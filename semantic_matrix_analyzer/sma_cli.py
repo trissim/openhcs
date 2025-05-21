@@ -19,8 +19,9 @@ import json
 import os
 import sys
 import textwrap
+import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Import SMA components
 # For development environment, use relative imports
@@ -102,11 +103,314 @@ def print_tool_intent() -> None:
 
     print(wrap_text(intent_text.strip(), indent=4))
 
+def find_python_files(project_dir: str) -> List[Path]:
+    """
+    Find all Python files in a project directory.
+
+    Args:
+        project_dir: Path to project directory
+
+    Returns:
+        List of paths to Python files
+    """
+    project_path = Path(project_dir)
+    python_files = []
+
+    for path in project_path.rglob("*.py"):
+        # Skip hidden directories and __pycache__
+        if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
+            continue
+        python_files.append(path)
+
+    return python_files
+
+def analyze_file_structure(project_dir: str) -> Dict[str, Any]:
+    """
+    Analyze the file structure of a project.
+
+    Args:
+        project_dir: Path to project directory
+
+    Returns:
+        Dictionary with file structure analysis
+    """
+    project_path = Path(project_dir)
+    python_files = find_python_files(project_dir)
+
+    # Count files by directory
+    dir_counts = {}
+    for file_path in python_files:
+        rel_path = file_path.relative_to(project_path)
+        parent = str(rel_path.parent)
+        if parent == ".":
+            parent = "root"
+        dir_counts[parent] = dir_counts.get(parent, 0) + 1
+
+    # Find top-level directories
+    top_dirs = set()
+    for file_path in python_files:
+        rel_path = file_path.relative_to(project_path)
+        if len(rel_path.parts) > 1:
+            top_dirs.add(rel_path.parts[0])
+
+    # Find potential package structure
+    packages = []
+    for dir_name in top_dirs:
+        init_path = project_path / dir_name / "__init__.py"
+        if init_path.exists():
+            packages.append(dir_name)
+
+    return {
+        "total_files": len(python_files),
+        "directory_counts": dir_counts,
+        "top_level_directories": sorted(list(top_dirs)),
+        "potential_packages": packages
+    }
+
+def analyze_imports(python_files: List[Path]) -> Dict[str, Any]:
+    """
+    Analyze imports in Python files.
+
+    Args:
+        python_files: List of paths to Python files
+
+    Returns:
+        Dictionary with import analysis
+    """
+    import_counts = {}
+    internal_imports = set()
+    external_imports = set()
+
+    for file_path in python_files:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            try:
+                content = f.read()
+
+                # Simple regex-based import analysis
+                import_lines = [line.strip() for line in content.split('\n')
+                               if line.strip().startswith(('import ', 'from '))
+                               and not line.strip().startswith('#')]
+
+                for line in import_lines:
+                    # Extract the main module being imported
+                    if line.startswith('import '):
+                        modules = line[7:].split(',')
+                        for module in modules:
+                            module = module.strip().split(' as ')[0].split('.')[0]
+                            import_counts[module] = import_counts.get(module, 0) + 1
+
+                            # Determine if internal or external
+                            if any(file.stem == module for file in python_files):
+                                internal_imports.add(module)
+                            else:
+                                external_imports.add(module)
+
+                    elif line.startswith('from '):
+                        # Handle "from x import y" syntax
+                        parts = line.split(' import ')
+                        if len(parts) == 2:
+                            module = parts[0][5:].split('.')[0]
+                            import_counts[module] = import_counts.get(module, 0) + 1
+
+                            # Determine if internal or external
+                            if any(file.stem == module for file in python_files):
+                                internal_imports.add(module)
+                            else:
+                                external_imports.add(module)
+            except Exception as e:
+                # Skip files that can't be read
+                continue
+
+    # Sort imports by frequency
+    top_imports = sorted(import_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+
+    return {
+        "top_imports": top_imports,
+        "internal_modules": sorted(list(internal_imports)),
+        "external_dependencies": sorted(list(external_imports))
+    }
+
+def generate_project_snapshot(
+    project_dir: str,
+    depth: int = 3,
+    focus: str = "all",
+    analyzer: Optional[Any] = None,
+    output_format: str = "markdown"
+) -> Union[str, Dict[str, Any]]:
+    """
+    Generate a snapshot of a project's architecture.
+
+    Args:
+        project_dir: Path to project directory
+        depth: Depth of analysis (1-5, where 5 is most detailed)
+        focus: Focus area (structure, semantics, intent, architecture, all)
+        analyzer: Optional analyzer instance
+        output_format: Output format (json, yaml, markdown, text)
+
+    Returns:
+        Project snapshot as string or dictionary
+    """
+    start_time = time.time()
+
+    # Find Python files
+    python_files = find_python_files(project_dir)
+
+    # Initialize snapshot data
+    snapshot = {
+        "project": {
+            "path": project_dir,
+            "name": Path(project_dir).name,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "analysis_depth": depth,
+            "focus_areas": focus
+        },
+        "structure": {},
+        "semantics": {},
+        "intent": {},
+        "architecture": {}
+    }
+
+    # Analyze file structure
+    if focus in ["structure", "all"]:
+        snapshot["structure"] = analyze_file_structure(project_dir)
+
+    # Analyze imports
+    if focus in ["structure", "architecture", "all"] and depth >= 2:
+        snapshot["structure"]["imports"] = analyze_imports(python_files)
+
+    # Placeholder for semantic analysis
+    if focus in ["semantics", "all"] and depth >= 2:
+        snapshot["semantics"] = {
+            "status": "placeholder",
+            "message": "Semantic analysis would analyze code patterns, naming conventions, and code quality."
+        }
+
+    # Placeholder for intent analysis
+    if focus in ["intent", "all"] and depth >= 3:
+        snapshot["intent"] = {
+            "status": "placeholder",
+            "message": "Intent analysis would extract the intended behavior from code, comments, and documentation."
+        }
+
+    # Placeholder for architectural analysis
+    if focus in ["architecture", "all"] and depth >= 3:
+        snapshot["architecture"] = {
+            "status": "placeholder",
+            "message": "Architectural analysis would identify design patterns, component relationships, and system structure."
+        }
+
+    # Add analysis metadata
+    snapshot["meta"] = {
+        "analysis_time": f"{time.time() - start_time:.2f} seconds",
+        "files_analyzed": len(python_files),
+        "sma_version": "0.1.0"
+    }
+
+    # Format output
+    if output_format == "json":
+        return snapshot
+    elif output_format == "yaml":
+        return snapshot
+    else:
+        # Generate markdown or text output
+        return format_snapshot_as_markdown(snapshot)
+
+def format_snapshot_as_markdown(snapshot: Dict[str, Any]) -> str:
+    """
+    Format a project snapshot as Markdown.
+
+    Args:
+        snapshot: Project snapshot dictionary
+
+    Returns:
+        Markdown-formatted snapshot
+    """
+    lines = []
+
+    # Project header
+    lines.append(f"# Project Snapshot: {snapshot['project']['name']}")
+    lines.append(f"Generated: {snapshot['project']['timestamp']}")
+    lines.append("")
+
+    # Structure section
+    if snapshot.get("structure"):
+        lines.append("## Structure")
+
+        structure = snapshot["structure"]
+        lines.append(f"- **Total Python Files**: {structure.get('total_files', 'N/A')}")
+
+        if structure.get("top_level_directories"):
+            lines.append("- **Top-Level Directories**:")
+            for dir_name in structure.get("top_level_directories", []):
+                lines.append(f"  - {dir_name}")
+
+        if structure.get("potential_packages"):
+            lines.append("- **Python Packages**:")
+            for package in structure.get("potential_packages", []):
+                lines.append(f"  - {package}")
+
+        if structure.get("imports"):
+            imports = structure["imports"]
+
+            if imports.get("top_imports"):
+                lines.append("- **Top Imports**:")
+                for module, count in imports.get("top_imports", [])[:10]:
+                    lines.append(f"  - {module} ({count} occurrences)")
+
+            if imports.get("external_dependencies"):
+                lines.append("- **External Dependencies**:")
+                for dep in imports.get("external_dependencies", [])[:10]:
+                    lines.append(f"  - {dep}")
+
+        lines.append("")
+
+    # Semantics section
+    if snapshot.get("semantics") and snapshot["semantics"].get("status") != "placeholder":
+        lines.append("## Semantics")
+        # Add semantics content here
+        lines.append("")
+
+    # Intent section
+    if snapshot.get("intent") and snapshot["intent"].get("status") != "placeholder":
+        lines.append("## Intent")
+        # Add intent content here
+        lines.append("")
+
+    # Architecture section
+    if snapshot.get("architecture") and snapshot["architecture"].get("status") != "placeholder":
+        lines.append("## Architecture")
+        # Add architecture content here
+        lines.append("")
+
+    # Metadata
+    lines.append("## Analysis Metadata")
+    lines.append(f"- **Analysis Time**: {snapshot['meta']['analysis_time']}")
+    lines.append(f"- **Files Analyzed**: {snapshot['meta']['files_analyzed']}")
+    lines.append(f"- **SMA Version**: {snapshot['meta']['sma_version']}")
+    lines.append("")
+
+    # Configuration guidance
+    lines.append("## Next Steps for AI Agents")
+    lines.append("1. Share this snapshot with the human to confirm your understanding")
+    lines.append("2. Update configuration based on human feedback:")
+    lines.append("   ```")
+    lines.append("   sma-cli config update --weight code_structure=0.8")
+    lines.append("   sma-cli config update --weight naming_conventions=0.7")
+    lines.append("   ```")
+    lines.append("3. Continue analysis with the improved configuration")
+    lines.append("4. Remember: This is a human-in-the-loop learning process where you tune")
+    lines.append("   configuration parameters based on feedback to improve your understanding")
+
+    return "\n".join(lines)
+
 def print_usage_examples() -> None:
     """Print usage examples for the SMA CLI."""
     print_section("USAGE EXAMPLES")
 
     examples = [
+        ("Get an immediate project overview:",
+         "sma-cli snapshot --project-dir ."),
+
         ("Analyze code for intent extraction:",
          "sma-cli analyze --code-file path/to/file.py"),
 
@@ -139,6 +443,13 @@ def create_parser() -> argparse.ArgumentParser:
     The SMA is designed for AI agents to assist humans in architecting, implementing,
     and debugging code with maximum accuracy and minimum cognitive load through
     the principle of separating judgment from execution via intent extraction.
+
+    QUICK START FOR AI AGENTS:
+    1. Run 'sma-cli snapshot --project-dir .' to get an immediate architectural overview
+    2. Share the snapshot with the human to confirm your understanding
+    3. Update configuration based on human feedback: 'sma-cli config update --weight <param>=<value>'
+    4. Continue analysis with improved configuration as a human-in-the-loop learning process
+    5. Use other SMA commands to analyze specific aspects of the codebase
     """
 
     parser = argparse.ArgumentParser(
@@ -175,6 +486,28 @@ def create_parser() -> argparse.ArgumentParser:
 
     # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+
+    # Snapshot command
+    snapshot_parser = subparsers.add_parser("snapshot", help="Get an immediate architectural overview of a project")
+    snapshot_parser.add_argument(
+        "--project-dir",
+        help="Path to project directory",
+        type=str,
+        required=True
+    )
+    snapshot_parser.add_argument(
+        "--depth",
+        help="Depth of analysis (1-5, where 5 is most detailed)",
+        type=int,
+        default=3,
+        choices=range(1, 6)
+    )
+    snapshot_parser.add_argument(
+        "--focus",
+        help="Focus area (structure, semantics, intent, architecture, all)",
+        choices=["structure", "semantics", "intent", "architecture", "all"],
+        default="all"
+    )
 
     # Analyze command
     analyze_parser = subparsers.add_parser("analyze", help="Analyze code for intent extraction")
@@ -294,6 +627,51 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+def handle_snapshot_command(args: argparse.Namespace) -> None:
+    """
+    Handle the snapshot command.
+
+    This command provides an immediate architectural overview of a project,
+    giving AI agents a quick understanding of the codebase's structure,
+    semantics, intent, and architecture.
+    """
+    print_header("PROJECT SNAPSHOT")
+    print(f"Generating architectural overview of project at: {args.project_dir}")
+    print(f"Analysis depth: {args.depth}")
+    print(f"Focus areas: {args.focus}")
+
+    # Create analyzer
+    analyzer = SemanticAnalyzer()
+
+    # Generate snapshot
+    snapshot = generate_project_snapshot(
+        project_dir=args.project_dir,
+        depth=args.depth,
+        focus=args.focus,
+        analyzer=analyzer,
+        output_format=args.format
+    )
+
+    # Print snapshot
+    if args.output:
+        with open(args.output, 'w') as f:
+            if args.format == "json":
+                json.dump(snapshot, f, indent=2)
+            elif args.format == "yaml":
+                import yaml
+                yaml.dump(snapshot, f, default_flow_style=False)
+            else:
+                f.write(snapshot)
+        print(f"Snapshot saved to {args.output}")
+    else:
+        if args.format == "json":
+            print(json.dumps(snapshot, indent=2))
+        elif args.format == "yaml":
+            import yaml
+            print(yaml.dump(snapshot, default_flow_style=False))
+        else:
+            print(snapshot)
 
 def handle_analyze_command(args: argparse.Namespace) -> None:
     """Handle the analyze command."""
@@ -457,7 +835,9 @@ def main() -> None:
         return
 
     # Execute command
-    if args.command == "analyze":
+    if args.command == "snapshot":
+        handle_snapshot_command(args)
+    elif args.command == "analyze":
         handle_analyze_command(args)
     elif args.command == "error-trace":
         handle_error_trace_command(args)
@@ -467,7 +847,7 @@ def main() -> None:
         handle_config_command(args)
     else:
         print(color_text("Error: No command specified", "RED"))
-        print("Use one of: analyze, error-trace, extract-intent, config")
+        print("Use one of: snapshot, analyze, error-trace, extract-intent, config")
         sys.exit(1)
 
 if __name__ == "__main__":
