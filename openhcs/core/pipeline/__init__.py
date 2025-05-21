@@ -35,7 +35,7 @@ from openhcs.core.pipeline.materialization_flag_planner import \
 from openhcs.core.pipeline.path_planner import PipelinePathPlanner
 # Import from pipeline module
 from openhcs.core.pipeline.pipeline import (PipelineCompiler,
-                                               PipelineExecutor, StepResult)
+                                               PipelineExecutor)
 # Removed import of GPUMemoryTypeValidator to break circular dependency
 from openhcs.core.pipeline.step_attribute_stripper import \
     StepAttributeStripper
@@ -111,7 +111,6 @@ __all__ = [
 
     # Core components
     'Pipeline',
-    'StepResult',
     'PipelineCompiler',
     'PipelineExecutor',
 
