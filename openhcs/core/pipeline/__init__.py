@@ -20,6 +20,7 @@ Doctrinal Clauses:
 
 # Import from constants
 from openhcs.constants.constants import (DEFAULT_BACKEND,
+                                            ENFORCED_BACKEND_MAPPING,
                                             FORCE_DISK_WRITE, READ_BACKEND,
                                             REQUIRES_DISK_READ,
                                             REQUIRES_DISK_WRITE,
@@ -101,6 +102,7 @@ __all__ = [
     'FORCE_DISK_WRITE',
     'READ_BACKEND',
     'WRITE_BACKEND',
+    'ENFORCED_BACKEND_MAPPING',
 
     # Constants from memory
     'MemoryType',

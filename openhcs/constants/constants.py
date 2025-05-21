@@ -43,6 +43,15 @@ FORCE_DISK_WRITE = "force_disk_write"
 READ_BACKEND = "read_backend"
 WRITE_BACKEND = "write_backend"
 
+# Backend mapping for enforced memory types
+ENFORCED_BACKEND_MAPPING = {
+    MemoryType.NUMPY.value: Backend.MEMORY.value,
+    MemoryType.CUPY.value: Backend.MEMORY.value,
+    MemoryType.TORCH.value: Backend.MEMORY.value,
+    MemoryType.TENSORFLOW.value: Backend.MEMORY.value,
+    MemoryType.JAX.value: Backend.MEMORY.value
+}
+
 # Default values
 DEFAULT_TILE_OVERLAP = 10.0
 DEFAULT_MAX_SHIFT = 50
