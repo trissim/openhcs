@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from semantic_matrix_analyzer.config_manager import ConfigManager
 from semantic_matrix_analyzer.analyzer import SemanticAnalyzer
 from semantic_matrix_analyzer.intent.extractor import IntentExtractor
+from semantic_matrix_analyzer.auto_config import generate_initial_config
 
 # ANSI color codes for terminal output
 COLORS = {
@@ -299,6 +300,17 @@ def generate_project_snapshot(
             "message": "Architectural analysis would identify design patterns, component relationships, and system structure."
         }
 
+    # Add configuration information if analyzer has config
+    if hasattr(analyzer, 'config') and analyzer.config:
+        config = analyzer.config
+        snapshot["configuration"] = {
+            "auto_generated": True,
+            "weights": config.get("analysis", {}).get("weights", {}),
+            "patterns": config.get("analysis", {}).get("patterns", {}).get("naming_conventions", {}),
+            "tokens": config.get("analysis", {}).get("tokens", {}),
+            "keys": config.get("analysis", {}).get("keys", {})
+        }
+
     # Add analysis metadata
     snapshot["meta"] = {
         "analysis_time": f"{time.time() - start_time:.2f} seconds",
@@ -389,6 +401,51 @@ def format_snapshot_as_markdown(snapshot: Dict[str, Any]) -> str:
     lines.append(f"- **SMA Version**: {snapshot['meta']['sma_version']}")
     lines.append("")
 
+    # Configuration information
+    lines.append("## Configuration")
+    lines.append("An initial configuration has been auto-generated based on codebase analysis:")
+    lines.append("- Naming patterns extracted from code")
+    lines.append("- Common tokens identified in docstrings and comments")
+    lines.append("- Intent indicators derived from function and class names")
+    lines.append("- Error patterns detected in exception handling")
+    lines.append("")
+
+    # Display configuration details if available
+    if snapshot.get("configuration"):
+        config = snapshot["configuration"]
+
+        if config.get("weights"):
+            lines.append("### Weights")
+            for name, value in config["weights"].items():
+                lines.append(f"- **{name}**: {value}")
+            lines.append("")
+
+        if config.get("patterns"):
+            lines.append("### Naming Patterns")
+            for name, pattern in config["patterns"].items():
+                lines.append(f"- **{name}**: `{pattern}`")
+            lines.append("")
+
+        if config.get("tokens"):
+            lines.append("### Tokens")
+            for category, tokens in config["tokens"].items():
+                if tokens:
+                    lines.append(f"- **{category}**: {', '.join(tokens)}")
+            lines.append("")
+
+        if config.get("keys"):
+            lines.append("### Keys")
+            for category, keys in config["keys"].items():
+                if keys:
+                    lines.append(f"- **{category}**: {', '.join(keys)}")
+            lines.append("")
+
+    lines.append("View the full configuration with:")
+    lines.append("```")
+    lines.append("sma-cli config view")
+    lines.append("```")
+    lines.append("")
+
     # Configuration guidance
     lines.append("## Next Steps for AI Agents")
     lines.append("1. Share this snapshot with the human to confirm your understanding")
@@ -400,6 +457,8 @@ def format_snapshot_as_markdown(snapshot: Dict[str, Any]) -> str:
     lines.append("3. Continue analysis with the improved configuration")
     lines.append("4. Remember: This is a human-in-the-loop learning process where you tune")
     lines.append("   configuration parameters based on feedback to improve your understanding")
+    lines.append("5. Each time you receive confirmation on ambiguities, update the configuration")
+    lines.append("   to reflect this new knowledge")
 
     return "\n".join(lines)
 
@@ -641,8 +700,14 @@ def handle_snapshot_command(args: argparse.Namespace) -> None:
     print(f"Analysis depth: {args.depth}")
     print(f"Focus areas: {args.focus}")
 
-    # Create analyzer
-    analyzer = SemanticAnalyzer()
+    # Generate initial configuration if none exists
+    print("Checking for configuration...")
+    config = generate_initial_config(args.project_dir)
+    if config:
+        print(color_text("Using auto-generated configuration based on codebase analysis", "GREEN"))
+
+    # Create analyzer with the configuration
+    analyzer = SemanticAnalyzer(config)
 
     # Generate snapshot
     snapshot = generate_project_snapshot(
