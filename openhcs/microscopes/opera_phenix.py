@@ -1,0 +1,604 @@
+"""
+Opera Phenix microscope implementations for openhcs.
+
+This module provides concrete implementations of FilenameParser and MetadataHandler
+for Opera Phenix microscopes.
+"""
+
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from openhcs.constants.constants import Backend
+# XML parser is implemented directly in this file
+# from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
+from openhcs.io.filemanager import FileManager
+from openhcs.microscopes.microscope_base import MicroscopeHandler
+from openhcs.microscopes.microscope_interfaces_base import (FilenameParser,
+                                                               MetadataHandler)
+
+logger = logging.getLogger(__name__)
+
+
+class OperaPhenixXmlParser:
+    """
+    Parser for Opera Phenix Index.xml files.
+
+    This class extracts field ID mappings and other metadata from Opera Phenix
+    Index.xml files.
+    """
+
+    def __init__(self, xml_path: str):
+        """
+        Initialize the parser with the path to an Index.xml file.
+
+        Args:
+            xml_path: Path to the Index.xml file
+        """
+        self.xml_path = xml_path
+        self._field_mapping = None
+
+    def get_field_id_mapping(self) -> Dict[str, int]:
+        """
+        Get a mapping from field IDs to remapped field IDs.
+
+        Returns:
+            Dictionary mapping original field IDs to remapped field IDs
+        """
+        if self._field_mapping is not None:
+            return self._field_mapping
+
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(self.xml_path)
+            root = tree.getroot()
+
+            # Find all field elements
+            fields = []
+            for field in root.findall(".//Field"):
+                field_id = field.get("id")
+                x = float(field.get("x", "0"))
+                y = float(field.get("y", "0"))
+                fields.append((field_id, x, y))
+
+            # Sort fields by y (row) then x (column)
+            fields.sort(key=lambda f: (f[2], f[1]))
+
+            # Create mapping from original field ID to remapped field ID
+            self._field_mapping = {field_id: i+1 for i, (field_id, _, _) in enumerate(fields)}
+            return self._field_mapping
+
+        except Exception as e:
+            logger.error("Error parsing Index.xml: %s", e)
+            return {}
+
+
+class OperaPhenixHandler(MicroscopeHandler):
+    """
+    MicroscopeHandler implementation for Opera Phenix systems.
+
+    This handler combines the OperaPhenix filename parser with its
+    corresponding metadata handler. It guarantees aligned behavior
+    for plate structure parsing, metadata extraction, and any optional
+    post-processing steps required after workspace setup.
+    """
+
+    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
+        self.parser = OperaPhenixFilenameParser(filemanager, pattern_format=pattern_format)
+        self.metadata_handler = OperaPhenixMetadataHandler(filemanager)
+        super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
+
+    @property
+    def common_dirs(self) -> List[str]:
+        """Subdirectory names commonly used by Opera Phenix."""
+        return 'image'
+
+    def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager):
+        """
+        Renames Opera Phenix images to follow a consistent field order
+        based on spatial layout extracted from Index.xml. Uses remapped
+        filenames and replaces the directory in-place.
+
+        This method performs preparation but does not determine the final image directory.
+
+        Args:
+            workspace_path: Path to the symlinked workspace
+            filemanager: FileManager instance for file operations
+
+        Returns:
+            Path to the normalized image directory.
+        """
+        # Find the image directory using the common_dirs property
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+
+        # Get all entries in the directory
+        entries = filemanager.list_dir(workspace_path, Backend.DISK.value)
+
+        # Look for a directory matching any of the common_dirs patterns
+        image_dir = workspace_path
+        for entry in entries:
+            entry_lower = entry.lower()
+            if any(common_dir.lower() in entry_lower for common_dir in self.common_dirs):
+                # Found a matching directory
+                image_dir = Path(workspace_path) / entry if isinstance(workspace_path, (str, Path)) else workspace_path / entry
+                logger.info("Found directory matching common_dirs pattern: %s", image_dir)
+                break
+
+        # Default to empty field mapping (no remapping)
+        field_mapping = {}
+
+        # Try to load field mapping from Index.xml if available
+        try:
+            # Clause 245: Workspace operations are disk-only by design
+            # This call is structurally hardcoded to use the "disk" backend
+            index_xml = filemanager.find_file_recursive(workspace_path, Backend.DISK.value, filename="Index.xml")
+            if index_xml:
+                xml_parser = OperaPhenixXmlParser(index_xml)
+                field_mapping = xml_parser.get_field_id_mapping()
+                logger.debug("Loaded field mapping from Index.xml: %s", field_mapping)
+            else:
+                logger.debug("Index.xml not found. Using default field mapping.")
+        except Exception as e:
+            logger.error("Error loading Index.xml: %s", e)
+            logger.debug("Using default field mapping due to error.")
+
+        # Create a temporary directory for renamed files
+        if isinstance(image_dir, str):
+            temp_dir = os.path.join(image_dir, "__renamed")
+        else:  # Path object
+            temp_dir = image_dir / "__renamed"
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        filemanager.ensure_directory(temp_dir, Backend.DISK.value)
+
+        # Get all image files in the directory
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        image_files = filemanager.list_image_files(image_dir, Backend.DISK.value)
+
+        # Process each file
+        for file_path in image_files:
+            # FileManager should return strings, but handle Path objects too
+            if isinstance(file_path, str):
+                file_name = os.path.basename(file_path)
+            elif isinstance(file_path, Path):
+                file_name = file_path.name
+            else:
+                # Skip any unexpected types
+                logger.warning("Unexpected file path type: %s", type(file_path).__name__)
+                continue
+
+            # Parse file metadata
+            metadata = self.parser.parse_filename(file_name)
+            if not metadata or 'site' not in metadata or metadata['site'] is None:
+                continue
+
+            # Remap the field ID using the spatial layout
+            original_field_id = metadata['site']
+            new_field_id = field_mapping.get(original_field_id, original_field_id)
+
+            # Construct the new filename with proper padding
+            new_name = self.parser.construct_filename(
+                well=metadata['well'],
+                site=new_field_id,
+                channel=metadata['channel'],
+                z_index=metadata['z_index'],
+                extension=metadata['extension'],
+                site_padding=3,
+                z_padding=3
+            )
+
+            # Create the new path in the temporary directory
+            if isinstance(temp_dir, str):
+                new_path = os.path.join(temp_dir, new_name)
+            else:  # Path object
+                new_path = temp_dir / new_name
+
+            # Copy the file to the temporary directory
+            # Clause 245: Workspace operations are disk-only by design
+            # This call is structurally hardcoded to use the "disk" backend
+            filemanager.copy_file(file_path, new_path, Backend.DISK.value)
+
+        # Clean up and replace old files
+        for file_path in image_files:
+            # Clause 245: Workspace operations are disk-only by design
+            # This call is structurally hardcoded to use the "disk" backend
+            filemanager.delete(file_path, Backend.DISK.value)
+
+        # Get all files in the temporary directory
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        temp_files = filemanager.list_files(temp_dir, Backend.DISK.value)
+
+        # Move files from temporary directory to image directory
+        for temp_file in temp_files:
+            # FileManager should return strings, but handle Path objects too
+            if isinstance(temp_file, str):
+                temp_file_name = os.path.basename(temp_file)
+            elif isinstance(temp_file, Path):
+                temp_file_name = temp_file.name
+            else:
+                # Skip any unexpected types
+                logger.warning("Unexpected file path type: %s", type(temp_file).__name__)
+                continue
+            if isinstance(image_dir, str):
+                dest_path = os.path.join(image_dir, temp_file_name)
+            else:  # Path object
+                dest_path = image_dir / temp_file_name
+
+            # Copy the file to the image directory
+            # Clause 245: Workspace operations are disk-only by design
+            # This call is structurally hardcoded to use the "disk" backend
+            filemanager.copy_file(temp_file, dest_path, Backend.DISK.value)
+
+            # Remove the file from the temporary directory
+            # Clause 245: Workspace operations are disk-only by design
+            # This call is structurally hardcoded to use the "disk" backend
+            filemanager.delete(temp_file, Backend.DISK.value)
+
+        # Remove the temporary directory
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        filemanager.delete(temp_dir, Backend.DISK.value)
+
+        return image_dir
+
+
+class OperaPhenixFilenameParser(FilenameParser):
+    """Parser for Opera Phenix microscope filenames.
+
+    Handles Opera Phenix format filenames like:
+    - r01c01f001p01-ch1sk1fk1fl1.tiff
+    - r01c01f001p01-ch1.tiff
+    """
+
+    # Regular expression pattern for Opera Phenix filenames
+    _pattern = re.compile(r"r(\d{1,2})c(\d{1,2})f(\d+|\{[^\}]*\})p(\d+|\{[^\}]*\})-ch(\d+|\{[^\}]*\})(?:sk\d+)?(?:fk\d+)?(?:fl\d+)?(\.\w+)$", re.I)
+
+    # Pattern for extracting row and column from Opera Phenix well format
+    _well_pattern = re.compile(r"R(\d{2})C(\d{2})", re.I)
+
+    def __init__(self, filemanager=None, pattern_format=None):
+        """
+        Initialize the parser.
+
+        Args:
+            filemanager: FileManager instance (not used, but required for interface compatibility)
+            pattern_format: Optional pattern format (not used, but required for interface compatibility)
+        """
+        # These parameters are not used by this parser, but are required for interface compatibility
+        self.filemanager = filemanager
+        self.pattern_format = pattern_format
+
+    @classmethod
+    def can_parse(cls, filename: str) -> bool:
+        """
+        Check if this parser can parse the given filename.
+
+        Args:
+            filename (str): Filename to check
+
+        Returns:
+            bool: True if this parser can parse the filename, False otherwise
+        """
+        # 🔒 Clause 17 — VFS Boundary Method
+        # This is a string operation that doesn't perform actual file I/O
+        # Extract just the basename
+        basename = os.path.basename(filename)
+        # Check if the filename matches the Opera Phenix pattern
+        return bool(cls._pattern.match(basename))
+
+    def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse an Opera Phenix filename to extract all components.
+        Supports placeholders like {iii} which will return None for that field.
+
+        Args:
+            filename (str): Filename to parse
+
+        Returns:
+            dict or None: Dictionary with extracted components or None if parsing fails.
+        """
+        # 🔒 Clause 17 — VFS Boundary Method
+        # This is a string operation that doesn't perform actual file I/O
+        basename = os.path.basename(filename)
+        logger.debug("OperaPhenixFilenameParser attempting to parse basename: '%s'", basename)
+
+        # Try parsing using the Opera Phenix pattern
+        match = self._pattern.match(basename)
+        if match:
+            logger.debug("Regex match successful for '%s'", basename)
+            row, col, site_str, z_str, channel_str, ext = match.groups()
+
+            # Helper function to parse component strings
+            def parse_comp(s):
+                """Parse component string to int or None if it's a placeholder."""
+                if not s or '{' in s:
+                    return None
+                return int(s)
+
+            # Create well ID from row and column
+            well = f"R{int(row):02d}C{int(col):02d}"
+
+            # Parse components
+            site = parse_comp(site_str)
+            channel = parse_comp(channel_str)
+            z_index = parse_comp(z_str)
+
+            result = {
+                'well': well,
+                'site': site,
+                'channel': channel,
+                'wavelength': channel,  # For backward compatibility
+                'z_index': z_index,
+                'extension': ext if ext else '.tif'
+            }
+            return result
+
+        logger.warning("Regex match failed for basename: '%s'", basename)
+        return None
+
+    def construct_filename(self, well: str, site: Optional[Union[int, str]] = None, channel: Optional[int] = None,
+                          z_index: Optional[Union[int, str]] = None, extension: str = '.tiff',
+                          site_padding: int = 3, z_padding: int = 3) -> str:
+        """
+        Construct an Opera Phenix filename from components.
+
+        Args:
+            well (str): Well ID (e.g., 'R03C04' or 'A01')
+            site: Site/field number (int) or placeholder string
+            channel (int): Channel number
+            z_index: Z-index/plane (int) or placeholder string
+            extension (str, optional): File extension
+            site_padding (int, optional): Width to pad site numbers to (default: 3)
+            z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
+
+        Returns:
+            str: Constructed filename
+        """
+        # Extract row and column from well name
+        # Check if well is in Opera Phenix format (e.g., 'R01C03')
+        match = self._well_pattern.match(well)
+        if match:
+            # Extract row and column from Opera Phenix format
+            row = int(match.group(1))
+            col = int(match.group(2))
+        else:
+            raise ValueError(f"Invalid well format: {well}. Expected format: 'R01C03'")
+
+        # Default Z-index to 1 if not provided
+        z_index = 1 if z_index is None else z_index
+        channel = 1 if channel is None else channel
+
+        # Construct filename in Opera Phenix format
+        if isinstance(site, str):
+            # If site is a string (e.g., '{iii}'), use it directly
+            site_part = f"f{site}"
+        else:
+            # Otherwise, format it as a padded integer
+            site_part = f"f{site:0{site_padding}d}"
+
+        if isinstance(z_index, str):
+            # If z_index is a string (e.g., '{zzz}'), use it directly
+            z_part = f"p{z_index}"
+        else:
+            # Otherwise, format it as a padded integer
+            z_part = f"p{z_index:0{z_padding}d}"
+
+        return f"r{row:02d}c{col:02d}{site_part}{z_part}-ch{channel}sk1fk1fl1{extension}"
+
+    def remap_field_in_filename(self, filename: str, xml_parser: Optional[OperaPhenixXmlParser] = None) -> str:
+        """
+        Remap the field ID in a filename to follow a top-left to bottom-right pattern.
+
+        Args:
+            filename: Original filename
+            xml_parser: Parser with XML data
+
+        Returns:
+            str: New filename with remapped field ID
+        """
+        if xml_parser is None:
+            return filename
+
+        # Parse the filename
+        metadata = self.parse_filename(filename)
+        if not metadata or 'site' not in metadata or metadata['site'] is None:
+            return filename
+
+        # Get the mapping and remap the field ID
+        mapping = xml_parser.get_field_id_mapping()
+        new_field_id = xml_parser.remap_field_id(metadata['site'], mapping)
+
+        # Always create a new filename with the remapped field ID and consistent padding
+        # This ensures all filenames have the same format, even if the field ID didn't change
+        return self.construct_filename(
+            well=metadata['well'],
+            site=new_field_id,
+            channel=metadata['channel'],
+            z_index=metadata['z_index'],
+            extension=metadata['extension'],
+            site_padding=3,
+            z_padding=3
+        )
+
+
+class OperaPhenixMetadataHandler(MetadataHandler):
+    """
+    Metadata handler for Opera Phenix microscopes.
+
+    Handles finding and parsing Index.xml files for Opera Phenix microscopes.
+    """
+
+    def __init__(self, filemanager: FileManager):
+        """
+        Initialize the metadata handler.
+
+        Args:
+            filemanager: FileManager instance for file operations.
+        """
+        super().__init__()
+        self.filemanager = filemanager
+
+    # Legacy mode has been completely purged
+
+    def find_metadata_file(self, plate_path: Union[str, Path]):
+        """
+        Find the Index.xml file in the plate directory.
+
+        Args:
+            plate_path: Path to the plate directory
+
+        Returns:
+            Path to the Index.xml file
+
+        Raises:
+            FileNotFoundError: If no Index.xml file is found
+        """
+        # Ensure plate_path is a Path object
+        if isinstance(plate_path, str):
+            plate_path = Path(plate_path)
+
+        # Ensure the path exists
+        if not plate_path.exists():
+            raise FileNotFoundError(f"Plate path does not exist: {plate_path}")
+
+        # Check for Index.xml in the plate directory
+        index_xml = plate_path / "Index.xml"
+        if index_xml.exists():
+            return index_xml
+
+        # Check for Index.xml in the Measurement directory
+        measurement_dir = plate_path / "Measurement"
+        if measurement_dir.exists():
+            index_xml = measurement_dir / "Index.xml"
+            if index_xml.exists():
+                return index_xml
+
+        # Use filemanager to find the file recursively
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        result = self.filemanager.find_file_recursive(plate_path, Backend.DISK.value, filename="Index.xml")
+        if result is None:
+            raise FileNotFoundError(
+                f"Index.xml not found in {plate_path}. "
+                "Opera Phenix metadata requires Index.xml file."
+            )
+
+        # Ensure result is a Path object
+        if isinstance(result, str):
+            return Path(result)
+        if isinstance(result, Path):
+            return result
+        # This should not happen if FileManager is properly implemented
+        logger.warning("Unexpected result type from find_file_recursive: %s", type(result).__name__)
+        return Path(str(result))
+
+    def get_grid_dimensions(self, plate_path: Union[str, Path]):
+        """
+        Get grid dimensions for stitching from Index.xml file.
+
+        Args:
+            plate_path: Path to the plate folder
+
+        Returns:
+            Tuple of (grid_size_x, grid_size_y)
+
+        Raises:
+            FileNotFoundError: If no Index.xml file is found
+            OperaPhenixXmlParseError: If the XML cannot be parsed
+            OperaPhenixXmlContentError: If grid dimensions cannot be determined
+        """
+        # Ensure plate_path is a Path object
+        if isinstance(plate_path, str):
+            plate_path = Path(plate_path)
+
+        # Ensure the path exists
+        if not plate_path.exists():
+            raise FileNotFoundError(f"Plate path does not exist: {plate_path}")
+
+        # Find the Index.xml file - this will raise FileNotFoundError if not found
+        index_xml = self.find_metadata_file(plate_path)
+
+        # Use the OperaPhenixXmlParser to get the grid size
+        # This will raise appropriate exceptions if parsing fails
+        xml_parser = self.create_xml_parser(index_xml)
+        grid_size = xml_parser.get_grid_size()
+
+        # Validate the grid size
+        if grid_size[0] <= 0 or grid_size[1] <= 0:
+            raise ValueError(
+                f"Invalid grid dimensions: {grid_size[0]}x{grid_size[1]}. "
+                "Grid dimensions must be positive integers."
+            )
+
+        logger.info("Grid size from Index.xml: %dx%d", grid_size[0], grid_size[1])
+        return grid_size
+
+    def get_pixel_size(self, plate_path: Union[str, Path]):
+        """
+        Get the pixel size from Index.xml file.
+
+        Args:
+            plate_path: Path to the plate folder
+
+        Returns:
+            Pixel size in micrometers
+
+        Raises:
+            FileNotFoundError: If no Index.xml file is found
+            OperaPhenixXmlParseError: If the XML cannot be parsed
+            OperaPhenixXmlContentError: If pixel size cannot be determined
+        """
+        # Ensure plate_path is a Path object
+        if isinstance(plate_path, str):
+            plate_path = Path(plate_path)
+
+        # Ensure the path exists
+        if not plate_path.exists():
+            raise FileNotFoundError(f"Plate path does not exist: {plate_path}")
+
+        # Find the Index.xml file - this will raise FileNotFoundError if not found
+        index_xml = self.find_metadata_file(plate_path)
+
+        # Use the OperaPhenixXmlParser to get the pixel size
+        # This will raise appropriate exceptions if parsing fails
+        xml_parser = self.create_xml_parser(index_xml)
+        pixel_size = xml_parser.get_pixel_size()
+
+        # Validate the pixel size
+        if pixel_size <= 0:
+            raise ValueError(
+                f"Invalid pixel size: {pixel_size}. "
+                "Pixel size must be a positive number."
+            )
+
+        logger.info("Pixel size from Index.xml: %.4f μm", pixel_size)
+        return pixel_size
+
+    def create_xml_parser(self, xml_path: Union[str, Path]):
+        """
+        Create an OperaPhenixXmlParser for the given XML file.
+
+        Args:
+            xml_path: Path to the XML file
+
+        Returns:
+            OperaPhenixXmlParser: Parser for the XML file
+
+        Raises:
+            FileNotFoundError: If the XML file does not exist
+        """
+        # Ensure xml_path is a Path object
+        if isinstance(xml_path, str):
+            xml_path = Path(xml_path)
+
+        # Ensure the path exists
+        if not xml_path.exists():
+            raise FileNotFoundError(f"XML file does not exist: {xml_path}")
+
+        # Create the parser
+        return OperaPhenixXmlParser(xml_path)

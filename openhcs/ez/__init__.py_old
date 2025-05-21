@@ -1,0 +1,14 @@
+"""
+EZ module for simplified access to openhcs functionality.
+
+This module provides a simplified interface for common stitching workflows,
+making it easier for non-coders to use openhcs.
+"""
+
+from .core import OpenHCS
+from .functions import stitch_plate
+
+__all__ = [
+    'OpenHCS',
+    'stitch_plate',
+]

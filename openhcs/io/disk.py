@@ -1,0 +1,495 @@
+# openhcs/io/storage/backends/disk.py
+"""
+Disk-based storage backend implementation.
+
+This module provides a concrete implementation of the storage backend interfaces
+for local disk storage. It strictly enforces VFS boundaries and doctrinal clauses.
+"""
+
+import fnmatch
+import logging
+import os
+import shutil
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Union
+from os import PathLike
+
+import numpy as np
+
+from openhcs.constants.constants import FileFormat
+from openhcs.io.base import StorageBackend
+
+logger = logging.getLogger(__name__)
+
+
+def optional_import(module_name):
+    try:
+        return __import__(module_name)
+    except ImportError:
+        return None
+
+class FileFormatRegistry:
+    def __init__(self):
+        self._writers: Dict[str, Callable[[Path, Any], None]] = {}
+        self._readers: Dict[str, Callable[[Path], Any]] = {}
+
+    def register(self, ext: str, writer: Callable, reader: Callable):
+        ext = ext.lower()
+        self._writers[ext] = writer
+        self._readers[ext] = reader
+
+    def get_writer(self, ext: str) -> Callable:
+        return self._writers[ext.lower()]
+
+    def get_reader(self, ext: str) -> Callable:
+        return self._readers[ext.lower()]
+
+    def is_registered(self, ext: str) -> bool:
+        return ext.lower() in self._writers and ext.lower() in self._readers
+
+
+class DiskStorageBackend(StorageBackend):
+    def __init__(self):
+        self.format_registry = FileFormatRegistry()
+        self._register_formats()
+
+    def _register_formats(self):
+        # Optional dependencies
+        torch = optional_import("torch")
+        jax = optional_import("jax")
+        jnp = optional_import("jax.numpy")
+        cupy = optional_import("cupy")
+        tf = optional_import("tensorflow")
+        tifffile = optional_import("tifffile")
+
+        formats = []
+
+        # NumPy
+        formats.append((
+            FileFormat.NUMPY.value,
+            np.save,
+            np.load
+        ))
+
+        if torch:
+            formats.append((
+                FileFormat.TORCH.value,
+                torch.save,
+                torch.load
+            ))
+
+        if jax and jnp:
+            formats.append((
+                FileFormat.JAX.value,
+                lambda p, d: np.save(p, jax.device_get(d)),
+                lambda p: jnp.array(np.load(p))
+            ))
+
+        # CuPy
+        if cupy:
+            formats.append((
+                FileFormat.CUPY.value,
+                lambda p, d: cupy.save(p, d),
+                lambda p: cupy.load(p)
+            ))
+
+        # TensorFlow
+        if tf:
+            formats.append((
+                FileFormat.TENSORFLOW.value,
+                lambda p, d: tf.io.write_file(p.as_posix(), tf.io.serialize_tensor(d)),
+                lambda p: tf.io.parse_tensor(tf.io.read_file(p.as_posix()), out_type=tf.dtypes.float32)
+            ))
+
+        # TIFF
+        if tifffile:
+            formats.append((
+                FileFormat.TIFF.value,
+                lambda p, d: tifffile.imwrite(p, d),
+                lambda p: tifffile.imread(p)
+            ))
+
+        # Plain Text
+        formats.append((
+            FileFormat.TEXT.value,
+            lambda p, d: p.write_text(str(d)),
+            lambda p: p.read_text()
+        ))
+
+        # Register everything
+        for extensions, writer, reader in formats:
+            for ext in extensions:
+             self.format_registry.register(ext.lower(), writer, reader)
+
+
+    def load(self, file_path: Union[str, Path], **kwargs) -> Any:
+        """
+        Load data from disk based on explicit content type.
+
+        Args:
+            file_path: Path to the file to load
+            **kwargs: Additional arguments for the load operation, must include 'content_type'
+                      to explicitly specify the type of content to load
+
+        Returns:
+            The loaded data
+
+        Raises:
+            TypeError: If file_path is not a valid path type or content_type is not specified
+            FileNotFoundError: If the file does not exist
+            ValueError: If the file cannot be loaded
+        """
+
+        disk_path = Path(file_path)
+        ext = disk_path.suffix.lower()
+        if not self.format_registry.is_registered(ext):
+            raise ValueError(f"No writer registered for extension '{ext}'")
+
+        try:
+            reader = self.format_registry.get_reader(ext)
+            return reader(disk_path, **kwargs)
+        except Exception as e:
+            raise ValueError(f"Error loading data from {disk_path}: {e}") from e
+
+    def save(self, data: Any, output_path: Union[str, Path], **kwargs) -> None:
+        """
+        Save data to disk based on explicit content type.
+
+        Args:
+            data: The data to save
+            output_path: Path where the data should be saved
+            **kwargs: Additional arguments for the save operation, must include 'content_type'
+                      to explicitly specify the type of content to save
+
+        Raises:
+            TypeError: If output_path is not a valid path type or content_type is not specified
+            ValueError: If the data cannot be saved
+        """
+        disk_output_path = Path(output_path)
+        ext = disk_output_path.suffix.lower()
+        if not self.format_registry.is_registered(ext):
+            raise ValueError(f"No writer registered for extension '{ext}'")
+
+        try:
+            writer = self.format_registry.get_writer(ext)
+            return writer(disk_output_path, data, **kwargs )
+        except Exception as e:
+            raise ValueError(f"Error saving data to {disk_output_path}: {e}") from e
+
+
+    def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
+                  extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:
+        """
+        List files on disk, optionally filtering by pattern and extensions.
+
+        Args:
+            directory: Directory to search.
+            pattern: Optional glob pattern to match filenames.
+            extensions: Optional set of file extensions to filter by (e.g., {'.tif', '.png'}).
+                        Extensions should include the dot and are case-insensitive.
+            recursive: Whether to search recursively.
+
+        Returns:
+            List of paths to matching files.
+
+        Raises:
+            TypeError: If directory is not a valid path type
+            FileNotFoundError: If the directory does not exist
+        """
+        disk_directory = Path(directory)
+
+
+        if not disk_directory.is_dir():
+            raise ValueError(f"Path is not a directory: {disk_directory}")
+
+        # Use appropriate glob pattern based on recursion and provided pattern
+        if recursive:
+            glob_pattern = f"**/{pattern}" if pattern else "**/*"
+            files = [p for p in disk_directory.glob(glob_pattern) if p.is_file()]
+        else:
+            glob_pattern = pattern if pattern else "*"
+            files = [p for p in disk_directory.glob(glob_pattern) if p.is_file()]
+
+        # Filter by extensions if provided
+        if extensions:
+            # Convert extensions to lowercase for case-insensitive comparison
+            lowercase_extensions = {ext.lower() for ext in extensions}
+            files = [f for f in files if f.suffix.lower() in lowercase_extensions]
+
+        # Return paths as strings
+        return [str(f) for f in files]
+
+    def list_dir(self, path: Union[str, Path]) -> List[str]:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+        if not path.is_dir():
+            raise NotADirectoryError(f"Not a directory: {path}")
+        return [entry.name for entry in path.iterdir()]
+
+        
+    def delete(self, path: Union[str, Path]) -> None:
+        """
+        Delete a file or empty directory at the given disk path.
+
+        Args:
+            path: Path to delete
+
+        Raises:
+            FileNotFoundError: If path does not exist
+            IsADirectoryError: If path is a directory and not empty
+            StorageResolutionError: If deletion fails for unknown reasons
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Cannot delete: path does not exist: {path}")
+
+        try:
+            if path.is_dir():
+                # Do not allow recursive deletion
+                path.rmdir()  # will raise OSError if directory is not empty
+            else:
+                path.unlink()
+        except IsADirectoryError:
+            raise
+        except OSError as e:
+            raise IsADirectoryError(f"Cannot delete non-empty directory: {path}") from e
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to delete {path}") from e
+    
+    def delete_all(self, path: Union[str, Path]) -> None:
+        """
+        Recursively delete a file or directory and all its contents from disk.
+
+        Args:
+            path: Filesystem path to delete
+
+        Raises:
+            FileNotFoundError: If the path does not exist
+            StorageResolutionError: If deletion fails for any reason
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+
+        try:
+            if path.is_file():
+                path.unlink()
+            else:
+                # Safe, recursive removal of directories
+                import shutil
+                shutil.rmtree(path)
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to recursively delete: {path}") from e
+
+
+    def ensure_directory(self, directory: Union[str, Path]) -> Union[str, Path]:
+        """
+        Ensure a directory exists on disk.
+
+        Args:
+            directory: Path to the directory to ensure exists
+
+        Returns:
+            Path to the directory
+
+        Raises:
+            TypeError: If directory is not a valid path type
+            ValueError: If there is an error creating the directory
+        """
+        # 🔒 Clause 17 — VFS Boundary Enforcement
+        try:
+            disk_directory = Path(directory)
+            disk_directory.mkdir(parents=True, exist_ok=True)
+            return directory
+        except OSError as e:
+            # 🔒 Clause 65 — No Fallback Logic
+            # Propagate the error with additional context
+            raise ValueError(f"Error creating directory {disk_directory}: {e}") from e
+
+    def exists(self, path: Union[str, Path]) -> bool:
+        return Path(path).exists()
+
+    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path]):
+        source = Path(source).resolve()
+        link_name = Path(link_name).resolve()
+
+        if not source.exists():
+            raise FileNotFoundError(f"Source path does not exist: {source}")
+
+        if link_name.exists() or link_name.is_symlink():
+            link_name.unlink()  # Replace if already exists
+
+        link_name.parent.mkdir(parents=True, exist_ok=True)
+        link_name.symlink_to(source)
+
+
+    def is_symlink(self, path: Union[str, Path]) -> bool:
+        return Path(path).is_symlink()
+
+
+    def is_file(self, path: Union[str, Path]) -> bool:
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Path does not exist: {path}")
+
+        # Resolve symlinks and return True only if final target is a file
+        resolved = path.resolve(strict=True)
+
+        if resolved.is_dir():
+            raise IsADirectoryError(f"Path is a directory: {path}")
+
+        return resolved.is_file()
+
+    def is_dir(self, path: Union[str, Path]) -> bool:
+        """
+        Check if a given disk path is a directory.
+
+        Follows filesystem symlinks to determine the actual resolved structure.
+
+        Args:
+            path: Filesystem path (absolute or relative)
+
+        Returns:
+            bool: True if path resolves to a directory
+
+        Raises:
+            FileNotFoundError: If the path or symlink target does not exist
+            NotADirectoryError: If the resolved target is not a directory
+            StorageResolutionError: For unexpected filesystem resolution errors
+        """
+        from pathlib import Path
+
+        try:
+            path = Path(path)
+
+            if not path.exists():
+                raise FileNotFoundError(f"Path does not exist: {path}")
+
+            # Follow symlinks to final real target
+            resolved = path.resolve(strict=True)
+
+            if not resolved.is_dir():
+                raise NotADirectoryError(f"Path is not a directory: {path}")
+
+            return True
+
+        except FileNotFoundError:
+            raise  # broken symlink or missing path
+        except NotADirectoryError:
+            raise
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to resolve directory: {path}") from e
+
+    def move(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+        """
+        Move a file or directory on disk. Follows symlinks and performs overwrite-safe move.
+
+        Raises:
+            FileNotFoundError: If source does not exist
+            FileExistsError: If destination already exists
+            StorageResolutionError: On failure to move
+        """
+        import shutil
+        from pathlib import Path
+
+        src = Path(src)
+        dst = Path(dst)
+
+        if not src.exists():
+            raise FileNotFoundError(f"Source path does not exist: {src}")
+        if dst.exists():
+            raise FileExistsError(f"Destination already exists: {dst}")
+
+        try:
+            shutil.move(str(src), str(dst))
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to move {src} to {dst}") from e
+    
+    def stat(self, path: Union[str, Path]) -> Dict[str, Any]:
+        """
+        Return structural metadata about a disk-backed path.
+
+        Returns:
+            dict with keys:
+            - 'type': 'file', 'directory', 'symlink', or 'missing'
+            - 'path': str(path)
+            - 'target': resolved target if symlink
+            - 'exists': bool
+
+        Raises:
+            StorageResolutionError: On access or resolution failure
+        """
+        path_str = str(path)
+        try:
+            if not os.path.lexists(path_str):  # includes broken symlinks
+                return {
+                    "type": "missing",
+                    "path": path_str,
+                    "exists": False
+                }
+
+            if os.path.islink(path_str):
+                try:
+                    resolved = os.readlink(path_str)
+                    target_exists = os.path.exists(path_str)
+                except OSError as e:
+                    raise StorageResolutionError(f"Failed to resolve symlink: {path}") from e
+
+                return {
+                    "type": "symlink",
+                    "path": path_str,
+                    "target": resolved,
+                    "exists": target_exists
+                }
+
+            if os.path.isdir(path_str):
+                return {
+                    "type": "directory",
+                    "path": path_str,
+                    "exists": True
+                }
+
+            if os.path.isfile(path_str):
+                return {
+                    "type": "file",
+                    "path": path_str,
+                    "exists": True
+                }
+
+            raise StorageResolutionError(f"Unknown filesystem object at: {path_str}")
+
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to stat disk path: {path}") from e
+
+    def copy(self, src: Union[str, Path], dst: Union[str, Path]) -> None:
+        """
+        Copy a file or directory to a new location.
+    
+        - Does not overwrite destination.
+        - Will raise if destination exists.
+        - Supports file-to-file and dir-to-dir copies.
+    
+        Raises:
+            FileExistsError: If destination already exists
+            FileNotFoundError: If source is missing
+            StorageResolutionError: On structural failure
+        """
+        src = Path(src)
+        dst = Path(dst)
+    
+        if not src.exists():
+            raise FileNotFoundError(f"Source does not exist: {src}")
+        if dst.exists():
+            raise FileExistsError(f"Destination already exists: {dst}")
+    
+        try:
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to copy {src} → {dst}") from e
