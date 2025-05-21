@@ -27,11 +27,18 @@ setup(
     install_requires=[
         "numpy",
         "matplotlib",
+        "pyyaml",
+        "nltk",
+        "spacy",
+        "scikit-learn",
+        "networkx",
     ],
     entry_points={
         "console_scripts": [
             "semantic-matrix-analyzer=semantic_matrix_analyzer.cli:main",
             "extract-intents=semantic_matrix_analyzer.extract_intents:main",
+            "sma=semantic_matrix_analyzer.cli:main",
+            "sma-intent=semantic_matrix_analyzer.intent.cli:main",
         ],
     },
 )
