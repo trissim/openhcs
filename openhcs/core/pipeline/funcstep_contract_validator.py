@@ -56,6 +56,13 @@ ERROR_MISSING_REQUIRED_ARGS = (
     "All required positional arguments must be explicitly provided in the kwargs dict when using (func, kwargs) pattern."
 )
 
+ERROR_COMPLEX_PATTERN_WITH_SPECIAL_CONTRACTS = (
+    "Clause 107 Violation: FunctionStep '{0}' uses special I/O or chainbreaker decorators. " # Placeholder Clause
+    "Its func_pattern must be a direct callable, a (callable, kwargs) tuple, or a list "
+    "containing exactly one such item. Dictionaries or multi-item lists are not permitted "
+    "when these decorators are used on any function in the pattern."
+)
+
 class FuncStepContractValidator:
     """
     Validator for FunctionStep memory type contracts.
@@ -152,7 +159,8 @@ class FuncStepContractValidator:
     @staticmethod
     def validate_funcstep(step: FunctionStep) -> Dict[str, str]:
         """
-        Validate memory type contracts for a FunctionStep instance.
+        Validate memory type contracts and func_pattern structure for a FunctionStep instance.
+        If special I/O or chainbreaker decorators are used, the func_pattern must be simple.
 
         Args:
             step: The FunctionStep to validate
@@ -161,14 +169,56 @@ class FuncStepContractValidator:
             Dictionary of validated memory types
 
         Raises:
-            ValueError: If the FunctionStep violates memory type contracts
+            ValueError: If the FunctionStep violates memory type contracts or structural rules
+                        related to special I/O/chainbreaker decorators.
         """
-        # Extract the function pattern from the step
-        func = step.func
+        # Extract the function pattern and name from the step
+        func_pattern = step.func # Renamed for clarity in this context
+        step_name = step.name
 
-        # Validate the function pattern and get the shared memory types
+        # 1. Check if any function in the pattern uses special contract decorators
+        # _extract_functions_from_pattern will raise ValueError if func_pattern itself is invalid (e.g. None, or bad structure)
+        all_callables = FuncStepContractValidator._extract_functions_from_pattern(func_pattern, step_name)
+        
+        uses_special_contracts = False
+        if all_callables: # Only check attributes if we have actual callables
+            for f_callable in all_callables:
+                if hasattr(f_callable, '__special_inputs__') or \
+                   hasattr(f_callable, '__special_outputs__') or \
+                   hasattr(f_callable, '__chain_breaker__'):
+                    uses_special_contracts = True
+                    break
+        
+        # 2. If special contracts are used, validate the func_pattern's overall structure
+        if uses_special_contracts:
+            is_structurally_simple = False
+            # Check for direct callable (and not a class type itself)
+            if callable(func_pattern) and not isinstance(func_pattern, type):
+                is_structurally_simple = True
+            # Check for (callable, kwargs_dict) tuple
+            elif isinstance(func_pattern, tuple):
+                # _extract_functions_from_pattern already validates tuple structure if it contains a callable
+                # We just confirm it's a 2-tuple with callable and dict for this specific rule.
+                if len(func_pattern) == 2 and callable(func_pattern[0]) and \
+                   not isinstance(func_pattern[0], type) and isinstance(func_pattern[1], dict):
+                    is_structurally_simple = True
+            # Check for list containing exactly one simple item
+            elif isinstance(func_pattern, list):
+                if len(func_pattern) == 1:
+                    item = func_pattern[0]
+                    # The single item must itself be a simple pattern (callable or valid tuple)
+                    if (callable(item) and not isinstance(item, type)) or \
+                       (isinstance(item, tuple) and len(item) == 2 and
+                        callable(item[0]) and not isinstance(item[0], type) and
+                        isinstance(item[1], dict)):
+                        is_structurally_simple = True
+            
+            if not is_structurally_simple:
+                raise ValueError(ERROR_COMPLEX_PATTERN_WITH_SPECIAL_CONTRACTS.format(step_name))
+
+        # 3. Proceed with existing memory type validation using the original func_pattern
         input_type, output_type = FuncStepContractValidator.validate_function_pattern(
-            func, step.name)
+            func_pattern, step_name)
 
         # Return the validated memory types
         return {

@@ -1,509 +1,302 @@
 """
 FunctionStep implementation for pattern-based processing.
 
-This module contains the FunctionStep class and its helper functions for
-pattern-based file selection and function dispatching.
-
-The FunctionStep is the canonical, schema-bound, stateless functional step
-that transforms image arrays. It is the foundation for all specialized
-steps in the OpenHCS pipeline.
+This module contains the FunctionStep class. During execution, FunctionStep instances
+are stateless regarding their configuration. All operational parameters, including
+the function(s) to execute, special input/output keys, their VFS paths, and memory types,
+are retrieved from this step's entry in `context.step_plans`.
 """
 
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDict as TypingOrderedDict
 
 from openhcs.constants.constants import (DEFAULT_IMAGE_EXTENSION,
-                                            DEFAULT_IMAGE_EXTENSIONS,
-                                            DEFAULT_SITE_PADDING, Backend,
-                                            MemoryType)
+                                             DEFAULT_IMAGE_EXTENSIONS,
+                                             DEFAULT_SITE_PADDING, Backend,
+                                             MemoryType)
+from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
-from openhcs.core.steps.step_result import StepResult
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
+from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
 
 logger = logging.getLogger(__name__)
 
+def _is_3d(array: Any) -> bool:
+    """Check if an array is 3D."""
+    return hasattr(array, 'ndim') and array.ndim == 3
 
-class FunctionStep(AbstractStep):
-    """
-    Base class for function steps with memory type awareness.
-
-    Function steps are the canonical, schema-bound, stateless functional steps
-    that transform image arrays. They are the foundation for all specialized
-    steps in the OpenHCS pipeline.
-
-    This class accepts a function that takes a VirtualImageArray3D and returns
-    a VirtualImageArray3D, and applies it to the input image array.
-
-    Unlike disk-mandated steps (ImageAssemblyStep, PositionGenerationStep),
-    FunctionStep is memory-native by default (requires_disk_output=False) but
-    supports optional filesystem persistence via force_disk_output.
-
-    Note: input_memory_type, output_memory_type, and well_id are not constructor parameters.
-    These values are assigned during planning and are available in the step plan.
-    """
-
-    @property
-    def requires_disk_input(self) -> bool:
-        return False
-
-    @property
-    def requires_disk_output(self) -> bool:
-        return False
-
-    def __init__(
-        self,
-        func: Callable,
-        *,
-        name: Optional[str] = None,
-        variable_components: Optional[List[str]] = ['site'],
-        group_by: str = "channel",
-        force_disk_output: bool = False
-    ):
-        """
-        Initialize a FuncStep using a single declarative function.
-
-        Args:
-            func: A callable that defines the transformation logic
-            name: Optional name for the step (defaults to function name)
-            variable_components: Components that vary in filename parsing
-            group_by: Component to group by during batching (default: 'channel')
-            force_disk_output: Whether to force output to disk regardless of backend
-        """
-        super().__init__(
-            name=name or getattr(func, '__name__', 'FunctionStep'),
-            variable_components=variable_components,
-            group_by=group_by,
-            force_disk_output=force_disk_output
-        )
-
-        self.func = func
-        self.special_inputs = getattr(func, "__special_inputs__", {})
-        self.special_outputs = getattr(func, "__special_outputs__", set())
-        self.chain_breaker = getattr(func, "__chain_breaker__", False)
-
-    def process(self, context: 'ProcessingContext') -> StepResult:
-        """
-        Process the step with pattern-based file selection and function dispatching.
-
-        This implementation uses standalone helper functions to handle different responsibilities:
-        1. validate_step_plan: Validate step plan and extract key values
-        2. detect_patterns: Detect patterns based on variable_components
-        3. map_functions_to_patterns: Map functions to patterns based on group_by
-        4. process_pattern: Process each pattern with its corresponding function
-        5. save_results: Save the processed results
-
-        Args:
-            context: The processing context
-
-        Returns:
-            StepResult with metadata about processed files
-
-        Raises:
-            ValueError: If required parameters are missing or invalid
-        """
-        try:
-            # Get step_id from context
-            # Note: context.current_step_id is set by the Pipeline before calling the step's process method
-            # It contains the unique identifier of the current step being executed
-            step_id = context.current_step_id
-
-            # Validate step plan and extract key values - using helper function defined in the same file
-            # Call the standalone function directly by name, not through self
-            plan_values = validate_step_plan(context, step_id)
-
-            # Extract values from plan_values
-            well_id = plan_values['well_id']
-            input_dir = plan_values['input_dir']
-            output_dir = plan_values['output_dir']
-            variable_components = plan_values['variable_components']
-            group_by = plan_values['group_by']
-            processing_funcs = plan_values['func']
-            read_backend = plan_values['read_backend']  # Using read_backend to match materialization flag planner
-            write_backend = plan_values['write_backend']  # Using write_backend to match materialization flag planner
-            force_disk_output = plan_values['force_disk_output']  # Get force_disk_output from plan_values
-
-            # Note: read_backend and write_backend are set by the materialization flag planner
-            # based on requires_disk_input, requires_disk_output, and force_disk_output
-            input_memory_type = plan_values['input_memory_type']
-            output_memory_type = plan_values['output_memory_type']
-            device_id = plan_values['device_id']
-
-            # Check if input_dir and output_dir are the same
-            same_directory = str(input_dir) == str(output_dir)
-            if same_directory:
-                logger.warning(
-                    "Input directory and output directory are the same: %s. "
-                    "Will delete existing processed files before saving new ones.",
-                    input_dir
-                )
-
-            # Log backend information
-            logger.info(
-                f"Using read_backend={read_backend}, write_backend={write_backend}, "
-                f"force_disk_output={force_disk_output}"
-            )
-
-            # Log key values for debugging
-            logger.debug(
-                "Processing step %s with well_id=%s, input_dir=%s, output_dir=%s, "
-                "variable_components=%s, group_by=%s",
-                step_id, well_id, input_dir, output_dir, variable_components, group_by
-            )
-
-            # Detect patterns based on variable_components - direct call
-            patterns_by_well = context.microscope_handler.auto_detect_patterns(
-                folder_path=input_dir,
-                well_filter=[well_id],
-                extensions=DEFAULT_IMAGE_EXTENSIONS,  # Use constant for extensions
-                group_by=group_by,
-                variable_components=variable_components,
-                backend=read_backend  # Using read_backend to match materialization flag planner
-            )
-
-            # Validate that patterns are found for the specified well_id
-            if well_id not in patterns_by_well:
-                raise ValueError(
-                    f"Clause 65 Violation: No patterns found for well {well_id} in {input_dir}. "
-                    f"Available wells: {list(patterns_by_well.keys())}"
-                )
-
-            patterns = patterns_by_well[well_id]
-            if not patterns:
-                raise ValueError(f"Clause 65 Violation: No patterns found for well {well_id} in {input_dir}")
-
-            # Map functions to patterns based on group_by - direct call
-            grouped_patterns, component_to_funcs, component_to_args = prepare_patterns_and_functions(
-                patterns, processing_funcs, component=group_by
-            )
-
-            # Get filemanager from context as required by clause STEPS_CONTEXT_FILEMANAGER
-            filemanager = context.filemanager
-
-            # Process each pattern with its corresponding function and immediately save results
-            # Store only metadata, not the actual processed arrays
-            results = {}
-
-            # Function calling sequence:
-            # 1. Iterate through each component value (e.g., channel "1", "2")
-            # 2. For each component, get the list of patterns and corresponding function
-            # 3. Process each pattern independently with process_and_save_pattern
-            # 4. Collect metadata results in a list under the component value
-            for component_value, component_patterns in grouped_patterns.items():
-                component_func = component_to_funcs[component_value]
-                component_args = component_to_args[component_value]
-
-                # Process each pattern and immediately save results
-                component_results = []
-                for pattern in component_patterns:
-                    # Process and save in one operation to avoid memory accumulation
-                    # Call the standalone function directly by name, not through self
-                    result_metadata = process_and_save_pattern(
-                        context, pattern, component_func, component_args,
-                        input_dir, output_dir, well_id, component_value,
-                        read_backend, write_backend,  # Using read_backend and write_backend to match materialization flag planner
-                        input_memory_type, output_memory_type,
-                        device_id, same_directory, force_disk_output
-                    )
-
-                    # Store only the metadata, not the actual processed array
-                    component_results.append(result_metadata)
-
-                # Store component results (metadata only, not actual arrays)
-                # This creates a nested structure: results[component_value] = [metadata1, metadata2, ...]
-                results[component_value] = component_results
-
-            # Return StepResult with metadata for traceability
-            # Note: This metadata is used by the Pipeline for logging and debugging
-            # No downstream components rely on specific metadata fields
-            return StepResult(
-                metadata={
-                    # Metadata fields - all for debugging and logging only
-                    "processed_components": list(results.keys()),  # List of component values processed
-                    "results": results,  # Contains only metadata, not actual arrays
-                    "well_id": well_id,
-                    "input_memory_type": input_memory_type,
-                    "output_memory_type": output_memory_type,
-                    "read_backend": read_backend,
-                    "write_backend": write_backend,
-                    "same_directory_operation": same_directory,
-                    "force_disk_output": force_disk_output
-                }
-            )
-
-        except Exception as e:
-            # Wrap all exceptions with clear context
-            logger.error("Error in FunctionStep.process: %s", e)
-            raise ValueError(f"Error in FunctionStep.process: {e}") from e
-
-
-# Helper functions defined outside the class to maintain statelessness (Clause 246)
-
-def validate_step_plan(context: 'ProcessingContext', step_id: str) -> Dict[str, Any]:
-    """
-    Validate that the step plan contains all required fields and extract key values.
-
-    Args:
-        context: The processing context
-        step_id: The ID of the current step
-
-    Returns:
-        Dictionary containing extracted values from the step plan
-
-    Raises:
-        ValueError: If required parameters are missing or invalid
-    """
-    # Check that step_id exists in context.step_plans
-    if step_id not in context.step_plans:
-        raise ValueError(f"Clause 65 Violation: Step plan not found for step_id {step_id}")
-
-    step_plan = context.step_plans[step_id]
-
-    # Validate all required fields are present
-    required_fields = [
-        'well_id', 'input_dir', 'output_dir',
-        'input_memory_type', 'output_memory_type',
-        'read_backend', 'write_backend',  # Using read_backend and write_backend to match materialization flag planner
-        'variable_components', 'group_by', 'func'
-    ]
-
-    for field in required_fields:
-        if field not in step_plan:
-            raise ValueError(f"Clause 65 Violation: '{field}' is required in step plan")
-
-    # Check for force_disk_output (optional field with default False)
-    force_disk_output = step_plan.get('force_disk_output', False)
-
-    # Extract values from step_plan
-    result = {
-        'well_id': step_plan['well_id'],
-        'input_dir': step_plan['input_dir'],
-        'output_dir': step_plan['output_dir'],
-        'variable_components': step_plan['variable_components'],
-        'group_by': step_plan['group_by'],
-        'func': step_plan['func'],
-        'read_backend': step_plan['read_backend'],  # Using read_backend to match materialization flag planner
-        'write_backend': step_plan['write_backend'],  # Using write_backend to match materialization flag planner
-        'input_memory_type': step_plan['input_memory_type'],
-        'output_memory_type': step_plan['output_memory_type'],
-        'force_disk_output': force_disk_output,  # Include force_disk_output in result
-    }
-
-    # Handle gpu_id requirements for GPU memory types
-    gpu_memory_types = [MemoryType.CUPY.value, MemoryType.TORCH.value, MemoryType.TENSORFLOW.value, MemoryType.JAX.value]
-    if result['input_memory_type'] in gpu_memory_types or result['output_memory_type'] in gpu_memory_types:
-        if 'gpu_id' not in step_plan:
-            raise ValueError(
-                f"Clause 65 Violation: 'gpu_id' is required in step plan for GPU memory types: "
-                f"{result['input_memory_type']} or {result['output_memory_type']}"
-            )
-        result['gpu_id'] = step_plan['gpu_id']
-    else:
-        # For CPU memory types, gpu_id is not required but might be present
-        result['gpu_id'] = None
-        if 'gpu_id' in step_plan:
-            result['gpu_id'] = step_plan['gpu_id']
-
-    # Backward compatibility: also set device_id to the same value as gpu_id
-    result['device_id'] = result['gpu_id']
-
-    return result
-
-
-def process_and_save_pattern(
+def _execute_function_core(
+    func_callable: Callable,
+    main_data_arg: Any,
+    base_kwargs: Dict[str, Any], 
     context: 'ProcessingContext',
-    pattern: Any,
-    component_func: Any,
-    component_args: Dict[str, Any],
-    input_dir: Union[str, Path],
-    output_dir: Union[str, Path],
+    special_inputs_plan: Dict[str, str],  # {'arg_name_for_func': 'special_path_value'}
+    special_outputs_plan: TypingOrderedDict[str, str] # {'output_key': 'special_path_value'}, order matters
+) -> Any: # Returns the main processed data stack
+    """
+    Executes a single callable, handling its special I/O.
+    - Loads special inputs from VFS paths in `special_inputs_plan`.
+    - Calls `func_callable(main_data_arg, **all_kwargs)`.
+    - If `special_outputs_plan` is non-empty, expects func to return (main_out, sp_val1, sp_val2,...).
+    - Saves special outputs positionally to VFS paths in `special_outputs_plan`.
+    - Returns the main processed data stack.
+    """
+    final_kwargs = base_kwargs.copy()
+    
+    if special_inputs_plan:
+        for arg_name, special_path_value in special_inputs_plan.items():
+            logger.debug(f"Loading special input '{arg_name}' from path '{special_path_value}' (memory backend)")
+            try:
+                final_kwargs[arg_name] = context.filemanager.load(special_path_value, MemoryType.MEMORY.value)
+            except Exception as e:
+                logger.error(f"Failed to load special input '{arg_name}' from '{special_path_value}': {e}", exc_info=True)
+                raise 
+    
+    raw_function_output = func_callable(main_data_arg, **final_kwargs)
+    main_output_data = raw_function_output
+    
+    if special_outputs_plan: 
+        num_special_outputs = len(special_outputs_plan)
+        if not isinstance(raw_function_output, tuple) or len(raw_function_output) != (1 + num_special_outputs):
+            raise ValueError(
+                f"Function '{getattr(func_callable, '__name__', 'unknown')}' was expected to return a tuple of "
+                f"{1 + num_special_outputs} values (main_output + {num_special_outputs} special) "
+                f"based on 'special_outputs' in step plan, but returned {len(raw_function_output) if isinstance(raw_function_output, tuple) else type(raw_function_output)} values."
+            )
+        main_output_data = raw_function_output[0]
+        returned_special_values_tuple = raw_function_output[1:]
+
+        # Iterate through special_outputs_plan (which must be ordered by compiler)
+        # and match with positionally returned special values.
+        for i, (output_key, vfs_path) in enumerate(special_outputs_plan.items()):
+            if i < len(returned_special_values_tuple):
+                value_to_save = returned_special_values_tuple[i]
+                logger.debug(f"Saving special output '{output_key}' to VFS path '{vfs_path}' (memory backend)")
+                context.filemanager.save(value_to_save, vfs_path, MemoryType.MEMORY.value)
+            else:
+                # This indicates a mismatch that should ideally be caught by schema/validation
+                logger.error(f"Mismatch: {num_special_outputs} special outputs planned, but fewer values returned by function for key '{output_key}'.")
+                # Or, if partial returns are allowed, this might be a warning. For now, error.
+                raise ValueError(f"Function did not return enough values for all planned special outputs. Missing value for '{output_key}'.")
+    
+    return main_output_data
+
+def _execute_chain_core(
+    initial_data_stack: Any,
+    func_chain: List[Union[Callable, Tuple[Callable, Dict]]], 
+    context: 'ProcessingContext',
+    step_special_inputs_plan: Dict[str, str], 
+    step_special_outputs_plan: TypingOrderedDict[str, str] 
+) -> Any: 
+    current_stack = initial_data_stack
+    for i, func_item in enumerate(func_chain):
+        actual_callable: Callable
+        base_kwargs_for_item: Dict[str, Any] = {}
+        is_last_in_chain = (i == len(func_chain) - 1)
+
+        if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
+            actual_callable, base_kwargs_for_item = func_item
+        elif callable(func_item):
+            actual_callable = func_item
+        else:
+            raise TypeError(f"Invalid item in function chain: {func_item}.")
+        
+        outputs_plan_for_this_call = step_special_outputs_plan if is_last_in_chain else {}
+        
+        current_stack = _execute_function_core(
+            func_callable=actual_callable,
+            main_data_arg=current_stack,
+            base_kwargs=base_kwargs_for_item,
+            context=context,
+            special_inputs_plan=step_special_inputs_plan, 
+            special_outputs_plan=outputs_plan_for_this_call
+        )
+    return current_stack
+
+def _process_single_pattern_group(
+    context: 'ProcessingContext',
+    pattern_group_info: Any, 
+    executable_func_or_chain: Any, 
+    base_func_args: Dict[str, Any], 
+    step_input_dir: Path,
+    step_output_dir: Path,
     well_id: str,
-    component_value: str,
+    component_value: str, 
     read_backend: str,
     write_backend: str,
-    input_memory_type: str,
-    output_memory_type: str,
+    input_memory_type_from_plan: str, # Explicitly from plan
+    output_memory_type_from_plan: str, # Explicitly from plan
     device_id: Optional[int],
     same_directory: bool,
-    force_disk_output: bool
-) -> Dict[str, Any]:
-    """
-    Process a single pattern with its corresponding function and immediately save the results.
-
-    Args:
-        context: The processing context
-        pattern: The pattern to process
-        component_func: The function to apply
-        component_args: Arguments for the function
-        input_dir: The input directory
-        output_dir: The output directory
-        well_id: The well ID
-        component_value: The component value (e.g., channel)
-        read_backend: Backend to use for input file operations
-        write_backend: Backend to use for output file operations
-        input_memory_type: Memory type for input data
-        output_memory_type: Memory type for output data
-        device_id: Device ID for GPU operations
-        same_directory: Whether input and output directories are the same
-        force_disk_output: Whether to force disk output regardless of write_backend
-
-    Returns:
-        Metadata about the processed and saved results (not the actual arrays)
-
-    Raises:
-        ValueError: If processing or saving the pattern fails
-    """
+    force_disk_output_flag: bool,
+    special_inputs_map: Dict[str, str], 
+    special_outputs_map: TypingOrderedDict[str, str]
+) -> None:
     start_time = time.time()
+    pattern_repr = str(pattern_group_info)[:100]
+    logger.debug(f"Processing pattern group {pattern_repr} for well {well_id}, component {component_value}")
 
     try:
-        # Find matching files for the pattern
+        if not context.microscope_handler:
+             raise RuntimeError("MicroscopeHandler not available in context.")
+
         matching_files = context.microscope_handler.path_list_from_pattern(
-            directory=input_dir,
-            pattern=pattern,
-            backend=read_backend  # Using read_backend to match materialization flag planner
+            str(step_input_dir), pattern_group_info, read_backend
         )
 
         if not matching_files:
-            raise ValueError(
-                f"No matching files found for pattern {pattern} in {input_dir}"
-            )
+            logger.warning(f"No matching files for pattern group {pattern_repr} in {step_input_dir}")
+            return
 
-        # Load raw slices using FileManager
         raw_slices = []
-        for file_path in matching_files:
+        for file_path_suffix in matching_files:
+            full_file_path = step_input_dir / file_path_suffix
             try:
-                # FileManager handles path conversion internally
-                image = context.filemanager.load_image(
-                    str(Path(input_dir) / file_path),
-                    read_backend  # Using read_backend to match materialization flag planner
-                )
-                if image is not None:
-                    raw_slices.append(image)
+                image = context.filemanager.load_image(str(full_file_path), read_backend)
+                if image is not None: raw_slices.append(image)
             except Exception as e:
-                # Log error but continue with other files
-                logger.error(
-                    "Error loading image %s: %s",
-                    file_path, e
-                )
-
+                logger.error(f"Error loading image {full_file_path}: {e}", exc_info=True)
+        
         if not raw_slices:
-            raise ValueError(
-                f"No valid images loaded for pattern {pattern} in {input_dir}"
-            )
+            logger.warning(f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}")
+            return
 
-        # Stack slices into a 3D array
-        stack = stack_slices(
-            slices=raw_slices,
-            memory_type=input_memory_type,
-            gpu_id=device_id,  # Using device_id consistently throughout the codebase
-            allow_single_slice=False  # Enforce multiple slices
+        main_data_stack = stack_slices(
+            slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id, allow_single_slice=False
         )
-
-        # Apply the function with appropriate arguments
-        if isinstance(component_func, list):
-            # Apply a list of functions in sequence
-            processed_stack = stack
-            for func_item in component_func:
-                if isinstance(func_item, tuple) and len(func_item) == 2 and callable(func_item[0]):
-                    # It's a (function, kwargs) tuple
-                    func, kwargs = func_item
-                    processed_stack = func(processed_stack, **kwargs)
-                else:
-                    # It's just a function
-                    processed_stack = func_item(processed_stack)
+        
+        final_base_kwargs = base_func_args.copy()
+        
+        if isinstance(executable_func_or_chain, list): 
+            processed_stack = _execute_chain_core(
+                main_data_stack, executable_func_or_chain, context,
+                special_inputs_map, special_outputs_map
+            )
+        elif callable(executable_func_or_chain):
+            processed_stack = _execute_function_core(
+                executable_func_or_chain, main_data_stack, final_base_kwargs, context,
+                special_inputs_map, special_outputs_map
+            )
         else:
-            # Apply a single function with its arguments
-            processed_stack = component_func(stack, **component_args)
+            raise TypeError(f"Invalid executable_func_or_chain: {type(executable_func_or_chain)}")
 
-        # Validate that the result is a 3D array
         if not _is_3d(processed_stack):
-            raise ValueError(
-                f"Clause 278 Violation: Function must return a 3D array, "
-                f"got shape {getattr(processed_stack, 'shape', 'unknown')}. "
-                f"All FuncStep.apply() implementations must return a 3D array of shape [Z, Y, X]."
-            )
+             raise ValueError(f"Main processing must result in a 3D array, got {getattr(processed_stack, 'shape', 'unknown')}")
 
-        # Get original shape and dtype for metadata
-        original_shape = processed_stack.shape
-        original_dtype = str(processed_stack.dtype)
-
-        # Unstack the 3D array into 2D slices
         output_slices = unstack_slices(
-            array=processed_stack,
-            memory_type=output_memory_type,
-            gpu_id=device_id,  # Using device_id consistently throughout the codebase
-            validate_slices=True  # Validate that slices are 2D
+            array=processed_stack, memory_type=output_memory_type_from_plan, gpu_id=device_id, validate_slices=True
         )
 
-        # Save processed slices
-        output_paths = []
         for i, img_slice in enumerate(output_slices):
             try:
-                # Construct output filename
+                site = pattern_group_info.get('site', i + 1) if isinstance(pattern_group_info, dict) else i + 1
                 output_filename = context.microscope_handler.parser.construct_filename(
-                    well=well_id,
-                    site=i+1,  # 1-based site index
-                    channel=component_value,
-                    extension=DEFAULT_IMAGE_EXTENSION,
-                    site_padding=DEFAULT_SITE_PADDING
+                    well=well_id, site=site, channel=component_value, z_step=i + 1, 
+                    extension=DEFAULT_IMAGE_EXTENSION, site_padding=DEFAULT_SITE_PADDING
                 )
+                output_path = Path(step_output_dir) / output_filename
 
-                # Create full output path
-                output_path = Path(output_dir) / output_filename
-                output_paths.append(str(output_path))
+                if same_directory and context.filemanager.exists(str(output_path), write_backend):
+                    context.filemanager.delete_file(str(output_path), write_backend)
+                
+                context.filemanager.save_image(img_slice, str(output_path), write_backend)
 
-                # Delete existing file if input and output directories are the same
-                if same_directory and context.filemanager.exists(
-                    str(output_path),
-                    write_backend  # Using write_backend to match materialization flag planner
-                ):
-                    logger.info("Deleting existing file before saving: %s", output_path)
-                    context.filemanager.delete_file(
-                        str(output_path),
-                        write_backend  # Using write_backend to match materialization flag planner
-                    )
-
-                # Save using FileManager
-                context.filemanager.save_image(
-                    img_slice,
-                    str(output_path),
-                    write_backend  # Using write_backend to match materialization flag planner
-                )
-
-                # Handle force_disk_output - save an additional copy to disk if needed
-                if force_disk_output and write_backend != Backend.DISK.value:
-                    logger.info("Force disk output enabled, saving additional copy to disk: %s", output_path)
-                    # Save using FileManager with 'disk' backend
-                    context.filemanager.save_image(
-                        path=str(output_path),
-                        image=img_slice,
-                        backend=Backend.DISK.value  # Always use 'disk' backend for forced disk output
-                    )
+                if force_disk_output_flag and write_backend != Backend.DISK.value:
+                    logger.info(f"Force disk output: saving additional copy to disk: {output_path}")
+                    context.filemanager.save_image(img_slice, str(output_path), Backend.DISK.value)
             except Exception as e:
-                # Log error but continue with other slices
-                logger.error(
-                    "Error saving image %s: %s",
-                    output_filename, e
-                )
-
-        # Calculate processing time
-        processing_time_ms = int((time.time() - start_time) * 1000)
-
-        # Return metadata about the processed and saved results
-        return {
-            # Required fields (used by downstream components)
-            "output_paths": output_paths,  # List of saved file paths - only required field
-
-            # Optional fields (for debugging and logging only)
-            "shape": original_shape,       # Original 3D array shape
-            "dtype": original_dtype,       # Original data type
-            "pattern": pattern,            # Original pattern
-            "processing_time_ms": processing_time_ms  # Processing time in milliseconds
-        }
-        # Note: Downstream components do not rely on any metadata fields except output_paths.
-        # The metadata structure is primarily for debugging and traceability.
-
+                logger.error(f"Error saving output slice {i} for pattern {pattern_repr}: {e}", exc_info=True)
+        
+        logger.debug(f"Finished pattern group {pattern_repr} in {(time.time() - start_time):.2f}s.")
     except Exception as e:
-        # Wrap exceptions with clear context
-        raise ValueError(f"Error processing and saving pattern {pattern}: {e}") from e
+        logger.error(f"Error processing pattern group {pattern_repr}: {e}", exc_info=True)
+        raise ValueError(f"Failed to process pattern group {pattern_repr}: {e}") from e
+
+class FunctionStep(AbstractStep):
+    @property
+    def requires_disk_input(self) -> bool: return False 
+    @property
+    def requires_disk_output(self) -> bool: return False
+
+    def __init__(
+        self,
+        func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]], 
+        *, name: Optional[str] = None, variable_components: Optional[List[str]] = ['site'], 
+        group_by: str = "channel", force_disk_output: bool = False
+    ):
+        actual_func_for_name = func
+        if isinstance(func, tuple): actual_func_for_name = func[0]
+        elif isinstance(func, list) and func:
+             first_item = func[0]
+             if isinstance(first_item, tuple): actual_func_for_name = first_item[0]
+             elif callable(first_item): actual_func_for_name = first_item
+        
+        super().__init__(
+            name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
+            variable_components=variable_components, group_by=group_by,
+            force_disk_output=force_disk_output
+        )
+        self.func = func # This is used by prepare_patterns_and_functions at runtime
+
+    def process(self, context: 'ProcessingContext') -> None:
+        step_plan = context.get_step_plan(self.step_id)
+        if not step_plan:
+            raise ValueError(f"Step plan not found for step: {self.name} (ID: {self.step_id})")
+
+        try:
+            well_id = step_plan.get('well_id')
+            step_input_dir = Path(step_plan.get('input_dir'))
+            step_output_dir = Path(step_plan.get('output_dir'))
+            variable_components = step_plan.get('variable_components', ['site'])
+            group_by = step_plan.get('group_by', 'channel')
+            
+            # special_inputs/outputs are dicts: {'key': 'vfs_path_value'}
+            special_inputs = step_plan.get('special_inputs', {}) 
+            special_outputs = step_plan.get('special_outputs', {}) # Should be OrderedDict if order matters
+
+            force_disk_output = step_plan.get('force_disk_output', False)
+            read_backend = step_plan.get('read_backend', Backend.DISK.value)
+            write_backend = step_plan.get('write_backend', Backend.DISK.value)
+            input_mem_type = step_plan.get('input_memory_type', MemoryType.NUMPY.value)
+            output_mem_type = step_plan.get('output_memory_type', MemoryType.NUMPY.value)
+            device_id = step_plan.get('gpu_id')
+
+            if not all([well_id, step_input_dir, step_output_dir]):
+                raise ValueError(f"Plan missing essential keys for step {self.step_id}")
+
+            same_dir = str(step_input_dir) == str(step_output_dir)
+            logger.info(f"Step {self.step_id} ({step_plan.get('step_name', self.name)}) I/O: read='{read_backend}', write='{write_backend}'.")
+
+            if not context.microscope_handler:
+                raise RuntimeError(f"MicroscopeHandler not in context for step {self.step_id}")
+
+            patterns_by_well = context.microscope_handler.auto_detect_patterns(
+                str(step_input_dir), [well_id], DEFAULT_IMAGE_EXTENSIONS,
+                group_by, variable_components, read_backend # backend is positional
+            )
+
+            if well_id not in patterns_by_well or not patterns_by_well[well_id]:
+                raise ValueError(f"No patterns for well {well_id} in {step_input_dir} for step {self.step_id}.")
+            
+            # self.func (the callable/tuple/list from __init__) is used here
+            grouped_patterns, comp_to_funcs, comp_to_base_args = prepare_patterns_and_functions(
+                patterns_by_well[well_id], self.func, component=group_by
+            )
+
+            for comp_val, current_pattern_list in grouped_patterns.items():
+                exec_func_or_chain = comp_to_funcs[comp_val]
+                base_kwargs = comp_to_base_args[comp_val]
+                for pattern_item in current_pattern_list:
+                    _process_single_pattern_group(
+                        context, pattern_item, exec_func_or_chain, base_kwargs,
+                        step_input_dir, step_output_dir, well_id, comp_val,
+                        read_backend, write_backend, input_mem_type, output_mem_type,
+                        device_id, same_dir, force_disk_output,
+                        special_inputs, special_outputs # Pass the maps from step_plan
+                    )
+            logger.info(f"FunctionStep {self.step_id} ({step_plan.get('step_name', self.name)}) completed for well {well_id}.")
+        except Exception as e:
+            logger.error(f"Error in FunctionStep {self.step_id} ({step_plan.get('step_name', self.name)}): {e}", exc_info=True)
+            raise

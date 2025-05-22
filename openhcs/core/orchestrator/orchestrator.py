@@ -1,8 +1,8 @@
 """
 Consolidated orchestrator module for OpenHCS.
 
-This module provides a unified PipelineOrchestrator class that combines
-the functionality of the previous orchestrator and dispatcher components.
+This module provides a unified PipelineOrchestrator class that implements
+a two-phase (compile-all-then-execute-all) pipeline execution model.
 
 Doctrinal Clauses:
 - Clause 12 — Absolute Clean Execution
@@ -13,36 +13,35 @@ Doctrinal Clauses:
 """
 
 import logging
-import os
 import threading
+import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import DEFAULT_NUM_WORKERS, Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.pipeline.pipeline import (PipelineCompiler,
-                                               PipelineExecutor)
+from openhcs.core.pipeline.compiler import PipelineCompiler
+from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.io.exceptions import StorageWriteError
 from openhcs.io.filemanager import FileManager
-from openhcs.io.base import storage_registry 
+from openhcs.io.base import storage_registry
 from openhcs.microscopes.microscope_interfaces import (
     MicroscopeHandler, create_microscope_handler)
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
+
 
 logger = logging.getLogger(__name__)
 
 
 class PipelineOrchestrator:
     """
-    Unified orchestrator for pipeline execution.
+    Unified orchestrator for a two-phase pipeline execution model.
 
-    This class combines the responsibilities of the previous orchestrator and
-    dispatcher components, providing a simpler, more cohesive API for pipeline
-    execution.
-
-    Thread Safety:
-        This class is thread-safe and can be used to execute multiple pipelines
-        concurrently.
+    The orchestrator first compiles the pipeline for all specified wells,
+    creating frozen, immutable ProcessingContexts using `compile_plate_for_processing()`.
+    Then, it executes the (now stateless) pipeline definition against these contexts,
+    potentially in parallel, using `execute_compiled_plate()`.
     """
 
     def __init__(
@@ -52,14 +51,6 @@ class PipelineOrchestrator:
         *,
         config: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Initialize the pipeline orchestrator.
-
-        Args:
-            plate_path: Path to the plate directory
-            workspace_path: Path to the workspace directory (optional)
-            config: Configuration parameters (optional)
-        """
         self._lock = threading.RLock()
         self._config = config or {}
 
@@ -68,372 +59,310 @@ class PipelineOrchestrator:
                 plate_path = Path(plate_path)
             elif not isinstance(plate_path, Path):
                 raise ValueError(f"Invalid plate_path type: {type(plate_path)}")
-
-        # Store plate_path as a regular path (string or Path)
         self.plate_path = plate_path
-
-        # Set workspace_path if provided, otherwise it will be set in initialize()
         self.workspace_path = workspace_path
 
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError("Either plate_path or workspace_path must be provided")
-      #  elif self.workspace_path is None and self.plate_path:
-      #      self.workspace_path = str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX
 
-        # Initialize registry
         self.registry = storage_registry()
-
-        # Initialize file manager with registry
         self.filemanager = FileManager(self.registry)
-        self.input_dir = None
-        self.microscope_handler = None
-
-        # Pipeline storage
-        self.pipeline = None
-
-        # Initialization flag
+        self.input_dir: Optional[Path] = None
+        self.microscope_handler: Optional[MicroscopeHandler] = None
+        self.default_pipeline_definition: Optional[List[AbstractStep]] = None
         self._initialized: bool = False
 
-
-
-    def initialize_workspace(self,workspace_path: Optional[Union[str, Path]] = None):
-        """
-        Initialize workspace path and mirror plate directory if needed.
-
-        # Clause 17 — VFS Exclusivity
-        # Clause 77 — Rot Intolerance
-        # Clause 245 — Declarative Enforcement
-        """
-        #if self.workspace_path is not None:
-        #    logger.debug("Workspace path already set")
-        #    return
-        self.workspace_path = workspace_path
+    def initialize_workspace(self, workspace_path: Optional[Union[str, Path]] = None):
+        """Initializes workspace path and mirrors plate directory if needed."""
+        if workspace_path:
+            self.workspace_path = Path(workspace_path) if isinstance(workspace_path, str) else workspace_path
+        
         if self.workspace_path is None and self.plate_path:
-            self.workspace_path = str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX
+            self.workspace_path = Path(str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX)
+        elif self.workspace_path is None:
+             raise ValueError("Cannot initialize workspace without either plate_path or a specified workspace_path.")
 
-        # Create workspace directory if it doesn't exist
-        self.filemanager.ensure_directory(self.workspace_path, Backend.DISK.value)
+        self.filemanager.ensure_directory(str(self.workspace_path), Backend.DISK.value)
 
-        # CRITICAL: Mirror plate directory to workspace with symlinks
         if self.plate_path and self.workspace_path:
-            logger.info("Mirroring plate directory to workspace...")
-            # Clause 245: Workspace operations are disk-only by design
-
-            # Pass regular paths to FileManager, which will handle VirtualPath conversion internally
+            logger.info(f"Mirroring plate directory {self.plate_path} to workspace {self.workspace_path}...")
             try:
-                # Clause 245: Workspace operations are disk-only by design
                 num_links = self.filemanager.mirror_directory_with_symlinks(
-                    self.plate_path,
-                    self.workspace_path,
-                    Backend.DISK.value,
+                    source_dir=str(self.plate_path),
+                    target_dir=str(self.workspace_path),
+                    backend=Backend.DISK.value,
                     recursive=True,
                     overwrite=True
                 )
-                logger.info("Created %d symlinks in workspace", num_links)
-                self.input_dir = self.workspace_path
+                logger.info(f"Created {num_links} symlinks in workspace.")
+                self.input_dir = Path(self.workspace_path)
             except Exception as e:
                 error_msg = f"Failed to mirror plate directory to workspace: {e}"
                 logger.error(error_msg)
                 raise StorageWriteError(error_msg) from e
-        else:
-            # Set input directory to plate path if no mirroring was done
+        elif self.plate_path:
             self.input_dir = self.plate_path
-            logger.info("Set input directory to plate path: %s", self.input_dir)
+            logger.info(f"Using plate path as input directory: {self.input_dir}")
+        elif self.workspace_path:
+            self.input_dir = self.workspace_path
+            logger.info(f"Using workspace path as input directory: {self.input_dir}")
+        else:
+            raise RuntimeError("Cannot determine input_dir due to missing plate_path and workspace_path.")
 
-    def initialize_microscope_handler(self,):
-        """
-        Initialize the microscope handler.
-
-        This method creates a microscope handler based on the input directory
-        and initializes it with the file manager.
-        """
+    def initialize_microscope_handler(self):
+        """Initializes the microscope handler."""
         if self.microscope_handler is not None:
-            logger.debug("Microscope handler already initialized")
+            logger.debug("Microscope handler already initialized.")
             return
+        if self.input_dir is None:
+            raise RuntimeError("Workspace (and input_dir) must be initialized before microscope handler.")
 
-        logger.info("Initializing microscope handler using workspace...")
-
-        # CRITICAL: Initialize the microscope handler with the disk-based file manager
+        logger.info(f"Initializing microscope handler using input directory: {self.input_dir}...")
         try:
-            # Pass the filemanager as a positional argument as required by Clause 306
-            # (Backend Positional Parameters)
             self.microscope_handler = create_microscope_handler(
-                self.workspace_path,  # plate_folder as positional arg
-                self.filemanager,  # filemanager as positional arg
-                microscope_type='auto',  # Use auto-detection
+                plate_folder=str(self.input_dir),
+                filemanager=self.filemanager,
+                microscope_type='auto',
             )
+            logger.info(f"Initialized microscope handler: {type(self.microscope_handler).__name__}")
         except Exception as e:
             error_msg = f"Failed to create microscope handler: {e}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
 
-        # This is necessary for pattern matching to work correctly
-        logger.info("Processing workspace directory with microscope handler...")
-
-        # The microscope handler will use the FileManager to convert to VirtualPath internally
-        try:
-            # Pass the physical workspace path and filemanager to post_workspace
-            self.input_dir = self.microscope_handler.post_workspace(self.workspace_path, self.filemanager)
-            logger.info("Workspace directory processed")
-        except Exception as e:
-            error_msg = f"Failed to process workspace directory: {e}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg) from e
-
-        logger.info(
-            "Initialized microscope handler: %s",
-            type(self.microscope_handler).__name__
-        )
-
-    def initialize(self):
+    def initialize(self, workspace_path: Optional[Union[str, Path]] = None) -> 'PipelineOrchestrator':
         """
-        Initialize the orchestrator.
-
-        This method initializes all required components for the orchestrator.
-        It must be called before any other methods are used.
-
-        Returns:
-            Self for method chaining
-
-        Raises:
-            RuntimeError: If initialization fails
+        Initializes all required components for the orchestrator.
+        Must be called before other processing methods.
+        Returns self for chaining.
         """
         if self._initialized:
-            logger.info("Orchestrator already initialized")
+            logger.info("Orchestrator already initialized.")
             return self
-
-        self.initialize_workspace()
+        
+        self.initialize_workspace(workspace_path)
         self.initialize_microscope_handler()
-
         self._initialized = True
         logger.info("PipelineOrchestrator fully initialized.")
+        return self
 
     def is_initialized(self) -> bool:
-        """
-        Check if the orchestrator is initialized.
-
-        Returns:
-            True if the orchestrator is initialized, False otherwise
-        """
         return self._initialized
 
-    def create_context(self, well: str) -> ProcessingContext:
-        """
-        Create a ProcessingContext for a given well.
-
-        Args:
-            well: The well identifier to create a context for
-
-        Returns:
-            A new ProcessingContext instance
-
-        Raises:
-            RuntimeError: If the orchestrator is not initialized
-            ValueError: If the well is not valid
-        """
+    def create_context(self, well_id: str) -> ProcessingContext:
+        """Creates a ProcessingContext for a given well."""
         if not self.is_initialized():
-            raise RuntimeError("Orchestrator must be initialized before calling create_context()")
+            raise RuntimeError("Orchestrator must be initialized before calling create_context().")
+        if not well_id:
+            raise ValueError("Well identifier must be provided.")
+        if self.input_dir is None:
+             raise RuntimeError("Orchestrator input_dir is not set; initialize orchestrator first.")
 
-        if not well:
-            raise ValueError("Well identifier must be provided")
-
-        # Create a new context with the well ID
-        context = ProcessingContext(well_id=well)
-
-        # Add orchestrator to context
+        context = ProcessingContext(well_id=well_id, filemanager=self.filemanager)
         context.orchestrator = self
-
-        # Add file manager to context
-        context.filemanager = self.filemanager
-
-        # Add microscope handler to context
         context.microscope_handler = self.microscope_handler
-
-        # Add input directory to context
         context.input_dir = self.input_dir
-
-        # Add workspace path to context
         context.workspace_path = self.workspace_path
-
         return context
 
-    def create_pipeline(self, steps: List[Any], well_id: str, context: Optional[ProcessingContext] = None) -> List[Any]:
-        """
-        Create a pipeline with automatic memory type conversion.
-
-        Args:
-            steps: List of steps to include in the pipeline
-            well_id: Identifier of the well being processed
-            context: Optional ProcessingContext to inject step plans into
-
-        Returns:
-            List of steps with conversion steps inserted where needed
-
-        Raises:
-            ValueError: If memory types are incompatible and no conversion is available
-            ValueError: If well_id is not provided
-        """
-        if not steps:
-            raise ValueError("Steps must be provided")
-
-        if not well_id:
-            raise ValueError("Well identifier must be provided")
-
-        # Compile the pipeline with automatic memory type conversion
-        pipeline = PipelineCompiler.compile(steps, self.input_dir, well_id)
-
-        # Inject step plans into context if provided
-        if context is not None:
-            PipelineCompiler.inject_step_plans(pipeline, context)
-
-        return pipeline
-
-    def execute_pipeline(self, context: ProcessingContext, pipeline: List[Any]) -> ProcessingContext:
-        """
-        Execute a pipeline with the given context.
-
-        Args:
-            context: Fully prepared ProcessingContext
-            pipeline: List of steps to execute
-
-        Returns:
-            Updated context after pipeline execution
-
-        Raises:
-            ValueError: If context or pipeline is invalid
-        """
-        # Validate inputs
-        if context is None:
-            raise ValueError("Context cannot be None")
-        if pipeline is None:
-            raise ValueError("Pipeline cannot be None")
-
-        # Log dispatch with structured logging
-        logger.info("Dispatching pipeline execution for well: %s", context.well_id)
-
-        # Execute pipeline using PipelineExecutor
-        updated_context = PipelineExecutor.execute(
-            steps=pipeline,
-            context=context
-        )
-
-        # Log completion with structured logging
-        logger.info("Pipeline execution completed for well: %s", context.well_id)
-
-        return updated_context
-
-    def run(
+    def compile_pipelines(
         self,
-        pipeline=None,
+        pipeline_definition: List[AbstractStep],
         well_filter: Optional[List[str]] = None,
-        max_workers: int = DEFAULT_NUM_WORKERS,
         enable_visualizer_override: bool = False
     ) -> Dict[str, ProcessingContext]:
         """
-        Process all wells using the given pipeline.
+        Compile-all phase: Prepares frozen ProcessingContexts for each well.
+
+        This method iterates through the specified wells, creates a ProcessingContext
+        for each, and invokes the various phases of the PipelineCompiler to populate
+        the context's step_plans. After all compilation phases for a well are complete,
+        its context is frozen. Finally, attributes are stripped from the pipeline_definition,
+        making the step objects stateless for the execution phase.
 
         Args:
-            pipeline: List of steps to execute (optional)
-            well_filter: Optional list of wells to process
-            max_workers: Maximum number of worker threads (1 for sequential)
-            enable_visualizer_override: Whether to enable visualization regardless of step settings
+            pipeline_definition: The list of AbstractStep objects defining the pipeline.
+            well_filter: Optional list of well IDs to process. If None, processes all found wells.
+            enable_visualizer_override: If True, all steps in all compiled contexts
+                                        will have their 'visualize' flag set to True.
 
         Returns:
-            Dict mapping wells to their updated contexts
-
-        Raises:
-            RuntimeError: If the orchestrator is not initialized
-            ValueError: If no pipeline is provided and no default pipeline is set
-            ValueError: If context creation fails
+            A dictionary mapping well IDs to their compiled and frozen ProcessingContexts.
+            The input `pipeline_definition` list (of step objects) is modified in-place
+            to become stateless.
         """
-        with self._lock:
-            # Validate orchestrator is initialized
-            if not self.is_initialized():
-                raise RuntimeError("Orchestrator must be initialized before calling run()")
+        if not self.is_initialized():
+            # Attempt to initialize if not already, for convenience in some calling scenarios
+            logger.info("Orchestrator not initialized. Attempting default initialization before compiling.")
+            self.initialize()
+        if not self.is_initialized(): # Check again
+            raise RuntimeError("Orchestrator must be initialized before compiling.")
+        
+        if not pipeline_definition:
+            raise ValueError("A valid pipeline definition (List[AbstractStep]) must be provided.")
 
-            # Use provided pipeline or default
-            pipeline_to_use = pipeline or self.pipeline
-            if not pipeline_to_use:
-                raise ValueError("No pipeline provided and no default pipeline set")
+        compiled_contexts: Dict[str, ProcessingContext] = {}
+        wells_to_process = self.get_wells(well_filter)
 
-            # Get wells to process
-            wells = self.get_wells(well_filter)
+        if not wells_to_process:
+            logger.warning("No wells found to process based on filter.")
+            return {}
 
-            if not wells:
-                logger.warning("No wells found to process")
-                return {}
+        logger.info(f"Starting compilation for wells: {', '.join(wells_to_process)}")
 
-            # Log the start of processing with structured logging
-            logger.info("Processing %d wells: %s", len(wells), ", ".join(wells))
+        for well_id in wells_to_process:
+            logger.debug(f"Compiling for well: {well_id}")
+            context = self.create_context(well_id)
+            
+            base_input_dir_for_well = Path(self.input_dir) if self.input_dir else Path(".")
 
-            # Prepare contexts and pipelines for all wells
-            contexts = []
-            #pipelines = []
+            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, base_input_dir_for_well, well_id)
+            PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, well_id)
+            PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition)
+            PipelineCompiler.assign_gpu_resources_for_context(context)
 
-            for well in wells:
+            if enable_visualizer_override:
+                PipelineCompiler.apply_global_visualizer_override_for_context(context, True)
+            
+            context.freeze()
+            compiled_contexts[well_id] = context
+            logger.debug(f"Compilation finished for well: {well_id}")
 
-                compiled = PipelineCompiler.compile(pipeline, input_dir=self.input_dir, well_id=well)
-                PipelineCompiler.inject_step_plans(compiled, context)
-               # # Create pipeline with automatic memory type conversion
-               # pipeline_with_conversions = self.create_pipeline(
-               #     pipeline_to_use,
-               #     well,
-               #     context
-               # )
+        logger.info("Stripping attributes from pipeline definition steps.")
+        StepAttributeStripper.strip_step_attributes(pipeline_definition, {}) 
 
-                # Add to lists
-                contexts.append(context)
-                pipelines.append(pipeline_with_conversions)
+        logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
+        return compiled_contexts
 
-            # Initialize visualizer if needed
-            visualizer_instance = None
-            if enable_visualizer_override or any(plan.get('visualize', False) for context in contexts for plan in context.step_plans.values()):
-                logger.info("Visualization requested. Initializing NapariStreamVisualizer.")
-                visualizer_instance = NapariStreamVisualizer()
-                # Visualizer will be started on first tensor push
+    def _execute_single_well(
+        self,
+        pipeline_definition: List[AbstractStep],
+        frozen_context: ProcessingContext,
+        visualizer: Optional[NapariStreamVisualizer]
+    ) -> Dict[str, Any]:
+        """Executes the pipeline for a single well using its frozen context."""
+        well_id = frozen_context.well_id
+        logger.info(f"Executing pipeline for well {well_id}")
+        if not frozen_context.is_frozen():
+            logger.error(f"Attempted to execute with a non-frozen context for well {well_id}.")
+            raise RuntimeError(f"Context for well {well_id} is not frozen before execution.")
 
-            # Execute pipelines (parallel if max_workers > 1 and multiple wells)
-            updated_contexts = PipelineExecutor.execute_parallel(
-                pipelines=pipelines,
-                contexts=contexts,
-                max_workers=max_workers,
-                visualizer=visualizer_instance
-            )
+        try:
+            for step in pipeline_definition:
+                logger.info(f"Executing step {step.uid} ({step.name if hasattr(step, 'name') else 'N/A'}) for well {well_id}")
+                step.process(frozen_context)
 
-            # Stop visualizer if it was created
-            if visualizer_instance:
-                logger.info("All pipeline executions finished. Stopping visualizer.")
-                visualizer_instance.stop_viewer()
+                if visualizer:
+                    step_plan = frozen_context.get_step_plan(step.uid)
+                    if step_plan and step_plan.get('visualize', False):
+                        output_dir = step_plan.get('output_dir')
+                        write_backend = step_plan.get('write_backend', Backend.DISK.value)
+                        if output_dir:
+                            logger.debug(f"Visualizing output for step {step.uid} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                            visualizer.visualize_path(
+                                step_id=step.uid,
+                                path=str(output_dir),
+                                backend=write_backend,
+                                well_id=well_id
+                            )
+                        else:
+                            logger.warning(f"Step {step.uid} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+            
+            logger.info(f"Pipeline execution completed successfully for well {well_id}")
+            return {"status": "success", "well_id": well_id}
+        except Exception as e:
+            logger.error(f"Error during pipeline execution for well {well_id}: {e}", exc_info=True)
+            return {"status": "error", "well_id": well_id, "error_message": str(e), "details": repr(e)}
 
-            # Create a dictionary mapping wells to their updated contexts
-            results = {}
-            for i, well in enumerate(wells):
-                results[well] = updated_contexts[i]
+    def execute_compiled_plate(
+        self,
+        pipeline_definition: List[AbstractStep], 
+        compiled_contexts: Dict[str, ProcessingContext],
+        max_workers: int = DEFAULT_NUM_WORKERS,
+        visualizer: Optional[NapariStreamVisualizer] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Execute-all phase: Runs the stateless pipeline against compiled contexts.
 
-            return results
+        Args:
+            pipeline_definition: The stateless list of AbstractStep objects.
+            compiled_contexts: Dict of well_id to its compiled, frozen ProcessingContext.
+                               Obtained from `compile_plate_for_processing`.
+            max_workers: Maximum number of worker threads for parallel execution.
+            visualizer: Optional instance of NapariStreamVisualizer (must be
+                        initialized with orchestrator's filemanager by the caller).
+
+        Returns:
+            A dictionary mapping well IDs to their execution status (success/error and details).
+        """
+        if not self.is_initialized():
+             raise RuntimeError("Orchestrator must be initialized before executing.")
+        if not pipeline_definition:
+            raise ValueError("A valid (stateless) pipeline definition must be provided.")
+        if not compiled_contexts:
+            logger.warning("No compiled contexts provided for execution.")
+            return {}
+
+        logger.info(f"Starting execution for {len(compiled_contexts)} wells with max_workers={max_workers}.")
+        execution_results: Dict[str, Dict[str, Any]] = {}
+
+        if max_workers > 1 and len(compiled_contexts) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_well_id = {
+                    executor.submit(self._execute_single_well, pipeline_definition, context, visualizer): well_id
+                    for well_id, context in compiled_contexts.items()
+                }
+                for future in concurrent.futures.as_completed(future_to_well_id):
+                    well_id = future_to_well_id[future]
+                    try:
+                        result = future.result()
+                        execution_results[well_id] = result
+                    except Exception as exc:
+                        logger.error(f"Well {well_id} generated an exception during parallel execution: {exc}", exc_info=True)
+                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": repr(exc)}
+        else:
+            logger.info("Executing wells sequentially.")
+            for well_id, context in compiled_contexts.items():
+                execution_results[well_id] = self._execute_single_well(pipeline_definition, context, visualizer)
+        
+        logger.info(f"Plate execution finished. Results: {execution_results}")
+        return execution_results
 
     def get_wells(self, well_filter: Optional[List[str]] = None) -> List[str]:
         """
         Get the wells to process based on the filter.
-
-        Args:
-            well_filter: Optional list of wells to process
-
-        Returns:
-            List of wells to process
         """
-        # Get all available wells
-        all_wells = []
-        filenames = self.filemanager.list_files(self.input_dir, Backend.DISK.value,extensions=DEFAULT_IMAGE_EXTENSIONS)
-        for filename in filenames:
-            all_wells.append(self.microscope_handler.parser.parse_filename(filename)['well'])
+        if not self.is_initialized() or self.input_dir is None or self.microscope_handler is None:
+            raise RuntimeError("Orchestrator must be initialized with input_dir and microscope_handler to get wells.")
+        
+        all_wells_set: Set[str] = set()
+        try:
+            filenames = self.filemanager.list_files(str(self.input_dir), Backend.DISK.value, extensions=DEFAULT_IMAGE_EXTENSIONS)
+            for filename in filenames:
+                parsed_info = self.microscope_handler.parser.parse_filename(str(filename))
+                if parsed_info and 'well' in parsed_info:
+                    all_wells_set.add(parsed_info['well'])
+                else:
+                    logger.warning(f"Could not parse well information from filename: {filename}")
+        except Exception as e:
+            logger.error(f"Error listing files or parsing well names from {self.input_dir}: {e}", exc_info=True)
+            return []
+            
+        all_wells = sorted(list(all_wells_set))
 
-        # Filter wells if a filter is provided
+        if not all_wells:
+            logger.warning(f"No wells found in input directory: {self.input_dir} with extensions {DEFAULT_IMAGE_EXTENSIONS}")
+            return []
+
         if well_filter:
-            wells = [well for well in all_wells if well in well_filter]
-            if not wells:
-                logger.warning("No wells match the filter: %s", well_filter)
+            str_well_filter = {str(w) for w in well_filter}
+            selected_wells = [well for well in all_wells if well in str_well_filter]
+            if not selected_wells:
+                logger.warning(f"No wells from {all_wells} match the filter: {well_filter}")
+            return selected_wells
         else:
-            wells = all_wells
+            return all_wells
 
-        return wells
+    # The run() method has been removed.
+    # UI/callers should use initialize(), then compile_plate_for_processing(), 
+    # then (if needed, setup visualizer), then execute_compiled_plate().

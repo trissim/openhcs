@@ -27,9 +27,10 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
-# Forward reference for StepResult to avoid circular imports
+# ProcessingContext is used in type hints
 if TYPE_CHECKING:
-    from openhcs.core.steps.step_result import StepResult
+    from openhcs.core.context.processing_context import ProcessingContext
+# StepResult is no longer returned by process()
 
 
 class AbstractStep(abc.ABC):
@@ -37,13 +38,12 @@ class AbstractStep(abc.ABC):
     Abstract base class for all steps in the OpenHCS pipeline.
 
     This class defines the interface that all steps must implement.
-    It is a non-instantiable protocol-like enforcement class with:
-    - No schema
-    - No validator
-    - No registration
-
-    Only FunctionStep, PositionGenerationStep, and ImageAssemblyStep receive
-    schemas and registration.
+    Steps are stateful during pipeline definition and compilation (holding attributes
+    like name, input/output memory types, etc.). After compilation, these attributes
+    are stripped by the StepAttributeStripper, and the step instances become
+    stateless shells. During execution, steps operate solely based on the
+    ProcessingContext (which is frozen) and their specific plan within
+    context.step_plans.
 
     # Clause 3 — Declarative Primacy
     # Clause 66 — Immutability After Construction
@@ -57,46 +57,48 @@ class AbstractStep(abc.ABC):
     @property
     @abstractmethod
     def requires_disk_input(self) -> bool:
+        """Indicates if the step requires its primary input to be on disk."""
         pass
 
     @property
     @abstractmethod
     def requires_disk_output(self) -> bool:
+        """Indicates if the step requires its primary output to be written to disk."""
         pass
 
-    # Step metadata
+    # Step metadata - these are primarily used during pipeline definition and compilation
     step_id: str
     enabled: bool = True
     description: Optional[str] = None
+    name: str # Made non-optional, defaults to class name
 
-    # No capabilities - capabilities are backend concerns, not step concerns
+    # Attributes like input_memory_type, output_memory_type, etc.,
+    # are defined in concrete subclasses (e.g., FunctionStep) as needed.
 
     def __init__(
         self,
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
         variable_components: Optional[List[str]] = None,
-        force_disk_output: Optional[bool] = False,  # Required field, no default
+        force_disk_output: Optional[bool] = False,
         group_by: Optional[str] = None,
-        input_dir: Optional[Union[str,Path]] = None,
-        output_dir: Optional[Union[str,Path]] = None
+        input_dir: Optional[Union[str,Path]] = None, # Used during path planning
+        output_dir: Optional[Union[str,Path]] = None # Used during path planning
     ) -> None:
         """
-        Initialize a step with explicit memory type declarations.
+        Initialize a step. These attributes are primarily used during the
+        pipeline definition and compilation phase. After compilation, step
+        instances are stripped of these attributes by StepAttributeStripper
+        to enforce statelessness during execution.
 
         Args:
-            name: Human-readable name for the step
-            variable_components: List of variable components for this step
-            force_disk_output: Whether to force filesystem output regardless of requirements
-                (required)
-            group_by: Optional grouping hint for step execution (e.g., "channel")
-            input_dir: The input directory for the step (required)
-            output_dir: The output directory for the step (required)
-
-        Raises:
-            TypeError: If input_dir or output_dir are not Path or str
+            name: Human-readable name for the step. Defaults to class name.
+            variable_components: List of variable components for this step.
+            force_disk_output: Whether to force filesystem output.
+            group_by: Optional grouping hint for step execution.
+            input_dir: Hint for input directory, used by path planner.
+            output_dir: Hint for output directory, used by path planner.
         """
-
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components
         self.force_disk_output = force_disk_output
@@ -104,37 +106,30 @@ class AbstractStep(abc.ABC):
         self.input_dir = input_dir
         self.output_dir = output_dir
 
-        # Generate a stable step_id based on object id
+        # Generate a stable step_id based on object id at instantiation.
+        # This ID is used to link the step object to its plan in the context.
         self.step_id = str(id(self))
 
-        # Log the step_id for debugging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Created step {self.__class__.__name__} with ID {self.step_id}")
+        logger_instance = logging.getLogger(__name__)
+        logger_instance.debug(f"Created step '{self.name}' (type: {self.__class__.__name__}) with ID {self.step_id}")
 
     @abc.abstractmethod
-    def process(self, context: 'ProcessingContext') -> 'StepResult':
+    def process(self, context: 'ProcessingContext') -> None:
         """
         Process the step with the given context.
 
         This method must be implemented by all step subclasses.
-        It must be stateless and must not modify the context directly.
-        All modifications must be returned as part of the StepResult.
-
-        Implementation must validate memory types according to:
-        - Clause 106-A — Declared Memory Types
-        - Clause 251 — Declarative Memory Conversion
-        - Clause 88 — No Inferred Capabilities
-        - Clause 503 — Cognitive Load Transfer
-        - Clause 65 — Fail Loudly
+        During execution, the step instance is stateless. All necessary
+        configuration and paths are retrieved from `context.step_plans[self.step_id]`.
+        The `context` itself is frozen and must not be modified.
+        Outputs are written to VFS via `context.filemanager` based on the step's plan.
+        This method returns None.
 
         Args:
-            context: The processing context containing all required fields.
-
-        Returns:
-            A StepResult object containing the result of the step execution.
+            context: The frozen ProcessingContext containing all required fields,
+                     including step_plans and filemanager.
 
         # Clause 246 — Statelessness Mandate
-        # Clause 281 — Context-Bound Identifiers
-        # Clause 524 — Step = Declaration = ID = Runtime Authority
+        # Clause 21 — Context Immunity (Context is read-only for steps)
         """
         raise NotImplementedError("AbstractStep.process() must be implemented by subclasses")

@@ -14,7 +14,9 @@ Doctrinal Clauses:
 import logging
 import queue
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional # Added List
+
+from openhcs.io.filemanager import FileManager # Added FileManager import
 
 import napari
 import numpy as np
@@ -30,11 +32,12 @@ class NapariStreamVisualizer:
     streamed from the OpenHCS pipeline. Runs in a separate thread.
     """
 
-    def __init__(self, viewer_title: str = "OpenHCS Real-Time Visualization"):
+    def __init__(self, filemanager: FileManager, viewer_title: str = "OpenHCS Real-Time Visualization"):
+        self.filemanager = filemanager # Added
         self.viewer_title = viewer_title
         self.viewer: Optional[napari.Viewer] = None
-        self.layers: Dict[str, napari.layers.Image] = {}
-        self.data_queue = queue.Queue() # Thread-safe queue for tensor data
+        self.layers: Dict[str, napari.layers.Image] = {} # Consider if layer type should be more generic
+        self.data_queue = queue.Queue()
         self.viewer_thread: Optional[threading.Thread] = None
         self.is_running = False
         self._lock = threading.Lock()
@@ -64,8 +67,34 @@ class NapariStreamVisualizer:
                             logger.info("Shutdown sentinel received. Exiting viewer loop.")
                             break
                         
-                        layer_name, tensor_slice, metadata = item
-                        self._update_layer_in_thread(layer_name, tensor_slice, metadata)
+                        # New logic for path-based items:
+                        if isinstance(item, dict) and item.get('type') == 'data_path':
+                            step_id = item['step_id']
+                            path = item['path']
+                            backend = item['backend']
+                            well_id = item.get('well_id') # Can be None
+                            
+                            logger.debug(f"Processing path '{path}' for step '{step_id}' from queue.")
+                            try:
+                                # Load data using FileManager
+                                loaded_data = self.filemanager.load(path, backend)
+                                if loaded_data is not None:
+                                    # Prepare data for display (includes GPU->CPU, slicing)
+                                    display_data = self._prepare_data_for_display(loaded_data, step_id)
+                                    
+                                    if display_data is not None:
+                                        layer_name = f"{well_id}_{step_id}" if well_id else step_id
+                                        # Metadata might come from step_plan or be fixed for now
+                                        metadata = {'colormap': 'gray'}
+                                        self._update_layer_in_thread(layer_name, display_data, metadata)
+                                    # else: (logging already in _prepare_data_for_display)
+                                else:
+                                    logger.warning(f"FileManager returned None for path '{path}', backend '{backend}' (step '{step_id}').")
+                            except Exception as e_load:
+                                logger.error(f"Error loading or preparing data for step '{step_id}', path '{path}': {e_load}", exc_info=True)
+                        else:
+                            logger.warning(f"Unknown item type in data queue: {type(item)}. Item: {item}")
+
                         self.data_queue.task_done()
                     except queue.Empty:
                         continue # Timeout, check self.is_running again
@@ -117,50 +146,88 @@ class NapariStreamVisualizer:
             self.viewer_thread.start()
             logger.info("NapariStreamVisualizer viewer thread initiated.")
 
-    def push_tensor(self, step_id: str, tensor: Any, well_id: Optional[str] = None):
-        """
-        Receives a tensor from the pipeline executor, prepares it, and queues it for display.
-        """
-        if not self.is_running and self.viewer_thread is None:
-            logger.info(f"First tensor received for step '{step_id}'. Starting Napari viewer.")
-            self.start_viewer()
-        
-        if not self.is_running:
-            logger.warning(f"Visualizer not running. Cannot push tensor for step '{step_id}'.")
-            return
-
+    def _prepare_data_for_display(self, data: Any, step_id_for_log: str) -> Optional[np.ndarray]:
+        """Converts loaded data to a displayable NumPy array (e.g., 2D slice)."""
+        cpu_tensor: Optional[np.ndarray] = None
         try:
-            # Explicit GPU to CPU conversion and slicing/projection.
-            if hasattr(tensor, 'is_cuda') and tensor.is_cuda: # PyTorch
-                cpu_tensor = tensor.cpu().numpy()
-            elif hasattr(tensor, 'device') and 'cuda' in str(tensor.device).lower():
-                if hasattr(tensor, 'get'): # CuPy
-                    cpu_tensor = tensor.get()
-                elif hasattr(tensor, 'numpy'): # JAX
-                    cpu_tensor = np.asarray(tensor)
-                else:
-                    logger.warning(f"Unknown GPU tensor type for step '{step_id}'. Cannot convert.")
-                    return
-            elif isinstance(tensor, np.ndarray):
-                cpu_tensor = tensor
+            # GPU to CPU conversion logic
+            if hasattr(data, 'is_cuda') and data.is_cuda: # PyTorch
+                cpu_tensor = data.cpu().numpy()
+            elif hasattr(data, 'device') and 'cuda' in str(data.device).lower(): # Check for device attribute
+                if hasattr(data, 'get'): # CuPy
+                    cpu_tensor = data.get()
+                elif hasattr(data, 'numpy'): # JAX on GPU might have .numpy() after host transfer
+                    cpu_tensor = np.asarray(data) # JAX arrays might need explicit conversion
+                else: # Fallback for other GPU array types if possible
+                    logger.warning(f"Unknown GPU array type for step '{step_id_for_log}'. Attempting .numpy().")
+                    if hasattr(data, 'numpy'):
+                        cpu_tensor = data.numpy()
+                    else:
+                        logger.error(f"Cannot convert GPU tensor of type {type(data)} for step '{step_id_for_log}'.")
+                        return None
+            elif isinstance(data, np.ndarray):
+                cpu_tensor = data
             else:
-                logger.warning(f"Unsupported tensor type for step '{step_id}': {type(tensor)}.")
-                return
+                # Attempt to convert to numpy array if it's some other array-like structure
+                try:
+                    cpu_tensor = np.asarray(data)
+                    logger.debug(f"Converted data of type {type(data)} to numpy array for step '{step_id_for_log}'.")
+                except Exception as e_conv:
+                    logger.warning(f"Unsupported data type for step '{step_id_for_log}': {type(data)}. Error: {e_conv}")
+                    return None
 
+            if cpu_tensor is None: # Should not happen if logic above is correct
+                return None
+
+            # Slicing logic
+            display_slice: Optional[np.ndarray] = None
             if cpu_tensor.ndim == 3: # ZYX
                 display_slice = cpu_tensor[cpu_tensor.shape[0] // 2, :, :]
             elif cpu_tensor.ndim == 2: # YX
                 display_slice = cpu_tensor
+            elif cpu_tensor.ndim > 3: # e.g. CZYX or TZYX
+                logger.warning(f"Tensor for step '{step_id_for_log}' has ndim > 3 ({cpu_tensor.ndim}). Taking a default slice.")
+                slicer = [0] * (cpu_tensor.ndim - 2) # Slice first channels/times
+                slicer[-1] = cpu_tensor.shape[-3] // 2 # Middle Z
+                try:
+                    display_slice = cpu_tensor[tuple(slicer)]
+                except IndexError: # Handle cases where slicing might fail (e.g. very small dimensions)
+                    logger.error(f"Slicing failed for tensor with shape {cpu_tensor.shape} for step '{step_id_for_log}'.", exc_info=True)
+                    display_slice = None
             else:
-                logger.warning(f"Tensor for step '{step_id}' has unsupported ndim: {cpu_tensor.ndim}.")
-                return
+                logger.warning(f"Tensor for step '{step_id_for_log}' has unsupported ndim for display: {cpu_tensor.ndim}.")
+                return None
+            
+            return display_slice.copy() if display_slice is not None else None
 
-            layer_name = f"{well_id}_{step_id}" if well_id else step_id
-            metadata = {'colormap': 'gray'} 
-            self.data_queue.put((layer_name, display_slice.copy(), metadata))
-            logger.debug(f"Queued tensor slice for step '{step_id}' (layer: '{layer_name}').")
         except Exception as e:
-            logger.error(f"Error preparing tensor from step '{step_id}' for visualization: {e}", exc_info=True)
+            logger.error(f"Error preparing data from step '{step_id_for_log}' for display: {e}", exc_info=True)
+            return None
+
+    def visualize_path(self, step_id: str, path: str, backend: str, well_id: Optional[str] = None):
+        """
+        Receives a VFS path, backend, and associated info, and queues it for display.
+        """
+        if not self.is_running and self.viewer_thread is None:
+            logger.info(f"Visualizer not running for step '{step_id}'. Starting Napari viewer.")
+            self.start_viewer()
+        
+        if not self.viewer_thread: # Check if thread actually started
+            logger.warning(f"Visualizer thread not available. Cannot visualize path for step '{step_id}'.")
+            return
+
+        try:
+            item_to_queue = {
+                'type': 'data_path', # To distinguish from other potential queue items
+                'step_id': step_id,
+                'path': path,
+                'backend': backend,
+                'well_id': well_id
+            }
+            self.data_queue.put(item_to_queue)
+            logger.debug(f"Queued path '{path}' for step '{step_id}' (well: {well_id}).")
+        except Exception as e:
+            logger.error(f"Error queueing path for visualization: {e}", exc_info=True)
 
     def stop_viewer(self):
         """Signals the viewer thread to shut down and waits for it to join."""
