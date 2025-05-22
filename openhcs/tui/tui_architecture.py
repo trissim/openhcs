@@ -360,8 +360,10 @@ class OpenHCSTUI:
             # If FPE was active, clear its instance so it's recreated fresh next time
             if self.function_pattern_editor is not None:
                 logger.debug("OpenHCSTUI: Clearing FunctionPatternEditor instance as 'editing_pattern' is false.")
-                # TODO: If FPE has a close/cleanup method, call it here.
-                # For now, just dereferencing.
+                # Note: FunctionPatternEditor (FPE) manages its own resources (e.g., temp files for Vim editing)
+                # or relies on prompt_toolkit's lifecycle for UI elements.
+                # Explicit close/cleanup method in FPE is not required here;
+                # dereferencing is sufficient for garbage collection.
                 self.function_pattern_editor = None
             
             if self.plate_manager and hasattr(self.plate_manager, 'container'):

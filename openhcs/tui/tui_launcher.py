@@ -184,7 +184,8 @@ class OpenHCSTUILauncher:
         self.logger.info(f"Attempting to remove plate: id='{plate_id}'")
         async with self.orchestrators_lock:
             if plate_id in self.orchestrators:
-                # TODO: Add any specific cleanup for the orchestrator instance if needed
+                # Note: PipelineOrchestrator instances manage their internal resources (e.g., ThreadPoolExecutor via `with` statement)
+                # or rely on Python's garbage collection. Specific cleanup calls on the instance are generally not required here.
                 removed_orchestrator = self.orchestrators.pop(plate_id)
                 self.logger.info(f"Orchestrator for plate '{plate_id}' removed.")
                 self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'removed'})
@@ -262,9 +263,12 @@ class OpenHCSTUILauncher:
                 self.logger.warning("OpenHCSTUI instance does not have a callable 'shutdown_components' method.")
         
         async with self.orchestrators_lock:
-            # TODO: Implement proper cleanup for each orchestrator if needed
-            # (e.g., shutting down thread pools, releasing resources they might hold)
-            # For now, just clearing. If orchestrators have shutdown methods, call them here.
+            # Note: PipelineOrchestrator instances manage resources like ThreadPoolExecutor
+            # within method scopes (e.g., using `with` statements), generally not requiring
+            # an explicit shutdown call from TuiLauncher for their own direct, long-lived resources.
+            # The loop below provides a generic mechanism to call a `shutdown()` method
+            # if an orchestrator instance defines one (e.g., for custom resource cleanup).
+            # For now, just clearing the orchestrators list after attempting shutdown.
             for orchestrator in self.orchestrators.values():
                 if hasattr(orchestrator, 'shutdown') and callable(orchestrator.shutdown):
                     try:

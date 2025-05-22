@@ -321,17 +321,59 @@ class ActionMenuPane:
                     well_ids_to_execute=None # For now, execute all wells in the compiled_contexts
                 )
                 
-                # TODO: Process execution_results if it contains meaningful data or error summaries per well.
-                # For now, assume successful completion if no exception is raised.
+                # Process execution_results for per-well status
+                num_wells = len(execution_results)
+                successful_wells = 0
+                failed_wells_details = []
 
-                exec_success_msg = f"Execution finished for {selected_plate.get('name', 'Unknown')}."
-                setattr(self.state, 'execution_status', exec_success_msg)
+                if execution_results: # Check if not empty
+                    for well_id, result in execution_results.items():
+                        if result.get('status') == 'success':
+                            successful_wells += 1
+                        else:
+                            error_msg = result.get('error_message', 'Unknown error')
+                            failed_wells_details.append(f"Well {well_id}: {error_msg}")
+                            logger.error(f"Execution error for Well {well_id} in plate {selected_plate.get('id')}: {result.get('details', error_msg)}")
+                else: # Should not happen if compiled_contexts was not empty
+                    logger.warning(f"Execution results are empty for plate {selected_plate.get('id')}, though execution was attempted.")
+                    # Treat as if no wells were processed successfully for status reporting
+                    num_wells = len(compiled_contexts) if compiled_contexts else 0
+
+
+                overall_status_message = ""
+                final_operation_status = "success"
+
+                if not execution_results and num_wells > 0 : # No results but wells were expected
+                    overall_status_message = f"Execution for {selected_plate.get('name', 'Unknown')} yielded no results for {num_wells} wells."
+                    final_operation_status = "error"
+                elif successful_wells == num_wells and num_wells > 0:
+                    overall_status_message = f"Execution finished successfully for all {num_wells} wells in {selected_plate.get('name', 'Unknown')}."
+                elif successful_wells > 0:
+                    overall_status_message = (
+                        f"Execution for {selected_plate.get('name', 'Unknown')} completed with "
+                        f"{successful_wells}/{num_wells} wells successful. "
+                        f"Errors in: {', '.join(detail.split(':')[0] for detail in failed_wells_details[:3])}"
+                        f"{'...' if len(failed_wells_details) > 3 else ''}."
+                    )
+                    final_operation_status = "partial_success" # Or "error" depending on desired strictness
+                elif num_wells > 0 : # All wells failed or no results for wells that existed
+                    overall_status_message = (
+                        f"Execution failed for all {num_wells} wells in {selected_plate.get('name', 'Unknown')}. "
+                        f"First error: {failed_wells_details[0] if failed_wells_details else 'Unknown reason'}."
+                    )
+                    final_operation_status = "error"
+                else: # No wells to process initially
+                    overall_status_message = f"No wells were processed for {selected_plate.get('name', 'Unknown')}."
+                    # final_operation_status remains "success" as no operation failed
+
+                setattr(self.state, 'execution_status', overall_status_message)
                 if hasattr(self.state, 'notify'):
                     self.state.notify('operation_status_changed', {
                         'operation': 'run',
-                        'status': 'success',
-                        'message': exec_success_msg,
-                        'source': 'ActionMenuPane'
+                        'status': final_operation_status,
+                        'message': overall_status_message,
+                        'source': 'ActionMenuPane',
+                        'details': {"failed_wells": failed_wells_details} if failed_wells_details else {}
                     })
                 self._set_status(exec_success_msg)
                 logger.info(exec_success_msg)
