@@ -51,6 +51,7 @@ class PipelineOrchestrator:
         workspace_path: Optional[Union[str, Path]] = None,
         *,
         global_config: Optional[GlobalPipelineConfig] = None,
+        filemanager: Optional[FileManager] = None, # Added filemanager argument
     ):
         self._lock = threading.RLock()
         
@@ -71,8 +72,16 @@ class PipelineOrchestrator:
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError("Either plate_path or workspace_path must be provided")
 
-        self.registry = storage_registry()
-        self.filemanager = FileManager(self.registry)
+        if filemanager:
+            self.filemanager = filemanager
+            # Assuming the provided filemanager uses a shared registry.
+            # If we needed to ensure it, we'd also pass the registry or check filemanager.registry.
+            self.registry = self.filemanager.registry # Use registry from provided filemanager
+            logger.info("PipelineOrchestrator using provided FileManager instance.")
+        else:
+            self.registry = storage_registry()
+            self.filemanager = FileManager(self.registry)
+            logger.info("PipelineOrchestrator created its own FileManager instance.")
         self.input_dir: Optional[Path] = None
         self.microscope_handler: Optional[MicroscopeHandler] = None
         self.default_pipeline_definition: Optional[List[AbstractStep]] = None
@@ -201,11 +210,7 @@ class PipelineOrchestrator:
             to become stateless.
         """
         if not self.is_initialized():
-            # Attempt to initialize if not already, for convenience in some calling scenarios
-            logger.info("Orchestrator not initialized. Attempting default initialization before compiling.")
-            self.initialize()
-        if not self.is_initialized(): # Check again
-            raise RuntimeError("Orchestrator must be initialized before compiling.")
+            raise RuntimeError("PipelineOrchestrator must be explicitly initialized before calling compile_pipelines().")
         
         if not pipeline_definition:
             raise ValueError("A valid pipeline definition (List[AbstractStep]) must be provided.")

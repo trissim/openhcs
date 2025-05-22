@@ -398,7 +398,9 @@ class PlateManagerPane:
             try:
                 await self.validation_service.validate_plate(result['path'], result['backend'])
             except Exception as e:
-                # Error already handled by validation service
+                # Assuming validation_service handles user notification of this error.
+                # Logging that this path was taken for debug purposes.
+                logger.debug(f"Exception caught in _handle_add_dialog_result after validation_service.validate_plate call: {e}", exc_info=True)
                 pass
 
     async def _handle_remove_dialog_result(self, plate: Dict[str, Any]):
@@ -548,8 +550,13 @@ class PlateManagerPane:
 
                 # Update plate statuses from context
                 for plate in self.plates:
-                    # This would get the actual status from the context
-                    # For now, we'll just keep the current status
+                    # TODO: Implement plate status update logic here.
+                    # This should involve:
+                    # 1. Getting the relevant ProcessingContext for the plate.
+                    # 2. Using the FileManager in the context to inspect VFS
+                    #    for output artifacts, logs, or status markers.
+                    # 3. Updating `plate['status']` based on VFS inspection.
+                    # For now, the plate's existing status is preserved during refresh.
                     pass
             finally:
                 # Hide loading indicator

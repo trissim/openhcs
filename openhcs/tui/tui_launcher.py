@@ -15,6 +15,7 @@ from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.io.filemanager import FileManager
+from openhcs.io.base import storage_registry # Import storage_registry
 
 # TUI components from tui_architecture.py
 from openhcs.tui.tui_architecture import OpenHCSTUI, TUIState
@@ -28,29 +29,41 @@ class OpenHCSTUILauncher:
     Launcher for the OpenHCS TUI.
     Manages shared components, orchestrators, and the main TUI application lifecycle.
     """
-    def __init__(self, 
+    def __init__(self,
                  core_global_config: GlobalPipelineConfig,
-                 default_workspace_path: Optional[str] = None,
+                 common_output_directory: Optional[str] = None, # Renamed parameter
                  tui_config_path: Optional[str] = None): # For any TUI-specific settings
         """
         Initialize the launcher.
 
         Args:
             core_global_config: The main configuration object for OpenHCS core.
-            default_workspace_path: Optional default path for creating plate workspaces.
+            common_output_directory: Optional root path for all TUI-managed plate outputs.
             tui_config_path: Optional path to a TUI-specific configuration file.
         """
         self.logger = logger
         self.core_global_config = core_global_config
-        self.default_workspace_path = Path(default_workspace_path) if default_workspace_path else None
+        self.common_output_root = Path(common_output_directory) if common_output_directory else Path("./openhcs_tui_outputs")
         self.tui_config_path = Path(tui_config_path) if tui_config_path else None # Not used yet, placeholder
+
+        try:
+            self.common_output_root.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Common output root for TUI operations: {self.common_output_root.resolve()}")
+        except Exception as e:
+            self.logger.critical(f"Failed to create common output root directory {self.common_output_root}: {e}", exc_info=True)
+            # Depending on desired robustness, might raise e or fallback to a temp dir. For now, logs critical.
 
         self.orchestrators: Dict[str, PipelineOrchestrator] = {}
         self.orchestrators_lock = asyncio.Lock()
         self.tui_app_instance: Optional[OpenHCSTUI] = None # To store the TUI app instance
 
         # Create shared instances
-        self.filemanager = FileManager() # TODO: Consider if FileManager needs VFSConfig from core_global_config
+        self.shared_storage_registry = storage_registry() # Create registry once
+        self.filemanager = FileManager(self.shared_storage_registry) # Pass shared registry
+        # FileManager is intentionally config-agnostic.
+        # Clients of FileManager (e.g., Orchestrator, Pipeline Steps) use VFSConfig
+        # from GlobalPipelineConfig to determine which backend to specify for operations
+        # or how to construct paths, rather than FileManager itself holding VFSConfig.
         self.state = TUIState()
 
         # Notify that the filemanager is available, for components like PlateManagerPane
@@ -71,7 +84,7 @@ class OpenHCSTUILauncher:
         # However, global_config itself is frozen.
 
         self.logger.info(
-            f"OpenHCSTUILauncher initialized. Workspace: {self.default_workspace_path}. "
+            f"OpenHCSTUILauncher initialized. Common Output Root: {self.common_output_root}. "
             f"Using GlobalPipelineConfig (num_workers={self.core_global_config.num_workers})."
         )
 
@@ -147,18 +160,17 @@ class OpenHCSTUILauncher:
                 self.logger.warning(f"Plate '{plate_id}' already has an orchestrator. Ignoring add request.")
                 return
 
-            workspace_path_for_plate = None
-            if self.default_workspace_path:
-                # Sanitize plate_id for use in path (simple replacement)
-                safe_plate_id_for_path = plate_id.replace(':', '_').replace('/', '_').replace('\\', '_')
-                workspace_path_for_plate = self.default_workspace_path / f"plate_{safe_plate_id_for_path}"
+            # Construct plate-specific workspace path within the common output root
+            safe_plate_id_for_path = plate_id.replace(':', '_').replace('/', '_').replace('\\', '_')
+            workspace_path_for_plate = self.common_output_root / f"plate_{safe_plate_id_for_path}"
             
             try:
                 self.logger.debug(f"Creating PipelineOrchestrator for plate '{plate_id}'.")
                 orchestrator = PipelineOrchestrator(
-                    plate_path=plate_path_str, 
+                    plate_path=plate_path_str,
                     workspace_path=workspace_path_for_plate,
-                    global_config=self.core_global_config # Crucial: Pass the global config
+                    global_config=self.core_global_config, # Crucial: Pass the global config
+                    filemanager=self.filemanager # Pass shared filemanager
                 )
                 
                 # orchestrator.initialize() # DO NOT initialize here. Initialization is now explicit via "Pre-compile" button.

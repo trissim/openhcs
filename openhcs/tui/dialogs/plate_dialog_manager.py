@@ -329,8 +329,9 @@ class PlateDialogManager:
                 try:
                     if previous_focus in app.layout.walk():
                         app.layout.focus(previous_focus)
-                except Exception:
-                    # Silently continue if focus restoration fails
+                except Exception as e_focus:
+                    # Silently continue if focus restoration fails, but log for debugging.
+                    logger.debug(f"Failed to restore focus to {previous_focus}: {e_focus}", exc_info=True)
                     pass
 
     async def _dialog_ok(self, dlg, result):
@@ -392,8 +393,9 @@ class PlateDialogManager:
                         try:
                             if previous_focus in app.layout.walk():
                                 app.layout.focus(previous_focus)
-                        except Exception:
-                            # Silently continue if focus restoration fails
+                        except Exception as e_focus_cancel:
+                            # Silently continue if focus restoration fails, but log for debugging.
+                            logger.debug(f"Failed to restore focus during dialog cancel to {previous_focus}: {e_focus_cancel}", exc_info=True)
                             pass
         
         # 🔒 Clause 298: Use getattr to safely access namespaced attribute
