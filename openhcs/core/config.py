@@ -1,121 +1,90 @@
 """
-Configuration classes for openhcs.
+Global configuration dataclasses for OpenHCS.
 
-This module contains dataclasses for configuration of different components.
+This module defines the primary configuration objects used throughout the application,
+such as VFSConfig, PathPlanningConfig, and the overarching GlobalPipelineConfig.
+Configuration is intended to be immutable and provided as Python objects.
 """
 
-import copy  # Import copy module at the top level
 import logging
+import os # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
-
-from openhcs.constants.constants import (DEFAULT_MARGIN_RATIO,
-                                            DEFAULT_MAX_SHIFT,
-                                            DEFAULT_NUM_WORKERS,
-                                            DEFAULT_OUT_DIR_SUFFIX,
-                                            DEFAULT_PIXEL_SIZE,
-                                            DEFAULT_POSITIONS_DIR_SUFFIX,
-                                            DEFAULT_STITCHED_DIR_SUFFIX,
-                                            DEFAULT_TILE_OVERLAP)
+from typing import Literal, Optional, Union
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class MISTConfig:
-    """Configuration for the MIST backend."""
-    use_gpu: bool = False
-    """Whether to use GPU acceleration if available."""
-
-    requires_gpu: bool = False
-    """Whether GPU is required (will raise NotImplementedError if unavailable)."""
-
-    mist_params: Dict[str, Any] = field(default_factory=dict)
-    """Additional MIST-specific parameters."""
-
-
-@dataclass
-class BackendConfig:
-    """Configuration for compute backends."""
-    type: str = "ashlar"
-    """Type of backend to use ('ashlar', 'mist', 'composite', etc.)."""
-
-    mapping: Optional[Dict[str, str]] = None
+@dataclass(frozen=True)
+class VFSConfig:
+    """Configuration for Virtual File System (VFS) related operations."""
+    default_intermediate_backend: Literal["memory", "disk", "zarr"] = "memory"
+    """Default backend for storing intermediate step results that are not explicitly materialized."""
+    
+    default_materialization_backend: Literal["disk", "zarr"] = "disk"
+    """Default backend for explicitly materialized outputs (e.g., final results, user-requested saves)."""
+    
+    persistent_storage_root_path: Optional[str] = None
     """
-    Mapping of method names to backend types for composite backends.
-    Example: {"generate_positions": "ashlar", "stitch": "mist"}
+    Optional root path for persistent storage backends like 'disk' or 'zarr'.
+    If None, paths might be relative to a workspace or require full specification.
+    Example: "/mnt/hcs_data_root" or "./.openhcs_data"
     """
 
-    params: Optional[Dict[str, Any]] = None
-    """Additional parameters for the backend."""
+@dataclass(frozen=True)
+class PathPlanningConfig:
+    """Configuration for pipeline path planning, defining directory suffixes."""
+    output_dir_suffix: str = "_outputs"
+    """Default suffix for general step output directories."""
+    
+    positions_dir_suffix: str = "_positions"
+    """Suffix for directories containing position generation results."""
+    
+    stitched_dir_suffix: str = "_stitched"
+    """Suffix for directories containing stitched image results."""
+    
+    # Consider adding other common suffixes if needed, e.g.:
+    # segmentation_dir_suffix: str = "_segmentation"
+    # features_dir_suffix: str = "_features"
 
-    # MIST-specific configuration
-    mist: MISTConfig = field(default_factory=MISTConfig)
-    """MIST-specific configuration."""
-
-
-@dataclass
-class StitcherConfig:
-    """Configuration for the Stitcher class."""
-    tile_overlap: float = DEFAULT_TILE_OVERLAP
-    max_shift: int = DEFAULT_MAX_SHIFT
-    margin_ratio: float = DEFAULT_MARGIN_RATIO
-    pixel_size: float = DEFAULT_PIXEL_SIZE
-    variable_components: List[str] = field(default_factory=lambda: DEFAULT_VARIABLE_COMPONENTS)
-    recursive_pattern_search: bool = DEFAULT_RECURSIVE_PATTERN_SEARCH
-
-
-# FocusAnalyzerConfig has been removed in favor of direct parameters to FocusAnalyzer
-
-
-# Constant for num_workers default is now imported from constants.pipeline
-
-@dataclass
-class PipelineConfig:
-    """Configuration for the pipeline orchestrator."""
-    # Directory configuration
-    out_dir_suffix: str = DEFAULT_OUT_DIR_SUFFIX  # Default suffix for processing steps
-    positions_dir_suffix: str = DEFAULT_POSITIONS_DIR_SUFFIX  # Suffix for position generation step
-    stitched_dir_suffix: str = DEFAULT_STITCHED_DIR_SUFFIX  # Suffix for stitching step
-
-    # Processing configuration
-    num_workers: int = DEFAULT_NUM_WORKERS  # Use constant default value
-
-    # Stitching configuration
-    stitcher: StitcherConfig = field(default_factory=StitcherConfig)
-
-    # Microscope configuration
-    force_parser: Optional[str] = None  # Force a specific parser type (e.g., "OperaPhenix")
-
-    # Backend configurations
-    position_generator_backend: Optional[BackendConfig] = field(default_factory=lambda: BackendConfig(type="ashlar"))
-    """Configuration for the position generator backend (e.g., Ashlar, MIST)."""
-
-    image_assembler_backend: Optional[BackendConfig] = field(default_factory=lambda: BackendConfig(type="cpu"))
-    """Configuration for the image assembler backend (e.g., CPU, GPU)."""
-
-    # Old 'backend' field is removed.
-    # Consumers must now specify 'position_generator_backend' and/or 'image_assembler_backend'.
-
-    # Intermediate storage configuration
-    storage_mode: Literal["legacy", "memory", "zarr"] = "legacy"
-    """Mode for storing intermediate pipeline results ('legacy', 'memory', 'zarr').
-    'legacy': Default, uses existing in-memory dict within Pipeline.
-    'memory': Uses MemoryStorageBackend (persists .npy on completion).
-    'zarr': Uses ZarrStorageBackend (persists to disk immediately).
+@dataclass(frozen=True)
+class GlobalPipelineConfig:
     """
-    storage_root: Optional[Path] = None
-    """Root directory for storage backends that require it (e.g., Zarr).
-    Must be provided when using storage modes that require a physical location (e.g., 'zarr').
-    If None when required, an explicit error will be raised during validation.
-    For 'memory' mode, this is not required.
+    Root configuration object for an OpenHCS pipeline session.
+    This object is intended to be instantiated at application startup and treated as immutable.
     """
+    num_workers: int = field(default_factory=lambda: os.cpu_count() or 1)
+    """Number of worker processes/threads for parallelizable tasks."""
+    
+    path_planning: PathPlanningConfig = field(default_factory=PathPlanningConfig)
+    """Configuration for path planning (directory suffixes)."""
+    
+    vfs: VFSConfig = field(default_factory=VFSConfig)
+    """Configuration for Virtual File System behavior."""
 
-    def copy(self):
-        """
-        Create a deep copy of this configuration object.
+    # Future extension point:
+    # logging_config: Optional[Dict[str, Any]] = None # For configuring logging levels, handlers
+    # plugin_settings: Dict[str, Any] = field(default_factory=dict) # For plugin-specific settings
 
-        Uses the copy module imported at the top level for deterministic behavior.
-        """
-        return copy.deepcopy(self)
+# --- Default Configuration Provider ---
+
+# Pre-instantiate default sub-configs for clarity if they have many fields or complex defaults.
+# For simple cases, direct instantiation in get_default_global_config is also fine.
+_DEFAULT_PATH_PLANNING_CONFIG = PathPlanningConfig()
+_DEFAULT_VFS_CONFIG = VFSConfig(
+    # Example: Set a default persistent_storage_root_path if desired for out-of-the-box behavior
+    # persistent_storage_root_path="./openhcs_output_data" 
+)
+
+def get_default_global_config() -> GlobalPipelineConfig:
+    """
+    Provides a default instance of GlobalPipelineConfig.
+    
+    This function is called if no specific configuration is provided to the
+    PipelineOrchestrator, ensuring the application can run with sensible defaults.
+    """
+    logger.info("Initializing with default GlobalPipelineConfig.")
+    return GlobalPipelineConfig(
+        # num_workers is already handled by field(default_factory) in GlobalPipelineConfig
+        path_planning=_DEFAULT_PATH_PLANNING_CONFIG,
+        vfs=_DEFAULT_VFS_CONFIG
+    )

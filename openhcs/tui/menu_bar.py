@@ -4,9 +4,20 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import (Any, Callable, ClassVar, Dict, FrozenSet, List, Optional,
-                    Tuple, Union)
+                    Tuple, Union, TYPE_CHECKING) # Added TYPE_CHECKING
+import logging # ADDED
+import json # ADDED for _on_save_pipeline
 
-import yaml
+# For handler implementations
+from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.context.processing_context import ProcessingContext
+if TYPE_CHECKING:
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    # TUIState is typically passed in __init__, so direct import might not be needed here
+    # from openhcs.tui.tui_architecture import TUIState
+
+
+# import yaml # YAML dependency is being removed
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import HTML
@@ -17,6 +28,8 @@ from prompt_toolkit.layout.containers import (AnyContainer,
                                               ConditionalContainer, Float)
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.widgets import Box, Frame, Label
+
+logger = logging.getLogger(__name__) # ADDED
 
 
 class MissingStateError(Exception):
@@ -288,6 +301,60 @@ class MenuItem:
             children=children
         )
 
+# Python-defined menu structure
+# This replaces the content that would have been in menu.yaml
+# Ensure handler and condition names used here match those in _create_handler_map and _create_condition_map
+_DEFAULT_MENU_STRUCTURE = {
+    "File": {
+        "mnemonic": "F", # For Alt+F activation
+        "items": [
+            {"type": "command", "label": "&New Pipeline", "handler": "_on_new_pipeline", "shortcut": "Ctrl+N"},
+            {"type": "command", "label": "&Open Pipeline...", "handler": "_on_open_pipeline", "shortcut": "Ctrl+O"},
+            {"type": "command", "label": "&Save Pipeline", "handler": "_on_save_pipeline", "enabled": "is_compiled"},
+            {"type": "separator"},
+            {"type": "command", "label": "E&xit", "handler": "_on_exit"}
+        ]
+    },
+    "Edit": {
+        "mnemonic": "E",
+        "items": [
+            {"type": "command", "label": "&Add Step", "handler": "_on_add_step", "enabled": "has_selected_step"},
+            {"type": "command", "label": "Edit Ste&p", "handler": "_on_edit_step", "enabled": "has_selected_step"},
+            {"type": "command", "label": "&Remove Step", "handler": "_on_remove_step", "enabled": "has_selected_step"},
+        ]
+    },
+    "View": {
+        "mnemonic": "V",
+        "items": [
+            {"type": "checkbox", "label": "&Vim Mode", "handler": "_on_toggle_vim_mode", "checked": "vim_mode"},
+            {"type": "checkbox", "label": "&Log Drawer", "handler": "_on_toggle_log_drawer", "checked": "log_drawer_expanded"},
+            {"type": "separator"},
+            {"type": "submenu", "label": "&Theme", "children": [
+                {"type": "checkbox", "label": "&Light", "handler": "_on_set_theme_light", "checked": "theme_is_light"},
+                {"type": "checkbox", "label": "&Dark", "handler": "_on_set_theme_dark", "checked": "theme_is_dark"},
+                {"type": "checkbox", "label": "&System", "handler": "_on_set_theme_system", "checked": "theme_is_system"},
+            ]}
+        ]
+    },
+    "Pipeline": {
+        "mnemonic": "P",
+        "items": [
+            {"type": "command", "label": "Pre-&compile", "handler": "_on_pre_compile"},
+            {"type": "command", "label": "&Compile", "handler": "_on_compile"},
+            {"type": "command", "label": "&Run", "handler": "_on_run", "enabled": "is_compiled"},
+            {"type": "separator"},
+            {"type": "command", "label": "Se&ttings...", "handler": "_on_settings"}
+        ]
+    },
+    "Help": {
+        "mnemonic": "H",
+        "items": [
+            {"type": "command", "label": "&Keyboard Shortcuts", "handler": "_on_keyboard_shortcuts"},
+            {"type": "command", "label": "&About", "handler": "_on_about"}
+        ]
+    }
+}
+
 
 class MenuBar(Container):
     """
@@ -435,9 +502,22 @@ class MenuBar(Container):
         Returns:
             Dictionary mapping menu names to lists of MenuItem objects
         """
-        # Load raw structure
-        raw_structure = MenuItem.load_menu_structure()
-        
+        # Use the Python-defined structure
+        raw_structure = _DEFAULT_MENU_STRUCTURE
+
+        # Validate the Python-defined structure first
+        try:
+            MenuStructureSchema.validate_menu_structure(raw_structure)
+        except ValueError as e:
+            # Handle validation error, e.g., log and use an empty menu or raise
+            # For now, let's log and raise, as a malformed default is a critical dev error.
+            # In a production setting, might fall back to a minimal safe menu.
+            # logger.error(f"Invalid _DEFAULT_MENU_STRUCTURE: {e}") # Assuming logger is available
+            print(f"CRITICAL: Invalid _DEFAULT_MENU_STRUCTURE in menu_bar.py: {e}") # Fallback print
+            raise RuntimeError(f"Invalid _DEFAULT_MENU_STRUCTURE: {e}") from e
+            # menu_structure = {}
+            # return menu_structure
+
         # Convert to MenuItem objects
         menu_structure = {}
         for menu_name, menu_data in raw_structure.items():
@@ -475,42 +555,8 @@ class MenuBar(Container):
 
    
     
-    @staticmethod
-    def load_menu_structure() -> Dict[str, Dict[str, Any]]:
-        """
-        Load menu structure from YAML file.
-        
-        Returns:
-            Dictionary with menu structure
-            
-        Raises:
-            FileNotFoundError: If menu.yaml file is not found
-            ValueError: If menu structure is invalid
-        """
-        # Load YAML from file
-        yaml_path = Path(__file__).parent / "menu.yaml"
-        if not yaml_path.exists():
-            raise FileNotFoundError(f"Menu structure file not found: {yaml_path}")
-            
-        with open(yaml_path, 'r') as f:
-            structure = yaml.safe_load(f)
-        
-        # Validate structure
-        for menu_name, menu_data in structure.items():
-            if not isinstance(menu_data, dict):
-                raise ValueError(f"Menu '{menu_name}' data must be a dictionary")
-                
-            if "items" not in menu_data:
-                raise ValueError(f"Menu '{menu_name}' must have 'items' field")
-                
-            if "mnemonic" not in menu_data:
-                raise ValueError(f"Menu '{menu_name}' must have 'mnemonic' field")
-                
-            # Validate items
-            MenuStructureSchema.validate_menu_structure({menu_name: menu_data["items"]})
-        
-        return structure
-
+    # Removed static method MenuBar.load_menu_structure() as YAML loading is no longer used.
+    # The _DEFAULT_MENU_STRUCTURE defined above is now the source of the menu definition.
     def _create_menu_labels(self) -> List[Label]:
         """
         Create the menu labels for the top bar.
@@ -856,19 +902,81 @@ class MenuBar(Container):
     
     async def _on_new_pipeline(self) -> None:
         """Handle New Pipeline command."""
-        self.state.notify('menu_command', {'command': 'new_pipeline'})
+        logger.warning("MenuBar: File > New Pipeline selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'new_pipeline', 'status': 'info', 'message': 'File > New Pipeline: Not Implemented', 'source': 'MenuBar'})
 
     async def _on_open_pipeline(self) -> None:
         """Handle Open Pipeline command."""
-        self.state.notify('menu_command', {'command': 'open_pipeline'})
+        logger.warning("MenuBar: File > Open Pipeline selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'open_pipeline', 'status': 'info', 'message': 'File > Open Pipeline: Not Implemented', 'source': 'MenuBar'})
 
-    async def _on_save_pipeline(self) -> None:
+    async def _on_save_pipeline(self) -> None: # This was implemented in msg_idx 235, ensuring it's the correct version
         """Handle Save Pipeline command."""
-        self.state.notify('menu_command', {'command': 'save_pipeline'})
+        logger.info("MenuBar: File > Save Pipeline selected.")
+        active_orchestrator: Optional['PipelineOrchestrator'] = getattr(self.state, 'active_orchestrator', None)
+        selected_plate: Optional[Dict[str, Any]] = getattr(self.state, 'selected_plate', None)
+
+        if not active_orchestrator or not selected_plate:
+            err_msg = "No active plate selected to save pipeline for."
+            logger.warning(err_msg)
+            if hasattr(self.state, 'notify'):
+                self.state.notify('operation_status_changed', {'operation': 'save_pipeline', 'status': 'error', 'message': err_msg, 'source': 'MenuBar'})
+            return
+
+        pipeline_definition: Optional[List[AbstractStep]] = getattr(active_orchestrator, 'pipeline_definition', None)
+        if not pipeline_definition:
+            err_msg = f"No pipeline definition loaded for plate '{selected_plate.get('name', 'Unknown')}' to save."
+            logger.warning(err_msg)
+            if hasattr(self.state, 'notify'):
+                self.state.notify('operation_status_changed', {'operation': 'save_pipeline', 'status': 'error', 'message': err_msg, 'source': 'MenuBar'})
+            return
+
+        try:
+            plate_dir_path_str = selected_plate.get('path')
+            if not plate_dir_path_str:
+                raise ValueError("Selected plate information is missing a valid 'path' attribute.")
+            
+            plate_dir_path = Path(plate_dir_path_str)
+            # Ensure json is imported if not already (it was added in a previous step for this file)
+            import json
+            filename = getattr(active_orchestrator, 'DEFAULT_PIPELINE_FILENAME', 'pipeline_definition.json')
+            save_path = plate_dir_path / filename
+            
+            pipeline_dicts = [step.to_dict() for step in pipeline_definition]
+            json_content = json.dumps(pipeline_dicts, indent=2)
+
+            logger.info(f"Attempting to save pipeline definition from MenuBar for plate '{selected_plate.get('id')}' to {save_path}")
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(json_content)
+
+            save_success_msg = f"Pipeline saved to {save_path} (via MenuBar)"
+            logger.info(save_success_msg)
+            if hasattr(self.state, 'notify'):
+                self.state.notify('operation_status_changed', {
+                    'operation': 'save_pipeline',
+                    'status': 'success',
+                    'message': save_success_msg,
+                    'source': 'MenuBar'
+                })
+        except Exception as e:
+            save_fail_msg = f"Save Pipeline Error (MenuBar): {str(e)}"
+            logger.error(save_fail_msg, exc_info=True)
+            if hasattr(self.state, 'notify'):
+                self.state.notify('operation_status_changed', {
+                    'operation': 'save_pipeline',
+                    'status': 'error',
+                    'message': save_fail_msg,
+                    'source': 'MenuBar'
+                })
 
     async def _on_save_pipeline_as(self) -> None:
         """Handle Save Pipeline As command."""
-        self.state.notify('menu_command', {'command': 'save_pipeline_as'})
+        logger.warning("MenuBar: File > Save Pipeline As selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'save_pipeline_as', 'status': 'info', 'message': 'File > Save Pipeline As: Not Implemented', 'source': 'MenuBar'})
 
     async def _on_exit(self) -> None:
         """Handle Exit command."""
@@ -876,23 +984,106 @@ class MenuBar(Container):
 
     async def _on_add_step(self) -> None:
         """Handle Add Step command."""
-        self.state.notify('menu_command', {'command': 'add_step'})
+        logger.warning("MenuBar: Edit > Add Step selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'add_step', 'status': 'info', 'message': 'Edit > Add Step: Not Implemented', 'source': 'MenuBar'})
 
     async def _on_edit_step(self) -> None:
-        """Handle Edit Step command."""
-        self.state.notify('menu_command', {'command': 'edit_step'})
+        """Handle Edit Step command: Activates the FunctionPatternEditor for the selected step."""
+        logger.info("MenuBar: Edit > Edit Step selected.")
+        selected_step = getattr(self.state, 'selected_step', None)
+
+        if selected_step:
+            # These attributes ('editing_pattern', 'selected_step_for_editing')
+            # were added to TUIState in tui_architecture.py
+            self.state.selected_step_for_editing = selected_step
+            self.state.editing_pattern = True # This will trigger OpenHCSTUI._get_left_pane() to show FPE
+            
+            logger.info(f"MenuBar: Set editing_pattern=True, selected_step_for_editing='{selected_step.get('name', 'N/A')}'.")
+            
+            if hasattr(self.state, 'notify'):
+                # Notify that editing state has changed, perhaps for other UI elements to react
+                self.state.notify('editing_state_changed', {'editing_pattern': True, 'step': selected_step})
+                # Also provide immediate feedback via status bar
+                self.state.notify('operation_status_changed', {
+                    'operation': 'edit_step_start',
+                    'status': 'info',
+                    'message': f"Editing pattern for step: {selected_step.get('name', 'N/A')}",
+                    'source': 'MenuBar'
+                })
+            
+            # Force a redraw so that OpenHCSTUI._get_left_pane() re-evaluates and shows the FPE
+            app = get_app()
+            if app:
+                app.invalidate()
+        else:
+            logger.warning("MenuBar: Edit Step clicked, but no step is selected in TUIState.")
+            if hasattr(self.state, 'notify'):
+                self.state.notify('operation_status_changed', {
+                    'operation': 'edit_step_attempt',
+                    'status': 'warning',
+                    'message': "No step selected to edit. Please select a step in the Step Viewer.",
+                    'source': 'MenuBar'
+                })
 
     async def _on_remove_step(self) -> None:
         """Handle Remove Step command."""
-        self.state.notify('menu_command', {'command': 'remove_step'})
+        logger.info("MenuBar: Edit > Remove Step selected.")
+        selected_step_dict: Optional[Dict[str, Any]] = getattr(self.state, 'selected_step', None)
+        active_orchestrator: Optional['PipelineOrchestrator'] = getattr(self.state, 'active_orchestrator', None)
 
+        if not selected_step_dict:
+            msg = "No step selected to remove."
+            logger.warning(msg)
+            if hasattr(self.state, 'notify'): self.state.notify('operation_status_changed', {'operation': 'remove_step', 'status': 'warning', 'message': msg, 'source': 'MenuBar'})
+            return
+
+        if not active_orchestrator or not hasattr(active_orchestrator, 'pipeline_definition') or active_orchestrator.pipeline_definition is None:
+            msg = "No active pipeline definition to remove step from."
+            logger.warning(msg)
+            if hasattr(self.state, 'notify'): self.state.notify('operation_status_changed', {'operation': 'remove_step', 'status': 'error', 'message': msg, 'source': 'MenuBar'})
+            return
+        
+        step_uid_to_remove = selected_step_dict.get('uid')
+        if not step_uid_to_remove:
+            msg = "Selected step has no UID, cannot remove."
+            logger.error(msg)
+            if hasattr(self.state, 'notify'): self.state.notify('operation_status_changed', {'operation': 'remove_step', 'status': 'error', 'message': msg, 'source': 'MenuBar'})
+            return
+
+        current_pipeline: List[AbstractStep] = active_orchestrator.pipeline_definition
+        original_length = len(current_pipeline)
+        
+        active_orchestrator.pipeline_definition = [step for step in current_pipeline if step.uid != step_uid_to_remove]
+
+        if len(active_orchestrator.pipeline_definition) < original_length:
+            self.state.selected_step = None # Clear selection
+            self.state.selected_step_for_editing = None # Clear if it was being edited
+            if hasattr(self.state, 'notify'):
+                self.state.notify('pipeline_definition_changed', {'orchestrator_id': active_orchestrator.plate_path}) # Notify StepViewerPane
+                self.state.notify('operation_status_changed', {
+                    'operation': 'remove_step',
+                    'status': 'success',
+                    'message': f"Step '{selected_step_dict.get('name', step_uid_to_remove)}' removed.",
+                    'source': 'MenuBar'
+                })
+            logger.info(f"Step '{step_uid_to_remove}' removed from pipeline.")
+        else:
+            msg = f"Step with UID '{step_uid_to_remove}' not found in pipeline."
+            logger.warning(msg)
+            if hasattr(self.state, 'notify'): self.state.notify('operation_status_changed', {'operation': 'remove_step', 'status': 'warning', 'message': msg, 'source': 'MenuBar'})
+            
     async def _on_move_step_up(self) -> None:
         """Handle Move Step Up command."""
-        self.state.notify('menu_command', {'command': 'move_step_up'})
+        logger.warning("MenuBar: Edit > Move Step Up selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'move_step_up', 'status': 'info', 'message': 'Edit > Move Step Up: Not Implemented', 'source': 'MenuBar'})
 
     async def _on_move_step_down(self) -> None:
         """Handle Move Step Down command."""
-        self.state.notify('menu_command', {'command': 'move_step_down'})
+        logger.warning("MenuBar: Edit > Move Step Down selected (Not Implemented).")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'move_step_down', 'status': 'info', 'message': 'Edit > Move Step Down: Not Implemented', 'source': 'MenuBar'})
 
     async def _on_toggle_log_drawer(self) -> None:
         """Handle Toggle Log Drawer command."""
@@ -924,8 +1115,26 @@ class MenuBar(Container):
         self.state.notify('menu_command', {'command': 'run'})
 
     async def _on_test(self) -> None:
-        """Handle Test command."""
-        self.state.notify('menu_command', {'command': 'test'})
+        """Handle Test command by adding a predefined test plate."""
+        logger.info("MenuBar: Pipeline > Test selected. Adding predefined test plate.")
+        test_plate_relative_path = "tests/integration/tests_data/opera_phenix_pipeline/test_main_3d[OperaPhenix]/zstack_plate"
+        test_plate_path_str = test_plate_relative_path
+        test_plate_backend = "OperaPhenix"
+
+        logger.info(f"MenuBar: Attempting to add test plate: {test_plate_path_str} (Backend: {test_plate_backend})")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('add_predefined_plate', {
+                'path': test_plate_path_str,
+                'backend': test_plate_backend
+            })
+            self.state.notify('operation_status_changed', {
+                'operation': 'add_test_plate',
+                'status': 'pending',
+                'message': f"Adding test plate '{Path(test_plate_path_str).name}' (from Menu)...",
+                'source': 'MenuBar'
+            })
+        else:
+            logger.error("MenuBar: Cannot add test plate: TUIState.notify not available.")
 
     async def _on_settings(self) -> None:
         """Handle Settings command."""
@@ -933,15 +1142,21 @@ class MenuBar(Container):
 
     async def _on_documentation(self) -> None:
         """Handle Documentation command."""
-        self.state.notify('menu_command', {'command': 'documentation'})
+        logger.info("MenuBar: Help > Documentation selected.")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'show_documentation', 'status': 'info', 'message': 'Help > Documentation: Not Implemented (placeholder)', 'source': 'MenuBar'})
 
     async def _on_keyboard_shortcuts(self) -> None:
         """Handle Keyboard Shortcuts command."""
-        self.state.notify('menu_command', {'command': 'keyboard_shortcuts'})
+        logger.info("MenuBar: Help > Keyboard Shortcuts selected.")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'show_shortcuts', 'status': 'info', 'message': 'Help > Keyboard Shortcuts: Not Implemented (placeholder)', 'source': 'MenuBar'})
 
     async def _on_about(self) -> None:
         """Handle About command."""
-        self.state.notify('menu_command', {'command': 'about'})
+        logger.info("MenuBar: Help > About selected.")
+        if hasattr(self.state, 'notify'):
+            self.state.notify('operation_status_changed', {'operation': 'show_about', 'status': 'info', 'message': 'Help > About: Not Implemented (placeholder)', 'source': 'MenuBar'})
 
     # Event handlers
     

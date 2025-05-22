@@ -24,6 +24,7 @@ All updates to state.operation_status must be serialized through a lock.
 TUI must work only with plain strings, not VirtualPath objects.
 """
 import asyncio
+import logging # ADDED
 import os
 import shutil  # For terminal size fallback
 import signal  # For signal handling in register_with_app
@@ -42,6 +43,8 @@ from tui.services.plate_validation_service import PlateValidationService
 
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.orchestrator.orchestrator import BackendRegistry
+
+logger = logging.getLogger(__name__) # ADDED
 
 
 # Define interfaces for component communication
@@ -173,6 +176,37 @@ class PlateManagerPane:
         # Register for events
         self.state.add_observer('refresh_plates', self._refresh_plates)
         self.state.add_observer('plate_status_changed', self._update_plate_status)
+        # Listen for requests to show the add plate dialog
+        self.state.add_observer('ui_request_show_add_plate_dialog',
+                                lambda data=None: get_app().create_background_task(self._handle_request_show_add_plate_dialog(data)))
+        # Listen for requests to add a predefined test plate
+        self.state.add_observer('add_predefined_plate',
+                                lambda data=None: get_app().create_background_task(self._handle_add_predefined_plate(data)))
+
+    async def _handle_request_show_add_plate_dialog(self, data=None):
+        """Handles the TUIState event 'ui_request_show_add_plate_dialog'."""
+        logger.info("PlateManagerPane: Received ui_request_show_add_plate_dialog event.")
+        await self._show_add_plate_dialog()
+
+    async def _handle_add_predefined_plate(self, data: Optional[Dict[str, Any]] = None):
+        """Handles the TUIState event 'add_predefined_plate'."""
+        if not data or 'path' not in data or 'backend' not in data:
+            logger.error("PlateManagerPane: Received 'add_predefined_plate' event with missing data.")
+            await self._handle_error("Invalid data for predefined plate.",
+                                     f"Received: {data}")
+            return
+
+        path = data['path']
+        backend = data['backend']
+        logger.info(f"PlateManagerPane: Received 'add_predefined_plate' event for path='{path}', backend='{backend}'.")
+        
+        try:
+            # Use the existing validation service to add and validate the plate
+            await self.validation_service.validate_plate(path, backend)
+            logger.info(f"PlateManagerPane: Validation initiated for predefined plate '{path}'.")
+        except Exception as e:
+            logger.error(f"PlateManagerPane: Error initiating validation for predefined plate '{path}': {e}", exc_info=True)
+            await self._handle_error(f"Error adding test plate {Path(path).name}", str(e))
 
     def _on_filemanager_available(self, data):
         """Handle filemanager becoming available."""

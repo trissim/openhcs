@@ -18,7 +18,8 @@ import concurrent.futures
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Set
 
-from openhcs.constants.constants import DEFAULT_NUM_WORKERS, Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS
+from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS # DEFAULT_NUM_WORKERS removed
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -49,10 +50,15 @@ class PipelineOrchestrator:
         plate_path: Union[str, Path],
         workspace_path: Optional[Union[str, Path]] = None,
         *,
-        config: Optional[Dict[str, Any]] = None,
+        global_config: Optional[GlobalPipelineConfig] = None,
     ):
         self._lock = threading.RLock()
-        self._config = config or {}
+        
+        if global_config is None:
+            self.global_config = get_default_global_config()
+            logger.info("PipelineOrchestrator using default global configuration.")
+        else:
+            self.global_config = global_config
 
         if plate_path is not None:
             if isinstance(plate_path, str):
@@ -159,6 +165,9 @@ class PipelineOrchestrator:
              raise RuntimeError("Orchestrator input_dir is not set; initialize orchestrator first.")
 
         context = ProcessingContext(well_id=well_id, filemanager=self.filemanager)
+        # Pass the global_config to the context
+        # ProcessingContext will need to be updated to store this
+        context.global_config = self.global_config
         context.orchestrator = self
         context.microscope_handler = self.microscope_handler
         context.input_dir = self.input_dir
@@ -214,10 +223,8 @@ class PipelineOrchestrator:
             logger.debug(f"Compiling for well: {well_id}")
             context = self.create_context(well_id)
             
-            base_input_dir_for_well = Path(self.input_dir) if self.input_dir else Path(".")
-
-            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, base_input_dir_for_well, well_id)
-            PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, well_id)
+            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
+            PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition)
             PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition)
             PipelineCompiler.assign_gpu_resources_for_context(context)
 
@@ -278,7 +285,7 @@ class PipelineOrchestrator:
         self,
         pipeline_definition: List[AbstractStep], 
         compiled_contexts: Dict[str, ProcessingContext],
-        max_workers: int = DEFAULT_NUM_WORKERS,
+        max_workers: Optional[int] = None, # Changed from DEFAULT_NUM_WORKERS
         visualizer: Optional[NapariStreamVisualizer] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
@@ -302,12 +309,16 @@ class PipelineOrchestrator:
         if not compiled_contexts:
             logger.warning("No compiled contexts provided for execution.")
             return {}
+        
+        actual_max_workers = max_workers if max_workers is not None else self.global_config.num_workers
+        if actual_max_workers <= 0: # Ensure positive number of workers
+            actual_max_workers = 1
 
-        logger.info(f"Starting execution for {len(compiled_contexts)} wells with max_workers={max_workers}.")
+        logger.info(f"Starting execution for {len(compiled_contexts)} wells with max_workers={actual_max_workers}.")
         execution_results: Dict[str, Dict[str, Any]] = {}
 
-        if max_workers > 1 and len(compiled_contexts) > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        if actual_max_workers > 1 and len(compiled_contexts) > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
                 future_to_well_id = {
                     executor.submit(self._execute_single_well, pipeline_definition, context, visualizer): well_id
                     for well_id, context in compiled_contexts.items()
@@ -364,5 +375,36 @@ class PipelineOrchestrator:
             return all_wells
 
     # The run() method has been removed.
-    # UI/callers should use initialize(), then compile_plate_for_processing(), 
+    # UI/callers should use initialize(), then compile_plate_for_processing(),
     # then (if needed, setup visualizer), then execute_compiled_plate().
+
+    async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
+        """
+        Applies a new GlobalPipelineConfig to this orchestrator instance.
+
+        This updates the internal global_config reference. Subsequent operations,
+        especially new context creation and pipeline compilations, will use this
+        new configuration.
+
+        Args:
+            new_config: The new GlobalPipelineConfig object.
+        """
+        if not isinstance(new_config, GlobalPipelineConfig):
+            logger.error(
+                f"Attempted to apply invalid config type {type(new_config)} to PipelineOrchestrator. Expected GlobalPipelineConfig."
+            )
+            return
+
+        logger.info(
+            f"PipelineOrchestrator (plate: {self.plate_path}, workspace: {self.workspace_path}) "
+            f"is applying new GlobalPipelineConfig. Old num_workers: {self.global_config.num_workers}, "
+            f"New num_workers: {new_config.num_workers}"
+        )
+        self.global_config = new_config
+        # Re-initialization of components like path_planner or materialization_flag_planner
+        # is implicitly handled if they are created fresh during compilation using contexts
+        # that are generated with the new self.global_config.
+        # If any long-lived orchestrator components directly cache parts of global_config
+        # and need explicit updating, that would be done here. For now, updating the
+        # reference is the primary action.
+        logger.info("New GlobalPipelineConfig applied to orchestrator.")

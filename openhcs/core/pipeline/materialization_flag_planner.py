@@ -19,8 +19,9 @@ Doctrinal Clauses:
 import logging
 from typing import Any, Dict, List
 
-from openhcs.constants.constants import (DEFAULT_BACKEND, FORCE_DISK_WRITE, READ_BACKEND,
-                                            REQUIRES_DISK_READ, REQUIRES_DISK_WRITE, WRITE_BACKEND)
+from openhcs.constants.constants import (FORCE_DISK_WRITE, READ_BACKEND, # DEFAULT_BACKEND removed
+                                             REQUIRES_DISK_READ, REQUIRES_DISK_WRITE, WRITE_BACKEND)
+from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.steps.abstract_step import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
@@ -45,29 +46,32 @@ class MaterializationFlagPlanner:
 
     @staticmethod
     def prepare_pipeline_flags(
-        steps: List[AbstractStep],
-        well_id: str,
-        step_plans: Dict[str, Dict[str, Any]]
+        context: ProcessingContext, # CHANGED: context is now the primary input
+        pipeline_definition: List[AbstractStep] # Renamed 'steps' for clarity
+        # well_id and step_plans are now derived from context
     ) -> None:
         """
-        Prepare materialization flags for each step in a pipeline and injects them into step_plans.
+        Prepare materialization flags for each step in a pipeline and injects them
+        into context.step_plans.
 
         This method determines materialization flags and backend selection for each step
         in a pipeline, taking into account step type, position, and declared flags.
-        The flags are then added to the corresponding step_plan in the step_plans dictionary.
+        The flags are then added to the corresponding step_plan in context.step_plans.
 
         Args:
-            steps: List of steps to prepare flags for
-            well_id: Well identifier for the pipeline
-            step_plans: Dictionary mapping step UIDs to their (partially filled) step plans.
-                        This dictionary will be modified in place.
+            context: The ProcessingContext, containing step_plans, well_id, and config.
+            pipeline_definition: List of AbstractStep instances defining the pipeline.
         """
+        step_plans = context.step_plans
+        well_id = context.well_id # Used for logging/completeness if step_plan doesn't have it
+        vfs_config = context.get_vfs_config()
+
         if not step_plans:
-            logger.warning("No step_plans provided to MaterializationFlagPlanner. Flags will not be set.")
+            logger.warning("Context step_plans is empty. Materialization flags will not be set.")
             return
 
         # Process each step in the pipeline
-        for i, step in enumerate(steps):
+        for i, step in enumerate(pipeline_definition): # Use pipeline_definition
             # Get step UID
             step_id = step.uid
             step_name = step.name
@@ -112,7 +116,7 @@ class MaterializationFlagPlanner:
                 logger.debug(f"First step {step_name} always requires disk input")
 
             # Last step always requires disk output
-            if i == len(steps) - 1:
+            if i == len(pipeline_definition) - 1: # Use pipeline_definition
                 requires_disk_output = True
                 logger.debug(f"Last step {step_name} always requires disk output")
 
@@ -122,36 +126,36 @@ class MaterializationFlagPlanner:
                 logger.debug(f"Step {step_name} has force_disk_output=True, setting requires_disk_output=True")
 
             # Determine backend selection based on materialization flags
-            # Only FunctionStep can use non-disk backends
-            read_backend = "disk"
-            write_backend = "disk"
+            # Only FunctionStep can use non-disk (intermediate) backends.
+            # Default to persistent for safety, then adjust.
 
-            if not requires_disk_input and is_function_step:
-                read_backend = DEFAULT_BACKEND
-                logger.debug(f"Step {step_name} does not require disk input, using {read_backend} backend for reading")
+            # READ BACKEND determination
+            if requires_disk_input: # Includes first step.
+                current_step_plan[READ_BACKEND] = "disk" # Reading initial dataset is 'disk'.
+                logger.debug(f"Step {step_name} requires disk input, using 'disk' for reading.")
+            elif is_function_step: # Can read from an intermediate backend.
+                current_step_plan[READ_BACKEND] = vfs_config.default_intermediate_backend
+                logger.debug(f"Step {step_name} is FunctionStep and does not require disk input, using '{vfs_config.default_intermediate_backend}' for reading (from default_intermediate_backend).")
+            else: # Non-FunctionStep not requiring disk input (e.g., CompositeStep). Must read from persistent store.
+                current_step_plan[READ_BACKEND] = "disk" # Default to 'disk' if not intermediate.
+                logger.debug(f"Step {step_name} is not FunctionStep and does not require disk input, defaulting to 'disk' for reading.")
 
-            if not requires_disk_output and is_function_step:
-                write_backend = DEFAULT_BACKEND
-                logger.debug(f"Step {step_name} does not require disk output, using {write_backend} backend for writing")
-
-            # Non-FunctionStep cannot use non-disk backends
-            if not is_function_step:
-                if read_backend != "disk":
-                    # Assuming ERROR_INVALID_BACKEND was defined elsewhere or this check is less critical
-                    # For now, log a warning instead of raising an error if it's not a FunctionStep
-                    logger.warning(f"Step {step_name} is not a FunctionStep but read_backend is {read_backend}. Forcing to 'disk'.")
-                    read_backend = "disk"
-
-                if write_backend != "disk":
-                    logger.warning(f"Step {step_name} is not a FunctionStep but write_backend is {write_backend}. Forcing to 'disk'.")
-                    write_backend = "disk"
+            # WRITE BACKEND determination
+            if requires_disk_output: # This includes last step, force_disk_output, or step's own requirement.
+                current_step_plan[WRITE_BACKEND] = vfs_config.default_materialization_backend
+                logger.debug(f"Step {step_name} requires disk output, using '{vfs_config.default_materialization_backend}' for writing (from default_materialization_backend).")
+            elif is_function_step: # Not requires_disk_output and is_function_step, so can use intermediate.
+                current_step_plan[WRITE_BACKEND] = vfs_config.default_intermediate_backend
+                logger.debug(f"Step {step_name} is FunctionStep and does not require disk output, using '{vfs_config.default_intermediate_backend}' for writing (from default_intermediate_backend).")
+            else: # Non-FunctionStep not requiring disk output. If it writes primary data, it must be to a persistent store.
+                current_step_plan[WRITE_BACKEND] = vfs_config.default_materialization_backend
+                logger.debug(f"Step {step_name} is not FunctionStep and does not require disk output, defaulting to '{vfs_config.default_materialization_backend}' for writing (from default_materialization_backend).")
             
-            # Store flags directly into the step_plan for this step
+            # Store other flags directly into the step_plan for this step
             current_step_plan[REQUIRES_DISK_READ] = requires_disk_input
             current_step_plan[REQUIRES_DISK_WRITE] = requires_disk_output
             current_step_plan[FORCE_DISK_WRITE] = force_disk_output
-            current_step_plan[READ_BACKEND] = read_backend
-            current_step_plan[WRITE_BACKEND] = write_backend
+            # READ_BACKEND and WRITE_BACKEND are set above
             
             # Log backend selection
             logger.debug(

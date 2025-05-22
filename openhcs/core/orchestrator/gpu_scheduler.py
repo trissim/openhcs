@@ -26,13 +26,16 @@ import os
 import threading
 from typing import Dict, List, Optional
 
-from openhcs.constants.constants import DEFAULT_NUM_WORKERS
+# DEFAULT_NUM_WORKERS removed
 from openhcs.core.memory.gpu_utils import (check_cupy_gpu_available,
-                                              check_jax_gpu_available,
-                                              check_tf_gpu_available,
-                                              check_torch_gpu_available)
+                                               check_jax_gpu_available,
+                                               check_tf_gpu_available,
+                                               check_torch_gpu_available)
+# Import necessary config classes
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger(__name__) # Ensure logger is consistently named if used across module
 
 # Thread-safe lock for GPU registry access
 _registry_lock = threading.Lock()
@@ -45,12 +48,19 @@ GPU_REGISTRY: Dict[int, Dict[str, int]] = {}
 _registry_initialized = False
 
 
-def initialize_gpu_registry() -> None:
+def initialize_gpu_registry(configured_num_workers: int) -> None:
     """
-    Initialize the GPU registry based on available GPUs and CPU thread count.
+    Initialize the GPU registry based on available GPUs and configured number of workers.
 
     This function detects available GPUs, calculates the maximum number of
-    concurrent pipelines per GPU, and initializes the GPU registry.
+    concurrent pipelines per GPU (influenced by `configured_num_workers`),
+    and initializes the GPU registry.
+
+    Args:
+        configured_num_workers (int): The number of workers specified in the
+                                      global configuration, used as a fallback
+                                      if os.cpu_count() is not available or to
+                                      influence pipelines per GPU.
 
     Must be called exactly once during application startup, before any
     pipeline threads are created. The registry is a global singleton
@@ -59,7 +69,7 @@ def initialize_gpu_registry() -> None:
     Thread-safe: Uses a lock to ensure consistent access to the global registry.
 
     Raises:
-        RuntimeError: If no GPUs are available or if the registry is already initialized
+        RuntimeError: If no GPUs are available or if the registry is already initialized.
     """
     global GPU_REGISTRY, _registry_initialized
 
@@ -80,8 +90,11 @@ def initialize_gpu_registry() -> None:
                 "Cannot initialize GPU registry."
             )
 
-        # Get maximum CPU threads (use CPU count as a proxy)
-        max_cpu_threads = os.cpu_count() or DEFAULT_NUM_WORKERS
+        # Get maximum CPU threads (use CPU count as a proxy, fallback to configured_num_workers)
+        max_cpu_threads = os.cpu_count() or configured_num_workers
+        if max_cpu_threads <= 0: # Ensure positive
+            max_cpu_threads = 1
+
 
         # Calculate maximum pipelines per GPU
         max_pipelines_per_gpu = math.ceil(max_cpu_threads / len(available_gpus))
@@ -261,3 +274,42 @@ def is_gpu_registry_initialized() -> bool:
     """
     with _registry_lock:
         return _registry_initialized
+
+
+def setup_global_gpu_registry(global_config: Optional[GlobalPipelineConfig] = None) -> None:
+    """
+    Initializes the global GPU registry using the provided or default global configuration.
+
+    This function should be called once at application startup. It ensures that the
+    GPU registry is initialized with worker configurations derived from the
+    GlobalPipelineConfig.
+
+    Args:
+        global_config (Optional[GlobalPipelineConfig]): An optional pre-loaded global
+            configuration object. If None, the default global configuration will be used.
+    """
+    # Use the existing thread-safe check from is_gpu_registry_initialized()
+    # but need to acquire lock to make the check-and-set atomic if we were to set _registry_initialized here.
+    # However, initialize_gpu_registry itself is internally locked and handles the _registry_initialized flag.
+    
+    if is_gpu_registry_initialized():
+        logger.info("GPU registry is already initialized. Skipping setup.")
+        return
+
+    config_to_use: GlobalPipelineConfig
+    if global_config is None:
+        logger.info("No global_config provided to setup_global_gpu_registry, using default configuration.")
+        config_to_use = get_default_global_config()
+    else:
+        config_to_use = global_config
+    
+    try:
+        # initialize_gpu_registry is already designed to be called once and is thread-safe.
+        initialize_gpu_registry(configured_num_workers=config_to_use.num_workers)
+        # logger.info("Global GPU registry setup complete via setup_global_gpu_registry.") # initialize_gpu_registry already logs
+    except RuntimeError as e:
+        logger.error(f"Failed to setup GPU registry via setup_global_gpu_registry: {e}")
+        # Depending on application needs, this might re-raise or just log.
+        # If initialize_gpu_registry raises on no GPUs, that behavior is preserved.
+        # Pass for now, assuming initialize_gpu_registry handles logging of its specific errors.
+        pass

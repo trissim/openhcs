@@ -1,0 +1,128 @@
+# OpenHCS TUI Menu Structure
+# 🔒 Clause 3: Declarative Primacy
+# Menu structure is declared statically for static analysis.
+
+File:
+  mnemonic: F  # Explicit mnemonic for Alt+F shortcut
+  items:
+    - type: COMMAND
+      label: New Pipeline
+      handler: _on_new_pipeline
+      shortcut: Ctrl+N
+    - type: COMMAND
+      label: Open Pipeline...
+      handler: _on_open_pipeline
+      shortcut: Ctrl+O
+    - type: COMMAND
+      label: Save Pipeline
+      handler: _on_save_pipeline
+      shortcut: Ctrl+S
+      enabled: is_compiled
+    - type: COMMAND
+      label: Save Pipeline As...
+      handler: _on_save_pipeline_as
+      shortcut: Ctrl+Shift+S
+      enabled: is_compiled
+    - type: SEPARATOR
+    - type: COMMAND
+      label: Exit
+      handler: _on_exit
+      shortcut: Ctrl+Q
+
+Edit:
+  mnemonic: E  # Explicit mnemonic for Alt+E shortcut
+  items:
+    - type: COMMAND
+      label: Add Step
+      handler: _on_add_step
+      shortcut: Ctrl+A
+    - type: COMMAND
+      label: Edit Step
+      handler: _on_edit_step
+      shortcut: Ctrl+E
+      enabled: has_selected_step
+    - type: COMMAND
+      label: Remove Step
+      handler: _on_remove_step
+      shortcut: Delete
+      enabled: has_selected_step
+    - type: SEPARATOR
+    - type: COMMAND
+      label: Move Step Up
+      handler: _on_move_step_up
+      shortcut: Alt+Up
+      enabled: has_selected_step
+    - type: COMMAND
+      label: Move Step Down
+      handler: _on_move_step_down
+      shortcut: Alt+Down
+      enabled: has_selected_step
+
+View:
+  mnemonic: V  # Explicit mnemonic for Alt+V shortcut
+  items:
+    - type: CHECKBOX
+      label: Show Log Drawer
+      handler: _on_toggle_log_drawer
+      checked: log_drawer_expanded
+    - type: CHECKBOX
+      label: Vim Mode
+      handler: _on_toggle_vim_mode
+      checked: vim_mode
+    - type: SEPARATOR
+    - type: SUBMENU
+      label: Theme
+      children:
+        - type: COMMAND
+          label: Light
+          handler: _on_set_theme_light
+          checked: theme_is_light
+        - type: COMMAND
+          label: Dark
+          handler: _on_set_theme_dark
+          checked: theme_is_dark
+        - type: COMMAND
+          label: System
+          handler: _on_set_theme_system
+          checked: theme_is_system
+
+Pipeline:
+  mnemonic: P  # Explicit mnemonic for Alt+P shortcut
+  items:
+    - type: COMMAND
+      label: Pre-compile
+      handler: _on_pre_compile
+      shortcut: F5
+    - type: COMMAND
+      label: Compile
+      handler: _on_compile
+      shortcut: F6
+    - type: COMMAND
+      label: Run
+      handler: _on_run
+      shortcut: F7
+      enabled: is_compiled
+    - type: SEPARATOR
+    - type: COMMAND
+      label: Test
+      handler: _on_test
+      shortcut: F8
+    - type: COMMAND
+      label: Settings...
+      handler: _on_settings
+      shortcut: F9
+
+Help:
+  mnemonic: H  # Explicit mnemonic for Alt+H shortcut
+  items:
+    - type: COMMAND
+      label: Documentation
+      handler: _on_documentation
+      shortcut: F1
+    - type: COMMAND
+      label: Keyboard Shortcuts
+      handler: _on_keyboard_shortcuts
+    - type: SEPARATOR
+    - type: COMMAND
+      label: About
+      handler: _on_about

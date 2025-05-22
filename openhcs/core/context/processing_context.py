@@ -7,6 +7,8 @@ This module defines the ProcessingContext class, which maintains state during pi
 from typing import Any, Dict, Optional, Union
 from pathlib import Path
 
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
+
 # Forward declaration for type hinting if StepResult was used, but it's being removed.
 # class StepResult: ...
 
@@ -28,11 +30,13 @@ class ProcessingContext:
         current_step: Current executing step ID (usage may change).
         well_id: Identifier of the well being processed.
         filemanager: Instance of FileManager for VFS operations.
+        global_config: GlobalPipelineConfig holding system-wide configurations.
         _is_frozen: Internal flag indicating if the context is immutable.
     """
 
     def __init__(
         self,
+        global_config: GlobalPipelineConfig, # Made a required argument
         step_plans: Optional[Dict[str, Dict[str, Any]]] = None,
         well_id: Optional[str] = None,
         **kwargs
@@ -41,9 +45,10 @@ class ProcessingContext:
         Initialize the processing context.
 
         Args:
-            step_plans: Dictionary mapping step IDs to execution plans
-            well_id: Identifier of the well being processed
-            **kwargs: Additional context attributes (e.g., filemanager, microscope_handler)
+            global_config: The global pipeline configuration object.
+            step_plans: Dictionary mapping step IDs to execution plans.
+            well_id: Identifier of the well being processed.
+            **kwargs: Additional context attributes (e.g., filemanager, microscope_handler).
         """
         # Initialize _is_frozen first to allow other attributes to be set by __setattr__
         # This direct assignment bypasses the custom __setattr__ during initialization.
@@ -54,9 +59,11 @@ class ProcessingContext:
         self.intermediates = {} # Future use TBD, primary data flow via VFS
         self.current_step = None # Future use TBD
         self.well_id = well_id
+        self.global_config = global_config # Store the global config
         self.filemanager = None # Expected to be set by Orchestrator via kwargs or direct assignment
 
-        # Add any additional attributes
+        # Add any additional attributes from kwargs
+        # Note: 'filemanager' is often passed via kwargs by PipelineOrchestrator.create_context
         for key, value in kwargs.items():
             setattr(self, key, value) # This will now go through our __setattr__
 
@@ -128,3 +135,24 @@ class ProcessingContext:
         return self.step_plans.get(step_id)
 
     # update_from_step_result method is removed as per plan.
+
+    # --- Config Getters ---
+
+    def get_vfs_config(self) -> VFSConfig:
+        """Returns the VFSConfig part of the global configuration."""
+        if not hasattr(self, 'global_config') or self.global_config is None:
+            # This case should ideally not happen if Orchestrator always sets it.
+            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
+        return self.global_config.vfs
+
+    def get_path_planning_config(self) -> PathPlanningConfig:
+        """Returns the PathPlanningConfig part of the global configuration."""
+        if not hasattr(self, 'global_config') or self.global_config is None:
+            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
+        return self.global_config.path_planning
+
+    def get_num_workers(self) -> int:
+        """Returns the number of workers from the global configuration."""
+        if not hasattr(self, 'global_config') or self.global_config is None:
+            raise RuntimeError("GlobalPipelineConfig not set on ProcessingContext.")
+        return self.global_config.num_workers

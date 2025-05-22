@@ -16,6 +16,7 @@ the principle of separating judgment from execution via intent extraction.
 
 import argparse
 import json
+import numpy as np
 import os
 import sys
 import textwrap
@@ -743,8 +744,228 @@ def handle_analyze_command(args: argparse.Namespace) -> None:
     print_header("CODE ANALYSIS")
     print("Analyzing code for intent extraction...")
 
-    # Implementation would go here
-    print(color_text("Not yet implemented", "YELLOW"))
+    try:
+        # Check if GPU plugin is available
+        import sys
+        from pathlib import Path
+
+        # Add plugins directory to path if needed
+        plugins_dir = Path(__file__).parent / "plugins"
+        if str(plugins_dir) not in sys.path:
+            sys.path.insert(0, str(plugins_dir))
+
+        from gpu_analysis_plugin import GPUAnalysisPlugin
+        gpu_plugin = GPUAnalysisPlugin()
+
+        # Initialize plugin with minimal context
+        class MinimalContext:
+            def log(self, level, message):
+                if level == "error":
+                    print(color_text(f"Error: {message}", "RED"))
+                elif level == "warning":
+                    print(color_text(f"Warning: {message}", "YELLOW"))
+                else:
+                    print(message)
+
+            def get_config(self):
+                # Create config manager
+                config_manager = ConfigManager(args.config)
+                return config_manager.get_config()
+
+        # Initialize plugin
+        gpu_plugin.initialize(MinimalContext())
+
+        # Analyze code
+        if args.code_file:
+            print(f"Analyzing file: {args.code_file}")
+
+            # Read the file
+            with open(args.code_file, 'r', encoding='utf-8') as f:
+                code = f.read()
+
+            # Analyze the code
+            results = gpu_plugin.analyze_code(code, args.code_file)
+
+            # Extract patterns directly if using GPU plugin
+            if hasattr(gpu_plugin, 'extract_patterns') and not results.get('patterns'):
+                try:
+                    print_section("EXTRACTING PATTERNS")
+                    print("  Using GPU plugin's pattern extraction...")
+                    patterns = gpu_plugin.extract_patterns(code, "code", {"file_path": str(args.code_file)})
+
+                    if patterns:
+                        # Convert patterns to serializable format
+                        pattern_list = []
+                        for pattern in patterns:
+                            pattern_list.append({
+                                "id": pattern.id,
+                                "name": pattern.name,
+                                "type": pattern.pattern_type,
+                                "weight": pattern.weight,
+                                "confidence": pattern.confidence,
+                                "content": pattern.content
+                            })
+
+                        # Add patterns to results
+                        results["patterns"] = pattern_list
+                        print(f"  Extracted {len(pattern_list)} patterns")
+
+                        # Match patterns
+                        if hasattr(gpu_plugin, 'pattern_extractor'):
+                            pattern_matches = []
+                            for pattern in patterns:
+                                try:
+                                    matches = gpu_plugin.pattern_extractor.match_patterns(code, pattern.pattern_type)
+                                    for match in matches:
+                                        pattern_matches.append({
+                                            "pattern": {
+                                                "id": match.pattern.id,
+                                                "name": match.pattern.name,
+                                                "type": match.pattern.pattern_type
+                                            },
+                                            "confidence": match.score,
+                                            "locations": match.locations,
+                                            "content": match.content[:100] + "..." if len(match.content) > 100 else match.content
+                                        })
+                                except Exception as e:
+                                    print(f"  Error matching pattern {pattern.name}: {e}")
+
+                            # Add pattern matches to results
+                            results["pattern_matches"] = pattern_matches
+                            print(f"  Found {len(pattern_matches)} pattern matches")
+                except Exception as e:
+                    print(f"  Error extracting patterns: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # Print results
+            if args.format == "json":
+                print(json.dumps(results, indent=2))
+            elif args.format == "yaml":
+                import yaml
+                print(yaml.dump(results, default_flow_style=False))
+            else:
+                print_section("ANALYSIS RESULTS")
+
+                # Print complexity metrics if available
+                if "complexity" in results:
+                    print_section("COMPLEXITY METRICS")
+                    for metric, value in results["complexity"].items():
+                        print(f"  {metric}: {value}")
+
+                # Print patterns if available
+                if "patterns" in results:
+                    print_section("PATTERNS")
+                    if not results["patterns"]:
+                        print("  No patterns found")
+                    else:
+                        for pattern in results["patterns"]:
+                            print(f"  Pattern: {pattern.get('name', 'Unknown')}")
+                            print(f"    Type: {pattern.get('type', 'Unknown')}")
+                            print(f"    Weight: {pattern.get('weight', 0.0)}")
+                            print(f"    Confidence: {pattern.get('confidence', 0.0)}")
+                            print()
+
+                # Print pattern matches if available
+                if "pattern_matches" in results:
+                    print_section("PATTERN MATCHES")
+                    if not results["pattern_matches"]:
+                        print("  No pattern matches found")
+                    else:
+                        for match in results["pattern_matches"]:
+                            print(f"  Pattern: {match.get('pattern', {}).get('name', 'Unknown')}")
+                            print(f"    Confidence: {match.get('confidence', 0.0)}")
+                            print(f"    Type: {match.get('pattern', {}).get('type', 'Unknown')}")
+                            print()
+                elif "patterns" not in results:
+                    print_section("PATTERN MATCHES")
+                    print("  Pattern matching not performed or no patterns defined")
+
+                # Print semantic analysis if available
+                if "semantics" in results:
+                    print_section("SEMANTIC ANALYSIS")
+                    for category, data in results["semantics"].items():
+                        print(f"  {category}:")
+                        if isinstance(data, dict):
+                            for key, value in data.items():
+                                print(f"    {key}: {value}")
+                        elif isinstance(data, list):
+                            for item in data:
+                                print(f"    - {item}")
+                        else:
+                            print(f"    {data}")
+                        print()
+
+                # Print dependency analysis if available
+                if "dependency" in results:
+                    print_section("DEPENDENCY ANALYSIS")
+                    for dep_type, matrix in results["dependency"].items():
+                        if isinstance(matrix, (list, np.ndarray)) and len(matrix) > 0:
+                            print(f"  {dep_type}: {len(matrix)} dependencies found")
+                        else:
+                            print(f"  {dep_type}: No dependencies found")
+
+                # Print type analysis if available
+                if "types" in results:
+                    print_section("TYPE ANALYSIS")
+                    if "errors" in results["types"]:
+                        errors = results["types"]["errors"]
+                        if isinstance(errors, (list, np.ndarray)) and len(errors) > 0:
+                            print(f"  Type errors: {np.sum(errors) if isinstance(errors, np.ndarray) else len(errors)}")
+                        else:
+                            print("  No type errors found")
+
+                # Print metadata if available
+                if "metadata" in results:
+                    print_section("METADATA")
+                    for key, value in results["metadata"].items():
+                        print(f"  {key}: {value}")
+
+                # Print summary
+                print_section("SUMMARY")
+                print(f"  Analysis completed in {results.get('metadata', {}).get('analysis_time', 0):.2f} seconds")
+                print(f"  Device: {results.get('metadata', {}).get('device', 'unknown')}")
+                print(f"  Code length: {results.get('metadata', {}).get('code_length', 0)} characters")
+
+        elif args.project_dir:
+            print(f"Analyzing project directory: {args.project_dir}")
+
+            # Find Python files
+            python_files = find_python_files(args.project_dir)
+
+            # Analyze files in batch
+            results = gpu_plugin.analyze_batch([str(f) for f in python_files[:10]])  # Limit to 10 files for demo
+
+            # Print summary
+            print(f"Analyzed {len(results)} files")
+
+            if args.report:
+                # Generate comprehensive report
+                print_section("COMPREHENSIVE REPORT")
+
+                # Print file-by-file summary
+                for file_path, file_results in results.items():
+                    print(f"File: {file_path}")
+
+                    # Print complexity metrics if available
+                    if "complexity" in file_results:
+                        print(f"  Complexity: {file_results['complexity'].get('cyclomatic_complexity', 'N/A')}")
+
+                    # Print pattern count if available
+                    if "pattern_matches" in file_results:
+                        print(f"  Patterns: {len(file_results['pattern_matches'])}")
+
+                    print()
+        else:
+            print(color_text("Error: No code file or project directory specified", "RED"))
+            print("Use --code-file or --project-dir to specify what to analyze")
+
+    except ImportError:
+        print(color_text("Error: GPU Analysis Plugin not found", "RED"))
+        print("Make sure the plugin is installed correctly")
+    except Exception as e:
+        print(color_text(f"Error: {str(e)}", "RED"))
+        print("Analysis failed")
 
 def handle_error_trace_command(args: argparse.Namespace) -> None:
     """Handle the error-trace command."""

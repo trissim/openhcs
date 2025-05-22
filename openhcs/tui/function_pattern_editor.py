@@ -533,33 +533,29 @@ class FunctionPatternEditor:
         This implementation validates the edited file contains only a valid pattern
         assignment before evaluating it, preventing arbitrary code execution.
         """
+        temp_file_path = None # Ensure it's defined for the finally block
         try:
-            # Create temporary file through FileManager
-            temp_file_path = self.filemanager.create_temp_file(
-                suffix='.py',
-                backend=self.backend
-            )
-
-            # Write initial content
-            self.filemanager.write_file(
-                temp_file_path,
-                f"pattern = {repr(self.current_pattern)}\n"
-                "\n# IMPORTANT: This file must contain ONLY a 'pattern = ...' assignment.\n"
-                "# Any other code will be rejected for security reasons.\n"
-                "# Valid pattern structures:\n"
-                "#  - A callable function\n"
-                "#  - A tuple of (callable, kwargs) where kwargs is a dict\n"
-                "#  - A list of valid pattern structures\n"
-                "#  - A dict mapping keys to valid pattern structures\n",
-                backend=self.backend
-            )
-
+            # Create a temporary file using standard library
+            with tempfile.NamedTemporaryFile(delete=False, mode='w+', suffix='.py', encoding='utf-8') as tmp_file:
+                temp_file_path = tmp_file.name
+                tmp_file.write(f"pattern = {repr(self.current_pattern)}\n\n")
+                tmp_file.write("# IMPORTANT: This file must contain ONLY a 'pattern = ...' assignment.\n")
+                tmp_file.write("# Any other code will be rejected for security reasons.\n")
+                tmp_file.write("# Valid pattern structures:\n")
+                tmp_file.write("#  - A callable function\n")
+                tmp_file.write("#  - A tuple of (callable, kwargs) where kwargs is a dict\n")
+                tmp_file.write("#  - A list of valid pattern structures\n")
+                tmp_file.write("#  - A dict mapping keys to valid pattern structures\n")
+            
             # Launch editor
             editor = os.environ.get('EDITOR', 'vim')
-            subprocess.run([editor, temp_file_path])
+            # Ensure editor command is properly formed if path contains spaces (less common for vim)
+            # For simplicity, direct call assuming editor is in PATH and handles paths.
+            subprocess.run([editor, temp_file_path], check=True) # check=True to raise on editor error
 
-            # Read back the file through FileManager
-            content = self.filemanager.read_file(temp_file_path, backend=self.backend)
+            # Read back the file content
+            with open(temp_file_path, 'r', encoding='utf-8') as tmp_file_read:
+                content = tmp_file_read.read()
 
             # Validate and parse the pattern
             is_valid, pattern, error_message = _validate_pattern_file(content)
@@ -588,10 +584,20 @@ class FunctionPatternEditor:
                 # Show error message
                 self._show_error(f"Invalid pattern: {error_message}")
 
+        except FileNotFoundError:
+            self._show_error(f"Editor '{editor}' not found. Please ensure it's in your PATH.")
+        except subprocess.CalledProcessError:
+            self._show_error(f"Editor '{editor}' exited with an error.")
+        except Exception as e:
+            self._show_error(f"An error occurred during Vim edit: {str(e)}")
         finally:
-            # Clean up through FileManager
-            if temp_file_path:
-                self.filemanager.delete_file(temp_file_path, backend=self.backend)
+            # Clean up the temporary file
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except Exception as e_remove:
+                    # Log this error, but don't let it overshadow a primary error
+                    logger.error(f"Failed to remove temporary file {temp_file_path}: {e_remove}")
 
     def _show_error(self, message: str):
         """Show an error message to the user."""

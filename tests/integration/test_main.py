@@ -1,5 +1,5 @@
 """
-Integration tests for the pipeline orchestrator and TUI components.
+Integration tests for the pipeline cccccccccccc and TUI components.
 """
 import pytest
 import sys
@@ -85,12 +85,13 @@ def test_main_3d(zstack_plate_dir: Union[Path,str]):
         orchestrator.initialize()
 
         # Get pipeline and wells
-        pipelines = [get_pipeline(orchestrator.workspace_path)]
         wells = orchestrator.get_wells()
+        pipeline = get_pipeline(orchestrator.workspace_path),
+
 
         # Phase 1: Compilation - explicitly compile pipelines
-        contexts, compiled_pipelines = orchestrator.compile_pipelines(
-            pipeline=pipelines[0],
+        contexts, compiled_pipeline = orchestrator.compile_pipelines(
+            pipeline=pipeline,
             wells=wells
         )
 
@@ -101,7 +102,7 @@ def test_main_3d(zstack_plate_dir: Union[Path,str]):
         # Phase 2: Execution - execute compiled pipelines
         results = orchestrator.execute_pipelines(
             contexts=contexts,
-            pipelines=compiled_pipelines,
+            pipelines=compiled_pipeline,
             wells=wells
         )
 
@@ -119,12 +120,12 @@ def test_main_2d(flat_plate_dir: Union[Path,str]):
         orchestrator.initialize()
 
         # Get pipeline and wells
-        pipelines = [get_pipeline(orchestrator.workspace_path)]
+        pipeline = get_pipeline(orchestrator.workspace_path)
         wells = orchestrator.get_wells()
 
         # Phase 1: Compilation - explicitly compile pipelines
-        contexts, compiled_pipelines = orchestrator.compile_pipelines(
-            pipeline=pipelines[0],
+        contexts, compiled_pipeline = orchestrator.compile_pipelines(
+            pipeline=pipeline,
             wells=wells
         )
 
@@ -135,7 +136,7 @@ def test_main_2d(flat_plate_dir: Union[Path,str]):
         # Phase 2: Execution - execute compiled pipelines
         results = orchestrator.execute_pipelines(
             contexts=contexts,
-            pipelines=compiled_pipelines,
+            pipeline=compiled_pipelines,
             wells=wells
         )
 

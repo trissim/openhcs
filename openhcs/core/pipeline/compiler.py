@@ -51,19 +51,11 @@ class PipelineCompiler:
     memory contract validation, and GPU resource assignment.
     """
 
-    # Comment about _get_core_callable being removed is now outdated and removed.
-    # "Take 20+" model: contracts (special I/O keys, chainbreaker) come from step.func via pipeline_utils.get_core_callable.
-    # PipelinePathPlanner is now responsible for reading these and planning all I/O.
-
-    # _prepare_step_paths static method is removed.
-    # initialize_step_plans_for_context will call PipelinePathPlanner.prepare_pipeline_paths directly.
-
     @staticmethod
     def initialize_step_plans_for_context(
         context: ProcessingContext,
-        steps_definition: List[AbstractStep],
-        base_input_dir: Union[str, Path], # base_input_dir is used by PathPlanner for the first step
-        well_id: str
+        steps_definition: List[AbstractStep]
+        # base_input_dir and well_id parameters removed, will use from context
     ) -> None:
         """
         Initializes step_plans by calling PipelinePathPlanner.prepare_pipeline_paths,
@@ -75,29 +67,10 @@ class PipelineCompiler:
 
         if not hasattr(context, 'step_plans') or context.step_plans is None:
             context.step_plans = {} # Ensure step_plans dict exists
-
-        # PipelinePathPlanner.prepare_pipeline_paths modifies context.step_plans in place.
-        # It now handles all primary paths, special output planning, special input linking,
-        # and reading chainbreaker flags from step.func (via get_core_callable).
-        # Note: The `base_input_dir` is implicitly handled by `prepare_pipeline_paths`
-        # as it uses the `input_dir` from the first step's initial plan if provided,
-        # or constructs it. The `PipelinePathPlanner.prepare_pipeline_paths` signature
-        # might need adjustment if it explicitly needs `base_input_dir` for the very first step.
-        # For now, assuming `path_planner.py` handles this based on its current logic
-        # where it checks `step_plans[first_step_id]["input_dir"]`.
-        # The `PipelineCompiler` previously passed `base_input_dir` to `_prepare_step_paths`
-        # which then passed it as `input_dir` to `PipelinePathPlanner.prepare_pipeline_paths`.
-        # The `path_planner.py`'s `prepare_pipeline_paths` takes `step_plans` (which can have initial input_dir for first step)
-        # and `pipeline_definition`.
-        
-        # The call to path_planner.py's prepare_pipeline_paths:
-        # Its signature is: prepare_pipeline_paths(step_plans, pipeline_definition, well_id)
-        # It modifies step_plans in-place.
+        # The well_id and base_input_dir are available from the context object.
         PipelinePathPlanner.prepare_pipeline_paths(
-            step_plans=context.step_plans, # Pass the dict to be modified
-            pipeline_definition=steps_definition,
-            well_id=well_id,
-            initial_pipeline_input_dir=Path(base_input_dir) # "Take 27": Pass base_input_dir
+            context,
+            steps_definition
         )
 
         # Loop to supplement step_plans with non-I/O, non-path attributes
@@ -113,7 +86,7 @@ class PipelineCompiler:
                 context.step_plans[step_id] = {
                      "step_name": step.name,
                      "step_type": step.__class__.__name__,
-                     "well_id": well_id,
+                     "well_id": context.well_id, # Use context.well_id
                      "error": "Missing from path planning phase by PipelinePathPlanner"
                 }
                 continue
@@ -123,7 +96,7 @@ class PipelineCompiler:
             # Ensure basic metadata (PathPlanner should set most of this)
             current_plan["step_name"] = step.name
             current_plan["step_type"] = step.__class__.__name__
-            current_plan["well_id"] = well_id # PathPlanner might not set this, ensure it.
+            current_plan["well_id"] = context.well_id # Use context.well_id; PathPlanner should also use context.well_id
             current_plan.setdefault("visualize", False) # Ensure visualize key exists
 
             # The special_outputs and special_inputs are now fully handled by PipelinePathPlanner.
@@ -151,46 +124,18 @@ class PipelineCompiler:
     # The resolve_special_input_paths_for_context static method is DELETED (lines 181-238 of original)
     # as this functionality is now handled by PipelinePathPlanner.prepare_pipeline_paths.
 
-    @staticmethod
-    def _prepare_materialization_flags(
-        steps: List[AbstractStep],
-        well_id: str
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Prepare materialization flags for all steps using the flag planner.
-        (Unchanged from previous version)
-        """
-        step_flags = MaterializationFlagPlanner.prepare_pipeline_flags(
-            steps=steps,
-            well_id=well_id
-        )
-        for step in steps:
-            step_id = step.uid
-            if step_id not in step_flags:
-                raise AssertionError(
-                    f"Materialization flag planning must be completed for all steps. "
-                    f"Missing flag information for step {step.name} (ID: {step_id}) (Clause 504)."
-                )
-            flags = step_flags[step_id]
-            if "requires_disk_input" not in flags or \
-               "requires_disk_output" not in flags or \
-               "read_backend" not in flags or \
-               "write_backend" not in flags:
-                raise AssertionError(
-                    f"Materialization flag planning incomplete for step {step.name} (ID: {step_id}). "
-                    f"Missing one or more required flags (Clause 273)."
-                )
-        return step_flags
+    # _prepare_materialization_flags is removed as MaterializationFlagPlanner.prepare_pipeline_flags
+    # now modifies context.step_plans in-place and takes context directly.
 
     @staticmethod
     def plan_materialization_flags_for_context(
         context: ProcessingContext,
-        steps_definition: List[AbstractStep],
-        well_id: str
+        steps_definition: List[AbstractStep]
+        # well_id parameter removed, will use from context if needed by internal logic (currently not)
     ) -> None:
         """
-        Plans and injects materialization flags into context.step_plans.
-        (Unchanged from previous version)
+        Plans and injects materialization flags into context.step_plans
+        by calling MaterializationFlagPlanner.
         """
         if context.is_frozen():
             raise AttributeError("Cannot plan materialization flags in a frozen ProcessingContext.")
@@ -198,15 +143,27 @@ class PipelineCompiler:
              logger.warning("step_plans is empty in context for materialization planning. This may be valid if pipeline is empty.")
              return
 
-        step_flags_map = PipelineCompiler._prepare_materialization_flags(
-            steps=steps_definition,
-            well_id=well_id
+        # MaterializationFlagPlanner.prepare_pipeline_flags now takes context and pipeline_definition
+        # and modifies context.step_plans in-place.
+        MaterializationFlagPlanner.prepare_pipeline_flags(
+            context,
+            steps_definition
         )
-        for step_id, flags in step_flags_map.items():
-            if step_id in context.step_plans:
-                context.step_plans[step_id].update(flags)
-            else:
-                logger.warning(f"Step ID {step_id} found in materialization flags but not in context.step_plans. Skipping.")
+        
+        # Post-check (optional, but good for ensuring contracts are met by the planner)
+        for step in steps_definition:
+            step_id = step.uid
+            if step_id not in context.step_plans:
+                 # This should not happen if prepare_pipeline_flags guarantees plans for all steps
+                logger.error(f"Step {step.name} (ID: {step_id}) missing from step_plans after materialization planning.")
+                continue
+            
+            plan = context.step_plans[step_id]
+            if not all(k in plan for k in ["requires_disk_input", "requires_disk_output", "read_backend", "write_backend"]):
+                logger.error(
+                    f"Materialization flag planning incomplete for step {step.name} (ID: {step_id}). "
+                    f"Missing one or more required flags (Clause 273)."
+                )
 
 
     @staticmethod

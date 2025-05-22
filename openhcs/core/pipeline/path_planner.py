@@ -7,18 +7,18 @@ determining input and output paths for each step in a pipeline in a single pass.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union # Added Optional
+from typing import Any, Dict, List, Optional, Set, Union
 
-from openhcs.constants.constants import DEFAULT_OUT_DIR_SUFFIX
-from openhcs.core.pipeline.pipeline_utils import get_core_callable, to_snake_case # Added
-from openhcs.core.steps.abstract import AbstractStep # Added
-from openhcs.core.steps.function_step import FunctionStep # Added
+# DEFAULT_OUT_DIR_SUFFIX removed
+from openhcs.core.context.processing_context import ProcessingContext # ADDED
+from openhcs.core.pipeline.pipeline_utils import get_core_callable, to_snake_case
+from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.steps.function_step import FunctionStep
 
 
 logger = logging.getLogger(__name__)
 
-# Default suffixes for different step types
-FIRST_STEP_OUTPUT_SUFFIX = DEFAULT_OUT_DIR_SUFFIX  # Suffix for first step output directory
+# FIRST_STEP_OUTPUT_SUFFIX removed
 
 class PlanError(ValueError):
     """Error raised when pipeline planning fails."""
@@ -31,31 +31,34 @@ class PipelinePathPlanner:
 
     @staticmethod
     def prepare_pipeline_paths(
-        step_plans: Dict[str, Dict[str, Any]],
-        pipeline_definition: List[AbstractStep],
-        well_id: str,
-        initial_pipeline_input_dir: Path  # New parameter for "Take 27"
-        # Potential future: context: ProcessingContext if ensure_directory is needed here
-    ) -> Dict[str, Dict[str, Any]]:
+        context: ProcessingContext, # CHANGED: context is now the primary input
+        pipeline_definition: List[AbstractStep]
+        # step_plans, well_id, initial_pipeline_input_dir are now derived from context
+    ) -> Dict[str, Dict[str, Any]]: # Return type is still the modified step_plans from context
     """
     Prepare path information in a single pass through the pipeline.
+    Modifies context.step_plans in place.
     
     Args:
-        step_plans: Initial step plans with base paths, will be modified in place.
+        context: The ProcessingContext, containing step_plans, well_id, input_dir, and config.
         pipeline_definition: List of AbstractStep instances.
-        well_id: Well identifier.
         
     Returns:
-        The modified step_plans dictionary.
+        The modified step_plans dictionary (from context.step_plans).
     """
-    # Use existing step plans as starting point
-    if not step_plans:
-        raise ValueError("Step plans must be provided")
-    
-    # steps = pipeline["steps"] # Old way
-    steps = pipeline_definition # New way, directly use the list of step objects
+    path_config = context.get_path_planning_config()
+    step_plans = context.step_plans # Work on the context's step_plans
+    well_id = context.well_id
+    initial_pipeline_input_dir = context.input_dir # Assuming context.input_dir is the equivalent
 
-    # Modify step_plans in place (step_paths is an alias)
+    if not step_plans: # Should be initialized by PipelineCompiler before this call
+        raise ValueError("Context step_plans must be initialized before path planning.")
+    if not initial_pipeline_input_dir:
+        raise ValueError("Context input_dir must be set before path planning.")
+
+    steps = pipeline_definition
+
+    # Modify step_plans in place (step_paths is an alias to context.step_plans)
     step_paths = step_plans
     
     # Track available special outputs by key for validation
@@ -148,15 +151,28 @@ class PipelinePathPlanner:
                     # Use next step's input from step attribute
                     step_output_dir = Path(next_step.input_dir)
                 else:
-                    # Use same directory as input with processing suffix
-                    step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}_processed")
+                    # Use same directory as input with appropriate suffix based on step name
+                    step_name_lower = step_name.lower()
+                    current_suffix = path_config.output_dir_suffix # Default
+                    if "position" in step_name_lower:
+                        current_suffix = path_config.positions_dir_suffix
+                    elif "stitch" in step_name_lower:
+                        current_suffix = path_config.stitched_dir_suffix
+                    step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
             else:
-                # Last step uses input directory with processing suffix
-                step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}_processed")
+                # Last step uses input directory with appropriate suffix
+                step_name_lower = step_name.lower()
+                current_suffix = path_config.output_dir_suffix # Default
+                if "position" in step_name_lower:
+                    current_suffix = path_config.positions_dir_suffix
+                elif "stitch" in step_name_lower:
+                    current_suffix = path_config.stitched_dir_suffix
+                step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
             
             # --- Rule: First step must have different input and output ---
             if i == 0 and step_output_dir == step_input_dir:
-                step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{FIRST_STEP_OUTPUT_SUFFIX}")
+                # For the first step, always use the general output_dir_suffix if it needs differentiation
+                step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{path_config.output_dir_suffix}")
             
             # --- Process special I/O ---
             special_outputs = {}
