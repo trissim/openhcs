@@ -8,7 +8,6 @@ using NumPy. It handles subpixel positioning and blending of image tiles.
 import logging
 from typing import TYPE_CHECKING
 
-from openhcs.constants.constants import SpecialKey
 from openhcs.core.memory.decorators import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import special_inputs
 

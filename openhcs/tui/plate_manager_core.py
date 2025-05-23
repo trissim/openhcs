@@ -24,7 +24,7 @@ All updates to state.operation_status must be serialized through a lock.
 TUI must work only with plain strings, not VirtualPath objects.
 """
 import asyncio
-import logging # ADDED
+import logging
 import os
 import shutil  # For terminal size fallback
 import signal  # For signal handling in register_with_app
@@ -35,17 +35,19 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Container, HSplit, VSplit
-from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
+from prompt_toolkit.layout import Container, HSplit, VSplit, DynamicContainer, Dimension
+from prompt_toolkit.widgets import Box, Button, Frame, Label # Removed TextArea
 from openhcs.tui.status_bar import STATUS_ICONS
 from openhcs.tui.dialogs.plate_dialog_manager import PlateDialogManager
+from .components import InteractiveListItem # Import the new component
 from openhcs.tui.services.plate_validation import PlateValidationService
 
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.io.base import storage_registry
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.io.base import storage_registry, StorageBackendEnum # Added StorageBackendEnum
 from openhcs.io.filemanager import FileManager
 
-logger = logging.getLogger(__name__) # ADDED
+logger = logging.getLogger(__name__)
 
 
 # Define interfaces for component communication
@@ -60,50 +62,27 @@ class PlateEventHandler(Protocol):
 class PlateManagerPane:
     """
     Left pane for managing plates in the OpenHCS TUI.
-
-    Displays a list of plates (filesystem directories) and allows
-    the user to select, add, and manage them. When a plate is selected,
-    it emits an event to the ProcessingContext through the TUIState.
-
-    This class uses composition with PlateDialogManager for dialog handling.
     """
     def __init__(self, state, context: ProcessingContext, storage_registry: Any):
-        """
-        Initialize the Plate Manager pane.
-
-        Args:
-            state: The TUI state manager
-            context: The OpenHCS ProcessingContext
-            storage_registry: The shared storage registry instance.
-        """
         self.state = state
         self.context = context
-        self.registry = storage_registry # Store the shared registry
-
-        # PlateManagerPane creates its own FileManager using the shared registry
+        self.registry = storage_registry
         self.filemanager = FileManager(self.registry)
 
-        # Initialize state with thread safety
         self.plates: List[Dict[str, Any]] = []
         self.selected_index = 0
         self.is_loading = False
         self.plates_lock = asyncio.Lock()
 
-        # Create dedicated executor for I/O operations
-        self.io_executor = ThreadPoolExecutor(
-            max_workers=3,  # Limit concurrent I/O operations
-            thread_name_prefix="plate-io-"
-        )
+        self.io_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="plate-io-")
 
-        # Create dialog manager with callbacks
         self.dialog_manager = PlateDialogManager(
             on_add_dialog_result=self._handle_add_dialog_result,
             on_remove_dialog_result=self._handle_remove_dialog_result,
             on_error=self._handle_error,
-            storage_registry=self.registry
+            file_manager=self.filemanager, # Pass the FileManager instance
+            default_backend=StorageBackendEnum.LOCAL # Pass a default backend
         )
-
-        # Create validation service with callbacks
         self.validation_service = PlateValidationService(
             context=self.context,
             on_validation_result=self._handle_validation_result,
@@ -112,98 +91,144 @@ class PlateManagerPane:
             io_executor=self.io_executor
         )
 
-        # Initialize UI components that don't require app context
-        # Actual UI initialization will happen in _initialize_and_refresh
-        # This prevents duplicate initialization (Clause 12)
         self._ui_initialized = False
+        self.plate_items_container_widget: Optional[HSplit] = None
+        self._dynamic_plate_list_wrapper: Optional[DynamicContainer] = None
+        self._container: Optional[Frame] = None
+        
+        # Buttons
+        self.add_button: Optional[Button] = None
+        self.remove_button: Optional[Button] = None
+        self.edit_button: Optional[Button] = None
+        self.init_button: Optional[Button] = None
+        self.compile_button: Optional[Button] = None
+        self.run_button: Optional[Button] = None
+        self.kb: Optional[KeyBindings] = None
+
 
     async def _initialize_ui(self):
-        """
-        Initialize UI components that need filemanager.
-
-        🔒 Clause 12: Explicit Error Handling
-        Made idempotent to prevent duplicate initialization.
-
-        🔒 Clause 317: Runtime Correctness
-        Defers app context access until TUI is running.
-        """
-        # Guard against duplicate initialization
         if self._ui_initialized:
             return
 
-        # Create UI components
-        self.plate_list = await self._create_plate_list()
-
-        # Create button handlers that safely access app context
-        # Only create these when the app is actually running
         app = get_app()
         if not hasattr(app, 'is_running') or not app.is_running:
-            raise RuntimeError("Cannot initialize UI before application is running")
+            logger.warning("PlateManagerPane._initialize_ui called before app is fully running. Deferring.")
+            app.call_later(0.1, lambda: get_app().create_background_task(self._initialize_ui()))
+            return
 
-        self.add_button = Button(
-            "Add Plate",
-            handler=lambda: app.create_background_task(self._show_add_plate_dialog())
-        )
-        self.remove_button = Button(
-            "Remove Plate",
-            handler=lambda: app.create_background_task(self._show_remove_plate_dialog())
-        )
-        self.refresh_button = Button(
-            "Refresh",
-            handler=lambda: app.create_background_task(self._refresh_plates())
-        )
+        # Ensure self.context is available (should be set in __init__)
+        if not hasattr(self, 'context') or self.context is None:
+            logger.error("PlateManagerPane: ProcessingContext not available for command execution.")
+            # Handle error appropriately, maybe disable buttons or show an error message
+            # For now, buttons might fail if context is None.
+            # This assumes self.context is properly initialized.
 
-        # Mark as initialized to prevent duplicate initialization
-        self._ui_initialized = True
-
-        # Create key bindings
+        self.add_button = Button("Add", handler=lambda: get_app().create_background_task(
+            ShowAddPlateDialogCommand().execute(self.state, self.context, plate_dialog_manager=self.dialog_manager)
+        ))
+        self.remove_button = Button("Del", handler=lambda: get_app().create_background_task(
+            DeleteSelectedPlatesCommand().execute(self.state, self.context, selected_plates_data=self._get_selected_plate_data_for_action())
+        ))
+        self.edit_button = Button("Edit", handler=lambda: get_app().create_background_task(
+            ShowEditPlateConfigDialogCommand().execute(self.state, self.context) # Relies on state.active_orchestrator
+        ))
+        self.init_button = Button("Init", handler=lambda: get_app().create_background_task(
+            InitializePlatesCommand().execute(self.state, self.context, orchestrators_to_init=self._get_selected_orchestrators_for_action())
+        ))
+        self.compile_button = Button("Compile", handler=lambda: get_app().create_background_task(
+            CompilePlatesCommand().execute(self.state, self.context, orchestrators_to_compile=self._get_selected_orchestrators_for_action())
+        ))
+        self.run_button = Button("Run", handler=lambda: get_app().create_background_task(
+            RunPlatesCommand().execute(self.state, self.context, orchestrators_to_run=self._get_selected_orchestrators_for_action())
+        ))
+        
+        self.plate_items_container_widget = await self._build_plate_items_container()
         self.kb = self._create_key_bindings()
 
-        # Create container
-        self.container = HSplit([
-            self.plate_list,
-            VSplit([
-                Box(self.add_button, padding=1),
-                Box(self.remove_button, padding=1),
-                Box(self.refresh_button, padding=1)
-            ])
-        ])
+        self.get_current_plate_list_container = lambda: self.plate_items_container_widget or HSplit([Label("Loading plates...")])
+        self._dynamic_plate_list_wrapper = DynamicContainer(self.get_current_plate_list_container)
+        self._container = Frame(self._dynamic_plate_list_wrapper, title="Plates")
+        
+        self._ui_initialized = True
+
+    def _get_selected_plate_data_for_action(self) -> Optional[List[Dict[str, Any]]]:
+        """Helper to get data of the currently selected plate(s) for commands."""
+        # This logic needs to be robust based on how multi-selection is handled.
+        # For now, assume single selection via self.selected_index or a list if multi-select is implemented.
+        if self.plates and 0 <= self.selected_index < len(self.plates):
+            return [self.plates[self.selected_index]] # Return as a list for consistency
+        # Could also check self.state.selected_plates if that's a list from multi-select UI
+        return None
+
+    def _get_selected_orchestrators_for_action(self) -> List["PipelineOrchestrator"]:
+        """Helper to get orchestrator instances of selected plate(s)."""
+        # This method should ideally use a more robust way to get selected plates,
+        # e.g. if multi-selection is supported by InteractiveListItem or a similar mechanism.
+        # For now, it relies on _get_selected_plate_data_for_action which is single-select.
+        selected_data = self._get_selected_plate_data_for_action()
+        orchestrators: List["PipelineOrchestrator"] = []
+        if selected_data:
+            for plate_dict in selected_data:
+                orchestrator = plate_dict.get('orchestrator')
+                if orchestrator: # Add type check for PipelineOrchestrator if possible
+                    orchestrators.append(orchestrator)
+        
+        # Fallback to active_orchestrator if no specific selection for action is found
+        # and the command implies action on the single active one.
+        if not orchestrators and hasattr(self.state, 'active_orchestrator') and self.state.active_orchestrator:
+            orchestrators.append(self.state.active_orchestrator)
+            
+        return orchestrators
 
     @property
     def container(self) -> Container:
-        """Return the main container for the PlateManagerPane."""
-        return self._container # Assuming _container is set in __init__
+        if not self._container: 
+            # This case should ideally not be hit if _initialize_ui is called correctly.
+            # Fallback to a simple label if not initialized.
+            return Frame(Label("Plate Manager not initialized."))
+        return self._container
 
-        # Register for events
-        self.state.add_observer('refresh_plates', self._refresh_plates)
-        self.state.add_observer('plate_status_changed', self._update_plate_status)
-        # Listen for requests to show the add plate dialog
-        self.state.add_observer('ui_request_show_add_plate_dialog',
-                                lambda data=None: get_app().create_background_task(self._handle_request_show_add_plate_dialog(data)))
-        # Listen for requests to add a predefined test plate
-        self.state.add_observer('add_predefined_plate',
-                                lambda data=None: get_app().create_background_task(self._handle_add_predefined_plate(data)))
+    def get_buttons_container(self) -> Container:
+        # Ensure buttons are initialized before creating the container
+        if not all([self.add_button, self.remove_button, self.edit_button, self.init_button, self.compile_button, self.run_button]):
+             # This can happen if get_buttons_container is called before _initialize_ui completes
+             return HSplit([Label("Buttons not ready.")])
+
+        return HSplit([ 
+            VSplit([ # VSplit for horizontal arrangement of buttons
+                Box(self.add_button, padding_left=1, padding_right=1),
+                Box(self.remove_button, padding_right=1),
+                Box(self.edit_button, padding_right=1),
+                Box(self.init_button, padding_right=1),
+                Box(self.compile_button, padding_right=1),
+                Box(self.run_button, padding_right=1),
+            ])
+        ])
+    
+    def register_with_app(self):
+        """Registers observers with the TUIState."""
+        self.state.add_observer('filemanager_available', self._on_filemanager_available)
+        self.state.add_observer('refresh_plates', lambda data=None: get_app().create_background_task(self._refresh_plates(data)))
+        self.state.add_observer('plate_status_changed', lambda data: get_app().create_background_task(self._update_plate_status(data)))
+        self.state.add_observer('ui_request_show_add_plate_dialog', lambda data=None: get_app().create_background_task(self._handle_request_show_add_plate_dialog(data)))
+        self.state.add_observer('add_predefined_plate', lambda data=None: get_app().create_background_task(self._handle_add_predefined_plate(data)))
+        self.state.add_observer('delete_plates_requested', self._handle_delete_plates_request) # Added observer
+        # Note: Shutdown hook is handled by the main TUI application ensuring self.shutdown() is called.
 
     async def _handle_request_show_add_plate_dialog(self, data=None):
-        """Handles the TUIState event 'ui_request_show_add_plate_dialog'."""
         logger.info("PlateManagerPane: Received ui_request_show_add_plate_dialog event.")
         await self._show_add_plate_dialog()
 
     async def _handle_add_predefined_plate(self, data: Optional[Dict[str, Any]] = None):
-        """Handles the TUIState event 'add_predefined_plate'."""
         if not data or 'path' not in data or 'backend' not in data:
             logger.error("PlateManagerPane: Received 'add_predefined_plate' event with missing data.")
-            await self._handle_error("Invalid data for predefined plate.",
-                                     f"Received: {data}")
+            await self._handle_error("Invalid data for predefined plate.", f"Received: {data}")
             return
-
         path = data['path']
         backend = data['backend']
         logger.info(f"PlateManagerPane: Received 'add_predefined_plate' event for path='{path}', backend='{backend}'.")
-        
         try:
-            # Use the existing validation service to add and validate the plate
-            await self.validation_service.validate_plate(path, backend)
+            await self.validation_service.validate_plate(path, backend) # Validation service will add it via _handle_validation_result
             logger.info(f"PlateManagerPane: Validation initiated for predefined plate '{path}'.")
         except Exception as e:
             logger.error(f"PlateManagerPane: Error initiating validation for predefined plate '{path}': {e}", exc_info=True)
@@ -213,380 +238,470 @@ class PlateManagerPane:
         """Handle filemanager becoming available."""
         if 'filemanager' in data:
             self.filemanager = data['filemanager']
-
             # Update validation service with filemanager
             self.validation_service.filemanager = self.filemanager
+            # Initialize UI asynchronously now that filemanager is ready
+            get_app().create_background_task(self._initialize_and_refresh())
 
-            # Initialize UI asynchronously
-            # Use await to properly handle async method (Clause 12)
-            get_app().create_background_task(self._initialize_and_refresh)
 
     async def _initialize_and_refresh(self):
-        """
-        Initialize UI and refresh plates asynchronously.
-
-        🔒 Clause 317: Runtime Correctness
-        Ensures app is running before initializing UI.
-        """
-        # Wait for app to be fully running before initializing UI
+        """Initialize UI and refresh plates asynchronously."""
         app = get_app()
-        while not hasattr(app, 'is_running') or not app.is_running:
+        while not hasattr(app, 'is_running') or not app.is_running: # Wait for app to be fully running
             await asyncio.sleep(0.1)
+        
+        if not self._ui_initialized: # Ensure UI is initialized only once
+            await self._initialize_ui()
+            self.register_with_app() # Register observers after UI is set up
 
-        # Initialize UI first
-        await self._initialize_ui()
+        await self._refresh_plates() # Initial refresh
 
-        # Then refresh plates if any were added before filemanager was available
-        await self._refresh_plates()
 
-        # Register shutdown hook with application
-        self.register_with_app()
+    async def _update_selection(self):
+        """Rebuilds the plate items container to reflect current selection and data."""
+        if not self._ui_initialized:
+            logger.debug("PlateManagerPane: _update_selection called before UI initialized.")
+            return
 
-    async def _create_plate_list(self) -> TextArea:
-        """Create the plate list component with proper scrolling."""
-        # Get initial text with thread safety
-        initial_text = await self._format_plate_list()
+        self.plate_items_container_widget = await self._build_plate_items_container()
+        
+        # Ensure TUIState is updated with the current selection status
+        current_selection_valid = self.plates and 0 <= self.selected_index < len(self.plates)
+        if current_selection_valid:
+            await self._select_plate(self.selected_index) 
+        elif not self.plates: # If list is empty, ensure no selection is active in TUIState
+             await self.state.notify('plate_selected', None)
+        # If selection is invalid but list is not empty, _select_plate will handle notifying None if index is bad.
 
-        # Create TextArea with proper scrolling support for PTK ≥3.0
-        # Remove horizontal_scroll which is not valid in PTK ≥3.0 (Clause 24)
-        from prompt_toolkit.layout.margins import ScrollbarMargin
+        get_app().invalidate()
 
-        text_area = TextArea(
-            text=initial_text,
-            read_only=True,
-            scrollbar=True,
-            wrap_lines=False,
-            width=None,  # Let TextArea determine appropriate width
-            right_margins=[ScrollbarMargin()]  # Use ScrollbarMargin instead of horizontal_scroll
-        )
-        return text_area
+    async def _build_plate_items_container(self) -> HSplit:
+        """Builds the HSplit container holding individual InteractiveListItem widgets for plates."""
+        item_widgets = []
+        async with self.plates_lock:
+            if self.is_loading and not self.plates: 
+                 item_widgets.append(Label("Loading plates..."))
+            elif not self.plates:
+                item_widgets.append(Label("No plates. Click 'Add'."))
+            else:
+                for i, plate_data in enumerate(self.plates):
+                    is_selected = (i == self.selected_index)
+                    can_move_up = i > 0
+                    can_move_down = i < len(self.plates) - 1
+                    item_widget = InteractiveListItem(
+                        item_data=plate_data, item_index=i, is_selected=is_selected,
+                        display_text_func=self._get_plate_display_text,
+                        on_select=self._handle_plate_item_select,
+                        on_move_up=self._handle_plate_item_move_up,
+                        on_move_down=self._handle_plate_item_move_down,
+                        can_move_up=can_move_up, can_move_down=can_move_down
+                    )
+                    item_widgets.append(item_widget)
+        # Ensure HSplit always has children, even if it's just a placeholder label
+        return HSplit(item_widgets if item_widgets else [Label(" ")], width=Dimension(weight=1), height=Dimension(min=len(item_widgets) or 1))
 
-    async def _format_plate_list(self, lock_already_held: bool = False) -> str:
-        """
-        Format the plate list for display with proper path handling.
+    def _get_plate_display_text(self, plate_data: Dict[str, Any], is_selected: bool) -> str:
+        """Generates the display text for a single plate item."""
+        plate_status = plate_data.get('status', 'unknown')
+        
+        # Updated status symbol logic based on V4 plan and common error states
+        if plate_status == 'not_initialized': status_symbol = "?"
+        elif plate_status == 'initialized': status_symbol = "-"
+        elif plate_status == 'compiled_ok': status_symbol = "✓"
+        elif plate_status and ('error' in plate_status or plate_status in ['error_init', 'error_compile', 'error_run']):
+            status_symbol = "✗"
+        else: status_symbol = STATUS_ICONS.get(plate_status, "o") # Fallback, 'o' could mean idle/unknown good state
 
-        Args:
-            lock_already_held: Whether the plates_lock is already held by the caller
-
-        🔒 Clause 317: TUI_STATUS_THREADSAFETY
-        Uses plates_lock to prevent read-while-write races.
-        """
-        # Define the formatting function to avoid code duplication
-        async def _do_format():
-            if self.is_loading:
-                return "Loading plates..."
-
-            if not self.plates:
-                return "No plates added. Click 'Add Plate' to add a plate."
-
-            lines = []
-            # Get filemanager from instance (set in constructor)
-            fm = self.filemanager
-
-            # Get terminal width for dynamic path truncation
-            # Use shutil.get_terminal_size() as a fallback (Clause 12)
-            terminal_width = 80  # Default fallback
+        name = plate_data.get('name', 'Unknown Plate')
+        
+        path_str = "[No Path]"
+        # Ensure self.filemanager is checked before use, as it's set asynchronously
+        fm = getattr(self, 'filemanager', None)
+        if 'path' in plate_data and 'backend' in plate_data and fm:
             try:
-                # Try prompt_toolkit's method first
-                app = get_app()
-                if hasattr(app, 'output') and app.output is not None:
-                    size = app.output.get_size()
-                    if size and size.columns > 0:
-                        terminal_width = size.columns
-                    else:
-                        # Fallback to shutil if prompt_toolkit returns invalid size
-                        terminal_width = shutil.get_terminal_size((80, 20)).columns
+                # Assuming fm.get_path might not exist or backend is not directly used here
+                # If path is already an OS path for disk backend:
+                raw_path = plate_data['path']
+                # If it's a VFS path object, get its string representation
+                if hasattr(raw_path, 'os_path'): # Check if it's a VirtualPath like object
+                    path_str = str(raw_path.os_path)
                 else:
-                    # Fallback to shutil if app.output is not available
-                    terminal_width = shutil.get_terminal_size((80, 20)).columns
-            except Exception:
-                # Final fallback if all else fails
-                terminal_width = shutil.get_terminal_size((80, 20)).columns
+                    path_str = str(raw_path)
 
-            max_path_length = max(30, terminal_width - 30)  # Dynamic width based on terminal
+                if len(path_str) > 40:
+                    path_str = "..." + path_str[-(40-3):]
+            except Exception as e:
+                logger.debug(f"Error formatting path for display: {plate_data.get('path')}, {e}")
+                path_str = plate_data.get('path', '[Path Error]')
+        elif 'path' in plate_data: # Fallback if backend or fm not fully set up yet
+             path_str = str(plate_data['path'])
+             if len(path_str) > 40: path_str = "..." + path_str[-(40-3):]
 
-            for i, plate in enumerate(self.plates):
-                # Format: [status] plate_name | plate_path
-                status_icon = STATUS_ICONS.get(plate['status'], "?")
-                selected = ">" if i == self.selected_index else " "
-                name = plate['name']
+        # The ^/v symbols for reordering are best handled by InteractiveListItem itself
+        # as it knows its position and capabilities (can_move_up/down).
+        prefix = "X | " if is_selected else "  | "
+        return f"{prefix}{status_symbol} {name} | {path_str}"
 
-                # 🔒 Clause 319: TUI_NO_VIRTUALPATH_EXPOSURE
-                # Convert to OS path to prevent leaking VFS URIs
-                backend = plate['backend']
-                virtual_path = fm.get_path(plate['path'], backend)
-                # Use os_path (canonical accessor) to get OS path without VFS URI
-                # VirtualPath guarantees .os_path, not .local_path (Clause 88)
-                path_str = str(virtual_path.os_path)
+    # _format_plate_list is obsolete.
 
-                # Truncate long paths for display
-                if len(path_str) > max_path_length:
-                    path_str = path_str[:max_path_length-3] + "..."
+    # --- New callback handlers for InteractiveListItem ---
+    async def _handle_plate_item_select(self, index: int):
+        """Handles selection of a plate item from the list via click."""
+        if 0 <= index < len(self.plates): # Ensure index is valid
+            self.selected_index = index
+            await self._update_selection() # This will rebuild list and call _select_plate
 
-                line = f"{selected} {status_icon} {name} | {path_str}"
-                lines.append(line)
+    async def _handle_plate_item_move_up(self, index: int):
+        """Handles 'move up' button click for a plate item."""
+        if 0 <= index < len(self.plates): # Ensure index is valid
+            self.selected_index = index # Set current selection to the item being moved
+            await self._move_plate_up()
 
-            return "\n".join(lines)
-
-        # Acquire lock only if not already held
-        if lock_already_held:
-            return await _do_format()
-        else:
-            # Acquire lock to prevent read-while-write races
-            async with self.plates_lock:
-                return await _do_format()
+    async def _handle_plate_item_move_down(self, index: int):
+        """Handles 'move down' button click for a plate item."""
+        if 0 <= index < len(self.plates): # Ensure index is valid
+            self.selected_index = index # Set current selection to the item being moved
+            await self._move_plate_down()
+            
+    async def _update_selection_and_notify_order(self):
+        """Helper to update selection UI and notify about plate order changes."""
+        await self._update_selection() 
+        async with self.plates_lock: # Ensure thread-safe access to self.plates for notification
+            await self.state.notify('plate_order_changed', {'plates': list(self.plates)}) # Send a copy
+    # --- End of new callback handlers ---
 
     def _create_key_bindings(self) -> KeyBindings:
-        """Create key bindings for the plate list with Vim-style navigation."""
         kb = KeyBindings()
+        # Ensure self._container is used for focus check, which is the Frame
+        list_container_focused = has_focus(self._container) if self._container else Condition(lambda: False)
 
-        # Arrow key navigation
-        @kb.add('up', filter=has_focus(self.plate_list))
+        @kb.add('up', filter=list_container_focused)
         def _(event):
-            """Move selection up."""
-            if self.plates:
-                get_app().create_background_task(self._move_selection(-1))
-
-        @kb.add('down', filter=has_focus(self.plate_list))
+            if self.plates: get_app().create_background_task(self._move_selection(-1))
+        @kb.add('down', filter=list_container_focused)
         def _(event):
-            """Move selection down."""
-            if self.plates:
-                get_app().create_background_task(self._move_selection(1))
+            if self.plates: get_app().create_background_task(self._move_selection(1))
 
-        # Vim-style navigation
-        # Use getattr with default for vim_mode to prevent AttributeError (Clause 24/41)
         vim_mode_condition = Condition(lambda: getattr(self.state, "vim_mode", False))
-
-        @kb.add('k', filter=has_focus(self.plate_list) & vim_mode_condition)
+        @kb.add('k', filter=list_container_focused & vim_mode_condition)
         def _(event):
-            """Move selection up (Vim style)."""
-            if self.plates:
-                get_app().create_background_task(self._move_selection(-1))
-
-        @kb.add('j', filter=has_focus(self.plate_list) & vim_mode_condition)
+            if self.plates: get_app().create_background_task(self._move_selection(-1))
+        @kb.add('j', filter=list_container_focused & vim_mode_condition)
         def _(event):
-            """Move selection down (Vim style)."""
-            if self.plates:
-                get_app().create_background_task(self._move_selection(1))
+            if self.plates: get_app().create_background_task(self._move_selection(1))
+        
+        @kb.add('shift+up', filter=list_container_focused)
+        def _(event): get_app().create_background_task(self._move_plate_up())
+        @kb.add('shift+down', filter=list_container_focused)
+        def _(event): get_app().create_background_task(self._move_plate_down())
 
-        # Selection
-        @kb.add('enter', filter=has_focus(self.plate_list))
+        @kb.add('enter', filter=list_container_focused)
         def _(event):
-            """Select the current plate."""
             if self.plates and 0 <= self.selected_index < len(self.plates):
+                # Enter on a plate confirms selection and potentially opens an edit/detail view in future
                 get_app().create_background_task(self._select_plate(self.selected_index))
-
         return kb
 
-    # Dialog interface methods
-    async def _show_add_plate_dialog(self):
-        """Show dialog to add a plate using the dialog manager."""
-        await self.dialog_manager.show_add_plate_dialog()
+    async def _move_plate_up(self):
+        logger.info("PlateManagerPane: Move plate up.")
+        async with self.plates_lock:
+            if not self.plates or self.selected_index == 0: return
+            idx = self.selected_index
+            plate_to_move = self.plates.pop(idx)
+            self.plates.insert(idx - 1, plate_to_move)
+            self.selected_index = idx - 1 # Update selected index to follow the moved item
+            await self._update_selection_and_notify_order()
 
-    async def _show_remove_plate_dialog(self):
-        """Show dialog to remove a plate using the dialog manager."""
-        if not self.plates or not (0 <= self.selected_index < len(self.plates)):
+    async def _move_plate_down(self):
+        logger.info("PlateManagerPane: Move plate down.")
+        async with self.plates_lock:
+            if not self.plates or self.selected_index >= len(self.plates) - 1: return
+            idx = self.selected_index
+            plate_to_move = self.plates.pop(idx)
+            self.plates.insert(idx + 1, plate_to_move)
+            self.selected_index = idx + 1 # Update selected index to follow the moved item
+            await self._update_selection_and_notify_order()
+
+    # Old handler methods _show_add_plate_dialog, _show_remove_plate_dialog,
+    # and the missing _on_edit_plate_clicked, _on_init_plate_clicked,
+    # _on_compile_plate_clicked, _on_run_plate_clicked are now effectively
+    # replaced by the Command executions in _initialize_ui.
+    # Their direct invocation is removed.
+    # The logic for what these actions do is now encapsulated within their respective Command classes.
+
+    # _handle_add_dialog_result is still needed if ShowAddPlateDialogCommand (or dialog manager)
+    # calls back to PlateManagerPane after dialog completion.
+    # Or, ShowAddPlateDialogCommand handles the result itself.
+    # For now, assuming commands might notify TUIState, and PlateManagerPane reacts.
+    # Let's keep _handle_add_dialog_result as it's used by dialog_manager.
+    # The ShowAddPlateDialogCommand will trigger dialog_manager.show_add_plate_dialog,
+    # which then calls this handler.
+    async def _handle_add_dialog_result(self, result: Dict[str, Any]):
+        if not result or 'paths' not in result or not result['paths']: # Check for None, 'paths' key, and empty list
+            logger.error("PlateManagerPane: '_handle_add_dialog_result' received no 'paths' or empty list.")
+            # Notify error or simply log and return if cancellation is handled by dialog manager
+            # await self._handle_error("Failed to add plate(s): No paths provided.", f"Result: {result}")
+            return # Assuming cancellation or empty selection is handled, so just return
+        
+        paths_to_process = result['paths'] # Expecting a list of path strings
+        # Ensure it's a list, though PlateDialogManager should now always send a list
+        if not isinstance(paths_to_process, list):
+            logger.warning(f"PlateManagerPane: _handle_add_dialog_result expected a list of paths, got {type(paths_to_process)}. Wrapping.")
+            paths_to_process = [str(paths_to_process)]
+
+        if not self.state.global_config:
+            logger.error("PlateManagerPane: Global config not available.")
+            await self._handle_error("Cannot add plate(s): Global configuration is missing.")
+            return
+        
+        added_plate_details = []
+        for path_str in paths_to_process:
+            try:
+                orchestrator = PipelineOrchestrator(plate_path=path_str, config=self.state.global_config, storage_registry=self.registry)
+                plate_tui_id = str(Path(path_str).name) + f"_{orchestrator.config.vfs.default_storage_backend}"
+                new_plate_entry = {'id': plate_tui_id, 'name': Path(path_str).name, 'path': path_str, 
+                                   'status': 'not_initialized', 'orchestrator': orchestrator, 
+                                   'backend': orchestrator.config.vfs.default_storage_backend}
+                async with self.plates_lock:
+                    if any(p['id'] == new_plate_entry['id'] for p in self.plates):
+                        logger.warning(f"Plate with TUI ID '{new_plate_entry['id']}' already exists. Skipping.")
+                        continue
+                    self.plates.append(new_plate_entry)
+                added_plate_details.append({'plate_id': new_plate_entry['id'], 'path': new_plate_entry['path']})
+                logger.info(f"Added new plate '{new_plate_entry['name']}' (ID: {new_plate_entry['id']}). Status: not_initialized.")
+            except Exception as e:
+                logger.error(f"Error creating orchestrator for path '{path_str}': {e}", exc_info=True)
+                await self._handle_error(f"Failed to add plate for path: {path_str}", str(e))
+        
+        if added_plate_details:
+            async with self.plates_lock: 
+                if self.plates: 
+                    self.selected_index = len(self.plates) - 1
+                await self._update_selection() # This will rebuild UI and call _select_plate
+            # Notify for each added plate (orchestrator instance)
+            for plate_data in self.plates: # Iterate through current plates
+                for detail in added_plate_details:
+                    if plate_data['id'] == detail['plate_id']:
+                         await self.state.notify('plate_orchestrator_added', {
+                            'plate_id': plate_data['id'],
+                            'orchestrator': plate_data['orchestrator'], # Send the orchestrator instance
+                            'path': plate_data['path']
+                        })
+                         break # Found the added plate, move to next detail
+            logger.info(f"Processed and notified for {len(added_plate_details)} new plate(s).")
+        else:
+            logger.info("No new plates were added from dialog result.")
+
+    async def _handle_delete_plates_request(self, data: Dict[str, Any]):
+        """Handles the 'delete_plates_requested' event from DeleteSelectedPlatesCommand."""
+        plates_to_delete_data = data.get('plates_to_delete', [])
+        if not plates_to_delete_data:
+            logger.info("PlateManagerPane: Received delete_plates_requested but no plates specified.")
             return
 
-        plate = self.plates[self.selected_index]
-        await self.dialog_manager.show_remove_plate_dialog(plate)
+        ids_to_remove = {plate_data.get('id') for plate_data in plates_to_delete_data if plate_data.get('id')}
+        if not ids_to_remove:
+            logger.warning("PlateManagerPane: No valid plate IDs found in delete_plates_requested.")
+            return
 
-    # Event handlers for dialog manager callbacks
-    async def _handle_add_dialog_result(self, result: Dict[str, Any]):
-        """Handle add dialog result from dialog manager."""
-        if 'path' in result and 'backend' in result:
-            # Start validation process
-            try:
-                await self.validation_service.validate_plate(result['path'], result['backend'])
-            except Exception as e:
-                # Assuming validation_service handles user notification of this error.
-                # Logging that this path was taken for debug purposes.
-                logger.debug(f"Exception caught in _handle_add_dialog_result after validation_service.validate_plate call: {e}", exc_info=True)
-                pass
-
-    async def _handle_remove_dialog_result(self, plate: Dict[str, Any]):
-        """Handle remove dialog result from dialog manager."""
+        removed_plate_details = []
         async with self.plates_lock:
-            # Remove plate from list
-            self.plates = [p for p in self.plates if p['id'] != plate['id']]
+            original_length = len(self.plates)
+            
+            # Store details of plates being removed before modifying self.plates
+            for plate_id_to_remove in ids_to_remove:
+                for plate_in_list in self.plates:
+                    if plate_in_list.get('id') == plate_id_to_remove:
+                        removed_plate_details.append(dict(plate_in_list)) # Store a copy
+                        break
+            
+            self.plates = [p for p in self.plates if p.get('id') not in ids_to_remove]
+            num_removed = original_length - len(self.plates)
 
-            # Update selection
             if self.selected_index >= len(self.plates):
                 self.selected_index = max(0, len(self.plates) - 1)
+        
+        if num_removed > 0:
+            logger.info(f"PlateManagerPane: Removed {num_removed} plate(s) with IDs: {ids_to_remove}.")
+            await self._update_selection() # This refreshes UI and notifies 'plate_selected'
+            
+            # Notify TUIState for each actually removed plate so TUILauncher can clean up orchestrators
+            for removed_plate_detail in removed_plate_details:
+                 await self.state.notify('plate_removed', removed_plate_detail) # Send full detail for TUILauncher
+        else:
+            logger.warning(f"PlateManagerPane: No plates found matching IDs {ids_to_remove} for deletion.")
 
-            # Update UI - lock already held
-            formatted = await self._format_plate_list(lock_already_held=True)
-            self.plate_list.text = formatted
 
-            # Notify state
-            self.state.notify('plate_removed', plate)
+    async def _handle_remove_dialog_result(self, plate_to_remove: Dict[str, Any]):
+        # This method is called by PlateDialogManager after user confirms removal of a single plate.
+        # The DeleteSelectedPlatesCommand might show a single confirmation for multiple plates,
+        # then notify 'delete_plates_requested'. This _handle_remove_dialog_result might become
+        # less used if multi-delete confirmation is handled centrally by the command.
+        # For now, keeping its logic as it's tied to the dialog manager's current single-item remove flow.
+        # If DeleteSelectedPlatesCommand directly calls this for each, it's fine.
+        # However, the current DeleteSelectedPlatesCommand notifies 'delete_plates_requested'
+        # which is now handled by _handle_delete_plates_request.
+        # This method might be simplified or removed if PlateDialogManager's remove dialog
+        # is only ever triggered by a command that handles multi-selection confirmation.
+        # For safety, let's assume it might still be called for single deletions.
+        logger.info(f"PlateManagerPane: _handle_remove_dialog_result for plate ID: {plate_to_remove.get('id')}")
+        await self._handle_delete_plates_request({'plates_to_delete': [plate_to_remove]})
 
-    # Event handlers for validation service callbacks
-    async def _handle_validation_result(self, plate: Dict[str, Any]):
-        """Handle validation result from validation service."""
+
+    async def _handle_validation_result(self, validated_plate: Dict[str, Any]):
+        """Handles validation result, typically adding or updating a plate."""
         async with self.plates_lock:
-            # Check if plate already exists
-            existing_plate = next((p for p in self.plates if p['id'] == plate['id']), None)
-
-            if existing_plate:
-                # Update existing plate
-                for p in self.plates:
-                    if p['id'] == plate['id']:
-                        p.update(plate)
-                        break
+            existing_plate_index = -1
+            for i, p in enumerate(self.plates):
+                if p['id'] == validated_plate['id']:
+                    existing_plate_index = i
+                    break
+            
+            if existing_plate_index != -1:
+                self.plates[existing_plate_index].update(validated_plate)
             else:
-                # Add new plate
-                self.plates.append(plate)
-                self.selected_index = len(self.plates) - 1
-
-            # Update UI - lock already held
-            formatted = await self._format_plate_list(lock_already_held=True)
-            self.plate_list.text = formatted
-
-            # Notify state if plate is ready
-            if plate['status'] == 'ready':
-                self.state.notify('plate_added', plate)
+                self.plates.append(validated_plate)
+                if self.plates: 
+                    self.selected_index = len(self.plates) - 1
+            await self._update_selection() # Rebuilds UI and calls _select_plate
+        
+        # Notify TUIState about the added/updated plate if it's ready
+        if validated_plate.get('status') == 'ready': # Check status from validated_plate
+            self.state.notify('plate_added', validated_plate) # Send the full plate data
 
     async def _handle_error(self, message: str, details: str = None):
-        """Handle error from components."""
-        # Store in state for logging with bounded size
         if not hasattr(self.state, 'error_logs'):
-            # Use collections.deque with maxlen for bounded size
             from collections import deque
             self.state.error_logs = deque(maxlen=200)
+        if details: self.state.error_logs.append(f"PlateManagerPane Error: {message} - Details: {details}")
+        else: self.state.error_logs.append(f"PlateManagerPane Error: {message}")
+        self.state.notify('error', {'source': 'PlateManagerPane', 'message': message, 'details': details})
 
-        if details:
-            # Add error to the bounded log
-            self.state.error_logs.append(f"--- Error ---\n{details}")
+    async def _on_edit_plate_clicked(self):
+        logger.info("PlateManagerPane: Edit plate clicked.")
+        if not self.plates or not (0 <= self.selected_index < len(self.plates)):
+            await self._handle_error("No plate selected.", "Select a plate to edit its configuration.")
+            return
+        plate_entry = self.plates[self.selected_index]
+        orchestrator = plate_entry.get('orchestrator') 
+        if not orchestrator:
+             await self._handle_error(f"Orchestrator not found for selected plate '{plate_entry['name']}'. Cannot edit.")
+             return
+        logger.info(f"Attempting to edit config for plate '{plate_entry['name']}'.")
+        # Actual edit dialog logic would go here.
+        await self._handle_error(f"Edit Plate Configuration for '{plate_entry['name']}' not yet implemented.", "This feature (PlateConfigEditorDialog) is part of a future phase.")
 
-        # Notify state
-        self.state.notify('error', {
-            'source': 'PlateManagerPane',
-            'message': message,
-            'details': details
-        })
+    async def _on_init_plate_clicked(self):
+        logger.info("Init plate clicked (Not Implemented).")
+        await self._handle_error("Initialize Plate functionality not yet implemented.", "This feature is pending.")
+    async def _on_compile_plate_clicked(self):
+        logger.info("Compile plate clicked (Not Implemented).")
+        await self._handle_error("Compile Plate functionality not yet implemented.", "This feature is pending.")
+    async def _on_run_plate_clicked(self):
+        logger.info("Run plate clicked (Not Implemented).")
+        await self._handle_error("Run Plate functionality not yet implemented.", "This feature is pending.")
 
-    # Core plate management methods
     async def _move_selection(self, delta: int) -> None:
-        """Move selection up or down with thread safety."""
+        """Move selection up or down (typically for keyboard navigation)."""
         async with self.plates_lock:
             if self.plates:
-                self.selected_index = max(0, min(len(self.plates) - 1, self.selected_index + delta))
-                # Use async _format_plate_list with lock already acquired
-                # Update UI - lock already held
-                formatted = await self._format_plate_list(lock_already_held=True)
-                self.plate_list.text = formatted
-
-                # Ensure selection is visible
-                if 0 <= self.selected_index < len(self.plates):
-                    # Schedule this to run after rendering
-                    get_app().call_later(self._ensure_selection_visible)
+                new_index = max(0, min(len(self.plates) - 1, self.selected_index + delta))
+                if new_index != self.selected_index:
+                    self.selected_index = new_index
+                    await self._update_selection() # This will rebuild UI and call _select_plate
 
     def _ensure_selection_visible(self) -> None:
-        """Ensure the selected item is visible in the viewport."""
-        if hasattr(self, 'plate_list') and self.plates and 0 <= self.selected_index < len(self.plates):
-            # Scroll to make selection visible if needed
-            self.plate_list.buffer.cursor_position = self.plate_list.buffer.document.translate_row_col_to_index(
-                self.selected_index, 0
-            )
+        """Placeholder. Relies on PTK default scroll-to-focus for Frame/DynamicContainer."""
+        pass 
 
     async def _select_plate(self, index: int) -> None:
-        """Select a plate and emit selection event."""
-        if not self.plates or not (0 <= index < len(self.plates)):
-            return
+        """Updates TUIState with the currently selected plate's information."""
+        plate_to_select: Optional[Dict[str, Any]] = None
+        is_valid_selection = False
+        async with self.plates_lock: # Lock for accessing self.plates and self.selected_index
+            if self.plates and 0 <= index < len(self.plates):
+                self.selected_index = index # Ensure selected_index is up-to-date
+                plate_to_select = self.plates[index]
+                is_valid_selection = True
+            # Note: _update_selection() is NOT called here to prevent recursion,
+            # as _update_selection() itself calls _select_plate().
+            # The UI refresh is handled by the caller of _select_plate (e.g., _update_selection).
 
-        async with self.plates_lock:
-            plate = self.plates[index]
-            self.selected_index = index
-
-            # Update UI to reflect selection - lock already held
-            # Update UI - lock already held
-            formatted = await self._format_plate_list(lock_already_held=True)
-            self.plate_list.text = formatted
-
-            # Emit event to TUIState (not directly to context)
-            self.state.notify('plate_selected', {
-                'id': plate['id'],
-                'backend': plate['backend'],
-                'path': plate['path']
+        if is_valid_selection and plate_to_select:
+            await self.state.notify('plate_selected', {
+                'id': plate_to_select.get('id'), 
+                'backend': plate_to_select.get('backend'),
+                'path': plate_to_select.get('path'),
+                'orchestrator': plate_to_select.get('orchestrator') # Pass orchestrator on selection
             })
+        else: 
+            await self.state.notify('plate_selected', None) # No valid selection
+
 
     async def _update_plate_status(self, data):
-        """Update the status of a plate with thread safety."""
-        if not data or 'plate_id' not in data or 'status' not in data:
-            return
+        """Handles 'plate_status_changed' events from TUIState."""
+        plate_id = data.get('plate_id')
+        new_status = data.get('status')
+        error_message = data.get('error_message') # Optional error message
+        if not plate_id or not new_status: return
+        # Update local state and UI, but don't re-notify TUIState (notify_state=False)
+        await self._update_plate_status_locally_and_notify(plate_id, new_status, error_message, notify_state=False)
 
-        # Use thread-safe lock for plate list modifications (TUI_STATUS_THREADSAFETY)
+    async def _update_plate_status_locally_and_notify(self, plate_id: str, new_status: str, message: Optional[str] = None, notify_state: bool = True):
+        """Helper to update plate status in self.plates, refresh UI, and optionally notify TUIState."""
+        updated = False
         async with self.plates_lock:
-            # Find plate by ID
             for plate in self.plates:
-                if plate['id'] == data['plate_id']:
-                    # Update status
-                    plate['status'] = data['status']
+                if plate.get('id') == plate_id:
+                    plate['status'] = new_status
+                    if message and new_status == 'error': plate['error_message'] = message
+                    else: plate.pop('error_message', None) # Clear error if status is not error
+                    updated = True
                     break
-
-            # Update UI - lock already held
-            # Update UI - lock already held
-            formatted = await self._format_plate_list(lock_already_held=True)
-            self.plate_list.text = formatted
-
-            # Notify state of status change
-            self.state.notify('plate_status_updated', {
-                'plate_id': data['plate_id'],
-                'status': data['status']
+            if updated:
+                await self._update_selection() # Rebuild UI to reflect status change
+        
+        if notify_state and updated: # If this method is called directly to also notify TUIState
+            await self.state.notify('plate_status_changed', {
+                'plate_id': plate_id, 
+                'status': new_status, 
+                'message': message
             })
 
     async def _refresh_plates(self, _=None):
-        """Refresh the plate list with thread safety."""
+        """Refresh the plate list, simulating re-fetching or re-validating data."""
+        logger.info("Refreshing plates...")
         async with self.plates_lock:
-            # Set loading state
             self.is_loading = True
-            self.plate_list.text = await self._format_plate_list(lock_already_held=True)
-
-            try:
-                # In a real implementation, this would query the filesystem
-                # or ProcessingContext for updated plate information
-                # For now, we'll just simulate work
-                await asyncio.sleep(0.5)
-
-                # Update plate statuses from context
-                for plate in self.plates:
-                    # TODO: Implement plate status update logic here.
-                    # This should involve:
-                    # 1. Getting the relevant ProcessingContext for the plate.
-                    # 2. Using the FileManager in the context to inspect VFS
-                    #    for output artifacts, logs, or status markers.
-                    # 3. Updating `plate['status']` based on VFS inspection.
-                    # For now, the plate's existing status is preserved during refresh.
-                    pass
-            finally:
-                # Hide loading indicator
+            # Update UI to show loading state (e.g. if _build_plate_items_container checks is_loading)
+            await self._update_selection() 
+        
+        try:
+            # Simulate actual refresh logic 
+            await asyncio.sleep(0.1) # Simulate I/O delay
+            # In a real scenario, this might involve:
+            # 1. Clearing self.plates
+            # 2. Re-scanning directories or querying a database
+            # 3. Calling self.validation_service.validate_plate for each found item
+            # For now, we just log and assume data might have changed externally if needed.
+            logger.info("Plate refresh simulation complete. Current plates will be re-rendered.")
+        except Exception as e:
+            logger.error(f"Error during plate refresh: {e}", exc_info=True)
+            await self._handle_error("Failed to refresh plates.", str(e))
+        finally:
+            async with self.plates_lock:
                 self.is_loading = False
-                self.plate_list.text = await self._format_plate_list(lock_already_held=True)
+            await self._update_selection() # Rebuild with current (possibly unchanged) self.plates data
 
     async def shutdown(self):
-        """
-        Explicit cleanup method for deterministic resource release.
-
-        🔒 Clause 317: Runtime Correctness
-        Ensures ThreadPool is properly shut down.
-
-        🔒 Clause 241: Resource Lifecycle Management
-        Explicitly manages executor and validation service lifecycle.
-        """
-        # Close validation service first if it exists
+        """Performs cleanup of resources like the ThreadPoolExecutor."""
+        logger.info("PlateManagerPane: Shutting down...")
         if hasattr(self, 'validation_service') and self.validation_service is not None:
             await self.validation_service.close()
             self.validation_service = None
-
-        # Then shut down our own executor
         if hasattr(self, 'io_executor') and self.io_executor is not None:
-            self.io_executor.shutdown(wait=True)
+            # Ensure executor shutdown is handled correctly in async context
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.io_executor.shutdown, True) # wait=True
             self.io_executor = None
-        if hasattr(self, 'io_executor') and self.io_executor is not None:
-            # Use asyncio to ensure thread pool shutdown is non-blocking
-            await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.io_executor.shutdown(wait=True)
-            )
-            self.io_executor = None
+        logger.info("PlateManagerPane: Shutdown complete.")

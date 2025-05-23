@@ -14,18 +14,22 @@ All external inputs (especially Vim-edited files) are validated before processin
 to prevent arbitrary code execution.
 """
 
-import ast
 import inspect
-import os
-import subprocess
-import tempfile
+import pickle # Added for .func load/save
+from pathlib import Path # Added for .func load/save
+import asyncio # Added for async handlers
+import logging # Added for logging in new handlers
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.layout import HSplit, ScrollablePane, VSplit
-from prompt_toolkit.widgets import (Box, Button, Dialog, Label,
-                                    TextArea, RadioList as Dropdown)
+from prompt_toolkit.layout import HSplit, ScrollablePane, VSplit, Container
+from prompt_toolkit.widgets import (Box, Button, Dialog, Label, TextArea, RadioList as Dropdown)
+
+# Import custom components
+from openhcs.tui.components import GroupedDropdown, ParameterEditor
+from openhcs.tui.services.external_editor_service import ExternalEditorService
+from openhcs.tui.utils import show_error_dialog, prompt_for_path_dialog # Import prompt_for_path_dialog
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES
 from openhcs.core.pipeline.funcstep_contract_validator import \
@@ -33,6 +37,8 @@ from openhcs.core.pipeline.funcstep_contract_validator import \
 # Import from func_registry instead of function_registry to avoid circular imports
 from openhcs.processing.func_registry import FUNC_REGISTRY
 
+
+logger = logging.getLogger(__name__) # Added logger
 
 def get_function_info(func):
     """
@@ -78,118 +84,61 @@ class PatternValidationError(Exception):
     pass
 
 
-def _validate_pattern_file(content: str) -> Tuple[bool, Optional[Any], Optional[str]]:
-    """
-    Validate that a file contains only a valid pattern assignment.
-
-    Args:
-        content: The content of the file to validate
-
-    Returns:
-        Tuple of (is_valid, pattern, error_message)
-    """
-    try:
-        # Parse the file
-        tree = ast.parse(content)
-
-        # Check that there's only one statement
-        if len(tree.body) != 1:
-            return False, None, "File must contain exactly one statement (pattern assignment)"
-
-        # Check that the statement is an assignment
-        stmt = tree.body[0]
-        if not isinstance(stmt, ast.Assign):
-            return False, None, "File must contain a pattern assignment"
-
-        # Check that the assignment target is 'pattern'
-        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name) or stmt.targets[0].id != 'pattern':
-            return False, None, "Assignment target must be 'pattern'"
-
-        # Use ast.literal_eval to safely evaluate the pattern
-        pattern_str = ast.unparse(stmt.value) if hasattr(ast, 'unparse') else content.strip().split('=', 1)[1].strip()
-        try:
-            pattern = ast.literal_eval(pattern_str)
-
-            # Validate pattern structure using FuncStepContractValidator
-            # This will raise ValueError if the pattern is invalid
-            try:
-                # Extract functions to validate pattern structure
-                # We don't care about the actual functions, just that the structure is valid
-                FuncStepContractValidator._extract_functions_from_pattern(
-                    pattern, "Function Pattern Editor"
-                )
-                return True, pattern, None
-            except ValueError as e:
-                return False, None, f"Invalid pattern structure: {str(e)}"
-
-        except (ValueError, SyntaxError) as e:
-            # If literal_eval fails, the pattern contains non-literal expressions
-            return False, None, f"Pattern must contain only literals: {str(e)}"
-
-    except SyntaxError as e:
-        return False, None, f"Syntax error: {str(e)}"
-    except Exception as e:
-        return False, None, f"Validation error: {str(e)}"
-
-
-class GroupedDropdown(Dropdown):
-    """Dropdown with support for disabled group headers."""
-
-    def __init__(self, options, default=None):
-        # Filter out headers for internal options list
-        self.all_options = options
-        self.selectable_options = [(value, text) for value, text in options if value != 'header']
-        super().__init__(options=self.selectable_options, default=default)
-
-    def _get_text_fragments(self):
-        """Override to display all options including headers."""
-        result = []
-        for i, (value, text) in enumerate(self.all_options):
-            if value == 'header':
-                # Header style
-                result.append(('class:dropdown.header', text))
-                result.append(('', '\n'))
-            elif value == self.current_value:
-                # Selected item
-                result.append(('class:dropdown-selected', f"> {text}"))
-                result.append(('', '\n'))
-            else:
-                # Normal item
-                result.append(('', f"  {text}"))
-                result.append(('', '\n'))
-        return result
-
-
 class FunctionPatternEditor:
     """Function Pattern Editor leveraging OpenHCS's static reflection."""
 
-    def __init__(self, state, step=None):
-        """Initialize the Function Pattern Editor."""
-        self.state = state
-        self.step = step
+    def __init__(self, state: Any, initial_pattern: Union[List, Dict, None] = None, change_callback: Optional[Callable] = None):
+        """
+        Initialize the Function Pattern Editor.
 
-        # Extract and clone pattern
-        self.original_pattern = self._extract_pattern(step) if step else []
+        Args:
+            state: The TUIState instance.
+            initial_pattern: The initial function pattern to edit.
+            change_callback: Callback to notify when the pattern changes.
+        """
+        self.state = state
+        self.change_callback = change_callback
+        self.external_editor_service = ExternalEditorService(state) # Instantiate the service
+
+        # Use and clone the provided pattern
+        self.original_pattern = self._clone_pattern(initial_pattern if initial_pattern is not None else [])
         self.current_pattern = self._clone_pattern(self.original_pattern)
 
         # Determine pattern type
         self.is_dict = isinstance(self.current_pattern, dict)
         self.current_key = None if not self.is_dict else next(iter(self.current_pattern), None)
 
+        # Instantiate ParameterEditor
+        # The func_index is implicitly handled by which function's parameters are being shown.
+        # The ParameterEditor will need the currently selected function and its kwargs.
+        # We'll pass stubs for callbacks for now, to be implemented fully later.
+
+        # Find the initial function and its kwargs to pass to ParameterEditor
+        initial_func_for_editor, initial_kwargs_for_editor = self._get_initial_func_for_param_editor()
+
+        self.parameter_editor = ParameterEditor(
+            func=initial_func_for_editor,
+            current_kwargs=initial_kwargs_for_editor,
+            on_parameter_change=self._handle_parameter_change,
+            on_reset_parameter=self._handle_reset_parameter,
+            on_reset_all_parameters=self._handle_reset_all_parameters
+        )
+
         # Create UI components
         self.header = self._create_header()
         self.key_selector_container = HSplit([])
-        self.function_list_container = ScrollablePane(HSplit([]))
+        self.function_list_container = ScrollablePane(HSplit([])) # This will contain items that include the parameter_editor
 
         # Initial UI refresh
         self._refresh_key_selector()
-        self._refresh_function_list()
+        self._refresh_function_list() # This will now build items that use self.parameter_editor
 
         # Create container
         self._container = HSplit([
             self.header,
             self.key_selector_container,
             self.function_list_container
+            # The parameter editor is now part of items within function_list_container
         ])
 
     @property
@@ -221,23 +170,143 @@ class FunctionPatternEditor:
         else:
             return item
 
+    def _get_initial_func_for_param_editor(self) -> Tuple[Optional[Callable], Dict[str, Any]]:
+        """Helper to get the first function and its kwargs for initial ParameterEditor setup."""
+        functions = self._get_current_functions()
+        if functions:
+            func, kwargs = self._extract_func_and_kwargs(functions[0])
+            return func, kwargs
+        return None, {}
+
+    # --- Callback handlers for ParameterEditor ---
+    async def _handle_parameter_change(self, param_name: str, new_value_str: str, func_index: int):
+        """
+        Handles parameter change callback from a ParameterEditor instance.
+        Parses the string value and then updates the model.
+        """
+        parsed_value: Any
+        if new_value_str.lower() == 'none':
+            parsed_value = None
+        elif new_value_str.lower() == 'true':
+            parsed_value = True
+        elif new_value_str.lower() == 'false':
+            parsed_value = False
+        else:
+            try:
+                parsed_value = int(new_value_str)
+            except ValueError:
+                try:
+                    parsed_value = float(new_value_str)
+                except ValueError:
+                    parsed_value = new_value_str
+
+        functions = self._get_current_functions()
+        if 0 <= func_index < len(functions):
+            current_func, current_kwargs = self._extract_func_and_kwargs(functions[func_index])
+            if current_func is None: return
+
+            current_kwargs[param_name] = parsed_value
+            functions[func_index] = (current_func, current_kwargs)
+            self._update_pattern_functions(functions)
+            self._refresh_function_list() # Refresh to show updated param if necessary (though ParameterEditor handles its own display)
+
+    async def _handle_reset_parameter(self, param_name: str, func_index: int):
+        """Handles reset parameter callback from a ParameterEditor instance."""
+        functions = self._get_current_functions()
+        if not (0 <= func_index < len(functions)):
+            return
+
+        current_func, current_kwargs = self._extract_func_and_kwargs(functions[func_index])
+        if not current_func: return
+
+        sig = inspect.signature(current_func)
+        default_value = inspect.Parameter.empty
+        if param_name in sig.parameters:
+            default_value = sig.parameters[param_name].default
+
+        if default_value is not inspect.Parameter.empty and default_value is not None:
+            current_kwargs[param_name] = default_value
+        elif param_name in current_kwargs:
+            del current_kwargs[param_name]
+
+        functions[func_index] = (current_func, current_kwargs)
+        self._update_pattern_functions(functions)
+        self._refresh_function_list()
+
+    async def _handle_reset_all_parameters(self, func_index: int):
+        """Handles reset all parameters callback from a ParameterEditor instance."""
+        functions = self._get_current_functions()
+        if not (0 <= func_index < len(functions)):
+             return
+
+        current_func, _ = self._extract_func_and_kwargs(functions[func_index])
+        if not current_func: return
+
+        # Re-fetch parameters with defaults from the function signature
+        # This logic was previously in the now-deleted _get_function_parameters and _reset_all_parameters
+        params_with_defaults_info = []
+        sig = inspect.signature(current_func)
+        for name, param in sig.parameters.items():
+            if name in ('self', 'cls'):
+                continue
+            default_val = param.default if param.default is not inspect.Parameter.empty else None
+            params_with_defaults_info.append({'name': name, 'default': default_val})
+
+        new_kwargs = {p['name']: p['default'] for p in params_with_defaults_info if p['default'] is not None}
+
+        functions[func_index] = (current_func, new_kwargs)
+        self._update_pattern_functions(functions)
+        self._refresh_function_list()
+    # --- End Callback Handlers ---
+
     def _create_header(self):
-        """Create the editor header with title and save/load buttons."""
+        """Create the editor header with title."""
+        # Save/Cancel buttons are removed as this will be a sub-component.
+        # DualStepFuncEditorPane will handle the main save/close.
         title = Label(HTML("<b>Function Pattern Editor</b>"))
-        save_button = Button(
-            "Save",
-            handler=lambda: get_app().create_background_task(self._save_pattern())
+
+        add_func_button = Button(
+            "Add Func",
+            handler=lambda: get_app().create_background_task(self._add_function())
         )
-        cancel_button = Button(
-            "Cancel",
-            handler=lambda: get_app().create_background_task(self._cancel_editing())
+        load_func_button = Button(
+            "Load .func",
+            handler=lambda: get_app().create_background_task(self._load_func_pattern_from_file_handler())
+        )
+        save_as_func_button = Button(
+            "Save .func As",
+            handler=lambda: get_app().create_background_task(self._save_func_pattern_as_file_handler())
+        )
+        edit_in_vim_button = Button(
+            "Edit in Vim",
+            handler=lambda: get_app().create_background_task(self._edit_in_vim())
         )
 
         return VSplit([
             title,
-            Box(save_button, padding=1),
-            Box(cancel_button, padding=1)
-        ])
+            Box(add_func_button, padding_left=2),
+            Box(load_func_button, padding_left=1),
+            Box(save_as_func_button, padding_left=1),
+            Box(edit_in_vim_button, padding_left=1)
+        ], height=1, padding=0) # Ensure it's a single line bar
+
+    def _notify_change(self):
+        """Notify the parent component of a change."""
+        if self.change_callback:
+            self.change_callback()
+
+    def get_pattern(self) -> Union[List, Dict]:
+        """Returns the current state of the edited pattern."""
+        # Ensure the latest changes from any sub-components are reflected if necessary
+        # For instance, if a key was being edited, ensure it's saved to self.current_pattern
+        if self.is_dict and self.current_key is not None:
+             active_list = self._get_current_functions() # This gets from self.current_pattern based on current_key
+             # No, this is not needed, _get_current_functions reads from self.current_pattern
+             # self.current_pattern[self.current_key] = active_list
+        elif not self.is_dict:
+            # self.current_pattern is already the list
+            pass
+        return self._clone_pattern(self.current_pattern) # Return a clone
 
     def _refresh_key_selector(self):
         """
@@ -272,28 +341,33 @@ class FunctionPatternEditor:
 
         # Create key management buttons
         add_key_button = Button(
-            "+",
+            "Add Key", # More descriptive
             handler=lambda: get_app().create_background_task(self._add_key())
         )
         remove_key_button = Button(
-            "-",
+            "Remove Key", # More descriptive
             handler=lambda: get_app().create_background_task(self._remove_key())
         )
-        edit_in_vim_button = Button(
-            "Edit in Vim",
-            handler=lambda: get_app().create_background_task(self._edit_in_vim())
-        )
+        # Edit in Vim button is now in the header
 
         # Create container
-        self.key_selector_container.children = [
-            VSplit([
-                Label("dict_keys: "),
-                key_dropdown,
-                add_key_button,
-                remove_key_button,
-                Box(edit_in_vim_button, padding=1)
-            ])
-        ]
+        key_management_buttons = VSplit([add_key_button, remove_key_button], padding=1)
+
+        if self.is_dict:
+            self.key_selector_container.children = [
+                VSplit([
+                    Label("Pattern Keys: "), # Renamed for clarity
+                    key_dropdown,
+                    key_management_buttons
+                ])
+            ]
+        else: # Not a dict, no key selector needed, but can offer to convert to dict
+            convert_to_dict_button = Button(
+                "Convert to Dict Pattern",
+                handler=lambda: get_app().create_background_task(self._convert_list_to_dict_pattern())
+            )
+            self.key_selector_container.children = [convert_to_dict_button]
+
 
     def _refresh_function_list(self):
         """Rebuild the function list."""
@@ -345,8 +419,17 @@ class FunctionPatternEditor:
             handler=lambda: get_app().create_background_task(self._delete_function(index))
         )
 
-        # Parameter editor
-        param_editor = self._create_parameter_editor(func, kwargs, index)
+        # Parameter editor: Instantiate a new ParameterEditor for each item
+        # The callbacks will need to be adapted or new ones created that are specific to this 'index'
+        item_param_editor = ParameterEditor(
+            func=func,
+            current_kwargs=kwargs,
+            # These handlers in FunctionPatternEditor will use 'index' to update the correct item
+            on_parameter_change=lambda p_name, p_val_str, idx=index: get_app().create_background_task(self._handle_parameter_change(p_name, p_val_str, idx)),
+            on_reset_parameter=lambda p_name, idx=index: get_app().create_background_task(self._handle_reset_parameter(p_name, idx)),
+            on_reset_all_parameters=lambda idx=index: get_app().create_background_task(self._handle_reset_all_parameters(idx))
+        )
+        param_editor_container = item_param_editor # This is the UI container from ParameterEditor
 
         # Combine components
         return Frame(
@@ -359,7 +442,7 @@ class FunctionPatternEditor:
                     Box(delete_button, width=8)
                 ]),
                 # Parameter editor
-                param_editor
+                param_editor_container
             ]),
             title=f"Function {index+1}: {func_info['name']} ({func_info['backend']})"
         )
@@ -475,6 +558,17 @@ class FunctionPatternEditor:
 
         # Refresh UI
         self._refresh_function_list()
+        self._notify_change() # Key switch implies pattern structure might change
+
+    async def _convert_list_to_dict_pattern(self):
+        """Converts the current list pattern to a dict pattern with a default key."""
+        if not self.is_dict:
+            self.current_pattern = {None: self.current_pattern} # Clause 234
+            self.is_dict = True
+            self.current_key = None
+            self._refresh_key_selector()
+            self._refresh_function_list()
+            self._notify_change()
 
     async def _add_key(self):
         """
@@ -538,93 +632,28 @@ class FunctionPatternEditor:
         This implementation validates the edited file contains only a valid pattern
         assignment before evaluating it, preventing arbitrary code execution.
         """
-        temp_file_path = None # Ensure it's defined for the finally block
-        try:
-            # Create a temporary file using standard library
-            with tempfile.NamedTemporaryFile(delete=False, mode='w+', suffix='.py', encoding='utf-8') as tmp_file:
-                temp_file_path = tmp_file.name
-                tmp_file.write(f"pattern = {repr(self.current_pattern)}\n\n")
-                tmp_file.write("# IMPORTANT: This file must contain ONLY a 'pattern = ...' assignment.\n")
-                tmp_file.write("# Any other code will be rejected for security reasons.\n")
-                tmp_file.write("# Valid pattern structures:\n")
-                tmp_file.write("#  - A callable function\n")
-                tmp_file.write("#  - A tuple of (callable, kwargs) where kwargs is a dict\n")
-                tmp_file.write("#  - A list of valid pattern structures\n")
-                tmp_file.write("#  - A dict mapping keys to valid pattern structures\n")
-            
-            # Launch editor
-            editor = os.environ.get('EDITOR', 'vim')
-            # Ensure editor command is properly formed if path contains spaces (less common for vim)
-            # For simplicity, direct call assuming editor is in PATH and handles paths.
-            subprocess.run([editor, temp_file_path], check=True) # check=True to raise on editor error
+        initial_content = f"pattern = {repr(self.current_pattern)}"
 
-            # Read back the file content
-            with open(temp_file_path, 'r', encoding='utf-8') as tmp_file_read:
-                content = tmp_file_read.read()
+        success, new_pattern, error_message = await self.external_editor_service.edit_pattern_in_external_editor(initial_content)
 
-            # Validate and parse the pattern
-            is_valid, pattern, error_message = _validate_pattern_file(content)
-
-            if is_valid and pattern is not None:
-                # Update pattern
-                self.current_pattern = pattern
-                self.is_dict = isinstance(self.current_pattern, dict)
-
-                # 🔒 Clause 234: Handle None key for unnamed structural groups
-                if self.is_dict and self.current_pattern:
-                    # Check if None is a key in the pattern
-                    if None in self.current_pattern and len(self.current_pattern) == 1:
-                        # If only None key exists, use it as the current key
-                        self.current_key = None
-                    else:
-                        # Otherwise use the first key
-                        self.current_key = next(iter(self.current_pattern))
-                else:
-                    self.current_key = "None"
-
-                # Refresh UI
-                self._refresh_key_selector()
-                self._refresh_function_list()
-            else:
-                # Show error message
-                self._show_error(f"Invalid pattern: {error_message}")
-
-        except FileNotFoundError:
-            self._show_error(f"Editor '{editor}' not found. Please ensure it's in your PATH.")
-        except subprocess.CalledProcessError:
-            self._show_error(f"Editor '{editor}' exited with an error.")
-        except Exception as e:
-            self._show_error(f"An error occurred during Vim edit: {str(e)}")
-        finally:
-            # Clean up the temporary file
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.remove(temp_file_path)
-                except Exception as e_remove:
-                    # Log this error, but don't let it overshadow a primary error
-                    logger.error(f"Failed to remove temporary file {temp_file_path}: {e_remove}")
+        if success:
+            self.current_pattern = new_pattern
+            self._refresh_key_selector()
+            self._refresh_function_list()
+            self._notify_change()
+        else:
+            # Error message is already shown by the service, or logged by it.
+            # The _show_error method in this class might be redundant if the service handles UI feedback.
+            pass
 
     def _show_error(self, message: str):
-        """Show an error message to the user."""
-        from prompt_toolkit.layout.containers import HSplit
-        from prompt_toolkit.widgets import Button, Label
-
-        # Create error dialog
-        error_dialog = Dialog(
-            title="Error",
-            body=HSplit([
-                Label(message),
-            ]),
-            buttons=[
-                Button("OK", handler=lambda: get_app().exit_dialog())
-            ],
-            width=80,
-            modal=True
+        """Show an error message to the user using the TUI utility."""
+        # Ensure this is run in the app's event loop if called from non-async context
+        # or if show_error_dialog itself needs to schedule something.
+        # Since show_error_dialog is async, we need to create a background task.
+        get_app().create_background_task(
+            show_error_dialog(title="Error", message=message, app_state=self.state)
         )
-
-        # Show dialog
-        get_app().layout.focus(error_dialog)
-        get_app().layout.container = error_dialog
 
     async def _update_function(self, index, func):
         """
@@ -729,155 +758,15 @@ class FunctionPatternEditor:
             Box(reset_button, width=8)
         ])
 
-    def _create_input_field(self, name, value, func_index):
-        """Create an input field appropriate for the parameter type."""
-        # Convert value to string representation
-        value_str = str(value) if value is not None else ""
-
-        # Create text area
-        text_area = TextArea(
-            text=value_str,
-            multiline=False,
-            height=1
-        )
-
-        # Set handler for value change
-        def on_text_changed(buffer):
-            get_app().create_background_task(self._update_parameter(name, buffer.text, func_index))
-
-        text_area.buffer.on_text_changed += on_text_changed
-
-        return text_area
-
-    def _get_function_parameters(self, func) -> List[Dict]:
-        """Get parameters for a function through introspection."""
-        params = []
-
-        # Get function signature
-        sig = inspect.signature(func)
-
-        # Extract parameters
-        for name, param in sig.parameters.items():
-            # Skip self/cls
-            if name in ('self', 'cls'):
-                continue
-
-            # Get default value
-            if param.default is not inspect.Parameter.empty:
-                default = param.default
-            else:
-                default = None
-
-            # Get parameter type
-            param_type = param.annotation if param.annotation is not inspect.Parameter.empty else None
-
-            # Check if special parameter
-            is_special = hasattr(func, 'special_inputs') and name in getattr(func, 'special_inputs', [])
-
-            # Add to parameters
-            params.append({
-                'name': name,
-                'default': default,
-                'type': param_type,
-                'required': param.default is inspect.Parameter.empty,
-                'is_special': is_special
-            })
-
-        return params
-
-    async def _update_parameter(self, name, value_str, func_index):
-        """Update a parameter value."""
-        functions = self._get_current_functions()
-
-        if 0 <= func_index < len(functions):
-            # Extract function and kwargs
-            func, kwargs = self._extract_func_and_kwargs(functions[func_index])
-
-            # Convert string to appropriate type
-            value = self._parse_parameter_value(value_str)
-
-            # Update kwargs
-            kwargs[name] = value
-
-            # Update function with new kwargs
-            functions[func_index] = (func, kwargs)
-
-            # Update pattern
-            self._update_pattern_functions(functions)
-
-    def _parse_parameter_value(self, value_str):
-        """Parse a parameter value from string."""
-        # Handle special cases
-        if value_str.lower() == 'none':
-            return None
-        elif value_str.lower() == 'true':
-            return True
-        elif value_str.lower() == 'false':
-            return False
-
-        # Try to parse as number
-        try:
-            # Try int first
-            return int(value_str)
-        except ValueError:
-            try:
-                # Then try float
-                return float(value_str)
-            except ValueError:
-                # Fall back to string
-                return value_str
-
-    async def _reset_parameter(self, name, default, func_index):
-        """Reset a parameter to its default value."""
-        functions = self._get_current_functions()
-
-        if 0 <= func_index < len(functions):
-            # Extract function and kwargs
-            func, kwargs = self._extract_func_and_kwargs(functions[func_index])
-
-            # Reset parameter to default
-            if default is not None:
-                kwargs[name] = default
-            elif name in kwargs:
-                del kwargs[name]
-
-            # Update function with new kwargs
-            functions[func_index] = (func, kwargs)
-
-            # Update pattern
-            self._update_pattern_functions(functions)
-
-            # Refresh function list
-            self._refresh_function_list()
-
-    async def _reset_all_parameters(self, func_index):
-        """Reset all parameters to their default values."""
-        functions = self._get_current_functions()
-
-        if 0 <= func_index < len(functions):
-            # Extract function
-            func, _ = self._extract_func_and_kwargs(functions[func_index])
-
-            # Create empty kwargs
-            kwargs = {}
-
-            # Update function with empty kwargs
-            functions[func_index] = (func, kwargs)
-
-            # Update pattern
-            self._update_pattern_functions(functions)
-
-            # Refresh function list
-            self._refresh_function_list()
-
     async def _move_function_up(self, index):
         """Move a function up in the list."""
         functions = self._get_current_functions()
 
         if 0 < index < len(functions):
             functions[index], functions[index-1] = functions[index-1], functions[index]
-            self._update_pattern_functions(functions)
+            self._update_pattern_functions(functions) # This calls _notify_change
             self._refresh_function_list()
+
 
     async def _move_function_down(self, index):
         """Move a function down in the list."""
@@ -885,8 +774,9 @@ class FunctionPatternEditor:
 
         if 0 <= index < len(functions) - 1:
             functions[index], functions[index+1] = functions[index+1], functions[index]
-            self._update_pattern_functions(functions)
+            self._update_pattern_functions(functions) # This calls _notify_change
             self._refresh_function_list()
+
 
     async def _delete_function(self, index):
         """Delete a function from the pattern."""
@@ -894,50 +784,33 @@ class FunctionPatternEditor:
 
         if 0 <= index < len(functions):
             del functions[index]
-            self._update_pattern_functions(functions)
+            self._update_pattern_functions(functions) # This calls _notify_change
             self._refresh_function_list()
+
 
     async def _add_function(self):
         """Add a new function to the pattern."""
-        # Get a default function from the registry
         default_func = None
-        for backend, funcs in FUNC_REGISTRY.items():
-            if funcs:
-                default_func = funcs[0]
-                break
+        # Try to find any function in the registry as a placeholder
+        if FUNC_REGISTRY:
+            for backend_funcs in FUNC_REGISTRY.values():
+                if backend_funcs:
+                    default_func = backend_funcs[0]
+                    break
 
-        if not default_func:
-            return
+        # If no function found, we could add a pure None placeholder,
+        # but it's better if the user is forced to select one.
+        # For now, adding (None, {}) which the UI should handle.
 
-        # Add function to pattern
         functions = self._get_current_functions()
-        functions.append((default_func, {}))
+        functions.append((default_func, {})) # Add with a default func if found, or None
 
-        # Update pattern
-        self._update_pattern_functions(functions)
-
-        # Refresh function list
+        self._update_pattern_functions(functions) # This calls _notify_change
         self._refresh_function_list()
 
-    async def _save_pattern(self):
-        """Save the pattern and exit the editor."""
-        # Validate pattern
-        if not self._validate_pattern():
-            return
-
-        # Update step with new pattern
-        if self.step:
-            self.step['func'] = self.current_pattern
-
-        # Notify state manager
-        self.state.notify('pattern_saved', {
-            'step': self.step,
-            'pattern': self.current_pattern
-        })
-
-    async def _cancel_editing(self):
-        """Cancel editing and exit the editor."""
-        self.state.notify('editing_cancelled')
+    # _save_pattern and _cancel_editing are removed.
+    # The parent component (DualStepFuncEditorPane) will call get_pattern()
+    # and handle the save/cancel logic for the entire FunctionStep.
 
     def _validate_pattern(self) -> bool:
         """
@@ -949,24 +822,87 @@ class FunctionPatternEditor:
         3. Memory types are consistent
         """
         try:
-            # Use FuncStepContractValidator to extract and validate functions
-            functions = FuncStepContractValidator._extract_functions_from_pattern(
+            # Delegate full validation to FuncStepContractValidator
+            FuncStepContractValidator.validate_function_pattern(
                 self.current_pattern, "Function Pattern Editor"
             )
-
-            # Check that all functions have memory type declarations
-            for func in functions:
-                if not hasattr(func, 'input_memory_type') or not hasattr(func, 'output_memory_type'):
-                    self._show_error(f"Function {func.__name__} is missing memory type declarations")
-                    return False
-
-                # Validate memory types against known valid types
-                if (func.input_memory_type not in VALID_MEMORY_TYPES or
-                    func.output_memory_type not in VALID_MEMORY_TYPES):
-                    self._show_error(f"Function {func.__name__} has invalid memory types")
-                    return False
-
             return True
-        except Exception as e:
+        except ValueError as e: # Catch specific validation errors from the validator
             self._show_error(f"Pattern validation failed: {str(e)}")
             return False
+        except Exception as e: # Catch any other unexpected errors during validation
+            self._show_error(f"Unexpected error during pattern validation: {str(e)}")
+            return False
+
+    async def _load_func_pattern_from_file_handler(self):
+        """Handles loading a function pattern from a .func file."""
+        file_path_str = await prompt_for_path_dialog(
+            title="Load .func Pattern File",
+            prompt_message="Enter path to .func pattern file:",
+            app_state=self.state # Assuming self.state is accessible and correct
+        )
+
+        if not file_path_str:
+            logger.info("Load .func pattern operation cancelled.")
+            return
+
+        file_path = Path(file_path_str)
+        if not file_path.exists() or not file_path.is_file():
+            await show_error_dialog("Load Error", f"File not found or is not a file: {file_path}", app_state=self.state)
+            return
+
+        try:
+            with open(file_path, "rb") as f:
+                loaded_pattern = pickle.load(f)
+
+            # Basic validation: should be a list or dict
+            if not isinstance(loaded_pattern, (list, dict)):
+                await show_error_dialog("Load Error", "File does not contain a valid list or dict pattern.", app_state=self.state)
+                return
+
+            self.current_pattern = self._clone_pattern(loaded_pattern) # Use cloned, validated pattern
+            self.original_pattern = self._clone_pattern(loaded_pattern) # Update original to prevent immediate "changed" state
+
+            # Update internal state based on loaded pattern type
+            self.is_dict = isinstance(self.current_pattern, dict)
+            self.current_key = None if not self.is_dict else next(iter(self.current_pattern), None)
+
+            self._refresh_key_selector()
+            self._refresh_function_list()
+            self._notify_change() # Notify parent of structural change
+            logger.info(f"Successfully loaded function pattern from {file_path}")
+
+        except pickle.UnpicklingError as e:
+            logger.error(f"Error unpickling .func pattern from {file_path}: {e}", exc_info=True)
+            await show_error_dialog("Load Error", f"Error unpickling file: {e}", app_state=self.state)
+        except Exception as e:
+            logger.error(f"Failed to load .func pattern from {file_path}: {e}", exc_info=True)
+            await show_error_dialog("Load Error", f"Failed to load pattern: {e}", app_state=self.state)
+
+    async def _save_func_pattern_as_file_handler(self):
+        """Handles saving the current function pattern to a .func file."""
+        file_path_str = await prompt_for_path_dialog(
+            title="Save .func Pattern As",
+            prompt_message="Enter path to save .func pattern file:",
+            app_state=self.state,
+            initial_value="pattern.func" # Suggest a default filename
+        )
+
+        if not file_path_str:
+            logger.info("Save .func pattern As operation cancelled.")
+            return
+
+        file_path = Path(file_path_str)
+
+        try:
+            with open(file_path, "wb") as f:
+                pickle.dump(self.current_pattern, f)
+            logger.info(f"Successfully saved function pattern to {file_path}")
+            # Optionally, show a success message dialog
+            # await show_message_dialog("Success", f"Pattern saved to {file_path}", app_state=self.state)
+        except pickle.PicklingError as e:
+            logger.error(f"Error pickling .func pattern to {file_path}: {e}", exc_info=True)
+            await show_error_dialog("Save Error", f"Error pickling pattern: {e}", app_state=self.state)
+        except Exception as e:
+            logger.error(f"Failed to save .func pattern to {file_path}: {e}", exc_info=True)
+            await show_error_dialog("Save Error", f"Failed to save pattern: {e}", app_state=self.state)

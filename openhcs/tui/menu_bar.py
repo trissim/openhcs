@@ -11,10 +11,16 @@ import json # ADDED for _on_save_pipeline
 # For handler implementations
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.config import GlobalPipelineConfig # Added for type hinting and use
+# Dialog import moved to commands.py to avoid potential circularity if dialogs use commands
+# from openhcs.tui.dialogs.global_settings_editor import GlobalSettingsEditorDialog
+
+# Import Commands
+from openhcs.tui.commands import Command, ShowGlobalSettingsDialogCommand, ShowHelpCommand
+
 if TYPE_CHECKING:
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-    # TUIState is typically passed in __init__, so direct import might not be needed here
-    # from openhcs.tui.tui_architecture import TUIState
+    from openhcs.tui.tui_architecture import TUIState
 
 
 # import yaml # YAML dependency is being removed
@@ -326,21 +332,21 @@ _DEFAULT_MENU_STRUCTURE = {
     "Edit": {
         "mnemonic": "E",
         "items": [
-            {"type": "command", "label": "&Add Step", "handler": "_on_add_step", "enabled": "has_selected_step"},
-            {"type": "command", "label": "Edit Ste&p", "handler": "_on_edit_step", "enabled": "has_selected_step"},
-            {"type": "command", "label": "&Remove Step", "handler": "_on_remove_step", "enabled": "has_selected_step"},
+            {"type": "command", "label": "&Add Step", "handler": "_on_add_step", "enabled": "has_selected_step"}, # Condition name might need quotes
+            {"type": "command", "label": "Edit Ste&p", "handler": "_on_edit_step", "enabled": "has_selected_step"}, # Condition name might need quotes
+            {"type": "command", "label": "&Remove Step", "handler": "_on_remove_step", "enabled": "has_selected_step"}, # Condition name might need quotes
         ]
     },
     "View": {
         "mnemonic": "V",
         "items": [
-            {"type": "checkbox", "label": "&Vim Mode", "handler": "_on_toggle_vim_mode", "checked": "vim_mode"},
-            {"type": "checkbox", "label": "&Log Drawer", "handler": "_on_toggle_log_drawer", "checked": "log_drawer_expanded"},
+            {"type": "checkbox", "label": "&Vim Mode", "handler": "_on_toggle_vim_mode", "checked": "vim_mode"}, # Condition name might need quotes
+            {"type": "checkbox", "label": "&Log Drawer", "handler": "_on_toggle_log_drawer", "checked": "log_drawer_expanded"}, # Condition name might need quotes
             {"type": "separator"},
             {"type": "submenu", "label": "&Theme", "children": [
-                {"type": "checkbox", "label": "&Light", "handler": "_on_set_theme_light", "checked": "theme_is_light"},
-                {"type": "checkbox", "label": "&Dark", "handler": "_on_set_theme_dark", "checked": "theme_is_dark"},
-                {"type": "checkbox", "label": "&System", "handler": "_on_set_theme_system", "checked": "theme_is_system"},
+                {"type": "checkbox", "label": "&Light", "handler": "_on_set_theme_light", "checked": "theme_is_light"}, # Condition name might need quotes
+                {"type": "checkbox", "label": "&Dark", "handler": "_on_set_theme_dark", "checked": "theme_is_dark"}, # Condition name might need quotes
+                {"type": "checkbox", "label": "&System", "handler": "_on_set_theme_system", "checked": "theme_is_system"}, # Condition name might need quotes
             ]}
         ]
     },
@@ -349,16 +355,16 @@ _DEFAULT_MENU_STRUCTURE = {
         "items": [
             {"type": "command", "label": "Pre-&compile", "handler": "_on_pre_compile"},
             {"type": "command", "label": "&Compile", "handler": "_on_compile"},
-            {"type": "command", "label": "&Run", "handler": "_on_run", "enabled": "is_compiled"},
+            {"type": "command", "label": "&Run", "handler": "_on_run", "enabled": "is_compiled"}, # Condition name might need quotes
             {"type": "separator"},
-            {"type": "command", "label": "Se&ttings...", "handler": "_on_settings"}
+            {"type": "command", "label": "Global Se&ttings...", "handler": "_on_settings"}
         ]
     },
     "Help": {
         "mnemonic": "H",
         "items": [
-            {"type": "command", "label": "&Keyboard Shortcuts", "handler": "_on_keyboard_shortcuts"},
-            {"type": "command", "label": "&About", "handler": "_on_about"}
+            # Consolidated into a single "Help" item
+            {"type": "command", "label": "&View Help", "handler": "_on_show_help"}
         ]
     }
 }
@@ -377,14 +383,16 @@ class MenuBar(Container):
     🔒 Clause 245: Declarative Enforcement
     Layout contract is explicitly validated.
     """
-    def __init__(self, state):
+    def __init__(self, state: 'TUIState', context: 'ProcessingContext'): # Added context
         """
         Initialize the menu bar.
 
         Args:
             state: The TUI state manager
+            context: The main ProcessingContext (or initial context)
         """
         self.state = state
+        self.context = context # Store context for commands
         
         # Initialize state with thread safety
         self.active_menu: Optional[str] = None
@@ -392,13 +400,13 @@ class MenuBar(Container):
         self.active_item_index: Optional[int] = None
         self.menu_lock = ReentrantLock()
 
-        # Create handler map
+        # Create handler map (now maps to Command instances for some items)
         self.handler_map = self._create_handler_map()
         
         # Create condition map
         self.condition_map = self._create_condition_map()
 
-        # Load menu structure from YAML
+        # Load menu structure (uses _DEFAULT_MENU_STRUCTURE)
         self.menu_structure = self._load_menu_structure()
         
         # Create UI components
@@ -420,12 +428,12 @@ class MenuBar(Container):
         self.state.add_observer('plate_selected', self._on_plate_selected)
         self.state.add_observer('is_compiled_changed', self._on_is_compiled_changed)
         
-    def _create_handler_map(self) -> Dict[str, Callable]:
+    def _create_handler_map(self) -> Dict[str, Union[Callable, Command]]: # Return type updated
         """
-        Create a map of handler names to handler methods.
+        Create a map of handler names to handler methods or Command instances.
         
         Returns:
-            Dictionary mapping handler names to methods
+            Dictionary mapping handler names to callables or Commands
         """
         return {
             # File menu
@@ -445,21 +453,19 @@ class MenuBar(Container):
             # View menu
             "_on_toggle_log_drawer": self._on_toggle_log_drawer,
             "_on_toggle_vim_mode": self._on_toggle_vim_mode,
-            "_on_set_theme_light": lambda: self._on_set_theme("light"),
+            "_on_set_theme_light": lambda: self._on_set_theme("light"), # Simple lambdas can remain
             "_on_set_theme_dark": lambda: self._on_set_theme("dark"),
-            "_on_set_theme_system": lambda: self._on_set_theme("system"),
+            "_on_set_theme_system": lambda: self.state.notify("set_theme", "system"), # Or direct notify
             
             # Pipeline menu
             "_on_pre_compile": self._on_pre_compile,
             "_on_compile": self._on_compile,
             "_on_run": self._on_run,
             "_on_test": self._on_test,
-            "_on_settings": self._on_settings,
+            "_on_settings": ShowGlobalSettingsDialogCommand(), # Mapped to Command instance
             
             # Help menu
-            "_on_documentation": self._on_documentation,
-            "_on_keyboard_shortcuts": self._on_keyboard_shortcuts,
-            "_on_about": self._on_about
+            "_on_show_help": ShowHelpCommand() # New handler name mapped to Command instance
         }
         
     def _create_condition_map(self) -> Dict[str, Condition]:
@@ -1141,27 +1147,8 @@ class MenuBar(Container):
         else:
             logger.error("MenuBar: Cannot add test plate: TUIState.notify not available.")
 
-    async def _on_settings(self) -> None:
-        """Handle Settings command."""
-        self.state.notify('menu_command', {'command': 'settings'})
-
-    async def _on_documentation(self) -> None:
-        """Handle Documentation command."""
-        logger.info("MenuBar: Help > Documentation selected.")
-        if hasattr(self.state, 'notify'):
-            self.state.notify('operation_status_changed', {'operation': 'show_documentation', 'status': 'info', 'message': 'Help > Documentation: Not Implemented (placeholder)', 'source': 'MenuBar'})
-
-    async def _on_keyboard_shortcuts(self) -> None:
-        """Handle Keyboard Shortcuts command."""
-        logger.info("MenuBar: Help > Keyboard Shortcuts selected.")
-        if hasattr(self.state, 'notify'):
-            self.state.notify('operation_status_changed', {'operation': 'show_shortcuts', 'status': 'info', 'message': 'Help > Keyboard Shortcuts: Not Implemented (placeholder)', 'source': 'MenuBar'})
-
-    async def _on_about(self) -> None:
-        """Handle About command."""
-        logger.info("MenuBar: Help > About selected.")
-        if hasattr(self.state, 'notify'):
-            self.state.notify('operation_status_changed', {'operation': 'show_about', 'status': 'info', 'message': 'Help > About: Not Implemented (placeholder)', 'source': 'MenuBar'})
+    # _on_settings, _on_documentation, _on_keyboard_shortcuts, _on_about are removed
+    # as their functionality is now handled by ShowGlobalSettingsDialogCommand and ShowHelpCommand.
 
     # Event handlers
     

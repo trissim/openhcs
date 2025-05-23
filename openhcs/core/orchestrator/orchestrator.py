@@ -61,16 +61,29 @@ class PipelineOrchestrator:
         else:
             self.global_config = global_config
 
-        if plate_path is not None:
-            if isinstance(plate_path, str):
-                plate_path = Path(plate_path)
-            elif not isinstance(plate_path, Path):
-                raise ValueError(f"Invalid plate_path type: {type(plate_path)}")
+        if plate_path is None:
+            # This case should ideally be prevented by TUI logic if plate_path is mandatory
+            # for an orchestrator instance tied to a specific plate.
+            # If workspace_path is also None, this will be caught later.
+            pass
+        elif isinstance(plate_path, str):
+            plate_path = Path(plate_path)
+        elif not isinstance(plate_path, Path):
+            raise ValueError(f"Invalid plate_path type: {type(plate_path)}. Must be str or Path.")
+        
+        if plate_path:
+            if not plate_path.is_absolute():
+                raise ValueError(f"Plate path must be absolute: {plate_path}")
+            if not plate_path.exists():
+                raise FileNotFoundError(f"Plate path does not exist: {plate_path}")
+            if not plate_path.is_dir():
+                raise NotADirectoryError(f"Plate path is not a directory: {plate_path}")
+
         self.plate_path = plate_path
         self.workspace_path = workspace_path
 
         if self.plate_path is None and self.workspace_path is None:
-            raise ValueError("Either plate_path or workspace_path must be provided")
+            raise ValueError("Either plate_path or workspace_path must be provided for PipelineOrchestrator.")
 
         if storage_registry:
             self.registry = storage_registry

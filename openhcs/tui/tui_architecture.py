@@ -22,22 +22,21 @@ All unimplemented components must be clearly marked with TODO references.
 import asyncio
 import os
 import logging # ADDED for logging config updates
-from typing import Any, Callable, Container, Dict, List, Optional, Union
+from typing import Any, Callable, Container, Dict, List, Optional, Union, TYPE_CHECKING
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager # ADDED
 # ProcessingContext is already imported below
 
-# Import the new ActionMenuPane
-from openhcs.tui.action_menu_pane import ActionMenuPane
 # Import the actual PlateManagerPane
 from openhcs.tui.plate_manager_core import PlateManagerPane as ActualPlateManagerPane
 # Import the actual MenuBar
 from openhcs.tui.menu_bar import MenuBar as ActualMenuBar
 # Import the actual StepViewerPane
 from openhcs.tui.step_viewer import StepViewerPane as ActualStepViewerPane
-# Import the actual FunctionPatternEditor
-from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor
+# Import the actual FunctionPatternEditor (old) and new DualStepFuncEditorPane
+from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor # Keep for now if any logic is reused
+from openhcs.tui.dual_step_func_editor import DualStepFuncEditorPane # New editor
 # Import the actual StatusBar
 from openhcs.tui.status_bar import StatusBar as ActualStatusBar
 # Import main strage registry
@@ -55,30 +54,6 @@ class Clause5Violation(Exception):
     pass
 
 
-# Placeholder component classes that enforce Clause 299
-# These will be replaced by actual implementations in their respective plans
-
-# PlateManagerPane stub removed, will be imported from openhcs.tui.plate_manager_core
-
-
-# StepViewerPane stub removed, will be imported from openhcs.tui.step_viewer
-# Its initialization will be handled asynchronously.
-
-
-# Placeholder for ActionMenuPane removed, as it's now imported from action_menu_pane.py
-
-
-# FunctionPatternEditor stub removed, will be imported from openhcs.tui.function_pattern_editor
-# It's created on demand by _get_left_pane.
-# FunctionPatternEditor stub class definition removed.
-
-
-# StatusBar stub removed, will be imported from openhcs.tui.status_bar
-
-
-# MenuBar stub removed, will be imported from openhcs.tui.menu_bar
-
-
 from prompt_toolkit import Application
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition, has_focus
@@ -86,9 +61,11 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Container, HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.containers import (DynamicContainer, Float,
                                               FloatContainer)
-from prompt_toolkit.widgets import Box, Button, Frame, TextArea
+from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
 
 from openhcs.core.context.processing_context import ProcessingContext
+if TYPE_CHECKING: # Add for PipelineOrchestrator type hint
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 # Import from func_registry instead of function_registry to avoid circular imports
 from openhcs.processing.func_registry import FUNC_REGISTRY
 
@@ -109,15 +86,21 @@ class TUIState:
         self.is_compiled: bool = False
         self.is_running: bool = False # Generic flag for any long operation
         self.error_message: Optional[str] = None
-        
+
         # Specific states for compile/run cycle
         self.compiled_contexts: Optional[Dict[str, ProcessingContext]] = None
         self.execution_status: Optional[str] = None
 
-        # State for FunctionPatternEditor interaction
-        self.editing_pattern: bool = False
-        self.selected_step_for_editing: Optional[Dict[str, Any]] = None
+        # State for DualStepFuncEditorPane interaction
+        self.editing_step_config: bool = False # Renamed from editing_pattern
+        self.step_to_edit_config: Optional[Dict[str, Any]] = None # Renamed from selected_step_for_editing
 
+        # State for PlateConfigEditorPane interaction
+        self.editing_plate_config: bool = False
+        self.orchestrator_for_plate_config_edit: Optional["PipelineOrchestrator"] = None
+
+        # Global configuration (rebound from launcher)
+        self.global_config: Optional[GlobalPipelineConfig] = None # Added for global config access
 
         # TUI-specific settings (as per plans/tui_final/plan01_phase1.md)
         self.vim_mode: bool = False
@@ -185,6 +168,9 @@ class TUIState:
         self.is_compiled = False
 
 
+# Added import for FunctionStep type hint
+from openhcs.core.steps.function_step import FunctionStep
+
 class OpenHCSTUI:
     """
     Core TUI application for OpenHCS.
@@ -210,36 +196,42 @@ class OpenHCSTUI:
         # OpenHCSTUI is the main initialization class for the TUI, so it creates the storage registry.
         self.storage_registry = storage_registry()
         self.global_config = global_config # Store shared global_config
-        
+        self.state.global_config = global_config # Also set in TUIState for broader access
+
         self.step_viewer: Optional[ActualStepViewerPane] = None # For async initialization
-        self.function_pattern_editor: Optional[ActualFunctionPatternEditor] = None # Created on demand
+        self.function_pattern_editor: Optional[ActualFunctionPatternEditor] = None # Old editor, might be removed later
+        self.dual_step_func_editor: Optional[DualStepFuncEditorPane] = None # New editor, created on demand
+        self.plate_config_editor: Optional[Any] = None # Placeholder for PlateConfigEditorPane instance
 
         # Create key bindings
         self.kb = self._create_key_bindings()
 
-        # Component validation - enforces Clause 92 and Clause 299
-        self._validate_components_present()
+        # Component instantiation (formerly _validate_components_present)
+        self._initialize_components() # Renamed for clarity
 
         # Register observer for launcher's core config updates
         self.state.add_observer('launcher_core_config_rebound', self._on_launcher_config_rebound)
 
-        # Create root container
-        self.root_container = self._create_root_container()
+        # Observers for PlateConfigEditorPane
+        self.state.add_observer('show_edit_plate_config_requested', self._handle_show_edit_plate_config_request)
+        self.state.add_observer('plate_config_editing_cancelled', self._handle_plate_config_editing_cancelled)
+        self.state.add_observer('plate_config_saved', self._handle_plate_config_saved)
+
+        # Observer for DualStepFuncEditorPane close/cancel
+        self.state.add_observer('step_editing_cancelled', self._handle_step_editing_cancelled)
+        # Note: 'step_pattern_saved' is handled by PipelineEditorPane to update its internal step list.
+        # OpenHCSTUI only needs to know when to stop showing the editor.
+        # 'edit_step_dialog_requested' is handled by PipelineEditorPane to set TUIState.
 
         # Create application
         self.application = Application(
-            layout=Layout(self.root_container),
+            layout=Layout(self._create_root_container()), # Call _create_root_container here
             key_bindings=self.kb,
             mouse_support=True,
             full_screen=True
         )
-        
+
         # Schedule asynchronous initialization of components that require it
-        # Ensure get_app() is valid here, or defer to a point where it is.
-        # If called too early, get_app() might not yet return the created application.
-        # A common pattern is to do this in an app.startup event if available,
-        # or ensure this __init__ is called when an event loop is already running.
-        # For now, assuming get_app() will work when this task is scheduled.
         if self.application: # Ensure application object exists
              self.application.create_background_task(self._async_initialize_step_viewer())
 
@@ -271,30 +263,10 @@ class OpenHCSTUI:
 
         return kb
 
-    def _validate_components_present(self):
+    def _initialize_components(self): # Renamed from _validate_components_present
         """
-        Validate that all required components are present and properly implemented.
-
-        🔒 Clause 92: Structural Validation First
-        Prevents interface fraud by disallowing fake instantiations.
-
-        🔒 Clause 299: Explicitly prohibits false instantiation stubs
-
-        🔒 Clause 5: Disallows any UI layout logic from proceeding without validation
-
-        🔒 Clause 503: Makes invisible work visible — restores load transfer
-
-        Raises:
-            Clause5Violation: If any required component is missing or unimplemented
+        Instantiate core TUI components.
         """
-        # Initialize components with proper stubs that will raise errors if used
-        # These components would now receive state, and can access filemanager
-        # and global_config via self.filemanager, self.global_config, or self.context.
-        # For now, their instantiation signature is kept simple as they are stubs.
-        # When implemented, they'll need to be passed the correct dependencies.
-        
-        # TODO(plan_02_plate_manager.md)
-        # Example: self.plate_manager = PlateManagerPane(state=self.state, filemanager=self.filemanager)
         # Instantiate the actual PlateManagerPane from plate_manager_core.py
         self.plate_manager = ActualPlateManagerPane(
             state=self.state,
@@ -302,76 +274,147 @@ class OpenHCSTUI:
             storage_registry=self.storage_registry, # Pass the shared registry
         )
 
-        # TODO(plan_03_step_viewer.md)
-        # self.step_viewer is now initialized asynchronously in __init__ via _async_initialize_step_viewer
-        # No direct instantiation here anymore.
+        # self.step_viewer is initialized asynchronously.
 
-        # TODO(plan_04_action_menu.md)
-        # Now instantiates the ActionMenuPane from openhcs.tui.action_menu_pane
-        # The arguments self.state (TUIState) and self.context (initial_tui_context)
-        # match the __init__ signature of the new ActionMenuPane.
-        self.action_menu = ActionMenuPane(state=self.state, initial_tui_context=self.context)
+        # ActionMenuPane is no longer used and its instantiation is removed.
+        # Functionality integrated into PlateManagerPane and PipelineEditorPane via Commands.
 
-        # TODO(plan_05a_function_pattern_editor_core.md)
-        # self.function_pattern_editor is initialized to None in __init__ and created by _get_left_pane.
+        # self.function_pattern_editor (old) is created on demand by _get_left_pane if needed.
+        # self.dual_step_func_editor is also created on demand by _get_left_pane.
 
-        # TODO(plan_06_status_bar.md)
         # Instantiate the actual StatusBar from status_bar.py
         self.status_bar = ActualStatusBar(self.state)
 
-        # TODO(plan_07_menu_bar.md)
         # Instantiate the actual MenuBar from menu_bar.py
         self.menu_bar = ActualMenuBar(self.state)
+
+    def _create_root_container(self) -> Container:
+        """
+        Creates the root container for the TUI application with the new 3-horizontal-bar layout.
+        This structure aligns with V4 Plan 1.2.
+        """
+        return HSplit([
+            # Top Bar (MenuBar and Version Label)
+            VSplit([
+                self._get_menu_bar(),
+                # Use a Window with flexible width to push the version label to the right
+                Window(width=0, char=' '), # Flexible spacer
+                Label("OpenHCS_V1.0", style="class:app-title", dont_extend_width=True)
+            ], height=1),
+            # 2nd Bar (Titles)
+            VSplit([
+                Frame(Label("1 Plate Manager"), style="class:pane-title"),
+                Frame(Label("2 Pipeline Editor"), style="class:pane-title"),
+            ], height=1),
+            # 3rd Bar (Contextual Buttons)
+            VSplit([
+                DynamicContainer(
+                    lambda: self.plate_manager.get_buttons_container()
+                    if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
+                    else Box(Label("Plate Buttons Loading..."), padding_left=1)
+                ),
+                DynamicContainer(
+                    lambda: self.step_viewer.get_buttons_container()
+                    if self.step_viewer and hasattr(self.step_viewer, 'get_buttons_container')
+                    else Box(Label("Pipeline Buttons Loading..."), padding_left=1)
+                ),
+            ], height=1),
+            # Main Panes (Plate Manager | Pipeline Editor) - This should be a VSplit
+            VSplit([
+                self._get_left_pane(),
+                self._get_step_viewer(),
+            ]), # Main content area takes remaining space
+            # Bottom Bar (StatusBar)
+            self._get_status_bar(), # This should have a fixed height, e.g., height=1
+        ])
 
     def _get_left_pane(self) -> Container:
         """
         Get the current left pane based on state.
-        Dynamically shows PlateManagerPane or FunctionPatternEditor.
+        Dynamically shows PlateManagerPane or DualStepFuncEditorPane.
         """
-        # Check TUIState for 'editing_pattern' and 'selected_step_for_editing'
-        # These attributes need to be managed by TUIState based on user actions
-        # (e.g., clicking "Edit Step" in StepViewerPane sets these).
-        is_editing_pattern = getattr(self.state, 'editing_pattern', False)
-        step_to_edit = getattr(self.state, 'selected_step_for_editing', None)
+        is_editing_step_config = getattr(self.state, 'editing_step_config', False)
+        is_editing_plate_config = getattr(self.state, 'editing_plate_config', False)
+        step_to_edit_config = getattr(self.state, 'step_to_edit_config', None)
+        orchestrator_to_edit_config = getattr(self.state, 'orchestrator_for_plate_config_edit', None)
 
-        if is_editing_pattern:
-            if step_to_edit is None:
-                logger.warning("OpenHCSTUI: 'editing_pattern' is true, but 'selected_step_for_editing' is not set in TUIState.")
-                # Fallback: Show an error message or the PlateManagerPane
-                return Frame(Box(Label("Error: No step selected for pattern editing.")), title="Error")
+        if is_editing_plate_config:
+            if orchestrator_to_edit_config is None:
+                logger.warning("OpenHCSTUI: 'editing_plate_config' is true, but 'orchestrator_for_plate_config_edit' is not set.")
+                self.state.editing_plate_config = False # Reset state
+                return self.plate_manager.container if self.plate_manager else Frame(Label("Error")) # Fallback
 
-            # Logic to create or reuse FunctionPatternEditor instance
-            # Recreate if the step to edit has changed or if it's the first time
-            if self.function_pattern_editor is None or \
-               not hasattr(self.function_pattern_editor, 'step') or \
-               self.function_pattern_editor.step != step_to_edit:
-                logger.info(f"OpenHCSTUI: Instantiating FunctionPatternEditor for step: {step_to_edit.get('name', 'N/A')}")
+            from openhcs.tui.dialogs.plate_config_editor import PlateConfigEditorPane # Import here
+
+            # Instantiate or re-instantiate if orchestrator changed or editor was cleared
+            if self.plate_config_editor is None or \
+               getattr(self.plate_config_editor, 'orchestrator', None) != orchestrator_to_edit_config:
+                logger.info(f"OpenHCSTUI: Instantiating PlateConfigEditorPane for orchestrator of plate: {getattr(orchestrator_to_edit_config, 'plate_id', 'N/A')}")
                 try:
-                    self.function_pattern_editor = ActualFunctionPatternEditor(state=self.state, step=step_to_edit)
+                    self.plate_config_editor = PlateConfigEditorPane(state=self.state, orchestrator=orchestrator_to_edit_config)
                 except Exception as e:
-                    logger.error(f"OpenHCSTUI: Failed to instantiate FunctionPatternEditor: {e}", exc_info=True)
-                    self.function_pattern_editor = None # Ensure it's None on failure
-                    return Frame(Box(Label(f"Error creating FPE: {e}")), title="FPE Error")
-            
-            if self.function_pattern_editor and hasattr(self.function_pattern_editor, 'container'):
-                return Frame(self.function_pattern_editor.container, title="Function Pattern Editor")
+                    logger.error(f"OpenHCSTUI: Failed to instantiate PlateConfigEditorPane: {e}", exc_info=True)
+                    self.plate_config_editor = None # Ensure it's None on failure
+                    self.state.editing_plate_config = False # Reset state on error
+                    return Frame(Box(Label(f"Error creating Plate Config Editor: {e}")), title="Editor Error") # Show error
+
+            if self.plate_config_editor and hasattr(self.plate_config_editor, 'container'):
+                return self.plate_config_editor.container
+            else: # Should not happen if instantiation was successful
+                logger.error("OpenHCSTUI: PlateConfigEditorPane instance available but has no container, or failed instantiation.")
+                self.state.editing_plate_config = False # Reset state
+                return Frame(Box(Label("Error: Plate Config Editor could not be loaded.")), title="Editor Error") # Fallback
+
+        elif is_editing_step_config:
+            if step_to_edit_config is None:
+                logger.warning("OpenHCSTUI: 'editing_step_config' is true, but 'step_to_edit_config' is not set in TUIState.")
+                return Frame(Box(Label("Error: No step selected for editing.")), title="Error")
+
+            # Ensure step_to_edit_config is a FuncStep instance
+            if not isinstance(step_to_edit_config, FunctionStep): # Requires FunctionStep import
+                 # Attempt to convert if it's a dict, otherwise log error
+                if isinstance(step_to_edit_config, dict):
+                    try:
+                        step_to_edit_config = FunctionStep(**step_to_edit_config)
+                    except Exception as e:
+                        logger.error(f"OpenHCSTUI: Failed to convert step_to_edit_config dict to FuncStep: {e}", exc_info=True)
+                        return Frame(Box(Label(f"Error: Invalid step data for editor: {e}")), title="Editor Error")
+                else:
+                    logger.error(f"OpenHCSTUI: 'step_to_edit_config' is not a FuncStep or dict, but {type(step_to_edit_config)}.")
+                    return Frame(Box(Label("Error: Invalid step data type for editor.")), title="Editor Error")
+
+
+            if self.dual_step_func_editor is None or \
+               self.dual_step_func_editor.original_func_step.id != step_to_edit_config.id: # Compare by ID or a unique attribute
+                logger.info(f"OpenHCSTUI: Instantiating DualStepFuncEditorPane for step: {step_to_edit_config.name or step_to_edit_config.id}")
+                try:
+                    self.dual_step_func_editor = DualStepFuncEditorPane(state=self.state, func_step=step_to_edit_config)
+                except Exception as e:
+                    logger.error(f"OpenHCSTUI: Failed to instantiate DualStepFuncEditorPane: {e}", exc_info=True)
+                    self.dual_step_func_editor = None
+                    return Frame(Box(Label(f"Error creating Step/Func Editor: {e}")), title="Editor Error")
+
+            if self.dual_step_func_editor and hasattr(self.dual_step_func_editor, 'container'):
+                # The title is now handled within DualStepFuncEditorPane itself or by its Frame
+                return self.dual_step_func_editor.container
             else:
-                logger.error("OpenHCSTUI: FunctionPatternEditor instance available but has no container, or failed instantiation.")
-                return Frame(Box(Label("Error: Function Pattern Editor could not be loaded.")), title="FPE Error")
-        else:
-            # Not editing a pattern, show PlateManagerPane
-            # If FPE was active, clear its instance so it's recreated fresh next time
-            if self.function_pattern_editor is not None:
-                logger.debug("OpenHCSTUI: Clearing FunctionPatternEditor instance as 'editing_pattern' is false.")
-                # TODO: If FPE has a close/cleanup method, call it here.
-                # For now, just dereferencing.
-                self.function_pattern_editor = None
-            
+                logger.error("OpenHCSTUI: DualStepFuncEditorPane instance available but has no container, or failed instantiation.")
+                return Frame(Box(Label("Error: Step/Func Editor could not be loaded.")), title="Editor Error")
+        else: # Neither step config nor plate config is being edited, show PlateManagerPane
+            # Clear editor instances if they exist and we are switching away from them
+            if self.dual_step_func_editor is not None:
+                logger.debug("OpenHCSTUI: Clearing DualStepFuncEditorPane instance.")
+                # await self.dual_step_func_editor.shutdown() # if it has one
+                self.dual_step_func_editor = None
+            if self.plate_config_editor is not None:
+                logger.debug("OpenHCSTUI: Clearing PlateConfigEditorPane instance.")
+                # await self.plate_config_editor.shutdown() # if it has one
+                self.plate_config_editor = None
+
             if self.plate_manager and hasattr(self.plate_manager, 'container'):
-                return Frame(self.plate_manager.container, title="Plate Manager")
+                return self.plate_manager.container # PlateManagerPane now includes its own Frame
             else:
                 logger.error("OpenHCSTUI: PlateManagerPane not available or has no container.")
-                # This should ideally not happen if PlateManagerPane initializes correctly.
                 return Frame(Box(Label("Error: Plate Manager not available.")), title="Error")
 
     def _get_step_viewer(self) -> Container:
@@ -383,27 +426,13 @@ class OpenHCSTUI:
             # Return a temporary placeholder if not yet initialized or init failed
             logger.debug("OpenHCSTUI: StepViewerPane not yet initialized, returning placeholder.")
             return Box(Label("Step Viewer - Initializing..."), padding=1)
-        
+
         # Ensure the initialized step_viewer has a container
         if not hasattr(self.step_viewer, 'container') or self.step_viewer.container is None:
             logger.error("OpenHCSTUI: StepViewerPane is initialized but has no container.")
             return Box(Label("Step Viewer - Error: No container"), padding=1)
-            
+
         return self.step_viewer.container
-
-    def _get_action_menu(self) -> Container:
-        """
-        Get the Action Menu pane.
-
-        Returns:
-            The Action Menu container
-
-        Raises:
-            Clause5Violation: If the Action Menu is not implemented
-        """
-        if not hasattr(self, "action_menu"):
-            raise Clause5Violation("Action Menu pane is unimplemented.")
-        return self.action_menu.container
 
     def _get_status_bar(self) -> Container:
         """
@@ -454,21 +483,61 @@ class OpenHCSTUI:
                 f"Expected GlobalPipelineConfig, got {type(new_core_config)}."
             )
 
+    async def _handle_show_edit_plate_config_request(self, data: Dict[str, Any]):
+        """Handles request to show the plate-specific configuration editor."""
+        orchestrator = data.get('orchestrator')
+        if orchestrator:
+            self.state.orchestrator_for_plate_config_edit = orchestrator
+            self.state.editing_plate_config = True
+            self.state.editing_step_config = False # Ensure not also editing step
+            logger.info(f"OpenHCSTUI: Switched to editing plate config for orchestrator: {getattr(orchestrator, 'plate_id', 'N/A')}")
+            get_app().invalidate() # Trigger layout refresh
+        else:
+            logger.warning("OpenHCSTUI: _handle_show_edit_plate_config_request called without orchestrator data.")
+
+    async def _handle_plate_config_editing_cancelled(self, data: Any = None):
+        """Handles cancellation of plate config editing."""
+        self.state.editing_plate_config = False
+        self.state.orchestrator_for_plate_config_edit = None
+        self.plate_config_editor = None # Clear the editor instance
+        logger.info("OpenHCSTUI: Plate config editing cancelled/closed.")
+        get_app().invalidate()
+
+    async def _handle_plate_config_saved(self, data: Any = None):
+        """Handles successful save of plate config."""
+        # The actual save logic is in PlateConfigEditorPane.
+        # This handler just resets the TUI state to switch views.
+        self.state.editing_plate_config = False
+        self.state.orchestrator_for_plate_config_edit = None
+        self.plate_config_editor = None # Clear the editor instance
+        logger.info("OpenHCSTUI: Plate config saved, closing editor.")
+        get_app().invalidate()
+
+    async def _handle_step_editing_cancelled(self, data: Any = None):
+        """Handles cancellation of step editing from DualStepFuncEditorPane."""
+        self.state.editing_step_config = False
+        self.state.step_to_edit_config = None
+        self.dual_step_func_editor = None # Clear the editor instance
+        logger.info("OpenHCSTUI: Step editing cancelled/closed.")
+        get_app().invalidate()
+
+
     async def shutdown_components(self):
         """
         Gracefully shut down all managed TUI components that have a shutdown method.
         """
         logger.info("OpenHCSTUI: Initiating shutdown sequence for components...")
-        
+
         component_attributes = [
             'plate_manager',
             'step_viewer',
-            'action_menu',
             'status_bar',
             'menu_bar',
-            'function_pattern_editor' # This might be None if never activated
+            'function_pattern_editor', # Old editor, might be removed later
+            'dual_step_func_editor', # New editor
+            'plate_config_editor' # New editor
         ]
- 
+
         for attr_name in component_attributes:
             component = getattr(self, attr_name, None)
             if component and hasattr(component, 'shutdown') and callable(component.shutdown):
@@ -486,9 +555,9 @@ class OpenHCSTUI:
                 logger.debug(f"Component {attr_name} ({component.__class__.__name__}) does not have a callable 'shutdown' method.")
             # else:
                 # logger.debug(f"Component attribute {attr_name} not found or is None.")
- 
+
         logger.info("OpenHCSTUI: Component shutdown sequence complete.")
- 
+
     async def _async_initialize_step_viewer(self):
         """
         Asynchronously initializes the StepViewerPane.
@@ -497,7 +566,7 @@ class OpenHCSTUI:
         if self.step_viewer is not None:
             logger.info("OpenHCSTUI: StepViewerPane already initialized or initialization in progress.")
             return
- 
+
         logger.info("OpenHCSTUI: Asynchronously initializing StepViewerPane...")
         try:
             # Use the async factory 'create' from step_viewer.py

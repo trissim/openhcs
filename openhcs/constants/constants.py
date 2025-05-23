@@ -19,21 +19,20 @@ class Microscope(Enum):
     IMAGEXPRESS = "ImageXpress"
     OPERAPHENIX = "OperaPhenix"
 
+class GroupBy(Enum):
+    CHANNEL = VariableComponents.CHANNEL.value
+    Z_INDEX = VariableComponents.Z_INDEX.value
+    SITE = VariableComponents.SITE.value
+    WELL = VariableComponents.WELL.value
+
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
 DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff"}
 DEFAULT_SITE_PADDING = 3
 DEFAULT_RECURSIVE_PATTERN_SEARCH = False
-DEFAULT_VARIABLE_COMPONENTS: VariableComponents = VariableComponents.SITE 
-DEFAULT_GROUP_BY: GroupBy = GroupBy.CHANNEL 
+DEFAULT_VARIABLE_COMPONENTS: VariableComponents = VariableComponents.SITE
+DEFAULT_GROUP_BY: GroupBy = GroupBy.CHANNEL
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
-
-
-class GroupBy(Enum):
-    CHANNEL = VariableComponents.CHANNEL.value
-    Z_INDEX = VAriableComponents.Z_INDEX.value
-    SITE = VariableComponents.SITE.value
-    WELL = VariableComponents.WELL.value
 
 # Backend-related constants
 class Backend(Enum):

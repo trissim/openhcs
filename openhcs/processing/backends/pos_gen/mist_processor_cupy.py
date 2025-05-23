@@ -16,7 +16,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Tuple, Union
 
 from openhcs.constants.constants import (DEFAULT_PATCH_SIZE,
-                                            DEFAULT_SEARCH_RADIUS, SpecialKey)
+                                            DEFAULT_SEARCH_RADIUS)
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.utils import optional_import

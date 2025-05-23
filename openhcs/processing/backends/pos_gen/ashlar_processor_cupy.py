@@ -15,7 +15,6 @@ The implementation follows the OpenHCS doctrinal principles:
 import logging
 from typing import TYPE_CHECKING, Any, Tuple
 
-from openhcs.constants.constants import SpecialKey
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import special_outputs, chain_breaker
 from openhcs.core.utils import optional_import
