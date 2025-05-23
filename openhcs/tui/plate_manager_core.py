@@ -378,11 +378,12 @@ class PlateManagerPane:
 
         # Updated status symbol logic based on V4 plan and common error states
         if plate_status == 'not_initialized': status_symbol = "?"
-        elif plate_status == 'initialized': status_symbol = "-"
+        elif plate_status == 'initialized' or plate_status == 'ready': status_symbol = "-" # Added 'ready'
         elif plate_status == 'compiled_ok': status_symbol = "✓"
-        elif plate_status and ('error' in plate_status or plate_status in ['error_init', 'error_compile', 'error_run']):
+        elif plate_status and ('error' in plate_status.lower() or \
+                               plate_status in ['error_init', 'error_compile', 'error_run', 'error_validation', 'error_general']):
             status_symbol = "!"
-        else: status_symbol = " " # Remove the circle, use space instead
+        else: status_symbol = " " # Default for other statuses, removed circle comment
 
         name = plate_data.get('name', 'Unknown Plate')
 

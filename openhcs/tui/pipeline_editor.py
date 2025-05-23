@@ -214,16 +214,19 @@ class PipelineEditorPane: # Renamed from StepViewerPane
     def _get_step_display_text(self, step_data: Dict[str, Any], is_selected: bool) -> str:
         """
         Generates the display text for a single step item.
-        Reordering symbols (^/v) should be handled by InteractiveListItem.
+        Format: symbol | name | func_name -> output_memory_type
+        The InteractiveListItem is assumed to handle the '^/v index:' part.
         """
         status_icon = self._get_status_icon(step_data.get('status', 'unknown'))
         name = step_data.get('name', 'Unknown Step')
-        func_name = self._get_function_name(step_data)
-        memory_type = step_data.get('output_memory_type', '[N/A]')
+        func_name = self._get_function_name(step_data) # This already returns a string
+        output_memory_type = step_data.get('output_memory_type', '[N/A]')
 
-        # Format the display text to match the desired layout
-        # The ^/v symbols and item index are handled by InteractiveListItem
-        return f"{status_icon} {name}: {func_name} → {memory_type}"
+        # Ensure func_name is just the name, not complex structure for this display line
+        if not isinstance(func_name, str): # Should be string from _get_function_name
+            func_name = str(func_name)
+
+        return f"{status_icon} | {name} | {func_name} → {output_memory_type}"
 
     # _format_step_list is obsolete.
 

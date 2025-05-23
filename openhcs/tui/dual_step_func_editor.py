@@ -20,7 +20,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy # Added impo
 from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, FormattedTextControl, Window, ScrollablePane, Container
-from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea, RadioList, CheckboxList, Dialog # Added Dialog
+from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea, RadioList, CheckboxList, Dialog, Checkbox # Added Checkbox
 
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.abstract import AbstractStep
@@ -157,11 +157,35 @@ class DualStepFuncEditorPane:
                 actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
             
             if actual_type is bool:
-                widget = CheckboxList(values=[(param_name, "")])
-                if current_value:
-                    widget.current_values = [param_name]
-                # For CheckboxList, changes are typically handled on save or via a dedicated callback
-                # if immediate _something_changed is needed. Here, we'll update on save.
+                # Use a single Checkbox for boolean parameters
+                widget = Checkbox(checked=bool(current_value))
+                # Checkbox doesn't have a direct on_text_changed or similar event for its state change.
+                # We will read its '.checked' attribute in _something_changed (if called generically)
+                # and definitely in _save_changes.
+                # To trigger _something_changed, we can wrap its handler or rely on a general change detection.
+                # For now, let's ensure _something_changed is robust enough.
+                # A simple way to make it participate in _something_changed is to attach a custom handler
+                # if the Checkbox allows it, or call _something_changed from a wrapper if PTK doesn't directly support.
+                # PTK Checkbox is simple; its state is just read.
+                # Let's assume _something_changed will be called by a general mechanism or on field focus change for now.
+                # To explicitly trigger _something_changed, we might need to wrap the Checkbox interaction
+                # or have a "apply changes from form" button if events are tricky.
+                # For now, we will rely on _save_changes to correctly read the value.
+                # To make save button enable/disable work, _something_changed needs to be called.
+                # A common pattern is to have a focus change listener on the form that calls _something_changed.
+                # Or, more simply, attach a dummy handler that calls _something_changed.
+                # The Checkbox itself does not have an on_press that gives the new state directly.
+                # Let's refine this: we can use a VSplit with a button or make the checkbox itself trigger.
+                # The prompt_toolkit Checkbox is a container, its control handles mouse.
+                # We'll make a small modification to how _something_changed is called for it.
+                # We will call _something_changed with the checkbox instance itself.
+                original_handler = widget.control.mouse_handler
+                def new_mouse_handler(mouse_event):
+                    result = original_handler(mouse_event)
+                    self._something_changed(param_name, widget) # Pass widget to read .checked state
+                    return result
+                widget.control.mouse_handler = new_mouse_handler
+
             elif param_name == "variable_components": # Special handling for VariableComponents
                 options = [(None, "(None)")] + [(member, member.name) for member in VariableComponents]
                 
@@ -320,17 +344,31 @@ class DualStepFuncEditorPane:
 
         has_changed = False
         sig_abstract = inspect.signature(AbstractStep.__init__)
+        changed_in_step_settings = False
         for name_to_check in sig_abstract.parameters:
             if name_to_check == 'self': continue
+
             original_val = getattr(self.original_func_step, name_to_check, inspect.Parameter.empty)
-            editing_val = getattr(self.editing_func_step, name_to_check, inspect.Parameter.empty)
+            
+            # For boolean fields handled by Checkbox, get .checked value
+            widget_instance = self.step_param_inputs.get(name_to_check)
+            if isinstance(widget_instance, Checkbox):
+                editing_val = widget_instance.checked
+                # Update editing_func_step directly here for booleans if _something_changed was called with widget
+                if param_name == name_to_check and widget_value is widget_instance: # widget_value is the checkbox itself
+                     setattr(self.editing_func_step, name_to_check, editing_val)
+            else:
+                editing_val = getattr(self.editing_func_step, name_to_check, inspect.Parameter.empty)
+
             if original_val != editing_val:
-                has_changed = True
+                changed_in_step_settings = True
                 break
         
-        if not has_changed:
-            if copy.deepcopy(self.editing_func_step.func) != copy.deepcopy(self.original_func_step.func):
-                has_changed = True
+        func_changed = False
+        if copy.deepcopy(self.editing_func_step.func) != copy.deepcopy(self.original_func_step.func):
+            func_changed = True
+            
+        has_changed = changed_in_step_settings or func_changed
         
         if self.save_button:
             self.save_button.disabled = not has_changed
@@ -359,8 +397,9 @@ class DualStepFuncEditorPane:
                     setattr(self.editing_func_step, param_name, [selected_enum_member.name])
                 else:
                     setattr(self.editing_func_step, param_name, None)
-            elif isinstance(widget, CheckboxList) and actual_type is bool: # Existing bool handling
-                setattr(self.editing_func_step, param_name, param_name in widget.current_values)
+                elif isinstance(widget, Checkbox) and actual_type is bool:
+                    setattr(self.editing_func_step, param_name, widget.checked)
+                # Removed CheckboxList handling for bool as it's replaced by Checkbox
 
         if self.func_pattern_editor_component:
             self.editing_func_step.func = self.func_pattern_editor_component.get_pattern()
@@ -501,9 +540,8 @@ class DualStepFuncEditorPane:
         # Update the UI widget
         if isinstance(associated_widget, TextArea):
             associated_widget.text = str(original_value or "")
-        elif isinstance(associated_widget, CheckboxList):
-            # Assuming param_name_to_reset is the value for boolean CheckboxList
-            associated_widget.current_values = [param_name_to_reset] if original_value else []
+        elif isinstance(associated_widget, Checkbox): # Updated for single Checkbox
+            associated_widget.checked = bool(original_value)
         elif isinstance(associated_widget, RadioList):
             # For VariableComponents and GroupBy
             enum_class = None
