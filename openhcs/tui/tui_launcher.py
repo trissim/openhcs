@@ -7,11 +7,13 @@ and creating per-plate orchestrators. Integrates the GlobalPipelineConfig.
 import asyncio
 import logging
 import sys # For fallback print
+import pickle # Added for loading pipeline definitions
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List # Added List
 
 # Core OpenHCS components
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.steps.abstract import AbstractStep # Added for pipeline definition typing
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.io.filemanager import FileManager
@@ -30,6 +32,8 @@ class OpenHCSTUILauncher:
     Launcher for the OpenHCS TUI.
     Manages shared components, orchestrators, and the main TUI application lifecycle.
     """
+    DEFAULT_PIPELINE_FILENAME = "pipeline_definition.openhcs" # Added class variable
+
     def __init__(self,
                  core_global_config: GlobalPipelineConfig,
                  common_output_directory: Optional[str] = None, # Renamed parameter
@@ -195,39 +199,108 @@ class OpenHCSTUILauncher:
         if not plate_id: return
 
         self.logger.info(f"Attempting to remove plate: id='{plate_id}'")
+        removed_orchestrator_instance = None
         async with self.orchestrators_lock:
             if plate_id in self.orchestrators:
-                # Note: PipelineOrchestrator instances manage their internal resources (e.g., ThreadPoolExecutor via `with` statement)
-                # or rely on Python's garbage collection. Specific cleanup calls on the instance are generally not required here.
-                removed_orchestrator = self.orchestrators.pop(plate_id)
-                self.logger.info(f"Orchestrator for plate '{plate_id}' removed.")
-                self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'removed'})
-
-                # If the removed plate was the active one, clear active orchestrator
-                if hasattr(self.state, 'active_orchestrator') and self.state.active_orchestrator == removed_orchestrator:
-                    self.state.active_orchestrator = None
-                    self.logger.info(f"Active orchestrator cleared as plate '{plate_id}' was removed.")
-                    self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+                removed_orchestrator_instance = self.orchestrators.pop(plate_id)
+                self.logger.info(f"Orchestrator for plate '{plate_id}' removed from launcher's active list.")
+                # Actual orchestrator shutdown/cleanup might be handled by its own methods if needed,
+                # or rely on garbage collection if it doesn't hold persistent resources like open files/threads.
+                # For now, we just remove it from the dict.
             else:
-                self.logger.warning(f"Attempted to remove plate '{plate_id}', but no orchestrator found.")
+                self.logger.warning(f"Attempted to remove plate '{plate_id}', but no orchestrator found in launcher.")
+                return # Exit if no orchestrator was found to remove
 
-    async def _on_plate_selected(self, plate_info: Dict[str, Any]):
-        """Handles 'plate_selected' event: Sets the active orchestrator in TUIState."""
+        # If the removed plate was the active one, clear relevant TUIState.
+        if hasattr(self.state, 'active_orchestrator') and self.state.active_orchestrator == removed_orchestrator_instance:
+            self.logger.info(f"Removed plate '{plate_id}' was active. Clearing active plate context in TUIState.")
+            if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
+                self.state.clear_active_plate_context() # This will set active_orchestrator, selected_plate, etc. to None
+            else: # Fallback if method is missing (should not happen with prior changes)
+                self.state.active_orchestrator = None
+                self.state.selected_plate = None # Ensure selected_plate is also cleared
+                self.state.current_pipeline_definition = None
+            
+            # Notify components that the active context (including pipeline) has changed.
+            # PipelineEditorPane would observe 'pipeline_definition_loaded' to clear its view.
+            await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+            await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+            self.logger.info(f"Notified UI about active context change for removed plate '{plate_id}'.")
+        
+        # Notify about the removal itself, e.g., for PlateManagerPane to update its list.
+        # This should ideally happen after TUIState context is cleared if it was active.
+        await self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'removed'})
+
+
+    async def _on_plate_selected(self, plate_info: Optional[Dict[str, Any]]): # plate_info can be None
+        """Handles 'plate_selected' event: Sets active orchestrator and loads its pipeline."""
+        if plate_info is None or plate_info.get('id') is None:
+            self.logger.info("Plate selection cleared or invalid. Clearing active plate context.")
+            if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
+                self.state.clear_active_plate_context()
+            else: # Fallback
+                self.state.active_orchestrator = None
+                self.state.selected_plate = None
+                self.state.current_pipeline_definition = None
+            await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+            await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+            return
+
         plate_id = plate_info.get('id')
-        if not plate_id: return
-
         self.logger.info(f"Plate selected: id='{plate_id}'")
+
+        orchestrator = None
         async with self.orchestrators_lock:
             orchestrator = self.orchestrators.get(plate_id)
-            if orchestrator:
-                self.state.active_orchestrator = orchestrator # Assuming TUIState has this attribute
-                self.logger.debug(f"Active orchestrator set in TUIState for plate '{plate_id}'.")
-                self.state.notify('active_orchestrator_changed', {'orchestrator': orchestrator, 'plate_id': plate_id})
+
+        if orchestrator:
+            self.state.active_orchestrator = orchestrator
+            self.state.selected_plate = plate_info # Store the full plate_info for context
+            self.logger.debug(f"Active orchestrator set in TUIState for plate '{plate_id}'.")
+            await self.state.notify('active_orchestrator_changed', {'orchestrator': orchestrator, 'plate_id': plate_id})
+
+            # Load pipeline definition
+            pipeline_loaded: List[AbstractStep] = []
+            pipeline_file_path = orchestrator.workspace_path / self.DEFAULT_PIPELINE_FILENAME
+            
+            if await asyncio.to_thread(pipeline_file_path.exists): # Run sync Path.exists in thread
+                try:
+                    with open(pipeline_file_path, "rb") as f:
+                        # Run sync pickle.load in thread
+                        pipeline_loaded = await asyncio.to_thread(pickle.load, f) 
+                    if not isinstance(pipeline_loaded, list) or \
+                       not all(isinstance(step, AbstractStep) for step in pipeline_loaded):
+                        self.logger.error(f"Pipeline file '{pipeline_file_path}' for plate '{plate_id}' is corrupted or not a list of AbstractStep. Treating as empty.")
+                        pipeline_loaded = []
+                    else:
+                        self.logger.info(f"Pipeline definition loaded for plate '{plate_id}' from '{pipeline_file_path}'. Steps: {len(pipeline_loaded)}")
+                except FileNotFoundError: # Should be caught by .exists(), but defensive
+                    self.logger.info(f"Pipeline file not found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
+                    pipeline_loaded = []
+                except pickle.UnpicklingError as e:
+                    self.logger.error(f"Error unpickling pipeline for plate '{plate_id}' from '{pipeline_file_path}': {e}. Treating as empty.")
+                    pipeline_loaded = []
+                except Exception as e: # Catch other potential errors during load
+                    self.logger.error(f"Unexpected error loading pipeline for plate '{plate_id}': {e}", exc_info=True)
+                    pipeline_loaded = []
             else:
-                self.logger.warning(f"Selected plate '{plate_id}' has no orchestrator. Active orchestrator not changed.")
-                # Optionally clear active orchestrator if selection implies it should be valid
-                # self.state.active_orchestrator = None
-                # self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+                self.logger.info(f"No pipeline definition file found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
+                pipeline_loaded = []
+            
+            self.state.current_pipeline_definition = pipeline_loaded
+            await self.state.notify('pipeline_definition_loaded', {'plate_id': plate_id, 'pipeline': pipeline_loaded})
+
+        else:
+            self.logger.warning(f"Selected plate '{plate_id}' has no orchestrator instance in launcher. Clearing active context.")
+            if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
+                self.state.clear_active_plate_context()
+            else: # Fallback
+                self.state.active_orchestrator = None
+                self.state.selected_plate = None
+                self.state.current_pipeline_definition = None
+            await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+            await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+
 
     async def run(self):
         """Initializes and runs the TUI application."""

@@ -31,9 +31,9 @@ from openhcs.io.filemanager import FileManager # ADDED
 # Import the actual PlateManagerPane
 from openhcs.tui.plate_manager_core import PlateManagerPane as ActualPlateManagerPane
 # Import the actual MenuBar
-from openhcs.tui.menu_bar import MenuBar as ActualMenuBar
-# Import the actual PipelineEditorPane (renamed from StepViewerPane)
-from openhcs.tui.step_viewer import PipelineEditorPane as ActualStepViewerPane
+# from openhcs.tui.menu_bar import MenuBar as ActualMenuBar # ActualMenuBar is no longer used for the top bar
+# Import the actual PipelineEditorPane
+from openhcs.tui.pipeline_editor import PipelineEditorPane as ActualPipelineEditorPane
 # Import the actual FunctionPatternEditor (old) and new DualStepFuncEditorPane
 from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor # Keep for now if any logic is reused
 from openhcs.tui.dual_step_func_editor import DualStepFuncEditorPane # New editor
@@ -41,6 +41,9 @@ from openhcs.tui.dual_step_func_editor import DualStepFuncEditorPane # New edito
 from openhcs.tui.status_bar import StatusBar as ActualStatusBar
 # Import main strage registry
 from openhcs.io.base import storage_registry
+# Import commands for new buttons
+from openhcs.tui.commands import ShowGlobalSettingsDialogCommand, ShowHelpCommand
+
 
 logger = logging.getLogger(__name__) # ADDED module-level logger
 
@@ -66,6 +69,8 @@ from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
 from openhcs.core.context.processing_context import ProcessingContext
 if TYPE_CHECKING: # Add for PipelineOrchestrator type hint
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.steps.abstract import AbstractStep # Added for current_pipeline_definition
+    from openhcs.core.steps.function_step import FunctionStep # Added for step_to_edit_config
 # Import from func_registry instead of function_registry to avoid circular imports
 from openhcs.processing.func_registry import FUNC_REGISTRY
 
@@ -90,10 +95,11 @@ class TUIState:
         # Specific states for compile/run cycle
         self.compiled_contexts: Optional[Dict[str, ProcessingContext]] = None
         self.execution_status: Optional[str] = None
+        self.current_pipeline_definition: Optional[List["AbstractStep"]] = None # Added attribute
 
         # State for DualStepFuncEditorPane interaction
         self.editing_step_config: bool = False # Renamed from editing_pattern
-        self.step_to_edit_config: Optional[Dict[str, Any]] = None # Renamed from selected_step_for_editing
+        self.step_to_edit_config: Optional["FunctionStep"] = None # Updated type hint
 
         # State for PlateConfigEditorPane interaction
         self.editing_plate_config: bool = False
@@ -108,7 +114,7 @@ class TUIState:
         # Default editor from environment, fallback to vim
         self.editor_path: str = os.environ.get('EDITOR', 'vim')
         # Add other TUI specific state as needed, e.g. for active orchestrator
-        self.active_orchestrator: Optional[Any] = None # Placeholder for actual orchestrator type
+        self.active_orchestrator: Optional["PipelineOrchestrator"] = None # Updated type hint
 
         # Observer pattern implementation
         self.observers: Dict[str, List[Callable]] = {}
@@ -201,8 +207,7 @@ class TUIState:
         return result
 
 
-# Added import for FunctionStep type hint
-from openhcs.core.steps.function_step import FunctionStep
+# Removed import for FunctionStep type hint here, as it's under TYPE_CHECKING now
 
 class OpenHCSTUI:
     """
@@ -231,7 +236,7 @@ class OpenHCSTUI:
         self.global_config = global_config # Store shared global_config
         self.state.global_config = global_config # Also set in TUIState for broader access
 
-        self.step_viewer: Optional[ActualStepViewerPane] = None # For async initialization
+        self.pipeline_editor: Optional[ActualPipelineEditorPane] = None # For async initialization, renamed from step_viewer
         self.function_pattern_editor: Optional[ActualFunctionPatternEditor] = None # Old editor, might be removed later
         self.dual_step_func_editor: Optional[DualStepFuncEditorPane] = None # New editor, created on demand
         self.plate_config_editor: Optional[Any] = None # Placeholder for PlateConfigEditorPane instance
@@ -266,9 +271,9 @@ class OpenHCSTUI:
 
         # Schedule asynchronous initialization of components that require it
         if self.application: # Ensure application object exists
-             self.application.create_background_task(self._async_initialize_step_viewer())
+             self.application.create_background_task(self._async_initialize_pipeline_editor()) # Renamed
              # Register menu bar key bindings after application is fully initialized
-             if hasattr(self.menu_bar, 'register_key_bindings'):
+             if hasattr(self.menu_bar, 'register_key_bindings'): # menu_bar might be removed
                  self.menu_bar.register_key_bindings()
 
     def _create_key_bindings(self) -> KeyBindings:
@@ -322,46 +327,60 @@ class OpenHCSTUI:
         self.status_bar = ActualStatusBar(self.state)
 
         # Instantiate the actual MenuBar from menu_bar.py
-        self.menu_bar = ActualMenuBar(self.state, self.context)
+        # self.menu_bar = ActualMenuBar(self.state, self.context) # ActualMenuBar is no longer used for the top bar
+        # Instantiate commands for the new top bar buttons
+        self.show_global_settings_command = ShowGlobalSettingsDialogCommand(self.state, self.context)
+        self.show_help_command = ShowHelpCommand(self.state, self.context)
+
 
     def _create_root_container(self) -> Container:
         """
         Creates the root container for the TUI application with the new 3-horizontal-bar layout.
-        This structure aligns with V4 Plan 1.2.
+        This structure aligns with V4 Plan 1.2 and the refined plan.
         """
+        # Top Bar (1st horizontal bar)
+        top_bar = VSplit([
+            Button("Global Settings", handler=self.show_global_settings_command.execute),
+            Button("Help", handler=self.show_help_command.execute),
+            Window(width=0, char=' '),  # Flexible spacer
+            Label("OpenHCS_V1.0", style="class:app-title", dont_extend_width=True)
+        ], height=1, padding=0) # Using VSplit as per prompt, though HSplit might be more typical for horizontal elements
+
+        # Titles Bar (2nd horizontal bar)
+        titles_bar = VSplit([
+            Frame(Label("1 Plate Manager"), style="class:pane-title", width=Dimension(weight=1)),
+            Frame(Label("2 Pipeline Editor"), style="class:pane-title", width=Dimension(weight=1)),
+        ], height=1, padding=0)
+
+        # Buttons Bar (3rd horizontal bar)
+        buttons_bar = VSplit([
+            DynamicContainer(
+                lambda: self.plate_manager.get_buttons_container()
+                if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
+                else Box(Label("[Plate Buttons Placeholder]"), padding_left=1) # Updated placeholder
+            ),
+            DynamicContainer(
+                lambda: self.pipeline_editor.get_buttons_container() # Renamed from step_viewer
+                if self.pipeline_editor and hasattr(self.pipeline_editor, 'get_buttons_container')
+                else Box(Label("[Pipeline Buttons Placeholder]"), padding_left=1)
+            ),
+        ], height=1, padding=0)
+
+        # Main Content Area
+        main_content_area = VSplit([
+            self._get_left_pane(), # This will be wrapped in a Frame by PlateManagerPane or editor
+            self._get_pipeline_editor_pane(), # Renamed from _get_step_viewer
+        ], height=Dimension(weight=1)) # Main content area takes remaining space
+
+        # Status Bar
+        status_bar_container = self._get_status_bar() # This should have a fixed height, e.g., height=1
+
         return HSplit([
-            # Top Bar (MenuBar and Version Label)
-            VSplit([
-                self._get_menu_bar(),
-                # Use a Window with flexible width to push the version label to the right
-                Window(width=0, char=' '), # Flexible spacer
-                Label("OpenHCS_V1.0", style="class:app-title", dont_extend_width=True)
-            ], height=1),
-            # 2nd Bar (Titles)
-            VSplit([
-                Frame(Label("1 Plate Manager"), style="class:pane-title", width=Dimension(weight=1)),
-                Frame(Label("2 Pipeline Editor"), style="class:pane-title", width=Dimension(weight=1)),
-            ], height=1),
-            # 3rd Bar (Contextual Buttons)
-            VSplit([
-                DynamicContainer(
-                    lambda: self.plate_manager.get_buttons_container()
-                    if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
-                    else Box(Label("[add] [del] [edit] [init] [compile] [run]"), padding_left=1)
-                ),
-                DynamicContainer(
-                    lambda: self.step_viewer.get_buttons_container()
-                    if self.step_viewer and hasattr(self.step_viewer, 'get_buttons_container')
-                    else Box(Label("[add] [del] [edit] [load] [save]"), padding_left=1)
-                ),
-            ], height=1),
-            # Main Panes (Plate Manager | Pipeline Editor) - This should be a VSplit
-            VSplit([
-                self._get_left_pane(),
-                self._get_step_viewer(),
-            ], height=Dimension(weight=1)), # Main content area takes remaining space
-            # Bottom Bar (StatusBar)
-            self._get_status_bar(), # This should have a fixed height, e.g., height=1
+            top_bar,
+            titles_bar,
+            buttons_bar,
+            main_content_area,
+            status_bar_container,
         ])
 
     def _get_left_pane(self) -> Container:
@@ -453,22 +472,33 @@ class OpenHCSTUI:
                 logger.error("OpenHCSTUI: PlateManagerPane not available or has no container.")
                 return Frame(Box(Label("Error: Plate Manager not available.")), title="Error")
 
-    def _get_step_viewer(self) -> Container:
+    def clear_active_plate_context(self):
+        """Clears context related to the active plate."""
+        logger.debug("TUIState: Clearing active plate context.")
+        self.active_orchestrator = None
+        self.selected_plate = None
+        self.current_pipeline_definition = None
+        self.selected_step = None
+        self.compiled_contexts = None
+        # Notify relevant components if needed, e.g., to clear their views
+        # await self.notify('active_plate_context_cleared') # Example notification
+
+    def _get_pipeline_editor_pane(self) -> Container: # Renamed from _get_step_viewer
         """
-        Get the Step Viewer pane.
+        Get the Pipeline Editor pane.
         Returns a placeholder if the pane is not yet initialized.
         """
-        if self.step_viewer is None:
+        if self.pipeline_editor is None: # Renamed from step_viewer
             # Return a temporary placeholder if not yet initialized or init failed
-            logger.debug("OpenHCSTUI: StepViewerPane not yet initialized, returning placeholder.")
-            return Frame(Label("Step Viewer - Initializing..."), width=Dimension(weight=1))
+            logger.debug("OpenHCSTUI: PipelineEditorPane not yet initialized, returning placeholder.")
+            return Frame(Label("Pipeline Editor - Initializing..."), width=Dimension(weight=1)) # Updated label
 
-        # Ensure the initialized step_viewer has a container
-        if not hasattr(self.step_viewer, 'container') or self.step_viewer.container is None:
-            logger.error("OpenHCSTUI: StepViewerPane is initialized but has no container.")
-            return Frame(Label("Step Viewer - Error: No container"), width=Dimension(weight=1))
+        # Ensure the initialized pipeline_editor has a container
+        if not hasattr(self.pipeline_editor, 'container') or self.pipeline_editor.container is None: # Renamed
+            logger.error("OpenHCSTUI: PipelineEditorPane is initialized but has no container.")
+            return Frame(Label("Pipeline Editor - Error: No container"), width=Dimension(weight=1)) # Updated label
 
-        return self.step_viewer.container
+        return self.pipeline_editor.container # Renamed
 
     def _get_status_bar(self) -> Container:
         """
@@ -480,23 +510,21 @@ class OpenHCSTUI:
         Raises:
             Clause5Violation: If the Status Bar is not implemented
         """
-        if not hasattr(self, "status_bar"):
+        if not hasattr(self, "status_bar"): # This check remains valid
             raise Clause5Violation("Status Bar is unimplemented.")
+        # Ensure the status bar itself has a height of 1, prompt_toolkit might handle this via its content
+        # but explicit HSplit in root container with height=1 for the status bar is the main driver.
         return self.status_bar.container
 
-    def _get_menu_bar(self) -> Container:
-        """
-        Get the Menu Bar.
-
-        Returns:
-            The Menu Bar container
-
-        Raises:
-            Clause5Violation: If the Menu Bar is not implemented
-        """
-        if not hasattr(self, "menu_bar"):
-            raise Clause5Violation("Menu Bar is unimplemented.")
-        return self.menu_bar.container
+    # _get_menu_bar is no longer needed as ActualMenuBar is not used for the top bar.
+    # def _get_menu_bar(self) -> Container:
+    #     """
+    #     Get the Menu Bar. (No longer used for the primary top bar)
+    #     """
+    #     if not hasattr(self, "menu_bar"): # This component might be removed entirely later
+    #         # raise Clause5Violation("Menu Bar is unimplemented.")
+    #         return Window() # Return empty window if it's fully removed
+    #     return self.menu_bar.container
 
     def _on_launcher_config_rebound(self, new_core_config: GlobalPipelineConfig) -> None:
         """
@@ -566,9 +594,9 @@ class OpenHCSTUI:
 
         component_attributes = [
             'plate_manager',
-            'step_viewer',
+            'pipeline_editor', # Renamed from step_viewer
             'status_bar',
-            'menu_bar',
+            # 'menu_bar', # menu_bar instance is no longer created if ActualMenuBar is not used
             'function_pattern_editor', # Old editor, might be removed later
             'dual_step_func_editor', # New editor
             'plate_config_editor' # New editor
@@ -594,23 +622,23 @@ class OpenHCSTUI:
 
         logger.info("OpenHCSTUI: Component shutdown sequence complete.")
 
-    async def _async_initialize_step_viewer(self):
+    async def _async_initialize_pipeline_editor(self): # Renamed from _async_initialize_step_viewer
         """
-        Asynchronously initializes the StepViewerPane.
+        Asynchronously initializes the PipelineEditorPane.
         This is called as a background task after OpenHCSTUI is instantiated.
         """
-        if self.step_viewer is not None:
-            logger.info("OpenHCSTUI: StepViewerPane already initialized or initialization in progress.")
+        if self.pipeline_editor is not None: # Renamed
+            logger.info("OpenHCSTUI: PipelineEditorPane already initialized or initialization in progress.") # Updated message
             return
 
-        logger.info("OpenHCSTUI: Asynchronously initializing StepViewerPane...")
+        logger.info("OpenHCSTUI: Asynchronously initializing PipelineEditorPane...") # Updated message
         try:
-            # Use the async factory 'create' from step_viewer.py
-            self.step_viewer = await ActualStepViewerPane.create(self.state, self.context)
-            logger.info("OpenHCSTUI: StepViewerPane initialized and setup complete.")
+            # Use the async factory 'create' from pipeline_editor.py (via ActualPipelineEditorPane)
+            self.pipeline_editor = await ActualPipelineEditorPane.create(self.state, self.context) # Renamed
+            logger.info("OpenHCSTUI: PipelineEditorPane initialized and setup complete.") # Updated message
         except Exception as e:
-            logger.error(f"OpenHCSTUI: Error initializing StepViewerPane: {e}", exc_info=True)
-            # self.step_viewer remains None, _get_step_viewer will show "Initializing..." or an error.
+            logger.error(f"OpenHCSTUI: Error initializing PipelineEditorPane: {e}", exc_info=True) # Updated message
+            # self.pipeline_editor remains None, _get_pipeline_editor_pane will show "Initializing..." or an error.
 
     # Implement abstract methods by delegating to the root_container
     def get_children(self):

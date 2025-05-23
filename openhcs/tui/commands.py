@@ -18,9 +18,16 @@ if TYPE_CHECKING:
     from openhcs.core.steps.function_step import FunctionStep # For AddStepCommand
 
 # Actual imports needed at runtime by commands
+import asyncio # For running sync code in executor
+from concurrent.futures import ThreadPoolExecutor # For InitializePlatesCommand
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.tui.utils import show_error_dialog, prompt_for_path_dialog # For Load/Save
+from openhcs.processing.func_registry import FUNC_REGISTRY # For AddStepCommand
+
+# Shared ThreadPoolExecutor for running synchronous orchestrator methods
+SHARED_EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix="tui-cmd-executor")
+
 
 class Command(Protocol):
     """
@@ -230,43 +237,52 @@ class InitializePlatesCommand(Command):
     """Command to initialize selected plate(s)."""
     async def execute(self, state: "TUIState", context: "ProcessingContext", **kwargs: Any) -> None:
         logger.info("InitializePlatesCommand: Triggered.")
-        # This command will iterate through selected plates (from state)
-        # and call orchestrator.initialize() for each.
-        # Error handling and state updates will be crucial.
-        # This replaces logic from ActionMenuPane._pre_compile_handler()
-        selected_orchestrators = kwargs.get('orchestrators_to_init', []) # Expect list of orchestrators
-        if not selected_orchestrators:
-             active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
-             if active_orchestrator:
-                 selected_orchestrators = [active_orchestrator]
+        active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
 
-        if not selected_orchestrators:
-            await message_dialog(title="Info", text="No plates selected to initialize.").run_async()
+        if not active_orchestrator:
+            await state.notify('error', {'message': 'No active plate selected to initialize.', 'source': self.__class__.__name__})
+            await message_dialog(title="Error", text="No active plate selected to initialize.").run_async() # User feedback
             return
 
-        for orchestrator in selected_orchestrators:
-            plate_id = getattr(orchestrator, 'plate_id', 'Unknown Plate')
-            try:
-                await state.notify("plate_operation_started", {"plate_id": plate_id, "operation": "initialize"})
-                # orchestrator.initialize() should be async or run in executor
-                # For now, assuming it can be awaited if it becomes async, or wrapped.
-                # Let's assume initialize is synchronous for now as per current orchestrator structure.
-                # To make it non-blocking, it would need to be run in an executor.
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, orchestrator.initialize) # Run sync initialize in executor
-                logger.info(f"Plate '{plate_id}' initialized successfully.")
-                await state.notify("plate_status_changed", {"plate_id": plate_id, "status": "initialized"}) # e.g., for '-' symbol
-            except Exception as e:
-                logger.error(f"Error initializing plate '{plate_id}': {e}", exc_info=True)
-                await state.notify("plate_status_changed", {"plate_id": plate_id, "status": "error_init", "message": str(e)})
-                await message_dialog(title="Initialization Error", text=f"Failed to initialize plate '{plate_id}':\n{e}").run_async()
-            finally:
-                await state.notify("plate_operation_finished", {"plate_id": plate_id, "operation": "initialize"})
+        plate_name = active_orchestrator.plate_path.name
+        plate_id = getattr(active_orchestrator, 'plate_id', plate_name) # Use plate_id if available
+
+        try:
+            await state.notify('operation_status_changed', {'status': 'running', 'message': f'Initializing plate {plate_name}...', 'source': self.__class__.__name__})
+            
+            loop = asyncio.get_event_loop()
+            # Run the synchronous orchestrator.initialize() in the shared thread pool
+            await loop.run_in_executor(SHARED_EXECUTOR, active_orchestrator.initialize)
+            
+            logger.info(f"Plate '{plate_name}' (ID: {plate_id}) initialized successfully by command.")
+            await state.notify('plate_status_changed', {
+                'plate_id': plate_id, 
+                'status': 'initialized', 
+                'message': 'Plate initialized successfully.'
+            })
+            await state.notify('operation_status_changed', {'status': 'idle', 'message': f'Plate {plate_name} initialization complete.', 'source': self.__class__.__name__})
+
+        except Exception as e:
+            logger.error(f"Error initializing plate '{plate_name}' (ID: {plate_id}): {e}", exc_info=True)
+            await state.notify('plate_status_changed', {
+                'plate_id': plate_id, 
+                'status': 'error_init', 
+                'message': f'Error initializing plate: {str(e)}'
+            })
+            await state.notify('operation_status_changed', {'status': 'idle', 'message': f'Plate {plate_name} initialization failed.', 'source': self.__class__.__name__})
+            # Also show a user-facing dialog for the error
+            await show_error_dialog(title="Initialization Error", message=f"Failed to initialize plate '{plate_name}':\n{e}", app_state=state)
+
 
     def can_execute(self, state: "TUIState") -> bool:
-        # Can execute if there's an active orchestrator or selected orchestrators for action
-        return getattr(state, 'active_orchestrator', None) is not None or \
-               kwargs.get('orchestrators_to_init') # This needs to be passed if used
+        # Can execute if there's an active orchestrator
+        active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
+        if active_orchestrator:
+            # Add more specific checks if needed, e.g., plate not already initialized
+            # current_plate_status = getattr(active_orchestrator, 'status', None) # Assuming orchestrator has a status
+            # return current_plate_status != 'initialized' 
+            return True # For now, allow if orchestrator is present
+        return False
 
 
 class CompilePlatesCommand(Command):
@@ -411,24 +427,57 @@ class AddStepCommand(Command):
         active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
 
         if not active_orchestrator:
+            await state.notify('error', {'message': 'No active plate/pipeline to add a step to.', 'source': self.__class__.__name__})
             await show_error_dialog(title="Error", message="No active plate/pipeline to add a step to.", app_state=state)
             return
 
-        new_step_instance = FunctionStep(
-            name="New Function Step",
-            func=None
+        # Ensure current_pipeline_definition is a list in TUIState
+        if state.current_pipeline_definition is None:
+            logger.warning("AddStepCommand: state.current_pipeline_definition was None. Initializing to empty list.")
+            state.current_pipeline_definition = []
+        
+        # Attempt to find a default function
+        default_func_pattern = None
+        default_func_name = "Default Func" # Fallback name
+        
+        # Try to find a simple, known function from the registry (example placeholder)
+        # This part is illustrative; a robust solution needs a well-defined default or specific UI to choose.
+        if FUNC_REGISTRY:
+            for backend_name, funcs_in_backend in FUNC_REGISTRY.items():
+                if backend_name == "numpy" and "noop_numpy" in funcs_in_backend: # Example
+                    default_func_pattern = funcs_in_backend["noop_numpy"]['pattern']
+                    default_func_name = "NumPy No-Op"
+                    break
+                elif funcs_in_backend: # Fallback: take the first function from any backend
+                    first_func_name = next(iter(funcs_in_backend))
+                    default_func_pattern = funcs_in_backend[first_func_name]['pattern']
+                    default_func_name = f"{first_func_name} (default)"
+                    break
+        
+        if default_func_pattern is None:
+            logger.warning("AddStepCommand: No suitable default function found in FUNC_REGISTRY. New step will have func=None.")
+            # Using func=None is acceptable if DualStepFuncEditor can handle it for selection.
+
+        new_step = FunctionStep(
+            func=default_func_pattern, # Can be None if no default found
+            name=f"New Step - {default_func_name}" 
+            # Other parameters will use defaults from FunctionStep.__init__
         )
+        # Ensure step_id is unique if FunctionStep doesn't auto-generate a sufficiently unique one
+        # new_step.step_id = str(uuid.uuid4()) # FunctionStep already generates a UUID
 
-        if not hasattr(active_orchestrator, 'pipeline_definition') or \
-           active_orchestrator.pipeline_definition is None:
-            active_orchestrator.pipeline_definition = []
+        state.current_pipeline_definition.append(new_step)
+        
+        # Update the orchestrator's view of the pipeline definition directly
+        # This assumes that TUIState.current_pipeline_definition is THE source of truth for the active pipeline
+        active_orchestrator.pipeline_definition = state.current_pipeline_definition
 
-        active_orchestrator.pipeline_definition.append(new_step_instance)
-
-        await state.notify('steps_updated', {'action': 'add', 'step_id': new_step_instance.step_id})
-        logger.info(f"Added new step '{new_step_instance.name}' to orchestrator.")
+        await state.notify('steps_updated', {'pipeline_definition': state.current_pipeline_definition, 'action': 'add', 'added_step_id': new_step.step_id})
+        await state.notify('operation_status_changed', {'status': 'idle', 'message': f'Added step: {new_step.name}', 'source': self.__class__.__name__})
+        logger.info(f"Added new step '{new_step.name}' (ID: {new_step.step_id}) to current_pipeline_definition and orchestrator.")
 
     def can_execute(self, state: "TUIState") -> bool:
+        # Can execute if there's an active orchestrator, as a pipeline can always be started or added to.
         return getattr(state, 'active_orchestrator', None) is not None
 
 
