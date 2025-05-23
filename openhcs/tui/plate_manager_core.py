@@ -35,11 +35,11 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Container, HSplit, VSplit, DynamicContainer, Dimension
+from prompt_toolkit.layout import Container, HSplit, VSplit, DynamicContainer, Dimension, Window
 from prompt_toolkit.widgets import Box, Button, Frame, Label # Removed TextArea
 from openhcs.tui.status_bar import STATUS_ICONS
 from openhcs.tui.dialogs.plate_dialog_manager import PlateDialogManager
-from .components import InteractiveListItem # Import the new component
+from .components import InteractiveListItem, FramedButton # Import the components
 from openhcs.tui.services.plate_validation import PlateValidationService
 
 from openhcs.core.context.processing_context import ProcessingContext
@@ -154,6 +154,7 @@ class PlateManagerPane:
 
     async def _initialize_ui(self):
         if self._ui_initialized:
+            logger.info("PlateManagerPane: UI already initialized, skipping initialization.")
             return
 
         app = get_app()
@@ -168,34 +169,52 @@ class PlateManagerPane:
             # Handle error appropriately, maybe disable buttons or show an error message
             # For now, buttons might fail if context is None.
 
+        # Ensure filemanager is available
+        if not hasattr(self, 'filemanager') or self.filemanager is None:
+            logger.warning("PlateManagerPane: FileManager not available during UI initialization. Some features may be limited.")
+            # We'll continue with initialization, but some features might not work properly
+
         # Register observers with the TUIState
         self.register_with_app()
 
         # Import commands here to avoid circular imports
-        from openhcs.tui.commands import (
-            ShowAddPlateDialogCommand, DeleteSelectedPlatesCommand,
-            ShowEditPlateConfigDialogCommand, InitializePlatesCommand,
-            CompilePlatesCommand, RunPlatesCommand
-        )
+        try:
+            from openhcs.tui.commands import (
+                ShowAddPlateDialogCommand, DeleteSelectedPlatesCommand,
+                ShowEditPlateConfigDialogCommand, InitializePlatesCommand,
+                CompilePlatesCommand, RunPlatesCommand
+            )
+        except ImportError as e:
+            logger.error(f"PlateManagerPane: Failed to import commands: {e}")
+            # Create placeholder commands
+            class PlaceholderCommand:
+                async def execute(self, *args, **kwargs):
+                    pass
+            ShowAddPlateDialogCommand = PlaceholderCommand
+            DeleteSelectedPlatesCommand = PlaceholderCommand
+            ShowEditPlateConfigDialogCommand = PlaceholderCommand
+            InitializePlatesCommand = PlaceholderCommand
+            CompilePlatesCommand = PlaceholderCommand
+            RunPlatesCommand = PlaceholderCommand
 
-        self.add_button = Button("Add", handler=lambda: get_app().create_background_task(
+        self.add_button = FramedButton("Add", handler=lambda: get_app().create_background_task(
             ShowAddPlateDialogCommand().execute(self.state, self.context, plate_dialog_manager=self.dialog_manager)
-        ))
-        self.remove_button = Button("Del", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.remove_button = FramedButton("Del", handler=lambda: get_app().create_background_task(
             DeleteSelectedPlatesCommand().execute(self.state, self.context, selected_plates_data=self._get_selected_plate_data_for_action())
-        ))
-        self.edit_button = Button("Edit", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.edit_button = FramedButton("Edit", handler=lambda: get_app().create_background_task(
             ShowEditPlateConfigDialogCommand().execute(self.state, self.context) # Relies on state.active_orchestrator
-        ))
-        self.init_button = Button("Init", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.init_button = FramedButton("Init", handler=lambda: get_app().create_background_task(
             InitializePlatesCommand().execute(self.state, self.context, orchestrators_to_init=self._get_selected_orchestrators_for_action())
-        ))
-        self.compile_button = Button("Compile", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.compile_button = FramedButton("Compile", handler=lambda: get_app().create_background_task(
             CompilePlatesCommand().execute(self.state, self.context, orchestrators_to_compile=self._get_selected_orchestrators_for_action())
-        ))
-        self.run_button = Button("Run", handler=lambda: get_app().create_background_task(
+        ), width=9)
+        self.run_button = FramedButton("Run", handler=lambda: get_app().create_background_task(
             RunPlatesCommand().execute(self.state, self.context, orchestrators_to_run=self._get_selected_orchestrators_for_action())
-        ))
+        ), width=5)
 
         # Initialize with a placeholder until plates are loaded
         self.plates = [{
@@ -206,17 +225,34 @@ class PlateManagerPane:
             'error_details': 'Please wait while plates are being loaded'
         }]
 
-        self.plate_items_container_widget = await self._build_plate_items_container()
+        # Build the plate items container
+        try:
+            self.plate_items_container_widget = await self._build_plate_items_container()
+            logger.info("PlateManagerPane: Successfully built plate items container.")
+        except Exception as e:
+            logger.error(f"PlateManagerPane: Error building plate items container: {e}", exc_info=True)
+            self.plate_items_container_widget = HSplit([Label(f"Error building plate list: {e}")])
+
+        # Create key bindings
         self.kb = self._create_key_bindings()
 
+        # Create the dynamic container for the plate list
         self.get_current_plate_list_container = lambda: self.plate_items_container_widget or HSplit([Label("Loading plates...")])
         self._dynamic_plate_list_wrapper = DynamicContainer(self.get_current_plate_list_container)
+
+        # Create the main container
         self._container = Frame(self._dynamic_plate_list_wrapper, title="Plates")
 
+        # Mark UI as initialized
         self._ui_initialized = True
+        logger.info("PlateManagerPane: UI initialization complete.")
 
         # Trigger a refresh of plates after UI is initialized
-        app.create_background_task(self._refresh_plates())
+        try:
+            app.create_background_task(self._refresh_plates())
+            logger.info("PlateManagerPane: Scheduled plate refresh.")
+        except Exception as e:
+            logger.error(f"PlateManagerPane: Error scheduling plate refresh: {e}", exc_info=True)
 
     def _get_selected_plate_data_for_action(self) -> Optional[List[Dict[str, Any]]]:
         """Helper to get data of the currently selected plate(s) for commands."""
@@ -251,26 +287,36 @@ class PlateManagerPane:
     def container(self) -> Container:
         if not self._container:
             # This case should ideally not be hit if _initialize_ui is called correctly.
-            # Fallback to a simple label if not initialized.
-            return Frame(Label("Plate Manager not initialized."))
+            # Fallback to a more informative placeholder if not yet initialized
+            if not hasattr(self, '_ui_initialized') or not self._ui_initialized:
+                return Frame(Label("Plate Manager initializing... Please wait."))
+            elif not hasattr(self, 'filemanager') or self.filemanager is None:
+                return Frame(Label("Waiting for FileManager to be available..."))
+            else:
+                return Frame(Label("Plate Manager not fully initialized."))
         return self._container
 
     def get_buttons_container(self) -> Container:
         # Ensure buttons are initialized before creating the container
         if not all([self.add_button, self.remove_button, self.edit_button, self.init_button, self.compile_button, self.run_button]):
              # This can happen if get_buttons_container is called before _initialize_ui completes
-             return HSplit([Label("Buttons not ready.")])
+             return VSplit([Label("Buttons not ready.")])
 
-        return HSplit([
-            VSplit([ # VSplit for horizontal arrangement of buttons
-                Box(self.add_button, padding_left=1, padding_right=1),
-                Box(self.remove_button, padding_right=1),
-                Box(self.edit_button, padding_right=1),
-                Box(self.init_button, padding_right=1),
-                Box(self.compile_button, padding_right=1),
-                Box(self.run_button, padding_right=1),
-            ])
-        ])
+        # Return a simple VSplit with all buttons in a row
+        # Each button is already framed by FramedButton
+        return VSplit([
+            self.add_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.remove_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.edit_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.init_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.compile_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.run_button,
+        ], height=1)
 
     def register_with_app(self):
         """Registers observers with the TUIState."""
@@ -376,14 +422,14 @@ class PlateManagerPane:
         """Generates the display text for a single plate item."""
         plate_status = plate_data.get('status', 'unknown')
 
-        # Updated status symbol logic based on V4 plan and common error states
+        # Updated status symbol logic to match the image
         if plate_status == 'not_initialized': status_symbol = "?"
-        elif plate_status == 'initialized' or plate_status == 'ready': status_symbol = "-" # Added 'ready'
+        elif plate_status == 'initialized' or plate_status == 'ready': status_symbol = "o" # Use lowercase o
         elif plate_status == 'compiled_ok': status_symbol = "✓"
         elif plate_status and ('error' in plate_status.lower() or \
                                plate_status in ['error_init', 'error_compile', 'error_run', 'error_validation', 'error_general']):
             status_symbol = "!"
-        else: status_symbol = " " # Default for other statuses, removed circle comment
+        else: status_symbol = " " # Default for other statuses
 
         name = plate_data.get('name', 'Unknown Plate')
 

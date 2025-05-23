@@ -43,6 +43,10 @@ from openhcs.tui.status_bar import StatusBar as ActualStatusBar
 from openhcs.io.base import storage_registry
 # Import commands for new buttons
 from openhcs.tui.commands import ShowGlobalSettingsDialogCommand, ShowHelpCommand
+from openhcs.tui.commands import command_registry
+from openhcs.tui.dialogs import initialize_dialog_manager
+# Import loading screen
+from openhcs.tui.components.loading_screen import LoadingScreen
 
 
 logger = logging.getLogger(__name__) # ADDED module-level logger
@@ -65,6 +69,9 @@ from prompt_toolkit.layout import Container, HSplit, Layout, VSplit, Window, Dim
 from prompt_toolkit.layout.containers import (DynamicContainer, Float,
                                               FloatContainer)
 from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
+
+# Import FunctionStep for type checking
+from openhcs.core.steps.function_step import FunctionStep
 
 from openhcs.core.context.processing_context import ProcessingContext
 if TYPE_CHECKING: # Add for PipelineOrchestrator type hint
@@ -197,12 +204,40 @@ class TUIState:
         """
         app = get_app()
 
-        # Run the dialog
-        result = await app.run_dialog(dialog)
+        # Create a future to track the dialog result
+        if result_future is None:
+            import asyncio
+            result_future = asyncio.Future()
 
-        # If a future was provided, set the result
-        if result_future is not None:
-            result_future.set_result(result)
+        # Store the current layout
+        previous_layout = app.layout
+
+        # Create a new layout with the dialog
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import FloatContainer, Float
+
+        # Create a float container with the dialog
+        float_container = FloatContainer(
+            content=previous_layout.container,
+            floats=[
+                Float(
+                    content=dialog,
+                    transparent=False,
+                )
+            ]
+        )
+
+        # Set the new layout
+        app.layout = Layout(float_container)
+
+        # Focus the dialog
+        app.layout.focus(dialog)
+
+        # Wait for the dialog to complete
+        result = await result_future
+
+        # Restore the previous layout
+        app.layout = previous_layout
 
         return result
 
@@ -241,6 +276,10 @@ class OpenHCSTUI:
         self.dual_step_func_editor: Optional[DualStepFuncEditorPane] = None # New editor, created on demand
         self.plate_config_editor: Optional[Any] = None # Placeholder for PlateConfigEditorPane instance
 
+        # Create loading screen
+        self.loading_screen = LoadingScreen(message="Initializing OpenHCS TUI...")
+        self.components_initialized = False
+
         # Create key bindings
         self.kb = self._create_key_bindings()
 
@@ -257,9 +296,10 @@ class OpenHCSTUI:
 
         # Observer for DualStepFuncEditorPane close/cancel
         self.state.add_observer('step_editing_cancelled', self._handle_step_editing_cancelled)
+        # Observer for edit step dialog request
+        self.state.add_observer('edit_step_dialog_requested', self._handle_edit_step_dialog_requested)
         # Note: 'step_pattern_saved' is handled by PipelineEditorPane to update its internal step list.
         # OpenHCSTUI only needs to know when to stop showing the editor.
-        # 'edit_step_dialog_requested' is handled by PipelineEditorPane to set TUIState.
 
         # Create application
         self.application = Application(
@@ -271,10 +311,19 @@ class OpenHCSTUI:
 
         # Schedule asynchronous initialization of components that require it
         if self.application: # Ensure application object exists
+             # Start the loading screen
+             self.loading_screen.start()
+
+             # Schedule the initialization of components
              self.application.create_background_task(self._async_initialize_pipeline_editor()) # Renamed
+
+             # Schedule a task to check if all components are initialized
+             self.application.create_background_task(self._check_components_initialized())
+
              # Register menu bar key bindings after application is fully initialized
-             if hasattr(self.menu_bar, 'register_key_bindings'): # menu_bar might be removed
-                 self.menu_bar.register_key_bindings()
+             # The menu_bar is no longer used, so this code is commented out
+             # if hasattr(self, 'menu_bar') and hasattr(self.menu_bar, 'register_key_bindings'):
+             #     self.menu_bar.register_key_bindings()
 
     def _create_key_bindings(self) -> KeyBindings:
         """
@@ -292,12 +341,12 @@ class OpenHCSTUI:
             event.app.exit()
 
         # Add Vim navigation bindings
-        @kb.add('j', filter=Condition(lambda: self.vim_mode))
+        @kb.add('j', filter=Condition(lambda: getattr(self.state, 'vim_mode', False)))
         def _(event):
             """Move down (Vim style)."""
             event.current_buffer.cursor_down()
 
-        @kb.add('k', filter=Condition(lambda: self.vim_mode))
+        @kb.add('k', filter=Condition(lambda: getattr(self.state, 'vim_mode', False)))
         def _(event):
             """Move up (Vim style)."""
             event.current_buffer.cursor_up()
@@ -315,7 +364,16 @@ class OpenHCSTUI:
             storage_registry=self.storage_registry, # Pass the shared registry
         )
 
-        # self.step_viewer is initialized asynchronously.
+        # Ensure plate manager UI is initialized by scheduling a background task
+        if hasattr(self.plate_manager, '_initialize_ui'):
+            try:
+                # Schedule the initialization as a background task
+                get_app().create_background_task(self.plate_manager._initialize_ui())
+                logger.info("OpenHCSTUI: Scheduled PlateManagerPane UI initialization.")
+            except Exception as e:
+                logger.error(f"OpenHCSTUI: Error scheduling PlateManagerPane UI initialization: {e}", exc_info=True)
+
+        # self.pipeline_editor is initialized asynchronously in _async_initialize_pipeline_editor.
 
         # ActionMenuPane is no longer used and its instantiation is removed.
         # Functionality integrated into PlateManagerPane and PipelineEditorPane via Commands.
@@ -332,56 +390,202 @@ class OpenHCSTUI:
         self.show_global_settings_command = ShowGlobalSettingsDialogCommand(self.state, self.context)
         self.show_help_command = ShowHelpCommand(self.state, self.context)
 
+        # Register commands in the command registry
+        command_registry.register("show_global_settings", self.show_global_settings_command)
+        command_registry.register("show_help", self.show_help_command)
+
+        # Initialize dialog manager
+        initialize_dialog_manager(self.state)
+
 
     def _create_root_container(self) -> Container:
         """
-        Creates the root container for the TUI application with the new 3-horizontal-bar layout.
-        This structure aligns with V4 Plan 1.2 and the refined plan.
+        Creates the root container for the TUI application with proper grouping of components.
         """
-        # Top Bar (1st horizontal bar)
-        top_bar = VSplit([
-            Button("Global Settings", handler=self.show_global_settings_command.execute),
-            Button("Help", handler=self.show_help_command.execute),
-            Window(width=0, char=' '),  # Flexible spacer
-            Label("OpenHCS_V1.0", style="class:app-title", dont_extend_width=True)
-        ], height=1, padding=0) # Using VSplit as per prompt, though HSplit might be more typical for horizontal elements
+        # Top Bar (Global bar)
+        top_bar = Frame(
+            VSplit([
+                Button("Global Settings", handler=lambda: get_app().create_background_task(self.show_global_settings_command.execute()), width=18),
+                Window(width=1, char=' '),  # Small spacer
+                Button("Help", handler=lambda: get_app().create_background_task(self.show_help_command.execute()), width=8),
+                Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+                Label("OpenHCS_V1.0", style="class:app-title", dont_extend_width=True)
+            ], padding=0),
+            height=Dimension.exact(3),
+            style="class:top-bar-frame"
+        )
 
-        # Titles Bar (2nd horizontal bar)
-        titles_bar = VSplit([
-            Frame(Label("1 Plate Manager"), style="class:pane-title", width=Dimension(weight=1)),
-            Frame(Label("2 Pipeline Editor"), style="class:pane-title", width=Dimension(weight=1)),
-        ], height=1, padding=0)
+        # Create the main content area with two panes side by side
+        # Use a single VSplit with two frames that extend to the bottom
+        main_content = VSplit([
+            # Left pane - Plate Manager with frame
+            Frame(
+                HSplit([
+                    # Buttons for Plate Manager
+                    DynamicContainer(
+                        lambda: self.plate_manager.get_buttons_container()
+                        if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
+                        else Box(Label("[Plate Buttons Placeholder]"), padding_left=1)
+                    ),
+                    # Content for Plate Manager - direct access to the dynamic wrapper
+                    DynamicContainer(
+                        lambda: self.plate_manager._dynamic_plate_list_wrapper
+                        if self.plate_manager and hasattr(self.plate_manager, '_dynamic_plate_list_wrapper') and self.plate_manager._dynamic_plate_list_wrapper is not None
+                        else Box(Label("Plate Manager initializing..."))
+                    )
+                ]),
+                title="Plate Manager",
+                height=Dimension(weight=1),
+                width=Dimension(weight=1),
+                style="class:left-pane-frame"
+            ),
 
-        # Buttons Bar (3rd horizontal bar)
-        buttons_bar = VSplit([
-            DynamicContainer(
+            # Right pane - Pipeline Editor with frame
+            Frame(
+                HSplit([
+                    # Buttons for Pipeline Editor
+                    DynamicContainer(
+                        lambda: self.pipeline_editor.get_buttons_container()
+                        if self.pipeline_editor and hasattr(self.pipeline_editor, 'get_buttons_container')
+                        else Box(Label("[Pipeline Buttons Placeholder]"), padding_left=1)
+                    ),
+                    # Content for Pipeline Editor - direct access to the dynamic wrapper
+                    DynamicContainer(
+                        lambda: self.pipeline_editor._dynamic_step_list_wrapper
+                        if self.pipeline_editor and hasattr(self.pipeline_editor, '_dynamic_step_list_wrapper') and self.pipeline_editor._dynamic_step_list_wrapper is not None
+                        else Box(Label("Pipeline Editor initializing..."))
+                    )
+                ]),
+                title="Pipeline Editor",
+                height=Dimension(weight=1),
+                width=Dimension(weight=1),
+                style="class:right-pane-frame"
+            )
+        ], height=Dimension(weight=1), padding=0)
+
+        # Status Bar - framed and connected to main content
+        status_bar = Frame(
+            self._get_status_bar(),
+            height=Dimension.exact(3),
+            style="class:status-bar-frame"
+        )
+
+        # Create the main layout with no padding between elements to connect frames
+        main_layout = HSplit([
+            top_bar,
+            main_content,
+            status_bar
+        ], padding=0)
+
+        # Wrap in a FloatContainer to allow the loading screen to float on top
+        return FloatContainer(
+            content=main_layout,
+            floats=[
+                Float(
+                    content=self.loading_screen,
+                    transparent=False,
+                )
+            ]
+        )
+
+    def _get_left_pane_with_frame(self) -> Container:
+        """
+        Get the left pane with its title and buttons, wrapped in a frame.
+        """
+        # Determine which pane to show based on state
+        is_editing_step_config = getattr(self.state, 'editing_step_config', False)
+        is_editing_plate_config = getattr(self.state, 'editing_plate_config', False)
+
+        # Set the title based on the current pane
+        if is_editing_step_config:
+            title = "Step Editor"
+            buttons_container = self._get_dual_step_func_editor_buttons()
+            content_container = self._get_dual_step_func_editor_content()
+        elif is_editing_plate_config:
+            title = "Plate Config Editor"
+            buttons_container = self._get_plate_config_editor_buttons()
+            content_container = self._get_plate_config_editor_content()
+        else:
+            title = "Plate Manager"
+            buttons_container = DynamicContainer(
                 lambda: self.plate_manager.get_buttons_container()
                 if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
-                else Box(Label("[Plate Buttons Placeholder]"), padding_left=1) # Updated placeholder
-            ),
-            DynamicContainer(
-                lambda: self.pipeline_editor.get_buttons_container() # Renamed from step_viewer
-                if self.pipeline_editor and hasattr(self.pipeline_editor, 'get_buttons_container')
-                else Box(Label("[Pipeline Buttons Placeholder]"), padding_left=1)
-            ),
-        ], height=1, padding=0)
+                else Box(Label("[Plate Buttons Placeholder]"), padding_left=1)
+            )
+            content_container = self._get_plate_manager_content()
 
-        # Main Content Area
-        main_content_area = VSplit([
-            self._get_left_pane(), # This will be wrapped in a Frame by PlateManagerPane or editor
-            self._get_pipeline_editor_pane(), # Renamed from _get_step_viewer
-        ], height=Dimension(weight=1)) # Main content area takes remaining space
+        # Ensure none of the containers are None
+        if buttons_container is None:
+            logger.warning(f"Buttons container for {title} is None, using placeholder")
+            buttons_container = Box(Label(f"[{title} Buttons Placeholder]"), padding_left=1)
 
-        # Status Bar
-        status_bar_container = self._get_status_bar() # This should have a fixed height, e.g., height=1
+        if content_container is None:
+            logger.warning(f"Content container for {title} is None, using placeholder")
+            content_container = Box(Label(f"[{title} Content Placeholder]"), padding=1)
 
-        return HSplit([
-            top_bar,
-            titles_bar,
-            buttons_bar,
-            main_content_area,
-            status_bar_container,
-        ])
+        # Create a container with title bar, buttons, and content
+        # Title bar includes the buttons directly underneath it
+        return Frame(
+            HSplit([
+                # Title bar with buttons directly underneath
+                HSplit([
+                    # Title bar
+                    VSplit([
+                        Label(f" {title} ", style="class:frame.title"),
+                        Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+                    ], height=1, style="class:frame.title"),
+                    # Buttons bar directly under title
+                    buttons_container
+                ]),
+                # Content area
+                content_container
+            ]),
+            # Make the frame extend to the bottom of the window
+            height=Dimension(weight=1),
+            width=Dimension(weight=1),
+            style="class:left-pane-frame"
+        )
+
+    def _get_pipeline_editor_pane_with_frame(self) -> Container:
+        """
+        Get the pipeline editor pane with its title and buttons, wrapped in a frame.
+        """
+        # Get the buttons container
+        buttons_container = DynamicContainer(
+            lambda: self.pipeline_editor.get_buttons_container()
+            if self.pipeline_editor and hasattr(self.pipeline_editor, 'get_buttons_container')
+            else Box(Label("[Pipeline Buttons Placeholder]"), padding_left=1)
+        )
+
+        # Get the content container
+        content_container = self._get_pipeline_editor_content()
+
+        # Ensure content container is not None
+        if content_container is None:
+            logger.warning("Pipeline editor content container is None, using placeholder")
+            content_container = Box(Label("[Pipeline Editor Content Placeholder]"), padding=1)
+
+        # Create a container with title bar, buttons, and content
+        return Frame(
+            HSplit([
+                # Title bar with buttons directly underneath
+                HSplit([
+                    # Title bar
+                    VSplit([
+                        Label(" Pipeline Editor ", style="class:frame.title"),
+                        Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+                    ], height=1, style="class:frame.title"),
+                    # Buttons bar directly under title
+                    buttons_container
+                ]),
+                # Content area
+                content_container
+            ]),
+            # Make the frame extend to the bottom of the window
+            height=Dimension(weight=1),
+            width=Dimension(weight=1),
+            style="class:right-pane-frame"
+        )
 
     def _get_left_pane(self) -> Container:
         """
@@ -393,84 +597,116 @@ class OpenHCSTUI:
         step_to_edit_config = getattr(self.state, 'step_to_edit_config', None)
         orchestrator_to_edit_config = getattr(self.state, 'orchestrator_for_plate_config_edit', None)
 
+        # Get the appropriate content based on state
         if is_editing_plate_config:
             if orchestrator_to_edit_config is None:
                 logger.warning("OpenHCSTUI: 'editing_plate_config' is true, but 'orchestrator_for_plate_config_edit' is not set.")
                 self.state.editing_plate_config = False # Reset state
-                return self.plate_manager.container if self.plate_manager else Frame(Label("Error")) # Fallback
+                content = self.plate_manager.container if self.plate_manager else Box(Label("Error"))
+                title = "Plate Manager"
+            else:
+                from openhcs.tui.dialogs.plate_config_editor import PlateConfigEditorPane # Import here
 
-            from openhcs.tui.dialogs.plate_config_editor import PlateConfigEditorPane # Import here
+                # Instantiate or re-instantiate if orchestrator changed or editor was cleared
+                if self.plate_config_editor is None or \
+                   getattr(self.plate_config_editor, 'orchestrator', None) != orchestrator_to_edit_config:
+                    logger.info(f"OpenHCSTUI: Instantiating PlateConfigEditorPane for orchestrator of plate: {getattr(orchestrator_to_edit_config, 'plate_id', 'N/A')}")
+                    try:
+                        self.plate_config_editor = PlateConfigEditorPane(state=self.state, orchestrator=orchestrator_to_edit_config)
+                    except Exception as e:
+                        logger.error(f"OpenHCSTUI: Failed to instantiate PlateConfigEditorPane: {e}", exc_info=True)
+                        self.plate_config_editor = None # Ensure it's None on failure
+                        self.state.editing_plate_config = False # Reset state on error
+                        content = Box(Label(f"Error creating Plate Config Editor: {e}"))
+                        title = "Editor Error"
+                        return Frame(content, title=title, height=Dimension(weight=1), width=Dimension(weight=1))
 
-            # Instantiate or re-instantiate if orchestrator changed or editor was cleared
-            if self.plate_config_editor is None or \
-               getattr(self.plate_config_editor, 'orchestrator', None) != orchestrator_to_edit_config:
-                logger.info(f"OpenHCSTUI: Instantiating PlateConfigEditorPane for orchestrator of plate: {getattr(orchestrator_to_edit_config, 'plate_id', 'N/A')}")
-                try:
-                    self.plate_config_editor = PlateConfigEditorPane(state=self.state, orchestrator=orchestrator_to_edit_config)
-                except Exception as e:
-                    logger.error(f"OpenHCSTUI: Failed to instantiate PlateConfigEditorPane: {e}", exc_info=True)
-                    self.plate_config_editor = None # Ensure it's None on failure
-                    self.state.editing_plate_config = False # Reset state on error
-                    return Frame(Box(Label(f"Error creating Plate Config Editor: {e}")), title="Editor Error") # Show error
-
-            if self.plate_config_editor and hasattr(self.plate_config_editor, 'container'):
-                return self.plate_config_editor.container
-            else: # Should not happen if instantiation was successful
-                logger.error("OpenHCSTUI: PlateConfigEditorPane instance available but has no container, or failed instantiation.")
-                self.state.editing_plate_config = False # Reset state
-                return Frame(Box(Label("Error: Plate Config Editor could not be loaded.")), title="Editor Error") # Fallback
+                if self.plate_config_editor and hasattr(self.plate_config_editor, 'container'):
+                    content = self.plate_config_editor.container
+                    title = "Plate Config Editor"
+                else: # Should not happen if instantiation was successful
+                    logger.error("OpenHCSTUI: PlateConfigEditorPane instance available but has no container, or failed instantiation.")
+                    self.state.editing_plate_config = False # Reset state
+                    content = Box(Label("Error: Plate Config Editor could not be loaded."))
+                    title = "Editor Error"
 
         elif is_editing_step_config:
             if step_to_edit_config is None:
                 logger.warning("OpenHCSTUI: 'editing_step_config' is true, but 'step_to_edit_config' is not set in TUIState.")
-                return Frame(Box(Label("Error: No step selected for editing.")), title="Error")
-
-            # Ensure step_to_edit_config is a FuncStep instance
-            if not isinstance(step_to_edit_config, FunctionStep): # Requires FunctionStep import
-                 # Attempt to convert if it's a dict, otherwise log error
-                if isinstance(step_to_edit_config, dict):
-                    try:
-                        step_to_edit_config = FunctionStep(**step_to_edit_config)
-                    except Exception as e:
-                        logger.error(f"OpenHCSTUI: Failed to convert step_to_edit_config dict to FuncStep: {e}", exc_info=True)
-                        return Frame(Box(Label(f"Error: Invalid step data for editor: {e}")), title="Editor Error")
-                else:
-                    logger.error(f"OpenHCSTUI: 'step_to_edit_config' is not a FuncStep or dict, but {type(step_to_edit_config)}.")
-                    return Frame(Box(Label("Error: Invalid step data type for editor.")), title="Editor Error")
-
-
-            if self.dual_step_func_editor is None or \
-               self.dual_step_func_editor.original_func_step.id != step_to_edit_config.id: # Compare by ID or a unique attribute
-                logger.info(f"OpenHCSTUI: Instantiating DualStepFuncEditorPane for step: {step_to_edit_config.name or step_to_edit_config.id}")
-                try:
-                    self.dual_step_func_editor = DualStepFuncEditorPane(state=self.state, func_step=step_to_edit_config)
-                except Exception as e:
-                    logger.error(f"OpenHCSTUI: Failed to instantiate DualStepFuncEditorPane: {e}", exc_info=True)
-                    self.dual_step_func_editor = None
-                    return Frame(Box(Label(f"Error creating Step/Func Editor: {e}")), title="Editor Error")
-
-            if self.dual_step_func_editor and hasattr(self.dual_step_func_editor, 'container'):
-                # The title is now handled within DualStepFuncEditorPane itself or by its Frame
-                return self.dual_step_func_editor.container
+                content = Box(Label("Error: No step selected for editing."))
+                title = "Error"
             else:
-                logger.error("OpenHCSTUI: DualStepFuncEditorPane instance available but has no container, or failed instantiation.")
-                return Frame(Box(Label("Error: Step/Func Editor could not be loaded.")), title="Editor Error")
+                # Ensure step_to_edit_config is a FuncStep instance
+                if not isinstance(step_to_edit_config, FunctionStep): # Requires FunctionStep import
+                    # Attempt to convert if it's a dict, otherwise log error
+                    if isinstance(step_to_edit_config, dict):
+                        try:
+                            step_to_edit_config = FunctionStep(**step_to_edit_config)
+                        except Exception as e:
+                            logger.error(f"OpenHCSTUI: Failed to convert step_to_edit_config dict to FuncStep: {e}", exc_info=True)
+                            content = Box(Label(f"Error: Invalid step data for editor: {e}"))
+                            title = "Editor Error"
+                            return Frame(content, title=title, height=Dimension(weight=1), width=Dimension(weight=1))
+                    else:
+                        logger.error(f"OpenHCSTUI: 'step_to_edit_config' is not a FuncStep or dict, but {type(step_to_edit_config)}.")
+                        content = Box(Label("Error: Invalid step data type for editor."))
+                        title = "Editor Error"
+                        return Frame(content, title=title, height=Dimension(weight=1), width=Dimension(weight=1))
+
+                if self.dual_step_func_editor is None or \
+                   self.dual_step_func_editor.original_func_step.id != step_to_edit_config.id: # Compare by ID or a unique attribute
+                    logger.info(f"OpenHCSTUI: Instantiating DualStepFuncEditorPane for step: {step_to_edit_config.name or step_to_edit_config.id}")
+                    try:
+                        self.dual_step_func_editor = DualStepFuncEditorPane(state=self.state, func_step=step_to_edit_config)
+                    except Exception as e:
+                        logger.error(f"OpenHCSTUI: Failed to instantiate DualStepFuncEditorPane: {e}", exc_info=True)
+                        self.dual_step_func_editor = None
+                        content = Box(Label(f"Error creating Step/Func Editor: {e}"))
+                        title = "Editor Error"
+                        return Frame(content, title=title, height=Dimension(weight=1), width=Dimension(weight=1))
+
+                if self.dual_step_func_editor and hasattr(self.dual_step_func_editor, 'container'):
+                    content = self.dual_step_func_editor.container
+                    title = "Step Editor"
+                else:
+                    logger.error("OpenHCSTUI: DualStepFuncEditorPane instance available but has no container, or failed instantiation.")
+                    content = Box(Label("Error: Step/Func Editor could not be loaded."))
+                    title = "Editor Error"
+
         else: # Neither step config nor plate config is being edited, show PlateManagerPane
             # Clear editor instances if they exist and we are switching away from them
             if self.dual_step_func_editor is not None:
                 logger.debug("OpenHCSTUI: Clearing DualStepFuncEditorPane instance.")
-                # await self.dual_step_func_editor.shutdown() # if it has one
                 self.dual_step_func_editor = None
             if self.plate_config_editor is not None:
                 logger.debug("OpenHCSTUI: Clearing PlateConfigEditorPane instance.")
-                # await self.plate_config_editor.shutdown() # if it has one
                 self.plate_config_editor = None
 
             if self.plate_manager and hasattr(self.plate_manager, 'container'):
-                return self.plate_manager.container # PlateManagerPane now includes its own Frame
+                # Create a frame with title, buttons, and content
+                buttons_container = DynamicContainer(
+                    lambda: self.plate_manager.get_buttons_container()
+                    if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
+                    else Box(Label("[Plate Buttons Placeholder]"), padding_left=1)
+                )
+                content = HSplit([
+                    buttons_container,
+                    self._get_plate_manager_content()
+                ])
+                title = "Plate Manager"
             else:
                 logger.error("OpenHCSTUI: PlateManagerPane not available or has no container.")
-                return Frame(Box(Label("Error: Plate Manager not available.")), title="Error")
+                content = Box(Label("Error: Plate Manager not available."))
+                title = "Error"
+
+        # Return a framed container with the appropriate content
+        return Frame(
+            content,
+            title=title,
+            height=Dimension(weight=1),
+            width=Dimension(weight=1),
+            style="class:left-pane-frame"
+        )
 
     def clear_active_plate_context(self):
         """Clears context related to the active plate."""
@@ -483,22 +719,195 @@ class OpenHCSTUI:
         # Notify relevant components if needed, e.g., to clear their views
         # await self.notify('active_plate_context_cleared') # Example notification
 
-    def _get_pipeline_editor_pane(self) -> Container: # Renamed from _get_step_viewer
+    def _get_pipeline_editor_pane(self) -> Container:
         """
-        Get the Pipeline Editor pane.
-        Returns a placeholder if the pane is not yet initialized.
+        Get the Pipeline Editor pane with title, buttons, and content.
+        Returns a properly framed container.
         """
-        if self.pipeline_editor is None: # Renamed from step_viewer
+        if self.pipeline_editor is None:
             # Return a temporary placeholder if not yet initialized or init failed
             logger.debug("OpenHCSTUI: PipelineEditorPane not yet initialized, returning placeholder.")
-            return Frame(Label("Pipeline Editor - Initializing..."), width=Dimension(weight=1)) # Updated label
+            content = Box(Label("Pipeline Editor - Initializing..."), padding=1)
+            return Frame(content, title="Pipeline Editor", height=Dimension(weight=1), width=Dimension(weight=1), style="class:right-pane-frame")
 
-        # Ensure the initialized pipeline_editor has a container
-        if not hasattr(self.pipeline_editor, 'container') or self.pipeline_editor.container is None: # Renamed
-            logger.error("OpenHCSTUI: PipelineEditorPane is initialized but has no container.")
-            return Frame(Label("Pipeline Editor - Error: No container"), width=Dimension(weight=1)) # Updated label
+        # Get the buttons container
+        buttons_container = DynamicContainer(
+            lambda: self.pipeline_editor.get_buttons_container()
+            if self.pipeline_editor and hasattr(self.pipeline_editor, 'get_buttons_container')
+            else Box(Label("[Pipeline Buttons Placeholder]"), padding_left=1)
+        )
 
-        return self.pipeline_editor.container # Renamed
+        # Get the content container
+        content_container = self._get_pipeline_editor_content()
+
+        # Create a container with buttons and content
+        content = HSplit([
+            buttons_container,
+            content_container
+        ])
+
+        # Return a framed container
+        return Frame(
+            content,
+            title="Pipeline Editor",
+            height=Dimension(weight=1),
+            width=Dimension(weight=1),
+            style="class:right-pane-frame"
+        )
+
+    def _get_pipeline_editor_content(self) -> Container:
+        """
+        Get the pipeline editor content without the frame.
+
+        Returns:
+            Container with the pipeline editor content
+        """
+        if self.pipeline_editor is None:
+            logger.warning("Pipeline Editor is None, returning placeholder")
+            return Box(Label("Pipeline Editor content not available"), padding=1)
+
+        # Get the container directly from the pipeline_editor
+        if hasattr(self.pipeline_editor, 'container'):
+            if self.pipeline_editor.container is None:
+                logger.warning("Pipeline Editor container is None, returning placeholder")
+                return Box(Label("Pipeline Editor content not available"), padding=1)
+            return self.pipeline_editor.container
+
+        # Fallback to dynamic wrapper if available
+        if hasattr(self.pipeline_editor, '_dynamic_step_list_wrapper'):
+            if self.pipeline_editor._dynamic_step_list_wrapper is None:
+                logger.warning("Pipeline Editor _dynamic_step_list_wrapper is None, returning placeholder")
+                return Box(Label("Pipeline Editor content not available"), padding=1)
+            return self.pipeline_editor._dynamic_step_list_wrapper
+
+        logger.warning("Pipeline Editor has no container or _dynamic_step_list_wrapper attribute, returning placeholder")
+        return Box(Label("Pipeline Editor content not ready."), padding=1)
+
+    def _get_plate_manager_content(self) -> Container:
+        """
+        Get the plate manager content without the frame.
+
+        Returns:
+            Container with the plate manager content
+        """
+        if self.plate_manager is None:
+            logger.warning("Plate Manager is None, returning placeholder")
+            return Box(Label("Plate Manager content not available"), padding=1)
+
+        # Get the container directly from the plate_manager
+        if hasattr(self.plate_manager, 'container'):
+            if self.plate_manager.container is None:
+                logger.warning("Plate Manager container is None, returning placeholder")
+                return Box(Label("Plate Manager content not available"), padding=1)
+            return self.plate_manager.container
+
+        # Fallback to dynamic wrapper if available
+        if hasattr(self.plate_manager, '_dynamic_plate_list_wrapper'):
+            if self.plate_manager._dynamic_plate_list_wrapper is None:
+                logger.warning("Plate Manager _dynamic_plate_list_wrapper is None, returning placeholder")
+                return Box(Label("Plate Manager content not available"), padding=1)
+            return self.plate_manager._dynamic_plate_list_wrapper
+
+        logger.warning("Plate Manager has no container or _dynamic_plate_list_wrapper attribute, returning placeholder")
+        return Box(Label("Plate Manager content not ready."), padding=1)
+
+    def _get_dual_step_func_editor_content(self) -> Container:
+        """
+        Get the dual step/func editor content without the frame.
+
+        Returns:
+            Container with the dual step/func editor content
+        """
+        if self.dual_step_func_editor is None:
+            logger.warning("Dual Step/Func Editor is None, returning placeholder")
+            return Box(Label("Step Editor initializing..."), padding=1)
+
+        if hasattr(self.dual_step_func_editor, '_dynamic_content_wrapper'):
+            if self.dual_step_func_editor._dynamic_content_wrapper is None:
+                logger.warning("Dual Step/Func Editor _dynamic_content_wrapper is None, returning placeholder")
+                return Box(Label("Step Editor content not available"), padding=1)
+            return self.dual_step_func_editor._dynamic_content_wrapper
+        elif hasattr(self.dual_step_func_editor, 'container'):
+            # If the container is a Frame, try to get its body
+            if isinstance(self.dual_step_func_editor.container, Frame):
+                if self.dual_step_func_editor.container.body is None:
+                    logger.warning("Dual Step/Func Editor container.body is None, returning placeholder")
+                    return Box(Label("Step Editor content not available"), padding=1)
+                return self.dual_step_func_editor.container.body
+            if self.dual_step_func_editor.container is None:
+                logger.warning("Dual Step/Func Editor container is None, returning placeholder")
+                return Box(Label("Step Editor content not available"), padding=1)
+            return self.dual_step_func_editor.container
+
+        logger.warning("Dual Step/Func Editor has no _dynamic_content_wrapper or container attribute, returning placeholder")
+        return Box(Label("Step Editor content not ready."), padding=1)
+
+    def _get_plate_config_editor_content(self) -> Container:
+        """
+        Get the plate config editor content without the frame.
+
+        Returns:
+            Container with the plate config editor content
+        """
+        if self.plate_config_editor is None:
+            logger.warning("Plate Config Editor is None, returning placeholder")
+            return Box(Label("Plate Config Editor initializing..."), padding=1)
+
+        if hasattr(self.plate_config_editor, '_dynamic_content_wrapper'):
+            if self.plate_config_editor._dynamic_content_wrapper is None:
+                logger.warning("Plate Config Editor _dynamic_content_wrapper is None, returning placeholder")
+                return Box(Label("Plate Config Editor content not available"), padding=1)
+            return self.plate_config_editor._dynamic_content_wrapper
+        elif hasattr(self.plate_config_editor, 'container'):
+            # If the container is a Frame, try to get its body
+            if isinstance(self.plate_config_editor.container, Frame):
+                if self.plate_config_editor.container.body is None:
+                    logger.warning("Plate Config Editor container.body is None, returning placeholder")
+                    return Box(Label("Plate Config Editor content not available"), padding=1)
+                return self.plate_config_editor.container.body
+            if self.plate_config_editor.container is None:
+                logger.warning("Plate Config Editor container is None, returning placeholder")
+                return Box(Label("Plate Config Editor content not available"), padding=1)
+            return self.plate_config_editor.container
+
+        logger.warning("Plate Config Editor has no _dynamic_content_wrapper or container attribute, returning placeholder")
+        return Box(Label("Plate Config Editor content not ready."), padding=1)
+
+    def _get_dual_step_func_editor_buttons(self) -> Container:
+        """
+        Get the dual step/func editor buttons.
+
+        Returns:
+            Container with the dual step/func editor buttons
+        """
+        if self.dual_step_func_editor is None or not hasattr(self.dual_step_func_editor, 'get_buttons_container'):
+            logger.warning("Dual Step/Func Editor is None or has no get_buttons_container method, returning placeholder")
+            return Box(Label("[Step Editor Buttons Placeholder]"), padding_left=1)
+
+        buttons_container = self.dual_step_func_editor.get_buttons_container()
+        if buttons_container is None:
+            logger.warning("Dual Step/Func Editor get_buttons_container returned None, using placeholder")
+            return Box(Label("[Step Editor Buttons Placeholder]"), padding_left=1)
+
+        return buttons_container
+
+    def _get_plate_config_editor_buttons(self) -> Container:
+        """
+        Get the plate config editor buttons.
+
+        Returns:
+            Container with the plate config editor buttons
+        """
+        if self.plate_config_editor is None or not hasattr(self.plate_config_editor, 'get_buttons_container'):
+            logger.warning("Plate Config Editor is None or has no get_buttons_container method, returning placeholder")
+            return Box(Label("[Plate Config Editor Buttons Placeholder]"), padding_left=1)
+
+        buttons_container = self.plate_config_editor.get_buttons_container()
+        if buttons_container is None:
+            logger.warning("Plate Config Editor get_buttons_container returned None, using placeholder")
+            return Box(Label("[Plate Config Editor Buttons Placeholder]"), padding_left=1)
+
+        return buttons_container
 
     def _get_status_bar(self) -> Container:
         """
@@ -585,6 +994,22 @@ class OpenHCSTUI:
         logger.info("OpenHCSTUI: Step editing cancelled/closed.")
         get_app().invalidate()
 
+    async def _handle_edit_step_dialog_requested(self, step_data: Any = None):
+        """Handles request to show the step editor dialog."""
+        if step_data:
+            # Ensure we're not editing a plate config at the same time
+            self.state.editing_plate_config = False
+            self.state.orchestrator_for_plate_config_edit = None
+
+            # Set the step editing state
+            self.state.editing_step_config = True
+            self.state.step_to_edit_config = step_data
+
+            logger.info(f"OpenHCSTUI: Switched to editing step: {getattr(step_data, 'name', 'Unknown')}")
+            get_app().invalidate() # Trigger layout refresh
+        else:
+            logger.warning("OpenHCSTUI: _handle_edit_step_dialog_requested called without step data.")
+
 
     async def shutdown_components(self):
         """
@@ -622,6 +1047,39 @@ class OpenHCSTUI:
 
         logger.info("OpenHCSTUI: Component shutdown sequence complete.")
 
+    async def _check_components_initialized(self):
+        """
+        Check if all components are initialized and hide the loading screen if they are.
+        This is called as a background task after OpenHCSTUI is instantiated.
+        """
+        # Wait for the pipeline editor to be initialized
+        max_wait_time = 30  # Maximum wait time in seconds
+        wait_interval = 0.5  # Check interval in seconds
+        elapsed_time = 0
+
+        while elapsed_time < max_wait_time:
+            # Check if the pipeline editor is initialized
+            if self.pipeline_editor is not None and hasattr(self.pipeline_editor, 'container'):
+                # Check if the plate manager is initialized
+                if (self.plate_manager is not None and
+                    hasattr(self.plate_manager, 'container') and
+                    hasattr(self.plate_manager, '_ui_initialized') and
+                    self.plate_manager._ui_initialized):
+
+                    # All components are initialized, hide the loading screen
+                    logger.info("OpenHCSTUI: All components initialized, hiding loading screen.")
+                    self.components_initialized = True
+                    self.loading_screen.complete()
+                    return
+
+            # Wait before checking again
+            await asyncio.sleep(wait_interval)
+            elapsed_time += wait_interval
+
+        # If we get here, we've timed out waiting for components to initialize
+        logger.warning("OpenHCSTUI: Timed out waiting for components to initialize. Hiding loading screen anyway.")
+        self.loading_screen.complete()
+
     async def _async_initialize_pipeline_editor(self): # Renamed from _async_initialize_step_viewer
         """
         Asynchronously initializes the PipelineEditorPane.
@@ -635,7 +1093,19 @@ class OpenHCSTUI:
         try:
             # Use the async factory 'create' from pipeline_editor.py (via ActualPipelineEditorPane)
             self.pipeline_editor = await ActualPipelineEditorPane.create(self.state, self.context) # Renamed
+
+            # Ensure setup is called to fully initialize the pipeline editor
+            if hasattr(self.pipeline_editor, 'setup') and not getattr(self.pipeline_editor, '_ui_initialized', False):
+                try:
+                    await self.pipeline_editor.setup()
+                    logger.info("OpenHCSTUI: PipelineEditorPane setup completed successfully.")
+                except Exception as e:
+                    logger.error(f"OpenHCSTUI: Error in PipelineEditorPane setup: {e}", exc_info=True)
+
             logger.info("OpenHCSTUI: PipelineEditorPane initialized and setup complete.") # Updated message
+
+            # Invalidate the application to refresh the UI
+            get_app().invalidate()
         except Exception as e:
             logger.error(f"OpenHCSTUI: Error initializing PipelineEditorPane: {e}", exc_info=True) # Updated message
             # self.pipeline_editor remains None, _get_pipeline_editor_pane will show "Initializing..." or an error.

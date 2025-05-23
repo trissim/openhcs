@@ -65,7 +65,7 @@ class HelpDialog:
         # Using FormattedTextControl for potentially better formatting control later if needed
         # For simple text, Label is also fine.
         help_body = FormattedTextControl(text=self.help_text_content, focusable=True, show_cursor=False)
-        
+
         ok_button = Button("OK", handler=self._handle_ok)
 
         self.dialog = Dialog(
@@ -99,7 +99,7 @@ class HelpDialog:
 
         # Store previous focus to restore it later
         previous_focus = app.layout.current_window if hasattr(app.layout, 'current_window') else None
-        
+
         # Create a Float to display the dialog
         float_ = Float(content=self.dialog)
         # Store the float on the dialog to remove it later (optional, but good practice)
@@ -114,7 +114,7 @@ class HelpDialog:
             # Clean up: remove the float and restore focus
             if float_ in app.layout.container.floats:
                 app.layout.container.floats.remove(float_)
-            
+
             if previous_focus and hasattr(app.layout, 'walk'): # Check if layout has walk method
                 try:
                     # Check if previous_focus widget is still part of the layout
@@ -126,7 +126,7 @@ class HelpDialog:
                     if is_still_in_layout:
                         app.layout.focus(previous_focus)
                     else: # Fallback if previous focus target is gone
-                        app.layout.focus_last() 
+                        app.layout.focus_last()
                 except Exception as e: # Broad exception for focus restoration issues
                     logger.warning(f"HelpDialog: Could not restore focus: {e}")
                     try:
@@ -143,4 +143,3 @@ class HelpDialog:
 #         dialog = HelpDialog()
 #         await dialog.show()
 #         logger.info("Help dialog closed.")
-```

@@ -6,8 +6,10 @@ from typing import Any, Dict, List, Optional
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, Container, Dimension
+from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, Container, Dimension, Window
 from prompt_toolkit.widgets import Button, Frame, Label, TextArea, Box, Dialog
+
+from .components import FramedButton
 
 logger = logging.getLogger(__name__)
 import pickle # Ensure pickle is imported if not already (it was added for save)
@@ -92,6 +94,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         UI components that require async operations.
         """
         if self._ui_initialized:
+            logger.info("PipelineEditorPane: UI already initialized, skipping initialization.")
             return
 
         if not hasattr(self, 'context') or self.context is None:
@@ -101,29 +104,46 @@ class PipelineEditorPane: # Renamed from StepViewerPane
 
         # Create UI components asynchronously - handlers now use Commands
         # Import commands here to avoid circular imports
-        from .commands import (
-            AddStepCommand, DeleteSelectedStepsCommand, LoadPipelineCommand,
-            SavePipelineCommand, ShowEditStepDialogCommand
-        )
+        try:
+            from .commands import (
+                AddStepCommand, DeleteSelectedStepsCommand, LoadPipelineCommand,
+                SavePipelineCommand, ShowEditStepDialogCommand
+            )
+        except ImportError as e:
+            logger.error(f"PipelineEditorPane: Failed to import commands: {e}")
+            # Create placeholder commands
+            class PlaceholderCommand:
+                async def execute(self, *args, **kwargs):
+                    pass
+            AddStepCommand = PlaceholderCommand
+            DeleteSelectedStepsCommand = PlaceholderCommand
+            LoadPipelineCommand = PlaceholderCommand
+            SavePipelineCommand = PlaceholderCommand
+            ShowEditStepDialogCommand = PlaceholderCommand
 
-        self.add_button = Button("Add", handler=lambda: get_app().create_background_task(
+        self.add_button = FramedButton("Add", handler=lambda: get_app().create_background_task(
             AddStepCommand().execute(self.state, self.context)
-        ))
-        self.remove_button = Button("Del", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.remove_button = FramedButton("Del", handler=lambda: get_app().create_background_task(
             DeleteSelectedStepsCommand().execute(self.state, self.context, steps_to_delete=self._get_selected_steps_for_action())
-        ))
-        self.edit_button = Button("Edit", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.edit_button = FramedButton("Edit", handler=lambda: get_app().create_background_task(
             ShowEditStepDialogCommand().execute(self.state, self.context) # Relies on state.selected_step
-        ))
-        self.load_button = Button("Load", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.load_button = FramedButton("Load", handler=lambda: get_app().create_background_task(
             LoadPipelineCommand().execute(self.state, self.context) # Relies on state.active_orchestrator
-        ))
-        self.save_button = Button("Save", handler=lambda: get_app().create_background_task(
+        ), width=6)
+        self.save_button = FramedButton("Save", handler=lambda: get_app().create_background_task(
             SavePipelineCommand().execute(self.state, self.context) # Relies on state.active_orchestrator
-        ))
+        ), width=6)
 
         # This will now build a container of interactive items
-        self.step_items_container_widget = await self._build_step_items_container()
+        try:
+            self.step_items_container_widget = await self._build_step_items_container()
+            logger.info("PipelineEditorPane: Successfully built step items container.")
+        except Exception as e:
+            logger.error(f"PipelineEditorPane: Error building step items container: {e}", exc_info=True)
+            self.step_items_container_widget = HSplit([Label(f"Error building step list: {e}")])
 
         # Create key bindings
         self.kb = self._create_key_bindings()
@@ -134,16 +154,23 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         self._dynamic_step_list_wrapper = DynamicContainer(self.get_current_step_list_container)
         self._container = Frame(self._dynamic_step_list_wrapper, title="Steps")
 
-
         # Register for events - use wrapper for async methods
-        self.state.add_observer('plate_selected', lambda plate: get_app().create_background_task(self._on_plate_selected(plate)))
-        self.state.add_observer('steps_updated', lambda _: get_app().create_background_task(self._refresh_steps()))
-        self.state.add_observer('step_pattern_saved', lambda data: get_app().create_background_task(self._handle_step_pattern_saved(data)))
-        # Add observer for when ShowEditStepDialogCommand requests to edit a step
-        self.state.add_observer('edit_step_dialog_requested', lambda data: get_app().create_background_task(self._handle_edit_step_request(data)))
+        try:
+            self.state.add_observer('plate_selected', lambda plate: get_app().create_background_task(self._on_plate_selected(plate)))
+            self.state.add_observer('steps_updated', lambda _: get_app().create_background_task(self._refresh_steps()))
+            self.state.add_observer('step_pattern_saved', lambda data: get_app().create_background_task(self._handle_step_pattern_saved(data)))
+            # Add observer for when ShowEditStepDialogCommand requests to edit a step
+            self.state.add_observer('edit_step_dialog_requested', lambda data: get_app().create_background_task(self._handle_edit_step_request(data)))
+            logger.info("PipelineEditorPane: Successfully registered observers.")
+        except Exception as e:
+            logger.error(f"PipelineEditorPane: Error registering observers: {e}", exc_info=True)
 
         # Mark as initialized
         self._ui_initialized = True
+        logger.info("PipelineEditorPane: UI initialization complete.")
+
+        # Invalidate the application to refresh the UI
+        get_app().invalidate()
 
     def _get_selected_steps_for_action(self) -> List[Dict[str, Any]]:
         """Helper to get data of the currently selected step(s) for commands."""
@@ -163,13 +190,19 @@ class PipelineEditorPane: # Renamed from StepViewerPane
              # This can happen if get_buttons_container is called before setup completes
              return VSplit([Label("Pipeline Buttons not ready.")])
 
-        return VSplit([ # Use VSplit for horizontal button layout
-            Box(self.add_button, padding_left=1, padding_right=1),
-            Box(self.remove_button, padding_right=1),
-            Box(self.edit_button, padding_right=1),
-            Box(self.load_button, padding_right=1),
-            Box(self.save_button, padding_right=1),
-        ])
+        # Return a simple VSplit with all buttons in a row
+        # Each button is already framed by FramedButton
+        return VSplit([
+            self.add_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.remove_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.edit_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.load_button,
+            Window(width=1, char=' '),  # Small spacer
+            self.save_button,
+        ], height=1)
 
     async def _build_step_items_container(self) -> HSplit:
         """
@@ -226,7 +259,8 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         if not isinstance(func_name, str): # Should be string from _get_function_name
             func_name = str(func_name)
 
-        return f"{status_icon} | {name} | {func_name} → {output_memory_type}"
+        # Format to match the image
+        return f"{status_icon} {name} | {func_name} → {output_memory_type}"
 
     # _format_step_list is obsolete.
 
@@ -266,7 +300,11 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         icons = {
             'pending': "o",
             'validated': "✓",
-            'error': "!"
+            'error': "!",
+            'not_initialized': "?",
+            'initialized': "o",
+            'ready': "o",
+            'compiled_ok': "✓"
         }
         if status not in icons:
             # Instead of raising an error, return a default icon
@@ -576,11 +614,23 @@ class PipelineEditorPane: # Renamed from StepViewerPane
             get_app().create_background_task(self._update_selection())
 
     async def _edit_step(self):
-        """Edit the selected step."""
+        """
+        Edit the currently selected step.
+        This will trigger showing the DualStepFuncEditorPane in the left pane.
+        """
         async with self.steps_lock:
-            if self.steps and 0 <= self.selected_index < len(self.steps):
-                step = self.steps[self.selected_index]
-                self.state.notify('edit_step', step)
+            if not self.steps or self.selected_index >= len(self.steps):
+                return
+
+            # Get the selected step
+            step = self.steps[self.selected_index]
+
+            # Set the state to trigger showing the DualStepFuncEditorPane
+            self.state.step_to_edit_config = step
+            self.state.editing_step_config = True
+
+            # Notify observers of the change
+            await self.state.notify('edit_step_dialog_requested', step)
 
     async def _refresh_steps(self, _=None):
         """

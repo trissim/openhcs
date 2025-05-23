@@ -10,6 +10,8 @@ import asyncio
 import logging
 import os
 import sys
+import time
+import traceback
 from pathlib import Path
 import yaml # For loading persisted config
 import dataclasses # For asdict, if needed for complex merging (not used in this simple version)
@@ -29,39 +31,50 @@ async def main():
     parser.add_argument("--workspace", type=str, default=None,
                         help="Default workspace directory for plates")
     # The --tui-config argument is for any TUI-specific settings, not GlobalPipelineConfig.
-    parser.add_argument("--tui-config", type=str, default=None, 
+    parser.add_argument("--tui-config", type=str, default=None,
                         help="Path to TUI-specific configuration file (if any)")
     args = parser.parse_args()
 
     # Configure logging
     log_level = logging.DEBUG if args.debug else logging.INFO
+
+    # Create logs directory if it doesn't exist
+    log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use a file handler instead of stderr to avoid printing to the TUI screen
+    log_file = log_dir / f"openhcs_tui_{time.strftime('%Y%m%d_%H%M%S')}.log"
+
     if not logging.getLogger().hasHandlers(): # Ensure basicConfig is set up once
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            stream=sys.stderr 
-        )
-    logging.getLogger("openhcs").setLevel(log_level) # Set level for openhcs root logger
-    logger = logging.getLogger("openhcs.tui.main") 
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        root_logger.addHandler(file_handler)
+
+    # Set level for openhcs root logger
+    logging.getLogger("openhcs").setLevel(log_level)
+    logger = logging.getLogger("openhcs.tui.main")
     logger.info(f"OpenHCS TUI starting with log level: {logging.getLevelName(log_level)}")
 
     # 1. Obtain Global Pipeline Configuration
     USER_CONFIG_DIR = Path.home() / ".config" / "openhcs"
     USER_GLOBAL_CONFIG_FILE = USER_CONFIG_DIR / "global_pipeline_config.yaml"
-    
+
     core_global_config: Optional[GlobalPipelineConfig] = None
-    
+
     if USER_GLOBAL_CONFIG_FILE.exists():
         logger.info(f"Attempting to load user-defined GlobalPipelineConfig from {USER_GLOBAL_CONFIG_FILE}")
         try:
             with open(USER_GLOBAL_CONFIG_FILE, 'r', encoding='utf-8') as f:
                 loaded_data = yaml.safe_load(f)
-            
+
             if loaded_data and isinstance(loaded_data, dict):
                 # Reconstruct nested dataclasses if they are present as dicts
                 vfs_data = loaded_data.pop('vfs', {})
                 pp_data = loaded_data.pop('path_planning', {})
-                
+
                 # Create default instances to get default values for nested fields
                 default_vfs = VFSConfig()
                 default_pp = PathPlanningConfig()
@@ -95,7 +108,7 @@ async def main():
     if core_global_config is None: # Fallback if loading failed or file didn't exist
         core_global_config = get_default_global_config()
         logger.info("Using default GlobalPipelineConfig.")
-    
+
     logger.info(f"Final core global config: num_workers={core_global_config.num_workers}, VFS intermediate backend='{core_global_config.vfs.default_intermediate_backend}'")
 
     # 2. Setup Global GPU Registry (must be done once, early)
@@ -113,20 +126,36 @@ async def main():
         # tui_config_path=args.tui_config, # If tui_launcher uses its own config file
         core_global_config=core_global_config # Pass the obtained config
     )
-    
-    # Run the TUI application
-    await launcher.run()
+
+    # Run the TUI application with detailed error handling
+    try:
+        logger.info("Starting TUI launcher.run()")
+        await launcher.run()
+        logger.info("TUI launcher.run() completed successfully")
+    except Exception as e:
+        logger.critical(f"Error in launcher.run(): {e}", exc_info=True)
+        print(f"ERROR: TUI crashed: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        # Re-raise to be caught by the outer try/except
+        raise
 
 
 if __name__ == "__main__":
     if sys.platform == "win32" and sys.version_info >= (3, 8):
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
+
     try:
+        print("Starting OpenHCS TUI...")
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
+        print("OpenHCS TUI terminated by user.")
         logger.info("OpenHCS TUI terminated by user.")
         sys.exit(0)
     except Exception as e:
+        print(f"ERROR: Unhandled exception in TUI main: {e}")
+        print("Check the log file for details.")
+        print(f"Traceback: {traceback.format_exc()}")
         logging.getLogger("openhcs.tui.main").critical(f"Unhandled exception in TUI main: {e}", exc_info=True)
+        # Wait for user to see the error
+        input("Press Enter to exit...")
         sys.exit(1)

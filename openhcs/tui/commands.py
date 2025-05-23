@@ -46,6 +46,9 @@ class Command(Protocol):
             state: The current TUIState instance.
             context: The current ProcessingContext instance.
             **kwargs: Additional arguments specific to the command.
+
+        Returns:
+            None
         """
         ...
 
@@ -88,7 +91,21 @@ class ShowGlobalSettingsDialogCommand(Command):
     """
     Command to show the Global Settings Editor dialog.
     """
-    async def execute(self, state: "TUIState", context: "ProcessingContext", **kwargs: Any) -> None:
+    def __init__(self, state: "TUIState" = None, context: "ProcessingContext" = None):
+        """
+        Initialize the command.
+
+        Args:
+            state: The TUIState instance (optional, can be provided during execute)
+            context: The ProcessingContext instance (optional, can be provided during execute)
+        """
+        self.state = state
+        self.context = context
+
+    async def execute(self, state: "TUIState" = None, context: "ProcessingContext" = None, **kwargs: Any) -> None:
+        # Use provided state/context or the ones from initialization
+        state = state or self.state
+        context = context or self.context
         if state.global_config is None:
             # This should ideally not happen if TUIState is properly initialized
             await message_dialog(
@@ -133,7 +150,21 @@ class ShowHelpCommand(Command):
     """
     Command to show a simple help message/dialog.
     """
-    async def execute(self, state: "TUIState", context: "ProcessingContext", **kwargs: Any) -> None:
+    def __init__(self, state: "TUIState" = None, context: "ProcessingContext" = None):
+        """
+        Initialize the command.
+
+        Args:
+            state: The TUIState instance (optional, can be provided during execute)
+            context: The ProcessingContext instance (optional, can be provided during execute)
+        """
+        self.state = state
+        self.context = context
+
+    async def execute(self, state: "TUIState" = None, context: "ProcessingContext" = None, **kwargs: Any) -> None:
+        # Use provided state/context or the ones from initialization
+        state = state or self.state
+        context = context or self.context
         # For now, a simple message dialog. This can be expanded later.
         # The content of the help message should be defined elsewhere.
         help_text = (
@@ -249,15 +280,15 @@ class InitializePlatesCommand(Command):
 
         try:
             await state.notify('operation_status_changed', {'status': 'running', 'message': f'Initializing plate {plate_name}...', 'source': self.__class__.__name__})
-            
+
             loop = asyncio.get_event_loop()
             # Run the synchronous orchestrator.initialize() in the shared thread pool
             await loop.run_in_executor(SHARED_EXECUTOR, active_orchestrator.initialize)
-            
+
             logger.info(f"Plate '{plate_name}' (ID: {plate_id}) initialized successfully by command.")
             await state.notify('plate_status_changed', {
-                'plate_id': plate_id, 
-                'status': 'initialized', 
+                'plate_id': plate_id,
+                'status': 'initialized',
                 'message': 'Plate initialized successfully.'
             })
             await state.notify('operation_status_changed', {'status': 'idle', 'message': f'Plate {plate_name} initialization complete.', 'source': self.__class__.__name__})
@@ -265,8 +296,8 @@ class InitializePlatesCommand(Command):
         except Exception as e:
             logger.error(f"Error initializing plate '{plate_name}' (ID: {plate_id}): {e}", exc_info=True)
             await state.notify('plate_status_changed', {
-                'plate_id': plate_id, 
-                'status': 'error_init', 
+                'plate_id': plate_id,
+                'status': 'error_init',
                 'message': f'Error initializing plate: {str(e)}'
             })
             await state.notify('operation_status_changed', {'status': 'idle', 'message': f'Plate {plate_name} initialization failed.', 'source': self.__class__.__name__})
@@ -280,7 +311,7 @@ class InitializePlatesCommand(Command):
         if active_orchestrator:
             # Add more specific checks if needed, e.g., plate not already initialized
             # current_plate_status = getattr(active_orchestrator, 'status', None) # Assuming orchestrator has a status
-            # return current_plate_status != 'initialized' 
+            # return current_plate_status != 'initialized'
             return True # For now, allow if orchestrator is present
         return False
 
@@ -435,11 +466,11 @@ class AddStepCommand(Command):
         if state.current_pipeline_definition is None:
             logger.warning("AddStepCommand: state.current_pipeline_definition was None. Initializing to empty list.")
             state.current_pipeline_definition = []
-        
+
         # Attempt to find a default function
         default_func_pattern = None
         default_func_name = "Default Func" # Fallback name
-        
+
         # Try to find a simple, known function from the registry (example placeholder)
         # This part is illustrative; a robust solution needs a well-defined default or specific UI to choose.
         if FUNC_REGISTRY:
@@ -453,21 +484,21 @@ class AddStepCommand(Command):
                     default_func_pattern = funcs_in_backend[first_func_name]['pattern']
                     default_func_name = f"{first_func_name} (default)"
                     break
-        
+
         if default_func_pattern is None:
             logger.warning("AddStepCommand: No suitable default function found in FUNC_REGISTRY. New step will have func=None.")
             # Using func=None is acceptable if DualStepFuncEditor can handle it for selection.
 
         new_step = FunctionStep(
             func=default_func_pattern, # Can be None if no default found
-            name=f"New Step - {default_func_name}" 
+            name=f"New Step - {default_func_name}"
             # Other parameters will use defaults from FunctionStep.__init__
         )
         # Ensure step_id is unique if FunctionStep doesn't auto-generate a sufficiently unique one
         # new_step.step_id = str(uuid.uuid4()) # FunctionStep already generates a UUID
 
         state.current_pipeline_definition.append(new_step)
-        
+
         # Update the orchestrator's view of the pipeline definition directly
         # This assumes that TUIState.current_pipeline_definition is THE source of truth for the active pipeline
         active_orchestrator.pipeline_definition = state.current_pipeline_definition

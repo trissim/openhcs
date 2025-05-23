@@ -1,4 +1,3 @@
-from prompt_toolkit.layout import Container
 """
 Status Bar and Log Drawer for OpenHCS TUI.
 
@@ -22,6 +21,7 @@ StatusBarState is an immutable state container.
 🔒 Clause 317: Runtime Correctness / Thread Safety
 All status updates are protected by a lock.
 """
+from prompt_toolkit.layout import Container
 import asyncio
 import logging # For TUIStatusBarLogHandler
 import sys # For stderr in logging fallback
@@ -41,6 +41,9 @@ from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.layout import ConditionalContainer, Container, HSplit
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.widgets import Box, Frame, Label
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Assuming TUIState will be imported where StatusBar is used, or passed in.
 # For now, type hint as string if direct import is an issue here.

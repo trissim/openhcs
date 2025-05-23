@@ -1,9 +1,18 @@
-from typing import Any, Optional # Added Optional
+"""
+Dialog helper utilities for the TUI.
+
+This module provides utilities for creating and showing dialogs.
+"""
+
 import logging
+import asyncio
+from typing import Any, Optional, Callable
+
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout.containers import HSplit
-from prompt_toolkit.widgets import Button, Dialog, Label, TextArea # Added TextArea
-import asyncio # Added for Future
+from prompt_toolkit.widgets import Button, Dialog, Label, TextArea
+
+logger = logging.getLogger(__name__)
 
 async def show_error_dialog(title: str, message: str, app_state: Optional[Any] = None):
     """
@@ -34,7 +43,7 @@ async def show_error_dialog(title: str, message: str, app_state: Optional[Any] =
         buttons=[
             Button("OK", handler=ok_handler)
         ],
-        width=80, # Standard width
+        width=80,  # Standard width
         modal=True
     )
 
@@ -43,7 +52,6 @@ async def show_error_dialog(title: str, message: str, app_state: Optional[Any] =
         await app_state.show_dialog(error_dialog, result_future=future)
     else:
         # Fallback if app_state doesn't have a show_dialog or if app_state is None
-        logger = logging.getLogger(__name__)
         logger.error("show_error_dialog: app_state does not have show_dialog method")
         future.set_result(False)
 
@@ -77,7 +85,7 @@ async def prompt_for_path_dialog(title: str, prompt_message: str, app_state: Any
         multiline=False,
         height=1,
         prompt="Path: ",
-        accept_handler=lambda buff: accept_path(buff.text) # Accept on Enter
+        accept_handler=lambda buff: accept_path(buff.text)  # Accept on Enter
     )
 
     dialog = Dialog(
@@ -107,8 +115,48 @@ async def prompt_for_path_dialog(title: str, prompt_message: str, app_state: Any
         await app_state.show_dialog(dialog, result_future=future)
     else:
         # Fallback if app_state doesn't have a show_dialog
-        logger = logging.getLogger(__name__)
         logger.error("prompt_for_path_dialog: app_state does not have show_dialog method")
         future.set_result(None)
 
     return await future
+
+def ok_handler(future: asyncio.Future) -> Callable[[], None]:
+    """
+    Create a handler for OK button that sets the future result to True.
+
+    Args:
+        future: The future to set the result on
+
+    Returns:
+        A handler function
+    """
+    def handler():
+        future.set_result(True)
+    return handler
+
+def cancel_dialog(future: asyncio.Future) -> Callable[[], None]:
+    """
+    Create a handler for Cancel button that sets the future result to None.
+
+    Args:
+        future: The future to set the result on
+
+    Returns:
+        A handler function
+    """
+    def handler():
+        future.set_result(None)
+    return handler
+
+async def focus_text_area(text_area: TextArea) -> None:
+    """
+    Focus a text area after a short delay.
+
+    Args:
+        text_area: The text area to focus
+
+    Returns:
+        None
+    """
+    await asyncio.sleep(0.1)  # Short delay to ensure dialog is rendered
+    get_app().layout.focus(text_area)

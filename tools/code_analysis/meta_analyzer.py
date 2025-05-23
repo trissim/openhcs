@@ -28,6 +28,7 @@ class MetaCommand(Enum):
     SEMANTICS = "semantics"          # Analyze semantics (roles, state mutations)
     IMPORTS = "imports"              # Analyze imports and fix issues
     QUALITY = "quality"              # Analyze code quality (complexity, maintainability)
+    ASYNC = "async"                  # Analyze async/await patterns
 
 def run_tool(tool_path: str, args: List[str]) -> int:
     """
@@ -100,14 +101,24 @@ def run_comprehensive_analysis(path: str, output_dir: str, exclude: List[str] = 
 
     # Run code analyzer CLI for dependencies
     code_analyzer_tool = os.path.join(TOOLS_DIR, "code_analyzer_cli.py")
-    dependency_output = os.path.join(output_dir, f"module_dependency_graph_{os.path.basename(path)}.md")
-    if run_tool(code_analyzer_tool, ["dependencies", path, "-o", dependency_output]) != 0:
-        print("Warning: Dependency analysis failed")
+    # Check if path is a file or directory and use appropriate command
+    if os.path.isfile(path):
+        dependency_output = os.path.join(output_dir, f"file_dependencies_{os.path.basename(path)}.md")
+        if run_tool(code_analyzer_tool, ["file-dependencies", path, "-o", dependency_output]) != 0:
+            print("Warning: File dependency analysis failed")
+    else:
+        dependency_output = os.path.join(output_dir, f"module_dependency_graph_{os.path.basename(path)}.md")
+        if run_tool(code_analyzer_tool, ["dependencies", path, "-o", dependency_output]) != 0:
+            print("Warning: Directory dependency analysis failed")
 
     # Run code analyzer CLI for snapshot
     snapshot_output = os.path.join(output_dir, f"{os.path.basename(path)}_codebase_snapshot.csv")
     if run_tool(code_analyzer_tool, ["snapshot", "-t", path, "-o", snapshot_output]) != 0:
         print("Warning: Snapshot analysis failed")
+
+    # Run code analyzer CLI for async patterns
+    if run_tool(code_analyzer_tool, ["async-patterns", path, "--output-dir", output_dir]) != 0:
+        print("Warning: Async pattern analysis failed")
 
     print(f"\nComprehensive analysis complete. Reports written to {output_dir}")
     return 0
@@ -146,8 +157,17 @@ def run_architecture_analysis(path: str, output_dir: str, exclude: List[str] = N
 
     # Run code analyzer CLI for dependencies
     code_analyzer_tool = os.path.join(TOOLS_DIR, "code_analyzer_cli.py")
-    if run_tool(code_analyzer_tool, ["dependencies", path, "--output-dir", output_dir]) != 0:
-        print("Warning: Dependency analysis failed")
+    # Check if path is a file or directory and use appropriate command
+    if os.path.isfile(path):
+        if run_tool(code_analyzer_tool, ["file-dependencies", path, "--output-dir", output_dir]) != 0:
+            print("Warning: File dependency analysis failed")
+    else:
+        if run_tool(code_analyzer_tool, ["dependencies", path, "--output-dir", output_dir]) != 0:
+            print("Warning: Directory dependency analysis failed")
+
+    # Run code analyzer CLI for async patterns
+    if run_tool(code_analyzer_tool, ["async-patterns", path, "--output-dir", output_dir]) != 0:
+        print("Warning: Async pattern analysis failed")
 
     print(f"\nArchitecture analysis complete. Reports written to {output_dir}")
     return 0
@@ -250,6 +270,34 @@ def run_quality_analysis(path: str, output_dir: str, exclude: List[str] = None) 
     print(f"\nCode quality analysis complete. Reports written to {output_dir}")
     return 0
 
+def run_async_analysis(path: str, output_dir: str, exclude: List[str] = None) -> int:
+    """
+    Run async/await pattern analysis on a path.
+
+    Args:
+        path: Path to analyze
+        output_dir: Directory to write reports to
+        exclude: List of patterns to exclude
+
+    Returns:
+        Return code (0 for success, non-zero for failure)
+    """
+    ensure_directory(output_dir)
+
+    # Build exclude args
+    exclude_args = []
+    if exclude:
+        for pattern in exclude:
+            exclude_args.extend(["--exclude", pattern])
+
+    # Run code analyzer CLI for async patterns
+    code_analyzer_tool = os.path.join(TOOLS_DIR, "code_analyzer_cli.py")
+    if run_tool(code_analyzer_tool, ["async-patterns", path, "--output-dir", output_dir]) != 0:
+        print("Warning: Async pattern analysis failed")
+
+    print(f"\nAsync pattern analysis complete. Reports written to {output_dir}")
+    return 0
+
 def main():
     """Main entry point for the command-line interface."""
     parser = argparse.ArgumentParser(
@@ -271,6 +319,9 @@ Examples:
 
   # Run code quality analysis on a directory
   ./meta_analyzer.py quality openhcs
+
+  # Run async/await pattern analysis on a directory
+  ./meta_analyzer.py async openhcs/tui
 """
     )
 
@@ -317,6 +368,8 @@ Examples:
         return run_imports_analysis(args.path, args.output_dir, args.exclude, args.fix)
     elif args.command == MetaCommand.QUALITY.value:
         return run_quality_analysis(args.path, args.output_dir, args.exclude)
+    elif args.command == MetaCommand.ASYNC.value:
+        return run_async_analysis(args.path, args.output_dir, args.exclude)
     else:
         print(f"Error: Unknown command {args.command}")
         return 1

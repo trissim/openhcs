@@ -15,6 +15,14 @@ from tools.code_analysis.extract_definitions import extract_summary_from_file
 from tools.code_analysis.detailed_definition_extractor import extract_detailed_definitions_from_file
 from tools.code_analysis.module_dependency_analyzer import analyze_dependencies
 
+# Import async analyzer
+try:
+    from tools.code_analysis.async_analyzer import handle_async_patterns
+except ImportError:
+    # Handle the case where the async analyzer is not available
+    def handle_async_patterns(args):
+        print("Error: Async analyzer not available", file=sys.stderr)
+
 REPORTS_DIR = os.path.abspath(os.path.join(PROJECT_ROOT, "reports", "code_analysis"))
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -188,12 +196,55 @@ def handle_dependencies(args):
 
     markdown_output = format_dependencies_as_markdown(args.directory, dependencies_map)
 
+    # Determine output directory
+    output_dir = args.output_dir if hasattr(args, 'output_dir') and args.output_dir else REPORTS_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
     # Ensure basename is not empty if args.directory ends with a slash
     dir_name = os.path.basename(args.directory.rstrip(os.sep)) or "root"
-    output_filename = args.output or os.path.join(REPORTS_DIR, f"module_dependency_graph_{dir_name}.md")
+
+    # Determine output filename
+    if args.output:
+        output_filename = args.output
+    else:
+        output_filename = os.path.join(output_dir, f"module_dependency_graph_{dir_name}.md")
+
     with open(output_filename, "w", encoding="utf-8") as f:
         f.write(markdown_output)
     print(f"Module dependency graph generated: {output_filename}")
+
+def handle_file_dependencies(args):
+    print(f"Analyzing dependencies for file: {args.filepath}...")
+
+    filepath = os.path.abspath(args.filepath)
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found at {filepath}", file=sys.stderr)
+        return
+
+    # analyze_dependencies expects base_path to be the project root for resolving 'openhcs.*'
+    deps = analyze_dependencies(filepath, PROJECT_ROOT)
+    relative_filepath = os.path.relpath(filepath, PROJECT_ROOT)
+
+    dependencies_map = {relative_filepath: deps}
+    markdown_output = format_dependencies_as_markdown(args.filepath, dependencies_map)
+
+    # Determine output directory
+    output_dir = args.output_dir if hasattr(args, 'output_dir') and args.output_dir else REPORTS_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Get filename for output
+    file_basename = os.path.basename(args.filepath)
+    file_name_without_ext = os.path.splitext(file_basename)[0]
+
+    # Determine output filename
+    if args.output:
+        output_filename = args.output
+    else:
+        output_filename = os.path.join(output_dir, f"file_dependencies_{file_name_without_ext}.md")
+
+    with open(output_filename, "w", encoding="utf-8") as f:
+        f.write(markdown_output)
+    print(f"File dependency analysis generated: {output_filename}")
 
 
 def main():
@@ -220,8 +271,22 @@ def main():
     parser_deps = subparsers.add_parser("dependencies", help="Generate a module dependency graph (Markdown) for a specified directory.")
     parser_deps.add_argument("directory", help="Path to the directory to analyze (e.g., openhcs/tui).")
     parser_deps.add_argument("-o", "--output", help="Output Markdown file path. Defaults to reports/code_analysis/module_dependency_graph_<dirname>.md")
+    parser_deps.add_argument("--output-dir", help="Output directory for the report. Defaults to reports/code_analysis/")
     parser_deps.set_defaults(func=handle_dependencies)
 
+    # File Dependencies command
+    parser_file_deps = subparsers.add_parser("file-dependencies", help="Analyze dependencies for a single Python file.")
+    parser_file_deps.add_argument("filepath", help="Path to the Python file to analyze.")
+    parser_file_deps.add_argument("-o", "--output", help="Output Markdown file path. Defaults to reports/code_analysis/file_dependencies_<filename>.md")
+    parser_file_deps.add_argument("--output-dir", help="Output directory for the report. Defaults to reports/code_analysis/")
+    parser_file_deps.set_defaults(func=handle_file_dependencies)
+
+    # Async Patterns command
+    parser_async = subparsers.add_parser("async-patterns", help="Analyze async/await patterns in a file or directory.")
+    parser_async.add_argument("path", help="Path to the file or directory to analyze.")
+    parser_async.add_argument("-o", "--output", help="Output Markdown file path. Defaults to reports/code_analysis/async_patterns_<name>.md")
+    parser_async.add_argument("--output-dir", help="Output directory for the report. Defaults to reports/code_analysis/")
+    parser_async.set_defaults(func=handle_async_patterns)
 
     args = parser.parse_args()
     args.func(args)

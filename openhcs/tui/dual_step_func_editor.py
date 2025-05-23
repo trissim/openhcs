@@ -19,7 +19,7 @@ from openhcs.constants.constants import VariableComponents, GroupBy # Added impo
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, FormattedTextControl, Window, ScrollablePane, Container
+from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, FormattedTextControl, Window, ScrollablePane, Container, Dimension
 from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea, RadioList, CheckboxList, Dialog, Checkbox # Added Checkbox
 
 from openhcs.core.steps.function_step import FunctionStep
@@ -53,14 +53,14 @@ class DualStepFuncEditorPane:
         self.step_settings_container: Optional[ScrollablePane] = None
         self.func_pattern_editor_component: Optional[FunctionPatternEditor] = None
         self.func_pattern_container: Optional[Any] = None
-        
+
         self.step_param_inputs: Dict[str, Any] = {}
 
         self.save_button: Optional[Button] = None
         self.close_button: Optional[Button] = None
         self.step_view_button: Optional[Button] = None
         self.func_view_button: Optional[Button] = None
-       
+
         self._container: Optional[HSplit] = None
         self._initialize_ui()
 
@@ -74,14 +74,17 @@ class DualStepFuncEditorPane:
 
     def _initialize_ui(self):
         """Initialize all UI components for the editor."""
-        
+
+        # Top menu bar with Step/Func toggle and Save/Close buttons
         self.step_view_button = Button(
-            "Step Settings", 
-            handler=lambda: self._switch_view("step")
+            "Step",
+            handler=lambda: self._switch_view("step"),
+            width=10
         )
         self.func_view_button = Button(
-            "Func Pattern",
-            handler=lambda: self._switch_view("func")
+            "Func",
+            handler=lambda: self._switch_view("func"),
+            width=10
         )
         self.save_button = Button(
             "Save",
@@ -94,21 +97,22 @@ class DualStepFuncEditorPane:
             handler=self._close_editor # Async handler
         )
 
-        menu_bar = VSplit([
+        # Top menu bar with Step/Func toggle and Save/Close buttons
+        top_menu_bar = VSplit([
             self.step_view_button,
             self.func_view_button,
-            Window(width=5), # Spacer
+            Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
             self.save_button,
             self.close_button,
         ], height=1, padding=1)
 
         self.step_settings_container = self._create_step_settings_view()
-        
+
         # Initialize the FunctionPatternEditor component
         if not self.func_pattern_editor_component: # Ensure it's only initialized once
             self.func_pattern_editor_component = FunctionPatternEditor(
                 state=self.state,
-                initial_pattern=self.editing_func_step.func, 
+                initial_pattern=self.editing_func_step.func,
                 change_callback=self._func_pattern_changed
             )
         # Ensure func_pattern_container is set from the component's container
@@ -117,16 +121,42 @@ class DualStepFuncEditorPane:
         # Dynamic container to switch between views
         def get_current_view_container():
             if self.current_view == "step":
-                return self.step_settings_container
+                # Create a container with title bar for Step Settings
+                return HSplit([
+                    # Title bar for Step Settings
+                    VSplit([
+                        Label(" Step Settings Editor ", style="class:frame.title"),
+                        Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+                        Button("Load", handler=self._load_step_object),
+                        Button("Save As", handler=self._save_step_object_as)
+                    ], height=1, style="class:frame.title"),
+                    # Content area
+                    self.step_settings_container
+                ])
             else: # "func"
-                return self.func_pattern_container if self.func_pattern_container else HSplit([Label("Func Editor Component Error")])
+                # Create a container with title bar for Func Pattern
+                return HSplit([
+                    # Title bar for Func Pattern
+                    VSplit([
+                        Label(" Func Pattern Editor ", style="class:frame.title"),
+                        Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+                        Button("Add", handler=lambda: self.func_pattern_editor_component._add_function() if hasattr(self.func_pattern_editor_component, '_add_function') else None),
+                        Button("Load", handler=lambda: self.func_pattern_editor_component._load_func_pattern_from_file_handler() if hasattr(self.func_pattern_editor_component, '_load_func_pattern_from_file_handler') else None),
+                        Button("Save As", handler=lambda: self.func_pattern_editor_component._save_func_pattern_as_file_handler() if hasattr(self.func_pattern_editor_component, '_save_func_pattern_as_file_handler') else None)
+                    ], height=1, style="class:frame.title"),
+                    # Content area
+                    self.func_pattern_container if self.func_pattern_container else HSplit([Label("Func Editor Component Error")])
+                ])
 
-        dynamic_content_area = DynamicContainer(get_current_view_container)
-        
+        # Create the dynamic content area
+        self._dynamic_content_wrapper = DynamicContainer(get_current_view_container)
+
+        # Create the main container with the top menu bar and dynamic content
         self._container = HSplit([
-            menu_bar,
-            Frame(dynamic_content_area, title=self._get_current_view_title())
+            top_menu_bar,
+            Frame(self._dynamic_content_wrapper)
         ])
+
         self._update_button_styles()
 
 
@@ -139,9 +169,9 @@ class DualStepFuncEditorPane:
         """Creates the UI for editing AbstractStep __init__ parameters dynamically."""
         self.step_param_inputs.clear()
         rows = []
-        
+
         sig = inspect.signature(AbstractStep.__init__)
-        
+
         for param_name, param_obj in sig.parameters.items():
             if param_name == 'self' or param_obj.kind == param_obj.VAR_KEYWORD or param_obj.kind == param_obj.VAR_POSITIONAL:
                 continue
@@ -155,7 +185,7 @@ class DualStepFuncEditorPane:
             is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
             if is_optional:
                 actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
-            
+
             if actual_type is bool:
                 # Use a single Checkbox for boolean parameters
                 widget = Checkbox(checked=bool(current_value))
@@ -188,7 +218,7 @@ class DualStepFuncEditorPane:
 
             elif param_name == "variable_components": # Special handling for VariableComponents
                 options = [(None, "(None)")] + [(member, member.name) for member in VariableComponents]
-                
+
                 # Determine initial selection for RadioList
                 initial_selection = None
                 if current_value and isinstance(current_value, list) and len(current_value) > 0:
@@ -197,14 +227,14 @@ class DualStepFuncEditorPane:
                         if member.name == current_name:
                             initial_selection = member
                             break
-                
+
                 widget = RadioList(values=options, default=initial_selection)
                 # The handler for RadioList is set directly on the widget instance
                 # and it's called with the selected value (enum member or None)
                 widget.handler = lambda val, n=param_name: self._something_changed(n, val)
             elif param_name == "group_by": # Special handling for GroupBy
                 options = [(None, "(None)")] + [(member, member.name) for member in GroupBy]
-                
+
                 initial_selection = None
                 if current_value and isinstance(current_value, list) and len(current_value) > 0:
                     current_name = current_value[0]
@@ -212,7 +242,7 @@ class DualStepFuncEditorPane:
                         if member.name == current_name:
                             initial_selection = member
                             break
-                
+
                 widget = RadioList(values=options, default=initial_selection)
                 widget.handler = lambda val, n=param_name: self._something_changed(n, val)
             elif actual_type is str or get_origin(actual_type) is Path or isinstance(actual_type, type(Path)) or actual_type is Any:
@@ -244,13 +274,13 @@ class DualStepFuncEditorPane:
                     widget,
                     Box(reset_button, width=10, padding_left=1) # Added Box for padding
                 ], padding=0))
-        
+
         parameter_fields_container = HSplit(rows)
 
         # Define these buttons earlier for the toolbar
         load_step_button = Button("Load .step", handler=self._load_step_object, width=12)
         save_step_as_button = Button("Save .step As...", handler=self._save_step_object_as, width=18)
-        
+
         # Create a toolbar for these buttons
         step_settings_toolbar = VSplit([
             load_step_button,
@@ -269,7 +299,7 @@ class DualStepFuncEditorPane:
         ])
         return ScrollablePane(view_content)
 
-    def _create_func_pattern_view(self) -> Any: 
+    def _create_func_pattern_view(self) -> Any:
         """
         Returns the container of the FunctionPatternEditor component.
         The component should be initialized in _initialize_ui.
@@ -312,7 +342,7 @@ class DualStepFuncEditorPane:
                 is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
                 if is_optional:
                     actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
-                
+
                 current_text = str(widget_value).strip()
 
                 converted_value: Any
@@ -321,9 +351,9 @@ class DualStepFuncEditorPane:
                 # Removed old TextArea handling for variable_components
                 elif actual_type is str:
                     converted_value = current_text if not (is_optional and not current_text) else None
-                else: 
+                else:
                     converted_value = current_text if not (is_optional and not current_text) else None
-                
+
                 # Handle variable_components specifically if it was changed by RadioList
                 if param_name == "variable_components":
                     # widget_value is the enum member or None
@@ -349,7 +379,7 @@ class DualStepFuncEditorPane:
             if name_to_check == 'self': continue
 
             original_val = getattr(self.original_func_step, name_to_check, inspect.Parameter.empty)
-            
+
             # For boolean fields handled by Checkbox, get .checked value
             widget_instance = self.step_param_inputs.get(name_to_check)
             if isinstance(widget_instance, Checkbox):
@@ -363,25 +393,25 @@ class DualStepFuncEditorPane:
             if original_val != editing_val:
                 changed_in_step_settings = True
                 break
-        
+
         func_changed = False
         if copy.deepcopy(self.editing_func_step.func) != copy.deepcopy(self.original_func_step.func):
             func_changed = True
-            
+
         has_changed = changed_in_step_settings or func_changed
-        
+
         if self.save_button:
             self.save_button.disabled = not has_changed
         get_app().invalidate()
 
     async def _save_changes(self):
         logger.info("DualStepFuncEditorPane: Save changes initiated.")
-        
+
         sig_abstract = inspect.signature(AbstractStep.__init__)
         for param_name, widget in self.step_param_inputs.items():
             if param_name not in sig_abstract.parameters: continue
             param_obj = sig_abstract.parameters[param_name]
-            actual_type = param_obj.annotation 
+            actual_type = param_obj.annotation
             if get_origin(actual_type) is TypingUnion and type(None) in get_args(actual_type):
                 actual_type = next((t for t in get_args(actual_type) if t is not type(None)), actual_type)
 
@@ -397,8 +427,8 @@ class DualStepFuncEditorPane:
                     setattr(self.editing_func_step, param_name, [selected_enum_member.name])
                 else:
                     setattr(self.editing_func_step, param_name, None)
-                elif isinstance(widget, Checkbox) and actual_type is bool:
-                    setattr(self.editing_func_step, param_name, widget.checked)
+            elif isinstance(widget, Checkbox) and actual_type is bool:
+                setattr(self.editing_func_step, param_name, widget.checked)
                 # Removed CheckboxList handling for bool as it's replaced by Checkbox
 
         if self.func_pattern_editor_component:
@@ -416,7 +446,7 @@ class DualStepFuncEditorPane:
             step_to_save = copy.deepcopy(self.editing_func_step)
             await self.state.notify('step_pattern_saved', {'step': step_to_save})
             self.original_func_step = copy.deepcopy(self.editing_func_step)
-            
+
             if self.save_button:
                 self.save_button.disabled = True
             get_app().invalidate()
@@ -444,6 +474,22 @@ class DualStepFuncEditorPane:
             return HSplit([Label("Error: Editor not initialized.")]) # Fallback
         return self._container
 
+    def get_buttons_container(self) -> Container:
+        """
+        Get the buttons container for the Dual Step/Func Editor.
+        This is used by the TUI architecture to get the buttons for the left pane.
+
+        Returns:
+            Container with the buttons for the Dual Step/Func Editor
+        """
+        return VSplit([
+            self.step_view_button,
+            self.func_view_button,
+            Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
+            self.save_button,
+            self.close_button,
+        ], height=1, padding=1)
+
     async def shutdown(self):
         """Perform any cleanup if necessary."""
         logger.info("DualStepFuncEditorPane shutting down.")
@@ -470,14 +516,14 @@ class DualStepFuncEditorPane:
         try:
             with open(file_path, "rb") as f:
                 loaded_object = pickle.load(f)
-            
+
             if not isinstance(loaded_object, FunctionStep):
                 await show_error_dialog("Load Error", "File does not contain a valid FunctionStep.", app_state=self.state)
                 return
 
             self.original_func_step = loaded_object # Keep the loaded one as original for comparison
             self.editing_func_step = copy.deepcopy(loaded_object)
-            
+
             # Refresh UI with loaded step data
             self._initialize_ui() # Re-initialize UI to reflect new step
             self._something_changed() # Recalculate save button state (should be disabled initially)
@@ -502,7 +548,7 @@ class DualStepFuncEditorPane:
         if not file_path_str:
             logger.info("Save .step As operation cancelled by user.")
             return
-            
+
         file_path = Path(file_path_str)
 
         try:
@@ -517,7 +563,7 @@ class DualStepFuncEditorPane:
             # self.original_func_step = copy.deepcopy(self.editing_func_step)
             # if self.save_button: self.save_button.disabled = True
             # get_app().invalidate()
-            
+
             # For "Save As", typically we don't automatically consider it "saved" in the editor session
             # unless it's also a primary save action.
             # For now, just log success. A success dialog could be added.
@@ -533,7 +579,7 @@ class DualStepFuncEditorPane:
         """Resets a specific step parameter field to its original value."""
         logger.info(f"Resetting parameter: {param_name_to_reset}")
         original_value = getattr(self.original_func_step, param_name_to_reset, None)
-        
+
         # Update the editing_func_step
         setattr(self.editing_func_step, param_name_to_reset, original_value)
 
@@ -549,7 +595,7 @@ class DualStepFuncEditorPane:
                 enum_class = VariableComponents
             elif param_name_to_reset == "group_by":
                 enum_class = GroupBy
-            
+
             if enum_class:
                 initial_selection = None
                 if original_value and isinstance(original_value, list) and len(original_value) > 0:
