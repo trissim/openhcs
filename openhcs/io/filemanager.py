@@ -8,7 +8,7 @@ including directory listing, existence checking, mkdir, symlink, and mirror oper
 import logging
 import os
 from pathlib import Path
-from typing import List, Set, Union, Tuple
+from typing import List, Set, Union, Tuple, Optional, Any
 
 from openhcs.constants.constants import DEFAULT_IMAGE_EXTENSIONS
 from openhcs.io.base import StorageBackend

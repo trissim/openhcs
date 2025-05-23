@@ -19,6 +19,7 @@ from prompt_toolkit.layout import (
     FormattedTextControl,
     ScrollablePane,
     Window,
+    Container,
     ConditionalContainer # Added ConditionalContainer
 )
 from prompt_toolkit.filters import Condition # Added Condition
@@ -27,7 +28,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML, FormattedText, to_formatted_text
 
 from openhcs.io.filemanager import FileManager
-from openhcs.io.base import StorageBackendEnum
+from openhcs.constants.constants import Backend
 # from openhcs.tui.components import InteractiveListItem # Not used in current basic version
 
 # For logging
@@ -48,7 +49,7 @@ class FileManagerBrowser:
         on_path_selected: Callable[[List[Path]], Coroutine[Any, Any, None]], # Expects a List of Paths
         on_cancel: Callable[[], Coroutine[Any, Any, None]],
         initial_path: Optional[Union[str, Path]] = None,
-        backend: Optional[StorageBackendEnum] = None, # Backend for FileManager operations
+        backend: Optional[Backend] = None, # Backend for FileManager operations
         select_files: bool = True, # True to select files, False to select directories
         select_multiple: bool = False, # TODO: Implement multi-select later
         show_hidden_files: bool = False,
@@ -72,7 +73,7 @@ class FileManagerBrowser:
         # UI Components
         self.path_display = FormattedTextControl(text=self._get_path_display_text)
         self.item_list_container = DynamicContainer(lambda: self._build_item_list_ui())
-        
+
         self.ok_button = Button("Select", handler=lambda: get_app().create_background_task(self._handle_ok()))
         self.cancel_button = Button("Cancel", handler=lambda: get_app().create_background_task(self._handle_cancel()))
         self.up_button = Button("Up ..", handler=lambda: get_app().create_background_task(self._handle_up_directory()))
@@ -96,7 +97,7 @@ class FileManagerBrowser:
         path_to_check = Path.cwd() # Default to CWD
         if initial_path:
             path_to_check = Path(initial_path).resolve()
-        
+
         # Ensure it's a directory; if not, go to parent
         # This requires a FileManager call, which might be slow for remote.
         # For now, assume initial_path is generally valid or local.
@@ -119,12 +120,12 @@ class FileManagerBrowser:
     def _build_ui(self) -> Container:
         """Builds the main container for the file browser."""
         path_window = Window(content=self.path_display, height=1, style="class:filebrowser.path")
-        
+
         action_buttons = VSplit([
             self.ok_button,
             self.cancel_button,
         ], padding=1, align="RIGHT")
-            
+
         nav_buttons = VSplit([
             self.up_button,
             self.refresh_button,
@@ -145,7 +146,7 @@ class FileManagerBrowser:
             Box(self.error_label, padding_left=1, height=1),
             filter=Condition(lambda: bool(self.error_message))
         )
-        
+
         return HSplit([
             path_window,
             Window(height=1, char='─', style="class:filebrowser.separator"), # Separator
@@ -198,18 +199,18 @@ class FileManagerBrowser:
             prefix = " "
             if self.select_multiple:
                 prefix = "[x] " if is_selected_for_multi else "[ ] "
-            
+
             icon = "📁" if item_info['is_dir'] else "📄"
             name_part = f"{prefix}{icon} {item_info['name']}" # Add selection prefix
-            
+
             size_part = self._format_size(item_info.get('size')) if not item_info['is_dir'] else ""
             mtime_part = self._format_mtime(item_info.get('mtime'))
-            
+
             # Construct display text with fixed-width columns for alignment (using spaces)
             # This is a basic way; for perfect columns, FormattedText with (width, text) tuples is better.
             # For simplicity with Button, we'll use string formatting.
             # Max width for name can be estimated or fixed.
-            
+
             # Using FormattedText for better control with Button text
             text_fragments = []
             text_fragments.append(('', f"{name_part:<{max_name_width}}")) # Left align name
@@ -218,7 +219,7 @@ class FileManagerBrowser:
             else:
                  text_fragments.append(('', f"{'':>10}  ")) # Spacer for dirs
             text_fragments.append(('', f"{mtime_part}"))
-            
+
             display_formatted_text = to_formatted_text(HTML("".join(t[1] for t in text_fragments)))
 
 
@@ -233,9 +234,9 @@ class FileManagerBrowser:
                 item_button.style = "class:filebrowser.item.selected"
             else:
                 item_button.style = "class:filebrowser.item"
-            
+
             items_ui.append(item_button)
-            
+
         return HSplit(items_ui)
 
     async def _load_directory_listing(self): # Made async
@@ -246,18 +247,18 @@ class FileManagerBrowser:
             # For now, assuming they are synchronous or wrapped by run_in_executor if needed by FileManager
             # If FileManager methods become async, await them here.
             # Example: raw_items = await self.file_manager.listdir(...)
-            
+
             # To make this non-blocking for TUI, run sync FM calls in executor
             loop = asyncio.get_event_loop()
             raw_items = await loop.run_in_executor(None, self.file_manager.listdir, str(self.current_path), self.backend)
-            
+
             processed_listing = []
             for item_name in raw_items:
                 if not self.show_hidden_files and item_name.startswith('.'):
                     continue
-                
+
                 item_path = self.current_path / item_name
-                
+
                 # Fetch stats for each item
                 try:
                     stats = await loop.run_in_executor(None, self.file_manager.stat, str(item_path), self.backend)
@@ -277,7 +278,7 @@ class FileManagerBrowser:
                 if self.filter_extensions and not is_dir:
                     if not any(item_name.lower().endswith(ext) for ext in self.filter_extensions):
                         continue
-                
+
                 processed_listing.append({
                     'name': item_name,
                     'path': item_path,
@@ -285,7 +286,7 @@ class FileManagerBrowser:
                     'size': size,
                     'mtime': mtime
                 })
-            
+
             self.current_listing = sorted(
                 processed_listing,
                 key=lambda x: (not x['is_dir'], x['name'].lower())
@@ -297,7 +298,7 @@ class FileManagerBrowser:
             logger.error(f"Error listing directory {self.current_path}: {e}", exc_info=True)
             self.error_message = f"Error: {e}"
             self.current_listing = []
-        
+
         get_app().invalidate()
 
     async def _handle_item_activated(self, index: int):
@@ -339,7 +340,7 @@ class FileManagerBrowser:
                 await self._load_directory_listing() # await async load
             elif self.select_files:
                 await self._handle_ok()
-        
+
         get_app().invalidate()
 
 
@@ -352,7 +353,7 @@ class FileManagerBrowser:
                 self.error_message = "No items selected."
                 get_app().invalidate()
                 return
-            
+
             for index in self.selected_item_indices:
                 if 0 <= index < len(self.current_listing):
                     item_info = self.current_listing[index]
@@ -360,12 +361,12 @@ class FileManagerBrowser:
                         selected_paths.append(item_info['path'])
                     elif not self.select_files and item_info['is_dir']:
                         selected_paths.append(item_info['path'])
-            
+
             if not selected_paths:
                 self.error_message = "Selected items do not match selection type (files/directories)."
                 get_app().invalidate()
                 return
-            
+
         else: # Single selection mode
             if not self.current_listing and not self.select_files: # Selecting current dir if list empty
                  selected_paths.append(self.current_path)
@@ -385,7 +386,7 @@ class FileManagerBrowser:
                         selected_paths.append(self.current_path)
             elif not self.select_files: # No item focused, but in directory selection mode
                  selected_paths.append(self.current_path)
-            
+
             if not selected_paths:
                 self.error_message = "No valid item focused for selection."
                 get_app().invalidate()
@@ -428,7 +429,7 @@ class FileManagerBrowser:
             if self.focused_item_index < len(self.current_listing) - 1:
                 self.focused_item_index += 1
                 get_app().invalidate()
-        
+
         @kb.add('pageup')
         def _page_up(event):
             self.focused_item_index = max(0, self.focused_item_index - 10)
@@ -467,7 +468,7 @@ class FileManagerBrowser:
         def _go_up_directory_key(event):
             """Handles backspace key to navigate up a directory."""
             event.app.create_background_task(self._handle_up_directory())
-            
+
         # TODO: Add keybindings for home/end, refresh (e.g. F5)
 
         return kb
@@ -481,7 +482,7 @@ if __name__ == '__main__':
     from prompt_toolkit.application import Application
     from prompt_toolkit.layout.layout import Layout
     from openhcs.io.filemanager import FileManager
-    from openhcs.io.base import StorageBackendEnum
+    from openhcs.constants.constants import Backend
 
     logging.basicConfig(level=logging.DEBUG)
 
@@ -497,15 +498,15 @@ if __name__ == '__main__':
 
         # Create a FileManager instance (assuming local backend for example)
         # In a real app, this would come from a StorageRegistry
-        fm = FileManager() 
-        
+        fm = FileManager()
+
         # Create the browser
         file_browser = FileManagerBrowser(
             file_manager=fm,
             on_path_selected=on_path_selected_cb,
             on_cancel=on_cancel_cb,
             initial_path=Path.home(), # Start at home directory
-            backend=StorageBackendEnum.LOCAL, # Specify backend
+            backend=Backend.DISK, # Specify backend
             select_files=True
         )
 
@@ -514,10 +515,10 @@ if __name__ == '__main__':
             container=Dialog(title="File Browser Test", body=file_browser, modal=True, width=Dimension(preferred=80)),
             focused_element=file_browser.ok_button # Focus an element within the browser
         )
-        
+
         # Create and run the application
         app = Application(layout=layout, full_screen=True, key_bindings=file_browser.get_key_bindings())
-        
+
         selected_path = await app.run_async()
         if selected_path:
             print(f"Application exited with selected path: {selected_path}")

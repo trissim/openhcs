@@ -5,7 +5,7 @@ This module defines the base `Command` protocol that all TUI actions
 will implement. Commands encapsulate the logic for user-triggered actions,
 promoting separation of concerns and making UI components leaner.
 """
-from typing import Protocol, Any, TYPE_CHECKING, List # Added List
+from typing import Protocol, Any, TYPE_CHECKING, List, Optional # Added List and Optional
 import uuid # For AddStepCommand
 import pickle # For Load/Save Pipeline
 from pathlib import Path # For Load/Save Pipeline
@@ -62,7 +62,7 @@ class Command(Protocol):
 #
 #     def can_execute(self, state: "TUIState") -> bool:
 #         return True
-from prompt_toolkit.shortcuts import message_dialog, DialogResult
+from prompt_toolkit.shortcuts import message_dialog
 from prompt_toolkit.application import get_app
 
 # Attempt to import dialogs and config, handle potential circularity if commands are also imported by them
@@ -73,7 +73,7 @@ try:
 except ImportError:
     # This might happen if commands.py is imported by one of these modules before they are fully defined.
     # For now, we'll assume this will resolve or use forward references if truly needed.
-    GlobalSettingsEditorDialog = Any 
+    GlobalSettingsEditorDialog = Any
     GlobalPipelineConfig = Any
 
 
@@ -98,20 +98,20 @@ class ShowGlobalSettingsDialogCommand(Command):
         # or handle notifications internally.
         # For now, assuming it updates state.global_config if changes are saved
         # and notifies 'global_config_needs_update'
-        result_config: GlobalPipelineConfig | DialogResult | None = await dialog.show()
+        result_config: GlobalPipelineConfig | None = await dialog.show()
 
-        if result_config and not isinstance(result_config, DialogResult) and isinstance(result_config, GlobalPipelineConfig):
+        if result_config and isinstance(result_config, GlobalPipelineConfig):
             # If dialog returns the new config, update state and notify
             # This logic aligns with V4 plan (Phase 4.1)
             # where the dialog's save handler notifies 'global_config_changed' and 'global_config_needs_update'.
             # If the dialog itself handles notifications, this command might just show it.
             # For now, let's assume the command is responsible for the notification if dialog returns data.
             # This part might be refined when GlobalSettingsEditorDialog is fully implemented with commands.
-            
-            # As per plan 4.1: "MenuBar._on_settings handler correctly instantiates and shows this dialog, 
+
+            # As per plan 4.1: "MenuBar._on_settings handler correctly instantiates and shows this dialog,
             # then passes the result to OpenHCSTUILauncher via self.state.notify('global_config_needs_update', ...)"
             # The command now replaces the _on_settings handler.
-            
+
             # The dialog itself (its _save_settings) should notify 'global_config_changed'.
             # This command ensures 'global_config_needs_update' is notified for the launcher.
             await state.notify('global_config_needs_update', result_config)
@@ -169,7 +169,7 @@ class ShowAddPlateDialogCommand(Command):
         # This command will trigger the dialog that uses the interactive browser (Phase 2)
         # The dialog manager itself will handle showing the dialog.
         # This command's primary role is to initiate that process.
-        
+
         # Placeholder: Actual dialog invocation will depend on PlateDialogManager's final API
         # and how it's made available.
         # Example:
@@ -179,7 +179,7 @@ class ShowAddPlateDialogCommand(Command):
         # else:
         #     logger.error("ShowAddPlateDialogCommand: PlateDialogManager not available.")
         #     await message_dialog(title="Error", text="Cannot open Add Plate dialog.").run_async()
-        
+
         # For now, let's just log and notify. The actual dialog showing will be part of Phase 2.
         # The PlateManagerPane's button handler will call this command.
         # The command then might interact with PlateDialogManager.
@@ -218,7 +218,7 @@ class ShowEditPlateConfigDialogCommand(Command):
         if not active_orchestrator:
             await message_dialog(title="Error", text="No active plate selected to edit configuration.").run_async()
             return
-        
+
         # This will eventually show PlateConfigEditorDialog (Phase 4.2)
         # For now, notify state.
         await state.notify("show_edit_plate_config_requested", {"orchestrator": active_orchestrator})
@@ -239,7 +239,7 @@ class InitializePlatesCommand(Command):
              active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
              if active_orchestrator:
                  selected_orchestrators = [active_orchestrator]
-        
+
         if not selected_orchestrators:
             await message_dialog(title="Info", text="No plates selected to initialize.").run_async()
             return
@@ -262,7 +262,7 @@ class InitializePlatesCommand(Command):
                 await message_dialog(title="Initialization Error", text=f"Failed to initialize plate '{plate_id}':\n{e}").run_async()
             finally:
                 await state.notify("plate_operation_finished", {"plate_id": plate_id, "operation": "initialize"})
-    
+
     def can_execute(self, state: "TUIState") -> bool:
         # Can execute if there's an active orchestrator or selected orchestrators for action
         return getattr(state, 'active_orchestrator', None) is not None or \
@@ -294,7 +294,7 @@ class CompilePlatesCommand(Command):
             try:
                 await state.notify("plate_operation_started", {"plate_id": plate_id, "operation": "compile"})
                 loop = asyncio.get_event_loop()
-                
+
                 if not hasattr(orchestrator, 'pipeline_definition') or not orchestrator.pipeline_definition:
                     logger.error(f"CompilePlatesCommand: Pipeline definition missing for plate '{plate_id}'.")
                     await message_dialog(title="Error", text=f"Pipeline definition missing for plate '{plate_id}'.").run_async()
@@ -311,7 +311,7 @@ class CompilePlatesCommand(Command):
                 logger.info(f"Plate '{plate_id}' compiled successfully.")
                 # Store compiled_contexts on the orchestrator instance for later use by RunPlatesCommand
                 orchestrator.last_compiled_contexts = compiled_pipeline_data
-                
+
                 await state.notify("plate_status_changed", {"plate_id": plate_id, "status": "compiled_ok"}) # No need to pass compiled_data in notification if stored on orchestrator
                 state.is_compiled = True
                 await state.notify("is_compiled_changed", True)
@@ -361,9 +361,9 @@ class RunPlatesCommand(Command):
                 await state.notify("plate_operation_started", {"plate_id": plate_id, "operation": "run"})
                 state.is_running = True
                 await state.notify("run_status_changed", {"plate_id": plate_id, "running": True})
-                
+
                 loop = asyncio.get_event_loop()
-                
+
                 if not hasattr(orchestrator, 'pipeline_definition') or not orchestrator.pipeline_definition:
                     logger.error(f"RunPlatesCommand: Stateless pipeline definition missing for plate '{plate_id}'.")
                     await message_dialog(title="Error", text=f"Stateless pipeline definition missing for plate '{plate_id}'. Was it compiled?").run_async()
@@ -409,7 +409,7 @@ class AddStepCommand(Command):
     async def execute(self, state: "TUIState", context: "ProcessingContext", **kwargs: Any) -> None:
         logger.info("AddStepCommand: Triggered.")
         active_orchestrator: Optional["PipelineOrchestrator"] = getattr(state, 'active_orchestrator', None)
-        
+
         if not active_orchestrator:
             await show_error_dialog(title="Error", message="No active plate/pipeline to add a step to.", app_state=state)
             return
@@ -418,13 +418,13 @@ class AddStepCommand(Command):
             name="New Function Step",
             func=None
         )
-        
+
         if not hasattr(active_orchestrator, 'pipeline_definition') or \
            active_orchestrator.pipeline_definition is None:
             active_orchestrator.pipeline_definition = []
 
         active_orchestrator.pipeline_definition.append(new_step_instance)
-        
+
         await state.notify('steps_updated', {'action': 'add', 'step_id': new_step_instance.step_id})
         logger.info(f"Added new step '{new_step_instance.name}' to orchestrator.")
 
@@ -442,7 +442,7 @@ class DeleteSelectedStepsCommand(Command):
             single_selected_step = getattr(state, 'selected_step', None)
             if single_selected_step:
                 selected_steps_data = [single_selected_step]
-        
+
         if not selected_steps_data:
             await message_dialog(title="Info", text="No steps selected for deletion.").run_async()
             return
@@ -496,7 +496,7 @@ class ShowEditStepDialogCommand(Command):
         if not active_orchestrator or not selected_step_data:
             await message_dialog(title="Error", text="No step selected or no active pipeline to edit a step from.").run_async()
             return
-        
+
         # The PipelineEditorPane's handler for this command will set:
         # state.step_to_edit_config = actual_FunctionStep_instance
         # state.editing_step_config = True
@@ -538,11 +538,11 @@ class LoadPipelineCommand(Command):
         try:
             with open(file_path, "rb") as f:
                 loaded_pipeline = pickle.load(f)
-            
+
             if not isinstance(loaded_pipeline, list):
                 await show_error_dialog("Load Pipeline Error", "Invalid pipeline file: content is not a list.", app_state=state)
                 return
-            
+
             valid_pipeline = True
             for item in loaded_pipeline:
                 if not isinstance(item, AbstractStep):
@@ -551,9 +551,9 @@ class LoadPipelineCommand(Command):
                     break
             if not valid_pipeline:
                 return
-            
+
             active_orchestrator.pipeline_definition = loaded_pipeline
-            
+
             await state.notify('steps_updated', {'action': 'load_pipeline'})
             await state.notify('operation_status_changed', {'message': f"Pipeline loaded from {file_path}", 'status': 'success', 'source': self.__class__.__name__})
             logger.info(f"Pipeline loaded from {file_path} into orchestrator.")
@@ -577,7 +577,7 @@ class SavePipelineCommand(Command):
         if not active_orchestrator:
             await message_dialog(title="Error", text="No active pipeline to save.").run_async()
             return
-        
+
         if not active_orchestrator.pipeline_definition:
             await message_dialog(title="Info", text="Pipeline is empty. Nothing to save.").run_async()
             return
@@ -588,13 +588,13 @@ class SavePipelineCommand(Command):
         # save_path = await show_file_save_dialog_for_pipeline(default_name=...)
         # if save_path:
         #    await state.notify("save_pipeline_requested", {"orchestrator": active_orchestrator, "path": save_path})
-        
+
         # Simplified for now, directly calling the orchestrator's save method (which needs to exist)
         # or using the logic from MenuBar._on_save_pipeline
         try:
             # Re-using logic similar to MenuBar._on_save_pipeline for now
             # This logic should ideally be in a shared service or the orchestrator itself.
-            default_filename = "pipeline.json" 
+            default_filename = "pipeline.json"
             if hasattr(active_orchestrator, 'config') and hasattr(active_orchestrator.config, 'pipeline_filename'):
                 default_filename = active_orchestrator.config.pipeline_filename
             elif hasattr(active_orchestrator, 'DEFAULT_PIPELINE_FILENAME'):
@@ -602,23 +602,23 @@ class SavePipelineCommand(Command):
 
             plate_path = Path(getattr(active_orchestrator, 'plate_path', '.'))
             save_path = plate_path / default_filename
-            
+
             pipeline_data_to_save = []
             for step_obj in active_orchestrator.pipeline_definition:
                 if isinstance(step_obj, AbstractStep): # Assuming AbstractStep is imported
-                    pipeline_data_to_save.append(step_obj.to_dict()) 
+                    pipeline_data_to_save.append(step_obj.to_dict())
                 elif isinstance(step_obj, dict):
                     pipeline_data_to_save.append(step_obj)
                 else:
                     logger.warning(f"SavePipelineCommand: Cannot serialize step of type {type(step_obj)}.")
-            
+
             # Assuming context.filemanager for VFS operations if available, else direct write
             fm = getattr(context, 'filemanager', None)
             if fm:
-                # Assuming StorageBackend.DISK for now for pipeline definition files
+                # Assuming Backend.DISK for now for pipeline definition files
                 # This might need to be configurable or inferred.
-                from openhcs.core.memory.storage_backend import StorageBackend # Temp import
-                await fm.write_json(save_path, pipeline_data_to_save, backend=StorageBackend.DISK)
+                from openhcs.constants.constants import Backend
+                await fm.write_json(save_path, pipeline_data_to_save, backend=Backend.DISK)
             else: # Fallback to direct write if no filemanager on context
                 with open(save_path, 'w') as f:
                     json.dump(pipeline_data_to_save, f, indent=4)

@@ -1,3 +1,4 @@
+from typing import List, Dict
 def prepare_patterns_and_functions(patterns, processing_funcs, component='default'):
     """
     Prepare patterns, processing functions, and processing args for processing.

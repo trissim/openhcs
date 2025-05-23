@@ -14,9 +14,9 @@ Doctrinal Clauses:
 import logging
 import queue
 import threading
-from typing import Any, Dict, List, Optional # Added List
+from typing import Any, Dict, Optional
 
-from openhcs.io.filemanager import FileManager # Added FileManager import
+from openhcs.io.filemanager import FileManager
 
 import napari
 import numpy as np
@@ -66,14 +66,14 @@ class NapariStreamVisualizer:
                         if item is SHUTDOWN_SENTINEL:
                             logger.info("Shutdown sentinel received. Exiting viewer loop.")
                             break
-                        
+
                         # New logic for path-based items:
                         if isinstance(item, dict) and item.get('type') == 'data_path':
                             step_id = item['step_id']
                             path = item['path']
                             backend = item['backend']
                             well_id = item.get('well_id') # Can be None
-                            
+
                             logger.debug(f"Processing path '{path}' for step '{step_id}' from queue.")
                             try:
                                 # Load data using FileManager
@@ -81,7 +81,7 @@ class NapariStreamVisualizer:
                                 if loaded_data is not None:
                                     # Prepare data for display (includes GPU->CPU, slicing)
                                     display_data = self._prepare_data_for_display(loaded_data, step_id)
-                                    
+
                                     if display_data is not None:
                                         layer_name = f"{well_id}_{step_id}" if well_id else step_id
                                         # Metadata might come from step_plan or be fixed for now
@@ -126,7 +126,7 @@ class NapariStreamVisualizer:
             else:
                 self.layers[layer_name] = self.viewer.add_image(data, name=layer_name)
                 logger.info(f"Added new layer: {layer_name} with shape {data.shape}")
-            
+
             if metadata and 'colormap' in metadata and self.layers[layer_name]:
                 self.layers[layer_name].colormap = metadata['colormap']
             if metadata and 'contrast_limits' in metadata and self.layers[layer_name]:
@@ -197,7 +197,7 @@ class NapariStreamVisualizer:
             else:
                 logger.warning(f"Tensor for step '{step_id_for_log}' has unsupported ndim for display: {cpu_tensor.ndim}.")
                 return None
-            
+
             return display_slice.copy() if display_slice is not None else None
 
         except Exception as e:
@@ -211,7 +211,7 @@ class NapariStreamVisualizer:
         if not self.is_running and self.viewer_thread is None:
             logger.info(f"Visualizer not running for step '{step_id}'. Starting Napari viewer.")
             self.start_viewer()
-        
+
         if not self.viewer_thread: # Check if thread actually started
             logger.warning(f"Visualizer thread not available. Cannot visualize path for step '{step_id}'.")
             return

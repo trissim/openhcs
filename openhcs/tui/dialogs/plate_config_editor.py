@@ -1,3 +1,4 @@
+from prompt_toolkit.layout import Container
 """
 Plate Configuration Editor Pane for OpenHCS TUI.
 
@@ -6,7 +7,7 @@ which are overrides of the GlobalPipelineConfig.
 """
 import asyncio
 import logging
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING, List, Union
 import copy # For deepcopying config
 import dataclasses # To inspect dataclass fields
 

@@ -1,13 +1,15 @@
 import asyncio
+import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, VSplit
-from prompt_toolkit.widgets import Button, Frame, Label, TextArea, Box
 from prompt_toolkit.layout import HSplit, VSplit, DynamicContainer, Container, Dimension
+from prompt_toolkit.widgets import Button, Frame, Label, TextArea, Box, Dialog
+
+logger = logging.getLogger(__name__)
 import pickle # Ensure pickle is imported if not already (it was added for save)
 from pathlib import Path # Ensure Path is imported
 
@@ -17,6 +19,7 @@ from .utils import show_error_dialog, prompt_for_path_dialog # Ensure these are 
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.abstract import AbstractStep # Import AbstractStep for type checking
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
 
 class PipelineEditorPane: # Renamed from StepViewerPane
@@ -29,7 +32,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
     def __init__(self, state, context: ProcessingContext):
         """
         Initialize the Pipeline Editor pane.
-        
+
         🔒 Clause 12: Explicit Error Handling
         Constructor must be synchronous in Python.
 
@@ -43,7 +46,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         self.pipelines: List[Dict[str, Any]] = [] # This might be simplified if only one active pipeline is shown
         self.selected_index = 0
         self.steps_lock = asyncio.Lock()  # Thread safety for step operations
-        
+
         # Placeholder for UI components that will be created in setup()
         self.step_items_container_widget: Optional[HSplit] = None # Will hold HSplit of InteractiveListItems
         self.edit_button: Optional[Button] = None
@@ -54,37 +57,37 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         self.kb: Optional[KeyBindings] = None
         self._dynamic_step_list_wrapper: Optional[DynamicContainer] = None
         self._container: Optional[Frame] = None # This will be the Frame around step_items_container_widget
-        
+
         # Flag to track initialization state
         self._ui_initialized = False
-    
+
     @classmethod
     async def create(cls, state, context: ProcessingContext):
         """
         Factory method to create and initialize a PipelineEditorPane asynchronously.
-        
+
         🔒 Clause 12: Explicit Error Handling
         Use factory pattern for async initialization.
-        
+
         Args:
             state: The TUI state manager
             context: The OpenHCS ProcessingContext
-            
+
         Returns:
             Initialized PipelineEditorPane instance
         """
         # Create instance with synchronous constructor
         instance = cls(state, context)
-        
+
         # Initialize UI components asynchronously
         await instance.setup()
-        
+
         return instance
-    
+
     async def setup(self):
         """
         Set up UI components asynchronously.
-        
+
         This method must be called after instantiation to initialize
         UI components that require async operations.
         """
@@ -97,6 +100,12 @@ class PipelineEditorPane: # Renamed from StepViewerPane
             # For now, assuming context is initialized.
 
         # Create UI components asynchronously - handlers now use Commands
+        # Import commands here to avoid circular imports
+        from .commands import (
+            AddStepCommand, DeleteSelectedStepsCommand, LoadPipelineCommand,
+            SavePipelineCommand, ShowEditStepDialogCommand
+        )
+
         self.add_button = Button("Add", handler=lambda: get_app().create_background_task(
             AddStepCommand().execute(self.state, self.context)
         ))
@@ -132,7 +141,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         self.state.add_observer('step_pattern_saved', lambda data: get_app().create_background_task(self._handle_step_pattern_saved(data)))
         # Add observer for when ShowEditStepDialogCommand requests to edit a step
         self.state.add_observer('edit_step_dialog_requested', lambda data: get_app().create_background_task(self._handle_edit_step_request(data)))
-        
+
         # Mark as initialized
         self._ui_initialized = True
 
@@ -173,14 +182,14 @@ class PipelineEditorPane: # Renamed from StepViewerPane
             else:
                 for i, step_data in enumerate(self.steps):
                     is_selected = (i == self.selected_index)
-                    
+
                     can_move_up = False
                     if i > 0:
                         current_step_pipeline_id = step_data.get('pipeline_id')
                         prev_step_pipeline_id = self.steps[i - 1].get('pipeline_id')
                         if current_step_pipeline_id == prev_step_pipeline_id:
                             can_move_up = True
-                    
+
                     can_move_down = False
                     if i < len(self.steps) - 1:
                         current_step_pipeline_id = step_data.get('pipeline_id')
@@ -211,11 +220,10 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         name = step_data.get('name', 'Unknown Step')
         func_name = self._get_function_name(step_data)
         memory_type = step_data.get('output_memory_type', '[N/A]')
-        
-        # InteractiveListItem will handle its own selection highlighting.
-        # The ^/v symbols for reordering are also best handled by InteractiveListItem.
-        prefix = "X | " if is_selected else "  | "
-        return f"{prefix}{status_icon} {name}: {func_name} → {memory_type}"
+
+        # Format the display text to match the desired layout
+        # The ^/v symbols and item index are handled by InteractiveListItem
+        return f"{status_icon} {name}: {func_name} → {memory_type}"
 
     # _format_step_list is obsolete.
 
@@ -253,12 +261,13 @@ class PipelineEditorPane: # Renamed from StepViewerPane
             A status icon character
         """
         icons = {
-            'pending': "○",
-            'validated': "●",
-            'error': "✗"
+            'pending': "o",
+            'validated': "✓",
+            'error': "!"
         }
         if status not in icons:
-            raise ValueError(f"Unknown step status: {status}")
+            # Instead of raising an error, return a default icon
+            return "o"
         return icons[status]
 
     def _get_function_name(self, step: Dict[str, Any]) -> str:
@@ -274,6 +283,24 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         # 🔒 Clause 88: No Inferred Capabilities
         # 🔒 Clause 92: Structural Validation First
         # Safe access to func field with fallback for rendering
+        if 'func' not in step:
+            return '[MISSING FUNC]'
+
+        func = step['func']
+        if func is None:
+            return '[NULL FUNC]'
+
+        # Handle different function pattern types
+        if callable(func):
+            return func.__name__
+        elif isinstance(func, tuple) and len(func) == 2 and callable(func[0]):
+            return f"{func[0].__name__}(...)"
+        elif isinstance(func, list):
+            return f"[{len(func)} functions]"
+        elif isinstance(func, dict):
+            return f"{{{len(func)} components}}"
+        else:
+            return str(func)
 
     # Old _add_step, _remove_step, _edit_step, _load_pipeline, _save_pipeline methods
     # are removed as their core logic is moved to Command classes.
@@ -292,50 +319,31 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         active_orchestrator: Optional["PipelineOrchestrator"] = getattr(self.state, 'active_orchestrator', None)
 
         if not active_orchestrator or not selected_step_data:
-            await message_dialog(title="Error", text="No step selected or no active pipeline to edit a step from.").run_async()
+            await show_error_dialog("Error", "No step selected or no active pipeline to edit a step from.", app_state=self.state)
             return
 
         step_id_to_edit = selected_step_data.get('id')
         actual_step_instance: Optional[AbstractStep] = None # AbstractStep for type hint
-        
+
         if step_id_to_edit and active_orchestrator.pipeline_definition:
             for step_in_pipeline in active_orchestrator.pipeline_definition:
                 if isinstance(step_in_pipeline, AbstractStep) and step_in_pipeline.id == step_id_to_edit:
                     actual_step_instance = step_in_pipeline
                     break
-        
+
         if not actual_step_instance:
             logger.error(f"PipelineEditorPane: Could not find actual step instance for ID: {step_id_to_edit}")
-            await message_dialog(title="Error", text="Could not find step instance to edit.").run_async()
+            await show_error_dialog("Error", "Could not find step instance to edit.", app_state=self.state)
             return
 
         if not isinstance(actual_step_instance, FunctionStep): # Ensure it's a FunctionStep
-            await message_dialog(title="Info", text="Selected step is not a FunctionStep and cannot be edited with this editor.").run_async()
+            await show_error_dialog("Info", "Selected step is not a FunctionStep and cannot be edited with this editor.", app_state=self.state)
             return
-            
+
         logger.info(f"PipelineEditorPane: Requesting edit for step: {actual_step_instance.name or actual_step_instance.id}")
         self.state.step_to_edit_config = actual_step_instance # Store the actual FunctionStep instance
         self.state.editing_step_config = True
         await self.state.notify('editing_step_config_changed', True) # Notify UI to switch views
-        # Validation happens in _load_steps_for_plate, not in the render loop
-        if 'func' not in step:
-            return '[MISSING FUNC]'
-        
-        func = step['func']
-        if func is None:
-            return '[NULL FUNC]'
-
-        # Handle different function pattern types
-        if callable(func):
-            return func.__name__
-        elif isinstance(func, tuple) and len(func) == 2 and callable(func[0]):
-            return f"{func[0].__name__}(...)"
-        elif isinstance(func, list):
-            return f"[{len(func)} functions]"
-        elif isinstance(func, dict):
-            return f"{{{len(func)} components}}"
-        else:
-            return str(func)
 
     def _create_key_bindings(self) -> KeyBindings:
         """
@@ -374,12 +382,12 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                 # For now, assume _edit_step is the primary action for 'enter'.
                 get_app().create_background_task(self._edit_step())
 
-        @kb.add('shift+up', filter=list_container_focused)
+        @kb.add('s-up', filter=list_container_focused)
         def _(event):
             """Move the selected step up."""
             get_app().create_background_task(self._move_step_up())
 
-        @kb.add('shift+down', filter=list_container_focused)
+        @kb.add('s-down', filter=list_container_focused)
         def _(event):
             """Move the selected step down."""
             get_app().create_background_task(self._move_step_down())
@@ -395,12 +403,12 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         self.step_items_container_widget = await self._build_step_items_container()
         # The DynamicContainer (self._dynamic_step_list_wrapper) will pick up the change
         # to self.step_items_container_widget when get_app().invalidate() is called.
-        
+
         if self.steps and 0 <= self.selected_index < len(self.steps):
             # Notify about selection, which might trigger other UI updates (e.g. details pane).
             # This is important if other parts of the UI depend on the selected step.
             get_app().create_background_task(self._select_step(self.selected_index)) # Ensure this is called
-        
+
         get_app().invalidate() # Crucial to trigger a redraw of the DynamicContainer
 
     async def _select_step(self, index: int):
@@ -415,7 +423,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                 step_data = self.steps[index]
                 self.state.set_selected_step(step_data)
 
-    
+
 
     async def _save_pipeline(self):
         """Saves the current pipeline definition for the active plate."""
@@ -423,7 +431,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         if not self.state.active_orchestrator:
             await self.state.notify('error', {'message': "No active plate selected to save pipeline for.", 'source': self.__class__.__name__})
             return
-        
+
         if not self.steps:
             await self.state.notify('error', {'message': "No steps in the current pipeline to save.", 'source': self.__class__.__name__})
             return
@@ -431,7 +439,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         # Simulate asking for a path (in a real app, use a dialog)
         # path_to_save = await self.show_file_dialog_for_save()
         # if not path_to_save: return
-        
+
         file_path_str = await prompt_for_path_dialog(
             title="Save Pipeline As",
             prompt_message="Enter path to save .pipeline file:",
@@ -442,7 +450,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         if not file_path_str:
             await self.state.notify('info', {'message': "Save pipeline operation cancelled.", 'source': self.__class__.__name__})
             return
-            
+
         file_path = Path(file_path_str)
 
         try:
@@ -453,7 +461,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
 
             with open(file_path, "wb") as f:
                 pickle.dump(pipeline_to_save, f)
-            
+
             await self.state.notify('operation_status_changed', {'message': f"Pipeline saved to {file_path}", 'status': 'success', 'source': self.__class__.__name__})
 
         except pickle.PicklingError as e:
@@ -504,7 +512,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
         """
         # Get pipelines and build lookup dict for O(1) access
         self.pipelines = self.context.list_pipelines_for_plate(plate_id)
-        
+
         # 🔒 Clause 24: Performance Optimization
         # Build pipeline lookup dict for O(1) access instead of O(N) search
         self.pipeline_lookup = {p['id']: p for p in self.pipelines}
@@ -531,7 +539,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                         invalid_steps_from_context.append((step_dict.get('id', f'ctx index {i}'), missing_fields))
                     if 'func' in step_dict and step_dict['func'] is None:
                          invalid_steps_from_context.append((step_dict.get('id', f'ctx index {i}'), ['func is None']))
-                
+
                 if invalid_steps_from_context:
                     # Handle/report errors for steps from context
                     pass # Placeholder for error reporting logic for context-sourced steps
@@ -559,7 +567,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                     'status': 'pending', # Default status for display
                     'pipeline_id': getattr(step_obj, 'pipeline_id', None) # If steps are grouped by pipeline
                 })
-            
+
             self.steps = transformed_steps
             self.selected_index = 0
             get_app().create_background_task(self._update_selection())
@@ -605,13 +613,13 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                 return
 
             pipeline: List[FunctionStep] = self.state.active_orchestrator.pipeline_definition
-            
+
             if not (0 < self.selected_index < len(self.steps)):
                  return
 
             current_step_dict = self.steps[self.selected_index]
             prev_step_dict = self.steps[self.selected_index - 1]
-            
+
             current_step_id = current_step_dict.get('id')
             prev_step_id = prev_step_dict.get('id')
 
@@ -627,7 +635,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                     current_orchestrator_idx = i
                 if getattr(step_obj, 'step_id', None) == prev_step_id:
                     prev_orchestrator_idx = i
-            
+
             if current_orchestrator_idx == -1 or prev_orchestrator_idx == -1 or \
                current_orchestrator_idx != prev_orchestrator_idx + 1 : # Ensure they are adjacent in orchestrator list
                 self.state.notify('error', {'message': "Could not find adjacent steps in orchestrator pipeline for reorder.", 'source': 'PipelineEditorPane'})
@@ -681,7 +689,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
                     current_orchestrator_idx = i
                 if getattr(step_obj, 'step_id', None) == next_step_id:
                     next_orchestrator_idx = i
-            
+
             if current_orchestrator_idx == -1 or next_orchestrator_idx == -1 or \
                next_orchestrator_idx != current_orchestrator_idx + 1: # Ensure they are adjacent
                 self.state.notify('error', {'message': "Could not find adjacent steps in orchestrator pipeline for reorder.", 'source': 'PipelineEditorPane'})
@@ -690,7 +698,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
 
             pipeline[current_orchestrator_idx], pipeline[next_orchestrator_idx] = \
                 pipeline[next_orchestrator_idx], pipeline[current_orchestrator_idx]
-            
+
             self.selected_index += 1
             await self.state.notify('steps_updated', {'action': 'reorder'})
 

@@ -32,8 +32,8 @@ from openhcs.io.filemanager import FileManager # ADDED
 from openhcs.tui.plate_manager_core import PlateManagerPane as ActualPlateManagerPane
 # Import the actual MenuBar
 from openhcs.tui.menu_bar import MenuBar as ActualMenuBar
-# Import the actual StepViewerPane
-from openhcs.tui.step_viewer import StepViewerPane as ActualStepViewerPane
+# Import the actual PipelineEditorPane (renamed from StepViewerPane)
+from openhcs.tui.step_viewer import PipelineEditorPane as ActualStepViewerPane
 # Import the actual FunctionPatternEditor (old) and new DualStepFuncEditorPane
 from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor # Keep for now if any logic is reused
 from openhcs.tui.dual_step_func_editor import DualStepFuncEditorPane # New editor
@@ -58,7 +58,7 @@ from prompt_toolkit import Application
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import Container, HSplit, Layout, VSplit, Window
+from prompt_toolkit.layout import Container, HSplit, Layout, VSplit, Window, Dimension
 from prompt_toolkit.layout.containers import (DynamicContainer, Float,
                                               FloatContainer)
 from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
@@ -125,6 +125,20 @@ class TUIState:
             self.observers[event_type] = []
         self.observers[event_type].append(callback)
 
+    def remove_observer(self, event_type: str, callback: Callable) -> None:
+        """
+        Remove an observer for a specific event type.
+
+        Args:
+            event_type: The event type to remove the observer from
+            callback: The callback function to remove
+        """
+        if event_type in self.observers and callback in self.observers[event_type]:
+            self.observers[event_type].remove(callback)
+            # If the list is empty, remove the event type from the dictionary
+            if not self.observers[event_type]:
+                del self.observers[event_type]
+
     async def notify(self, event_type: str, data: Any = None) -> None:
         """
         Notify all observers of an event.
@@ -166,6 +180,25 @@ class TUIState:
 
         # Reset compilation state when step changes
         self.is_compiled = False
+
+    async def show_dialog(self, dialog, result_future=None):
+        """
+        Show a dialog in the application.
+
+        Args:
+            dialog: The dialog to show
+            result_future: Optional future to set the result on
+        """
+        app = get_app()
+
+        # Run the dialog
+        result = await app.run_dialog(dialog)
+
+        # If a future was provided, set the result
+        if result_future is not None:
+            result_future.set_result(result)
+
+        return result
 
 
 # Added import for FunctionStep type hint
@@ -234,6 +267,9 @@ class OpenHCSTUI:
         # Schedule asynchronous initialization of components that require it
         if self.application: # Ensure application object exists
              self.application.create_background_task(self._async_initialize_step_viewer())
+             # Register menu bar key bindings after application is fully initialized
+             if hasattr(self.menu_bar, 'register_key_bindings'):
+                 self.menu_bar.register_key_bindings()
 
     def _create_key_bindings(self) -> KeyBindings:
         """
@@ -286,7 +322,7 @@ class OpenHCSTUI:
         self.status_bar = ActualStatusBar(self.state)
 
         # Instantiate the actual MenuBar from menu_bar.py
-        self.menu_bar = ActualMenuBar(self.state)
+        self.menu_bar = ActualMenuBar(self.state, self.context)
 
     def _create_root_container(self) -> Container:
         """
@@ -303,27 +339,27 @@ class OpenHCSTUI:
             ], height=1),
             # 2nd Bar (Titles)
             VSplit([
-                Frame(Label("1 Plate Manager"), style="class:pane-title"),
-                Frame(Label("2 Pipeline Editor"), style="class:pane-title"),
+                Frame(Label("1 Plate Manager"), style="class:pane-title", width=Dimension(weight=1)),
+                Frame(Label("2 Pipeline Editor"), style="class:pane-title", width=Dimension(weight=1)),
             ], height=1),
             # 3rd Bar (Contextual Buttons)
             VSplit([
                 DynamicContainer(
                     lambda: self.plate_manager.get_buttons_container()
                     if self.plate_manager and hasattr(self.plate_manager, 'get_buttons_container')
-                    else Box(Label("Plate Buttons Loading..."), padding_left=1)
+                    else Box(Label("[add] [del] [edit] [init] [compile] [run]"), padding_left=1)
                 ),
                 DynamicContainer(
                     lambda: self.step_viewer.get_buttons_container()
                     if self.step_viewer and hasattr(self.step_viewer, 'get_buttons_container')
-                    else Box(Label("Pipeline Buttons Loading..."), padding_left=1)
+                    else Box(Label("[add] [del] [edit] [load] [save]"), padding_left=1)
                 ),
             ], height=1),
             # Main Panes (Plate Manager | Pipeline Editor) - This should be a VSplit
             VSplit([
                 self._get_left_pane(),
                 self._get_step_viewer(),
-            ]), # Main content area takes remaining space
+            ], height=Dimension(weight=1)), # Main content area takes remaining space
             # Bottom Bar (StatusBar)
             self._get_status_bar(), # This should have a fixed height, e.g., height=1
         ])
@@ -425,12 +461,12 @@ class OpenHCSTUI:
         if self.step_viewer is None:
             # Return a temporary placeholder if not yet initialized or init failed
             logger.debug("OpenHCSTUI: StepViewerPane not yet initialized, returning placeholder.")
-            return Box(Label("Step Viewer - Initializing..."), padding=1)
+            return Frame(Label("Step Viewer - Initializing..."), width=Dimension(weight=1))
 
         # Ensure the initialized step_viewer has a container
         if not hasattr(self.step_viewer, 'container') or self.step_viewer.container is None:
             logger.error("OpenHCSTUI: StepViewerPane is initialized but has no container.")
-            return Box(Label("Step Viewer - Error: No container"), padding=1)
+            return Frame(Label("Step Viewer - Error: No container"), width=Dimension(weight=1))
 
         return self.step_viewer.container
 

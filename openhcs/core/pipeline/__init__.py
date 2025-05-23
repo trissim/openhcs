@@ -1,3 +1,4 @@
+from typing import List, Dict
 """
 Pipeline module for the OpenHCS pipeline architecture.
 

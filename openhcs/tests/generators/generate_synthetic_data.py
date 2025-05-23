@@ -1,3 +1,4 @@
+from typing import Optional, List, Dict, Tuple
 #!/usr/bin/env python3
 """
 Generate synthetic microscopy images for testing openhcs.

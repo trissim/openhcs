@@ -10,7 +10,7 @@ import logging
 import os # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, Dict, Any
 from openhcs.constants import Microscope
 
 logger = logging.getLogger(__name__)

@@ -4,6 +4,7 @@ Constants for OpenHCS.
 This module exports all constants defined in the constants submodules.
 """
 
+# These imports are re-exported through __all__
 from openhcs.constants.clauses import Clause
 from openhcs.constants.constants import (  # Backend constants; Memory constants; I/O constants; Pipeline constants; Default constants
     CPU_MEMORY_TYPES, DEFAULT_ASSEMBLER_LOG_LEVEL, DEFAULT_BACKEND,

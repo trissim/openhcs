@@ -1,3 +1,4 @@
+from prompt_toolkit.layout import Container
 """
 Status Bar and Log Drawer for OpenHCS TUI.
 
@@ -26,12 +27,13 @@ import logging # For TUIStatusBarLogHandler
 import sys # For stderr in logging fallback
 import time # For log timestamps
 from collections import deque
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import List, Optional, Dict, Any, Deque, ClassVar, Tuple, Union
 
 # Renamed to avoid conflict with standard library 'Lock' if used directly
-from asyncio import Lock as AsyncioLock 
+from asyncio import Lock as AsyncioLock
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.filters import Condition
@@ -62,7 +64,7 @@ class LogLevel(Enum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
-    
+
     @classmethod
     def from_string(cls, level_str: str) -> 'LogLevel':
         """Convert string to LogLevel enum."""
@@ -96,13 +98,13 @@ STATUS_ICONS = {
 class StatusBarSchema:
     """Schema for validating StatusBarState."""
     max_log_entries: ClassVar[int] = 1000 # Default, can be overridden in StatusBar init
-    
+
     @staticmethod
     def validate_priority(priority: Priority) -> None:
         """Validate priority is a valid Priority enum value."""
         if not isinstance(priority, Priority):
             raise ValueError(f"Priority must be a Priority enum value, got {type(priority)}")
-    
+
     @staticmethod
     def validate_log_entry(entry: Dict[str, Any]) -> None:
         """Validate log entry has required fields."""
@@ -110,7 +112,7 @@ class StatusBarSchema:
         for field_name in required_fields:
             if field_name not in entry:
                 raise ValueError(f"Log entry missing required field: {field_name}")
-        
+
         if 'level' in entry:
             try:
                 LogLevel(entry['level'].upper()) # Ensure level is valid LogLevel string
@@ -129,7 +131,7 @@ class StatusBarState:
     operation_status: str = 'idle' # e.g., 'idle', 'running', 'success', 'error'
     drawer_expanded: bool = False
     log_buffer: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=StatusBarSchema.max_log_entries))
-    
+
     def __post_init__(self):
         """Validate state after initialization."""
         StatusBarSchema.validate_priority(self.status_priority)
@@ -153,7 +155,7 @@ class StatusBarState:
     def with_drawer_expanded(self, expanded: bool) -> 'StatusBarState':
         """Create a new state with updated drawer expansion state."""
         return dataclasses.replace(self, drawer_expanded=expanded)
-    
+
     def with_log_entry(self, entry: Dict[str, Any]) -> 'StatusBarState':
         """Create a new state with an additional log entry."""
         StatusBarSchema.validate_log_entry(entry)
@@ -171,7 +173,7 @@ class LogFormatter:
         LogLevel.ERROR: ("class:log.error", "ansired"),
         LogLevel.CRITICAL: ("class:log.critical", "ansibrightred bg:ansiblack"),
     }
-    
+
     @classmethod
     def format_log_entry(cls, entry: Dict[str, Any]) -> FormattedText:
         """Format a single log entry as FormattedText."""
@@ -179,14 +181,14 @@ class LogFormatter:
         level_str = entry.get('level', LogLevel.INFO.value)
         msg = entry.get('message', '')
         src = entry.get('source', '')
-        
+
         try:
             level_enum = LogLevel(level_str.upper())
         except ValueError:
             level_enum = LogLevel.INFO # Fallback
-        
+
         style_class, _ = cls.LEVEL_STYLES.get(level_enum, cls.LEVEL_STYLES[LogLevel.INFO])
-        
+
         segments = [
             ("", f"[{ts}] "),
             (style_class, f"{level_enum.value:<8}"), # Padded level
@@ -194,9 +196,9 @@ class LogFormatter:
         ]
         if src:
             segments.append(("", f" ({src})"))
-        
+
         return FormattedText(segments)
-    
+
     @classmethod
     def format_log_entries(cls, entries: Deque[Dict[str, Any]]) -> FormattedText:
         """Format multiple log entries."""
@@ -215,16 +217,16 @@ class LogFormatter:
 
 class StatusBar(Container):
     """Status bar and expandable log drawer for the OpenHCS TUI."""
-    
+
     def __init__(self, tui_state: Any, max_log_entries: int = 1000):
         """Initialize the status bar."""
         self.tui_state = tui_state # General TUI state
-        
+
         # Internal, immutable state for the status bar itself
         self._status_bar_state = StatusBarState(
             log_buffer=deque(maxlen=max_log_entries)
         )
-        
+
         self.status_lock = AsyncioLock() # For thread-safe updates to _status_bar_state
 
         # Create UI components
@@ -244,7 +246,7 @@ class StatusBar(Container):
         self.tui_state.add_observer('operation_status_changed', self._on_operation_status_changed)
         self.tui_state.add_observer('error', self._on_error_event) # Distinguish from internal _on_error
         self.tui_state.add_observer('tui_log_level_changed', self._on_tui_log_level_changed) # Already present from draft
-        
+
         # Listen for requests to toggle the log drawer (e.g., from MenuBar)
         self.tui_state.add_observer('ui_request_toggle_log_drawer',
                                     lambda data=None: get_app().create_background_task(self._toggle_drawer()))
@@ -315,7 +317,7 @@ class StatusBar(Container):
         }
         async with self.status_lock:
             self._status_bar_state = self._status_bar_state.with_log_entry(entry)
-        
+
         # If drawer is open, invalidate to refresh its content
         if self._status_bar_state.drawer_expanded:
             get_app().invalidate()
@@ -327,7 +329,7 @@ class StatusBar(Container):
         # Example:
         # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         # handler.setFormatter(formatter)
-        
+
         # Add handler to the root logger or specific loggers
         # Adding to root logger to capture all openhcs logs.
         # Be mindful of log levels to avoid flooding.
@@ -346,7 +348,7 @@ class StatusBar(Container):
         message = data.get('message', self._status_bar_state.status_message)
         priority = data.get('priority', self._status_bar_state.status_priority)
         operation_status = data.get('status', 'idle') # 'idle', 'running', 'success', 'error'
-        
+
         # Convert priority string from event to Priority enum if necessary
         if isinstance(priority, str):
             try:
@@ -355,10 +357,10 @@ class StatusBar(Container):
                 priority = Priority.INFO
 
         await self.set_status_message(message, priority, operation_status)
-        
+
         log_level_str = data.get('log_level', 'INFO').upper()
         log_message = data.get('log_message', message)
-        
+
         if log_message: # Log the operation status change if a log message is provided
             try:
                 log_level = LogLevel(log_level_str)
@@ -374,7 +376,7 @@ class StatusBar(Container):
         source = error_data.get('source', 'Application')
 
         await self.set_status_message(message, Priority.ERROR, operation_status='error')
-        
+
         log_msg = message
         if details:
             log_msg += f" | Details: {str(details)[:200]}" # Truncate details for log line
@@ -387,7 +389,7 @@ class StatusBar(Container):
         try:
             level_enum = LogLevel(new_level_str.upper())
             logging_level = getattr(logging, level_enum.value, logging.INFO)
-            
+
             # Example: Adjust level of the logger that TUIStatusBarLogHandler is attached to
             logger_to_adjust = logging.getLogger("openhcs") # Or logging.getLogger()
             logger_to_adjust.setLevel(logging_level)
@@ -460,18 +462,18 @@ class TUIStatusBarLogHandler(logging.Handler):
         # This method can be called from any thread, so adding to log buffer
         # must be thread-safe. StatusBar.add_log_entry is async and uses a lock.
         # We need to schedule this async method on the TUI's event loop.
-        
+
         log_level_enum = LogLevel.from_logging_level(record.levelno)
-        
+
         # Basic filtering: only process if record level is >= handler level
         # More advanced filtering (e.g., based on TUIState.tui_log_level) could be added here
         # or within StatusBar.add_log_entry itself.
         # For now, let TUIState.tui_log_level control the Python logger's level.
-        
+
         # Formatting can be done here or delegated to StatusBar's LogFormatter
         # For simplicity, pass raw message and let StatusBar format.
         message = self.format(record) # Use handler's formatter if set, else record.getMessage()
-        
+
         # Get app and schedule the async task
         try:
             app = get_app()
@@ -483,7 +485,7 @@ class TUIStatusBarLogHandler(logging.Handler):
                     source=record.name
                 )
             )
-        except RuntimeError: 
+        except RuntimeError:
             # get_app() fails if no event loop is running or app not fully set up.
             # This can happen during early startup or late shutdown.
             # Fallback to stderr or a temporary buffer if critical.

@@ -1,3 +1,4 @@
+from prompt_toolkit.layout import Container
 """
 Function Pattern Editor for OpenHCS TUI.
 

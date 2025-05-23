@@ -6,7 +6,7 @@ GlobalPipelineConfig.
 """
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout import HSplit, VSplit

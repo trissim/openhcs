@@ -12,7 +12,7 @@ from enum import Enum, auto
 class Clause(Enum):
     """
     Enum for OpenHCS doctrinal clauses.
-    
+
     These values are used to identify which clause governs a particular
     constant or behavior in the codebase.
     """
@@ -23,9 +23,10 @@ class Clause(Enum):
     MEMORY_DECLARATION = auto()  # Clause 101
     DECLARED_MEMORY_TYPES = auto()  # Clause 106-A
     MEMORY_BACKEND_RESTRICTIONS = auto()  # Clause 273
-    
+
     def __str__(self) -> str:
         """Return a string representation of the clause."""
+        # Define clause numbers mapping
         clause_numbers = {
             Clause.DECLARATIVE_PRIMACY: "3",
             Clause.FAIL_LOUDLY: "65",

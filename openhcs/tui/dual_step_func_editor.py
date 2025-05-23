@@ -1,3 +1,4 @@
+from prompt_toolkit.layout import Container
 """
 Dual Step/Function Pattern Editor Pane for OpenHCS TUI.
 

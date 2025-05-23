@@ -1,3 +1,4 @@
+from prompt_toolkit.layout import Container
 import ast
 import inspect # Added for ParameterEditor
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -78,13 +79,21 @@ class InteractiveListItem:
             self.move_down_button.text = "▼" if self.can_move_down else " "
             self.move_down_button.handler = self._handle_move_down_click if self.can_move_down else None
             move_buttons_children.append(self.move_down_button)
-        
+
         buttons_container = VSplit(move_buttons_children, width=3, padding=0) if move_buttons_children else VSplit([], width=0)
 
+        # Create the item index display
+        index_display = f"{self.item_index + 1}: "
+
+        # Get the main display text from the callback
+        display_text = self.display_text_func(self.item_data, self.is_selected)
+
+        # Combine parts for the button text
+        full_text = f"{index_display}{display_text}"
 
         # Use a Button for the main item to make it easily clickable and focusable
         item_button = Button(
-            text=self._get_display_text(),
+            text=full_text,
             handler=lambda: self.on_select(self.item_index),
             width=None # Allow button to take available width
         )
@@ -92,7 +101,6 @@ class InteractiveListItem:
              item_button.style = "class:list-item.selected" # Apply selection style to button
         else:
              item_button.style = "class:list-item"
-
 
         return VSplit([
             item_button,
@@ -149,7 +157,7 @@ class ParameterEditor:
         self.on_parameter_change = on_parameter_change
         self.on_reset_parameter = on_reset_parameter
         self.on_reset_all_parameters = on_reset_all_parameters
-        
+
         self.container = self._build_ui()
 
     def update_function(self, func: Optional[Callable], new_kwargs: Dict[str, Any], func_index: int): # Added func_index
@@ -175,17 +183,17 @@ class ParameterEditor:
             current_value = self.current_kwargs.get(name, default)
             required = p_info['required']
             is_special = p_info.get('is_special', False)
-            
+
             param_fields.append(
                 self._create_parameter_field(name, default, current_value, required, is_special)
             )
-        
+
         reset_all_button = Button(
             "Reset All Params",
             handler=lambda: get_app().create_background_task(self.on_reset_all_parameters(self.func_index))
         )
         param_fields.append(reset_all_button)
-        
+
         return HSplit(param_fields)
 
     def _get_function_parameters(self, func: Callable) -> List[Dict]:
@@ -197,10 +205,10 @@ class ParameterEditor:
                 continue
             default_value = param.default if param.default is not inspect.Parameter.empty else None
             param_type = param.annotation if param.annotation is not inspect.Parameter.empty else Any
-            
+
             # Check if special parameter (assuming special_inputs is an attribute on the func)
             is_special = hasattr(func, 'special_inputs') and name in getattr(func, 'special_inputs', [])
-            
+
             params_list.append({
                 'name': name,
                 'default': default_value,
@@ -218,7 +226,7 @@ class ParameterEditor:
         label = Label(label_text + ": ", width=25) # Increased width for better readability
 
         input_field = self._create_input_field(name, current_value)
-        
+
         reset_button = Button(
             "Reset",
             handler=lambda: get_app().create_background_task(self.on_reset_parameter(name, self.func_index))

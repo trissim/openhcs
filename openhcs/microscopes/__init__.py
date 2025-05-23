@@ -10,3 +10,10 @@ from openhcs.microscopes.imagexpress import (ImageXpressFilenameParser,
                                                 ImageXpressMetadataHandler)
 from openhcs.microscopes.opera_phenix import (OperaPhenixFilenameParser,
                                                  OperaPhenixMetadataHandler)
+
+__all__ = [
+    'ImageXpressFilenameParser',
+    'ImageXpressMetadataHandler',
+    'OperaPhenixFilenameParser',
+    'OperaPhenixMetadataHandler'
+]

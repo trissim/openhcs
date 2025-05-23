@@ -19,6 +19,7 @@ from openhcs.io.base import storage_registry # Import storage_registry
 
 # TUI components from tui_architecture.py
 from openhcs.tui.tui_architecture import OpenHCSTUI, TUIState
+from prompt_toolkit.application.current import get_app
 
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,8 @@ class OpenHCSTUILauncher:
 
         # Notify that the filemanager is available, for components like PlateManagerPane
         # which might defer parts of their initialization until FileManager is ready.
-        self.state.notify('filemanager_available', {'filemanager': self.filemanager})
-        self.logger.info("Notified 'filemanager_available'.")
+        # We'll notify components about filemanager availability after the application is created
+        # This will be done in the run() method
 
         # Create an initial ProcessingContext for the TUI itself.
         # This context holds shared objects like filemanager and global_config.
@@ -94,7 +95,7 @@ class OpenHCSTUILauncher:
         self.state.add_observer('plate_selected', self._on_plate_selected)
         # Register observer for global config updates from the settings pane
         self.state.add_observer('global_config_needs_update', self._handle_global_config_update)
-        
+
     async def _handle_global_config_update(self, new_config: GlobalPipelineConfig):
         """
         Handles updates to the GlobalPipelineConfig triggered from the TUI settings.
@@ -139,7 +140,7 @@ class OpenHCSTUILauncher:
                         # logger.info(f"Re-initialized orchestrator for plate '{plate_id}' with new global config.")
                 except Exception as e:
                     self.logger.error(f"Error applying new global config to orchestrator for plate '{plate_id}': {e}", exc_info=True)
-        
+
         # The initial_tui_context's global_config reference will be stale.
         # Components should rely on OpenHCSTUI.global_config or new contexts from orchestrators.
         self.logger.info("Global config propagation complete in launcher.")
@@ -154,7 +155,7 @@ class OpenHCSTUILauncher:
             return
 
         self.logger.info(f"Attempting to add plate: id='{plate_id}', path='{plate_path_str}'")
-        
+
         async with self.orchestrators_lock:
             if plate_id in self.orchestrators:
                 self.logger.warning(f"Plate '{plate_id}' already has an orchestrator. Ignoring add request.")
@@ -163,7 +164,7 @@ class OpenHCSTUILauncher:
             # Construct plate-specific workspace path within the common output root
             safe_plate_id_for_path = plate_id.replace(':', '_').replace('/', '_').replace('\\', '_')
             workspace_path_for_plate = self.common_output_root / f"plate_{safe_plate_id_for_path}"
-            
+
             try:
                 self.logger.debug(f"Creating PipelineOrchestrator for plate '{plate_id}'.")
                 orchestrator = PipelineOrchestrator(
@@ -172,11 +173,11 @@ class OpenHCSTUILauncher:
                     global_config=self.core_global_config, # Crucial: Pass the global config
                     filemanager=self.filemanager # Pass shared filemanager
                 )
-                
+
                 # orchestrator.initialize() # DO NOT initialize here. Initialization is now explicit via "Pre-compile" button.
                 self.orchestrators[plate_id] = orchestrator
                 self.logger.info(f"PipelineOrchestrator instance created for plate '{plate_id}'. Initialization pending user action.")
-                
+
                 # Notify that plate is added but not yet fully initialized/ready for compilation.
                 self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'added'})
             except Exception as e:
@@ -187,7 +188,7 @@ class OpenHCSTUILauncher:
                     'details': str(e)
                 })
                 self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'error', 'message': str(e)})
-    
+
     async def _on_plate_removed(self, plate_info: Dict[str, Any]):
         """Handles 'plate_removed' event: Cleans up the orchestrator."""
         plate_id = plate_info.get('id')
@@ -201,7 +202,7 @@ class OpenHCSTUILauncher:
                 removed_orchestrator = self.orchestrators.pop(plate_id)
                 self.logger.info(f"Orchestrator for plate '{plate_id}' removed.")
                 self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'removed'})
-                
+
                 # If the removed plate was the active one, clear active orchestrator
                 if hasattr(self.state, 'active_orchestrator') and self.state.active_orchestrator == removed_orchestrator:
                     self.state.active_orchestrator = None
@@ -209,7 +210,7 @@ class OpenHCSTUILauncher:
                     self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
             else:
                 self.logger.warning(f"Attempted to remove plate '{plate_id}', but no orchestrator found.")
-    
+
     async def _on_plate_selected(self, plate_info: Dict[str, Any]):
         """Handles 'plate_selected' event: Sets the active orchestrator in TUIState."""
         plate_id = plate_info.get('id')
@@ -231,8 +232,8 @@ class OpenHCSTUILauncher:
     async def run(self):
         """Initializes and runs the TUI application."""
         self.logger.info("Initializing OpenHCSTUI application...")
-        
-        # Instantiate OpenHCSTUI, passing the shared state, filemanager, 
+
+        # Instantiate OpenHCSTUI, passing the shared state, filemanager,
         # the initial_tui_context (which contains global_config), and global_config directly.
         # OpenHCSTUI.__init__ was updated to accept these.
         tui_app = OpenHCSTUI(
@@ -241,7 +242,11 @@ class OpenHCSTUILauncher:
             global_config=self.core_global_config
         )
         self.tui_app_instance = tui_app # Store the instance
-        
+
+        # Now that the application is created, notify components about filemanager availability
+        await self.state.notify('filemanager_available', {'filemanager': self.filemanager})
+        self.logger.info("Notified 'filemanager_available'.")
+
         self.logger.info("Starting OpenHCS TUI event loop.")
         try:
             if hasattr(tui_app, 'application') and hasattr(tui_app.application, 'run_async'):
@@ -257,7 +262,7 @@ class OpenHCSTUILauncher:
         finally:
             self.logger.info("OpenHCS TUI run loop finished or exited.")
             await self._cleanup()
-    
+
     async def _cleanup(self):
         """Cleans up resources when the application exits."""
         self.logger.info("Cleaning up TUI launcher resources...")
@@ -272,7 +277,7 @@ class OpenHCSTUILauncher:
                     self.logger.error(f"Error during OpenHCSTUI.shutdown_components(): {e}", exc_info=True)
             else:
                 self.logger.warning("OpenHCSTUI instance does not have a callable 'shutdown_components' method.")
-        
+
         async with self.orchestrators_lock:
             # Note: PipelineOrchestrator instances manage resources like ThreadPoolExecutor
             # within method scopes (e.g., using `with` statements), generally not requiring
@@ -293,7 +298,7 @@ class OpenHCSTUILauncher:
                         self.logger.error(f"Error shutting down orchestrator for {orchestrator.plate_path}: {e}", exc_info=True)
             self.orchestrators.clear()
         self.logger.info("Orchestrators cleared/shut down.")
-        
+
         # Any other cleanup (e.g., for filemanager if it holds resources)
         if hasattr(self.filemanager, 'close') and callable(self.filemanager.close):
             try:

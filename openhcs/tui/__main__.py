@@ -1,3 +1,4 @@
+from typing import Optional
 """
 OpenHCS TUI entry point.
 
