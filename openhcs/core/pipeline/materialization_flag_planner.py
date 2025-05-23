@@ -22,7 +22,7 @@ from typing import Any, Dict, List
 from openhcs.constants.constants import (FORCE_DISK_WRITE, READ_BACKEND, # DEFAULT_BACKEND removed
                                              REQUIRES_DISK_READ, REQUIRES_DISK_WRITE, WRITE_BACKEND)
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
-from openhcs.core.steps.abstract_step import AbstractStep
+from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
 
@@ -80,10 +80,10 @@ class MaterializationFlagPlanner:
             if step_id not in step_plans:
                 logger.warning(f"No step_plan found for step {step_name} (ID: {step_id}). Skipping flag setting.")
                 continue
-            
+
             # Get the specific plan for this step to update
             current_step_plan = step_plans[step_id]
-            
+
             # Add well_id if not already present (though it should be)
             if "well_id" not in current_step_plan:
                 current_step_plan["well_id"] = well_id
@@ -150,13 +150,13 @@ class MaterializationFlagPlanner:
             else: # Non-FunctionStep not requiring disk output. If it writes primary data, it must be to a persistent store.
                 current_step_plan[WRITE_BACKEND] = vfs_config.default_materialization_backend
                 logger.debug(f"Step {step_name} is not FunctionStep and does not require disk output, defaulting to '{vfs_config.default_materialization_backend}' for writing (from default_materialization_backend).")
-            
+
             # Store other flags directly into the step_plan for this step
             current_step_plan[REQUIRES_DISK_READ] = requires_disk_input
             current_step_plan[REQUIRES_DISK_WRITE] = requires_disk_output
             current_step_plan[FORCE_DISK_WRITE] = force_disk_output
             # READ_BACKEND and WRITE_BACKEND are set above
-            
+
             # Log backend selection
             logger.debug(
                 f"Step {step_name} backend selection: "

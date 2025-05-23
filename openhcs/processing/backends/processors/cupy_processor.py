@@ -13,17 +13,17 @@ Doctrinal Clauses:
 import logging
 from typing import Any, List, Optional, Tuple
 
-# Import CuPy with error handling
-try:
-    import cupy as cp
-    from cupyx.scipy import ndimage
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
-
-# Import decorator directly from core.memory to avoid circular imports
-from openhcs.core.memory import cupy as cupy_func
+from openhcs.core.memory.decorators import cupy as cupy_func
+from openhcs.core.utils import optional_import
 from openhcs.processing.processor import ImageProcessorInterface
+
+# Import CuPy as an optional dependency
+cp = optional_import("cupy")
+ndimage = None
+if cp is not None:
+    cupyx_scipy = optional_import("cupyx.scipy")
+    if cupyx_scipy is not None:
+        ndimage = cupyx_scipy.ndimage
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     Returns:
         2D CuPy weight mask of shape (height, width)
     """
-    if not HAS_CUPY:
-        raise ImportError("CuPy is required for CuPyImageProcessor")
+    # The compiler will ensure this function is only called when CuPy is available
+    # No need to check for CuPy availability here
 
     margin_y = int(cp.floor(height * margin_ratio))
     margin_x = int(cp.floor(width * margin_ratio))
@@ -67,512 +67,492 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-class CuPyImageProcessor(ImageProcessorInterface):
+def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
     """
-    CuPy implementation of the ImageProcessorInterface.
+    Validate that the input is a 3D CuPy array.
 
-    This class provides GPU-accelerated image processing operations using CuPy.
-    All methods are stateless and operate on CuPy arrays.
+    Args:
+        array: Array to validate
+        name: Name of the array for error messages
+
+    Raises:
+        TypeError: If the array is not a CuPy array
+        ValueError: If the array is not 3D
+        ImportError: If CuPy is not available
     """
+    # The compiler will ensure this function is only called when CuPy is available
+    # No need to check for CuPy availability here
 
-    @classmethod
-    def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
-        """
-        Validate that the input is a 3D CuPy array.
+    if not isinstance(array, cp.ndarray):
+        raise TypeError(f"{name} must be a CuPy array, got {type(array)}. "
+                       f"No automatic conversion is performed to maintain explicit contracts.")
 
-        Args:
-            array: Array to validate
-            name: Name of the array for error messages
+    if array.ndim != 3:
+        raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
-        Raises:
-            TypeError: If the array is not a CuPy array
-            ValueError: If the array is not 3D
-            ImportError: If CuPy is not available
-        """
-        if not HAS_CUPY:
-            raise ImportError("CuPy is required for CuPyImageProcessor")
+@cupy_func
+def sharpen(cls, image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
+    """
+    Sharpen a 3D image using unsharp masking.
 
-        if not isinstance(array, cp.ndarray):
-            raise TypeError(f"{name} must be a CuPy array, got {type(array)}. "
-                           f"No automatic conversion is performed to maintain explicit contracts.")
+    This applies sharpening to each Z-slice independently.
 
-        if array.ndim != 3:
-            raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        radius: Radius of Gaussian blur
+        amount: Sharpening strength
 
-    @cupy_func
-    @classmethod
-    def sharpen(cls, image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
-        """
-        Sharpen a 3D image using unsharp masking.
+    Returns:
+        Sharpened 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        This applies sharpening to each Z-slice independently.
+    # Store original dtype
+    dtype = image.dtype
 
-        Args:
-            image: 3D CuPy array of shape (Z, Y, X)
-            radius: Radius of Gaussian blur
-            amount: Sharpening strength
+    # Process each Z-slice independently
+    result = cp.zeros_like(image, dtype=cp.float32)
 
-        Returns:
-            Sharpened 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    for z in range(image.shape[0]):
+        # Convert to float for processing
+        slice_float = image[z].astype(cp.float32) / cp.max(image[z])
 
-        # Store original dtype
-        dtype = image.dtype
+        # Create blurred version for unsharp mask
+        # Use CuPy's ndimage.gaussian_filter instead of scikit-image's filters.gaussian
+        blurred = ndimage.gaussian_filter(slice_float, sigma=radius)
 
-        # Process each Z-slice independently
-        result = cp.zeros_like(image, dtype=cp.float32)
+        # Apply unsharp mask: original + amount * (original - blurred)
+        sharpened = slice_float + amount * (slice_float - blurred)
 
-        for z in range(image.shape[0]):
-            # Convert to float for processing
-            slice_float = image[z].astype(cp.float32) / cp.max(image[z])
+        # Clip to valid range
+        sharpened = cp.clip(sharpened, 0, 1.0)
 
-            # Create blurred version for unsharp mask
-            # Use CuPy's ndimage.gaussian_filter instead of scikit-image's filters.gaussian
-            blurred = ndimage.gaussian_filter(slice_float, sigma=radius)
+        # Scale back to original range
+        # CuPy doesn't have exposure.rescale_intensity, so implement manually
+        min_val = cp.min(sharpened)
+        max_val = cp.max(sharpened)
+        if max_val > min_val:
+            sharpened = (sharpened - min_val) * 65535 / (max_val - min_val)
 
-            # Apply unsharp mask: original + amount * (original - blurred)
-            sharpened = slice_float + amount * (slice_float - blurred)
+        result[z] = sharpened
 
-            # Clip to valid range
-            sharpened = cp.clip(sharpened, 0, 1.0)
+    # Convert back to original dtype
+    return result.astype(dtype)
 
-            # Scale back to original range
-            # CuPy doesn't have exposure.rescale_intensity, so implement manually
-            min_val = cp.min(sharpened)
-            max_val = cp.max(sharpened)
-            if max_val > min_val:
-                sharpened = (sharpened - min_val) * 65535 / (max_val - min_val)
+@cupy_func
+def percentile_normalize(
+    cls, image: "cp.ndarray",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0
+) -> "cp.ndarray":
+    """
+    Normalize a 3D image using percentile-based contrast stretching.
 
-            result[z] = sharpened
+    This applies normalization to each Z-slice independently.
 
-        # Convert back to original dtype
-        return result.astype(dtype)
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-    @cupy_func
-    @classmethod
-    def percentile_normalize(
-        cls, image: "cp.ndarray",
-        low_percentile: float = 1.0,
-        high_percentile: float = 99.0,
-        target_min: float = 0.0,
-        target_max: float = 65535.0
-    ) -> "cp.ndarray":
-        """
-        Normalize a 3D image using percentile-based contrast stretching.
+    Returns:
+        Normalized 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        This applies normalization to each Z-slice independently.
+    # Process each Z-slice independently
+    result = cp.zeros_like(image, dtype=cp.float32)
 
-        Args:
-            image: 3D CuPy array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
-
-        Returns:
-            Normalized 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
-
-        # Process each Z-slice independently
-        result = cp.zeros_like(image, dtype=cp.float32)
-
-        for z in range(image.shape[0]):
-            # Get percentile values for this slice
-            p_low = cp.percentile(image[z], low_percentile)
-            p_high = cp.percentile(image[z], high_percentile)
-
-            # Avoid division by zero
-            if p_high == p_low:
-                result[z] = cp.ones_like(image[z]) * target_min
-                continue
-
-            # Clip and normalize to target range
-            clipped = cp.clip(image[z], p_low, p_high)
-            normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-            result[z] = normalized
-
-        # Convert to uint16
-        return result.astype(cp.uint16)
-
-    @cupy_func
-    @classmethod
-    def stack_percentile_normalize(
-        cls, stack: "cp.ndarray",
-        low_percentile: float = 1.0,
-        high_percentile: float = 99.0,
-        target_min: float = 0.0,
-        target_max: float = 65535.0
-    ) -> "cp.ndarray":
-        """
-        Normalize a stack using global percentile-based contrast stretching.
-
-        This ensures consistent normalization across all Z-slices by computing
-        global percentiles across the entire stack.
-
-        Args:
-            stack: 3D CuPy array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
-
-        Returns:
-            Normalized 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
-
-        # Calculate global percentiles across the entire stack
-        p_low = cp.percentile(stack, low_percentile)
-        p_high = cp.percentile(stack, high_percentile)
+    for z in range(image.shape[0]):
+        # Get percentile values for this slice
+        p_low = cp.percentile(image[z], low_percentile)
+        p_high = cp.percentile(image[z], high_percentile)
 
         # Avoid division by zero
         if p_high == p_low:
-            return cp.ones_like(stack) * target_min
+            result[z] = cp.ones_like(image[z]) * target_min
+            continue
 
         # Clip and normalize to target range
-        clipped = cp.clip(stack, p_low, p_high)
+        clipped = cp.clip(image[z], p_low, p_high)
         normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-        normalized = normalized.astype(cp.uint16)
+        result[z] = normalized
 
-        return normalized
+    # Convert to uint16
+    return result.astype(cp.uint16)
 
-    @cupy_func
-    @classmethod
-    def create_composite(
-        cls, images: List["cp.ndarray"], weights: Optional[List[float]] = None
-    ) -> "cp.ndarray":
-        """
-        Create a composite image from multiple 3D arrays.
+@cupy_func
+def stack_percentile_normalize(
+    cls, stack: "cp.ndarray",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0
+) -> "cp.ndarray":
+    """
+    Normalize a stack using global percentile-based contrast stretching.
 
-        Args:
-            images: List of 3D CuPy arrays, each of shape (Z, Y, X)
-            weights: List of weights for each image. If None, equal weights are used.
+    This ensures consistent normalization across all Z-slices by computing
+    global percentiles across the entire stack.
 
-        Returns:
-            Composite 3D CuPy array of shape (Z, Y, X)
-        """
-        # Ensure images is a list
-        if not isinstance(images, list):
-            raise TypeError("images must be a list of CuPy arrays")
+    Args:
+        stack: 3D CuPy array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-        # Check for empty list early
-        if not images:
-            raise ValueError("images list cannot be empty")
+    Returns:
+        Normalized 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Validate all images are 3D CuPy arrays with the same shape
-        for i, img in enumerate(images):
-            cls._validate_3d_array(img, f"images[{i}]")
-            if img.shape != images[0].shape:
-                raise ValueError(
-                    f"All images must have the same shape. "
-                    f"images[0] has shape {images[0].shape}, "
-                    f"images[{i}] has shape {img.shape}"
-                )
+    # Calculate global percentiles across the entire stack
+    p_low = cp.percentile(stack, low_percentile)
+    p_high = cp.percentile(stack, high_percentile)
 
-        # Default weights if none provided
-        if weights is None:
-            # Equal weights for all images
-            weights = [1.0 / len(images)] * len(images)
-        elif not isinstance(weights, list):
-            raise TypeError("weights must be a list of values")
+    # Avoid division by zero
+    if p_high == p_low:
+        return cp.ones_like(stack) * target_min
 
-        # Make sure weights list is at least as long as images list
-        if len(weights) < len(images):
-            weights = weights + [0.0] * (len(images) - len(weights))
-        # Truncate weights if longer than images
-        weights = weights[:len(images)]
+    # Clip and normalize to target range
+    clipped = cp.clip(stack, p_low, p_high)
+    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = normalized.astype(cp.uint16)
 
-        first_image = images[0]
-        shape = first_image.shape
-        dtype = first_image.dtype
+    return normalized
 
-        # Create empty composite
-        composite = cp.zeros(shape, dtype=cp.float32)
-        total_weight = 0.0
+@cupy_func
+def create_composite(
+    cls, images: List["cp.ndarray"], weights: Optional[List[float]] = None
+) -> "cp.ndarray":
+    """
+    Create a composite image from multiple 3D arrays.
 
-        # Add each image with its weight
-        for i, image in enumerate(images):
-            weight = weights[i]
-            if weight <= 0.0:
-                continue
+    Args:
+        images: List of 3D CuPy arrays, each of shape (Z, Y, X)
+        weights: List of weights for each image. If None, equal weights are used.
 
-            # Add to composite
-            composite += image.astype(cp.float32) * weight
-            total_weight += weight
+    Returns:
+        Composite 3D CuPy array of shape (Z, Y, X)
+    """
+    # Ensure images is a list
+    if not isinstance(images, list):
+        raise TypeError("images must be a list of CuPy arrays")
 
-        # Normalize by total weight
-        if total_weight > 0:
-            composite /= total_weight
+    # Check for empty list early
+    if not images:
+        raise ValueError("images list cannot be empty")
 
-        # Convert back to original dtype (usually uint16)
-        if cp.issubdtype(dtype, cp.integer):
-            max_val = cp.iinfo(dtype).max
-            composite = cp.clip(composite, 0, max_val).astype(dtype)
-        else:
-            composite = composite.astype(dtype)
+    # Validate all images are 3D CuPy arrays with the same shape
+    for i, img in enumerate(images):
+        cls._validate_3d_array(img, f"images[{i}]")
+        if img.shape != images[0].shape:
+            raise ValueError(
+                f"All images must have the same shape. "
+                f"images[0] has shape {images[0].shape}, "
+                f"images[{i}] has shape {img.shape}"
+            )
 
-        return composite
+    # Default weights if none provided
+    if weights is None:
+        # Equal weights for all images
+        weights = [1.0 / len(images)] * len(images)
+    elif not isinstance(weights, list):
+        raise TypeError("weights must be a list of values")
 
-    @cupy_func
-    @classmethod
-    def apply_mask(cls, image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
-        """
-        Apply a mask to a 3D image.
+    # Make sure weights list is at least as long as images list
+    if len(weights) < len(images):
+        weights = weights + [0.0] * (len(images) - len(weights))
+    # Truncate weights if longer than images
+    weights = weights[:len(images)]
 
-        This applies the mask to each Z-slice independently if mask is 2D,
-        or applies the 3D mask directly if mask is 3D.
+    first_image = images[0]
+    shape = first_image.shape
+    dtype = first_image.dtype
 
-        Args:
-            image: 3D CuPy array of shape (Z, Y, X)
-            mask: 3D CuPy array of shape (Z, Y, X) or 2D CuPy array of shape (Y, X)
+    # Create empty composite
+    composite = cp.zeros(shape, dtype=cp.float32)
+    total_weight = 0.0
 
-        Returns:
-            Masked 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    # Add each image with its weight
+    for i, image in enumerate(images):
+        weight = weights[i]
+        if weight <= 0.0:
+            continue
 
-        # Handle 2D mask (apply to each Z-slice)
-        if isinstance(mask, cp.ndarray) and mask.ndim == 2:
-            if mask.shape != image.shape[1:]:
-                raise ValueError(
-                    f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
-                )
+        # Add to composite
+        composite += image.astype(cp.float32) * weight
+        total_weight += weight
 
-            # Apply 2D mask to each Z-slice
-            result = cp.zeros_like(image)
-            for z in range(image.shape[0]):
-                result[z] = image[z].astype(cp.float32) * mask.astype(cp.float32)
+    # Normalize by total weight
+    if total_weight > 0:
+        composite /= total_weight
 
-            return result.astype(image.dtype)
+    # Convert back to original dtype (usually uint16)
+    if cp.issubdtype(dtype, cp.integer):
+        max_val = cp.iinfo(dtype).max
+        composite = cp.clip(composite, 0, max_val).astype(dtype)
+    else:
+        composite = composite.astype(dtype)
 
-        # Handle 3D mask
-        if isinstance(mask, cp.ndarray) and mask.ndim == 3:
-            if mask.shape != image.shape:
-                raise ValueError(
-                    f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
-                )
+    return composite
 
-            # Apply 3D mask directly
-            masked = image.astype(cp.float32) * mask.astype(cp.float32)
-            return masked.astype(image.dtype)
+@cupy_func
+def apply_mask(cls, image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
+    """
+    Apply a mask to a 3D image.
 
-        # If we get here, the mask is neither 2D nor 3D CuPy array
-        raise TypeError(f"mask must be a 2D or 3D CuPy array, got {type(mask)}")
+    This applies the mask to each Z-slice independently if mask is 2D,
+    or applies the 3D mask directly if mask is 3D.
 
-    @cupy_func
-    @classmethod
-    def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp.ndarray":
-        """
-        Create a weight mask for blending images.
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        mask: 3D CuPy array of shape (Z, Y, X) or 2D CuPy array of shape (Y, X)
 
-        Args:
-            shape: Shape of the mask (height, width)
-            margin_ratio: Ratio of image size to use as margin
+    Returns:
+        Masked 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        Returns:
-            2D CuPy weight mask of shape (Y, X)
-        """
-        if not isinstance(shape, tuple) or len(shape) != 2:
-            raise TypeError("shape must be a tuple of (height, width)")
+    # Handle 2D mask (apply to each Z-slice)
+    if isinstance(mask, cp.ndarray) and mask.ndim == 2:
+        if mask.shape != image.shape[1:]:
+            raise ValueError(
+                f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
+            )
 
-        height, width = shape
-        return create_linear_weight_mask(height, width, margin_ratio)
+        # Apply 2D mask to each Z-slice
+        result = cp.zeros_like(image)
+        for z in range(image.shape[0]):
+            result[z] = image[z].astype(cp.float32) * mask.astype(cp.float32)
 
-    @cupy_func
-    @classmethod
-    def max_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
-        """
-        Create a maximum intensity projection from a Z-stack.
+        return result.astype(image.dtype)
 
-        Args:
-            stack: 3D CuPy array of shape (Z, Y, X)
+    # Handle 3D mask
+    if isinstance(mask, cp.ndarray) and mask.ndim == 3:
+        if mask.shape != image.shape:
+            raise ValueError(
+                f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
+            )
 
-        Returns:
-            3D CuPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+        # Apply 3D mask directly
+        masked = image.astype(cp.float32) * mask.astype(cp.float32)
+        return masked.astype(image.dtype)
 
-        # Create max projection
-        projection_2d = cp.max(stack, axis=0)
-        return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    # If we get here, the mask is neither 2D nor 3D CuPy array
+    raise TypeError(f"mask must be a 2D or 3D CuPy array, got {type(mask)}")
 
-    @cupy_func
-    @classmethod
-    def mean_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
-        """
-        Create a mean intensity projection from a Z-stack.
+@cupy_func
+def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp.ndarray":
+    """
+    Create a weight mask for blending images.
 
-        Args:
-            stack: 3D CuPy array of shape (Z, Y, X)
+    Args:
+        shape: Shape of the mask (height, width)
+        margin_ratio: Ratio of image size to use as margin
 
-        Returns:
-            3D CuPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    Returns:
+        2D CuPy weight mask of shape (Y, X)
+    """
+    if not isinstance(shape, tuple) or len(shape) != 2:
+        raise TypeError("shape must be a tuple of (height, width)")
 
-        # Create mean projection
-        projection_2d = cp.mean(stack, axis=0).astype(stack.dtype)
-        return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    height, width = shape
+    return create_linear_weight_mask(height, width, margin_ratio)
 
-    @cupy_func
-    @classmethod
-    def stack_equalize_histogram(
-        cls, stack: "cp.ndarray",
-        bins: int = 65536,
-        range_min: float = 0.0,
-        range_max: float = 65535.0
-    ) -> "cp.ndarray":
-        """
-        Apply histogram equalization to an entire stack.
+@cupy_func
+def max_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
+    """
+    Create a maximum intensity projection from a Z-stack.
 
-        This ensures consistent contrast enhancement across all Z-slices by
-        computing a global histogram across the entire stack.
+    Args:
+        stack: 3D CuPy array of shape (Z, Y, X)
 
-        Args:
-            stack: 3D CuPy array of shape (Z, Y, X)
-            bins: Number of bins for histogram computation
-            range_min: Minimum value for histogram range
-            range_max: Maximum value for histogram range
+    Returns:
+        3D CuPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        Returns:
-            Equalized 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    # Create max projection
+    projection_2d = cp.max(stack, axis=0)
+    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
-        # Flatten the entire stack to compute the global histogram
-        flat_stack = stack.flatten()
+@cupy_func
+def mean_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
+    """
+    Create a mean intensity projection from a Z-stack.
 
-        # Calculate the histogram and cumulative distribution function (CDF)
-        hist = cp.histogram(flat_stack, bins=bins, range=(range_min, range_max))[0]
-        cdf = hist.cumsum()
+    Args:
+        stack: 3D CuPy array of shape (Z, Y, X)
 
-        # Normalize the CDF to the range [0, 65535]
-        # Avoid division by zero
-        if cdf[-1] > 0:
-            cdf = 65535 * cdf / cdf[-1]
+    Returns:
+        3D CuPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Implement linear interpolation directly in CuPy
-        # Calculate bin indices for each value in flat_stack
-        bin_width = (range_max - range_min) / bins
-        indices = cp.clip(
-            cp.floor((flat_stack - range_min) / bin_width).astype(cp.int32),
-            0, bins - 1
-        )
+    # Create mean projection
+    projection_2d = cp.mean(stack, axis=0).astype(stack.dtype)
+    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
-        # Look up CDF values using the indices
-        equalized_flat = cdf[indices]
+@cupy_func
+def stack_equalize_histogram(
+    cls, stack: "cp.ndarray",
+    bins: int = 65536,
+    range_min: float = 0.0,
+    range_max: float = 65535.0
+) -> "cp.ndarray":
+    """
+    Apply histogram equalization to an entire stack.
 
-        # Reshape back to original shape
-        equalized_stack = equalized_flat.reshape(stack.shape)
+    This ensures consistent contrast enhancement across all Z-slices by
+    computing a global histogram across the entire stack.
 
-        # Convert to uint16
-        return equalized_stack.astype(cp.uint16)
+    Args:
+        stack: 3D CuPy array of shape (Z, Y, X)
+        bins: Number of bins for histogram computation
+        range_min: Minimum value for histogram range
+        range_max: Maximum value for histogram range
 
-    @cupy_func
-    @classmethod
-    def create_projection(
-        cls, stack: "cp.ndarray", method: str = "max_projection"
-    ) -> "cp.ndarray":
-        """
-        Create a projection from a stack using the specified method.
+    Returns:
+        Equalized 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        Args:
-            stack: 3D CuPy array of shape (Z, Y, X)
-            method: Projection method (max_projection, mean_projection)
+    # Flatten the entire stack to compute the global histogram
+    flat_stack = stack.flatten()
 
-        Returns:
-            3D CuPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    # Calculate the histogram and cumulative distribution function (CDF)
+    hist = cp.histogram(flat_stack, bins=bins, range=(range_min, range_max))[0]
+    cdf = hist.cumsum()
 
-        if method == "max_projection":
-            return cls.max_projection(stack)
+    # Normalize the CDF to the range [0, 65535]
+    # Avoid division by zero
+    if cdf[-1] > 0:
+        cdf = 65535 * cdf / cdf[-1]
 
-        if method == "mean_projection":
-            return cls.mean_projection(stack)
+    # Implement linear interpolation directly in CuPy
+    # Calculate bin indices for each value in flat_stack
+    bin_width = (range_max - range_min) / bins
+    indices = cp.clip(
+        cp.floor((flat_stack - range_min) / bin_width).astype(cp.int32),
+        0, bins - 1
+    )
 
-        # Default case for unknown methods
-        logger.warning("Unknown projection method: %s, using max_projection", method)
+    # Look up CDF values using the indices
+    equalized_flat = cdf[indices]
+
+    # Reshape back to original shape
+    equalized_stack = equalized_flat.reshape(stack.shape)
+
+    # Convert to uint16
+    return equalized_stack.astype(cp.uint16)
+
+@cupy_func
+def create_projection(
+    cls, stack: "cp.ndarray", method: str = "max_projection"
+) -> "cp.ndarray":
+    """
+    Create a projection from a stack using the specified method.
+
+    Args:
+        stack: 3D CuPy array of shape (Z, Y, X)
+        method: Projection method (max_projection, mean_projection)
+
+    Returns:
+        3D CuPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
+
+    if method == "max_projection":
         return cls.max_projection(stack)
 
-    @cupy_func
-    @classmethod
-    def tophat(
-        cls, image: "cp.ndarray",
-        selem_radius: int = 50,
-        downsample_factor: int = 4
-    ) -> "cp.ndarray":
-        """
-        Apply white top-hat filter to a 3D image for background removal.
+    if method == "mean_projection":
+        return cls.mean_projection(stack)
 
-        This applies the filter to each Z-slice independently using CuPy's
-        morphological operations.
+    # Default case for unknown methods
+    logger.warning("Unknown projection method: %s, using max_projection", method)
+    return cls.max_projection(stack)
 
-        Args:
-            image: 3D CuPy array of shape (Z, Y, X)
-            selem_radius: Radius of the structuring element disk
-            downsample_factor: Factor by which to downsample the image for processing
+@cupy_func
+def tophat(
+    cls, image: "cp.ndarray",
+    selem_radius: int = 50,
+    downsample_factor: int = 4
+) -> "cp.ndarray":
+    """
+    Apply white top-hat filter to a 3D image for background removal.
 
-        Returns:
-            Filtered 3D CuPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    This applies the filter to each Z-slice independently using CuPy's
+    morphological operations.
 
-        # Process each Z-slice independently
-        result = cp.zeros_like(image)
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        selem_radius: Radius of the structuring element disk
+        downsample_factor: Factor by which to downsample the image for processing
 
-        # Create a circular structuring element
-        # CuPy doesn't have a direct disk function, so we'll create one manually
-        # (This is used as a reference for the per-slice structuring elements)
+    Returns:
+        Filtered 3D CuPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        for z in range(image.shape[0]):
-            # Store original data type
-            input_dtype = image[z].dtype
+    # Process each Z-slice independently
+    result = cp.zeros_like(image)
 
-            # 1) Downsample using CuPy's resize function
-            # Calculate new dimensions
-            new_h = image[z].shape[0] // downsample_factor
-            new_w = image[z].shape[1] // downsample_factor
+    # Create a circular structuring element
+    # CuPy doesn't have a direct disk function, so we'll create one manually
+    # (This is used as a reference for the per-slice structuring elements)
 
-            # Resize using CuPy's resize function
-            # Note: CuPy's resize is different from scikit-image's, but works for our purpose
-            image_small = cp.resize(image[z], (new_h, new_w))
+    for z in range(image.shape[0]):
+        # Store original data type
+        input_dtype = image[z].dtype
 
-            # 2) Resize the structuring element to match the downsampled image
-            small_selem_radius = max(1, selem_radius // downsample_factor)
+        # 1) Downsample using CuPy's resize function
+        # Calculate new dimensions
+        new_h = image[z].shape[0] // downsample_factor
+        new_w = image[z].shape[1] // downsample_factor
 
-            # Create grid for structuring element
-            y_range = cp.arange(-small_selem_radius, small_selem_radius+1)
-            x_range = cp.arange(-small_selem_radius, small_selem_radius+1)
-            grid_y, grid_x = cp.meshgrid(y_range, x_range)
+        # Resize using CuPy's resize function
+        # Note: CuPy's resize is different from scikit-image's, but works for our purpose
+        image_small = cp.resize(image[z], (new_h, new_w))
 
-            # Create circular mask
-            small_mask = grid_x**2 + grid_y**2 <= small_selem_radius**2
-            small_selem = cp.asarray(small_mask, dtype=cp.uint8)
+        # 2) Resize the structuring element to match the downsampled image
+        small_selem_radius = max(1, selem_radius // downsample_factor)
 
-            # 3) Apply white top-hat using CuPy's morphology functions
-            # White top-hat is opening subtracted from the original image
-            # Opening is erosion followed by dilation
+        # Create grid for structuring element
+        y_range = cp.arange(-small_selem_radius, small_selem_radius+1)
+        x_range = cp.arange(-small_selem_radius, small_selem_radius+1)
+        grid_y, grid_x = cp.meshgrid(y_range, x_range)
 
-            # Perform opening (erosion followed by dilation)
-            eroded = ndimage.binary_erosion(image_small, structure=small_selem)
-            opened = ndimage.binary_dilation(eroded, structure=small_selem)
+        # Create circular mask
+        small_mask = grid_x**2 + grid_y**2 <= small_selem_radius**2
+        small_selem = cp.asarray(small_mask, dtype=cp.uint8)
 
-            # White top-hat is original minus opening
-            tophat_small = image_small - opened
+        # 3) Apply white top-hat using CuPy's morphology functions
+        # White top-hat is opening subtracted from the original image
+        # Opening is erosion followed by dilation
 
-            # 4) Calculate background
-            background_small = image_small - tophat_small
+        # Perform opening (erosion followed by dilation)
+        eroded = ndimage.binary_erosion(image_small, structure=small_selem)
+        opened = ndimage.binary_dilation(eroded, structure=small_selem)
 
-            # 5) Upscale background to original size
-            background_large = cp.resize(background_small, image[z].shape)
+        # White top-hat is original minus opening
+        tophat_small = image_small - opened
 
-            # 6) Subtract background and clip negative values
-            slice_result = cp.maximum(image[z] - background_large, 0)
+        # 4) Calculate background
+        background_small = image_small - tophat_small
 
-            # 7) Convert back to original data type
-            result[z] = slice_result.astype(input_dtype)
+        # 5) Upscale background to original size
+        background_large = cp.resize(background_small, image[z].shape)
 
-        return result
+        # 6) Subtract background and clip negative values
+        slice_result = cp.maximum(image[z] - background_large, 0)
+
+        # 7) Convert back to original data type
+        result[z] = slice_result.astype(input_dtype)
+
+    return result

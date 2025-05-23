@@ -19,6 +19,7 @@ from openhcs.constants.constants import (GPU_MEMORY_TYPES, MEMORY_TYPE_CUPY,
                                             MEMORY_TYPE_TENSORFLOW,
                                             MEMORY_TYPE_TORCH, MemoryType)
 from openhcs.core.memory import MemoryWrapper
+from openhcs.core.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
@@ -84,37 +85,25 @@ def _detect_memory_type(data: Any) -> str:
         return MemoryType.NUMPY.value
 
     # Check if it's a cupy array
-    try:
-        import cupy as cp
-        if isinstance(data, cp.ndarray):
-            return MemoryType.CUPY.value
-    except ImportError:
-        pass
+    cp = optional_import("cupy")
+    if cp is not None and isinstance(data, cp.ndarray):
+        return MemoryType.CUPY.value
 
     # Check if it's a torch tensor
-    try:
-        import torch
-        if isinstance(data, torch.Tensor):
-            return MemoryType.TORCH.value
-    except ImportError:
-        pass
+    torch = optional_import("torch")
+    if torch is not None and isinstance(data, torch.Tensor):
+        return MemoryType.TORCH.value
 
     # Check if it's a tensorflow tensor
-    try:
-        import tensorflow as tf
-        if isinstance(data, tf.Tensor):
-            return MemoryType.TENSORFLOW.value
-    except ImportError:
-        pass
+    tf = optional_import("tensorflow")
+    if tf is not None and isinstance(data, tf.Tensor):
+        return MemoryType.TENSORFLOW.value
 
     # Check if it's a JAX array
-    try:
-        import jax
-        import jax.numpy as jnp
-        if isinstance(data, jnp.ndarray):
-            return MemoryType.JAX.value
-    except ImportError:
-        pass
+    jax = optional_import("jax")
+    jnp = optional_import("jax.numpy") if jax is not None else None
+    if jnp is not None and isinstance(data, jnp.ndarray):
+        return MemoryType.JAX.value
 
     # Fail loudly if we can't detect the type
     raise ValueError(f"Could not detect memory type of {type(data)}")
@@ -204,30 +193,26 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int, allow_single_
     if memory_type == MemoryType.NUMPY.value:
         return np.stack(converted_slices)
     elif memory_type == MemoryType.CUPY.value:
-        try:
-            import cupy as cp
-            return cp.stack(converted_slices)
-        except ImportError:
+        cp = optional_import("cupy")
+        if cp is None:
             raise ValueError(f"CuPy is required for memory type {memory_type}")
+        return cp.stack(converted_slices)
     elif memory_type == MemoryType.TORCH.value:
-        try:
-            import torch
-            return torch.stack(converted_slices)
-        except ImportError:
+        torch = optional_import("torch")
+        if torch is None:
             raise ValueError(f"PyTorch is required for memory type {memory_type}")
+        return torch.stack(converted_slices)
     elif memory_type == MemoryType.TENSORFLOW.value:
-        try:
-            import tensorflow as tf
-            return tf.stack(converted_slices)
-        except ImportError:
+        tf = optional_import("tensorflow")
+        if tf is None:
             raise ValueError(f"TensorFlow is required for memory type {memory_type}")
+        return tf.stack(converted_slices)
     elif memory_type == MemoryType.JAX.value:
-        try:
-            import jax
-            import jax.numpy as jnp
-            return jnp.stack(converted_slices)
-        except ImportError:
+        jax = optional_import("jax")
+        jnp = optional_import("jax.numpy") if jax is not None else None
+        if jnp is None:
             raise ValueError(f"JAX is required for memory type {memory_type}")
+        return jnp.stack(converted_slices)
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
 

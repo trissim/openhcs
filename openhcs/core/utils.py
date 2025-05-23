@@ -7,9 +7,45 @@ import logging
 import threading
 import time
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+def optional_import(module_name: str) -> Optional[Any]:
+    """
+    Import a module if available, otherwise return None.
+
+    This function allows for graceful handling of optional dependencies.
+    It can be used to import libraries that may not be installed,
+    particularly GPU-related libraries like torch, tensorflow, and cupy.
+
+    Args:
+        module_name: Name of the module to import
+
+    Returns:
+        The imported module if available, None otherwise
+
+    Example:
+        ```python
+        # Import torch if available
+        torch = optional_import("torch")
+
+        # Check if torch is available before using it
+        if torch is not None:
+            # Use torch
+            tensor = torch.tensor([1, 2, 3])
+        else:
+            # Handle the case where torch is not available
+            raise ImportError("PyTorch is required for this function")
+        ```
+    """
+    try:
+        # Use importlib.import_module which handles dotted names properly
+        import importlib
+        return importlib.import_module(module_name)
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        # Catch AttributeError as well to handle cases where a submodule doesn't exist
+        return None
 
 # Global thread activity tracking
 thread_activity = defaultdict(list)

@@ -18,25 +18,21 @@ from typing import TYPE_CHECKING, Any, Tuple, Union
 from openhcs.constants.constants import (DEFAULT_PATCH_SIZE,
                                             DEFAULT_SEARCH_RADIUS, SpecialKey)
 from openhcs.core.memory.decorators import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import special_out
+from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.utils import optional_import
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
     from cupyx.scipy import ndimage
 
-# Import CuPy with error handling
-try:
-    import cupy as cp  # type: ignore
-    from cupyx.scipy import ndimage  # type: ignore
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
-    # Create dummy objects for type checking
-    class DummyCupy:
-        def __getattr__(self, name):
-            raise ImportError("CuPy is not installed. Please install it to use GPU-accelerated functions.")
-    cp = DummyCupy()
+# Import CuPy as an optional dependency
+cp = optional_import("cupy")
+ndimage = None
+if cp is not None:
+    cupyx_scipy = optional_import("cupyx.scipy")
+    if cupyx_scipy is not None:
+        ndimage = cupyx_scipy.ndimage
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +50,8 @@ def _validate_cupy_array(array: Any, name: str = "input") -> None:  # type: igno
         TypeError: If the array is not a CuPy array
         ValueError: If the array doesn't support DLPack
     """
-    if not HAS_CUPY:
-        raise ImportError("CuPy is required for GPU-accelerated MIST")
+    # The compiler will ensure this function is only called when CuPy is available
+    # No need to check for CuPy availability here
 
     if not isinstance(array, cp.ndarray):
         raise TypeError(
@@ -202,7 +198,7 @@ def extract_patch(
     return patch
 
 
-@special_out(SpecialKey.POSITION_ARRAY)
+@special_outputs("positions") # The named output is "positions"
 @cupy_func
 def mist_compute_tile_positions(
     image_stack: "cp.ndarray",  # type: ignore
@@ -221,7 +217,7 @@ def mist_compute_tile_positions(
     refinement_iterations: int = 1,
     global_optimization: bool = False,
     **kwargs
-) -> "cp.ndarray":  # type: ignore
+) -> Tuple["cp.ndarray", "cp.ndarray"]:  # type: ignore # Return type changed
     """
     Compute tile positions using the MIST algorithm with GPU acceleration.
 
@@ -497,4 +493,5 @@ def mist_compute_tile_positions(
         # For simplicity, we'll skip this in the current implementation
         pass
 
-    return positions
+    # First return is always the 3D image data (image_stack), second is the named special output.
+    return image_stack, positions

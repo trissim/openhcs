@@ -9,9 +9,6 @@ from pathlib import Path
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
 
-# Forward declaration for type hinting if StepResult was used, but it's being removed.
-# class StepResult: ...
-
 
 class ProcessingContext:
     """

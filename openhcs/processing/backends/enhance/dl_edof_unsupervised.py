@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, List, Optional
 
 from openhcs.core.memory.decorators import torch as torch_func
+from openhcs.core.utils import optional_import
 
 # For type checking only
 if TYPE_CHECKING:
@@ -8,22 +9,10 @@ if TYPE_CHECKING:
     import torch.nn as nn
     import torch.nn.functional as F
 
-# Import torch with error handling
-try:
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
-    # Create dummy objects for type checking
-    class DummyTorch:
-        """Dummy class that raises ImportError when attributes are accessed."""
-        def __getattr__(self, name):
-            raise ImportError("PyTorch is not installed.")
-    torch = DummyTorch()
-    nn = DummyTorch()
-    F = DummyTorch()
+# Import torch modules using optional_import
+torch = optional_import("torch")
+nn = optional_import("torch.nn") if torch is not None else None
+F = optional_import("torch.nn.functional") if torch is not None else None
 
 
 # Helper for sharpness loss
@@ -135,7 +124,7 @@ def dl_edof_unsupervised(
     denoise: bool = False,
     normalize: bool = False,
 ) -> torch.Tensor:
-    if not HAS_TORCH:
+    if torch is None:
         raise ImportError("PyTorch is required for this function")
     if not (image_stack.ndim == 3 and str(image_stack.device.type) == 'cuda'):
         raise ValueError("Input image_stack must be a 3D CUDA tensor [Z, H, W]. "

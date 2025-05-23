@@ -2,7 +2,6 @@
 Pipeline module for OpenHCS.
 
 This module provides the core pipeline components for OpenHCS:
-- StepResult: Immutable container for step execution results
 - PipelineCompiler: Compiles a pipeline into an executable form
 - PipelineExecutor: Executes a compiled pipeline
 
@@ -24,13 +23,11 @@ import logging
 
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.executor import PipelineExecutor
-from openhcs.core.steps.step_result import StepResult
 
 logger = logging.getLogger(__name__)
 
 # Re-export key components
 __all__ = [
-    'StepResult',
     'PipelineCompiler',
     'PipelineExecutor'
 ]

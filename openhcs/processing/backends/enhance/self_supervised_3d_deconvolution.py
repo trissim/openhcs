@@ -1,11 +1,19 @@
 import logging
 from typing import Optional, Tuple
 
-# --- PyTorch Imports ---
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.fft import irfftn, rfftn
+# Import torch decorator and optional_import utility
+from openhcs.core.utils import optional_import
+from openhcs.core.memory.decorators import torch as torch_func
+
+# --- PyTorch Imports as optional dependencies ---
+torch = optional_import("torch")
+nn = optional_import("torch.nn") if torch is not None else None
+F = optional_import("torch.nn.functional") if torch is not None else None
+if torch is not None:
+    from torch.fft import irfftn, rfftn
+else:
+    irfftn = None
+    rfftn = None
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +109,7 @@ class _Simple3DCNN_torch(nn.Module):
         return patches
 
 # --- Main Deconvolution Function ---
+@torch_func
 def self_supervised_3d_deconvolution(
     image_volume: torch.Tensor, # Expected (1, Z, H, W) or (Z,H,W)
     apply_deconvolution: bool = True,

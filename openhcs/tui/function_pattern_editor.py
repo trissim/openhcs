@@ -24,8 +24,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from prompt_toolkit.application import get_app
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.layout import HSplit, ScrollablePane, VSplit
-from prompt_toolkit.widgets import (Box, Button, Dialog, Dropdown, Label,
-                                    TextArea)
+from prompt_toolkit.widgets import (Box, Button, Dialog, Label,
+                                    TextArea, RadioList as Dropdown)
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES
 from openhcs.core.pipeline.funcstep_contract_validator import \
@@ -186,11 +186,16 @@ class FunctionPatternEditor:
         self._refresh_function_list()
 
         # Create container
-        self.container = HSplit([
+        self._container = HSplit([
             self.header,
             self.key_selector_container,
             self.function_list_container
         ])
+
+    @property
+    def container(self) -> Container:
+        """Return the main container for the FunctionPatternEditor."""
+        return self._container # Assuming _container is set in __init__
 
     def _extract_pattern(self, step) -> Union[List, Dict]:
         """Extract function pattern from a step."""

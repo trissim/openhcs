@@ -1,9 +1,11 @@
 from typing import Optional
 
-import torch
-import torch.nn.functional as F
-
+from openhcs.core.utils import optional_import
 from openhcs.core.memory.decorators import torch as torch_decorator
+
+# Import torch modules as optional dependencies
+torch = optional_import("torch")
+F = optional_import("torch.nn.functional") if torch is not None else None
 
 
 def laplacian(image: "torch.Tensor") -> "torch.Tensor":
@@ -47,33 +49,33 @@ def focus_stack_max_sharpness(
     image_stack: "torch.Tensor",
     method: str = "laplacian",
     patch_size: Optional[int] = None,
-    stride: Optional[int] = None, 
+    stride: Optional[int] = None,
     normalize_sharpness: bool = False
 ) -> "torch.Tensor":
     """
     GPU-accelerated focus stacking using PyTorch. Selects sharpest regions from a Z-stack.
-    
+
     Args:
         image_stack: Input tensor of shape [Z, H, W]
         method: Sharpness metric ('laplacian' or 'gradient')
         patch_size: Size of analysis patches. Default: max(H,W)//8
         stride: Stride between patches. Default: patch_size//2
         normalize_sharpness: Normalize sharpness scores per patch
-        
+
     Returns:
         Composite image of shape [1, H, W] with maximal sharpness regions
     """
     if not (str(image_stack.ndim) == '3' and str(image_stack.device.type) == 'cuda'):
         raise ValueError(f"Input must be 3D tensor [Z,H,W]. Got {image_stack.ndim}D")
-    
+
     Z, H, W = image_stack.shape
     device = image_stack.device
     dtype = image_stack.dtype
-    
+
     # Set adaptive defaults based on image dimensions
     patch_size = patch_size or max(H, W) // 8
     stride = stride or patch_size // 2
-    
+
     # Calculate sharpness maps
     if method == "laplacian":
         sharpness = torch.abs(laplacian(image_stack.unsqueeze(1))).squeeze(1)
@@ -82,35 +84,35 @@ def focus_stack_max_sharpness(
         sharpness = torch.sqrt(gx**2 + gy**2)
     else:
         raise ValueError(f"Invalid method: {method}. Use 'laplacian' or 'gradient'")
-    
+
     if normalize_sharpness:
         sharpness = (sharpness - sharpness.mean(dim=0)) / (sharpness.std(dim=0) + 1e-6)
-    
+
     # Generate sliding window patches
     patches = F.unfold(
-        sharpness.unsqueeze(1), 
+        sharpness.unsqueeze(1),
         kernel_size=patch_size,
         stride=stride
     ).view(Z, -1, H//stride, W//stride)
-    
+
     # Find sharpest z-index per patch
     _, max_indices = torch.max(patches, dim=0)
-    
+
     # Create composite image using max sharpness indices
     composite = torch.zeros_like(image_stack[0])
     weights = torch.zeros_like(composite)
-    
+
     for i in range(max_indices.shape[1]):
         for j in range(max_indices.shape[2]):
             z_idx = max_indices[0,i,j]
             h_start = i * stride
             w_start = j * stride
-            
+
             composite_slice = composite[h_start:h_start+patch_size, w_start:w_start+patch_size]
             weight_slice = weights[h_start:h_start+patch_size, w_start:w_start+patch_size]
-            
+
             composite_slice += image_stack[z_idx, h_start:h_start+patch_size, w_start:w_start+patch_size]
             weight_slice += torch.ones_like(weight_slice)
-    
+
     # Avoid division by zero in overlapping regions
     return (composite / torch.clamp_min(weights, 1)).unsqueeze(0)

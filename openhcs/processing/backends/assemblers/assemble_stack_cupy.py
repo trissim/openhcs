@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING
 
 from openhcs.constants.constants import SpecialKey
 from openhcs.core.memory.decorators import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import special_input
+from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.utils import optional_import
 
 # For type checking only
 if TYPE_CHECKING:
@@ -18,22 +19,21 @@ if TYPE_CHECKING:
     from cupyx.scipy.ndimage import gaussian_filter
     from cupyx.scipy.ndimage import shift as subpixel_shift
 
-# Import CuPy with error handling
-try:
-    import cupy as cp  # type: ignore
-    from cupyx.scipy.ndimage import gaussian_filter
-    from cupyx.scipy.ndimage import shift as subpixel_shift  # type: ignore
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
-    # Create dummy objects for type checking
-    class DummyCupy:
-        """Dummy class that raises ImportError when attributes are accessed."""
-        def __getattr__(self, name):
-            raise ImportError("CuPy is not installed. Please install it to use GPU-accelerated functions.")
-    cp = DummyCupy()
-    subpixel_shift = None
+# Import CuPy as an optional dependency
+cp = optional_import("cupy")
+
+# Import CuPy functions if available
+if cp is not None:
+    cupyx_scipy = optional_import("cupyx.scipy.ndimage")
+    if cupyx_scipy is not None:
+        gaussian_filter = cupyx_scipy.gaussian_filter
+        subpixel_shift = cupyx_scipy.shift
+    else:
+        gaussian_filter = None
+        subpixel_shift = None
+else:
     gaussian_filter = None
+    subpixel_shift = None
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +61,11 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.n
     return mask.astype(cp.float32)
 
 
-@special_input(SpecialKey.POSITION_ARRAY)
+@special_inputs("positions") # The input name is "positions"
 @cupy_func
 def assemble_stack_cupy(
     image_tiles: "cp.ndarray",  # type: ignore
-    positions_xy: "cp.ndarray",  # type: ignore
+    positions: "cp.ndarray",  # type: ignore # Renamed from positions_xy
     blend_radius: float = 10.0
 ) -> "cp.ndarray":  # type: ignore
     """
@@ -73,8 +73,8 @@ def assemble_stack_cupy(
     returned as a 3D array (1, H_canvas, W_canvas), using subpixel XY positions
     and Gaussian blending.
     """
-    if not HAS_CUPY:
-        raise ImportError("CuPy is not installed. Please install it to use GPU-accelerated functions.")
+    # The compiler will ensure this function is only called when CuPy is available
+    # No need to check for CuPy availability here
     # --- 1. Validate and standardize inputs ---
     if not isinstance(image_tiles, cp.ndarray) or image_tiles.ndim != 3:
         raise TypeError("image_tiles must be a 3D CuPy ndarray of shape (N, H, W).")
@@ -82,10 +82,10 @@ def assemble_stack_cupy(
         logger.warning("image_tiles array is empty (0 tiles). Returning an empty array.")
         return cp.array([[[]]], dtype=cp.uint16) # Shape (1,0,0) to indicate empty 3D
 
-    if not isinstance(positions_xy, cp.ndarray) or positions_xy.ndim != 2 or positions_xy.shape[1] != 2:
-        raise TypeError("positions_xy must be a CuPy ndarray of shape [N, 2].")
-    if image_tiles.shape[0] != positions_xy.shape[0]:
-        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions_xy ({positions_xy.shape[0]}).")
+    if not isinstance(positions, cp.ndarray) or positions.ndim != 2 or positions.shape[1] != 2:
+        raise TypeError("positions must be a CuPy ndarray of shape [N, 2].") # Updated error message
+    if image_tiles.shape[0] != positions.shape[0]:
+        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).") # Updated error message
 
     num_tiles, tile_h, tile_w = image_tiles.shape
     first_tile_shape = (tile_h, tile_w) # Used for blend mask, assumes all tiles same H, W
@@ -99,12 +99,12 @@ def assemble_stack_cupy(
     # positions_xy[:, 0] is X (width dimension), positions_xy[:, 1] is Y (height dimension)
 
     # Min/max X coordinates of tile top-left corners
-    min_x_pos = cp.min(positions_xy[:, 0])
-    max_x_pos = cp.max(positions_xy[:, 0])
+    min_x_pos = cp.min(positions[:, 0])
+    max_x_pos = cp.max(positions[:, 0])
 
     # Min/max Y coordinates of tile top-left corners
-    min_y_pos = cp.min(positions_xy[:, 1])
-    max_y_pos = cp.max(positions_xy[:, 1])
+    min_y_pos = cp.min(positions[:, 1])
+    max_y_pos = cp.max(positions[:, 1])
 
     # Canvas dimensions need to encompass all tiles
     # Canvas origin will be (min_x_pos_rounded_down, min_y_pos_rounded_down)
@@ -135,7 +135,7 @@ def assemble_stack_cupy(
         # Shape validation for individual tiles is implicitly handled by the 3D array input check,
         # assuming all slices (tiles) in the 3D array have consistent H, W.
 
-        pos_x, pos_y = positions_xy[i] # Original subpixel top-left of this tile
+        pos_x, pos_y = positions[i] # Original subpixel top-left of this tile
 
         # Calculate integer and fractional parts of the shift
         # The shift for subpixel_shift is (shift_y, shift_x)

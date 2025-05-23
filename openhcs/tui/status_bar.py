@@ -23,11 +23,12 @@ All status updates are protected by a lock.
 """
 import asyncio
 import logging # For TUIStatusBarLogHandler
+import sys # For stderr in logging fallback
 import time # For log timestamps
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Optional, Dict, Any, Deque, ClassVar, Union
+from typing import List, Optional, Dict, Any, Deque, ClassVar, Tuple, Union
 
 # Renamed to avoid conflict with standard library 'Lock' if used directly
 from asyncio import Lock as AsyncioLock 
@@ -267,13 +268,6 @@ class StatusBar(Container):
             style="class:status-bar" # Base style
         )
 
-        original_mouse_handler = label.mouse_handler
-        def status_bar_mouse_handler(mouse_event):
-            if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                get_app().create_background_task(self._toggle_drawer())
-                return True # Event handled
-            return original_mouse_handler(mouse_event)
-        label.mouse_handler = status_bar_mouse_handler
         return label
 
     def _create_log_drawer_content(self) -> Label:
@@ -404,6 +398,56 @@ class StatusBar(Container):
 
     def __pt_container__(self):
         return self.container
+
+    # Implement abstract methods by delegating to the internal container
+    def get_children(self):
+        return self.container.get_children()
+
+    def preferred_width(self, max_available_width):
+        return self.container.preferred_width(max_available_width)
+
+    def preferred_height(self, max_available_height, width):
+        return self.container.preferred_height(max_available_height, width)
+
+    def reset(self):
+        self.container.reset()
+
+    def write_to_screen(self, screen, mouse_handlers, write_position,
+                        parent_style, erase_bg, z_index):
+        self.container.write_to_screen(screen, mouse_handlers, write_position,
+                                       parent_style, erase_bg, z_index)
+
+    def mouse_handler(self, mouse_event):
+        """Handle mouse events for the status bar."""
+        if mouse_event.event_type == MouseEventType.MOUSE_UP:
+            get_app().create_background_task(self._toggle_drawer())
+            return True # Event handled
+        return False # Event not handled
+
+
+    async def shutdown(self):
+        """
+        Explicit cleanup method for deterministic resource release.
+        Unregisters observers and removes the logging handler.
+        """
+        logger.info("StatusBar: Shutting down...")
+        # Unregister observers
+        self.tui_state.remove_observer('operation_status_changed', self._on_operation_status_changed)
+        self.tui_state.remove_observer('error', self._on_error_event)
+        self.tui_state.remove_observer('tui_log_level_changed', self._on_tui_log_level_changed)
+        self.tui_state.remove_observer('ui_request_toggle_log_drawer',
+                                        lambda data=None: get_app().create_background_task(self._toggle_drawer()))
+        logger.info("StatusBar: Observers unregistered.")
+
+        # Remove the logging handler
+        root_logger = logging.getLogger("openhcs")
+        for handler in root_logger.handlers:
+            if isinstance(handler, TUIStatusBarLogHandler) and handler.status_bar == self:
+                root_logger.removeHandler(handler)
+                logger.info("StatusBar: TUIStatusBarLogHandler removed.")
+                break
+        logger.info("StatusBar: Shutdown complete.")
+
 
 class TUIStatusBarLogHandler(logging.Handler):
     """A logging handler that directs log records to the TUI StatusBar."""

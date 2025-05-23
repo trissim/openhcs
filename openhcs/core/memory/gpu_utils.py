@@ -12,6 +12,8 @@ Doctrinal Clauses:
 import logging
 from typing import Optional
 
+from openhcs.core.utils import optional_import
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,9 +24,12 @@ def check_cupy_gpu_available() -> Optional[int]:
     Returns:
         GPU device ID if available, None otherwise
     """
-    try:
-        import cupy as cp
+    cp = optional_import("cupy")
+    if cp is None:
+        logger.debug("Cupy not installed")
+        return None
 
+    try:
         # Check if cupy is available and can access a GPU
         if cp.cuda.is_available():
             # Get the current device ID
@@ -34,9 +39,6 @@ def check_cupy_gpu_available() -> Optional[int]:
         else:
             logger.debug("Cupy CUDA not available")
             return None
-    except ImportError:
-        logger.debug("Cupy not installed")
-        return None
     except Exception as e:
         logger.debug("Error checking cupy GPU availability: %s", e)
         return None
@@ -49,9 +51,12 @@ def check_torch_gpu_available() -> Optional[int]:
     Returns:
         GPU device ID if available, None otherwise
     """
-    try:
-        import torch
+    torch = optional_import("torch")
+    if torch is None:
+        logger.debug("Torch not installed")
+        return None
 
+    try:
         # Check if torch is available and can access a GPU
         if torch.cuda.is_available():
             # Get the current device ID
@@ -61,9 +66,6 @@ def check_torch_gpu_available() -> Optional[int]:
         else:
             logger.debug("Torch CUDA not available")
             return None
-    except ImportError:
-        logger.debug("Torch not installed")
-        return None
     except Exception as e:
         logger.debug("Error checking torch GPU availability: %s", e)
         return None
@@ -76,9 +78,12 @@ def check_tf_gpu_available() -> Optional[int]:
     Returns:
         GPU device ID if available, None otherwise
     """
-    try:
-        import tensorflow as tf
+    tf = optional_import("tensorflow")
+    if tf is None:
+        logger.debug("TensorFlow not installed")
+        return None
 
+    try:
         # Check if tensorflow is available and can access a GPU
         gpus = tf.config.list_physical_devices('GPU')
         if gpus:
@@ -91,9 +96,6 @@ def check_tf_gpu_available() -> Optional[int]:
         else:
             logger.debug("TensorFlow GPU not available")
             return None
-    except ImportError:
-        logger.debug("TensorFlow not installed")
-        return None
     except Exception as e:
         logger.debug("Error checking TensorFlow GPU availability: %s", e)
         return None
@@ -106,9 +108,12 @@ def check_jax_gpu_available() -> Optional[int]:
     Returns:
         GPU device ID if available, None otherwise
     """
-    try:
-        import jax
+    jax = optional_import("jax")
+    if jax is None:
+        logger.debug("JAX not installed")
+        return None
 
+    try:
         # Check if JAX is available and can access a GPU
         devices = jax.devices()
         gpu_devices = [d for d in devices if d.platform == 'gpu']
@@ -127,9 +132,6 @@ def check_jax_gpu_available() -> Optional[int]:
         else:
             logger.debug("JAX GPU not available")
             return None
-    except ImportError:
-        logger.debug("JAX not installed")
-        return None
     except Exception as e:
         logger.debug("Error checking JAX GPU availability: %s", e)
         return None

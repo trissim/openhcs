@@ -98,6 +98,28 @@ class ErrorBanner(Container):
     def __pt_container__(self):
         """Return the container to render."""
         return self.filtered_container
+
+    # Implement abstract methods by delegating to the internal container
+    def get_children(self):
+        return self.container.get_children()
+
+    def preferred_width(self, max_available_width):
+        return self.container.preferred_width(max_available_width)
+
+    def preferred_height(self, max_available_height, width):
+        return self.container.preferred_height(max_available_height, width)
+
+    def reset(self):
+        self.container.reset()
+
+    def write_to_screen(self, screen, mouse_handlers, write_position,
+                        parent_style, erase_bg, z_index):
+        self.container.write_to_screen(screen, mouse_handlers, write_position,
+                                       parent_style, erase_bg, z_index)
+
+    def mouse_handler(self, mouse_event):
+        """Handle mouse events for the error banner (no interaction)."""
+        return False # Event not handled
         
     @staticmethod
     def find_in_container(container):
@@ -146,7 +168,7 @@ class PlateDialogManager:
         on_add_dialog_result: DialogResultCallback,
         on_remove_dialog_result: DialogResultCallback,
         on_error: ErrorCallback,
-        backend_registry=None
+        storage_registry: Any
     ):
         """
         Initialize the dialog manager.
@@ -160,7 +182,7 @@ class PlateDialogManager:
         self.on_add_dialog_result = on_add_dialog_result
         self.on_remove_dialog_result = on_remove_dialog_result
         self.on_error = on_error
-        self.backend_registry = backend_registry
+        self.storage_registry = storage_registry
 
     async def show_add_plate_dialog(self) -> None:
         """Show dialog to add a plate."""
@@ -200,9 +222,9 @@ class PlateDialogManager:
         # 🔒 Clause 316: Must use current_value, not selected_option
         # Initialize with empty string to force explicit selection
         backend_options = []
-        if self.backend_registry:
+        if self.storage_registry:
             # 🔒 Clause 316: PTK expects (label, value) order
-            backend_options = [(backend, backend) for backend in self.backend_registry.get_available_backends()]
+            backend_options = [(backend, backend) for backend in self.storage_registry.keys()]
 
         # Fallback to standard backends if registry not available
         if not backend_options:
@@ -252,14 +274,14 @@ class PlateDialogManager:
                 # Create buttons without handlers initially
                 # OK button will be enabled only after user explicitly selects backend
                 # 🔒 Clause 231: Deferred-Default Enforcement
-                ok_button = Button(
-                    "OK",
-                    handler=None,
-                    # Disable until user explicitly selects backend AND backend has a value
-                    filter=Condition(lambda: user_selected['value'] and bool(backend_selector.current_value))
-                )
-                cancel_button = Button("Cancel", handler=None)
-            ],
+              Button(
+                  "OK",
+                  handler=None,
+                  # Disable until user explicitly selects backend AND backend has a value
+                  filter=Condition(lambda: user_selected['value'] and bool(backend_selector.current_value))
+              ),
+               Button("Cancel", handler=None)
+           ],
             width=80,
             modal=True
         )
@@ -569,4 +591,3 @@ class PlateDialogManager:
         # Notify parent component of result
         if result:
             await self.on_remove_dialog_result(plate)
-```

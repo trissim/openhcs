@@ -184,10 +184,18 @@ class MenuStructureSchema:
         if not structure:
             raise ValueError("Menu structure cannot be empty")
             
-        for menu_name, items in structure.items():
+        for menu_name, menu_data in structure.items():
+            if not isinstance(menu_data, dict):
+                raise ValueError(f"Menu '{menu_name}' data must be a dictionary")
+            if "mnemonic" not in menu_data:
+                raise ValueError(f"Menu '{menu_name}' must have a 'mnemonic' field")
+            if "items" not in menu_data:
+                raise ValueError(f"Menu '{menu_name}' must have an 'items' field")
+            
+            items = menu_data["items"]
             if not isinstance(items, list):
-                raise ValueError(f"Menu '{menu_name}' items must be a list")
-                
+                raise ValueError(f"Menu '{menu_name}' 'items' field must be a list")
+            
             for item in items:
                 MenuItemSchema.validate_menu_item(item)
 
@@ -549,7 +557,10 @@ class MenuBar(Container):
                 menu_item = MenuItem.from_dict(item, self.handler_map)
                 menu_items.append(menu_item)
             
-            menu_structure[menu_name] = menu_items
+            menu_structure[menu_name] = {
+                "mnemonic": menu_data["mnemonic"],
+                "items": menu_items
+            }
         
         return menu_structure
 
@@ -575,11 +586,10 @@ class MenuBar(Container):
             label = Label(
                 text=label_text,
                 dont_extend_height=True,
-                style=lambda: f"class:menu-bar{'.' + self.active_menu if self.active_menu == menu_name else ''}"
+                style="class:menu-bar"
             )
             
             # Add mouse handler
-            original_mouse_handler = label.mouse_handler
             
             def create_mouse_handler(menu):
                 def menu_mouse_handler(mouse_event):
@@ -589,7 +599,6 @@ class MenuBar(Container):
                     return original_mouse_handler(mouse_event)
                 return menu_mouse_handler
             
-            label.mouse_handler = create_mouse_handler(menu_name)
             
             # Add to list
             labels.append(Box(label, padding=1))
@@ -618,7 +627,7 @@ class MenuBar(Container):
     def _create_key_bindings(self) -> KeyBindings:
         """
         Create key bindings for menu navigation.
-
+     
         Returns:
             KeyBindings object with menu navigation bindings
         """
@@ -626,25 +635,23 @@ class MenuBar(Container):
         
         # Add menu activation key bindings from explicit mnemonics
         for menu_name, items in self.menu_structure.items():
-            # Get mnemonic from menu data
-            menu_data = MenuItem.load_menu_structure()
-            if menu_name not in menu_data:
-                raise ValueError(f"Menu '{menu_name}' not found in menu data")
-                
-            # Get mnemonic from menu data
-            mnemonic = menu_data[menu_name].get('mnemonic')
+            mnemonic = items.get('mnemonic')
             if not mnemonic:
                 raise ValueError(f"Menu '{menu_name}' has no mnemonic defined")
-                
-            # Create a closure to capture menu_name
+            
+            # Closure to capture the current menu_name
             def create_handler(menu):
                 def handler(event: KeyPressEvent):
                     get_app().create_background_task(self._activate_menu(menu))
                 return handler
             
-            # Add the key binding with the created handler
-            kb.add(f'a-{mnemonic.lower()}')(create_handler(menu_name))
-        
+            # Use explicit ESC prefix for Alt (Meta) keys:
+            key = mnemonic.lower()
+            logger.debug(f"Adding key binding: (escape, {key})")
+            kb.add('escape', key)(create_handler(menu_name))
+     
+        return kb     
+
         # Escape to close menu
         @kb.add('escape')
         def _(event: KeyPressEvent):
@@ -861,7 +868,6 @@ class MenuBar(Container):
                 
                 # Add mouse handler for clickable items
                 if item.type != MenuItemType.SUBMENU and item.is_enabled():
-                    original_mouse_handler = label.mouse_handler
                     
                     def create_mouse_handler(menu_item):
                         def item_mouse_handler(mouse_event):
@@ -872,7 +878,6 @@ class MenuBar(Container):
                             return original_mouse_handler(mouse_event)
                         return item_mouse_handler
                     
-                    label.mouse_handler = create_mouse_handler(item)
                 
                 # Add to list
                 labels.append(Box(label, padding=1))
@@ -1190,6 +1195,55 @@ class MenuBar(Container):
         # Force UI refresh to update menu item enabling
         get_app().invalidate()
 
+    async def shutdown(self):
+        """
+        Explicit cleanup method for deterministic resource release.
+        Unregisters observers from TUIState.
+        """
+        logger.info("MenuBar: Shutting down...")
+        # Unregister observers
+        self.state.remove_observer('operation_status_changed', self._on_operation_status_changed)
+        self.state.remove_observer('plate_selected', self._on_plate_selected)
+        self.state.remove_observer('is_compiled_changed', self._on_is_compiled_changed)
+        logger.info("MenuBar: Observers unregistered.")
+        logger.info("MenuBar: Shutdown complete.")
+
     def __pt_container__(self) -> Container:
         """Return the container to render."""
         return self.container
+
+    # Implement abstract methods by delegating to the internal container
+    def get_children(self):
+        return self.container.get_children()
+
+    def preferred_width(self, max_available_width):
+        return self.container.preferred_width(max_available_width)
+
+    def preferred_height(self, max_available_height, width):
+        return self.container.preferred_height(max_available_height, width)
+
+    def reset(self):
+        self.container.reset()
+
+    def write_to_screen(self, screen, mouse_handlers, write_position,
+                        parent_style, erase_bg, z_index):
+        self.container.write_to_screen(screen, mouse_handlers, write_position,
+                                       parent_style, erase_bg, z_index)
+
+    def mouse_handler(self, mouse_event):
+        """Handle mouse events for the menu bar."""
+        if mouse_event.event_type == MouseEventType.MOUSE_UP:
+            # Check if a top-level menu was clicked
+            for i, label in enumerate(self.menu_labels):
+                if mouse_event.is_mouse_over(label):
+                    menu_name = list(self.menu_structure.keys())[i]
+                    get_app().create_background_task(self._activate_menu(menu_name))
+                    return True
+            
+            # Check if a submenu item was clicked
+            if self.active_submenu and mouse_event.is_mouse_over(self.active_submenu_container):
+                # Delegate to the submenu's mouse handler if it has one
+                if hasattr(self.active_submenu_container, 'mouse_handler'):
+                    return self.active_submenu_container.mouse_handler(mouse_event)
+                return True # Event handled, but no specific item handler
+        return False # Event not handled

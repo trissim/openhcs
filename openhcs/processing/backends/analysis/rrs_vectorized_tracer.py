@@ -1,19 +1,12 @@
 from typing import Any, Dict, List, Tuple
 
-import torch
+from openhcs.core.utils import optional_import
+from openhcs.core.memory.decorators import torch as torch_func
 
-# Import decorator directly from core.memory to avoid circular imports
-try:
-    from openhcs.core.memory import torch as torch_backend_func
-except ImportError:
-    # This is a simple placeholder. In a real system, this might log or raise an error
-    # if the decorator is essential for the system's function registration.
-    print("Warning: openhcs.core.memory.torch not found. Using placeholder decorator.")
-    def torch_decorator(func_to_decorate: Any) -> Any:
-        """Placeholder decorator."""
-        return func_to_decorate
+# Import torch as an optional dependency
+torch = optional_import("torch")
 
-@torch_backend_func
+@torch_func
 def trace_neurites_rrs_vectorized(
     image: torch.Tensor,
     seed_density: float = 0.01,

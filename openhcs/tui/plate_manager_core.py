@@ -37,12 +37,13 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Container, HSplit, VSplit
 from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
-from tui.constants import STATUS_ICONS
-from tui.dialogs.plate_dialog_manager import PlateDialogManager
-from tui.services.plate_validation_service import PlateValidationService
+from openhcs.tui.status_bar import STATUS_ICONS
+from openhcs.tui.dialogs.plate_dialog_manager import PlateDialogManager
+from openhcs.tui.services.plate_validation import PlateValidationService
 
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.orchestrator.orchestrator import BackendRegistry
+from openhcs.io.base import storage_registry
+from openhcs.io.filemanager import FileManager
 
 logger = logging.getLogger(__name__) # ADDED
 
@@ -66,26 +67,21 @@ class PlateManagerPane:
 
     This class uses composition with PlateDialogManager for dialog handling.
     """
-    def __init__(self, state, context: ProcessingContext, filemanager, backend_registry=None):
+    def __init__(self, state, context: ProcessingContext, storage_registry: Any):
         """
         Initialize the Plate Manager pane.
 
         Args:
             state: The TUI state manager
             context: The OpenHCS ProcessingContext
-            filemanager: Optional FileManager instance (defaults to context.filemanager)
-            backend_registry: Optional BackendRegistry instance for memory sharing
+            storage_registry: The shared storage registry instance.
         """
         self.state = state
         self.context = context
+        self.registry = storage_registry # Store the shared registry
 
-        # Strict filemanager validation (Clause 231)
-        if filemanager is None:
-            raise RuntimeError("PlateManagerCore requires non-None filemanager at initialization")
-        self.filemanager = filemanager
-
-        # Store backend registry for memory sharing
-        self.backend_registry = backend_registry
+        # PlateManagerPane creates its own FileManager using the shared registry
+        self.filemanager = FileManager(self.registry)
 
         # Initialize state with thread safety
         self.plates: List[Dict[str, Any]] = []
@@ -104,7 +100,7 @@ class PlateManagerPane:
             on_add_dialog_result=self._handle_add_dialog_result,
             on_remove_dialog_result=self._handle_remove_dialog_result,
             on_error=self._handle_error,
-            backend_registry=self.backend_registry
+            storage_registry=self.registry
         )
 
         # Create validation service with callbacks
@@ -112,7 +108,7 @@ class PlateManagerPane:
             context=self.context,
             on_validation_result=self._handle_validation_result,
             on_error=self._handle_error,
-            filemanager=self.filemanager,
+            storage_registry=self.registry,
             io_executor=self.io_executor
         )
 
@@ -172,6 +168,11 @@ class PlateManagerPane:
                 Box(self.refresh_button, padding=1)
             ])
         ])
+
+    @property
+    def container(self) -> Container:
+        """Return the main container for the PlateManagerPane."""
+        return self._container # Assuming _container is set in __init__
 
         # Register for events
         self.state.add_observer('refresh_plates', self._refresh_plates)
@@ -580,10 +581,12 @@ class PlateManagerPane:
 
         # Then shut down our own executor
         if hasattr(self, 'io_executor') and self.io_executor is not None:
+            self.io_executor.shutdown(wait=True)
+            self.io_executor = None
+        if hasattr(self, 'io_executor') and self.io_executor is not None:
             # Use asyncio to ensure thread pool shutdown is non-blocking
             await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: self.io_executor.shutdown(wait=True)
             )
             self.io_executor = None
-```

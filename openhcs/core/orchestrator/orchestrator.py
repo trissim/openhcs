@@ -51,7 +51,7 @@ class PipelineOrchestrator:
         workspace_path: Optional[Union[str, Path]] = None,
         *,
         global_config: Optional[GlobalPipelineConfig] = None,
-        filemanager: Optional[FileManager] = None, # Added filemanager argument
+        storage_registry: Optional[Any] = None, # Optional StorageRegistry instance
     ):
         self._lock = threading.RLock()
         
@@ -72,16 +72,15 @@ class PipelineOrchestrator:
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError("Either plate_path or workspace_path must be provided")
 
-        if filemanager:
-            self.filemanager = filemanager
-            # Assuming the provided filemanager uses a shared registry.
-            # If we needed to ensure it, we'd also pass the registry or check filemanager.registry.
-            self.registry = self.filemanager.registry # Use registry from provided filemanager
-            logger.info("PipelineOrchestrator using provided FileManager instance.")
+        if storage_registry:
+            self.registry = storage_registry
+            logger.info("PipelineOrchestrator using provided StorageRegistry instance.")
         else:
-            self.registry = storage_registry()
-            self.filemanager = FileManager(self.registry)
-            logger.info("PipelineOrchestrator created its own FileManager instance.")
+            self.registry = storage_registry() # Get the global singleton registry
+            logger.info("PipelineOrchestrator created its own StorageRegistry instance (global singleton).")
+        
+        # Orchestrator always creates its own FileManager, using the determined registry
+        self.filemanager = FileManager(self.registry)
         self.input_dir: Optional[Path] = None
         self.microscope_handler: Optional[MicroscopeHandler] = None
         self.default_pipeline_definition: Optional[List[AbstractStep]] = None

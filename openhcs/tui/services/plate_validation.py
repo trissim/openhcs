@@ -4,6 +4,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Protocol
+from openhcs.io.filemanager import FileManager
 
 from openhcs.core.context.processing_context import ProcessingContext
 
@@ -31,7 +32,7 @@ class PlateValidationService:
         context: ProcessingContext,
         on_validation_result: ValidationResultCallback,
         on_error: ErrorCallback,
-        filemanager=None,
+        storage_registry: Any, # Type hint for StorageRegistry
         io_executor: Optional[ThreadPoolExecutor] = None
     ):
         """
@@ -41,17 +42,14 @@ class PlateValidationService:
             context: The OpenHCS ProcessingContext
             on_validation_result: Callback for validation results
             on_error: Callback for error handling
-            filemanager: FileManager instance (defaults to context.filemanager)
             io_executor: ThreadPoolExecutor for I/O operations
         """
         self.context = context
         self.on_validation_result = on_validation_result
         self.on_error = on_error
-
-        # Get filemanager from context if not provided
-        self.filemanager = filemanager
-        if self.filemanager is None and hasattr(context, 'filemanager'):
-            self.filemanager = context.filemanager
+        
+        # PlateValidationService creates its own FileManager using the provided registry
+        self.filemanager = FileManager(storage_registry)
 
         # Create dedicated executor for I/O operations if not provided
         if io_executor is None:
@@ -63,6 +61,15 @@ class PlateValidationService:
         else:
             self.io_executor = io_executor
             self._owns_executor = False
+
+    async def close(self):
+        """
+        Explicit cleanup method for deterministic resource release.
+        Shuts down the internal ThreadPoolExecutor if owned by this instance.
+        """
+        if hasattr(self, '_owns_executor') and self._owns_executor and self.io_executor is not None:
+            self.io_executor.shutdown(wait=True)
+            self.io_executor = None
 
     async def validate_plate(self, path: str, backend: str, /) -> Dict[str, Any]:
         """
@@ -249,4 +256,3 @@ class PlateValidationService:
             import warnings
             warnings.warn("PlateValidationService.__del__ called without explicit close(). This is non-deterministic and may leak resources.")
             self.io_executor.shutdown(wait=False)
-```

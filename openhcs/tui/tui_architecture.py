@@ -40,6 +40,8 @@ from openhcs.tui.step_viewer import StepViewerPane as ActualStepViewerPane
 from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor
 # Import the actual StatusBar
 from openhcs.tui.status_bar import StatusBar as ActualStatusBar
+# Import main strage registry
+from openhcs.io.base import storage_registry
 
 logger = logging.getLogger(__name__) # ADDED module-level logger
 
@@ -140,7 +142,7 @@ class TUIState:
             self.observers[event_type] = []
         self.observers[event_type].append(callback)
 
-    def notify(self, event_type: str, data: Any = None) -> None:
+    async def notify(self, event_type: str, data: Any = None) -> None:
         """
         Notify all observers of an event.
 
@@ -150,9 +152,12 @@ class TUIState:
         """
         if event_type in self.observers:
             for callback in self.observers[event_type]:
-                callback(data)
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(data)
+                else:
+                    callback(data)
 
-    def set_selected_plate(self, plate: Dict[str, Any]) -> None:
+    async def set_selected_plate(self, plate: Dict[str, Any]) -> None:
         """
         Set the selected plate and notify observers.
 
@@ -160,13 +165,13 @@ class TUIState:
             plate: The plate to select
         """
         self.selected_plate = plate
-        self.notify('plate_selected', plate)
+        await self.notify('plate_selected', plate)
 
         # Reset compilation state when plate changes
         self.is_compiled = False
         self.error_message = None
 
-    def set_selected_step(self, step: Dict[str, Any]) -> None:
+    async def set_selected_step(self, step: Dict[str, Any]) -> None:
         """
         Set the selected step and notify observers.
 
@@ -174,7 +179,7 @@ class TUIState:
             step: The step to select
         """
         self.selected_step = step
-        self.notify('step_selected', step)
+        await self.notify('step_selected', step)
 
         # Reset compilation state when step changes
         self.is_compiled = False
@@ -190,21 +195,20 @@ class OpenHCSTUI:
     def __init__(self,
                  initial_context: ProcessingContext,
                  state: TUIState,
-                 filemanager: FileManager, # Added FileManager
-                 global_config: GlobalPipelineConfig): # Added GlobalPipelineConfig
+                 global_config: GlobalPipelineConfig):
         """
         Initialize the OpenHCS TUI application.
 
         Args:
             initial_context: A pre-configured ProcessingContext (contains global_config & filemanager).
             state: The shared TUIState instance.
-            filemanager: The shared FileManager instance.
             global_config: The shared GlobalPipelineConfig instance.
         """
         # Initialize state and context
         self.state = state # Use passed-in state
         self.context = initial_context # Use passed-in context (this is the TUI's initial/default context)
-        self.filemanager = filemanager # Store shared filemanager
+        # OpenHCSTUI is the main initialization class for the TUI, so it creates the storage registry.
+        self.storage_registry = storage_registry()
         self.global_config = global_config # Store shared global_config
         
         self.step_viewer: Optional[ActualStepViewerPane] = None # For async initialization
@@ -295,8 +299,7 @@ class OpenHCSTUI:
         self.plate_manager = ActualPlateManagerPane(
             state=self.state,
             context=self.context,
-            filemanager=self.filemanager,
-            backend_registry=None # backend_registry is optional and not managed by OpenHCSTUI directly
+            storage_registry=self.storage_registry, # Pass the shared registry
         )
 
         # TODO(plan_03_step_viewer.md)
@@ -360,10 +363,8 @@ class OpenHCSTUI:
             # If FPE was active, clear its instance so it's recreated fresh next time
             if self.function_pattern_editor is not None:
                 logger.debug("OpenHCSTUI: Clearing FunctionPatternEditor instance as 'editing_pattern' is false.")
-                # Note: FunctionPatternEditor (FPE) manages its own resources (e.g., temp files for Vim editing)
-                # or relies on prompt_toolkit's lifecycle for UI elements.
-                # Explicit close/cleanup method in FPE is not required here;
-                # dereferencing is sufficient for garbage collection.
+                # TODO: If FPE has a close/cleanup method, call it here.
+                # For now, just dereferencing.
                 self.function_pattern_editor = None
             
             if self.plate_manager and hasattr(self.plate_manager, 'container'):
@@ -453,61 +454,77 @@ class OpenHCSTUI:
                 f"Expected GlobalPipelineConfig, got {type(new_core_config)}."
             )
 
-   async def shutdown_components(self):
-       """
-       Gracefully shut down all managed TUI components that have a shutdown method.
-       """
-       logger.info("OpenHCSTUI: Initiating shutdown sequence for components...")
-       
-       component_attributes = [
-           'plate_manager',
-           'step_viewer',
-           'action_menu',
-           'status_bar',
-           'menu_bar',
-           'function_pattern_editor' # This might be None if never activated
-       ]
+    async def shutdown_components(self):
+        """
+        Gracefully shut down all managed TUI components that have a shutdown method.
+        """
+        logger.info("OpenHCSTUI: Initiating shutdown sequence for components...")
+        
+        component_attributes = [
+            'plate_manager',
+            'step_viewer',
+            'action_menu',
+            'status_bar',
+            'menu_bar',
+            'function_pattern_editor' # This might be None if never activated
+        ]
+ 
+        for attr_name in component_attributes:
+            component = getattr(self, attr_name, None)
+            if component and hasattr(component, 'shutdown') and callable(component.shutdown):
+                try:
+                    logger.info(f"Attempting to shut down {attr_name} ({component.__class__.__name__})...")
+                    # Check if shutdown is an async method
+                    if asyncio.iscoroutinefunction(component.shutdown):
+                        await component.shutdown()
+                    else:
+                        component.shutdown() # Call synchronously if not async
+                    logger.info(f"Successfully shut down {attr_name}.")
+                except Exception as e:
+                    logger.error(f"Error during shutdown of {attr_name} ({component.__class__.__name__}): {e}", exc_info=True)
+            elif component:
+                logger.debug(f"Component {attr_name} ({component.__class__.__name__}) does not have a callable 'shutdown' method.")
+            # else:
+                # logger.debug(f"Component attribute {attr_name} not found or is None.")
+ 
+        logger.info("OpenHCSTUI: Component shutdown sequence complete.")
+ 
+    async def _async_initialize_step_viewer(self):
+        """
+        Asynchronously initializes the StepViewerPane.
+        This is called as a background task after OpenHCSTUI is instantiated.
+        """
+        if self.step_viewer is not None:
+            logger.info("OpenHCSTUI: StepViewerPane already initialized or initialization in progress.")
+            return
+ 
+        logger.info("OpenHCSTUI: Asynchronously initializing StepViewerPane...")
+        try:
+            # Use the async factory 'create' from step_viewer.py
+            self.step_viewer = await ActualStepViewerPane.create(self.state, self.context)
+            logger.info("OpenHCSTUI: StepViewerPane initialized and setup complete.")
+        except Exception as e:
+            logger.error(f"OpenHCSTUI: Error initializing StepViewerPane: {e}", exc_info=True)
+            # self.step_viewer remains None, _get_step_viewer will show "Initializing..." or an error.
 
-       for attr_name in component_attributes:
-           component = getattr(self, attr_name, None)
-           if component and hasattr(component, 'shutdown') and callable(component.shutdown):
-               try:
-                   logger.info(f"Attempting to shut down {attr_name} ({component.__class__.__name__})...")
-                   # Check if shutdown is an async method
-                   if asyncio.iscoroutinefunction(component.shutdown):
-                       await component.shutdown()
-                   else:
-                       component.shutdown() # Call synchronously if not async
-                   logger.info(f"Successfully shut down {attr_name}.")
-               except Exception as e:
-                   logger.error(f"Error during shutdown of {attr_name} ({component.__class__.__name__}): {e}", exc_info=True)
-           elif component:
-               logger.debug(f"Component {attr_name} ({component.__class__.__name__}) does not have a callable 'shutdown' method.")
-           # else:
-               # logger.debug(f"Component attribute {attr_name} not found or is None.")
+    # Implement abstract methods by delegating to the root_container
+    def get_children(self):
+        return self.root_container.get_children()
 
-       logger.info("OpenHCSTUI: Component shutdown sequence complete.")
+    def preferred_width(self, max_available_width):
+        return self.root_container.preferred_width(max_available_width)
 
-   async def _async_initialize_step_viewer(self):
-       """
-       Asynchronously initializes the StepViewerPane.
-       This is called as a background task after OpenHCSTUI is instantiated.
-       """
-       if self.step_viewer is not None:
-           logger.info("OpenHCSTUI: StepViewerPane already initialized or initialization in progress.")
-           return
+    def preferred_height(self, max_available_height, width):
+        return self.root_container.preferred_height(max_available_height, width)
 
-       logger.info("OpenHCSTUI: Asynchronously initializing StepViewerPane...")
-       try:
-           # Use the async factory 'create' from step_viewer.py
-           self.step_viewer = await ActualStepViewerPane.create(self.state, self.context)
-           logger.info("OpenHCSTUI: StepViewerPane initialized and setup complete.")
-           
-           app = get_app()
-           if app: # Ensure app is available
-               app.invalidate() # Request a redraw as layout will change due to new container
-           else:
-               logger.warning("OpenHCSTUI: Could not get_app() to invalidate after StepViewerPane init.")
-       except Exception as e:
-           logger.error(f"OpenHCSTUI: Error initializing StepViewerPane: {e}", exc_info=True)
-           # self.step_viewer remains None, _get_step_viewer will show "Initializing..." or an error.
+    def reset(self):
+        self.root_container.reset()
+
+    def write_to_screen(self, screen, mouse_handlers, write_position,
+                        parent_style, erase_bg, z_index):
+        self.root_container.write_to_screen(screen, mouse_handlers, write_position,
+                                           parent_style, erase_bg, z_index)
+
+    def mouse_handler(self, mouse_event):
+        """Handle mouse events by delegating to the root container."""
+        return self.root_container.mouse_handler(mouse_event)

@@ -61,461 +61,441 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-class NumPyImageProcessor(ImageProcessorInterface):
+def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
     """
-    NumPy implementation of the ImageProcessorInterface.
+    Validate that the input is a 3D NumPy array.
 
-    This class provides image processing operations using NumPy and scikit-image.
-    All methods are stateless and operate on NumPy arrays.
+    Args:
+        array: Array to validate
+        name: Name of the array for error messages
+
+    Raises:
+        TypeError: If the array is not a NumPy array
+        ValueError: If the array is not 3D
     """
+    if not isinstance(array, np.ndarray):
+        raise TypeError(f"{name} must be a NumPy array, got {type(array)}")
 
-    @classmethod
-    def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
-        """
-        Validate that the input is a 3D NumPy array.
+    if array.ndim != 3:
+        raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
-        Args:
-            array: Array to validate
-            name: Name of the array for error messages
+@numpy_func
+def sharpen(cls, image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.ndarray:
+    """
+    Sharpen a 3D image using unsharp masking.
 
-        Raises:
-            TypeError: If the array is not a NumPy array
-            ValueError: If the array is not 3D
-        """
-        if not isinstance(array, np.ndarray):
-            raise TypeError(f"{name} must be a NumPy array, got {type(array)}")
+    This applies sharpening to each Z-slice independently.
 
-        if array.ndim != 3:
-            raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
+    Args:
+        image: 3D NumPy array of shape (Z, Y, X)
+        radius: Radius of Gaussian blur
+        amount: Sharpening strength
 
-    @numpy_func
-    @classmethod
-    def sharpen(cls, image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.ndarray:
-        """
-        Sharpen a 3D image using unsharp masking.
+    Returns:
+        Sharpened 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        This applies sharpening to each Z-slice independently.
+    # Store original dtype
+    dtype = image.dtype
 
-        Args:
-            image: 3D NumPy array of shape (Z, Y, X)
-            radius: Radius of Gaussian blur
-            amount: Sharpening strength
+    # Process each Z-slice independently
+    result = np.zeros_like(image, dtype=np.float32)
 
-        Returns:
-            Sharpened 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    for z in range(image.shape[0]):
+        # Convert to float for processing
+        slice_float = image[z].astype(np.float32) / np.max(image[z])
 
-        # Store original dtype
-        dtype = image.dtype
+        # Create blurred version for unsharp mask
+        blurred = filters.gaussian(slice_float, sigma=radius)
 
-        # Process each Z-slice independently
-        result = np.zeros_like(image, dtype=np.float32)
+        # Apply unsharp mask: original + amount * (original - blurred)
+        sharpened = slice_float + amount * (slice_float - blurred)
 
-        for z in range(image.shape[0]):
-            # Convert to float for processing
-            slice_float = image[z].astype(np.float32) / np.max(image[z])
+        # Clip to valid range
+        sharpened = np.clip(sharpened, 0, 1.0)
 
-            # Create blurred version for unsharp mask
-            blurred = filters.gaussian(slice_float, sigma=radius)
+        # Scale back to original range
+        sharpened = exposure.rescale_intensity(sharpened, in_range='image', out_range=(0, 65535))
+        result[z] = sharpened
 
-            # Apply unsharp mask: original + amount * (original - blurred)
-            sharpened = slice_float + amount * (slice_float - blurred)
+    # Convert back to original dtype
+    return result.astype(dtype)
 
-            # Clip to valid range
-            sharpened = np.clip(sharpened, 0, 1.0)
+@numpy_func
+def percentile_normalize(cls, image: np.ndarray,
+                        low_percentile: float = 1.0,
+                        high_percentile: float = 99.0,
+                        target_min: float = 0.0,
+                        target_max: float = 65535.0) -> np.ndarray:
+    """
+    Normalize a 3D image using percentile-based contrast stretching.
 
-            # Scale back to original range
-            sharpened = exposure.rescale_intensity(sharpened, in_range='image', out_range=(0, 65535))
-            result[z] = sharpened
+    This applies normalization to each Z-slice independently.
 
-        # Convert back to original dtype
-        return result.astype(dtype)
+    Args:
+        image: 3D NumPy array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-    @numpy_func
-    @classmethod
-    def percentile_normalize(cls, image: np.ndarray,
-                            low_percentile: float = 1.0,
-                            high_percentile: float = 99.0,
-                            target_min: float = 0.0,
-                            target_max: float = 65535.0) -> np.ndarray:
-        """
-        Normalize a 3D image using percentile-based contrast stretching.
+    Returns:
+        Normalized 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        This applies normalization to each Z-slice independently.
+    # Process each Z-slice independently
+    result = np.zeros_like(image, dtype=np.float32)
 
-        Args:
-            image: 3D NumPy array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
-
-        Returns:
-            Normalized 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
-
-        # Process each Z-slice independently
-        result = np.zeros_like(image, dtype=np.float32)
-
-        for z in range(image.shape[0]):
-            # Get percentile values for this slice
-            p_low, p_high = np.percentile(image[z], (low_percentile, high_percentile))
-
-            # Avoid division by zero
-            if p_high == p_low:
-                result[z] = np.ones_like(image[z]) * target_min
-                continue
-
-            # Clip and normalize to target range
-            clipped = np.clip(image[z], p_low, p_high)
-            normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-            result[z] = normalized
-
-        # Convert to uint16
-        return result.astype(np.uint16)
-
-    @numpy_func
-    @classmethod
-    def stack_percentile_normalize(cls, stack: np.ndarray,
-                                  low_percentile: float = 1.0,
-                                  high_percentile: float = 99.0,
-                                  target_min: float = 0.0,
-                                  target_max: float = 65535.0) -> np.ndarray:
-        """
-        Normalize a stack using global percentile-based contrast stretching.
-
-        This ensures consistent normalization across all Z-slices by computing
-        global percentiles across the entire stack.
-
-        Args:
-            stack: 3D NumPy array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
-
-        Returns:
-            Normalized 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
-
-        # Calculate global percentiles across the entire stack
-        p_low = np.percentile(stack, low_percentile)
-        p_high = np.percentile(stack, high_percentile)
+    for z in range(image.shape[0]):
+        # Get percentile values for this slice
+        p_low, p_high = np.percentile(image[z], (low_percentile, high_percentile))
 
         # Avoid division by zero
         if p_high == p_low:
-            return np.ones_like(stack) * target_min
+            result[z] = np.ones_like(image[z]) * target_min
+            continue
 
         # Clip and normalize to target range
-        clipped = np.clip(stack, p_low, p_high)
+        clipped = np.clip(image[z], p_low, p_high)
         normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-        normalized = normalized.astype(np.uint16)
+        result[z] = normalized
 
-        return normalized
+    # Convert to uint16
+    return result.astype(np.uint16)
 
-    @numpy_func
-    @classmethod
-    def create_composite(
-        cls, images: List[np.ndarray], weights: Optional[List[float]] = None
-    ) -> np.ndarray:
-        """
-        Create a composite image from multiple 3D arrays.
+@numpy_func
+def stack_percentile_normalize(cls, stack: np.ndarray,
+                              low_percentile: float = 1.0,
+                              high_percentile: float = 99.0,
+                              target_min: float = 0.0,
+                              target_max: float = 65535.0) -> np.ndarray:
+    """
+    Normalize a stack using global percentile-based contrast stretching.
 
-        Args:
-            images: List of 3D NumPy arrays, each of shape (Z, Y, X)
-            weights: List of weights for each image. If None, equal weights are used.
+    This ensures consistent normalization across all Z-slices by computing
+    global percentiles across the entire stack.
 
-        Returns:
-            Composite 3D NumPy array of shape (Z, Y, X)
-        """
-        # Ensure images is a list
-        if not isinstance(images, list):
-            raise TypeError("images must be a list of NumPy arrays")
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-        # Check for empty list early
-        if not images:
-            raise ValueError("images list cannot be empty")
+    Returns:
+        Normalized 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Validate all images are 3D NumPy arrays with the same shape
-        for i, img in enumerate(images):
-            cls._validate_3d_array(img, f"images[{i}]")
-            if img.shape != images[0].shape:
-                raise ValueError(f"All images must have the same shape. "
-                                f"images[0] has shape {images[0].shape}, "
-                                f"images[{i}] has shape {img.shape}")
+    # Calculate global percentiles across the entire stack
+    p_low = np.percentile(stack, low_percentile)
+    p_high = np.percentile(stack, high_percentile)
 
-        # Default weights if none provided
-        if weights is None:
-            # Equal weights for all images
-            weights = [1.0 / len(images)] * len(images)
-        elif not isinstance(weights, list):
-            raise TypeError("weights must be a list of values")
+    # Avoid division by zero
+    if p_high == p_low:
+        return np.ones_like(stack) * target_min
 
-        # Make sure weights list is at least as long as images list
-        if len(weights) < len(images):
-            weights = weights + [0.0] * (len(images) - len(weights))
-        # Truncate weights if longer than images
-        weights = weights[:len(images)]
+    # Clip and normalize to target range
+    clipped = np.clip(stack, p_low, p_high)
+    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = normalized.astype(np.uint16)
 
-        first_image = images[0]
-        shape = first_image.shape
-        dtype = first_image.dtype
+    return normalized
 
-        # Create empty composite
-        composite = np.zeros(shape, dtype=np.float32)
-        total_weight = 0.0
+@numpy_func
+def create_composite(
+    cls, images: List[np.ndarray], weights: Optional[List[float]] = None
+) -> np.ndarray:
+    """
+    Create a composite image from multiple 3D arrays.
 
-        # Add each image with its weight
-        for i, image in enumerate(images):
-            weight = weights[i]
-            if weight <= 0.0:
-                continue
+    Args:
+        images: List of 3D NumPy arrays, each of shape (Z, Y, X)
+        weights: List of weights for each image. If None, equal weights are used.
 
-            # Add to composite
-            composite += image.astype(np.float32) * weight
-            total_weight += weight
+    Returns:
+        Composite 3D NumPy array of shape (Z, Y, X)
+    """
+    # Ensure images is a list
+    if not isinstance(images, list):
+        raise TypeError("images must be a list of NumPy arrays")
 
-        # Normalize by total weight
-        if total_weight > 0:
-            composite /= total_weight
+    # Check for empty list early
+    if not images:
+        raise ValueError("images list cannot be empty")
 
-        # Convert back to original dtype (usually uint16)
-        if np.issubdtype(dtype, np.integer):
-            max_val = np.iinfo(dtype).max
-            composite = np.clip(composite, 0, max_val).astype(dtype)
-        else:
-            composite = composite.astype(dtype)
+    # Validate all images are 3D NumPy arrays with the same shape
+    for i, img in enumerate(images):
+        cls._validate_3d_array(img, f"images[{i}]")
+        if img.shape != images[0].shape:
+            raise ValueError(f"All images must have the same shape. "
+                            f"images[0] has shape {images[0].shape}, "
+                            f"images[{i}] has shape {img.shape}")
 
-        return composite
+    # Default weights if none provided
+    if weights is None:
+        # Equal weights for all images
+        weights = [1.0 / len(images)] * len(images)
+    elif not isinstance(weights, list):
+        raise TypeError("weights must be a list of values")
 
-    @numpy_func
-    @classmethod
-    def apply_mask(cls, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """
-        Apply a mask to a 3D image.
+    # Make sure weights list is at least as long as images list
+    if len(weights) < len(images):
+        weights = weights + [0.0] * (len(images) - len(weights))
+    # Truncate weights if longer than images
+    weights = weights[:len(images)]
 
-        This applies the mask to each Z-slice independently if mask is 2D,
-        or applies the 3D mask directly if mask is 3D.
+    first_image = images[0]
+    shape = first_image.shape
+    dtype = first_image.dtype
 
-        Args:
-            image: 3D NumPy array of shape (Z, Y, X)
-            mask: 3D NumPy array of shape (Z, Y, X) or 2D NumPy array of shape (Y, X)
+    # Create empty composite
+    composite = np.zeros(shape, dtype=np.float32)
+    total_weight = 0.0
 
-        Returns:
-            Masked 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    # Add each image with its weight
+    for i, image in enumerate(images):
+        weight = weights[i]
+        if weight <= 0.0:
+            continue
 
-        # Handle 2D mask (apply to each Z-slice)
-        if isinstance(mask, np.ndarray) and mask.ndim == 2:
-            if mask.shape != image.shape[1:]:
-                raise ValueError(
-                    f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
-                )
+        # Add to composite
+        composite += image.astype(np.float32) * weight
+        total_weight += weight
 
-            # Apply 2D mask to each Z-slice
-            result = np.zeros_like(image)
-            for z in range(image.shape[0]):
-                result[z] = image[z].astype(np.float32) * mask.astype(np.float32)
+    # Normalize by total weight
+    if total_weight > 0:
+        composite /= total_weight
 
-            return result.astype(image.dtype)
+    # Convert back to original dtype (usually uint16)
+    if np.issubdtype(dtype, np.integer):
+        max_val = np.iinfo(dtype).max
+        composite = np.clip(composite, 0, max_val).astype(dtype)
+    else:
+        composite = composite.astype(dtype)
 
-        # Handle 3D mask
-        if isinstance(mask, np.ndarray) and mask.ndim == 3:
-            if mask.shape != image.shape:
-                raise ValueError(
-                    f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
-                )
+    return composite
 
-            # Apply 3D mask directly
-            masked = image.astype(np.float32) * mask.astype(np.float32)
-            return masked.astype(image.dtype)
+@numpy_func
+def apply_mask(cls, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """
+    Apply a mask to a 3D image.
 
-        # If we get here, the mask is neither 2D nor 3D NumPy array
-        raise TypeError(f"mask must be a 2D or 3D NumPy array, got {type(mask)}")
+    This applies the mask to each Z-slice independently if mask is 2D,
+    or applies the 3D mask directly if mask is 3D.
 
-    @numpy_func
-    @classmethod
-    def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.ndarray:
-        """
-        Create a weight mask for blending images.
+    Args:
+        image: 3D NumPy array of shape (Z, Y, X)
+        mask: 3D NumPy array of shape (Z, Y, X) or 2D NumPy array of shape (Y, X)
 
-        Args:
-            shape: Shape of the mask (height, width)
-            margin_ratio: Ratio of image size to use as margin
+    Returns:
+        Masked 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        Returns:
-            2D NumPy weight mask of shape (Y, X)
-        """
-        if not isinstance(shape, tuple) or len(shape) != 2:
-            raise TypeError("shape must be a tuple of (height, width)")
+    # Handle 2D mask (apply to each Z-slice)
+    if isinstance(mask, np.ndarray) and mask.ndim == 2:
+        if mask.shape != image.shape[1:]:
+            raise ValueError(
+                f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
+            )
 
-        height, width = shape
-        return create_linear_weight_mask(height, width, margin_ratio)
+        # Apply 2D mask to each Z-slice
+        result = np.zeros_like(image)
+        for z in range(image.shape[0]):
+            result[z] = image[z].astype(np.float32) * mask.astype(np.float32)
 
-    @numpy_func
-    @classmethod
-    def max_projection(cls, stack: np.ndarray) -> np.ndarray:
-        """
-        Create a maximum intensity projection from a Z-stack.
+        return result.astype(image.dtype)
 
-        Args:
-            stack: 3D NumPy array of shape (Z, Y, X)
+    # Handle 3D mask
+    if isinstance(mask, np.ndarray) and mask.ndim == 3:
+        if mask.shape != image.shape:
+            raise ValueError(
+                f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
+            )
 
-        Returns:
-            3D NumPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+        # Apply 3D mask directly
+        masked = image.astype(np.float32) * mask.astype(np.float32)
+        return masked.astype(image.dtype)
 
-        # Create max projection
-        projection_2d = np.max(stack, axis=0)
-        return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    # If we get here, the mask is neither 2D nor 3D NumPy array
+    raise TypeError(f"mask must be a 2D or 3D NumPy array, got {type(mask)}")
 
-    @numpy_func
-    @classmethod
-    def mean_projection(cls, stack: np.ndarray) -> np.ndarray:
-        """
-        Create a mean intensity projection from a Z-stack.
+@numpy_func
+def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.ndarray:
+    """
+    Create a weight mask for blending images.
 
-        Args:
-            stack: 3D NumPy array of shape (Z, Y, X)
+    Args:
+        shape: Shape of the mask (height, width)
+        margin_ratio: Ratio of image size to use as margin
 
-        Returns:
-            3D NumPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    Returns:
+        2D NumPy weight mask of shape (Y, X)
+    """
+    if not isinstance(shape, tuple) or len(shape) != 2:
+        raise TypeError("shape must be a tuple of (height, width)")
 
-        # Create mean projection
-        projection_2d = np.mean(stack, axis=0).astype(stack.dtype)
-        return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    height, width = shape
+    return create_linear_weight_mask(height, width, margin_ratio)
 
-    @numpy_func
-    @classmethod
-    def stack_equalize_histogram(
-        cls, stack: np.ndarray,
-        bins: int = 65536,
-        range_min: float = 0.0,
-        range_max: float = 65535.0
-    ) -> np.ndarray:
-        """
-        Apply histogram equalization to an entire stack.
+@numpy_func
+def max_projection(cls, stack: np.ndarray) -> np.ndarray:
+    """
+    Create a maximum intensity projection from a Z-stack.
 
-        This ensures consistent contrast enhancement across all Z-slices by
-        computing a global histogram across the entire stack.
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
 
-        Args:
-            stack: 3D NumPy array of shape (Z, Y, X)
-            bins: Number of bins for histogram computation
-            range_min: Minimum value for histogram range
-            range_max: Maximum value for histogram range
+    Returns:
+        3D NumPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        Returns:
-            Equalized 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    # Create max projection
+    projection_2d = np.max(stack, axis=0)
+    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
-        # Flatten the entire stack to compute the global histogram
-        flat_stack = stack.flatten()
+@numpy_func
+def mean_projection(cls, stack: np.ndarray) -> np.ndarray:
+    """
+    Create a mean intensity projection from a Z-stack.
 
-        # Calculate the histogram and cumulative distribution function (CDF)
-        hist, bin_edges = np.histogram(flat_stack, bins=bins, range=(range_min, range_max))
-        cdf = hist.cumsum()
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
 
-        # Normalize the CDF to the range [0, 65535]
-        # Avoid division by zero
-        if cdf[-1] > 0:
-            cdf = 65535 * cdf / cdf[-1]
+    Returns:
+        3D NumPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Use linear interpolation to map input values to equalized values
-        equalized_stack = np.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(stack.shape)
+    # Create mean projection
+    projection_2d = np.mean(stack, axis=0).astype(stack.dtype)
+    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
-        # Convert to uint16
-        return equalized_stack.astype(np.uint16)
+@numpy_func
+def stack_equalize_histogram(
+    cls, stack: np.ndarray,
+    bins: int = 65536,
+    range_min: float = 0.0,
+    range_max: float = 65535.0
+) -> np.ndarray:
+    """
+    Apply histogram equalization to an entire stack.
 
-    @numpy_func
-    @classmethod
-    def create_projection(cls, stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
-        """
-        Create a projection from a stack using the specified method.
+    This ensures consistent contrast enhancement across all Z-slices by
+    computing a global histogram across the entire stack.
 
-        Args:
-            stack: 3D NumPy array of shape (Z, Y, X)
-            method: Projection method (max_projection, mean_projection)
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
+        bins: Number of bins for histogram computation
+        range_min: Minimum value for histogram range
+        range_max: Maximum value for histogram range
 
-        Returns:
-            3D NumPy array of shape (1, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    Returns:
+        Equalized 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        if method == "max_projection":
-            return cls.max_projection(stack)
+    # Flatten the entire stack to compute the global histogram
+    flat_stack = stack.flatten()
 
-        if method == "mean_projection":
-            return cls.mean_projection(stack)
+    # Calculate the histogram and cumulative distribution function (CDF)
+    hist, bin_edges = np.histogram(flat_stack, bins=bins, range=(range_min, range_max))
+    cdf = hist.cumsum()
 
-        # Default case for unknown methods
-        logger.warning("Unknown projection method: %s, using max_projection", method)
+    # Normalize the CDF to the range [0, 65535]
+    # Avoid division by zero
+    if cdf[-1] > 0:
+        cdf = 65535 * cdf / cdf[-1]
+
+    # Use linear interpolation to map input values to equalized values
+    equalized_stack = np.interp(stack.flatten(), bin_edges[:-1], cdf).reshape(stack.shape)
+
+    # Convert to uint16
+    return equalized_stack.astype(np.uint16)
+
+@numpy_func
+def create_projection(cls, stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
+    """
+    Create a projection from a stack using the specified method.
+
+    Args:
+        stack: 3D NumPy array of shape (Z, Y, X)
+        method: Projection method (max_projection, mean_projection)
+
+    Returns:
+        3D NumPy array of shape (1, Y, X)
+    """
+    cls._validate_3d_array(stack)
+
+    if method == "max_projection":
         return cls.max_projection(stack)
 
-    @numpy_func
-    @classmethod
-    def tophat(
-        cls, image: np.ndarray,
-        selem_radius: int = 50,
-        downsample_factor: int = 4
-    ) -> np.ndarray:
-        """
-        Apply white top-hat filter to a 3D image for background removal.
+    if method == "mean_projection":
+        return cls.mean_projection(stack)
 
-        This applies the filter to each Z-slice independently.
+    # Default case for unknown methods
+    logger.warning("Unknown projection method: %s, using max_projection", method)
+    return cls.max_projection(stack)
 
-        Args:
-            image: 3D NumPy array of shape (Z, Y, X)
-            selem_radius: Radius of the structuring element disk
-            downsample_factor: Factor by which to downsample the image for processing
+@numpy_func
+def tophat(
+    cls, image: np.ndarray,
+    selem_radius: int = 50,
+    downsample_factor: int = 4
+) -> np.ndarray:
+    """
+    Apply white top-hat filter to a 3D image for background removal.
 
-        Returns:
-            Filtered 3D NumPy array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    This applies the filter to each Z-slice independently.
 
-        # Process each Z-slice independently
-        result = np.zeros_like(image)
+    Args:
+        image: 3D NumPy array of shape (Z, Y, X)
+        selem_radius: Radius of the structuring element disk
+        downsample_factor: Factor by which to downsample the image for processing
 
-        for z in range(image.shape[0]):
-            # Store original data type
-            input_dtype = image[z].dtype
+    Returns:
+        Filtered 3D NumPy array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-            # 1) Downsample
-            image_small = trans.resize(
-                image[z],
-                (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor),
-                anti_aliasing=True,
-                preserve_range=True
-            )
+    # Process each Z-slice independently
+    result = np.zeros_like(image)
 
-            # 2) Build structuring element for the smaller image
-            selem_small = morph.disk(selem_radius // downsample_factor)
+    for z in range(image.shape[0]):
+        # Store original data type
+        input_dtype = image[z].dtype
 
-            # 3) White top-hat on the smaller image
-            tophat_small = morph.white_tophat(image_small, selem_small)
+        # 1) Downsample
+        image_small = trans.resize(
+            image[z],
+            (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor),
+            anti_aliasing=True,
+            preserve_range=True
+        )
 
-            # 4) Upscale background to original size
-            background_small = image_small - tophat_small
-            background_large = trans.resize(
-                background_small,
-                image[z].shape,
-                anti_aliasing=False,
-                preserve_range=True
-            )
+        # 2) Build structuring element for the smaller image
+        selem_small = morph.disk(selem_radius // downsample_factor)
 
-            # 5) Subtract background and clip negative values
-            slice_result = np.maximum(image[z] - background_large, 0)
+        # 3) White top-hat on the smaller image
+        tophat_small = morph.white_tophat(image_small, selem_small)
 
-            # 6) Convert back to original data type
-            result[z] = slice_result.astype(input_dtype)
+        # 4) Upscale background to original size
+        background_small = image_small - tophat_small
+        background_large = trans.resize(
+            background_small,
+            image[z].shape,
+            anti_aliasing=False,
+            preserve_range=True
+        )
 
-        return result
+        # 5) Subtract background and clip negative values
+        slice_result = np.maximum(image[z] - background_large, 0)
+
+        # 6) Convert back to original data type
+        result[z] = slice_result.astype(input_dtype)
+
+    return result

@@ -20,20 +20,21 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 # Import decorator directly from core.memory to avoid circular imports
-from openhcs.core.memory import cupy as cupy_func
+from openhcs.core.memory.decorators import cupy as cupy_func
+from openhcs.core.utils import optional_import
 
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
     from cupyx.scipy import linalg
 
-# Import CuPy with error handling
-try:
-    import cupy as cp
-    from cupyx.scipy import linalg
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
+# Import CuPy as an optional dependency
+cp = optional_import("cupy")
+linalg = None
+if cp is not None:
+    cupyx_scipy = optional_import("cupyx.scipy")
+    if cupyx_scipy is not None:
+        linalg = cupyx_scipy.linalg
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +52,8 @@ def _validate_cupy_array(array: Any, name: str = "input") -> None:
         TypeError: If the array is not a CuPy array
         ValueError: If the array doesn't support DLPack
     """
-    if not HAS_CUPY:
-        raise ImportError("CuPy is required for BaSiC illumination correction")
+    # The compiler will ensure this function is only called when CuPy is available
+    # No need to check for CuPy availability here
 
     if not isinstance(array, cp.ndarray):
         raise TypeError(

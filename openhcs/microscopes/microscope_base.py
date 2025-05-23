@@ -29,7 +29,7 @@ MICROSCOPE_HANDLERS = {}
 class MicroscopeHandler(ABC):
     """Composed class for handling microscope-specific functionality."""
 
-    DEFAULT_MICROSCOPE = 'ImageXpress'
+    DEFAULT_MICROSCOPE = 'auto'
     _handlers_cache = None
 
     def __init__(self, parser: FilenameParser,

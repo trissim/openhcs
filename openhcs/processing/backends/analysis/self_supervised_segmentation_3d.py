@@ -1,11 +1,13 @@
 import logging
 from typing import Tuple, Union
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
+from openhcs.core.utils import optional_import
 from openhcs.core.memory.decorators import torch as torch_func
+
+# Import torch modules as optional dependencies
+torch = optional_import("torch")
+nn = optional_import("torch.nn") if torch is not None else None
+F = optional_import("torch.nn.functional") if torch is not None else None
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +28,12 @@ class Encoder3D(nn.Module):
         # x: [B, 1, D, H, W]
         features_conv1 = F.relu(self.conv1(x))
         features_conv2 = F.relu(self.conv2(features_conv1)) # [B, features[1], D, H, W]
-        
+
         pooled_features = self.pool(features_conv2) # [B, features[1], 1, 1, 1]
         flattened_features = torch.flatten(pooled_features, 1) # [B, features[1]]
         embedding = self.fc(flattened_features) # [B, embedding_dim]
         normalized_embedding = F.normalize(embedding, p=2, dim=1)
-        
+
         if return_features_before_pool:
             return normalized_embedding, features_conv2 # Return features from last conv layer
         return normalized_embedding
@@ -40,7 +42,7 @@ class Decoder3D(nn.Module):
     def __init__(self, embedding_dim=128, features=(64, 32), out_channels=1, patch_size_dhw=(64,64,64)):
         super().__init__()
         self.patch_d, self.patch_h, self.patch_w = patch_size_dhw
-        
+
         # Determine initial dimensions for unflattening.
         # This depends on the encoder's spatial reduction. If encoder doesn't reduce much,
         # these initial dimensions might need to be larger or upsampling more aggressive.
@@ -88,7 +90,7 @@ def _affine_augment_patch(patch: torch.Tensor) -> torch.Tensor: # patch: [1, pD,
     if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[1]) # D
     if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[2]) # H
     if torch.rand(1).item() > 0.5: patch = torch.flip(patch, dims=[3]) # W
-    
+
     # Random 90-degree rotations (example: rotate in DH plane)
     if torch.rand(1).item() > 0.5:
         k = torch.randint(0, 4, (1,)).item()
@@ -98,33 +100,33 @@ def _affine_augment_patch(patch: torch.Tensor) -> torch.Tensor: # patch: [1, pD,
 def _nt_xent_loss(z_i: torch.Tensor, z_j: torch.Tensor, temperature: float) -> torch.Tensor:
     batch_size = z_i.shape[0]
     # z_i, z_j are already normalized by encoder
-    
+
     # Concatenate embeddings from two views
     z = torch.cat([z_i, z_j], dim=0) # Shape: [2*B, E]
-    
+
     # Calculate similarity matrix
     sim_matrix = torch.matmul(z, z.T) / temperature # Shape: [2*B, 2*B]
-    
+
     # Create mask to identify positive pairs (i-th sample from view 1 with i-th sample from view 2)
     # And exclude self-similarity (i-th sample with itself)
     identity_mask = torch.eye(2 * batch_size, device=z_i.device, dtype=torch.bool)
-    
+
     # Positive pairs are (i, i+B) and (i+B, i)
     pos_mask = torch.zeros_like(sim_matrix, dtype=torch.bool)
     pos_mask[torch.arange(batch_size), torch.arange(batch_size) + batch_size] = True
     pos_mask[torch.arange(batch_size) + batch_size, torch.arange(batch_size)] = True
-    
+
     # Numerator: similarity of positive pairs
     numerator = torch.exp(sim_matrix[pos_mask]) # Shape: [2*B] (actually B pairs, repeated)
-    
+
     # Denominator: sum of similarities with all other samples (excluding self)
     # For each row, sum exp(sim) over all columns except the diagonal (self-similarity)
     exp_sim_no_self = torch.exp(sim_matrix.masked_fill(identity_mask, -float('inf'))) # Mask self-similarity
     denominator = exp_sim_no_self.sum(dim=1) # Shape: [2*B]
-    
+
     # Calculate log probabilities
     log_probs = torch.log(numerator / denominator[pos_mask.any(dim=1)]) # Select relevant denominators
-    
+
     # Loss is the negative mean of these log probabilities
     loss = -log_probs.mean()
     return loss
@@ -132,20 +134,20 @@ def _nt_xent_loss(z_i: torch.Tensor, z_j: torch.Tensor, temperature: float) -> t
 def _kmeans_torch(X: torch.Tensor, K: int, n_iters: int = 20) -> Tuple[torch.Tensor, torch.Tensor]:
     N, D_feat = X.shape
     if N == 0: return torch.empty(0, dtype=torch.long, device=X.device), torch.empty((K,D_feat), device=X.device, dtype=X.dtype)
-    if N < K : K = N 
-        
+    if N < K : K = N
+
     centroids = X[torch.randperm(N, device=X.device)[:K]]
-    
+
     for _ in range(n_iters):
-        dists_sq = torch.sum((X[:, None, :] - centroids[None, :, :])**2, dim=2) 
-        labels = torch.argmin(dists_sq, dim=1) 
-        
+        dists_sq = torch.sum((X[:, None, :] - centroids[None, :, :])**2, dim=2)
+        labels = torch.argmin(dists_sq, dim=1)
+
         new_centroids = torch.zeros_like(centroids)
         for k_idx in range(K):
             assigned_points = X[labels == k_idx]
             if assigned_points.shape[0] > 0:
                 new_centroids[k_idx] = assigned_points.mean(dim=0)
-            else: 
+            else:
                 new_centroids[k_idx] = X[torch.randint(0,N,(1,)).item()] if N > 0 else centroids[k_idx]
 
         if torch.allclose(centroids, new_centroids, atol=1e-5): break
@@ -168,13 +170,13 @@ def self_supervised_segmentation_3d(
     original_dtype = image_volume.dtype
 
     img_vol_proc = image_volume.float()
-    if img_vol_proc.ndim == 3: 
+    if img_vol_proc.ndim == 3:
         Z_orig, H_orig, W_orig = img_vol_proc.shape
-        img_vol_proc = img_vol_proc.unsqueeze(0).unsqueeze(0) 
-    elif img_vol_proc.ndim == 4: 
+        img_vol_proc = img_vol_proc.unsqueeze(0).unsqueeze(0)
+    elif img_vol_proc.ndim == 4:
         _, Z_orig, H_orig, W_orig = img_vol_proc.shape
-        img_vol_proc = img_vol_proc.unsqueeze(1) 
-    elif img_vol_proc.ndim == 5: 
+        img_vol_proc = img_vol_proc.unsqueeze(1)
+    elif img_vol_proc.ndim == 5:
         _, _, Z_orig, H_orig, W_orig = img_vol_proc.shape
     else:
         raise ValueError(f"image_volume must be 3D, 4D or 5D. Got {image_volume.ndim}D")
@@ -188,7 +190,7 @@ def self_supervised_segmentation_3d(
         img_vol_norm = img_vol_norm * (max_val_norm - min_val_norm) + min_val_norm
     else:
         img_vol_norm = torch.full_like(img_vol_proc, min_val_norm)
-    
+
     patch_size_dhw_default = (max(16, Z_orig // 8), max(16, H_orig // 8), max(16, W_orig // 8)) # Ensure min size
     patch_size_dhw = tuple(kwargs.get("patch_size", patch_size_dhw_default))
     patch_size_dhw = (min(patch_size_dhw[0], Z_orig), min(patch_size_dhw[1], H_orig), min(patch_size_dhw[2], W_orig))
@@ -199,13 +201,13 @@ def self_supervised_segmentation_3d(
     n_epochs = int(kwargs.get("n_epochs", 500)) # Reduced default
     embedding_dim = int(kwargs.get("embedding_dim", 128))
     temperature = float(kwargs.get("temperature", 0.1))
-    batch_size = int(kwargs.get("batch_size", 4)) 
+    batch_size = int(kwargs.get("batch_size", 4))
     learning_rate = float(kwargs.get("learning_rate", 1e-4))
     reconstruction_weight = float(kwargs.get("reconstruction_weight", 1.0))
     contrastive_weight = float(kwargs.get("contrastive_weight", 1.0))
     cluster_k = int(kwargs.get("cluster_k", 2))
     mask_fraction = float(kwargs.get("mask_fraction", 0.01))
-    sigma_noise = float(kwargs.get("sigma_noise", 0.2)) 
+    sigma_noise = float(kwargs.get("sigma_noise", 0.2))
     lambda_bound = float(kwargs.get("lambda_bound", 0.1))
 
     encoder = Encoder3D(in_channels=1, embedding_dim=embedding_dim).to(device)
@@ -215,16 +217,16 @@ def self_supervised_segmentation_3d(
     for epoch in range(n_epochs):
         encoder.train()
         decoder.train()
-        
+
         patches_orig_batch = _extract_random_patches(img_vol_norm, patch_size_dhw, batch_size)
-        
+
         patches_mvm_list = []
         patches_affine_list = []
         masks_for_loss_list = []
 
         for i in range(batch_size):
             current_patch_orig = patches_orig_batch[i] # [1, pD, pH, pW]
-            
+
             mask_mvm = (torch.rand_like(current_patch_orig) < mask_fraction).bool()
             masks_for_loss_list.append(mask_mvm.clone()) # Store for loss calculation
             noise = (torch.randn_like(current_patch_orig) * sigma_noise).clamp(min_val_norm, max_val_norm)
@@ -249,15 +251,15 @@ def self_supervised_segmentation_3d(
             masked_original = patches_orig_batch[masks_batch]
             if masked_reconstruction.numel() > 0: # If any elements were actually masked and selected
                  loss_rec = F.mse_loss(masked_reconstruction, masked_original)
-        
+
         loss_contrastive = _nt_xent_loss(emb_mvm, emb_affine, temperature)
         loss_bound = (torch.relu(reconstructed_patches - max_val_norm) + \
                       torch.relu(min_val_norm - reconstructed_patches)).mean()
 
-        total_loss = (reconstruction_weight * loss_rec + 
+        total_loss = (reconstruction_weight * loss_rec +
                       contrastive_weight * loss_contrastive +
                       lambda_bound * loss_bound)
-        
+
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
@@ -267,22 +269,22 @@ def self_supervised_segmentation_3d(
                         f"(Rec: {loss_rec.item():.4f}, Contr: {loss_contrastive.item():.4f}, Bound: {loss_bound.item():.4f})")
 
     if not apply_segmentation:
-        return image_volume 
+        return image_volume
 
     encoder.eval()
     with torch.no_grad():
         _, dense_features_full_vol = encoder(img_vol_norm, return_features_before_pool=True)
-        
+
         if dense_features_full_vol.shape[2:] != (Z_orig, H_orig, W_orig):
             dense_features_upsampled = F.interpolate(
-                dense_features_full_vol, size=(Z_orig, H_orig, W_orig), 
+                dense_features_full_vol, size=(Z_orig, H_orig, W_orig),
                 mode='trilinear', align_corners=False
             )
         else:
             dense_features_upsampled = dense_features_full_vol
-        
+
         features_for_kmeans = dense_features_upsampled.squeeze(0).permute(1,2,3,0).reshape(-1, encoder.features_channels_before_pool)
-        
+
         if features_for_kmeans.shape[0] == 0:
              logger.warning("No features extracted for K-Means, returning empty segmentation.")
              return torch.zeros((Z_orig, H_orig, W_orig), dtype=torch.long, device=device)
@@ -291,8 +293,8 @@ def self_supervised_segmentation_3d(
         segmentation_mask = voxel_labels_flat.reshape(Z_orig, H_orig, W_orig)
 
     if original_input_shape_len == 3:
-        return segmentation_mask.to(original_dtype) 
-    elif original_input_shape_len == 4: 
+        return segmentation_mask.to(original_dtype)
+    elif original_input_shape_len == 4:
         return segmentation_mask.unsqueeze(0).to(original_dtype)
-    else: 
+    else:
         return segmentation_mask.unsqueeze(0).unsqueeze(0).to(original_dtype)

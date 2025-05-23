@@ -237,8 +237,7 @@ class OpenHCSTUILauncher:
         # OpenHCSTUI.__init__ was updated to accept these.
         tui_app = OpenHCSTUI(
             initial_context=self.initial_tui_context,
-            state=self.state, 
-            filemanager=self.filemanager,
+            state=self.state,
             global_config=self.core_global_config
         )
         self.tui_app_instance = tui_app # Store the instance

@@ -113,14 +113,14 @@ class PipelineCompiler:
                 current_plan["group_by"] = step.group_by
                 if hasattr(step, 'func'): # func attribute is set in FunctionStep.__init__
                     current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
-                
+
                 # Memory type hints from step instance (set in FunctionStep.__init__ if provided)
                 # These are initial hints; FuncStepContractValidator will set final types.
                 if hasattr(step, 'input_memory_type_hint'): # From FunctionStep.__init__
                     current_plan['input_memory_type_hint'] = step.input_memory_type_hint
                 if hasattr(step, 'output_memory_type_hint'): # From FunctionStep.__init__
                     current_plan['output_memory_type_hint'] = step.output_memory_type_hint
-    
+
     # The resolve_special_input_paths_for_context static method is DELETED (lines 181-238 of original)
     # as this functionality is now handled by PipelinePathPlanner.prepare_pipeline_paths.
 
@@ -149,7 +149,7 @@ class PipelineCompiler:
             context,
             steps_definition
         )
-        
+
         # Post-check (optional, but good for ensuring contracts are met by the planner)
         for step in steps_definition:
             step_id = step.uid
@@ -157,7 +157,7 @@ class PipelineCompiler:
                  # This should not happen if prepare_pipeline_flags guarantees plans for all steps
                 logger.error(f"Step {step.name} (ID: {step_id}) missing from step_plans after materialization planning.")
                 continue
-            
+
             plan = context.step_plans[step_id]
             if not all(k in plan for k in ["requires_disk_input", "requires_disk_output", "read_backend", "write_backend"]):
                 logger.error(
@@ -177,10 +177,10 @@ class PipelineCompiler:
         """
         if context.is_frozen():
             raise AttributeError("Cannot validate memory contracts in a frozen ProcessingContext.")
-        
+
         # FuncStepContractValidator might need access to input/output_memory_type_hint from plan
         step_memory_types = FuncStepContractValidator.validate_pipeline(
-            steps=steps_definition, 
+            steps=steps_definition,
             step_plans=context.step_plans # Pass step_plans for hints
         )
 
@@ -214,7 +214,7 @@ class PipelineCompiler:
             input_type = step_plan_val.get("input_memory_type")
             if input_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
-            
+
             output_type = step_plan_val.get("output_memory_type")
             if output_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
@@ -229,7 +229,7 @@ class PipelineCompiler:
                         f"GPU validation must assign gpu_id for step {step_name} (ID: {step_id}) "
                         f"with GPU memory types (Clause 295)."
                     )
-        
+
         for step_id, gpu_assignment in gpu_assignments.items():
             if step_id in context.step_plans:
                 context.step_plans[step_id].update(gpu_assignment)

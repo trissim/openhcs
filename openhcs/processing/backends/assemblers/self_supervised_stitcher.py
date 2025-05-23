@@ -1,19 +1,14 @@
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.models as models
+from openhcs.core.utils import optional_import
+from openhcs.core.memory.decorators import torch as torch_backend_func
 
-# Import decorator directly from core.memory to avoid circular imports
-try:
-    from openhcs.core.memory import torch as torch_backend_func
-except ImportError:
-    print("Warning: openhcs.core.memory.torch not found. Using placeholder decorator.")
-    def torch_decorator(func_to_decorate: Any) -> Any:
-        """Placeholder decorator."""
-        return func_to_decorate
+# Import torch modules as optional dependencies
+torch = optional_import("torch")
+nn = optional_import("torch.nn") if torch is not None else None
+F = optional_import("torch.nn.functional") if torch is not None else None
+models = optional_import("torchvision.models") if optional_import("torchvision") is not None else None
 
 # --- Helper Modules and Functions (Placeholders or Simplified) ---
 

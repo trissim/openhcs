@@ -15,23 +15,27 @@ import logging
 from typing import Any, Dict
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
-from openhcs.core.pipeline.gpu_memory_validator_base import \
-    GPUMemoryTypeValidatorBase
+from openhcs.core.utils import optional_import
 
-# Import this here to avoid circular imports
-# It's only used in the validate_step_plans method
+# Define a fallback function for when the orchestrator module is not available
+def get_gpu_registry_status():
+    """
+    Fallback function that returns a simple GPU registry status.
+    Used when the orchestrator module is not available.
+    """
+    return {0: {"max_pipelines": 1, "active": 0}}
+
+# Try to import the real function if available
 try:
-    from openhcs.core.orchestrator.gpu_scheduler import \
-        get_gpu_registry_status
+    from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
 except ImportError:
-    # Provide a fallback for when the orchestrator module is not available
-    def get_gpu_registry_status():
-        return {0: {"max_pipelines": 1, "active": 0}}
+    # Keep the fallback function defined above
+    pass
 
 logger = logging.getLogger(__name__)
 
 
-class GPUMemoryTypeValidator(GPUMemoryTypeValidatorBase):
+class GPUMemoryTypeValidator:
     """
     Validator for GPU memory types in step plans.
 

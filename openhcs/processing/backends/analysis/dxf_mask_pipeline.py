@@ -1,73 +1,60 @@
 import logging
 from typing import TYPE_CHECKING, List, Tuple, Union
 
-# --- Backend Imports (Try-Except) ---
+from openhcs.utils.import_utils import optional_import, create_placeholder_class
+from openhcs.core.memory.decorators import torch as torch_func # Changed from numpy_func
+
+# --- Backend Imports as optional dependencies ---
 # PyTorch
 if TYPE_CHECKING:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
 
-try:
-    import torch
-    import torch.nn as nn
-    import torch.nn.functional as F
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
-    torch = None # type: ignore
-    nn = None # type: ignore
-    F = None # type: ignore
+torch = optional_import("torch")
+nn = optional_import("torch.nn") if torch is not None else None
+F = optional_import("torch.nn.functional") if torch is not None else None
+HAS_TORCH = torch is not None
 
 # CuPy
 if TYPE_CHECKING:
     import cupy as cp
 
-try:
-    import cupy as cp
-
-    # from cupyx.scipy.ndimage import gaussian_filter as cupy_gaussian_filter1d
-    HAS_CUPY = True
-except ImportError:
-    HAS_CUPY = False
-    cp = None # type: ignore
+cp = optional_import("cupy")
+HAS_CUPY = cp is not None
 
 # JAX
 if TYPE_CHECKING:
     import jax
     import jax.numpy as jnp
 
-try:
-    import jax
-    import jax.numpy as jnp
-
-    # from jax.scipy.ndimage import gaussian_filter1d as jax_gaussian_filter1d
-    HAS_JAX = True
-except ImportError:
-    HAS_JAX = False
-    jax = None # type: ignore
-    jnp = None # type: ignore
+jax = optional_import("jax")
+jnp = optional_import("jax.numpy") if jax is not None else None
+HAS_JAX = jax is not None
 
 # TensorFlow
 if TYPE_CHECKING:
     import tensorflow as tf
 
-try:
-    import tensorflow as tf
-
-    # from tensorflow_addons.image import gaussian_filter2d # For smoothing, or implement manually
-    HAS_TENSORFLOW = True
-except ImportError:
-    HAS_TENSORFLOW = False
-    tf = None # type: ignore
+tf = optional_import("tensorflow")
+HAS_TENSORFLOW = tf is not None
 
 logger = logging.getLogger(__name__)
 
 # --- PyTorch Specific Helpers ---
-if HAS_TORCH:
-    class _RegistrationCNN_torch(nn.Module):
+# Create placeholder for nn.Module
+# If nn (and thus nn.Module) is available, ModulePlaceholder will be nn.Module.
+# Otherwise, ModulePlaceholder will be a placeholder class.
+ModulePlaceholder = create_placeholder_class(
+    "Module", # Name for the placeholder if generated
+    base_class=nn.Module if nn else None,
+    required_library="PyTorch"
+)
+
+if HAS_TORCH: # Keep nn.Module definition conditional on PyTorch availability
+    class _RegistrationCNN_torch(ModulePlaceholder): # Inherit from placeholder or actual nn.Module
         def __init__(self):
-            super().__init__()
+            super().__init__() # This will call nn.Module.__init__ or Placeholder.__init__
             self.conv1 = nn.Conv2d(2, 32, kernel_size=3, padding=1)
             self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
             self.conv3 = nn.Conv2d(64, 32, kernel_size=3, padding=1)
@@ -104,7 +91,7 @@ if HAS_TORCH:
             max_y = torch.clamp(max_y, 0, H - 1)
 
             if max_x < min_x or max_y < min_y: continue
-            
+
             # Create grid for the bounding box
             bb_H, bb_W = max_y - min_y + 1, max_x - min_x + 1
             yy_bb, xx_bb = torch.meshgrid(
@@ -112,15 +99,15 @@ if HAS_TORCH:
                 torch.arange(min_x, max_x + 1, device=device),
                 indexing='ij'
             ) # yy_bb, xx_bb shapes [bb_H, bb_W]
-            
+
             # Points to test within bounding box, shape [bb_H, bb_W, 2]
-            test_points = torch.stack((xx_bb.float(), yy_bb.float()), dim=-1) 
-            
+            test_points = torch.stack((xx_bb.float(), yy_bb.float()), dim=-1)
+
             # Ray casting algorithm (vectorized attempt for one polygon)
             num_poly_pts = poly_tensor.shape[0]
             poly_x = poly_tensor[:, 0]
             poly_y = poly_tensor[:, 1]
-            
+
             # Replicate points for comparison with all edges
             # test_points: [bb_H, bb_W, 2] -> [bb_H, bb_W, 1, 2]
             # poly_x/y: [num_poly_pts]
@@ -139,12 +126,12 @@ if HAS_TORCH:
             # Need to broadcast: test_y [bb_H, bb_W, 1], poly_y[j_indices] [1, 1, num_poly_pts]
             cond1 = (poly_y[j_indices] <= test_y) & (test_y < poly_y[k_indices]) # Upward edge
             cond2 = (poly_y[k_indices] <= test_y) & (test_y < poly_y[j_indices]) # Downward edge
-            
+
             # Intersection x-coordinate: test_x < (poly_x[k] - poly_x[j]) * (test_y - poly_y[j]) / (poly_y[k] - poly_y[j]) + poly_x[j]
             # Avoid division by zero if poly_y[k] == poly_y[j] (horizontal edge)
             # delta_y = poly_y[k_indices] - poly_y[j_indices]
             # delta_x = poly_x[k_indices] - poly_x[j_indices]
-            
+
             # Simplified: this vectorized PIP is complex. Using iterative for clarity here.
             # The iterative version from sandbox was more direct to write under constraints.
             # Reverting to iterative for bounding box for now.
@@ -164,13 +151,13 @@ if HAS_TORCH:
                         p1x, p1y = p2x, p2y
                     if intersections % 2 == 1:
                         current_poly_mask_bb[r_idx, c_idx] = True
-            
+
             mask_slice[min_y:max_y+1, min_x:max_x+1] = mask_slice[min_y:max_y+1, min_x:max_x+1] | current_poly_mask_bb
         return mask_slice
 
     def _apply_displacement_field_torch(data_slice: "torch.Tensor", displacement_field: "torch.Tensor") -> "torch.Tensor":
         H_data, W_data = data_slice.shape[-2:]
-        
+
         grid_y, grid_x = torch.meshgrid(
             torch.linspace(-1, 1, H_data, device=data_slice.device),
             torch.linspace(-1, 1, W_data, device=data_slice.device),
@@ -200,42 +187,41 @@ if HAS_TORCH:
     def _smooth_field_z_torch(displacement_field_stack: "torch.Tensor", sigma_z: float) -> "torch.Tensor":
         if sigma_z <= 0: return displacement_field_stack
         Z, C, H, W = displacement_field_stack.shape # [Z, 2, H, W]
-        
+
         kernel_size_z = max(3, int(2 * 2 * sigma_z + 1))
         if kernel_size_z % 2 == 0: kernel_size_z +=1
-            
+
         coords_z = torch.arange(kernel_size_z, dtype=torch.float32, device=displacement_field_stack.device)
         coords_z -= (kernel_size_z - 1) / 2
         kernel_1d_z = torch.exp(-(coords_z**2) / (2 * sigma_z**2))
         kernel_1d_z /= kernel_1d_z.sum()
-        
+
         kernel_1d_z_reshaped = kernel_1d_z.view(1, 1, kernel_size_z).repeat(C * H * W, 1, 1) # For grouped conv
-        
+
         # Reshape for 1D convolution: (N, C_in, L_in) -> (C*H*W, 1, Z)
         field_permuted = displacement_field_stack.permute(1,2,3,0).contiguous() # [C,H,W,Z]
         field_reshaped = field_permuted.view(-1, 1, Z) # [C*H*W, 1, Z]
-        
+
         padding_z = kernel_size_z // 2
         smoothed_reshaped = F.conv1d(field_reshaped, kernel_1d_z_reshaped, padding=padding_z, groups=C*H*W)
-        
+
         smoothed_permuted = smoothed_reshaped.view(C,H,W,Z)
         smoothed_stack = smoothed_permuted.permute(3,0,1,2).contiguous() # [Z,C,H,W]
         return smoothed_stack
 
 # --- Main Pipeline Function ---
+@torch_func # Decorate with torch_func
 def dxf_mask_pipeline(
-    image_stack, # Type will vary by backend (Z, H, W) or (Z, C, H, W)
+    image_stack, # Expected to be a torch.Tensor if torch_func is used
     dxf_polygons: List[List[Tuple[float, float]]],
     apply_mask: bool = False,
     **kwargs
 ) -> Union["torch.Tensor", "cp.ndarray", "jnp.ndarray", "tf.Tensor"]: # type: ignore
-    
-    backend = kwargs.get("backend")
-    if not backend: raise ValueError("Backend must be specified in kwargs.")
+
 
     masking_mode = kwargs.get("masking_mode", "zero_out")
     smoothing_sigma_z = float(kwargs.get("smoothing_sigma_z", 0.0))
-    
+
     # Assuming image_stack is (Z, H, W) or (Z, C, H, W)
     # If (Z,C,H,W), C is usually 1 for grayscale, or we take the first channel.
     if image_stack.ndim == 4: # Z, C, H, W
@@ -248,22 +234,18 @@ def dxf_mask_pipeline(
     else:
         raise ValueError(f"image_stack has unsupported ndim: {image_stack.ndim}. Expected 3 or 4.")
 
-    # --- PyTorch Backend ---
-    if backend == "torch":
-        if not HAS_TORCH: raise ImportError("PyTorch backend selected, but not installed.")
-        
-        device = image_stack.device
+        device = image_stack.device # image_stack is now expected to be a torch.Tensor
         polygons_gpu = [torch.tensor(p, dtype=torch.float32, device=device) for p in dxf_polygons]
-        
+
         initial_rasterized_masks_float = torch.zeros((Z, H, W), device=device, dtype=torch.float32)
         displacement_field_slices = []
-        
+
         registration_cnn = _RegistrationCNN_torch().to(device)
         registration_cnn.eval()
 
         for z_idx in range(Z):
             image_slice_gray = image_stack_reg[z_idx] # Shape [H, W]
-            
+
             img_min, img_max = torch.min(image_slice_gray), torch.max(image_slice_gray)
             image_slice_norm = (image_slice_gray - img_min) / (img_max - img_min + 1e-6) if img_max > img_min else torch.zeros_like(image_slice_gray)
 
@@ -274,7 +256,7 @@ def dxf_mask_pipeline(
             with torch.no_grad():
                 displacement_field_slice = registration_cnn(cnn_input).squeeze(0) # [2, H, W]
             displacement_field_slices.append(displacement_field_slice)
-        
+
         displacement_field_stack = torch.stack(displacement_field_slices, dim=0) # [Z, 2, H, W]
 
         if smoothing_sigma_z > 0:
@@ -283,13 +265,13 @@ def dxf_mask_pipeline(
         aligned_mask_slices_list = []
         for z_idx in range(Z):
             aligned_slice = _apply_displacement_field_torch(
-                initial_rasterized_masks_float[z_idx], 
+                initial_rasterized_masks_float[z_idx],
                 displacement_field_stack[z_idx]
             ) # Output can be [1,H,W] or [H,W]
             if aligned_slice.ndim == 3 and aligned_slice.shape[0] == 1:
                  aligned_slice = aligned_slice.squeeze(0) # to [H,W]
             aligned_mask_slices_list.append(aligned_slice > 0.5) # Binarize
-        
+
         aligned_mask_stack_bool = torch.stack(aligned_mask_slices_list, dim=0) # [Z, H, W] bool
 
         if apply_mask:
@@ -298,7 +280,7 @@ def dxf_mask_pipeline(
             mask_to_apply = aligned_mask_stack_bool.float()
             if image_stack.ndim == 4: # Z,C,H,W
                 mask_to_apply = mask_to_apply.unsqueeze(1) # -> (Z,1,H,W)
-            
+
             if masking_mode == "zero_out" or masking_mode == "multiply":
                 masked_img = image_stack.float() * mask_to_apply
                 return masked_img.to(original_dtype)
@@ -310,20 +292,3 @@ def dxf_mask_pipeline(
                 raise ValueError(f"Unknown masking_mode: {masking_mode}")
         else:
             return aligned_mask_stack_bool
-
-    # --- Other Backend Stubs ---
-    elif backend == "cupy":
-        if not HAS_CUPY: raise ImportError("CuPy backend selected, but not installed.")
-        logger.warning("CuPy backend for dxf_mask_pipeline is a stub and not fully implemented.")
-        # Placeholder: return zeros or original image based on apply_mask
-        return cp.zeros((Z,H,W), dtype=bool) if not apply_mask else image_stack # type: ignore
-    elif backend == "tensorflow":
-        if not HAS_TENSORFLOW: raise ImportError("TensorFlow backend selected, but not installed.")
-        logger.warning("TensorFlow backend for dxf_mask_pipeline is a stub and not fully implemented.")
-        return tf.zeros((Z,H,W), dtype=tf.bool) if not apply_mask else image_stack # type: ignore
-    elif backend == "jax":
-        if not HAS_JAX: raise ImportError("JAX backend selected, but not installed.")
-        logger.warning("JAX backend for dxf_mask_pipeline is a stub and not fully implemented.")
-        return jnp.zeros((Z,H,W), dtype=jnp.bool_) if not apply_mask else image_stack # type: ignore
-    else:
-        raise ValueError(f"Unsupported backend: {backend}.")

@@ -492,4 +492,14 @@ class StepViewerPane:
                 'pipeline_id': current_step['pipeline_id'],
                 'steps': self.steps
             })
-```
+
+    async def shutdown(self):
+        """
+        Explicit cleanup method for deterministic resource release.
+        Unregisters observers from TUIState.
+        """
+        logger.info("StepViewerPane: Shutting down...")
+        # Unregister observers
+        self.state.remove_observer('plate_selected', self._on_plate_selected)
+        self.state.remove_observer('steps_updated', self._refresh_steps)
+        logger.info("StepViewerPane: Observers unregistered.")

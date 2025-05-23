@@ -108,7 +108,7 @@ async def main():
     # 3. Initialize launcher, passing the core global config
     # OpenHCSTUILauncher will need to be updated to accept core_global_config
     launcher = OpenHCSTUILauncher(
-        default_workspace_path=args.workspace,
+        common_output_directory=args.workspace,
         # tui_config_path=args.tui_config, # If tui_launcher uses its own config file
         core_global_config=core_global_config # Pass the obtained config
     )

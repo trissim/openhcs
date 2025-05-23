@@ -13,17 +13,14 @@ Doctrinal Clauses:
 import logging
 from typing import Any, List, Optional, Tuple
 
-# Import JAX with error handling
-try:
-    import jax
-    import jax.numpy as jnp
-    from jax import lax
-    HAS_JAX = True
-except ImportError:
-    HAS_JAX = False
-
 from openhcs.core.memory.decorators import jax as jax_func
+from openhcs.core.utils import optional_import
 from openhcs.processing.processor import ImageProcessorInterface
+
+# Import JAX as an optional dependency
+jax = optional_import("jax")
+jnp = optional_import("jax.numpy") if jax is not None else None
+lax = jax.lax if jax is not None else None
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +38,8 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     Returns:
         2D JAX weight mask of shape (height, width)
     """
-    if not HAS_JAX:
-        raise ImportError("JAX is required for JAXImageProcessor")
+    # The compiler will ensure this function is only called when JAX is available
+    # No need to check for JAX availability here
 
     margin_y = int(jnp.floor(height * margin_ratio))
     margin_x = int(jnp.floor(width * margin_ratio))
@@ -67,689 +64,667 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-class JAXImageProcessor(ImageProcessorInterface):
+def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
     """
-    JAX implementation of the ImageProcessorInterface.
+    Validate that the input is a 3D JAX array.
 
-    This class provides GPU-accelerated image processing operations using JAX.
-    All methods are stateless and operate on JAX arrays.
+    Args:
+        array: Array to validate
+        name: Name of the array for error messages
+
+    Raises:
+        TypeError: If the array is not a JAX array
+        ValueError: If the array is not 3D
+        ImportError: If JAX is not available
     """
+    # The compiler will ensure this function is only called when JAX is available
+    # No need to check for JAX availability here
 
-    @classmethod
-    def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
-        """
-        Validate that the input is a 3D JAX array.
+    if not isinstance(array, jnp.ndarray):
+        raise TypeError(f"{name} must be a JAX array, got {type(array)}. "
+                       f"No automatic conversion is performed to maintain explicit contracts.")
 
-        Args:
-            array: Array to validate
-            name: Name of the array for error messages
+    if array.ndim != 3:
+        raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
-        Raises:
-            TypeError: If the array is not a JAX array
-            ValueError: If the array is not 3D
-            ImportError: If JAX is not available
-        """
-        if not HAS_JAX:
-            raise ImportError("JAX is required for JAXImageProcessor")
+@jax_func
+def _gaussian_kernel(cls, sigma: float, kernel_size: int) -> "jnp.ndarray":
+    """
+    Create a 2D Gaussian kernel.
 
-        if not isinstance(array, jnp.ndarray):
-            raise TypeError(f"{name} must be a JAX array, got {type(array)}. "
-                           f"No automatic conversion is performed to maintain explicit contracts.")
+    Args:
+        sigma: Standard deviation of the Gaussian kernel
+        kernel_size: Size of the kernel (must be odd)
 
-        if array.ndim != 3:
-            raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
+    Returns:
+        2D JAX array of shape (kernel_size, kernel_size)
+    """
+    # Ensure kernel_size is odd
+    if kernel_size % 2 == 0:
+        kernel_size += 1
 
-    @jax_func
-    @classmethod
-    def _gaussian_kernel(cls, sigma: float, kernel_size: int) -> "jnp.ndarray":
-        """
-        Create a 2D Gaussian kernel.
+    # Create 1D Gaussian kernel
+    x = jnp.arange(-(kernel_size // 2), kernel_size // 2 + 1, dtype=jnp.float32)
+    kernel_1d = jnp.exp(-0.5 * (x / sigma) ** 2)
+    kernel_1d = kernel_1d / jnp.sum(kernel_1d)
 
-        Args:
-            sigma: Standard deviation of the Gaussian kernel
-            kernel_size: Size of the kernel (must be odd)
+    # Create 2D Gaussian kernel
+    kernel_2d = jnp.outer(kernel_1d, kernel_1d)
 
-        Returns:
-            2D JAX array of shape (kernel_size, kernel_size)
-        """
-        # Ensure kernel_size is odd
-        if kernel_size % 2 == 0:
-            kernel_size += 1
+    return kernel_2d
 
-        # Create 1D Gaussian kernel
-        x = jnp.arange(-(kernel_size // 2), kernel_size // 2 + 1, dtype=jnp.float32)
-        kernel_1d = jnp.exp(-0.5 * (x / sigma) ** 2)
-        kernel_1d = kernel_1d / jnp.sum(kernel_1d)
+@jax_func
+def _gaussian_blur(cls, image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
+    """
+    Apply Gaussian blur to a 2D image.
 
-        # Create 2D Gaussian kernel
-        kernel_2d = jnp.outer(kernel_1d, kernel_1d)
+    Args:
+        image: 2D JAX array of shape (H, W)
+        sigma: Standard deviation of the Gaussian kernel
 
-        return kernel_2d
+    Returns:
+        Blurred 2D JAX array of shape (H, W)
+    """
+    # Calculate kernel size based on sigma
+    kernel_size = max(3, int(2 * 4 * sigma + 1))
 
-    @jax_func
-    @classmethod
-    def _gaussian_blur(cls, image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
-        """
-        Apply Gaussian blur to a 2D image.
+    # Create Gaussian kernel
+    kernel = cls._gaussian_kernel(sigma, kernel_size)
 
-        Args:
-            image: 2D JAX array of shape (H, W)
-            sigma: Standard deviation of the Gaussian kernel
+    # Pad the image for convolution
+    pad_size = kernel_size // 2
+    padded = jnp.pad(image, ((pad_size, pad_size), (pad_size, pad_size)), mode='reflect')
 
-        Returns:
-            Blurred 2D JAX array of shape (H, W)
-        """
-        # Calculate kernel size based on sigma
-        kernel_size = max(3, int(2 * 4 * sigma + 1))
+    # Apply convolution
+    # JAX doesn't have a direct 2D convolution function for arbitrary kernels
+    # We'll use lax.conv_general_dilated with appropriate parameters
 
-        # Create Gaussian kernel
-        kernel = cls._gaussian_kernel(sigma, kernel_size)
+    # Reshape inputs for lax.conv_general_dilated
+    kernel_reshaped = kernel.reshape(kernel_size, kernel_size, 1, 1)
+    padded_reshaped = padded.reshape(1, padded.shape[0], padded.shape[1], 1)
 
-        # Pad the image for convolution
-        pad_size = kernel_size // 2
-        padded = jnp.pad(image, ((pad_size, pad_size), (pad_size, pad_size)), mode='reflect')
+    # Apply convolution
+    result = lax.conv_general_dilated(
+        padded_reshaped,
+        kernel_reshaped,
+        window_strides=(1, 1),
+        padding='VALID',
+        dimension_numbers=('NHWC', 'HWIO', 'NHWC')
+    )
 
-        # Apply convolution
-        # JAX doesn't have a direct 2D convolution function for arbitrary kernels
-        # We'll use lax.conv_general_dilated with appropriate parameters
+    # Reshape back to 2D
+    return result[0, :, :, 0]
 
-        # Reshape inputs for lax.conv_general_dilated
-        kernel_reshaped = kernel.reshape(kernel_size, kernel_size, 1, 1)
-        padded_reshaped = padded.reshape(1, padded.shape[0], padded.shape[1], 1)
+@jax_func
+def sharpen(
+    cls, image: "jnp.ndarray", radius: float = 1.0, amount: float = 1.0
+) -> "jnp.ndarray":
+    """
+    Sharpen a 3D image using unsharp masking.
 
-        # Apply convolution
-        result = lax.conv_general_dilated(
-            padded_reshaped,
-            kernel_reshaped,
-            window_strides=(1, 1),
-            padding='VALID',
-            dimension_numbers=('NHWC', 'HWIO', 'NHWC')
-        )
+    This applies sharpening to each Z-slice independently.
 
-        # Reshape back to 2D
-        return result[0, :, :, 0]
+    Args:
+        image: 3D JAX array of shape (Z, Y, X)
+        radius: Radius of Gaussian blur
+        amount: Sharpening strength
 
-    @jax_func
-    @classmethod
-    def sharpen(
-        cls, image: "jnp.ndarray", radius: float = 1.0, amount: float = 1.0
-    ) -> "jnp.ndarray":
-        """
-        Sharpen a 3D image using unsharp masking.
+    Returns:
+        Sharpened 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        This applies sharpening to each Z-slice independently.
+    # Store original dtype
+    dtype = image.dtype
 
-        Args:
-            image: 3D JAX array of shape (Z, Y, X)
-            radius: Radius of Gaussian blur
-            amount: Sharpening strength
+    # Process each Z-slice independently
+    result_list = []
 
-        Returns:
-            Sharpened 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    for z in range(image.shape[0]):
+        # Convert to float for processing
+        slice_float = image[z].astype(jnp.float32) / jnp.max(image[z])
 
-        # Store original dtype
-        dtype = image.dtype
+        # Create blurred version for unsharp mask
+        blurred = cls._gaussian_blur(slice_float, sigma=radius)
 
-        # Process each Z-slice independently
-        result_list = []
+        # Apply unsharp mask: original + amount * (original - blurred)
+        sharpened = slice_float + amount * (slice_float - blurred)
 
-        for z in range(image.shape[0]):
-            # Convert to float for processing
-            slice_float = image[z].astype(jnp.float32) / jnp.max(image[z])
+        # Clip to valid range
+        sharpened = jnp.clip(sharpened, 0.0, 1.0)
 
-            # Create blurred version for unsharp mask
-            blurred = cls._gaussian_blur(slice_float, sigma=radius)
+        # Scale back to original range
+        min_val = jnp.min(sharpened)
+        max_val = jnp.max(sharpened)
+        if max_val > min_val:
+            sharpened = (sharpened - min_val) * 65535.0 / (max_val - min_val)
 
-            # Apply unsharp mask: original + amount * (original - blurred)
-            sharpened = slice_float + amount * (slice_float - blurred)
+        result_list.append(sharpened)
 
-            # Clip to valid range
-            sharpened = jnp.clip(sharpened, 0.0, 1.0)
+    # Stack results back into a 3D array
+    result = jnp.stack(result_list, axis=0)
 
-            # Scale back to original range
-            min_val = jnp.min(sharpened)
-            max_val = jnp.max(sharpened)
-            if max_val > min_val:
-                sharpened = (sharpened - min_val) * 65535.0 / (max_val - min_val)
-
-            result_list.append(sharpened)
-
-        # Stack results back into a 3D array
-        result = jnp.stack(result_list, axis=0)
-
-        # Convert back to original dtype
-        if jnp.issubdtype(dtype, jnp.integer):
-            result = jnp.clip(result, 0, 65535).astype(jnp.uint16)
-        else:
-            result = result.astype(dtype)
-
-        return result
-
-    @jax_func
-    @classmethod
-    def percentile_normalize(
-        cls, image: "jnp.ndarray",
-        low_percentile: float = 1.0,
-        high_percentile: float = 99.0,
-        target_min: float = 0.0,
-        target_max: float = 65535.0
-    ) -> "jnp.ndarray":
-        """
-        Normalize a 3D image using percentile-based contrast stretching.
-
-        This applies normalization to each Z-slice independently.
-
-        Args:
-            image: 3D JAX array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
-
-        Returns:
-            Normalized 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
-
-        # Process each Z-slice independently
-        result_list = []
-
-        # Define a function to normalize a single slice
-        def normalize_single_slice(slice_idx):
-            slice_data = image[slice_idx]
-
-            # Get percentile values for this slice
-            p_low = jnp.percentile(slice_data, low_percentile)
-            p_high = jnp.percentile(slice_data, high_percentile)
-
-            # Avoid division by zero
-            equal_percentiles = jnp.isclose(p_high, p_low)
-
-            # Function to normalize when percentiles are different
-            def normalize_slice(args):
-                p_low, p_high, slice_data = args
-                # Clip and normalize to target range
-                clipped = jnp.clip(slice_data.astype(jnp.float32), p_low, p_high)
-                scale = (target_max - target_min) / (p_high - p_low)
-                normalized = (clipped - p_low) * scale + target_min
-                return normalized
-
-            # Function for the case where percentiles are equal
-            def return_constant(args):
-                _, _, slice_data = args
-                return jnp.ones_like(slice_data, dtype=jnp.float32) * target_min
-
-            # Handle the case where percentiles are equal
-            normalized = jax.lax.cond(
-                equal_percentiles,
-                return_constant,
-                normalize_slice,
-                (p_low, p_high, slice_data)
-            )
-
-            return normalized
-
-        # Process each slice
-        for z in range(image.shape[0]):
-            result_list.append(normalize_single_slice(z))
-
-        # Stack results back into a 3D array
-        result = jnp.stack(result_list, axis=0)
-
-        # Convert to uint16
+    # Convert back to original dtype
+    if jnp.issubdtype(dtype, jnp.integer):
         result = jnp.clip(result, 0, 65535).astype(jnp.uint16)
+    else:
+        result = result.astype(dtype)
 
-        return result
+    return result
 
-    @jax_func
-    @classmethod
-    def stack_percentile_normalize(
-        cls, stack: "jnp.ndarray",
-        low_percentile: float = 1.0,
-        high_percentile: float = 99.0,
-        target_min: float = 0.0,
-        target_max: float = 65535.0
-    ) -> "jnp.ndarray":
-        """
-        Normalize a stack using global percentile-based contrast stretching.
+@jax_func
+def percentile_normalize(
+    cls, image: "jnp.ndarray",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0
+) -> "jnp.ndarray":
+    """
+    Normalize a 3D image using percentile-based contrast stretching.
 
-        This ensures consistent normalization across all Z-slices by computing
-        global percentiles across the entire stack.
+    This applies normalization to each Z-slice independently.
 
-        Args:
-            stack: 3D JAX array of shape (Z, Y, X)
-            low_percentile: Lower percentile (0-100)
-            high_percentile: Upper percentile (0-100)
-            target_min: Target minimum value
-            target_max: Target maximum value
+    Args:
+        image: 3D JAX array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-        Returns:
-            Normalized 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
+    Returns:
+        Normalized 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        # Calculate global percentiles across the entire stack
-        p_low = jnp.percentile(stack, low_percentile)
-        p_high = jnp.percentile(stack, high_percentile)
+    # Process each Z-slice independently
+    result_list = []
+
+    # Define a function to normalize a single slice
+    def normalize_single_slice(slice_idx):
+        slice_data = image[slice_idx]
+
+        # Get percentile values for this slice
+        p_low = jnp.percentile(slice_data, low_percentile)
+        p_high = jnp.percentile(slice_data, high_percentile)
 
         # Avoid division by zero
         equal_percentiles = jnp.isclose(p_high, p_low)
 
         # Function to normalize when percentiles are different
-        def normalize_stack_fn(args):
-            p_low, p_high, stack_data = args
+        def normalize_slice(args):
+            p_low, p_high, slice_data = args
             # Clip and normalize to target range
-            clipped = jnp.clip(stack_data.astype(jnp.float32), p_low, p_high)
+            clipped = jnp.clip(slice_data.astype(jnp.float32), p_low, p_high)
             scale = (target_max - target_min) / (p_high - p_low)
             normalized = (clipped - p_low) * scale + target_min
             return normalized
 
         # Function for the case where percentiles are equal
-        def return_constant_stack(args):
-            _, _, stack_data = args
-            return jnp.ones_like(stack_data, dtype=jnp.float32) * target_min
+        def return_constant(args):
+            _, _, slice_data = args
+            return jnp.ones_like(slice_data, dtype=jnp.float32) * target_min
 
         # Handle the case where percentiles are equal
         normalized = jax.lax.cond(
             equal_percentiles,
-            return_constant_stack,
-            normalize_stack_fn,
-            (p_low, p_high, stack)
+            return_constant,
+            normalize_slice,
+            (p_low, p_high, slice_data)
         )
-
-        # Convert to uint16
-        normalized = jnp.clip(normalized, 0, 65535).astype(jnp.uint16)
 
         return normalized
 
-    @jax_func
-    @classmethod
-    def create_composite(
-        cls, images: List["jnp.ndarray"], weights: Optional[List[float]] = None
-    ) -> "jnp.ndarray":
-        """
-        Create a composite image from multiple 3D arrays.
+    # Process each slice
+    for z in range(image.shape[0]):
+        result_list.append(normalize_single_slice(z))
 
-        Args:
-            images: List of 3D JAX arrays, each of shape (Z, Y, X)
-            weights: List of weights for each image. If None, equal weights are used.
+    # Stack results back into a 3D array
+    result = jnp.stack(result_list, axis=0)
 
-        Returns:
-            Composite 3D JAX array of shape (Z, Y, X)
-        """
-        # Ensure images is a list
-        if not isinstance(images, list):
-            raise TypeError("images must be a list of JAX arrays")
+    # Convert to uint16
+    result = jnp.clip(result, 0, 65535).astype(jnp.uint16)
 
-        # Check for empty list early
-        if not images:
-            raise ValueError("images list cannot be empty")
+    return result
 
-        # Validate all images are 3D JAX arrays with the same shape
-        for i, img in enumerate(images):
-            cls._validate_3d_array(img, f"images[{i}]")
-            if img.shape != images[0].shape:
-                raise ValueError(
-                    f"All images must have the same shape. "
-                    f"images[0] has shape {images[0].shape}, "
-                    f"images[{i}] has shape {img.shape}"
-                )
+@jax_func
+def stack_percentile_normalize(
+    cls, stack: "jnp.ndarray",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: float = 0.0,
+    target_max: float = 65535.0
+) -> "jnp.ndarray":
+    """
+    Normalize a stack using global percentile-based contrast stretching.
 
-        # Default weights if none provided
-        if weights is None:
-            # Equal weights for all images
-            weights = [1.0 / len(images)] * len(images)
-        elif not isinstance(weights, list):
-            raise TypeError("weights must be a list of values")
+    This ensures consistent normalization across all Z-slices by computing
+    global percentiles across the entire stack.
 
-        # Make sure weights list is at least as long as images list
-        if len(weights) < len(images):
-            weights = weights + [0.0] * (len(images) - len(weights))
-        # Truncate weights if longer than images
-        weights = weights[:len(images)]
+    Args:
+        stack: 3D JAX array of shape (Z, Y, X)
+        low_percentile: Lower percentile (0-100)
+        high_percentile: Upper percentile (0-100)
+        target_min: Target minimum value
+        target_max: Target maximum value
 
-        first_image = images[0]
-        shape = first_image.shape
-        dtype = first_image.dtype
+    Returns:
+        Normalized 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Create empty composite
-        composite = jnp.zeros(shape, dtype=jnp.float32)
-        total_weight = 0.0
+    # Calculate global percentiles across the entire stack
+    p_low = jnp.percentile(stack, low_percentile)
+    p_high = jnp.percentile(stack, high_percentile)
 
-        # Add each image with its weight
-        for i, image in enumerate(images):
-            weight = weights[i]
-            if weight <= 0.0:
-                continue
+    # Avoid division by zero
+    equal_percentiles = jnp.isclose(p_high, p_low)
 
-            # Add to composite
-            composite += image.astype(jnp.float32) * weight
-            total_weight += weight
+    # Function to normalize when percentiles are different
+    def normalize_stack_fn(args):
+        p_low, p_high, stack_data = args
+        # Clip and normalize to target range
+        clipped = jnp.clip(stack_data.astype(jnp.float32), p_low, p_high)
+        scale = (target_max - target_min) / (p_high - p_low)
+        normalized = (clipped - p_low) * scale + target_min
+        return normalized
 
-        # Normalize by total weight
-        if total_weight > 0:
-            composite /= total_weight
+    # Function for the case where percentiles are equal
+    def return_constant_stack(args):
+        _, _, stack_data = args
+        return jnp.ones_like(stack_data, dtype=jnp.float32) * target_min
 
-        # Convert back to original dtype (usually uint16)
-        if jnp.issubdtype(dtype, jnp.integer):
-            composite = jnp.clip(composite, 0, 65535).astype(jnp.uint16)
-        else:
-            composite = composite.astype(dtype)
+    # Handle the case where percentiles are equal
+    normalized = jax.lax.cond(
+        equal_percentiles,
+        return_constant_stack,
+        normalize_stack_fn,
+        (p_low, p_high, stack)
+    )
 
-        return composite
+    # Convert to uint16
+    normalized = jnp.clip(normalized, 0, 65535).astype(jnp.uint16)
 
-    @jax_func
-    @classmethod
-    def apply_mask(cls, image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
-        """
-        Apply a mask to a 3D image.
+    return normalized
 
-        This applies the mask to each Z-slice independently if mask is 2D,
-        or applies the 3D mask directly if mask is 3D.
+@jax_func
+def create_composite(
+    cls, images: List["jnp.ndarray"], weights: Optional[List[float]] = None
+) -> "jnp.ndarray":
+    """
+    Create a composite image from multiple 3D arrays.
 
-        Args:
-            image: 3D JAX array of shape (Z, Y, X)
-            mask: 3D JAX array of shape (Z, Y, X) or 2D JAX array of shape (Y, X)
+    Args:
+        images: List of 3D JAX arrays, each of shape (Z, Y, X)
+        weights: List of weights for each image. If None, equal weights are used.
 
-        Returns:
-            Masked 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    Returns:
+        Composite 3D JAX array of shape (Z, Y, X)
+    """
+    # Ensure images is a list
+    if not isinstance(images, list):
+        raise TypeError("images must be a list of JAX arrays")
 
-        # Handle 2D mask (apply to each Z-slice)
-        if isinstance(mask, jnp.ndarray) and mask.ndim == 2:
-            if mask.shape != image.shape[1:]:
-                raise ValueError(
-                    f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
-                )
+    # Check for empty list early
+    if not images:
+        raise ValueError("images list cannot be empty")
 
-            # Apply 2D mask to each Z-slice
-            result_list = []
-            for z in range(image.shape[0]):
-                result_list.append(image[z].astype(jnp.float32) * mask.astype(jnp.float32))
+    # Validate all images are 3D JAX arrays with the same shape
+    for i, img in enumerate(images):
+        cls._validate_3d_array(img, f"images[{i}]")
+        if img.shape != images[0].shape:
+            raise ValueError(
+                f"All images must have the same shape. "
+                f"images[0] has shape {images[0].shape}, "
+                f"images[{i}] has shape {img.shape}"
+            )
 
-            result = jnp.stack(result_list, axis=0)
-            return result.astype(image.dtype)
+    # Default weights if none provided
+    if weights is None:
+        # Equal weights for all images
+        weights = [1.0 / len(images)] * len(images)
+    elif not isinstance(weights, list):
+        raise TypeError("weights must be a list of values")
 
-        # Handle 3D mask
-        if isinstance(mask, jnp.ndarray) and mask.ndim == 3:
-            if mask.shape != image.shape:
-                raise ValueError(
-                    f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
-                )
+    # Make sure weights list is at least as long as images list
+    if len(weights) < len(images):
+        weights = weights + [0.0] * (len(images) - len(weights))
+    # Truncate weights if longer than images
+    weights = weights[:len(images)]
 
-            # Apply 3D mask directly
-            masked = image.astype(jnp.float32) * mask.astype(jnp.float32)
-            return masked.astype(image.dtype)
+    first_image = images[0]
+    shape = first_image.shape
+    dtype = first_image.dtype
 
-        # If we get here, the mask is neither 2D nor 3D JAX array
-        raise TypeError(f"mask must be a 2D or 3D JAX array, got {type(mask)}")
+    # Create empty composite
+    composite = jnp.zeros(shape, dtype=jnp.float32)
+    total_weight = 0.0
 
-    @jax_func
-    @classmethod
-    def create_weight_mask(
-        cls, shape: Tuple[int, int], margin_ratio: float = 0.1
-    ) -> "jnp.ndarray":
-        """
-        Create a weight mask for blending images.
+    # Add each image with its weight
+    for i, image in enumerate(images):
+        weight = weights[i]
+        if weight <= 0.0:
+            continue
 
-        Args:
-            shape: Shape of the mask (height, width)
-            margin_ratio: Ratio of image size to use as margin
+        # Add to composite
+        composite += image.astype(jnp.float32) * weight
+        total_weight += weight
 
-        Returns:
-            2D JAX weight mask of shape (Y, X)
-        """
-        if not isinstance(shape, tuple) or len(shape) != 2:
-            raise TypeError("shape must be a tuple of (height, width)")
+    # Normalize by total weight
+    if total_weight > 0:
+        composite /= total_weight
 
-        height, width = shape
-        return create_linear_weight_mask(height, width, margin_ratio)
+    # Convert back to original dtype (usually uint16)
+    if jnp.issubdtype(dtype, jnp.integer):
+        composite = jnp.clip(composite, 0, 65535).astype(jnp.uint16)
+    else:
+        composite = composite.astype(dtype)
 
-    @jax_func
-    @classmethod
-    def max_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
-        """
-        Create a maximum intensity projection from a Z-stack.
+    return composite
 
-        Args:
-            stack: 3D JAX array of shape (Z, Y, X)
+@jax_func
+def apply_mask(cls, image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
+    """
+    Apply a mask to a 3D image.
 
-        Returns:
-            2D JAX array of shape (Y, X)
-        """
-        cls._validate_3d_array(stack)
+    This applies the mask to each Z-slice independently if mask is 2D,
+    or applies the 3D mask directly if mask is 3D.
 
-        # Create max projection
-        return jnp.max(stack, axis=0)
+    Args:
+        image: 3D JAX array of shape (Z, Y, X)
+        mask: 3D JAX array of shape (Z, Y, X) or 2D JAX array of shape (Y, X)
 
-    @jax_func
-    @classmethod
-    def mean_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
-        """
-        Create a mean intensity projection from a Z-stack.
+    Returns:
+        Masked 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-        Args:
-            stack: 3D JAX array of shape (Z, Y, X)
+    # Handle 2D mask (apply to each Z-slice)
+    if isinstance(mask, jnp.ndarray) and mask.ndim == 2:
+        if mask.shape != image.shape[1:]:
+            raise ValueError(
+                f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
+            )
 
-        Returns:
-            2D JAX array of shape (Y, X)
-        """
-        cls._validate_3d_array(stack)
+        # Apply 2D mask to each Z-slice
+        result_list = []
+        for z in range(image.shape[0]):
+            result_list.append(image[z].astype(jnp.float32) * mask.astype(jnp.float32))
 
-        # Create mean projection
-        return jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
+        result = jnp.stack(result_list, axis=0)
+        return result.astype(image.dtype)
 
-    @jax_func
-    @classmethod
-    def stack_equalize_histogram(
-        cls, stack: "jnp.ndarray",
-        bins: int = 65536,
-        range_min: float = 0.0,
-        range_max: float = 65535.0
-    ) -> "jnp.ndarray":
-        """
-        Apply histogram equalization to an entire stack.
+    # Handle 3D mask
+    if isinstance(mask, jnp.ndarray) and mask.ndim == 3:
+        if mask.shape != image.shape:
+            raise ValueError(
+                f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
+            )
 
-        This ensures consistent contrast enhancement across all Z-slices by
-        computing a global histogram across the entire stack.
+        # Apply 3D mask directly
+        masked = image.astype(jnp.float32) * mask.astype(jnp.float32)
+        return masked.astype(image.dtype)
 
-        Args:
-            stack: 3D JAX array of shape (Z, Y, X)
-            bins: Number of bins for histogram computation
-            range_min: Minimum value for histogram range
-            range_max: Maximum value for histogram range
+    # If we get here, the mask is neither 2D nor 3D JAX array
+    raise TypeError(f"mask must be a 2D or 3D JAX array, got {type(mask)}")
 
-        Returns:
-            Equalized 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(stack)
+@jax_func
+def create_weight_mask(
+    cls, shape: Tuple[int, int], margin_ratio: float = 0.1
+) -> "jnp.ndarray":
+    """
+    Create a weight mask for blending images.
 
-        # Flatten the entire stack to compute the global histogram
-        flat_stack = stack.flatten()
+    Args:
+        shape: Shape of the mask (height, width)
+        margin_ratio: Ratio of image size to use as margin
 
-        # Calculate the histogram
-        hist, _ = jnp.histogram(flat_stack, bins=bins, range=(range_min, range_max))
+    Returns:
+        2D JAX weight mask of shape (Y, X)
+    """
+    if not isinstance(shape, tuple) or len(shape) != 2:
+        raise TypeError("shape must be a tuple of (height, width)")
 
-        # Calculate cumulative distribution function (CDF)
-        cdf = jnp.cumsum(hist)
+    height, width = shape
+    return create_linear_weight_mask(height, width, margin_ratio)
 
-        # Normalize the CDF to the range [0, 65535]
-        # Avoid division by zero
-        cdf_max = jnp.max(cdf)
-        cdf_normalized = jax.lax.cond(
-            cdf_max > 0,
-            lambda x: 65535.0 * x / cdf_max,
-            lambda x: x,
-            cdf
-        )
+@jax_func
+def max_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
+    """
+    Create a maximum intensity projection from a Z-stack.
 
-        # Scale input values to bin indices
-        bin_width = (range_max - range_min) / bins
-        indices = jnp.clip(
-            jnp.floor((flat_stack - range_min) / bin_width).astype(jnp.int32),
-            0, bins - 1
-        )
+    Args:
+        stack: 3D JAX array of shape (Z, Y, X)
 
-        # Look up CDF values
-        equalized_flat = jnp.take(cdf_normalized, indices)
+    Returns:
+        2D JAX array of shape (Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        # Reshape back to original shape
-        equalized_stack = equalized_flat.reshape(stack.shape)
+    # Create max projection
+    return jnp.max(stack, axis=0)
 
-        # Convert to uint16
-        return equalized_stack.astype(jnp.uint16)
+@jax_func
+def mean_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
+    """
+    Create a mean intensity projection from a Z-stack.
 
-    @jax_func
-    @classmethod
-    def create_projection(
-        cls, stack: "jnp.ndarray", method: str = "max_projection"
-    ) -> "jnp.ndarray":
-        """
-        Create a projection from a stack using the specified method.
+    Args:
+        stack: 3D JAX array of shape (Z, Y, X)
 
-        Args:
-            stack: 3D JAX array of shape (Z, Y, X)
-            method: Projection method (max_projection, mean_projection)
+    Returns:
+        2D JAX array of shape (Y, X)
+    """
+    cls._validate_3d_array(stack)
 
-        Returns:
-            2D JAX array of shape (Y, X)
-        """
-        cls._validate_3d_array(stack)
+    # Create mean projection
+    return jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
 
-        if method == "max_projection":
-            return cls.max_projection(stack)
+@jax_func
+def stack_equalize_histogram(
+    cls, stack: "jnp.ndarray",
+    bins: int = 65536,
+    range_min: float = 0.0,
+    range_max: float = 65535.0
+) -> "jnp.ndarray":
+    """
+    Apply histogram equalization to an entire stack.
 
-        if method == "mean_projection":
-            return cls.mean_projection(stack)
+    This ensures consistent contrast enhancement across all Z-slices by
+    computing a global histogram across the entire stack.
 
-        # Default case for unknown methods
-        logger.warning("Unknown projection method: %s, using max_projection", method)
+    Args:
+        stack: 3D JAX array of shape (Z, Y, X)
+        bins: Number of bins for histogram computation
+        range_min: Minimum value for histogram range
+        range_max: Maximum value for histogram range
+
+    Returns:
+        Equalized 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(stack)
+
+    # Flatten the entire stack to compute the global histogram
+    flat_stack = stack.flatten()
+
+    # Calculate the histogram
+    hist, _ = jnp.histogram(flat_stack, bins=bins, range=(range_min, range_max))
+
+    # Calculate cumulative distribution function (CDF)
+    cdf = jnp.cumsum(hist)
+
+    # Normalize the CDF to the range [0, 65535]
+    # Avoid division by zero
+    cdf_max = jnp.max(cdf)
+    cdf_normalized = jax.lax.cond(
+        cdf_max > 0,
+        lambda x: 65535.0 * x / cdf_max,
+        lambda x: x,
+        cdf
+    )
+
+    # Scale input values to bin indices
+    bin_width = (range_max - range_min) / bins
+    indices = jnp.clip(
+        jnp.floor((flat_stack - range_min) / bin_width).astype(jnp.int32),
+        0, bins - 1
+    )
+
+    # Look up CDF values
+    equalized_flat = jnp.take(cdf_normalized, indices)
+
+    # Reshape back to original shape
+    equalized_stack = equalized_flat.reshape(stack.shape)
+
+    # Convert to uint16
+    return equalized_stack.astype(jnp.uint16)
+
+@jax_func
+def create_projection(
+    cls, stack: "jnp.ndarray", method: str = "max_projection"
+) -> "jnp.ndarray":
+    """
+    Create a projection from a stack using the specified method.
+
+    Args:
+        stack: 3D JAX array of shape (Z, Y, X)
+        method: Projection method (max_projection, mean_projection)
+
+    Returns:
+        2D JAX array of shape (Y, X)
+    """
+    cls._validate_3d_array(stack)
+
+    if method == "max_projection":
         return cls.max_projection(stack)
 
-    @jax_func
-    @classmethod
-    def tophat(
-        cls, image: "jnp.ndarray",
-        selem_radius: int = 50,
-        downsample_factor: int = 4
-    ) -> "jnp.ndarray":
-        """
-        Apply white top-hat filter to a 3D image for background removal.
+    if method == "mean_projection":
+        return cls.mean_projection(stack)
 
-        This applies the filter to each Z-slice independently using JAX's
-        native operations.
+    # Default case for unknown methods
+    logger.warning("Unknown projection method: %s, using max_projection", method)
+    return cls.max_projection(stack)
 
-        Args:
-            image: 3D JAX array of shape (Z, Y, X)
-            selem_radius: Radius of the structuring element disk
-            downsample_factor: Factor by which to downsample the image for processing
+@jax_func
+def tophat(
+    cls, image: "jnp.ndarray",
+    selem_radius: int = 50,
+    downsample_factor: int = 4
+) -> "jnp.ndarray":
+    """
+    Apply white top-hat filter to a 3D image for background removal.
 
-        Returns:
-            Filtered 3D JAX array of shape (Z, Y, X)
-        """
-        cls._validate_3d_array(image)
+    This applies the filter to each Z-slice independently using JAX's
+    native operations.
 
-        # Process each Z-slice independently
-        result_list = []
+    Args:
+        image: 3D JAX array of shape (Z, Y, X)
+        selem_radius: Radius of the structuring element disk
+        downsample_factor: Factor by which to downsample the image for processing
 
-        # Define a function to process a single slice
-        def process_slice(slice_idx):
-            slice_data = image[slice_idx]
-            input_dtype = slice_data.dtype
+    Returns:
+        Filtered 3D JAX array of shape (Z, Y, X)
+    """
+    cls._validate_3d_array(image)
 
-            # 1) Downsample
-            # JAX doesn't have a direct resize function, so we'll use a simple approach
-            # This is a simplified version and might not match scikit-image's resize exactly
-            new_h = slice_data.shape[0] // downsample_factor
-            new_w = slice_data.shape[1] // downsample_factor
+    # Process each Z-slice independently
+    result_list = []
 
-            # Simple block averaging for downsampling
-            slice_data_float = slice_data.astype(jnp.float32)
-            blocks = slice_data_float.reshape(
-                new_h, downsample_factor, new_w, downsample_factor
-            )
-            image_small = jnp.mean(blocks, axis=(1, 3))
+    # Define a function to process a single slice
+    def process_slice(slice_idx):
+        slice_data = image[slice_idx]
+        input_dtype = slice_data.dtype
 
-            # 2) Create a circular structuring element
-            small_selem_radius = max(1, selem_radius // downsample_factor)
+        # 1) Downsample
+        # JAX doesn't have a direct resize function, so we'll use a simple approach
+        # This is a simplified version and might not match scikit-image's resize exactly
+        new_h = slice_data.shape[0] // downsample_factor
+        new_w = slice_data.shape[1] // downsample_factor
 
-            # Create grid for structuring element
-            y_range = jnp.arange(-small_selem_radius, small_selem_radius + 1)
-            x_range = jnp.arange(-small_selem_radius, small_selem_radius + 1)
-            grid_y, grid_x = jnp.meshgrid(y_range, x_range, indexing='ij')
+        # Simple block averaging for downsampling
+        slice_data_float = slice_data.astype(jnp.float32)
+        blocks = slice_data_float.reshape(
+            new_h, downsample_factor, new_w, downsample_factor
+        )
+        image_small = jnp.mean(blocks, axis=(1, 3))
 
-            # Create circular mask
-            small_mask = (grid_x**2 + grid_y**2) <= small_selem_radius**2
-            small_selem = small_mask.astype(jnp.float32)
+        # 2) Create a circular structuring element
+        small_selem_radius = max(1, selem_radius // downsample_factor)
 
-            # 3) Apply white top-hat
-            # JAX doesn't have built-in morphological operations
-            # This is a simplified implementation that approximates the behavior
+        # Create grid for structuring element
+        y_range = jnp.arange(-small_selem_radius, small_selem_radius + 1)
+        x_range = jnp.arange(-small_selem_radius, small_selem_radius + 1)
+        grid_y, grid_x = jnp.meshgrid(y_range, x_range, indexing='ij')
 
-            # Pad the image for convolution
-            pad_size = small_selem_radius
-            padded = jnp.pad(image_small, pad_size, mode='reflect')
+        # Create circular mask
+        small_mask = (grid_x**2 + grid_y**2) <= small_selem_radius**2
+        small_selem = small_mask.astype(jnp.float32)
 
-            # Implement erosion (minimum filter)
-            # For each pixel, find the minimum value in the neighborhood defined by the structuring element
-            eroded = jnp.zeros_like(image_small)
+        # 3) Apply white top-hat
+        # JAX doesn't have built-in morphological operations
+        # This is a simplified implementation that approximates the behavior
 
-            # This is a simplified approach - in a real implementation, we would use a more efficient method
-            for y in range(new_h):
-                for x in range(new_w):
-                    # Extract neighborhood
-                    neighborhood = padded[y:y+2*pad_size+1, x:x+2*pad_size+1]
-                    # Apply structuring element and find minimum
-                    masked_values = jnp.where(small_selem, neighborhood, jnp.inf)
-                    eroded = eroded.at[y, x].set(jnp.min(masked_values))
+        # Pad the image for convolution
+        pad_size = small_selem_radius
+        padded = jnp.pad(image_small, pad_size, mode='reflect')
 
-            # Implement dilation (maximum filter)
-            # For each pixel, find the maximum value in the neighborhood defined by the structuring element
-            opened = jnp.zeros_like(image_small)
+        # Implement erosion (minimum filter)
+        # For each pixel, find the minimum value in the neighborhood defined by the structuring element
+        eroded = jnp.zeros_like(image_small)
 
-            # Pad the eroded image
-            padded_eroded = jnp.pad(eroded, pad_size, mode='reflect')
+        # This is a simplified approach - in a real implementation, we would use a more efficient method
+        for y in range(new_h):
+            for x in range(new_w):
+                # Extract neighborhood
+                neighborhood = padded[y:y+2*pad_size+1, x:x+2*pad_size+1]
+                # Apply structuring element and find minimum
+                masked_values = jnp.where(small_selem, neighborhood, jnp.inf)
+                eroded = eroded.at[y, x].set(jnp.min(masked_values))
 
-            # This is a simplified approach - in a real implementation, we would use a more efficient method
-            for y in range(new_h):
-                for x in range(new_w):
-                    # Extract neighborhood
-                    neighborhood = padded_eroded[y:y+2*pad_size+1, x:x+2*pad_size+1]
-                    # Apply structuring element and find maximum
-                    masked_values = jnp.where(small_selem, neighborhood, -jnp.inf)
-                    opened = opened.at[y, x].set(jnp.max(masked_values))
+        # Implement dilation (maximum filter)
+        # For each pixel, find the maximum value in the neighborhood defined by the structuring element
+        opened = jnp.zeros_like(image_small)
 
-            # White top-hat is original minus opening
-            tophat_small = image_small - opened
+        # Pad the eroded image
+        padded_eroded = jnp.pad(eroded, pad_size, mode='reflect')
 
-            # 4) Calculate background
-            background_small = image_small - tophat_small
+        # This is a simplified approach - in a real implementation, we would use a more efficient method
+        for y in range(new_h):
+            for x in range(new_w):
+                # Extract neighborhood
+                neighborhood = padded_eroded[y:y+2*pad_size+1, x:x+2*pad_size+1]
+                # Apply structuring element and find maximum
+                masked_values = jnp.where(small_selem, neighborhood, -jnp.inf)
+                opened = opened.at[y, x].set(jnp.max(masked_values))
 
-            # 5) Upscale background to original size
-            # Simple nearest neighbor upscaling
-            background_large = jnp.repeat(
-                jnp.repeat(background_small, downsample_factor, axis=0),
-                downsample_factor, axis=1
-            )
+        # White top-hat is original minus opening
+        tophat_small = image_small - opened
 
-            # Crop to original size if needed
-            if background_large.shape != slice_data.shape:
-                background_large = background_large[:slice_data.shape[0], :slice_data.shape[1]]
+        # 4) Calculate background
+        background_small = image_small - tophat_small
 
-            # 6) Subtract background and clip negative values
-            slice_result = jnp.maximum(slice_data.astype(jnp.float32) - background_large, 0)
+        # 5) Upscale background to original size
+        # Simple nearest neighbor upscaling
+        background_large = jnp.repeat(
+            jnp.repeat(background_small, downsample_factor, axis=0),
+            downsample_factor, axis=1
+        )
 
-            # 7) Convert back to original data type
-            return slice_result.astype(input_dtype)
+        # Crop to original size if needed
+        if background_large.shape != slice_data.shape:
+            background_large = background_large[:slice_data.shape[0], :slice_data.shape[1]]
 
-        # Process each slice
-        for z in range(image.shape[0]):
-            result_list.append(process_slice(z))
+        # 6) Subtract background and clip negative values
+        slice_result = jnp.maximum(slice_data.astype(jnp.float32) - background_large, 0)
 
-        # Stack results back into a 3D array
-        result = jnp.stack(result_list, axis=0)
+        # 7) Convert back to original data type
+        return slice_result.astype(input_dtype)
 
-        return result
+    # Process each slice
+    for z in range(image.shape[0]):
+        result_list.append(process_slice(z))
+
+    # Stack results back into a 3D array
+    result = jnp.stack(result_list, axis=0)
+
+    return result

@@ -11,6 +11,7 @@ import os # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Union
+from openhcs.constants import Microscope
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +42,7 @@ class PathPlanningConfig:
     
     stitched_dir_suffix: str = "_stitched"
     """Suffix for directories containing stitched image results."""
-    
-    # Consider adding other common suffixes if needed, e.g.:
-    # segmentation_dir_suffix: str = "_segmentation"
-    # features_dir_suffix: str = "_features"
+
 
 @dataclass(frozen=True)
 class GlobalPipelineConfig:
@@ -60,6 +58,9 @@ class GlobalPipelineConfig:
     
     vfs: VFSConfig = field(default_factory=VFSConfig)
     """Configuration for Virtual File System behavior."""
+
+    microscope: Microscope = Microscope.AUTO
+    """Default microscope type for auto-detection."""
 
     # Future extension point:
     # logging_config: Optional[Dict[str, Any]] = None # For configuring logging levels, handlers
