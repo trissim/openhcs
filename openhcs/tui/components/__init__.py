@@ -1,11 +1,30 @@
 """
-UI components for the OpenHCS TUI.
-"""
-from .interactive_list_item import InteractiveListItem
-from .spinner import Spinner
-from .loading_screen import LoadingScreen
-from .grouped_dropdown import GroupedDropdown
-from .parameter_editor import ParameterEditor
-from .framed_button import FramedButton
+UI Components for hybrid TUI.
 
-__all__ = ['InteractiveListItem', 'Spinner', 'LoadingScreen', 'GroupedDropdown', 'ParameterEditor', 'FramedButton']
+Contains all UI components that handle user interaction and display,
+following the component interface standards.
+"""
+
+from .function_pattern_editor import FunctionPatternEditor
+from .grouped_dropdown import GroupedDropdown
+from .file_browser import FileManagerBrowser
+from .step_settings_editor import StepSettingsEditor
+from .parameter_editor import ParameterEditor
+from .interactive_list_item import InteractiveListItem
+from .plate_list_view import PlateListView
+from .step_list_view import StepListView
+# from .plate_actions_toolbar import PlateActionsToolbar
+# from .pipeline_actions_toolbar import PipelineActionsToolbar
+
+__all__ = [
+    'FunctionPatternEditor',
+    'GroupedDropdown',
+    'FileManagerBrowser',
+    'StepSettingsEditor',
+    'ParameterEditor',
+    'InteractiveListItem',
+    'PlateListView',
+    'StepListView',
+    # 'PlateActionsToolbar',
+    # 'PipelineActionsToolbar'
+]

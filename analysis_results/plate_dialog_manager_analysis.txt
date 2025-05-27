@@ -1,0 +1,54 @@
+================================================================================
+DETAILED REPORT: openhcs/tui/dialogs/plate_dialog_manager.py
+================================================================================
+
+SUMMARY:
+  Classes: 4
+  Functions: 0
+  Methods: 25
+  Total Definitions: 29
+
+CLASSES:
+  DialogResultCallback (Protocol)
+    def __call__()
+
+  ErrorCallback (Protocol)
+    def __call__()
+
+  ErrorBanner (Container)
+    def __init__()
+    def show()
+    def hide()
+    def reset()
+    def __pt_container__()
+    def get_children()
+    def preferred_width()
+    def preferred_height()
+    def reset()
+    def write_to_screen()
+    def mouse_handler()
+    @staticmethod
+    def find_in_container()
+
+  PlateDialogManager
+    def __init__()
+    def show_add_plate_dialog()
+    def _create_file_browser_dialog()
+    def selection_tracking_handler()
+    def _show_dialog()
+    def _dialog_ok()
+    def _dialog_cancel()
+    def _handle_ok_button_press()
+    def _show_error_dialog()
+    def _create_error_dialog()
+    def show_remove_plate_dialog()
+
+IMPORTS:
+  from asyncio import asyncio
+  from pathlib import Path
+  from typing import Any, Dict, Optional, Protocol
+  from prompt_toolkit.application import get_app
+  from prompt_toolkit.filters import Condition, is_done
+  from prompt_toolkit.formatted_text import HTML
+  from prompt_toolkit.layout import ConditionalContainer, Container, Float, HSplit
+  from prompt_toolkit.widgets import Box, Button, Dialog, Label, RadioList as Dropdown, TextArea

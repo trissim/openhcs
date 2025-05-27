@@ -29,6 +29,16 @@ setup(
         "matplotlib",
         "pyyaml",
     ],
+    extras_require={
+        "tensorflow": ["tensorflow>=2.12.0,<2.16.0"],
+        "gpu": [
+            "torch",
+            "torchvision",
+            "jaxlib",
+            "cupy",
+            "tensorflow>=2.12.0,<2.16.0",
+        ],
+    },
     entry_points={
         "console_scripts": [
             "sma-cli=semantic_matrix_analyzer.sma_cli:main",

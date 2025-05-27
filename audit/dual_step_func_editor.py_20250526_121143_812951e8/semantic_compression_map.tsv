@@ -1,0 +1,2 @@
+file_path	semantic_profile	entropy_char	complexity_char	function_count_char	dependency_char	risk_char	priority_char	coupling_char	cohesion_char
+openhcs/tui/components/dual_step_func_editor.py	3D99H2ML	3	D	9	9	H	2	M	L

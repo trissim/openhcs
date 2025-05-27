@@ -1,0 +1,2 @@
+file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
+openhcs/tui/controllers/app_controller.py	110.33	0	528	29	32	18	f56c0da4

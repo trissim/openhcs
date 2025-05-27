@@ -1,0 +1,41 @@
+================================================================================
+DETAILED REPORT: openhcs/core/orchestrator/orchestrator.py
+================================================================================
+
+SUMMARY:
+  Classes: 1
+  Functions: 0
+  Methods: 11
+  Total Definitions: 12
+
+CLASSES:
+  PipelineOrchestrator
+    def __init__()
+    def initialize_workspace()
+    def initialize_microscope_handler()
+    def initialize()
+    def is_initialized()
+    def create_context()
+    def compile_pipelines()
+    def _execute_single_well()
+    def execute_compiled_plate()
+    def get_wells()
+    def apply_new_global_config()
+
+IMPORTS:
+  from logging import logging
+  from threading import threading
+  from concurrent.futures import concurrent.futures
+  from pathlib import Path
+  from typing import Any, Dict, List, Optional, Union, Set
+  from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS
+  from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
+  from openhcs.core.context.processing_context import ProcessingContext
+  from openhcs.core.pipeline.compiler import PipelineCompiler
+  from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
+  from openhcs.core.steps.abstract import AbstractStep
+  from openhcs.io.exceptions import StorageWriteError
+  from openhcs.io.filemanager import FileManager
+  from openhcs.io.base import storage_registry
+  from openhcs.microscopes.microscope_interfaces import MicroscopeHandler, create_microscope_handler
+  from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer

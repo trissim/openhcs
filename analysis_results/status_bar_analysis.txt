@@ -1,0 +1,100 @@
+================================================================================
+DETAILED REPORT: openhcs/tui/status_bar.py
+================================================================================
+
+SUMMARY:
+  Classes: 7
+  Functions: 0
+  Methods: 32
+  Total Definitions: 39
+
+CLASSES:
+  Priority (Enum)
+    Attributes:
+      DEBUG
+      INFO
+      WARNING
+      ERROR
+      CRITICAL
+
+  LogLevel (Enum)
+    @classmethod
+    def from_string()
+    @classmethod
+    def from_logging_level()
+    Attributes:
+      DEBUG
+      INFO
+      WARNING
+      ERROR
+      CRITICAL
+
+  StatusBarSchema
+    @staticmethod
+    def validate_priority()
+    @staticmethod
+    def validate_log_entry()
+    Attributes:
+      max_log_entries: ClassVar[int]
+
+  StatusBarState
+    def __post_init__()
+    def with_status_message()
+    def with_operation_status()
+    def with_drawer_expanded()
+    def with_log_entry()
+    Attributes:
+      status_message: str
+      status_priority: Priority
+      operation_status: str
+      drawer_expanded: bool
+      log_buffer: Deque[Dict[str, Any]]
+
+  LogFormatter
+    @classmethod
+    def format_log_entry()
+    @classmethod
+    def format_log_entries()
+    Attributes:
+      LEVEL_STYLES: ClassVar[Dict[LogLevel, Tuple[str, str]]]
+
+  StatusBar (Container)
+    def __init__()
+    def _create_status_label()
+    def get_display_text()
+    def _create_log_drawer_content()
+    def _toggle_drawer()
+    def set_status_message()
+    def add_log_entry()
+    def _setup_logging_handler()
+    def _on_operation_status_changed()
+    def _on_error_event()
+    def _on_tui_log_level_changed()
+    def __pt_container__()
+    def get_children()
+    def preferred_width()
+    def preferred_height()
+    def reset()
+    def write_to_screen()
+    def mouse_handler()
+    def shutdown()
+
+  TUIStatusBarLogHandler (logging.Handler)
+    def __init__()
+    def emit()
+
+IMPORTS:
+  from asyncio import asyncio, Lock as AsyncioLock
+  from logging import logging
+  from sys import sys
+  from time import time
+  from collections import deque
+  from dataclasses import dataclass, field
+  from enum import Enum, auto
+  from typing import List, Optional, Dict, Any, Deque, ClassVar, Tuple, Union
+  from prompt_toolkit.application import get_app
+  from prompt_toolkit.filters import Condition
+  from prompt_toolkit.formatted_text import FormattedText
+  from prompt_toolkit.layout import ConditionalContainer, Container, HSplit
+  from prompt_toolkit.mouse_events import MouseEventType
+  from prompt_toolkit.widgets import Box, Frame, Label

@@ -1,0 +1,38 @@
+================================================================================
+DETAILED REPORT: openhcs/tui/services/plate_validation.py
+================================================================================
+
+SUMMARY:
+  Classes: 3
+  Functions: 0
+  Methods: 9
+  Total Definitions: 12
+
+CLASSES:
+  ValidationResultCallback (Protocol)
+    def __call__()
+
+  ErrorCallback (Protocol)
+    def __call__()
+
+  PlateValidationService
+    def __init__()
+    def close()
+    def validate_plate()
+    def _validate_plate_directory()
+    def generate_plate_id()
+    def close()
+    def __del__()
+
+IMPORTS:
+  from asyncio import asyncio
+  from hashlib import hashlib
+  from os import os
+  from concurrent.futures import ThreadPoolExecutor
+  from pathlib import Path
+  from typing import Any, Callable, Dict, Optional, Protocol
+  from openhcs.io.filemanager import FileManager
+  from openhcs.core.context.processing_context import ProcessingContext
+  from traceback import traceback
+  from inspect import inspect
+  from warnings import warnings

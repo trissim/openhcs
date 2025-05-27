@@ -1,0 +1,3 @@
+file_path	function_name	complexity	lines	args
+openhcs/tui/commands.py	execute	4	27	3
+openhcs/tui/commands.py	can_execute	1	3	2

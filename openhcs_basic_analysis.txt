@@ -1,0 +1,163 @@
+# 🧬 Ultra Semantic DNA Analysis
+
+## 🧬 Semantic DNA
+```
+{'codebase_dna': 'c1fc96b24545bf31', 'file_count': 316, 'fingerprint_diversity': 224}
+```
+
+## 📊 Metrics
+- **Total Files**: 316
+- **Total Lines**: 90230
+- **Total Functions**: 2580
+- **Total Classes**: 471
+- **Total Complexity**: 10753
+- **Avg Complexity Per Function**: 4.167829457364341
+**Pattern Frequencies**:
+  - ♦: 670
+  - ⚡: 633
+  - Λ: 265
+- **Files With Errors**: 0
+- **Total Errors**: 17018
+- **Avg Error Density**: 0.1601012658227848
+- **High Risk Files**: 266
+
+## 📁 File Analysis
+### setup.py
+**Metrics**: 50 lines, 0 functions, C0
+**DNA**: `60f61ab7`
+**EDNA**: `R1` (ρ0.020, σ2.0)
+
+### __init__.py
+**Metrics**: 5 lines, 0 functions, C0
+**DNA**: `8e2c1f72`
+**EDNA**: `E0` (ρ0.000, σ0.0)
+
+### setup.py
+**Metrics**: 44 lines, 0 functions, C0
+**DNA**: `60f61ab7`
+**EDNA**: `R1` (ρ0.023, σ2.0)
+
+### extract_definitions.py
+**Metrics**: 1131 lines, 24 functions, C154
+**DNA**: `7d52d91a`
+**EDNA**: `I2R155D4` (ρ0.142, σ316.0)
+**Functions**:
+  - `__init__` [O] C1 | R1 ✓
+  - `visit_Import` [O] C2 | R2 ✓
+  - `visit_ImportFrom` [O] C3 | R3 ⚠
+
+### auto_config.py
+**Metrics**: 360 lines, 14 functions, C56
+**DNA**: `51736c52`
+**EDNA**: `R50D1` (ρ0.142, σ100.5)
+**Functions**:
+  - `__init__` [O] C1 | E0 ✓
+  - `_find_python_files` [O] C3 | R2 ✓
+  - `generate_config` [O] C1 | E0 ✓
+
+### config_manager.py
+**Metrics**: 300 lines, 19 functions, C34
+**DNA**: `db839935`
+**EDNA**: `R35D1` (ρ0.120, σ70.5)
+**Functions**:
+  - `__init__` [O] C1 | R1 ✓
+  - `_ensure_config_directory` [O] C2 | R1 ✓
+  - `_load_config` [O] C4 | R3 ⚠
+
+### analyzer.py
+**Metrics**: 90 lines, 5 functions, C5
+**DNA**: `444e005c`
+**EDNA**: `R8D1` (ρ0.100, σ16.5)
+**Functions**:
+  - `__init__` [O] C1 | R1 ✓
+  - `analyze_code` [O] C1 | R1 ✓
+  - `analyze_error_trace` [O] C1 | R1 ✓
+
+### sma_cli.py
+**Metrics**: 1140 lines, 21 functions, C174
+**DNA**: `09a35f95`
+**EDNA**: `I1R210D5` (ρ0.189, σ424.5)
+**Functions**:
+  - `color_text` [O] C2 | R2 ✓
+  - `print_header` [O] C1 | R1 ✓
+  - `print_section` [O] C1 | R1 ✓
+
+### cli.py
+**Metrics**: 186 lines, 3 functions, C9
+**DNA**: `7648f5f4`
+**EDNA**: `R7` (ρ0.038, σ14.0)
+**Functions**:
+  - `setup_logging` [O] C1 | E0 ✓
+  - `parse_args` [O] C1 | E0 ✓
+  - `main` [O] C7 | R5 ⚠
+
+### config_cli.py
+**Metrics**: 252 lines, 6 functions, C42
+**DNA**: `a3c14eb3`
+**EDNA**: `R35` (ρ0.139, σ70.0)
+**Functions**:
+  - `parse_args` [O] C1 | E0 ✓
+  - `get_nested_value` [T] C4 | R2 ✓
+  - `view_config` [O] C3 | R2 ✓
+
+## 🚨 Error Co-occurrence Matrix
+```
+      S   I   R   T   L   C   D   P
+S  [ 0  0  0  0  0  0  0  0]  Syntax
+I  [ 0  0 61  0  0  0 50  0]  Import
+R  [ 0 61  0  0  0  0 194  0]  Reference
+T  [ 0  0  0  0  0  0  0  0]  Type
+L  [ 0  0  0  0  0  0  0  0]  Lint
+C  [ 0  0  0  0  0  0  0  0]  Complexity
+D  [ 0 50 194  0  0  0  0  0]  Documentation
+P  [ 0  0  0  0  0  0  0  0]  Performance
+```
+
+## 🎯 Error Clusters
+- **Cluster 1** (R errors only): 72 files
+  - ./setup.py
+  - ./semantic_matrix_analyzer/setup.py
+  - ./semantic_matrix_analyzer/cli.py
+  - ... +69 more
+- **Cluster 2** (No errors): 31 files
+  - ./semantic_matrix_analyzer/__init__.py
+  - ./semantic_matrix_analyzer/semantic_matrix_analyzer/__init__.py
+  - ./semantic_matrix_analyzer/plugins/__init__.py
+  - ... +28 more
+- **Cluster 3** (I+R+D errors): 50 files
+  - ./semantic_matrix_analyzer/extract_definitions.py
+  - ./semantic_matrix_analyzer/sma_cli.py
+  - ./semantic_matrix_analyzer/plugins/pattern_matcher.py
+  - ... +47 more
+- **Cluster 4** (R+D errors): 144 files
+  - ./semantic_matrix_analyzer/auto_config.py
+  - ./semantic_matrix_analyzer/config_manager.py
+  - ./semantic_matrix_analyzer/analyzer.py
+  - ... +141 more
+- **Cluster 5** (I+R errors): 11 files
+  - ./semantic_matrix_analyzer/plugins/analyzers/__init__.py
+  - ./semantic_matrix_analyzer/plugins/gpu_analysis/__init__.py
+  - ./semantic_matrix_analyzer/plugins/gpu_analysis/analyzers/__init__.py
+  - ... +8 more
+- **Cluster 6** (I errors only): 7 files
+  - ./semantic_matrix_analyzer/plugins/gpu_analysis/utils/__init__.py
+  - ./semantic_matrix_analyzer/plugins/utils/__init__.py
+  - ./semantic_matrix_analyzer/utils/__init__.py
+  - ... +4 more
+
+## 📊 Error Density by Directory
+- **openhcs/tui**: 234.43 ████████████████████
+- **openhcs/tui2**: 205.33 ████████████████████
+- **openhcs/tui2/controllers**: 135.00 ████████████████████
+- **semantic_matrix_analyzer/plugins**: 108.27 ████████████████████
+- **openhcs/io**: 99.29 ████████████████████
+- **semantic_matrix_analyzer/plugins/gpu_analysis**: 82.48 ████████████████████
+- **openhcs/tui2/components**: 76.50 ████████████████████
+- **openhcs/tui/services**: 74.00 ████████████████████
+- **dna/lib**: 72.17 ████████████████████
+- **openhcs/processing/backends/processors**: 69.80 ████████████████████
+
+## 🔍 Top Error Patterns
+- **Reference (R)**: 15703 occurrences
+- **Documentation (D)**: 1063 occurrences
+- **Import (I)**: 252 occurrences

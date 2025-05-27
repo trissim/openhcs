@@ -1,0 +1,2 @@
+file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
+openhcs/tui/components/dual_step_func_editor.py	107.56	0	346	23	27	11	699fd07e

@@ -1,0 +1,67 @@
+================================================================================
+DETAILED REPORT: openhcs/tui/tui_architecture.py
+================================================================================
+
+SUMMARY:
+  Classes: 3
+  Functions: 0
+  Methods: 25
+  Total Definitions: 28
+
+CLASSES:
+  Clause5Violation (Exception)
+
+  TUIState
+    def __init__()
+    def add_observer()
+    def notify()
+    def set_selected_plate()
+    def set_selected_step()
+
+  OpenHCSTUI
+    def __init__()
+    def _create_key_bindings()
+    @kb.add(...)
+    def _()
+    @kb.add(...)
+    def _()
+    @kb.add(...)
+    def _()
+    def _validate_components_present()
+    def _create_root_container()
+    def _get_left_pane()
+    def _get_step_viewer()
+    def _get_status_bar()
+    def _get_menu_bar()
+    def _on_launcher_config_rebound()
+    def shutdown_components()
+    def _async_initialize_step_viewer()
+    def get_children()
+    def preferred_width()
+    def preferred_height()
+    def reset()
+    def write_to_screen()
+    def mouse_handler()
+
+IMPORTS:
+  from asyncio import asyncio
+  from os import os
+  from logging import logging
+  from typing import Any, Callable, Container, Dict, List, Optional, Union
+  from openhcs.core.config import GlobalPipelineConfig
+  from openhcs.io.filemanager import FileManager
+  from openhcs.tui.plate_manager_core import PlateManagerPane as ActualPlateManagerPane
+  from openhcs.tui.menu_bar import MenuBar as ActualMenuBar
+  from openhcs.tui.step_viewer import StepViewerPane as ActualStepViewerPane
+  from openhcs.tui.function_pattern_editor import FunctionPatternEditor as ActualFunctionPatternEditor
+  from openhcs.tui.status_bar import StatusBar as ActualStatusBar
+  from openhcs.io.base import storage_registry
+  from prompt_toolkit import Application
+  from prompt_toolkit.application import get_app
+  from prompt_toolkit.filters import Condition, has_focus
+  from prompt_toolkit.key_binding import KeyBindings
+  from prompt_toolkit.layout import Container, HSplit, Layout, VSplit, Window
+  from prompt_toolkit.layout.containers import DynamicContainer, Float, FloatContainer
+  from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
+  from openhcs.core.context.processing_context import ProcessingContext
+  from openhcs.processing.func_registry import FUNC_REGISTRY
