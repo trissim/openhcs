@@ -16,11 +16,10 @@ Obtain step name from static introspectoin.
 
 Launch menu:
 ____________________________________________________________________________________________________________
-|  _____________1_plate manager_____________________|_|_________2_Step_viewer____________|_____3_Menu______|
-|_|[add]_[del]_[edit]_______________________________|_|_[add]__[del]__[editlkjlkj]___[_________|___
-|o| ^/v 1: axotomy_n1_03-02-24 | (...)/nvme_usb/    |o| ^/v 1: pos_gen_pattern           | OpenHCS         |
-|!| ^/v 2: axotomy_n2_03-03-24 | (...)/nvme_usb/    |o| ^/v 2: enhance + assemble        | [ add ]         |
-|?| ^/v 3: axotomy_n3_03-04-24 | (...)/nvme_usb/    |o| ^/v 3: trace analysis	         | [ edit ]        |
+|_______________1_plate manager______________________|__________2_Step_viewer____________|_____3_Menu______|
+|o| ^/v 1: axotomy_n1_03-02-24 | (...)/nvme_usb/    |o| [edit] ^/v 1: pos_gen_pattern    | OpenHCS         |
+|!| ^/v 2: axotomy_n2_03-03-24 | (...)/nvme_usb/    |o| [edit] ^/v 2: enhance + assemble | [ add ]         |
+|?| ^/v 3: axotomy_n3_03-04-24 | (...)/nvme_usb/    |o| [edit] ^/v 3: trace analysis	 | [ edit ]        |
 | |                                                 | |                                  | [ pre-compile ] |
 | |                                                 | |                                  | [ compile ]     |
 | |                                                 | |                                  | [ run ]         |
@@ -28,28 +27,28 @@ ________________________________________________________________________________
 | |                                                 | |                                  | [ test ]        |
 | |                                                 | |                                  | [ settings ]    |
 | |                                                 | |                                  |                 |
-___________________________________________________ |_|_________________________________ |_________________|
+___________________________________________________ |_r_________________________________ |_________________|
 ___________________________________________________ _______________________________________________________|
 
 When edit on a step, selected two elements change
 - the left pane (1) gets replaced by a another pane: the func pattern editor.
 its a a gui for the dict of lists of tuples of func kwarg pattern.
 
-_________________________________________________
-________________________________________________|
-|__Step___|______________________________________|____________________________________________
-|_Func_Pattern_editor__[load]_[save]i___________|
-|_dict_keys:_|None|V|_+/-__|__[edit_in_vim]_?___| <- you can have mor than one key, making he list of funcs change.
+_____________________________________________________________________________________________
+| Func Pattern editor  [load] [save]            |
+________________________________________________|____________________________________________
+| dict_keys: |None|V| +/-  |  [edit in vim] ?   | <- you can have mor than one key, making he list of funcs change.
+________________________________________________|____________________________________________
 |^| Func 1: |percentile stack normalize|v|      | <- drop down menu generated from using the func register and static analysis of func name definition)
 |X| --------------------------------------------|--------------------------------------------
 |X|  move  [reset] percentile_low:  0.1 ...     | <- these two kwargs with editabel fields are autogen from the func definition)
 |X|   /\   [reset]  percentile_high: 99.9 ...   |
 |X|   \/   [add]                                |
 |X|        [delete]                             |
-|X| ____________________________________________|
+|X| ____________________________________________|______________________________________________
 |X| Func 2: |n2v2|V|                            |
-|X|---------------------------------------------|
-|X|  	    [reset] random_seed: 42 ...         |<- so are these
+|X|---------------------------------------------|----------------------------------------------
+|X|  	    [reset] random_seed: 42 ...           |<- so are these
 |X|   move  [reset] device: cuda ...            |
 |X|    /\   [reset] blindspot_prob: 0.05 ...    |
 |X|    \/   [reset] max_epochs: 10 ...          |
@@ -59,13 +58,14 @@ ________________________________________________|
 |X|    	    [reset] save_model_path: ...        |
 |X|    	    [reset all]                         |
 |V|    	    [add]                               |
-| |    	    [delete]	                        |
-| | ____________________________________________|
+| |    	    [delete]	                          |
+| | ____________________________________________|______________________________________________
 | | Func 3: |3d_deconv|V|                       |
 | |   	    [reset] random_seed:  42 ...        |
 | |    move [reset] device: cuda  ...           |
 | |     /\  [reset] blindspot_prob: 0.05 ...    |
-|_| vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv|
+| | vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv|vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+|_| ____________________________________________|______________________________________________
 
 
 ## Implementation Notes

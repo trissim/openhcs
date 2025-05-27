@@ -1,2 +1,0 @@
-file_path	semantic_profile	entropy_char	complexity_char	function_count_char	dependency_char	risk_char	priority_char	coupling_char	cohesion_char
-openhcs/tui/commands.py	3F25H2LL	3	F	2	5	H	2	L	L

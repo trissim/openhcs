@@ -7,15 +7,10 @@ tifffile>=2021.1.1
 imagecodecs>=2021.1.1  # Required for TIFF reading
 ashlar>=1.14.0
 opencv-python>=4.5.0
-prompt_toolkit>=3.0.0  # Required for TUI components
 PyYAML>=6.0
 zarr>=2.10.0 # For ZarrStorageAdapter
-protobuf>=3.20.0,<5.0.0  # Pin protobuf to avoid compatibility issues
-napari>=0.4.17  # For interactive visualization
-
-# Optional GPU dependencies - install with pip install -r requirements-gpu.txt
-# torch
-# torchvision
-# jaxlib
-# cupy
-# tensorflow>=2.12.0,<2.16.0  # Use stable TensorFlow instead of nightly
+torch
+torch-vision
+jaxlib
+cupy
+tf-nightly

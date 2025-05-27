@@ -21,11 +21,8 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Union, Set
 
+import torch
 import numpy as np
-from semantic_matrix_analyzer.utils import optional_import, create_placeholder_class
-
-# Import PyTorch as an optional dependency
-torch = optional_import("torch")
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -91,11 +88,6 @@ AST_NODE_TYPES = {
 # Reverse mapping for debugging and visualization
 AST_NODE_TYPES_REV = {v: k.__name__ for k, v in AST_NODE_TYPES.items()}
 
-# Create a Tensor class placeholder if PyTorch is not available
-Tensor = create_placeholder_class("Tensor",
-                                base_class=torch.Tensor if torch is not None else None,
-                                required_library="PyTorch")
-
 class ASTTensorizer:
     """
     Converts Python AST to tensor representation for GPU processing.
@@ -123,7 +115,7 @@ class ASTTensorizer:
         self.feature_dim = self.config.get("feature_dim", 10)
         self.max_nodes = self.config.get("max_nodes", 10000)
 
-    def tensorize(self, code: str) -> Dict[str, Any]:
+    def tensorize(self, code: str) -> Dict[str, torch.Tensor]:
         """
         Convert Python code to tensor representation.
 
@@ -135,12 +127,7 @@ class ASTTensorizer:
             - nodes: Tensor of node type IDs
             - edges: Tensor of edge indices (parent, child)
             - features: Tensor of node features
-
-        Raises:
-            ImportError: If PyTorch is not available
         """
-        if torch is None:
-            raise ImportError("PyTorch is required for AST tensorization")
         try:
             # Parse code to AST
             tree = ast.parse(code)
@@ -305,10 +292,6 @@ class GPUASTTensorizer:
     Attributes:
         device: Device to place tensors on ("cuda" or "cpu")
         config: Optional configuration for the tensorizer
-
-    Note:
-        This class requires PyTorch to be installed. If PyTorch is not available,
-        an ImportError will be raised when methods are called.
     """
 
     def __init__(self, device: str = "cuda", config: Optional[Dict[str, Any]] = None):
@@ -318,22 +301,15 @@ class GPUASTTensorizer:
         Args:
             device: Device to place tensors on ("cuda" or "cpu")
             config: Optional configuration dictionary
-
-        Raises:
-            ImportError: If PyTorch is not available (raised when methods are called)
         """
-        if torch is None:
-            # Don't raise error here, but methods will raise when called
-            self.device = "cpu"
-        else:
-            self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
+        self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
         self.config = config or {}
 
         # Extract configuration values
         self.feature_dim = self.config.get("feature_dim", 10)
         self.max_nodes = self.config.get("max_nodes", 10000)
 
-    def tensorize(self, code_or_ast: Union[str, ast.AST]) -> Dict[str, Any]:
+    def tensorize(self, code_or_ast: Union[str, ast.AST]) -> Dict[str, torch.Tensor]:
         """
         Convert Python code or AST to GPU-friendly tensor representation.
 
@@ -348,12 +324,7 @@ class GPUASTTensorizer:
             - node_types: Tensor of node type IDs as strings (for debugging)
             - depths: Tensor of node depths in the tree
             - siblings: Tensor of sibling indices
-
-        Raises:
-            ImportError: If PyTorch is not available
         """
-        if torch is None:
-            raise ImportError("PyTorch is required for GPU AST tensorization")
         try:
             # Parse code to AST if needed
             tree = code_or_ast if isinstance(code_or_ast, ast.AST) else ast.parse(code_or_ast)
@@ -393,7 +364,7 @@ class GPUASTTensorizer:
                 "field_names": []
             }
 
-    def tensorize_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
+    def tensorize_file(self, file_path: Union[str, Path]) -> Dict[str, torch.Tensor]:
         """
         Convert Python file to GPU-friendly tensor representation.
 
@@ -402,13 +373,7 @@ class GPUASTTensorizer:
 
         Returns:
             Dictionary of tensors representing the AST
-
-        Raises:
-            ImportError: If PyTorch is not available
-            FileNotFoundError: If the file does not exist
         """
-        if torch is None:
-            raise ImportError("PyTorch is required for GPU AST tensorization")
         file_path = Path(file_path)
         if not file_path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")

@@ -12,20 +12,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional, Union, Set
 
+import torch
 import numpy as np
-from semantic_matrix_analyzer.utils import optional_import, create_placeholder_class
 
-# Import PyTorch as an optional dependency
-torch = optional_import("torch")
-
-# Import GPUASTTensorizer
-try:
-    from semantic_matrix_analyzer.plugins.gpu_analysis.ast_tensor import GPUASTTensorizer
-except ImportError:
-    try:
-        from gpu_analysis.ast_tensor import GPUASTTensorizer
-    except ImportError:
-        GPUASTTensorizer = None
+from gpu_analysis.ast_tensor import GPUASTTensorizer
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -82,15 +72,8 @@ class GPUPatternMatcher:
 
         Args:
             device: Device to place tensors on ("cuda" or "cpu")
-
-        Raises:
-            ImportError: If PyTorch is not available (raised when methods are called)
         """
-        if torch is None:
-            # Don't raise error here, but methods will raise when called
-            self.device = "cpu"
-        else:
-            self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
+        self.device = device if torch.cuda.is_available() and device == "cuda" else "cpu"
 
     def match_pattern(self, pattern, file_path, file_content, ast_node):
         """

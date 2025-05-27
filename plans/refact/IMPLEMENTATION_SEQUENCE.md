@@ -209,6 +209,9 @@ This document outlines the precise sequence of implementation steps for the Open
        # Plan basic paths
        step_paths = plan_paths(steps, input_dir, well_id)
        
+       # Plan special input/output paths and validate key matching
+       special_path_info = plan_special_paths(steps)
+       
        # Plan materialization flags
        materialization_flags = plan_materialization_flags(steps, special_path_info)
        

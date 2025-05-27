@@ -65,9 +65,9 @@ class InteractiveListItem(Container):
         self.can_move_up = can_move_up
         self.can_move_down = can_move_down
 
-        # Create the item label with safe formatting
-        from openhcs.tui.utils.safe_formatting import SafeLabel
-        self.item_label = SafeLabel(
+        # Create the item label
+        # Use a simple string for style instead of a lambda to avoid concatenation issues
+        self.item_label = Label(
             text=self._get_display_text,
             style=""  # Empty style, we'll handle styling in the container
         )

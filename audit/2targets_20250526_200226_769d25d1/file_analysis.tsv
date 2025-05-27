@@ -1,3 +1,0 @@
-file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
-openhcs/tui/commands.py	105.09	0	875	71	5	14	f2150f4f
-openhcs/tui/components/dual_step_func_editor.py	107.82	0	576	33	31	12	2a585c03

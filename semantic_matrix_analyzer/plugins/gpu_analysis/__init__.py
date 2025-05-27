@@ -35,22 +35,19 @@ from typing import Dict, List, Optional, Union, Any
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Import utility functions for optional dependencies
-from semantic_matrix_analyzer.utils import optional_import, create_placeholder_class
-
 # Check if PyTorch is available
-torch = optional_import("torch")
-HAS_TORCH = torch is not None
-
-# Set default device
-if HAS_TORCH and torch.cuda.is_available():
-    DEFAULT_DEVICE = "cuda"
-else:
-    DEFAULT_DEVICE = "cpu"
-    if HAS_TORCH:
-        logger.warning("CUDA not available. Using CPU for GPU-accelerated analysis.")
+try:
+    import torch
+    HAS_TORCH = True
+    if torch.cuda.is_available():
+        DEFAULT_DEVICE = "cuda"
     else:
-        logger.warning("PyTorch not found. GPU-accelerated analysis will not be available.")
+        DEFAULT_DEVICE = "cpu"
+        logger.warning("CUDA not available. Using CPU for GPU-accelerated analysis.")
+except ImportError:
+    HAS_TORCH = False
+    DEFAULT_DEVICE = "cpu"
+    logger.warning("PyTorch not found. GPU-accelerated analysis will not be available.")
 
 # Import core components
 from .ast_tensor import ASTTensorizer

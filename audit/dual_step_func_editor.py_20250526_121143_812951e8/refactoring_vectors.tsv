@@ -1,2 +1,0 @@
-file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
-openhcs/tui/components/dual_step_func_editor.py	2.918	1.000	21.512	MEDIUM	KNOT_THEORY: Untangle dependency crossings	6.9	2.7
