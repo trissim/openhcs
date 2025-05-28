@@ -175,7 +175,7 @@ class OpenHCSTUILauncher:
                     plate_path=plate_path_str,
                     workspace_path=workspace_path_for_plate,
                     global_config=self.core_global_config, # Crucial: Pass the global config
-                    filemanager=self.filemanager # Pass shared filemanager
+                    storage_registry=self.shared_storage_registry # Pass shared storage registry
                 )
 
                 # orchestrator.initialize() # DO NOT initialize here. Initialization is now explicit via "Pre-compile" button.
@@ -183,15 +183,15 @@ class OpenHCSTUILauncher:
                 self.logger.info(f"PipelineOrchestrator instance created for plate '{plate_id}'. Initialization pending user action.")
 
                 # Notify that plate is added but not yet fully initialized/ready for compilation.
-                self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'added'})
+                await self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'added'})
             except Exception as e:
                 self.logger.error(f"Failed to create/initialize orchestrator for plate '{plate_id}': {e}", exc_info=True)
-                self.state.notify('error', {
+                await self.state.notify('error', {
                     'source': 'OpenHCSTUILauncher._on_plate_added',
                     'message': f"Error initializing plate {plate_id}",
                     'details': str(e)
                 })
-                self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'error', 'message': str(e)})
+                await self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'error', 'message': str(e)})
 
     async def _on_plate_removed(self, plate_info: Dict[str, Any]):
         """Handles 'plate_removed' event: Cleans up the orchestrator."""
@@ -232,75 +232,129 @@ class OpenHCSTUILauncher:
         await self.state.notify('plate_status_changed', {'plate_id': plate_id, 'status': 'removed'})
 
 
-    async def _on_plate_selected(self, plate_info: Optional[Dict[str, Any]]): # plate_info can be None
+    async def _on_plate_selected(self, plate_info: Optional[Dict[str, Any]]):
         """Handles 'plate_selected' event: Sets active orchestrator and loads its pipeline."""
-        if plate_info is None or plate_info.get('id') is None:
-            self.logger.info("Plate selection cleared or invalid. Clearing active plate context.")
-            if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
-                self.state.clear_active_plate_context()
-            else: # Fallback
-                self.state.active_orchestrator = None
-                self.state.selected_plate = None
-                self.state.current_pipeline_definition = None
-            await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
-            await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+        if not self._is_valid_plate_selection(plate_info):
+            await self._clear_plate_selection()
             return
 
         plate_id = plate_info.get('id')
         self.logger.info(f"Plate selected: id='{plate_id}'")
 
-        orchestrator = None
-        async with self.orchestrators_lock:
-            orchestrator = self.orchestrators.get(plate_id)
+        orchestrator = await self._get_orchestrator_for_plate(plate_id)
 
         if orchestrator:
-            self.state.active_orchestrator = orchestrator
-            self.state.selected_plate = plate_info # Store the full plate_info for context
-            self.logger.debug(f"Active orchestrator set in TUIState for plate '{plate_id}'.")
-            await self.state.notify('active_orchestrator_changed', {'orchestrator': orchestrator, 'plate_id': plate_id})
-
-            # Load pipeline definition
-            pipeline_loaded: List[AbstractStep] = []
-            pipeline_file_path = orchestrator.workspace_path / self.DEFAULT_PIPELINE_FILENAME
-            
-            if await asyncio.to_thread(pipeline_file_path.exists): # Run sync Path.exists in thread
-                try:
-                    with open(pipeline_file_path, "rb") as f:
-                        # Run sync pickle.load in thread
-                        pipeline_loaded = await asyncio.to_thread(pickle.load, f) 
-                    if not isinstance(pipeline_loaded, list) or \
-                       not all(isinstance(step, AbstractStep) for step in pipeline_loaded):
-                        self.logger.error(f"Pipeline file '{pipeline_file_path}' for plate '{plate_id}' is corrupted or not a list of AbstractStep. Treating as empty.")
-                        pipeline_loaded = []
-                    else:
-                        self.logger.info(f"Pipeline definition loaded for plate '{plate_id}' from '{pipeline_file_path}'. Steps: {len(pipeline_loaded)}")
-                except FileNotFoundError: # Should be caught by .exists(), but defensive
-                    self.logger.info(f"Pipeline file not found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
-                    pipeline_loaded = []
-                except pickle.UnpicklingError as e:
-                    self.logger.error(f"Error unpickling pipeline for plate '{plate_id}' from '{pipeline_file_path}': {e}. Treating as empty.")
-                    pipeline_loaded = []
-                except Exception as e: # Catch other potential errors during load
-                    self.logger.error(f"Unexpected error loading pipeline for plate '{plate_id}': {e}", exc_info=True)
-                    pipeline_loaded = []
-            else:
-                self.logger.info(f"No pipeline definition file found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
-                pipeline_loaded = []
-            
-            self.state.current_pipeline_definition = pipeline_loaded
-            await self.state.notify('pipeline_definition_loaded', {'plate_id': plate_id, 'pipeline': pipeline_loaded})
-
+            await self._activate_plate_with_orchestrator(plate_info, orchestrator, plate_id)
         else:
-            self.logger.warning(f"Selected plate '{plate_id}' has no orchestrator instance in launcher. Clearing active context.")
-            if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
-                self.state.clear_active_plate_context()
-            else: # Fallback
-                self.state.active_orchestrator = None
-                self.state.selected_plate = None
-                self.state.current_pipeline_definition = None
-            await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
-            await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+            await self._handle_missing_orchestrator(plate_id)
 
+    def _is_valid_plate_selection(self, plate_info: Optional[Dict[str, Any]]) -> bool:
+        """Check if plate selection is valid."""
+        return plate_info is not None and plate_info.get('id') is not None
+
+    async def _clear_plate_selection(self):
+        """Clear plate selection and active context."""
+        self.logger.info("Plate selection cleared or invalid. Clearing active plate context.")
+
+        if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
+            self.state.clear_active_plate_context()
+        else:
+            self._fallback_clear_context()
+
+        await self._notify_context_cleared()
+
+    def _fallback_clear_context(self):
+        """Fallback method to clear context when clear_active_plate_context is not available."""
+        self.state.active_orchestrator = None
+        self.state.selected_plate = None
+        self.state.current_pipeline_definition = None
+
+    async def _notify_context_cleared(self):
+        """Notify that context has been cleared."""
+        await self.state.notify('active_orchestrator_changed', {'orchestrator': None, 'plate_id': None})
+        await self.state.notify('pipeline_definition_loaded', {'plate_id': None, 'pipeline': []})
+
+    async def _get_orchestrator_for_plate(self, plate_id: str):
+        """Get orchestrator for the specified plate."""
+        async with self.orchestrators_lock:
+            return self.orchestrators.get(plate_id)
+
+    async def _activate_plate_with_orchestrator(self, plate_info: Dict[str, Any], orchestrator, plate_id: str):
+        """Activate plate with its orchestrator and load pipeline."""
+        self.state.active_orchestrator = orchestrator
+        self.state.selected_plate = plate_info
+        self.logger.debug(f"Active orchestrator set in TUIState for plate '{plate_id}'.")
+
+        await self.state.notify('active_orchestrator_changed', {'orchestrator': orchestrator, 'plate_id': plate_id})
+
+        pipeline_loaded = await self._load_pipeline_for_orchestrator(orchestrator, plate_id)
+        self.state.current_pipeline_definition = pipeline_loaded
+        await self.state.notify('pipeline_definition_loaded', {'plate_id': plate_id, 'pipeline': pipeline_loaded})
+
+    async def _load_pipeline_for_orchestrator(self, orchestrator, plate_id: str) -> List[AbstractStep]:
+        """Load pipeline definition for the orchestrator."""
+        pipeline_file_path = orchestrator.workspace_path / self.DEFAULT_PIPELINE_FILENAME
+
+        if not await asyncio.to_thread(pipeline_file_path.exists):
+            self.logger.info(f"No pipeline definition file found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
+            return []
+
+        return await self._load_pipeline_from_file(pipeline_file_path, plate_id)
+
+    async def _load_pipeline_from_file(self, pipeline_file_path: Path, plate_id: str) -> List[AbstractStep]:
+        """Load pipeline from file with error handling."""
+        try:
+            with open(pipeline_file_path, "rb") as f:
+                pipeline_loaded = await asyncio.to_thread(pickle.load, f)
+
+            if not self._is_valid_pipeline(pipeline_loaded):
+                self.logger.error(f"Pipeline file '{pipeline_file_path}' for plate '{plate_id}' is corrupted or not a list of AbstractStep. Treating as empty.")
+                return []
+
+            self.logger.info(f"Pipeline definition loaded for plate '{plate_id}' from '{pipeline_file_path}'. Steps: {len(pipeline_loaded)}")
+            return pipeline_loaded
+
+        except FileNotFoundError:
+            self.logger.info(f"Pipeline file not found for plate '{plate_id}' at '{pipeline_file_path}'. Starting with empty pipeline.")
+            return []
+        except pickle.UnpicklingError as e:
+            self.logger.error(f"Error unpickling pipeline for plate '{plate_id}' from '{pipeline_file_path}': {e}. Treating as empty.")
+            return []
+        except Exception as e:
+            self.logger.error(f"Unexpected error loading pipeline for plate '{plate_id}': {e}", exc_info=True)
+            return []
+
+    def _is_valid_pipeline(self, pipeline_loaded) -> bool:
+        """Check if loaded pipeline is valid."""
+        return (isinstance(pipeline_loaded, list) and
+                all(isinstance(step, AbstractStep) for step in pipeline_loaded))
+
+    async def _handle_missing_orchestrator(self, plate_id: str):
+        """Handle case when orchestrator is missing for selected plate."""
+        self.logger.warning(f"Selected plate '{plate_id}' has no orchestrator instance in launcher. Clearing active context.")
+
+        if hasattr(self.state, 'clear_active_plate_context') and callable(self.state.clear_active_plate_context):
+            self.state.clear_active_plate_context()
+        else:
+            self._fallback_clear_context()
+
+        await self._notify_context_cleared()
+
+    def _fallback_clear_context(self):
+        """Fallback method to clear context when state doesn't have clear_active_plate_context."""
+        self.logger.info("Using fallback context clearing method.")
+        # Clear any relevant state attributes
+        if hasattr(self.state, 'active_orchestrator'):
+            self.state.active_orchestrator = None
+        if hasattr(self.state, 'selected_plate'):
+            self.state.selected_plate = None
+
+    async def _notify_context_cleared(self):
+        """Notify that the context has been cleared."""
+        await self.state.notify('context_cleared', {
+            'source': 'OpenHCSTUILauncher',
+            'message': 'Active plate context cleared due to missing orchestrator'
+        })
 
     async def run(self):
         """Initializes and runs the TUI application."""
@@ -340,49 +394,68 @@ class OpenHCSTUILauncher:
         """Cleans up resources when the application exits."""
         self.logger.info("Cleaning up TUI launcher resources...")
 
-        # Shutdown TUI components first
-        if self.tui_app_instance:
-            if hasattr(self.tui_app_instance, 'shutdown_components') and callable(self.tui_app_instance.shutdown_components):
-                self.logger.info("Calling OpenHCSTUI.shutdown_components()...")
-                try:
-                    await self.tui_app_instance.shutdown_components()
-                except Exception as e:
-                    self.logger.error(f"Error during OpenHCSTUI.shutdown_components(): {e}", exc_info=True)
-            else:
-                self.logger.warning("OpenHCSTUI instance does not have a callable 'shutdown_components' method.")
+        await self._shutdown_tui_components()
+        await self._shutdown_orchestrators()
+        await self._shutdown_filemanager()
 
+        self.logger.info("TUI Launcher cleanup complete.")
+
+    async def _shutdown_tui_components(self):
+        """Shutdown TUI components."""
+        if not self.tui_app_instance:
+            return
+
+        if self._has_shutdown_components_method():
+            await self._call_shutdown_components()
+        else:
+            self.logger.warning("OpenHCSTUI instance does not have a callable 'shutdown_components' method.")
+
+    def _has_shutdown_components_method(self) -> bool:
+        """Check if TUI app instance has shutdown_components method."""
+        return (hasattr(self.tui_app_instance, 'shutdown_components') and
+                callable(self.tui_app_instance.shutdown_components))
+
+    async def _call_shutdown_components(self):
+        """Call shutdown_components on TUI app instance."""
+        self.logger.info("Calling OpenHCSTUI.shutdown_components()...")
+        try:
+            await self.tui_app_instance.shutdown_components()
+        except Exception as e:
+            self.logger.error(f"Error during OpenHCSTUI.shutdown_components(): {e}", exc_info=True)
+
+    async def _shutdown_orchestrators(self):
+        """Shutdown all orchestrators."""
         async with self.orchestrators_lock:
-            # Note: PipelineOrchestrator instances manage resources like ThreadPoolExecutor
-            # within method scopes (e.g., using `with` statements), generally not requiring
-            # an explicit shutdown call from TuiLauncher for their own direct, long-lived resources.
-            # The loop below provides a generic mechanism to call a `shutdown()` method
-            # if an orchestrator instance defines one (e.g., for custom resource cleanup).
-            # For now, just clearing the orchestrators list after attempting shutdown.
             for orchestrator in self.orchestrators.values():
-                if hasattr(orchestrator, 'shutdown') and callable(orchestrator.shutdown):
-                    try:
-                        # Assuming orchestrator.shutdown() might be async or sync
-                        if asyncio.iscoroutinefunction(orchestrator.shutdown):
-                            await orchestrator.shutdown()
-                        else:
-                            orchestrator.shutdown()
-                        self.logger.info(f"Shut down orchestrator for plate: {orchestrator.plate_path}") # Assuming plate_path attr
-                    except Exception as e:
-                        self.logger.error(f"Error shutting down orchestrator for {orchestrator.plate_path}: {e}", exc_info=True)
+                await self._shutdown_single_orchestrator(orchestrator)
             self.orchestrators.clear()
         self.logger.info("Orchestrators cleared/shut down.")
 
-        # Any other cleanup (e.g., for filemanager if it holds resources)
-        if hasattr(self.filemanager, 'close') and callable(self.filemanager.close):
-            try:
-                self.logger.info("Closing FileManager...")
-                # Assuming close might be async or sync
-                if asyncio.iscoroutinefunction(self.filemanager.close):
-                    await self.filemanager.close()
-                else:
-                    self.filemanager.close()
-                self.logger.info("FileManager closed.")
-            except Exception as e:
-                self.logger.error(f"Error closing FileManager: {e}", exc_info=True)
+    async def _shutdown_single_orchestrator(self, orchestrator):
+        """Shutdown a single orchestrator."""
+        if not (hasattr(orchestrator, 'shutdown') and callable(orchestrator.shutdown)):
+            return
 
-        self.logger.info("TUI Launcher cleanup complete.")
+        try:
+            if asyncio.iscoroutinefunction(orchestrator.shutdown):
+                await orchestrator.shutdown()
+            else:
+                orchestrator.shutdown()
+            self.logger.info(f"Shut down orchestrator for plate: {orchestrator.plate_path}")
+        except Exception as e:
+            self.logger.error(f"Error shutting down orchestrator for {orchestrator.plate_path}: {e}", exc_info=True)
+
+    async def _shutdown_filemanager(self):
+        """Shutdown the filemanager."""
+        if not (hasattr(self.filemanager, 'close') and callable(self.filemanager.close)):
+            return
+
+        try:
+            self.logger.info("Closing FileManager...")
+            if asyncio.iscoroutinefunction(self.filemanager.close):
+                await self.filemanager.close()
+            else:
+                self.filemanager.close()
+            self.logger.info("FileManager closed.")
+        except Exception as e:
+            self.logger.error(f"Error closing FileManager: {e}", exc_info=True)

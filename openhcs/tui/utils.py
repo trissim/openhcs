@@ -32,7 +32,7 @@ async def show_error_dialog(title: str, message: str, app_state: Optional[Any] =
             Label(message),
         ]),
         buttons=[
-            Button("OK", handler=ok_handler)
+            SafeButton("OK", handler=ok_handler)
         ],
         width=80, # Standard width
         modal=True
@@ -87,8 +87,8 @@ async def prompt_for_path_dialog(title: str, prompt_message: str, app_state: Any
             path_text_area,
         ]),
         buttons=[
-            Button("OK", handler=lambda: accept_path(path_text_area.text)),
-            Button("Cancel", handler=cancel_dialog),
+            SafeButton("OK", handler=lambda: accept_path(path_text_area.text)),
+            SafeButton("Cancel", handler=cancel_dialog),
         ],
         width=80,
         modal=True

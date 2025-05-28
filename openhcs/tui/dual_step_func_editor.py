@@ -29,6 +29,26 @@ from .utils import show_error_dialog, prompt_for_path_dialog # Import the new di
 
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+    
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+    
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 class DualStepFuncEditorPane:
     """
     A dual-view editor for FuncStep objects, combining AbstractStep parameter
@@ -76,24 +96,20 @@ class DualStepFuncEditorPane:
         """Initialize all UI components for the editor."""
 
         # Top menu bar with Step/Func toggle and Save/Close buttons
-        self.step_view_button = Button(
-            "Step",
+        self.step_view_button = SafeButton("Step",
             handler=lambda: self._switch_view("step"),
             width=10
         )
-        self.func_view_button = Button(
-            "Func",
+        self.func_view_button = SafeButton("Func",
             handler=lambda: self._switch_view("func"),
             width=10
         )
-        self.save_button = Button(
-            "Save",
+        self.save_button = SafeButton("Save",
             handler=self._save_changes # Async handler
         )
         self.save_button.disabled = True # Disabled until changes are made
 
-        self.close_button = Button(
-            "Close",
+        self.close_button = SafeButton("Close",
             handler=self._close_editor # Async handler
         )
 
@@ -127,8 +143,8 @@ class DualStepFuncEditorPane:
                     VSplit([
                         Label(" Step Settings Editor ", style="class:frame.title"),
                         Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
-                        Button("Load", handler=self._load_step_object),
-                        Button("Save As", handler=self._save_step_object_as)
+                        SafeButton("Load", handler=self._load_step_object),
+                        SafeButton("Save As", handler=self._save_step_object_as)
                     ], height=1, style="class:frame.title"),
                     # Content area
                     self.step_settings_container
@@ -140,9 +156,9 @@ class DualStepFuncEditorPane:
                     VSplit([
                         Label(" Func Pattern Editor ", style="class:frame.title"),
                         Window(width=Dimension(weight=1), char=' '),  # Flexible spacer
-                        Button("Add", handler=lambda: self.func_pattern_editor_component._add_function() if hasattr(self.func_pattern_editor_component, '_add_function') else None),
-                        Button("Load", handler=lambda: self.func_pattern_editor_component._load_func_pattern_from_file_handler() if hasattr(self.func_pattern_editor_component, '_load_func_pattern_from_file_handler') else None),
-                        Button("Save As", handler=lambda: self.func_pattern_editor_component._save_func_pattern_as_file_handler() if hasattr(self.func_pattern_editor_component, '_save_func_pattern_as_file_handler') else None)
+                        SafeButton("Add", handler=lambda: self.func_pattern_editor_component._add_function() if hasattr(self.func_pattern_editor_component, '_add_function') else None),
+                        SafeButton("Load", handler=lambda: self.func_pattern_editor_component._load_func_pattern_from_file_handler() if hasattr(self.func_pattern_editor_component, '_load_func_pattern_from_file_handler') else None),
+                        SafeButton("Save As", handler=lambda: self.func_pattern_editor_component._save_func_pattern_as_file_handler() if hasattr(self.func_pattern_editor_component, '_save_func_pattern_as_file_handler') else None)
                     ], height=1, style="class:frame.title"),
                     # Content area
                     self.func_pattern_container if self.func_pattern_container else HSplit([Label("Func Editor Component Error")])
@@ -168,136 +184,192 @@ class DualStepFuncEditorPane:
     def _create_step_settings_view(self) -> ScrollablePane:
         """Creates the UI for editing AbstractStep __init__ parameters dynamically."""
         self.step_param_inputs.clear()
+
+        # Get signature and create parameter rows
+        sig = inspect.signature(AbstractStep.__init__)
+        rows = self._create_parameter_rows(sig)
+
+        # Create main content
+        parameter_fields_container = HSplit(rows)
+        step_settings_toolbar = self._create_step_settings_toolbar()
+
+        view_content = HSplit([
+            step_settings_toolbar,
+            Frame(parameter_fields_container, title="Step Parameters (AbstractStep)")
+        ])
+
+        return ScrollablePane(view_content)
+
+    def _create_parameter_rows(self, sig: inspect.Signature) -> List[Any]:
+        """Create UI rows for each parameter in the signature."""
         rows = []
 
-        sig = inspect.signature(AbstractStep.__init__)
-
         for param_name, param_obj in sig.parameters.items():
-            if param_name == 'self' or param_obj.kind == param_obj.VAR_KEYWORD or param_obj.kind == param_obj.VAR_POSITIONAL:
+            if self._should_skip_parameter(param_name, param_obj):
                 continue
 
-            field_label = param_name.replace('_', ' ').title()
-            current_value = getattr(self.editing_func_step, param_name, None)
-            widget = None
-
-            param_type_hint = param_obj.annotation
-            actual_type = param_type_hint
-            is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
-            if is_optional:
-                actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
-
-            if actual_type is bool:
-                # Use a single Checkbox for boolean parameters
-                widget = Checkbox(checked=bool(current_value))
-                # Checkbox doesn't have a direct on_text_changed or similar event for its state change.
-                # We will read its '.checked' attribute in _something_changed (if called generically)
-                # and definitely in _save_changes.
-                # To trigger _something_changed, we can wrap its handler or rely on a general change detection.
-                # For now, let's ensure _something_changed is robust enough.
-                # A simple way to make it participate in _something_changed is to attach a custom handler
-                # if the Checkbox allows it, or call _something_changed from a wrapper if PTK doesn't directly support.
-                # PTK Checkbox is simple; its state is just read.
-                # Let's assume _something_changed will be called by a general mechanism or on field focus change for now.
-                # To explicitly trigger _something_changed, we might need to wrap the Checkbox interaction
-                # or have a "apply changes from form" button if events are tricky.
-                # For now, we will rely on _save_changes to correctly read the value.
-                # To make save button enable/disable work, _something_changed needs to be called.
-                # A common pattern is to have a focus change listener on the form that calls _something_changed.
-                # Or, more simply, attach a dummy handler that calls _something_changed.
-                # The Checkbox itself does not have an on_press that gives the new state directly.
-                # Let's refine this: we can use a VSplit with a button or make the checkbox itself trigger.
-                # The prompt_toolkit Checkbox is a container, its control handles mouse.
-                # We'll make a small modification to how _something_changed is called for it.
-                # We will call _something_changed with the checkbox instance itself.
-                original_handler = widget.control.mouse_handler
-                def new_mouse_handler(mouse_event):
-                    result = original_handler(mouse_event)
-                    self._something_changed(param_name, widget) # Pass widget to read .checked state
-                    return result
-                widget.control.mouse_handler = new_mouse_handler
-
-            elif param_name == "variable_components": # Special handling for VariableComponents
-                options = [(None, "(None)")] + [(member, member.name) for member in VariableComponents]
-
-                # Determine initial selection for RadioList
-                initial_selection = None
-                if current_value and isinstance(current_value, list) and len(current_value) > 0:
-                    current_name = current_value[0]
-                    for member in VariableComponents:
-                        if member.name == current_name:
-                            initial_selection = member
-                            break
-
-                widget = RadioList(values=options, default=initial_selection)
-                # The handler for RadioList is set directly on the widget instance
-                # and it's called with the selected value (enum member or None)
-                widget.handler = lambda val, n=param_name: self._something_changed(n, val)
-            elif param_name == "group_by": # Special handling for GroupBy
-                options = [(None, "(None)")] + [(member, member.name) for member in GroupBy]
-
-                initial_selection = None
-                if current_value and isinstance(current_value, list) and len(current_value) > 0:
-                    current_name = current_value[0]
-                    for member in GroupBy:
-                        if member.name == current_name:
-                            initial_selection = member
-                            break
-
-                widget = RadioList(values=options, default=initial_selection)
-                widget.handler = lambda val, n=param_name: self._something_changed(n, val)
-            elif actual_type is str or get_origin(actual_type) is Path or isinstance(actual_type, type(Path)) or actual_type is Any:
-                widget = TextArea(
-                    text=str(current_value or ("" if is_optional else param_obj.default if param_obj.default is not inspect.Parameter.empty else "")),
-                    multiline=False, height=1, style="class:input-field"
-                )
-                widget.buffer.on_text_changed += lambda buff, n=param_name: self._something_changed(n, buff.text)
-            else:
-                logger.warning(f"Unhandled param type for UI: {param_name} ({actual_type}). Using TextArea.")
-                widget = TextArea(
-                    text=str(current_value or ""),
-                    multiline=False, height=1, style="class:input-field"
-                )
-                widget.buffer.on_text_changed += lambda buff, n=param_name: self._something_changed(n, buff.text)
+            param_info = self._extract_parameter_info(param_name, param_obj)
+            widget = self._create_parameter_widget(param_info)
 
             if widget:
                 self.step_param_inputs[param_name] = widget
-                # Create reset button for this parameter
-                reset_button = Button(
-                    "Reset",
-                    handler=lambda p_name=param_name, w=widget: get_app().create_background_task(
-                        self._reset_step_parameter_field(p_name, w)
-                    ),
-                    width=8
-                )
-                rows.append(VSplit([
-                    Label(f"{field_label}:", width=25),
-                    widget,
-                    Box(reset_button, width=10, padding_left=1) # Added Box for padding
-                ], padding=0))
+                row = self._create_parameter_row(param_info, widget)
+                rows.append(row)
 
-        parameter_fields_container = HSplit(rows)
+        return rows
 
-        # Define these buttons earlier for the toolbar
-        load_step_button = Button("Load .step", handler=self._load_step_object, width=12)
-        save_step_as_button = Button("Save .step As...", handler=self._save_step_object_as, width=18)
+    def _should_skip_parameter(self, param_name: str, param_obj: inspect.Parameter) -> bool:
+        """Check if parameter should be skipped in UI."""
+        return (param_name == 'self' or
+                param_obj.kind == param_obj.VAR_KEYWORD or
+                param_obj.kind == param_obj.VAR_POSITIONAL)
 
-        # Create a toolbar for these buttons
-        step_settings_toolbar = VSplit([
+    def _extract_parameter_info(self, param_name: str, param_obj: inspect.Parameter) -> dict:
+        """Extract parameter information for UI creation."""
+        field_label = param_name.replace('_', ' ').title()
+        current_value = getattr(self.editing_func_step, param_name, None)
+
+        param_type_hint = param_obj.annotation
+        actual_type = param_type_hint
+        is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
+        if is_optional:
+            actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
+
+        return {
+            'param_name': param_name,
+            'param_obj': param_obj,
+            'field_label': field_label,
+            'current_value': current_value,
+            'actual_type': actual_type,
+            'is_optional': is_optional
+        }
+
+    def _create_parameter_widget(self, param_info: dict) -> Any:
+        """Create appropriate widget for parameter type."""
+        param_name = param_info['param_name']
+        actual_type = param_info['actual_type']
+        current_value = param_info['current_value']
+
+        if actual_type is bool:
+            return self._create_bool_parameter_widget(param_name, current_value)
+        elif param_name == "variable_components":
+            return self._create_variable_components_widget(current_value)
+        elif param_name == "group_by":
+            return self._create_group_by_widget(current_value)
+        elif self._is_string_like_type(actual_type):
+            return self._create_string_parameter_widget(param_name, param_info)
+        else:
+            return self._create_fallback_widget(param_name, current_value, actual_type)
+
+    def _create_bool_parameter_widget(self, param_name: str, current_value: Any) -> Checkbox:
+        """Create checkbox widget for boolean parameters."""
+        widget = Checkbox(checked=bool(current_value))
+        original_handler = widget.control.mouse_handler
+
+        def new_mouse_handler(mouse_event):
+            result = original_handler(mouse_event)
+            self._something_changed(param_name, widget)
+            return result
+
+        widget.control.mouse_handler = new_mouse_handler
+        return widget
+
+    def _create_variable_components_widget(self, current_value: Any) -> RadioList:
+        """Create radio list widget for VariableComponents parameter."""
+        options = [(None, "(None)")] + [(member, member.name) for member in VariableComponents]
+        initial_selection = self._find_enum_selection(current_value, VariableComponents)
+
+        widget = RadioList(values=options, default=initial_selection)
+        widget.handler = lambda val: self._something_changed("variable_components", val)
+        return widget
+
+    def _create_group_by_widget(self, current_value: Any) -> RadioList:
+        """Create radio list widget for GroupBy parameter."""
+        options = [(None, "(None)")] + [(member, member.name) for member in GroupBy]
+        initial_selection = self._find_enum_selection(current_value, GroupBy)
+
+        widget = RadioList(values=options, default=initial_selection)
+        widget.handler = lambda val: self._something_changed("group_by", val)
+        return widget
+
+    def _find_enum_selection(self, current_value: Any, enum_class: type) -> Any:
+        """Find the enum member that matches the current value."""
+        if current_value and isinstance(current_value, list) and len(current_value) > 0:
+            current_name = current_value[0]
+            for member in enum_class:
+                if member.name == current_name:
+                    return member
+        return None
+
+    def _is_string_like_type(self, actual_type: type) -> bool:
+        """Check if type is string-like (str, Path, Any)."""
+        return (actual_type is str or
+                get_origin(actual_type) is Path or
+                isinstance(actual_type, type(Path)) or
+                actual_type is Any)
+
+    def _create_string_parameter_widget(self, param_name: str, param_info: dict) -> TextArea:
+        """Create text area widget for string-like parameters."""
+        current_value = param_info['current_value']
+        param_obj = param_info['param_obj']
+        is_optional = param_info['is_optional']
+
+        default_text = ""
+        if current_value:
+            default_text = str(current_value)
+        elif not is_optional and param_obj.default is not inspect.Parameter.empty:
+            default_text = str(param_obj.default)
+
+        widget = TextArea(
+            text=default_text,
+            multiline=False,
+            height=1,
+            style="class:input-field"
+        )
+        widget.buffer.on_text_changed += lambda buff: self._something_changed(param_name, buff.text)
+        return widget
+
+    def _create_fallback_widget(self, param_name: str, current_value: Any, actual_type: type) -> TextArea:
+        """Create fallback text area widget for unhandled parameter types."""
+        logger.warning(f"Unhandled param type for UI: {param_name} ({actual_type}). Using TextArea.")
+
+        widget = TextArea(
+            text=str(current_value or ""),
+            multiline=False,
+            height=1,
+            style="class:input-field"
+        )
+        widget.buffer.on_text_changed += lambda buff: self._something_changed(param_name, buff.text)
+        return widget
+
+    def _create_parameter_row(self, param_info: dict, widget: Any) -> VSplit:
+        """Create a UI row for a parameter."""
+        param_name = param_info['param_name']
+        field_label = param_info['field_label']
+
+        reset_button = SafeButton("Reset",
+            handler=lambda: get_app().create_background_task(
+                self._reset_step_parameter_field(param_name, widget)
+            ),
+            width=8
+        )
+
+        return VSplit([
+            Label(f"{field_label}:", width=25),
+            widget,
+            Box(reset_button, width=10, padding_left=1)
+        ], padding=0)
+
+    def _create_step_settings_toolbar(self) -> VSplit:
+        """Create toolbar with load and save buttons."""
+        load_step_button = SafeButton("Load .step", handler=self._load_step_object, width=12)
+        save_step_as_button = SafeButton("Save .step As...", handler=self._save_step_object_as, width=18)
+
+        return VSplit([
             load_step_button,
             save_step_as_button,
-            # Add a flexible spacer to push buttons to the left if desired, or manage alignment via Box
-            Window(width=0, char=' ') # Flexible spacer
+            Window(width=0, char=' ')  # Flexible spacer
         ], height=1, padding_left=1)
-
-
-        view_content = HSplit([
-            # Toolbar at the top of the step settings view's content
-            step_settings_toolbar,
-            # Then the frame containing the parameters
-            Frame(parameter_fields_container, title="Step Parameters (AbstractStep)")
-            # Removed the old step_object_buttons VSplit from here
-        ])
-        return ScrollablePane(view_content)
 
     def _create_func_pattern_view(self) -> Any:
         """
@@ -329,108 +401,159 @@ class DualStepFuncEditorPane:
         Callback for when an editable field changes.
         Updates self.editing_func_step and enables save button if changes detected.
         """
-        if param_name and param_name != "func": # Change from Step Settings
-            try:
-                sig = inspect.signature(AbstractStep.__init__)
-                if param_name not in sig.parameters:
-                    logger.warning(f"_something_changed called for unknown param: {param_name}")
-                    return
+        if param_name and param_name != "func":
+            self._update_step_parameter(param_name, widget_value)
 
-                param_obj = sig.parameters[param_name]
-                param_type_hint = param_obj.annotation
-                actual_type = param_type_hint
-                is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
-                if is_optional:
-                    actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
+        # Check for changes and update UI state
+        has_changed = self._detect_changes()
+        self._update_save_button_state(has_changed)
 
-                current_text = str(widget_value).strip()
+    def _update_step_parameter(self, param_name: str, widget_value: Any):
+        """Update a single step parameter from widget value."""
+        try:
+            sig = inspect.signature(AbstractStep.__init__)
+            if param_name not in sig.parameters:
+                logger.warning(f"Unknown parameter: {param_name}")
+                return
 
-                converted_value: Any
-                if not current_text and is_optional: converted_value = None
-                elif actual_type is Path: converted_value = Path(current_text) if current_text else None
-                # Removed old TextArea handling for variable_components
-                elif actual_type is str:
-                    converted_value = current_text if not (is_optional and not current_text) else None
-                else:
-                    converted_value = current_text if not (is_optional and not current_text) else None
+            # Handle special enum parameters
+            if param_name in ("variable_components", "group_by"):
+                self._update_enum_parameter(param_name, widget_value)
+                return
 
-                # Handle variable_components specifically if it was changed by RadioList
-                if param_name == "variable_components":
-                    # widget_value is the enum member or None
-                    if widget_value and isinstance(widget_value, VariableComponents):
-                        setattr(self.editing_func_step, param_name, [widget_value.name])
-                    else: # widget_value is None (no selection)
-                        setattr(self.editing_func_step, param_name, None)
-                elif param_name == "group_by":
-                    if widget_value and isinstance(widget_value, GroupBy):
-                        setattr(self.editing_func_step, param_name, [widget_value.name])
-                    else: # widget_value is None
-                        setattr(self.editing_func_step, param_name, None)
-                else: # Handle other types as before
-                    setattr(self.editing_func_step, param_name, converted_value)
-            except Exception as e:
-                logger.warning(f"Error updating editing_func_step attribute '{param_name}' from text input '{widget_value}': {e}")
-        # If param_name == "func", self.editing_func_step.func was already updated in _func_pattern_changed.
+            # Handle regular parameters
+            converted_value = self._convert_widget_value(param_name, widget_value, sig.parameters[param_name])
+            setattr(self.editing_func_step, param_name, converted_value)
 
-        has_changed = False
+        except Exception as e:
+            logger.warning(f"Error updating parameter '{param_name}': {e}")
+
+    def _update_enum_parameter(self, param_name: str, widget_value: Any):
+        """Update enum parameters (variable_components, group_by)."""
+        enum_class = VariableComponents if param_name == "variable_components" else GroupBy
+
+        if widget_value and isinstance(widget_value, enum_class):
+            setattr(self.editing_func_step, param_name, [widget_value.name])
+        else:
+            setattr(self.editing_func_step, param_name, None)
+
+    def _convert_widget_value(self, param_name: str, widget_value: Any, param_obj) -> Any:
+        """Convert widget value to appropriate type for parameter."""
+        param_type_hint = param_obj.annotation
+        actual_type = param_type_hint
+        is_optional = get_origin(param_type_hint) is TypingUnion and type(None) in get_args(param_type_hint)
+
+        if is_optional:
+            actual_type = next((t for t in get_args(param_type_hint) if t is not type(None)), actual_type)
+
+        current_text = str(widget_value).strip()
+
+        if not current_text and is_optional:
+            return None
+        elif actual_type is Path:
+            return Path(current_text) if current_text else None
+        elif actual_type is str:
+            return current_text if not (is_optional and not current_text) else None
+        else:
+            return current_text if not (is_optional and not current_text) else None
+
+    def _detect_changes(self) -> bool:
+        """Detect if any changes have been made to the step."""
+        step_changed = self._detect_step_settings_changes()
+        func_changed = self._detect_func_pattern_changes()
+        return step_changed or func_changed
+
+    def _detect_step_settings_changes(self) -> bool:
+        """Detect changes in step settings."""
         sig_abstract = inspect.signature(AbstractStep.__init__)
-        changed_in_step_settings = False
+
         for name_to_check in sig_abstract.parameters:
-            if name_to_check == 'self': continue
+            if name_to_check == 'self':
+                continue
 
             original_val = getattr(self.original_func_step, name_to_check, inspect.Parameter.empty)
 
-            # For boolean fields handled by Checkbox, get .checked value
+            # Handle checkbox widgets specially
             widget_instance = self.step_param_inputs.get(name_to_check)
             if isinstance(widget_instance, Checkbox):
                 editing_val = widget_instance.checked
-                # Update editing_func_step directly here for booleans if _something_changed was called with widget
-                if param_name == name_to_check and widget_value is widget_instance: # widget_value is the checkbox itself
-                     setattr(self.editing_func_step, name_to_check, editing_val)
+                setattr(self.editing_func_step, name_to_check, editing_val)
             else:
                 editing_val = getattr(self.editing_func_step, name_to_check, inspect.Parameter.empty)
 
             if original_val != editing_val:
-                changed_in_step_settings = True
-                break
+                return True
 
-        func_changed = False
-        if copy.deepcopy(self.editing_func_step.func) != copy.deepcopy(self.original_func_step.func):
-            func_changed = True
+        return False
 
-        has_changed = changed_in_step_settings or func_changed
+    def _detect_func_pattern_changes(self) -> bool:
+        """Detect changes in function pattern."""
+        return (copy.deepcopy(self.editing_func_step.func) !=
+                copy.deepcopy(self.original_func_step.func))
 
+    def _update_save_button_state(self, has_changed: bool):
+        """Update save button enabled/disabled state."""
         if self.save_button:
             self.save_button.disabled = not has_changed
         get_app().invalidate()
 
     async def _save_changes(self):
+        """Save changes to the step and function pattern."""
         logger.info("DualStepFuncEditorPane: Save changes initiated.")
 
+        try:
+            await self._save_step_parameters()
+            await self._save_function_pattern()
+            await self._finalize_save()
+        except Exception as e:
+            await self._handle_save_error(e)
+
+    async def _save_step_parameters(self):
+        """Save step parameters from UI widgets."""
         sig_abstract = inspect.signature(AbstractStep.__init__)
+
         for param_name, widget in self.step_param_inputs.items():
-            if param_name not in sig_abstract.parameters: continue
+            if param_name not in sig_abstract.parameters:
+                continue
+
             param_obj = sig_abstract.parameters[param_name]
-            actual_type = param_obj.annotation
-            if get_origin(actual_type) is TypingUnion and type(None) in get_args(actual_type):
-                actual_type = next((t for t in get_args(actual_type) if t is not type(None)), actual_type)
+            actual_type = self._extract_actual_type(param_obj.annotation)
 
-            if param_name == "variable_components" and isinstance(widget, RadioList):
-                selected_enum_member = widget.current_value
-                if selected_enum_member and isinstance(selected_enum_member, VariableComponents):
-                    setattr(self.editing_func_step, param_name, [selected_enum_member.name])
-                else: # No selection or (None) was selected
-                    setattr(self.editing_func_step, param_name, None)
-            elif param_name == "group_by" and isinstance(widget, RadioList):
-                selected_enum_member = widget.current_value
-                if selected_enum_member and isinstance(selected_enum_member, GroupBy):
-                    setattr(self.editing_func_step, param_name, [selected_enum_member.name])
-                else:
-                    setattr(self.editing_func_step, param_name, None)
-            elif isinstance(widget, Checkbox) and actual_type is bool:
-                setattr(self.editing_func_step, param_name, widget.checked)
-                # Removed CheckboxList handling for bool as it's replaced by Checkbox
+            self._save_parameter_value(param_name, widget, actual_type)
 
+    def _extract_actual_type(self, annotation: type) -> type:
+        """Extract actual type from annotation, handling Optional types."""
+        if get_origin(annotation) is TypingUnion and type(None) in get_args(annotation):
+            return next((t for t in get_args(annotation) if t is not type(None)), annotation)
+        return annotation
+
+    def _save_parameter_value(self, param_name: str, widget: Any, actual_type: type):
+        """Save a single parameter value based on widget type."""
+        if param_name == "variable_components" and isinstance(widget, RadioList):
+            self._save_variable_components_parameter(param_name, widget)
+        elif param_name == "group_by" and isinstance(widget, RadioList):
+            self._save_group_by_parameter(param_name, widget)
+        elif isinstance(widget, Checkbox) and actual_type is bool:
+            setattr(self.editing_func_step, param_name, widget.checked)
+
+    def _save_variable_components_parameter(self, param_name: str, widget: RadioList):
+        """Save variable_components parameter."""
+        selected_enum_member = widget.current_value
+        if selected_enum_member and isinstance(selected_enum_member, VariableComponents):
+            setattr(self.editing_func_step, param_name, [selected_enum_member.name])
+        else:
+            setattr(self.editing_func_step, param_name, None)
+
+    def _save_group_by_parameter(self, param_name: str, widget: RadioList):
+        """Save group_by parameter."""
+        selected_enum_member = widget.current_value
+        if selected_enum_member and isinstance(selected_enum_member, GroupBy):
+            setattr(self.editing_func_step, param_name, [selected_enum_member.name])
+        else:
+            setattr(self.editing_func_step, param_name, None)
+
+    async def _save_function_pattern(self):
+        """Save function pattern from editor component."""
         if self.func_pattern_editor_component:
             self.editing_func_step.func = self.func_pattern_editor_component.get_pattern()
         else:
@@ -440,24 +563,27 @@ class DualStepFuncEditorPane:
                 message="Function pattern editor is not available. Cannot save.",
                 app_state=self.state
             )
-            return
+            raise ValueError("Function pattern editor not available")
 
-        try:
-            step_to_save = copy.deepcopy(self.editing_func_step)
-            await self.state.notify('step_pattern_saved', {'step': step_to_save})
-            self.original_func_step = copy.deepcopy(self.editing_func_step)
+    async def _finalize_save(self):
+        """Finalize the save operation."""
+        step_to_save = copy.deepcopy(self.editing_func_step)
+        await self.state.notify('step_pattern_saved', {'step': step_to_save})
+        self.original_func_step = copy.deepcopy(self.editing_func_step)
 
-            if self.save_button:
-                self.save_button.disabled = True
-            get_app().invalidate()
-            logger.info(f"Step '{self.original_func_step.name}' saved successfully.")
-        except Exception as e:
-            logger.error(f"Error during final save or notification for step '{self.editing_func_step.name}': {e}", exc_info=True)
-            await show_error_dialog(
-                title="Save Error",
-                message=f"Error saving step: {e}",
-                app_state=self.state
-            )
+        if self.save_button:
+            self.save_button.disabled = True
+        get_app().invalidate()
+        logger.info(f"Step '{self.original_func_step.name}' saved successfully.")
+
+    async def _handle_save_error(self, error: Exception):
+        """Handle errors during save operation."""
+        logger.error(f"Error during final save or notification for step '{self.editing_func_step.name}': {error}", exc_info=True)
+        await show_error_dialog(
+            title="Save Error",
+            message=f"Error saving step: {error}",
+            app_state=self.state
+        )
 
     async def _close_editor(self):
         logger.info("DualStepFuncEditorPane: Close editor clicked.")
@@ -578,39 +704,70 @@ class DualStepFuncEditorPane:
     async def _reset_step_parameter_field(self, param_name_to_reset: str, associated_widget: Any):
         """Resets a specific step parameter field to its original value."""
         logger.info(f"Resetting parameter: {param_name_to_reset}")
-        original_value = getattr(self.original_func_step, param_name_to_reset, None)
 
-        # Update the editing_func_step
-        setattr(self.editing_func_step, param_name_to_reset, original_value)
+        original_value = self._get_original_parameter_value(param_name_to_reset)
+        self._update_editing_step_parameter(param_name_to_reset, original_value)
+        self._update_widget_with_original_value(associated_widget, param_name_to_reset, original_value)
+        self._trigger_change_detection(param_name_to_reset, associated_widget, original_value)
 
-        # Update the UI widget
-        if isinstance(associated_widget, TextArea):
-            associated_widget.text = str(original_value or "")
-        elif isinstance(associated_widget, Checkbox): # Updated for single Checkbox
-            associated_widget.checked = bool(original_value)
-        elif isinstance(associated_widget, RadioList):
-            # For VariableComponents and GroupBy
-            enum_class = None
-            if param_name_to_reset == "variable_components":
-                enum_class = VariableComponents
-            elif param_name_to_reset == "group_by":
-                enum_class = GroupBy
+    def _get_original_parameter_value(self, param_name: str) -> Any:
+        """Get the original value for a parameter."""
+        return getattr(self.original_func_step, param_name, None)
 
-            if enum_class:
-                initial_selection = None
-                if original_value and isinstance(original_value, list) and len(original_value) > 0:
-                    original_name = original_value[0]
-                    for member in enum_class:
-                        if member.name == original_name:
-                            initial_selection = member
-                            break
-                associated_widget.current_value = initial_selection
-            else:
-                logger.warning(f"Cannot reset RadioList for unknown enum param: {param_name_to_reset}")
+    def _update_editing_step_parameter(self, param_name: str, original_value: Any):
+        """Update the editing step with the original value."""
+        setattr(self.editing_func_step, param_name, original_value)
+
+    def _update_widget_with_original_value(self, widget: Any, param_name: str, original_value: Any):
+        """Update the UI widget with the original value."""
+        if isinstance(widget, TextArea):
+            self._reset_text_area_widget(widget, original_value)
+        elif isinstance(widget, Checkbox):
+            self._reset_checkbox_widget(widget, original_value)
+        elif isinstance(widget, RadioList):
+            self._reset_radio_list_widget(widget, param_name, original_value)
         else:
-            logger.warning(f"Cannot update UI for unknown widget type during reset: {type(associated_widget)}")
+            logger.warning(f"Cannot update UI for unknown widget type during reset: {type(widget)}")
 
-        # Trigger change detection to update save button state and redraw
-        # Pass the original_value to ensure _something_changed correctly compares with the new state
-        self._something_changed(param_name=param_name_to_reset, widget_value=original_value if not isinstance(associated_widget, RadioList) else associated_widget.current_value)
-        get_app().invalidate() # Ensure UI redraws
+    def _reset_text_area_widget(self, widget: TextArea, original_value: Any):
+        """Reset text area widget to original value."""
+        widget.text = str(original_value or "")
+
+    def _reset_checkbox_widget(self, widget: Checkbox, original_value: Any):
+        """Reset checkbox widget to original value."""
+        widget.checked = bool(original_value)
+
+    def _reset_radio_list_widget(self, widget: RadioList, param_name: str, original_value: Any):
+        """Reset radio list widget to original value."""
+        enum_class = self._get_enum_class_for_parameter(param_name)
+
+        if enum_class:
+            initial_selection = self._find_enum_member_by_value(enum_class, original_value)
+            widget.current_value = initial_selection
+        else:
+            logger.warning(f"Cannot reset RadioList for unknown enum param: {param_name}")
+
+    def _get_enum_class_for_parameter(self, param_name: str) -> Optional[type]:
+        """Get the enum class for a parameter name."""
+        if param_name == "variable_components":
+            return VariableComponents
+        elif param_name == "group_by":
+            return GroupBy
+        return None
+
+    def _find_enum_member_by_value(self, enum_class: type, original_value: Any) -> Any:
+        """Find enum member that matches the original value."""
+        if not original_value or not isinstance(original_value, list) or len(original_value) == 0:
+            return None
+
+        original_name = original_value[0]
+        for member in enum_class:
+            if member.name == original_name:
+                return member
+        return None
+
+    def _trigger_change_detection(self, param_name: str, widget: Any, original_value: Any):
+        """Trigger change detection to update save button state."""
+        widget_value = original_value if not isinstance(widget, RadioList) else widget.current_value
+        self._something_changed(param_name=param_name, widget_value=widget_value)
+        get_app().invalidate()

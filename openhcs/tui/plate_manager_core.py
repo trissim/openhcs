@@ -39,7 +39,7 @@ from prompt_toolkit.layout import Container, HSplit, VSplit, DynamicContainer, D
 from prompt_toolkit.widgets import Box, Button, Frame, Label # Removed TextArea
 from openhcs.tui.status_bar import STATUS_ICONS
 from openhcs.tui.dialogs.plate_dialog_manager import PlateDialogManager
-from .components import InteractiveListItem, FramedButton # Import the components
+from openhcs.tui.components import InteractiveListItem, FramedButton # Import the components
 from openhcs.tui.services.plate_validation import PlateValidationService
 
 from openhcs.core.context.processing_context import ProcessingContext
@@ -49,6 +49,8 @@ from openhcs.constants.constants import Backend
 from openhcs.io.filemanager import FileManager
 
 logger = logging.getLogger(__name__)
+
+
 
 
 # Define interfaces for component communication
@@ -153,70 +155,117 @@ class PlateManagerPane:
                 logger.warning(f"PlateManagerPane: Error initializing UI after filemanager available: {e}")
 
     async def _initialize_ui(self):
+        """Initialize the UI components and layout."""
         if self._ui_initialized:
             logger.info("PlateManagerPane: UI already initialized, skipping initialization.")
             return
 
+        if not await self._validate_ui_initialization_prerequisites():
+            return
+
+        await self._setup_ui_components()
+        await self._finalize_ui_initialization()
+
+    async def _validate_ui_initialization_prerequisites(self) -> bool:
+        """Validate prerequisites for UI initialization."""
         app = get_app()
         if not hasattr(app, 'is_running') or not app.is_running:
             logger.warning("PlateManagerPane._initialize_ui called before app is fully running. Deferring.")
             app.call_later(0.1, lambda: get_app().create_background_task(self._initialize_ui()))
-            return
+            return False
 
-        # Ensure self.context is available (should be set in __init__)
+        self._validate_context_availability()
+        self._validate_filemanager_availability()
+        return True
+
+    def _validate_context_availability(self):
+        """Validate that context is available."""
         if not hasattr(self, 'context') or self.context is None:
             logger.error("PlateManagerPane: ProcessingContext not available for command execution.")
-            # Handle error appropriately, maybe disable buttons or show an error message
-            # For now, buttons might fail if context is None.
 
-        # Ensure filemanager is available
+    def _validate_filemanager_availability(self):
+        """Validate that filemanager is available."""
         if not hasattr(self, 'filemanager') or self.filemanager is None:
             logger.warning("PlateManagerPane: FileManager not available during UI initialization. Some features may be limited.")
-            # We'll continue with initialization, but some features might not work properly
 
-        # Register observers with the TUIState
+    async def _setup_ui_components(self):
+        """Set up all UI components."""
         self.register_with_app()
 
-        # Import commands here to avoid circular imports
+        command_classes = await self._import_command_classes()
+        await self._create_action_buttons(command_classes)
+        await self._initialize_plate_data()
+        await self._build_ui_containers()
+
+    async def _import_command_classes(self) -> dict:
+        """Import command classes with fallback to placeholders."""
         try:
             from openhcs.tui.commands import (
                 ShowAddPlateDialogCommand, DeleteSelectedPlatesCommand,
                 ShowEditPlateConfigDialogCommand, InitializePlatesCommand,
                 CompilePlatesCommand, RunPlatesCommand
             )
+            return {
+                'add': ShowAddPlateDialogCommand,
+                'delete': DeleteSelectedPlatesCommand,
+                'edit': ShowEditPlateConfigDialogCommand,
+                'init': InitializePlatesCommand,
+                'compile': CompilePlatesCommand,
+                'run': RunPlatesCommand
+            }
         except ImportError as e:
             logger.error(f"PlateManagerPane: Failed to import commands: {e}")
-            # Create placeholder commands
-            class PlaceholderCommand:
-                async def execute(self, *args, **kwargs):
-                    pass
-            ShowAddPlateDialogCommand = PlaceholderCommand
-            DeleteSelectedPlatesCommand = PlaceholderCommand
-            ShowEditPlateConfigDialogCommand = PlaceholderCommand
-            InitializePlatesCommand = PlaceholderCommand
-            CompilePlatesCommand = PlaceholderCommand
-            RunPlatesCommand = PlaceholderCommand
+            return self._create_placeholder_commands()
 
-        self.add_button = FramedButton("Add", handler=lambda: get_app().create_background_task(
-            ShowAddPlateDialogCommand().execute(self.state, self.context, plate_dialog_manager=self.dialog_manager)
-        ), width=6)
-        self.remove_button = FramedButton("Del", handler=lambda: get_app().create_background_task(
-            DeleteSelectedPlatesCommand().execute(self.state, self.context, selected_plates_data=self._get_selected_plate_data_for_action())
-        ), width=6)
-        self.edit_button = FramedButton("Edit", handler=lambda: get_app().create_background_task(
-            ShowEditPlateConfigDialogCommand().execute(self.state, self.context) # Relies on state.active_orchestrator
-        ), width=6)
-        self.init_button = FramedButton("Init", handler=lambda: get_app().create_background_task(
-            InitializePlatesCommand().execute(self.state, self.context, orchestrators_to_init=self._get_selected_orchestrators_for_action())
-        ), width=6)
-        self.compile_button = FramedButton("Compile", handler=lambda: get_app().create_background_task(
-            CompilePlatesCommand().execute(self.state, self.context, orchestrators_to_compile=self._get_selected_orchestrators_for_action())
-        ), width=9)
-        self.run_button = FramedButton("Run", handler=lambda: get_app().create_background_task(
-            RunPlatesCommand().execute(self.state, self.context, orchestrators_to_run=self._get_selected_orchestrators_for_action())
-        ), width=5)
+    def _create_placeholder_commands(self) -> dict:
+        """Create placeholder commands when imports fail."""
+        class PlaceholderCommand:
+            async def execute(self, *args, **kwargs):
+                pass
 
-        # Initialize with a placeholder until plates are loaded
+        return {
+            'add': PlaceholderCommand,
+            'delete': PlaceholderCommand,
+            'edit': PlaceholderCommand,
+            'init': PlaceholderCommand,
+            'compile': PlaceholderCommand,
+            'run': PlaceholderCommand
+        }
+
+    async def _create_action_buttons(self, command_classes: dict):
+        """Create action buttons with command handlers."""
+        self.add_button = FramedButton("Add",
+            handler=lambda: get_app().create_background_task(
+                command_classes['add']().execute(self.state, self.context, plate_dialog_manager=self.dialog_manager)
+            ), width=6)
+
+        self.remove_button = FramedButton("Del",
+            handler=lambda: get_app().create_background_task(
+                command_classes['delete']().execute(self.state, self.context, selected_plates_data=self._get_selected_plate_data_for_action())
+            ), width=6)
+
+        self.edit_button = FramedButton("Edit",
+            handler=lambda: get_app().create_background_task(
+                command_classes['edit']().execute(self.state, self.context)
+            ), width=6)
+
+        self.init_button = FramedButton("Init",
+            handler=lambda: get_app().create_background_task(
+                command_classes['init']().execute(self.state, self.context, orchestrators_to_init=self._get_selected_orchestrators_for_action())
+            ), width=6)
+
+        self.compile_button = FramedButton("Compile",
+            handler=lambda: get_app().create_background_task(
+                command_classes['compile']().execute(self.state, self.context, orchestrators_to_compile=self._get_selected_orchestrators_for_action())
+            ), width=9)
+
+        self.run_button = FramedButton("Run",
+            handler=lambda: get_app().create_background_task(
+                command_classes['run']().execute(self.state, self.context, orchestrators_to_run=self._get_selected_orchestrators_for_action())
+            ), width=5)
+
+    async def _initialize_plate_data(self):
+        """Initialize placeholder plate data."""
         self.plates = [{
             'id': 'loading',
             'path': 'N/A',
@@ -225,7 +274,8 @@ class PlateManagerPane:
             'error_details': 'Please wait while plates are being loaded'
         }]
 
-        # Build the plate items container
+    async def _build_ui_containers(self):
+        """Build UI containers and layout."""
         try:
             self.plate_items_container_widget = await self._build_plate_items_container()
             logger.info("PlateManagerPane: Successfully built plate items container.")
@@ -233,22 +283,18 @@ class PlateManagerPane:
             logger.error(f"PlateManagerPane: Error building plate items container: {e}", exc_info=True)
             self.plate_items_container_widget = HSplit([Label(f"Error building plate list: {e}")])
 
-        # Create key bindings
         self.kb = self._create_key_bindings()
-
-        # Create the dynamic container for the plate list
         self.get_current_plate_list_container = lambda: self.plate_items_container_widget or HSplit([Label("Loading plates...")])
         self._dynamic_plate_list_wrapper = DynamicContainer(self.get_current_plate_list_container)
-
-        # Create the main container
         self._container = Frame(self._dynamic_plate_list_wrapper, title="Plates")
 
-        # Mark UI as initialized
+    async def _finalize_ui_initialization(self):
+        """Finalize UI initialization and trigger refresh."""
         self._ui_initialized = True
         logger.info("PlateManagerPane: UI initialization complete.")
 
-        # Trigger a refresh of plates after UI is initialized
         try:
+            app = get_app()
             app.create_background_task(self._refresh_plates())
             logger.info("PlateManagerPane: Scheduled plate refresh.")
         except Exception as e:
@@ -420,45 +466,72 @@ class PlateManagerPane:
 
     def _get_plate_display_text(self, plate_data: Dict[str, Any], is_selected: bool) -> str:
         """Generates the display text for a single plate item."""
-        plate_status = plate_data.get('status', 'unknown')
-
-        # Updated status symbol logic to match the image
-        if plate_status == 'not_initialized': status_symbol = "?"
-        elif plate_status == 'initialized' or plate_status == 'ready': status_symbol = "o" # Use lowercase o
-        elif plate_status == 'compiled_ok': status_symbol = "✓"
-        elif plate_status and ('error' in plate_status.lower() or \
-                               plate_status in ['error_init', 'error_compile', 'error_run', 'error_validation', 'error_general']):
-            status_symbol = "!"
-        else: status_symbol = " " # Default for other statuses
-
+        status_symbol = self._get_status_symbol(plate_data.get('status', 'unknown'))
         name = plate_data.get('name', 'Unknown Plate')
-
-        path_str = "[No Path]"
-        # Ensure self.filemanager is checked before use, as it's set asynchronously
-        fm = getattr(self, 'filemanager', None)
-        if 'path' in plate_data and 'backend' in plate_data and fm:
-            try:
-                # Assuming fm.get_path might not exist or backend is not directly used here
-                # If path is already an OS path for disk backend:
-                raw_path = plate_data['path']
-                # If it's a VFS path object, get its string representation
-                if hasattr(raw_path, 'os_path'): # Check if it's a VirtualPath like object
-                    path_str = str(raw_path.os_path)
-                else:
-                    path_str = str(raw_path)
-
-                if len(path_str) > 40:
-                    path_str = "(...)" + path_str[-(40-5):]
-            except Exception as e:
-                logger.debug(f"Error formatting path for display: {plate_data.get('path')}, {e}")
-                path_str = plate_data.get('path', '[Path Error]')
-        elif 'path' in plate_data: # Fallback if backend or fm not fully set up yet
-             path_str = str(plate_data['path'])
-             if len(path_str) > 40: path_str = "(...)" + path_str[-(40-5):]
+        path_str = self._format_plate_path(plate_data)
 
         # Format the display text to match the desired layout
-        # The ^/v symbols for reordering are handled by InteractiveListItem
-        return f"{status_symbol} {name} | {path_str}"
+        display_text = f"{status_symbol} {name} | {path_str}"
+        # Only escape curly braces that could cause format string errors
+        return display_text.replace('{', '{{').replace('}', '}}')
+
+    def _get_status_symbol(self, plate_status: str) -> str:
+        """Get the canonical status symbol for a plate status."""
+        if plate_status == 'not_initialized':
+            return "?"  # Red - uninitialized
+        elif plate_status in ('initialized', 'ready'):
+            return "!"  # Yellow - initialized but not compiled
+        elif plate_status in ('compiled_ok', 'compiled', 'running'):
+            return "o"  # Green - compiled/ready/running
+        elif self._is_error_status(plate_status):
+            return "!"  # Error symbol (same as initialized for now)
+        else:
+            return " "  # Default for other statuses
+
+    def _is_error_status(self, plate_status: str) -> bool:
+        """Check if a plate status indicates an error."""
+        if not plate_status:
+            return False
+        return ('error' in plate_status.lower() or
+                plate_status in ['error_init', 'error_compile', 'error_run',
+                               'error_validation', 'error_general'])
+
+    def _format_plate_path(self, plate_data: Dict[str, Any]) -> str:
+        """Format the plate path for display."""
+        if 'path' not in plate_data:
+            return "[No Path]"
+
+        # Try to format with filemanager if available
+        fm = getattr(self, 'filemanager', None)
+        if 'backend' in plate_data and fm:
+            path_str = self._format_path_with_filemanager(plate_data)
+        else:
+            path_str = self._format_path_fallback(plate_data)
+
+        return self._truncate_path(path_str)
+
+    def _format_path_with_filemanager(self, plate_data: Dict[str, Any]) -> str:
+        """Format path using filemanager."""
+        try:
+            raw_path = plate_data['path']
+            # If it's a VFS path object, get its string representation
+            if hasattr(raw_path, 'os_path'):
+                return str(raw_path.os_path)
+            else:
+                return str(raw_path)
+        except Exception as e:
+            logger.debug(f"Error formatting path for display: {plate_data.get('path')}, {e}")
+            return plate_data.get('path', '[Path Error]')
+
+    def _format_path_fallback(self, plate_data: Dict[str, Any]) -> str:
+        """Fallback path formatting when filemanager not available."""
+        return str(plate_data['path'])
+
+    def _truncate_path(self, path_str: str) -> str:
+        """Truncate path if too long."""
+        if len(path_str) > 40:
+            return "(...)" + path_str[-(40-5):]
+        return path_str
 
     # _format_plate_list is obsolete.
 
@@ -701,29 +774,7 @@ class PlateManagerPane:
             logger.error(f"Error adding validated plate '{path}': {e}", exc_info=True)
             await self._handle_error(f"Error adding plate: {path}", str(e))
 
-    async def _handle_add_dialog_result(self, result: Dict[str, Any]):
-        """Handle the result of the add plate dialog."""
-        if not result or not result.get('paths'):
-            logger.info("PlateManagerPane: Add plate dialog cancelled or no paths provided.")
-            return
 
-        paths = result.get('paths', [])
-        backend = result.get('backend', Backend.DISK)
-
-        if not paths:
-            logger.info("PlateManagerPane: No paths provided in add plate dialog result.")
-            return
-
-        # Validate each path
-        for path in paths:
-            # Use the validation service to validate the plate
-            if self.validation_service:
-                await self.validation_service.validate_plate(path, backend)
-            else:
-                logger.error("PlateManagerPane: Validation service not initialized.")
-                await self._handle_error("Cannot validate plate", "Validation service not initialized")
-
-        logger.info(f"PlateManagerPane: Submitted {len(paths)} paths for validation.")
 
     async def _handle_remove_dialog_result(self, result: Dict[str, Any]):
         """Handle the result of the remove plate dialog."""
@@ -807,34 +858,9 @@ class PlateManagerPane:
         await self._handle_delete_plates_request({'plates_to_delete': [plate_to_remove]})
 
 
-    async def _handle_validation_result(self, validated_plate: Dict[str, Any]):
-        """Handles validation result, typically adding or updating a plate."""
-        async with self.plates_lock:
-            existing_plate_index = -1
-            for i, p in enumerate(self.plates):
-                if p['id'] == validated_plate['id']:
-                    existing_plate_index = i
-                    break
 
-            if existing_plate_index != -1:
-                self.plates[existing_plate_index].update(validated_plate)
-            else:
-                self.plates.append(validated_plate)
-                if self.plates:
-                    self.selected_index = len(self.plates) - 1
-            await self._update_selection() # Rebuilds UI and calls _select_plate
 
-        # Notify TUIState about the added/updated plate if it's ready
-        if validated_plate.get('status') == 'ready': # Check status from validated_plate
-            self.state.notify('plate_added', validated_plate) # Send the full plate data
 
-    async def _handle_error(self, message: str, details: str = None):
-        if not hasattr(self.state, 'error_logs'):
-            from collections import deque
-            self.state.error_logs = deque(maxlen=200)
-        if details: self.state.error_logs.append(f"PlateManagerPane Error: {message} - Details: {details}")
-        else: self.state.error_logs.append(f"PlateManagerPane Error: {message}")
-        self.state.notify('error', {'source': 'PlateManagerPane', 'message': message, 'details': details})
 
     async def _on_edit_plate_clicked(self):
         logger.info("PlateManagerPane: Edit plate clicked.")
@@ -930,100 +956,123 @@ class PlateManagerPane:
     async def _refresh_plates(self, _=None):
         """Refresh the plate list, re-fetching data from the filesystem."""
         logger.info("Refreshing plates...")
-        async with self.plates_lock:
-            self.is_loading = True
-            # Update UI to show loading state
-            await self._update_selection()
+        await self._set_loading_state(True)
 
         try:
-            # Get the common output directory from the context
-            common_output_directory = getattr(self.context, 'common_output_directory', None)
+            common_output_directory = await self._validate_refresh_prerequisites()
             if not common_output_directory:
-                logger.error("PlateManagerPane: Cannot refresh plates - no common_output_directory in context.")
-                # Create a placeholder entry to show the error
-                async with self.plates_lock:
-                    self.plates = [{
-                        'id': 'error',
-                        'path': 'N/A',
-                        'status': 'error',
-                        'name': 'Output directory not set',
-                        'error_details': 'No common_output_directory in context'
-                    }]
                 return
 
-            # Ensure we have a filemanager
-            if not hasattr(self, 'filemanager') or self.filemanager is None:
-                logger.error("PlateManagerPane: Cannot refresh plates - no filemanager available.")
-                # Create a placeholder entry to show the error
-                async with self.plates_lock:
-                    self.plates = [{
-                        'id': 'error',
-                        'path': 'N/A',
-                        'status': 'error',
-                        'name': 'FileManager not available',
-                        'error_details': 'No filemanager available'
-                    }]
-                return
+            await self._ensure_output_directory_exists(common_output_directory)
+            plate_paths = await self._discover_plate_paths(common_output_directory)
+            await self._update_plates_from_paths(plate_paths, common_output_directory)
 
-            # Ensure the directory exists
-            if not self.filemanager.exists(common_output_directory, backend='disk'):
-                logger.info(f"PlateManagerPane: Creating common output directory: {common_output_directory}")
-                self.filemanager.make_dir(common_output_directory, backend='disk')
-
-            # List all plate directories in the common output directory
-            paths = self.filemanager.list_dir(common_output_directory, backend='disk')
-
-            # Filter to only include directories
-            plate_paths = []
-            for path in paths:
-                if self.filemanager.is_dir(path, backend='disk'):
-                    plate_paths.append(path)
-
-            # Update the plates list with the new data
-            async with self.plates_lock:
-                # If no plates found, create a placeholder entry
-                if not plate_paths:
-                    logger.info("PlateManagerPane: No plates found. Creating placeholder.")
-                    self.plates = [{
-                        'id': 'no_plates',
-                        'path': common_output_directory,
-                        'status': 'info',
-                        'name': 'No plates found',
-                        'error_details': 'Use [Add] to create a new plate'
-                    }]
-                else:
-                    # Update the plates list with the new data
-                    self.plates = []
-                    for path in plate_paths:
-                        # Extract plate ID from path
-                        plate_id = Path(path).name
-                        # Create a plate detail entry
-                        plate_detail = {
-                            'id': plate_id,
-                            'path': str(path),
-                            'status': 'not_initialized',  # Default status
-                            'name': plate_id,  # Use ID as name by default
-                            'orchestrator': None  # Will be set when initialized
-                        }
-                        self.plates.append(plate_detail)
-
-                logger.info(f"PlateManagerPane: Refreshed {len(self.plates)} plates.")
         except Exception as e:
-            logger.error(f"Error during plate refresh: {e}", exc_info=True)
-            await self._handle_error("Failed to refresh plates.", str(e))
-            # Create a placeholder entry to show the error
-            async with self.plates_lock:
-                self.plates = [{
-                    'id': 'error',
-                    'path': 'N/A',
-                    'status': 'error',
-                    'name': f'Error: {str(e)}',
-                    'error_details': str(e)
-                }]
+            await self._handle_refresh_error(e)
         finally:
-            async with self.plates_lock:
-                self.is_loading = False
-            await self._update_selection() # Rebuild with current (possibly unchanged) self.plates data
+            await self._set_loading_state(False)
+
+    async def _set_loading_state(self, is_loading: bool):
+        """Set loading state and update UI."""
+        async with self.plates_lock:
+            self.is_loading = is_loading
+            await self._update_selection()
+
+    async def _validate_refresh_prerequisites(self) -> Optional[str]:
+        """Validate prerequisites for plate refresh."""
+        common_output_directory = getattr(self.context, 'common_output_directory', None)
+
+        if not common_output_directory:
+            await self._create_error_plate("Output directory not set", "No common_output_directory in context")
+            return None
+
+        if not hasattr(self, 'filemanager') or self.filemanager is None:
+            await self._create_error_plate("FileManager not available", "No filemanager available")
+            return None
+
+        return common_output_directory
+
+    async def _create_error_plate(self, name: str, details: str):
+        """Create an error plate entry."""
+        logger.error(f"PlateManagerPane: Cannot refresh plates - {details}")
+        async with self.plates_lock:
+            self.plates = [{
+                'id': 'error',
+                'path': 'N/A',
+                'status': 'error',
+                'name': name,
+                'error_details': details
+            }]
+
+    async def _ensure_output_directory_exists(self, common_output_directory: str):
+        """Ensure the output directory exists."""
+        if not self.filemanager.exists(common_output_directory, backend='disk'):
+            logger.info(f"PlateManagerPane: Creating common output directory: {common_output_directory}")
+            self.filemanager.make_dir(common_output_directory, backend='disk')
+
+    async def _discover_plate_paths(self, common_output_directory: str) -> List[str]:
+        """Discover plate paths in the output directory."""
+        paths = self.filemanager.list_dir(common_output_directory, backend='disk')
+
+        plate_paths = []
+        for path in paths:
+            if self.filemanager.is_dir(path, backend='disk'):
+                plate_paths.append(path)
+
+        return plate_paths
+
+    async def _update_plates_from_paths(self, plate_paths: List[str], common_output_directory: str):
+        """Update plates list from discovered paths."""
+        async with self.plates_lock:
+            if not plate_paths:
+                await self._create_no_plates_placeholder(common_output_directory)
+            else:
+                await self._create_plates_from_paths(plate_paths)
+
+    async def _create_no_plates_placeholder(self, common_output_directory: str):
+        """Create placeholder when no plates are found."""
+        logger.info("PlateManagerPane: No plates found. Creating placeholder.")
+        self.plates = [{
+            'id': 'no_plates',
+            'path': common_output_directory,
+            'status': 'info',
+            'name': 'No plates found',
+            'error_details': 'Use [Add] to create a new plate'
+        }]
+
+    async def _create_plates_from_paths(self, plate_paths: List[str]):
+        """Create plate entries from discovered paths."""
+        self.plates = []
+        for path in plate_paths:
+            plate_detail = self._create_plate_detail_from_path(path)
+            self.plates.append(plate_detail)
+
+        logger.info(f"PlateManagerPane: Refreshed {len(self.plates)} plates.")
+
+    def _create_plate_detail_from_path(self, path: str) -> Dict[str, Any]:
+        """Create a plate detail entry from a path."""
+        plate_id = Path(path).name
+        return {
+            'id': plate_id,
+            'path': str(path),
+            'status': 'not_initialized',
+            'name': plate_id,
+            'orchestrator': None
+        }
+
+    async def _handle_refresh_error(self, error: Exception):
+        """Handle errors during plate refresh."""
+        logger.error(f"Error during plate refresh: {error}", exc_info=True)
+        await self._handle_error("Failed to refresh plates.", str(error))
+
+        async with self.plates_lock:
+            self.plates = [{
+                'id': 'error',
+                'path': 'N/A',
+                'status': 'error',
+                'name': f'Error: {str(error)}',
+                'error_details': str(error)
+            }]
 
     async def shutdown(self):
         """Performs cleanup of resources like the ThreadPoolExecutor."""

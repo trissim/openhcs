@@ -14,6 +14,26 @@ from prompt_toolkit.widgets import Button, Dialog, Label, TextArea
 
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 async def show_error_dialog(title: str, message: str, app_state: Optional[Any] = None):
     """
     Displays a modal error dialog.
@@ -41,7 +61,7 @@ async def show_error_dialog(title: str, message: str, app_state: Optional[Any] =
             Label(message),
         ]),
         buttons=[
-            Button("OK", handler=ok_handler)
+            SafeButton("OK", handler=ok_handler)
         ],
         width=80,  # Standard width
         modal=True
@@ -95,8 +115,8 @@ async def prompt_for_path_dialog(title: str, prompt_message: str, app_state: Any
             path_text_area,
         ]),
         buttons=[
-            Button("OK", handler=lambda: accept_path(path_text_area.text)),
-            Button("Cancel", handler=cancel_dialog),
+            SafeButton("OK", handler=lambda: accept_path(path_text_area.text)),
+            SafeButton("Cancel", handler=cancel_dialog),
         ],
         width=80,
         modal=True

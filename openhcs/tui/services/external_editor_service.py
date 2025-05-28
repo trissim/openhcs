@@ -10,6 +10,26 @@ from prompt_toolkit.layout import HSplit
 
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 class ExternalEditorService:
     """
     Service for handling external text editor interactions,
@@ -123,6 +143,6 @@ class ExternalEditorService:
         dialog = Dialog(
             title="Error",
             body=HSplit([Label(message)]),
-            buttons=[Button("OK")]
+            buttons=[SafeButton("OK")]
         )
         await self.state.show_dialog(dialog) # Assuming TUIState has a show_dialog method

@@ -41,6 +41,26 @@ from openhcs.tui.file_browser import FileManagerBrowser # Import the new browser
 import logging
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+    
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+    
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 
 # Define callback protocols for clean interfaces
 class DialogResultCallback(Protocol):
@@ -406,46 +426,70 @@ class PlateDialogManager:
             path_input: The path input TextArea
         """
         paths_text = path_input.text.strip()
-
         error_banner = ErrorBanner.find_in_container(dialog)
 
+        if not self._validate_input_not_empty(paths_text, error_banner):
+            return
+
+        paths = self._extract_valid_paths(paths_text)
+        if not self._validate_paths_exist(paths, error_banner):
+            return
+
+        if not self._validate_path_format(paths, error_banner):
+            return
+
+        self._hide_error_banner(error_banner)
+        self._submit_dialog_result(dialog, paths)
+
+    def _validate_input_not_empty(self, paths_text: str, error_banner: Optional[ErrorBanner]) -> bool:
+        """Validate that input is not empty."""
         if not paths_text:
             if error_banner:
                 error_banner.show("Path input cannot be empty.")
-            return
+            return False
+        return True
 
-        # Split paths by newline, filter out empty strings
-        paths = [p.strip() for p in paths_text.splitlines() if p.strip()]
+    def _extract_valid_paths(self, paths_text: str) -> List[str]:
+        """Extract valid paths from input text."""
+        return [p.strip() for p in paths_text.splitlines() if p.strip()]
 
+    def _validate_paths_exist(self, paths: List[str], error_banner: Optional[ErrorBanner]) -> bool:
+        """Validate that at least one path exists."""
         if not paths:
             if error_banner:
                 error_banner.show("No valid paths entered.")
-            return
+            return False
+        return True
 
-        # Basic validation for each path (absolute, no scheme)
-        # Directory existence check is deferred.
+    def _validate_path_format(self, paths: List[str], error_banner: Optional[ErrorBanner]) -> bool:
+        """Validate path format (absolute, no scheme)."""
         for p_str in paths:
-            path_obj = Path(p_str)
-            if "://" in p_str:
-                if error_banner: error_banner.show(f"Path cannot contain URI schemes: {p_str}"); return
-            if not path_obj.is_absolute():
-                if error_banner: error_banner.show(f"Path must be absolute: {p_str}"); return
-            # Defer is_dir check:
-            # if not path_obj.is_dir():
-            #     if error_banner: error_banner.show(f"Path is not a directory or unreadable: {p_str}"); return
+            if not self._is_valid_path_format(p_str):
+                if error_banner:
+                    if "://" in p_str:
+                        error_banner.show(f"Path cannot contain URI schemes: {p_str}")
+                    else:
+                        error_banner.show(f"Path must be absolute: {p_str}")
+                return False
+        return True
 
+    def _is_valid_path_format(self, path_str: str) -> bool:
+        """Check if path format is valid."""
+        if "://" in path_str:
+            return False
+        path_obj = Path(path_str)
+        return path_obj.is_absolute()
+
+    def _hide_error_banner(self, error_banner: Optional[ErrorBanner]) -> None:
+        """Hide error banner if it exists."""
         if error_banner:
             error_banner.hide()
 
-        # Schedule the async dialog OK handler
-        # We pass a list of paths if multiple, or a single path string if only one.
+    def _submit_dialog_result(self, dialog, paths: List[str]) -> None:
+        """Submit dialog result."""
         result_path = paths if len(paths) > 1 else paths[0]
-
         get_app().create_background_task(
-            self._dialog_ok(
-                dialog,
-                {'path': result_path} # Only path is returned, backend is removed
-            )
+            self._dialog_ok(dialog, {'path': result_path})
         )
 
     # Note: _show_error_inline method removed in favor of ErrorBanner component
@@ -493,7 +537,7 @@ class PlateDialogManager:
             body=body,
             buttons=[
                 # Create button without handler initially
-                Button("OK", handler=None)
+                SafeButton("OK", handler=None)
             ],
             width=80,
             modal=True
@@ -520,8 +564,8 @@ class PlateDialogManager:
             ]),
             buttons=[
                 # Create buttons without handlers initially
-                Button("Yes", handler=None),
-                Button("No", handler=None)
+                SafeButton("Yes", handler=None),
+                SafeButton("No", handler=None)
             ],
             width=50,
             modal=True

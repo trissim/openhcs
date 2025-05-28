@@ -17,6 +17,26 @@ from prompt_toolkit.widgets import Box, Button, Label, TextArea
 
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 
 class ParameterEditor(Container):
     """
@@ -63,8 +83,7 @@ class ParameterEditor(Container):
     def _build_ui(self):
         """Build the UI components."""
         # Reset all parameters button
-        reset_all_button = Button(
-            "Reset All Parameters",
+        reset_all_button = SafeButton("Reset All Parameters",
             handler=lambda: self._handle_reset_all()
         )
 
@@ -129,8 +148,7 @@ class ParameterEditor(Container):
         text_area.buffer.accept_handler = accept_handler
 
         # Create reset button
-        reset_button = Button(
-            "Reset",
+        reset_button = SafeButton("Reset",
             handler=lambda: self._handle_reset_parameter(name)
         )
 

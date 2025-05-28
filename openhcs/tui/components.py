@@ -10,6 +10,15 @@ from prompt_toolkit.widgets import (Box, Button, Dialog, Label,
                                     TextArea, RadioList as Dropdown)
 from prompt_toolkit.key_binding import KeyBindings # Added KeyBindings
 
+# Simple text sanitization for Button widgets - minimal fix for formatting errors
+def sanitize_button_text(text: str) -> str:
+    """Sanitize text for use in Button widgets to prevent formatting errors."""
+    if not isinstance(text, str):
+        text = str(text)
+    # Only escape curly braces that could cause format string errors
+    # Don't replace colons as they're important for file paths
+    return text.replace('{', '{{').replace('}', '}}')
+
 class InteractiveListItem:
     """
     A custom prompt_toolkit widget that represents an interactive item in a list.
@@ -37,8 +46,10 @@ class InteractiveListItem:
         # self.label.control.is_focusable = True # This might not be needed if item itself is focusable
         # self.label.control.key_bindings = self._create_key_bindings()
 
-        self.move_up_button = Button("▲", handler=self._handle_move_up_click)
-        self.move_down_button = Button("▼", handler=self._handle_move_down_click)
+        # Import SafeButton locally to avoid circular imports
+        from openhcs.tui.components.framed_button import SafeButton
+        self.move_up_button = SafeButton("▲", handler=self._handle_move_up_click)
+        self.move_down_button = SafeButton("▼", handler=self._handle_move_down_click)
 
         self.container = self._create_container()
 
@@ -91,9 +102,10 @@ class InteractiveListItem:
         # Combine parts for the button text
         full_text = f"{index_display}{display_text}"
 
-        # Use a Button for the main item to make it easily clickable and focusable
-        item_button = Button(
-            text=full_text,
+        # Use SafeButton with sanitized text to avoid formatting errors
+        from openhcs.tui.components.framed_button import SafeButton
+        item_button = SafeButton(
+            text=sanitize_button_text(full_text),
             handler=lambda: self.on_select(self.item_index),
             width=None # Allow button to take available width
         )
@@ -188,7 +200,8 @@ class ParameterEditor:
                 self._create_parameter_field(name, default, current_value, required, is_special)
             )
 
-        reset_all_button = Button(
+        from openhcs.tui.components.framed_button import SafeButton
+        reset_all_button = SafeButton(
             "Reset All Params",
             handler=lambda: get_app().create_background_task(self.on_reset_all_parameters(self.func_index))
         )
@@ -227,7 +240,8 @@ class ParameterEditor:
 
         input_field = self._create_input_field(name, current_value)
 
-        reset_button = Button(
+        from openhcs.tui.components.framed_button import SafeButton
+        reset_button = SafeButton(
             "Reset",
             handler=lambda: get_app().create_background_task(self.on_reset_parameter(name, self.func_index))
         )
@@ -248,3 +262,6 @@ class ParameterEditor:
 
     def __pt_container__(self):
         return self.container
+
+# Export the classes and functions
+__all__ = ['sanitize_button_text', 'InteractiveListItem', 'GroupedDropdown', 'ParameterEditor']

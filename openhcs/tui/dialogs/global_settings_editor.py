@@ -21,6 +21,26 @@ from ..utils import show_error_dialog # Assuming show_error_dialog is available
 
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+    
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+    
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 class GlobalSettingsEditorDialog:
     """
     A dialog for editing global OpenHCS settings (GlobalPipelineConfig).
@@ -34,9 +54,9 @@ class GlobalSettingsEditorDialog:
         self.input_widgets: Dict[str, Any] = {}
         self.error_label: Label = Label("", style="class:error-text") # For displaying save errors
         
-        self.save_button = Button("Save", handler=self._save_settings)
+        self.save_button = SafeButton("Save", handler=self._save_settings)
         self.save_button.disabled = True # Initially disabled
-        self.cancel_button = Button("Cancel", handler=self._cancel)
+        self.cancel_button = SafeButton("Cancel", handler=self._cancel)
         
         self.dialog: Optional[Dialog] = None
         self._build_dialog() # Call to build the dialog structure
@@ -146,87 +166,159 @@ class GlobalSettingsEditorDialog:
 
     def _build_dialog_rows_for_model(self, model_instance: Any, model_type: Type, prefix: str = "") -> List[Any]:
         """Helper to recursively build UI rows for a given model instance and type."""
-        rows: List[Any] = []
-        
-        field_definitions = {}
-        if hasattr(model_type, 'model_fields'): # Pydantic
-            field_definitions = model_type.model_fields
-        elif dataclasses.is_dataclass(model_type): # Standard dataclasses
-            field_definitions = {f.name: f for f in dataclasses.fields(model_type)}
-        else:
-            return [] # Not a supported model type
+        field_definitions = self._get_field_definitions(model_type)
+        if not field_definitions:
+            return []
 
+        rows = []
         for field_name, field_obj in field_definitions.items():
             field_path = f"{prefix}{field_name}"
-            field_label_text = field_name.replace('_', ' ').title()
-            
-            field_type_hint = field_obj.annotation if hasattr(field_obj, 'annotation') else field_obj.type
-            current_value = getattr(model_instance, field_name, None)
-            widget: Any = None
+            field_info = self._extract_field_info(field_obj, model_instance, field_name)
 
-            actual_type = field_type_hint
-            is_optional = get_origin(field_type_hint) is Union and type(None) in get_args(field_type_hint)
-            if is_optional:
-                actual_type = next((t for t in get_args(field_type_hint) if t is not type(None)), actual_type)
-            
-            origin_type = get_origin(actual_type)
-
-            # Handle nested models (recursive call)
-            if hasattr(actual_type, 'model_fields') or dataclasses.is_dataclass(actual_type):
-                rows.append(VSplit([Label(f"{field_label_text} Settings:", style="class:dialog.section-title")], height=1, padding=Dimension(left=len(prefix.split('.'))-1 if prefix else 0)))
-                nested_prefix = f"{field_path}."
-                # Ensure current_value (the nested model instance) is not None
-                if current_value is None and not is_optional: # Should not happen if config is well-defined
-                     logger.error(f"Nested model {field_name} is None but not Optional. Cannot build UI.")
-                     rows.append(Label(f"Error: {field_label_text} is None", style="class:error-text"))
-                     continue
-                elif current_value is not None: # Only recurse if nested object exists
-                    rows.extend(self._build_dialog_rows_for_model(current_value, actual_type, nested_prefix))
-                elif is_optional: # If it's Optional and None, just show a label
-                    rows.append(Label(f"{field_label_text}: (Not set)", style="class:italic"))
-                continue
-
-            elif actual_type is bool:
-                widget = Checkbox(checked=bool(current_value))
-                # Mouse handler for Checkbox to trigger change detection
-                original_mouse_handler = widget.control.mouse_handler
-                def create_checkbox_mouse_handler(cb_widget_instance):
-                    def new_mouse_handler(mouse_event):
-                        res = original_mouse_handler(mouse_event)
-                        self._on_setting_changed() # Generic change trigger
-                        return res
-                    return new_mouse_handler
-                widget.control.mouse_handler = create_checkbox_mouse_handler(widget)
-
-            elif origin_type is list or origin_type is List: # Basic list handling
-                widget = TextArea(text=str(current_value or []), multiline=True, height=3, style="class:input-field")
-                widget.buffer.on_text_changed += lambda b: self._on_setting_changed()
-
-            elif origin_type is Literal:
-                options = [(val, str(val)) for val in get_args(actual_type)]
-                widget = RadioList(values=options, current_value=current_value)
-                widget.on_value_changed += lambda w_val: self._on_setting_changed()
-            
-            elif isinstance(actual_type, type) and issubclass(actual_type, Enum):
-                options = [(member.value, member.name) for name, member in actual_type.__members__.items()]
-                enum_current_value = current_value.value if current_value else None
-                if is_optional and current_value is None: # Handle Optional[Enum] being None
-                    options = [ (None, "(Not set)") ] + options # Add a "Not set" option
-                widget = RadioList(values=options, current_value=enum_current_value)
-                widget.on_value_changed += lambda w_val: self._on_setting_changed()
-            
-            elif actual_type in [int, str, float]:
-                widget = TextArea(text=str(current_value) if current_value is not None else "", multiline=False, height=1, style="class:input-field")
-                widget.buffer.on_text_changed += lambda b: self._on_setting_changed()
-            
+            if self._is_nested_model(field_info['actual_type']):
+                nested_rows = self._build_nested_model_rows(field_info, field_path, prefix)
+                rows.extend(nested_rows)
             else:
-                widget = Label(text=f"{str(current_value)} (Unsupported type: {actual_type})")
+                widget = self._create_field_widget(field_info)
+                if widget:
+                    self._register_widget(field_path, widget, field_info['field_label_text'], prefix)
+                    rows.append(self._create_field_row(field_info['field_label_text'], widget, prefix))
 
-            if widget:
-                self.input_widgets[field_path] = widget
-                # Use Box for consistent padding and alignment
-                rows.append(Box(HSplit([Label(f"{field_label_text}:", width=30), widget]), padding=Dimension(left=len(prefix.split('.'))-1 if prefix else 0)))
         return rows
+
+    def _get_field_definitions(self, model_type: Type) -> dict:
+        """Get field definitions for the model type."""
+        if hasattr(model_type, 'model_fields'):  # Pydantic
+            return model_type.model_fields
+        elif dataclasses.is_dataclass(model_type):  # Standard dataclasses
+            return {f.name: f for f in dataclasses.fields(model_type)}
+        return {}
+
+    def _extract_field_info(self, field_obj: Any, model_instance: Any, field_name: str) -> dict:
+        """Extract field information for UI creation."""
+        field_type_hint = field_obj.annotation if hasattr(field_obj, 'annotation') else field_obj.type
+        current_value = getattr(model_instance, field_name, None)
+
+        actual_type = field_type_hint
+        is_optional = get_origin(field_type_hint) is Union and type(None) in get_args(field_type_hint)
+        if is_optional:
+            actual_type = next((t for t in get_args(field_type_hint) if t is not type(None)), actual_type)
+
+        return {
+            'field_name': field_name,
+            'field_label_text': field_name.replace('_', ' ').title(),
+            'field_type_hint': field_type_hint,
+            'actual_type': actual_type,
+            'is_optional': is_optional,
+            'current_value': current_value,
+            'origin_type': get_origin(actual_type)
+        }
+
+    def _is_nested_model(self, actual_type: Type) -> bool:
+        """Check if the type is a nested model."""
+        return hasattr(actual_type, 'model_fields') or dataclasses.is_dataclass(actual_type)
+
+    def _build_nested_model_rows(self, field_info: dict, field_path: str, prefix: str) -> List[Any]:
+        """Build rows for nested model fields."""
+        rows = []
+        field_label_text = field_info['field_label_text']
+        current_value = field_info['current_value']
+        actual_type = field_info['actual_type']
+        is_optional = field_info['is_optional']
+
+        # Add section title
+        padding_left = len(prefix.split('.')) - 1 if prefix else 0
+        rows.append(VSplit([Label(f"{field_label_text} Settings:", style="class:dialog.section-title")],
+                          height=1, padding=Dimension(left=padding_left)))
+
+        nested_prefix = f"{field_path}."
+
+        if current_value is None and not is_optional:
+            logger.error(f"Nested model {field_info['field_name']} is None but not Optional. Cannot build UI.")
+            rows.append(Label(f"Error: {field_label_text} is None", style="class:error-text"))
+        elif current_value is not None:
+            rows.extend(self._build_dialog_rows_for_model(current_value, actual_type, nested_prefix))
+        elif is_optional:
+            rows.append(Label(f"{field_label_text}: (Not set)", style="class:italic"))
+
+        return rows
+
+    def _create_field_widget(self, field_info: dict) -> Any:
+        """Create appropriate widget for field type."""
+        actual_type = field_info['actual_type']
+        origin_type = field_info['origin_type']
+        current_value = field_info['current_value']
+        is_optional = field_info['is_optional']
+
+        if actual_type is bool:
+            return self._create_bool_widget(current_value)
+        elif origin_type is list or origin_type is List:
+            return self._create_list_widget(current_value)
+        elif origin_type is Literal:
+            return self._create_literal_widget(actual_type, current_value)
+        elif isinstance(actual_type, type) and issubclass(actual_type, Enum):
+            return self._create_enum_widget(actual_type, current_value, is_optional)
+        elif actual_type in [int, str, float]:
+            return self._create_basic_type_widget(current_value)
+        else:
+            return Label(text=f"{str(current_value)} (Unsupported type: {actual_type})")
+
+    def _create_bool_widget(self, current_value: Any) -> Checkbox:
+        """Create checkbox widget for boolean fields."""
+        widget = Checkbox(checked=bool(current_value))
+        original_mouse_handler = widget.control.mouse_handler
+
+        def create_checkbox_mouse_handler(cb_widget_instance):
+            def new_mouse_handler(mouse_event):
+                res = original_mouse_handler(mouse_event)
+                self._on_setting_changed()
+                return res
+            return new_mouse_handler
+
+        widget.control.mouse_handler = create_checkbox_mouse_handler(widget)
+        return widget
+
+    def _create_list_widget(self, current_value: Any) -> TextArea:
+        """Create text area widget for list fields."""
+        widget = TextArea(text=str(current_value or []), multiline=True, height=3, style="class:input-field")
+        widget.buffer.on_text_changed += lambda b: self._on_setting_changed()
+        return widget
+
+    def _create_literal_widget(self, actual_type: Type, current_value: Any) -> RadioList:
+        """Create radio list widget for literal fields."""
+        options = [(val, str(val)) for val in get_args(actual_type)]
+        widget = RadioList(values=options, current_value=current_value)
+        widget.on_value_changed += lambda w_val: self._on_setting_changed()
+        return widget
+
+    def _create_enum_widget(self, actual_type: Type, current_value: Any, is_optional: bool) -> RadioList:
+        """Create radio list widget for enum fields."""
+        options = [(member.value, member.name) for name, member in actual_type.__members__.items()]
+        enum_current_value = current_value.value if current_value else None
+
+        if is_optional and current_value is None:
+            options = [(None, "(Not set)")] + options
+
+        widget = RadioList(values=options, current_value=enum_current_value)
+        widget.on_value_changed += lambda w_val: self._on_setting_changed()
+        return widget
+
+    def _create_basic_type_widget(self, current_value: Any) -> TextArea:
+        """Create text area widget for basic types (int, str, float)."""
+        widget = TextArea(text=str(current_value) if current_value is not None else "",
+                         multiline=False, height=1, style="class:input-field")
+        widget.buffer.on_text_changed += lambda b: self._on_setting_changed()
+        return widget
+
+    def _register_widget(self, field_path: str, widget: Any, field_label_text: str, prefix: str) -> None:
+        """Register widget in the input_widgets dictionary."""
+        self.input_widgets[field_path] = widget
+
+    def _create_field_row(self, field_label_text: str, widget: Any, prefix: str) -> Any:
+        """Create a UI row for the field."""
+        padding_left = len(prefix.split('.')) - 1 if prefix else 0
+        return Box(HSplit([Label(f"{field_label_text}:", width=30), widget]),
+                  padding=Dimension(left=padding_left))
 
     def _build_dialog(self):
         self.input_widgets.clear()
@@ -252,35 +344,78 @@ class GlobalSettingsEditorDialog:
         )
 
     def _get_field_value_from_widget(self, widget: Any, field_type_hint: Type) -> Any:
+        """Extract value from widget based on field type."""
+        type_info = self._extract_type_info(field_type_hint)
+
+        if isinstance(widget, Checkbox):
+            return self._get_checkbox_value(widget)
+        elif isinstance(widget, RadioList):
+            return self._get_radiolist_value(widget, type_info)
+        elif isinstance(widget, TextArea):
+            return self._get_textarea_value(widget, type_info)
+        else:
+            raise ValueError(f"Unsupported widget type for value retrieval: {type(widget)}")
+
+    def _extract_type_info(self, field_type_hint: Type) -> dict:
+        """Extract type information from field type hint."""
         actual_type = field_type_hint
         is_optional = get_origin(field_type_hint) is Union and type(None) in get_args(field_type_hint)
         if is_optional:
             actual_type = next((t for t in get_args(field_type_hint) if t is not type(None)), actual_type)
-        
-        origin_type = get_origin(actual_type)
 
-        if isinstance(widget, Checkbox):
-            return widget.checked
-        elif isinstance(widget, RadioList):
-            current_radio_value = widget.current_value
-            if is_optional and current_radio_value is None: # Explicit "Not set" for Optional Enums
-                return None
-            if isinstance(actual_type, type) and issubclass(actual_type, Enum):
-                return actual_type(current_radio_value) if current_radio_value is not None else None
-            return current_radio_value # For Literals
-        elif isinstance(widget, TextArea):
-            text = widget.text.strip()
-            if not text and is_optional: return None
-            if actual_type is int: return int(text)
-            if actual_type is float: return float(text)
-            if actual_type is str: return text
-            if origin_type is list or origin_type is List:
-                try:
-                    if text.startswith('[') and text.endswith(']'): return eval(text)
-                    return [item.strip() for item in text.split(',') if item.strip()] if text else []
-                except Exception as e: raise ValueError(f"Invalid list format: {e}")
+        return {
+            'actual_type': actual_type,
+            'is_optional': is_optional,
+            'origin_type': get_origin(actual_type)
+        }
+
+    def _get_checkbox_value(self, widget: Checkbox) -> bool:
+        """Get value from checkbox widget."""
+        return widget.checked
+
+    def _get_radiolist_value(self, widget: RadioList, type_info: dict) -> Any:
+        """Get value from radio list widget."""
+        current_radio_value = widget.current_value
+        actual_type = type_info['actual_type']
+        is_optional = type_info['is_optional']
+
+        if is_optional and current_radio_value is None:
+            return None
+
+        if isinstance(actual_type, type) and issubclass(actual_type, Enum):
+            return actual_type(current_radio_value) if current_radio_value is not None else None
+
+        return current_radio_value  # For Literals
+
+    def _get_textarea_value(self, widget: TextArea, type_info: dict) -> Any:
+        """Get value from text area widget."""
+        text = widget.text.strip()
+        actual_type = type_info['actual_type']
+        is_optional = type_info['is_optional']
+        origin_type = type_info['origin_type']
+
+        if not text and is_optional:
+            return None
+
+        if actual_type is int:
+            return int(text)
+        elif actual_type is float:
+            return float(text)
+        elif actual_type is str:
             return text
-        raise ValueError(f"Unsupported widget type for value retrieval: {type(widget)}")
+        elif origin_type is list or origin_type is List:
+            return self._parse_list_value(text)
+        else:
+            return text
+
+    def _parse_list_value(self, text: str) -> list:
+        """Parse list value from text."""
+        try:
+            if text.startswith('[') and text.endswith(']'):
+                return eval(text)
+            return [item.strip() for item in text.split(',') if item.strip()] if text else []
+        except Exception as e:
+            raise ValueError(f"Invalid list format: {e}")
 
     async def _save_settings(self):
         logger.info("GlobalSettingsEditorDialog: Attempting to save settings.")

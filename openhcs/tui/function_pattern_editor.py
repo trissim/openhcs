@@ -26,6 +26,25 @@ from prompt_toolkit.application import get_app
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.layout import HSplit, ScrollablePane, VSplit, Container
 from prompt_toolkit.widgets import (Box, Button, Dialog, Label, TextArea, RadioList as Dropdown)
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
 
 # Import custom components
 from openhcs.tui.components import GroupedDropdown, ParameterEditor
@@ -185,79 +204,118 @@ class FunctionPatternEditor:
         Handles parameter change callback from a ParameterEditor instance.
         Parses the string value and then updates the model.
         """
-        parsed_value: Any
-        if new_value_str.lower() == 'none':
-            parsed_value = None
-        elif new_value_str.lower() == 'true':
-            parsed_value = True
-        elif new_value_str.lower() == 'false':
-            parsed_value = False
+        parsed_value = self._parse_parameter_value(new_value_str)
+        await self._update_function_parameter(param_name, parsed_value, func_index)
+
+    def _parse_parameter_value(self, value_str: str) -> Any:
+        """Parse string value to appropriate Python type."""
+        if value_str.lower() == 'none':
+            return None
+        elif value_str.lower() == 'true':
+            return True
+        elif value_str.lower() == 'false':
+            return False
         else:
+            return self._parse_numeric_or_string(value_str)
+
+    def _parse_numeric_or_string(self, value_str: str) -> Any:
+        """Parse value as numeric type or fallback to string."""
+        try:
+            return int(value_str)
+        except ValueError:
             try:
-                parsed_value = int(new_value_str)
+                return float(value_str)
             except ValueError:
-                try:
-                    parsed_value = float(new_value_str)
-                except ValueError:
-                    parsed_value = new_value_str
+                return value_str
 
+    async def _update_function_parameter(self, param_name: str, parsed_value: Any, func_index: int):
+        """Update a specific parameter for a function."""
         functions = self._get_current_functions()
-        if 0 <= func_index < len(functions):
-            current_func, current_kwargs = self._extract_func_and_kwargs(functions[func_index])
-            if current_func is None: return
 
-            current_kwargs[param_name] = parsed_value
-            functions[func_index] = (current_func, current_kwargs)
-            self._update_pattern_functions(functions)
-            self._refresh_function_list() # Refresh to show updated param if necessary (though ParameterEditor handles its own display)
+        if not self._is_valid_function_index(func_index, functions):
+            return
+
+        current_func, current_kwargs = self._extract_func_and_kwargs(functions[func_index])
+        if current_func is None:
+            return
+
+        current_kwargs[param_name] = parsed_value
+        functions[func_index] = (current_func, current_kwargs)
+        self._update_pattern_functions(functions)
+        self._refresh_function_list()
+
+    def _is_valid_function_index(self, func_index: int, functions: list) -> bool:
+        """Check if function index is valid."""
+        return 0 <= func_index < len(functions)
 
     async def _handle_reset_parameter(self, param_name: str, func_index: int):
         """Handles reset parameter callback from a ParameterEditor instance."""
         functions = self._get_current_functions()
-        if not (0 <= func_index < len(functions)):
+        if not self._is_valid_function_index(func_index, functions):
             return
 
         current_func, current_kwargs = self._extract_func_and_kwargs(functions[func_index])
-        if not current_func: return
+        if not current_func:
+            return
 
-        sig = inspect.signature(current_func)
-        default_value = inspect.Parameter.empty
-        if param_name in sig.parameters:
-            default_value = sig.parameters[param_name].default
-
-        if default_value is not inspect.Parameter.empty and default_value is not None:
-            current_kwargs[param_name] = default_value
-        elif param_name in current_kwargs:
-            del current_kwargs[param_name]
+        default_value = self._get_parameter_default_value(current_func, param_name)
+        self._apply_parameter_reset(current_kwargs, param_name, default_value)
 
         functions[func_index] = (current_func, current_kwargs)
         self._update_pattern_functions(functions)
         self._refresh_function_list()
 
+    def _get_parameter_default_value(self, func: Callable, param_name: str) -> Any:
+        """Get the default value for a parameter from function signature."""
+        sig = inspect.signature(func)
+        if param_name in sig.parameters:
+            return sig.parameters[param_name].default
+        return inspect.Parameter.empty
+
+    def _apply_parameter_reset(self, kwargs: Dict, param_name: str, default_value: Any):
+        """Apply parameter reset based on default value."""
+        if default_value is not inspect.Parameter.empty and default_value is not None:
+            kwargs[param_name] = default_value
+        elif param_name in kwargs:
+            del kwargs[param_name]
+
     async def _handle_reset_all_parameters(self, func_index: int):
         """Handles reset all parameters callback from a ParameterEditor instance."""
         functions = self._get_current_functions()
-        if not (0 <= func_index < len(functions)):
-             return
+        if not self._is_valid_function_index(func_index, functions):
+            return
 
         current_func, _ = self._extract_func_and_kwargs(functions[func_index])
-        if not current_func: return
+        if not current_func:
+            return
 
-        # Re-fetch parameters with defaults from the function signature
-        # This logic was previously in the now-deleted _get_function_parameters and _reset_all_parameters
-        params_with_defaults_info = []
-        sig = inspect.signature(current_func)
-        for name, param in sig.parameters.items():
-            if name in ('self', 'cls'):
-                continue
-            default_val = param.default if param.default is not inspect.Parameter.empty else None
-            params_with_defaults_info.append({'name': name, 'default': default_val})
-
-        new_kwargs = {p['name']: p['default'] for p in params_with_defaults_info if p['default'] is not None}
-
+        new_kwargs = self._extract_all_default_parameters(current_func)
         functions[func_index] = (current_func, new_kwargs)
         self._update_pattern_functions(functions)
         self._refresh_function_list()
+
+    def _extract_all_default_parameters(self, func: Callable) -> Dict[str, Any]:
+        """Extract all parameters with default values from function signature."""
+        params_with_defaults = self._get_parameters_with_defaults(func)
+        return {p['name']: p['default'] for p in params_with_defaults if p['default'] is not None}
+
+    def _get_parameters_with_defaults(self, func: Callable) -> List[Dict[str, Any]]:
+        """Get parameters with their default values from function signature."""
+        params_info = []
+        sig = inspect.signature(func)
+
+        for name, param in sig.parameters.items():
+            if self._should_skip_parameter(name):
+                continue
+
+            default_val = param.default if param.default is not inspect.Parameter.empty else None
+            params_info.append({'name': name, 'default': default_val})
+
+        return params_info
+
+    def _should_skip_parameter(self, param_name: str) -> bool:
+        """Check if parameter should be skipped (self, cls)."""
+        return param_name in ('self', 'cls')
     # --- End Callback Handlers ---
 
     def _create_header(self):
@@ -266,20 +324,16 @@ class FunctionPatternEditor:
         # DualStepFuncEditorPane will handle the main save/close.
         title = Label(HTML("<b>Function Pattern Editor</b>"))
 
-        add_func_button = Button(
-            "Add Func",
+        add_func_button = SafeButton("Add Func",
             handler=lambda: get_app().create_background_task(self._add_function())
         )
-        load_func_button = Button(
-            "Load .func",
+        load_func_button = SafeButton("Load .func",
             handler=lambda: get_app().create_background_task(self._load_func_pattern_from_file_handler())
         )
-        save_as_func_button = Button(
-            "Save .func As",
+        save_as_func_button = SafeButton("Save .func As",
             handler=lambda: get_app().create_background_task(self._save_func_pattern_as_file_handler())
         )
-        edit_in_vim_button = Button(
-            "Edit in Vim",
+        edit_in_vim_button = SafeButton("Edit in Vim",
             handler=lambda: get_app().create_background_task(self._edit_in_vim())
         )
 
@@ -341,12 +395,10 @@ class FunctionPatternEditor:
         key_dropdown.handler = on_key_change
 
         # Create key management buttons
-        add_key_button = Button(
-            "Add Key", # More descriptive
+        add_key_button = SafeButton("Add Key", # More descriptive
             handler=lambda: get_app().create_background_task(self._add_key())
         )
-        remove_key_button = Button(
-            "Remove Key", # More descriptive
+        remove_key_button = SafeButton("Remove Key", # More descriptive
             handler=lambda: get_app().create_background_task(self._remove_key())
         )
         # Edit in Vim button is now in the header
@@ -363,8 +415,7 @@ class FunctionPatternEditor:
                 ])
             ]
         else: # Not a dict, no key selector needed, but can offer to convert to dict
-            convert_to_dict_button = Button(
-                "Convert to Dict Pattern",
+            convert_to_dict_button = SafeButton("Convert to Dict Pattern",
                 handler=lambda: get_app().create_background_task(self._convert_list_to_dict_pattern())
             )
             self.key_selector_container.children = [convert_to_dict_button]
@@ -388,8 +439,7 @@ class FunctionPatternEditor:
             function_items.append(self._create_function_item(i, func, kwargs))
 
         # Add "Add Function" button
-        add_function_button = Button(
-            "Add Function",
+        add_function_button = SafeButton("Add Function",
             handler=lambda: get_app().create_background_task(self._add_function())
         )
         function_items.append(add_function_button)
@@ -407,16 +457,13 @@ class FunctionPatternEditor:
         func_dropdown = self._create_function_dropdown(index, func)
 
         # Function controls
-        move_up = Button(
-            "↑",
+        move_up = SafeButton("↑",
             handler=lambda: get_app().create_background_task(self._move_function_up(index))
         )
-        move_down = Button(
-            "↓",
+        move_down = SafeButton("↓",
             handler=lambda: get_app().create_background_task(self._move_function_down(index))
         )
-        delete_button = Button(
-            "Delete",
+        delete_button = SafeButton("Delete",
             handler=lambda: get_app().create_background_task(self._delete_function(index))
         )
 
@@ -496,15 +543,28 @@ class FunctionPatternEditor:
         """
         from prompt_toolkit.formatted_text import HTML
 
-        # Get functions from registry grouped by backend
+        # Get functions grouped by backend
+        functions_by_backend = self._get_functions_by_backend()
+
+        # Create dropdown options with headers
+        dropdown_options = self._create_dropdown_options(functions_by_backend)
+
+        # Create and configure dropdown
+        dropdown = self._create_configured_dropdown(dropdown_options, current_func, index)
+
+        return dropdown
+
+    def _get_functions_by_backend(self) -> Dict[str, List[Tuple[Callable, str]]]:
+        """Get functions from registry grouped by backend."""
         functions_by_backend = {}
+
         for backend, funcs in FUNC_REGISTRY.items():
             for func in funcs:
-                # Get function info using registry metadata
                 try:
                     info = get_function_info(func)
                     if backend not in functions_by_backend:
                         functions_by_backend[backend] = []
+
                     # Include memory type in display name
                     display_name = f"{func.__name__} ({info['input_memory_type']} → {info['output_memory_type']})"
                     functions_by_backend[backend].append((func, display_name))
@@ -512,7 +572,12 @@ class FunctionPatternEditor:
                     # Skip functions without proper metadata
                     continue
 
-        # Create dropdown options with disabled headers
+        return functions_by_backend
+
+    def _create_dropdown_options(self, functions_by_backend: Dict[str, List[Tuple[Callable, str]]]) -> List[Tuple]:
+        """Create dropdown options with disabled headers."""
+        from prompt_toolkit.formatted_text import HTML
+
         dropdown_options = []
         for backend, funcs in sorted(functions_by_backend.items()):
             # Add backend header as disabled option
@@ -520,7 +585,10 @@ class FunctionPatternEditor:
             # Add functions
             dropdown_options.extend([(func, name) for func, name in funcs])
 
-        # Create dropdown
+        return dropdown_options
+
+    def _create_configured_dropdown(self, dropdown_options: List[Tuple], current_func: Callable, index: int) -> GroupedDropdown:
+        """Create and configure the dropdown with handler."""
         dropdown = GroupedDropdown(
             options=dropdown_options,
             default=current_func
@@ -533,7 +601,6 @@ class FunctionPatternEditor:
                 get_app().create_background_task(self._update_function(index, func))
 
         dropdown.handler = on_selection_change
-
         return dropdown
 
     async def _switch_key(self, key):
@@ -727,8 +794,7 @@ class FunctionPatternEditor:
             ))
 
         # Create "Reset All" button
-        reset_all_button = Button(
-            "Reset All",
+        reset_all_button = SafeButton("Reset All",
             handler=lambda: get_app().create_background_task(self._reset_all_parameters(func_index))
         )
         param_fields.append(reset_all_button)
@@ -747,8 +813,7 @@ class FunctionPatternEditor:
         input_field = self._create_input_field(name, current_value, func_index)
 
         # Create reset button
-        reset_button = Button(
-            "Reset",
+        reset_button = SafeButton("Reset",
             handler=lambda: get_app().create_background_task(self._reset_parameter(name, default, func_index))
         )
 

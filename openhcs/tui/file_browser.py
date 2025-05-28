@@ -35,6 +35,26 @@ from openhcs.constants.constants import Backend
 import logging
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+    
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+    
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 class FileManagerBrowser:
     """
     An interactive file browser TUI component.
@@ -74,10 +94,10 @@ class FileManagerBrowser:
         self.path_display = FormattedTextControl(text=self._get_path_display_text)
         self.item_list_container = DynamicContainer(lambda: self._build_item_list_ui())
 
-        self.ok_button = Button("Select", handler=lambda: get_app().create_background_task(self._handle_ok()))
-        self.cancel_button = Button("Cancel", handler=lambda: get_app().create_background_task(self._handle_cancel()))
-        self.up_button = Button("Up ..", handler=lambda: get_app().create_background_task(self._handle_up_directory()))
-        self.refresh_button = Button("Refresh", handler=lambda: get_app().create_background_task(self._handle_refresh()))
+        self.ok_button = SafeButton("Select", handler=lambda: get_app().create_background_task(self._handle_ok()))
+        self.cancel_button = SafeButton("Cancel", handler=lambda: get_app().create_background_task(self._handle_cancel()))
+        self.up_button = SafeButton("Up ..", handler=lambda: get_app().create_background_task(self._handle_up_directory()))
+        self.refresh_button = SafeButton("Refresh", handler=lambda: get_app().create_background_task(self._handle_refresh()))
         # TODO: toggle hidden files button
 
         self.container = self._build_ui()
@@ -223,8 +243,7 @@ class FileManagerBrowser:
             display_formatted_text = to_formatted_text(HTML("".join(t[1] for t in text_fragments)))
 
 
-            item_button = Button(
-                text=display_formatted_text, # Use FormattedText
+            item_button = SafeButton(text=display_formatted_text, # Use FormattedText
                 handler=lambda idx=i: get_app().create_background_task(self._handle_item_activated(idx)),
                 width=None
             )
@@ -303,98 +322,155 @@ class FileManagerBrowser:
 
     async def _handle_item_activated(self, index: int):
         """Handles activation (click or Enter) of a list item."""
-        if not (0 <= index < len(self.current_listing)):
+        if not self._is_valid_index(index):
             return
 
-        self.focused_item_index = index # Activation always updates focus
+        self.focused_item_index = index
         selected_item_info = self.current_listing[index]
 
         if self.select_multiple:
-            # Toggle selection for the activated item
-            if index in self.selected_item_indices:
-                self.selected_item_indices.remove(index)
-            else:
-                # Only add if it matches selection type (file/dir)
-                if self.select_files and not selected_item_info['is_dir']:
-                    self.selected_item_indices.append(index)
-                elif not self.select_files and selected_item_info['is_dir']:
-                     self.selected_item_indices.append(index)
-                elif not self.select_files and not selected_item_info['is_dir']: # trying to select file in dir mode
-                    pass # Or show error: "Can only select directories"
-            # If it's a directory and we are NOT in file selection mode,
-            # activating it might still navigate into it, even if also selected.
-            # For now, activation primarily toggles selection in multi-select mode.
-            # To navigate into a dir in multi-select dir mode, user might need to press OK/Select button
-            # or we can make Enter navigate if it's a directory.
-            # Let's make Enter navigate into directory if select_files is False
-            if selected_item_info['is_dir'] and not self.select_files and not self.select_multiple: # old behavior for single dir select
-                 self.current_path = selected_item_info['path']
-                 await self._load_directory_listing() # await async load
-            elif selected_item_info['is_dir'] and self.select_files: # always navigate into dir if in file select mode
-                 self.current_path = selected_item_info['path']
-                 await self._load_directory_listing() # await async load
-
-        else: # Single selection mode
-            if selected_item_info['is_dir']:
-                self.current_path = selected_item_info['path']
-                await self._load_directory_listing() # await async load
-            elif self.select_files:
-                await self._handle_ok()
+            await self._handle_multiple_selection_activation(index, selected_item_info)
+        else:
+            await self._handle_single_selection_activation(selected_item_info)
 
         get_app().invalidate()
+
+    def _is_valid_index(self, index: int) -> bool:
+        """Check if index is valid for current listing."""
+        return 0 <= index < len(self.current_listing)
+
+    async def _handle_multiple_selection_activation(self, index: int, item_info: dict):
+        """Handle activation in multiple selection mode."""
+        await self._toggle_item_selection(index, item_info)
+        await self._handle_directory_navigation_in_multi_select(item_info)
+
+    async def _toggle_item_selection(self, index: int, item_info: dict):
+        """Toggle selection state for an item."""
+        if index in self.selected_item_indices:
+            self.selected_item_indices.remove(index)
+        else:
+            self._add_item_to_selection_if_valid(index, item_info)
+
+    def _add_item_to_selection_if_valid(self, index: int, item_info: dict):
+        """Add item to selection if it matches selection criteria."""
+        if self.select_files and not item_info['is_dir']:
+            self.selected_item_indices.append(index)
+        elif not self.select_files and item_info['is_dir']:
+            self.selected_item_indices.append(index)
+        # Silently ignore invalid selections (files in dir mode, etc.)
+
+    async def _handle_directory_navigation_in_multi_select(self, item_info: dict):
+        """Handle directory navigation in multi-select mode."""
+        should_navigate = (
+            item_info['is_dir'] and
+            (self.select_files or (not self.select_files and not self.select_multiple))
+        )
+
+        if should_navigate:
+            self.current_path = item_info['path']
+            await self._load_directory_listing()
+
+    async def _handle_single_selection_activation(self, item_info: dict):
+        """Handle activation in single selection mode."""
+        if item_info['is_dir']:
+            await self._navigate_to_directory(item_info['path'])
+        elif self.select_files:
+            await self._handle_ok()
+
+    async def _navigate_to_directory(self, path: Path):
+        """Navigate to a directory."""
+        self.current_path = path
+        await self._load_directory_listing()
 
 
     async def _handle_ok(self):
         """Handles the OK/Select button press."""
-        selected_paths: List[Path] = []
-
         if self.select_multiple:
-            if not self.selected_item_indices:
-                self.error_message = "No items selected."
-                get_app().invalidate()
-                return
-
-            for index in self.selected_item_indices:
-                if 0 <= index < len(self.current_listing):
-                    item_info = self.current_listing[index]
-                    if self.select_files and not item_info['is_dir']:
-                        selected_paths.append(item_info['path'])
-                    elif not self.select_files and item_info['is_dir']:
-                        selected_paths.append(item_info['path'])
-
-            if not selected_paths:
-                self.error_message = "Selected items do not match selection type (files/directories)."
-                get_app().invalidate()
-                return
-
-        else: # Single selection mode
-            if not self.current_listing and not self.select_files: # Selecting current dir if list empty
-                 selected_paths.append(self.current_path)
-            elif 0 <= self.focused_item_index < len(self.current_listing):
-                selected_item_info = self.current_listing[self.focused_item_index]
-                if self.select_files:
-                    if not selected_item_info['is_dir']:
-                        selected_paths.append(selected_item_info['path'])
-                    else:
-                        self.error_message = "Please select a file, not a directory."
-                        get_app().invalidate()
-                        return
-                else: # We are selecting directories
-                    if selected_item_info['is_dir']:
-                        selected_paths.append(selected_item_info['path'])
-                    else: # Select current_path if a file is highlighted in dir selection mode
-                        selected_paths.append(self.current_path)
-            elif not self.select_files: # No item focused, but in directory selection mode
-                 selected_paths.append(self.current_path)
-
-            if not selected_paths:
-                self.error_message = "No valid item focused for selection."
-                get_app().invalidate()
-                return
+            selected_paths = await self._handle_multiple_selection()
+        else:
+            selected_paths = await self._handle_single_selection()
 
         if selected_paths:
-            self.error_message = None # Clear previous error
+            self.error_message = None
             await self.on_path_selected(selected_paths)
+
+    async def _handle_multiple_selection(self) -> List[Path]:
+        """Handle multiple selection mode."""
+        if not self.selected_item_indices:
+            self._set_error("No items selected.")
+            return []
+
+        selected_paths = self._collect_selected_paths()
+        if not selected_paths:
+            self._set_error("Selected items do not match selection type (files/directories).")
+            return []
+
+        return selected_paths
+
+    def _collect_selected_paths(self) -> List[Path]:
+        """Collect paths from selected indices."""
+        selected_paths = []
+        for index in self.selected_item_indices:
+            if 0 <= index < len(self.current_listing):
+                item_info = self.current_listing[index]
+                if self._is_valid_selection(item_info):
+                    selected_paths.append(item_info['path'])
+        return selected_paths
+
+    def _is_valid_selection(self, item_info: dict) -> bool:
+        """Check if item matches selection criteria."""
+        if self.select_files and not item_info['is_dir']:
+            return True
+        elif not self.select_files and item_info['is_dir']:
+            return True
+        return False
+
+    async def _handle_single_selection(self) -> List[Path]:
+        """Handle single selection mode."""
+        # Empty directory case
+        if not self.current_listing and not self.select_files:
+            return [self.current_path]
+
+        # Valid focused item case
+        if 0 <= self.focused_item_index < len(self.current_listing):
+            return self._handle_focused_item_selection()
+
+        # No focused item in directory selection mode
+        if not self.select_files:
+            return [self.current_path]
+
+        self._set_error("No valid item focused for selection.")
+        return []
+
+    def _handle_focused_item_selection(self) -> List[Path]:
+        """Handle selection of the currently focused item."""
+        selected_item_info = self.current_listing[self.focused_item_index]
+
+        if self.select_files:
+            return self._handle_file_selection(selected_item_info)
+        else:
+            return self._handle_directory_selection(selected_item_info)
+
+    def _handle_file_selection(self, item_info: dict) -> List[Path]:
+        """Handle file selection logic."""
+        if not item_info['is_dir']:
+            return [item_info['path']]
+        else:
+            self._set_error("Please select a file, not a directory.")
+            return []
+
+    def _handle_directory_selection(self, item_info: dict) -> List[Path]:
+        """Handle directory selection logic."""
+        if item_info['is_dir']:
+            return [item_info['path']]
+        else:
+            # Select current_path if a file is highlighted in dir selection mode
+            return [self.current_path]
+
+    def _set_error(self, message: str) -> None:
+        """Set error message and invalidate display."""
+        self.error_message = message
+        get_app().invalidate()
 
 
     async def _handle_cancel(self):

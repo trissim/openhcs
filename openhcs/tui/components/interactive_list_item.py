@@ -20,6 +20,26 @@ from prompt_toolkit.widgets import Box, Button, Label
 
 logger = logging.getLogger(__name__)
 
+# Define SafeButton locally to avoid circular imports
+class SafeButton(Button):
+    """Safe wrapper around Button that handles formatting errors."""
+
+    def __init__(self, text="", handler=None, width=None, **kwargs):
+        # Sanitize text before passing to parent
+        if text is not None:
+            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
+        super().__init__(text=text, handler=handler, width=width, **kwargs)
+
+    def _get_text_fragments(self):
+        """Safe version that handles formatting errors gracefully."""
+        try:
+            return super()._get_text_fragments()
+        except (ValueError, TypeError, AttributeError):
+            # Fallback to simple text formatting without centering
+            text = str(self.text) if self.text is not None else ""
+            safe_text = text.replace('{', '{{').replace('}', '}}')
+            return [("class:button", f" {safe_text} ")]
+
 
 class InteractiveListItem(Container):
     """
@@ -75,8 +95,7 @@ class InteractiveListItem(Container):
         # Create up/down buttons if needed
         # Create up button (style will be applied via Box container)
         if on_move_up:
-            self.up_button = Button(
-                text="^",
+            self.up_button = SafeButton(text="^",
                 handler=self._handle_move_up,
                 width=1
             )
@@ -85,8 +104,7 @@ class InteractiveListItem(Container):
 
         # Create down button (style will be applied via Box container)
         if on_move_down:
-            self.down_button = Button(
-                text="v",
+            self.down_button = SafeButton(text="v",
                 handler=self._handle_move_down,
                 width=1
             )
