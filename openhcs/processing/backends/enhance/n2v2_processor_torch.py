@@ -205,14 +205,81 @@ class Up3d(Module): # Inherit from Module
         return self.conv(x)
 
 
-class N2V2UNet(Module): # Inherit from Module
+class DoubleConv2d(Module):
+    """Double convolution block for 2D N2V2."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+        return self.double_conv(x)
+
+
+class Down2d(Module):
+    """Downsampling block with max blur pooling for N2V2."""
+
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.conv = DoubleConv2d(in_channels, out_channels)
+        # Max blur pooling: max pool followed by blur
+        self.pool = nn.Sequential(
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, groups=out_channels)
+        )
+
+    def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+        x = self.conv(x)
+        return self.pool(x)
+
+
+class Up2d(Module):
+    """Upsampling block for 2D N2V2."""
+
+    def __init__(self, in_channels: int, out_channels: int, skip_connection: bool = True, skip_channels: int = 0):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
+
+        if skip_connection:
+            # After upsampling and concatenation: (in_channels // 2) + skip_channels
+            conv_input_channels = (in_channels // 2) + skip_channels
+            self.conv = DoubleConv2d(conv_input_channels, out_channels)
+        else:
+            self.conv = DoubleConv2d(in_channels // 2, out_channels)
+
+        self.skip_connection = skip_connection
+
+    def forward(self, x: "torch.Tensor", skip: Optional["torch.Tensor"] = None) -> "torch.Tensor":
+        x = self.up(x)
+
+        if self.skip_connection and skip is not None:
+            # Ensure dimensions match
+            diff_y = skip.size(2) - x.size(2)
+            diff_x = skip.size(3) - x.size(3)
+
+            x = F.pad(x, [diff_x // 2, diff_x - diff_x // 2,
+                          diff_y // 2, diff_y - diff_y // 2])
+
+            x = torch.cat([skip, x], dim=1)
+
+        return self.conv(x)
+
+
+class N2V2UNet(Module):
     """
-    3D U-Net architecture with N2V2 modifications.
+    2D U-Net architecture with N2V2 modifications.
 
     Modifications include:
-    - BlurPool instead of MaxPool
+    - Max blur pooling instead of MaxPool
     - No top-level skip connection
-    - No residual connections
+    - 2D convolutions for processing 2D images
     """
 
     def __init__(self, in_channels: int = 1, out_channels: int = 1, features: List[int] = None):
@@ -230,26 +297,26 @@ class N2V2UNet(Module): # Inherit from Module
             features = [32, 64, 128, 256]
 
         # Input convolution
-        self.inc = DoubleConv3d(in_channels, features[0])
+        self.inc = DoubleConv2d(in_channels, features[0])
 
         # Downsampling path
-        self.down1 = Down3d(features[0], features[1])
-        self.down2 = Down3d(features[1], features[2])
-        self.down3 = Down3d(features[2], features[3])
+        self.down1 = Down2d(features[0], features[1])
+        self.down2 = Down2d(features[1], features[2])
+        self.down3 = Down2d(features[2], features[3])
 
         # Bottom convolution
-        self.bottom = DoubleConv3d(features[3], features[3] * 2)
+        self.bottom = DoubleConv2d(features[3], features[3] * 2)
 
-        # Upsampling path
-        self.up1 = Up3d(features[3] * 2, features[2])
-        self.up2 = Up3d(features[2], features[1])
-        self.up3 = Up3d(features[1], features[0], skip_connection=False)  # No top-level skip connection
+        # Upsampling path - account for skip connection concatenation
+        self.up1 = Up2d(features[3] * 2, features[2], skip_channels=features[2])
+        self.up2 = Up2d(features[2], features[1], skip_channels=features[1])
+        self.up3 = Up2d(features[1], features[0], skip_connection=False)  # No top-level skip connection
 
         # Output convolution
-        self.outc = nn.Conv3d(features[0], out_channels, kernel_size=1)
+        self.outc = nn.Conv2d(features[0], out_channels, kernel_size=1)
 
     def forward(self, x: "torch.Tensor") -> "torch.Tensor":
-        """Forward pass through the U-Net."""
+        """Forward pass through the 2D U-Net."""
         # Downsampling path with skip connections
         x1 = self.inc(x)
         x2 = self.down1(x1)
@@ -268,7 +335,7 @@ class N2V2UNet(Module): # Inherit from Module
         return self.outc(x)
 
 
-def generate_blindspot_mask(shape: Tuple[int, ...], prob: float, device: str) -> "torch.Tensor":
+def generate_blindspot_mask(shape: Tuple[int, ...], prob: float, device: torch.device) -> "torch.Tensor":
     """
     Generate a random binary mask for blind-spot training.
 
@@ -283,45 +350,83 @@ def generate_blindspot_mask(shape: Tuple[int, ...], prob: float, device: str) ->
     return (torch.rand(shape, device=device) < prob)
 
 
-def extract_random_patches(
+def extract_random_patches_2d(
     image: "torch.Tensor",
     patch_size: int,
-    num_patches: int,
-    device: str
+    num_patches: int
 ) -> torch.Tensor:
     """
-    Extract random 3D patches from the input image.
+    Extract random 2D patches from the input image stack.
 
     Args:
         image: Input image tensor of shape (Z, Y, X)
-        patch_size: Size of the cubic patches
+        patch_size: Size of the square patches
         num_patches: Number of patches to extract
-        device: Device to create the patches on
 
     Returns:
-        Tensor of patches with shape (num_patches, patch_size, patch_size, patch_size)
+        Tensor of patches with shape (num_patches, patch_size, patch_size)
     """
+    device = image.device  # Get device from input tensor
     z, y, x = image.shape
 
-    # Ensure patch_size is not larger than the spatial dimensions (ignore stack dimension)
+    # Ensure patch_size is not larger than the spatial dimensions
     if patch_size > min(y, x):
         raise ValueError(f"Patch size {patch_size} is larger than the smallest spatial dimension of the image {min(y, x)}")
 
     patches = []
     for _ in range(num_patches):
-        # Random slice selection and 2D patch extraction
-        z_idx = torch.randint(0, z, (1,)).item()  # Random slice
-        y_start = torch.randint(0, y - patch_size + 1, (1,)).item()
-        x_start = torch.randint(0, x - patch_size + 1, (1,)).item()
+        # Random slice selection and 2D patch extraction - FORCE GPU
+        z_idx = torch.randint(0, z, (1,), device=device).item()  # Force GPU device
+        y_start = torch.randint(0, y - patch_size + 1, (1,), device=device).item()
+        x_start = torch.randint(0, x - patch_size + 1, (1,), device=device).item()
 
-        # Extract 2D patch from random slice, then expand to 3D for consistency
+        # Extract 2D patch from random slice
         patch_2d = image[z_idx, y_start:y_start + patch_size, x_start:x_start + patch_size]
-        # Expand to (1, patch_size, patch_size) to maintain 3D structure
-        patch = patch_2d.unsqueeze(0)
-
-        patches.append(patch)
+        patches.append(patch_2d)
 
     return torch.stack(patches)
+
+
+def apply_n2v2_masking(patches: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
+    """
+    Apply N2V2 masking strategy using median of neighborhood.
+
+    Args:
+        patches: Input patches of shape (batch_size, patch_size, patch_size)
+        mask: Binary mask of shape (batch_size, patch_size, patch_size)
+
+    Returns:
+        Masked patches where masked pixels are replaced with local median
+    """
+    masked_patches = patches.clone()
+    batch_size, patch_size, _ = patches.shape
+
+    # For each patch in the batch
+    for b in range(batch_size):
+        # Find masked pixel locations
+        mask_indices = torch.where(mask[b])
+
+        # For each masked pixel, replace with median of 3x3 neighborhood
+        for i, j in zip(mask_indices[0], mask_indices[1]):
+            # Define 3x3 neighborhood bounds
+            y_min = max(0, i - 1)
+            y_max = min(patch_size, i + 2)
+            x_min = max(0, j - 1)
+            x_max = min(patch_size, j + 2)
+
+            # Extract neighborhood (excluding the center pixel)
+            neighborhood = patches[b, y_min:y_max, x_min:x_max].flatten()
+
+            # Remove the center pixel from neighborhood
+            center_idx = (i - y_min) * (x_max - x_min) + (j - x_min)
+            if center_idx < len(neighborhood):
+                neighborhood = torch.cat([neighborhood[:center_idx], neighborhood[center_idx+1:]])
+
+            # Replace with median
+            if len(neighborhood) > 0:
+                masked_patches[b, i, j] = torch.median(neighborhood)
+
+    return masked_patches
 
 
 @torch_func
@@ -330,7 +435,7 @@ def n2v2_denoise_torch(
     model_path: Optional[str] = None,
     *,
     random_seed: int = 42,
-    device: str = "cuda",
+
     blindspot_prob: float = 0.05,
     max_epochs: int = 10,
     batch_size: int = 4,
@@ -348,10 +453,9 @@ def n2v2_denoise_torch(
     denoising step based on the N2V2 paper (Höck et al., 2022) using PyTorch.
 
     Args:
-        image: Input 3D tensor of shape (Z, Y, X)
+        image: Input 3D tensor of shape (Z, Y, X) - MUST be on CUDA device
         model_path: Path to a pre-trained model (optional)
         random_seed: Random seed for reproducibility
-        device: Device to run the model on ("cuda" or "cpu")
         blindspot_prob: Probability of masking a pixel for blind-spot training
         max_epochs: Maximum number of training epochs
         batch_size: Batch size for training
@@ -362,38 +466,42 @@ def n2v2_denoise_torch(
         **kwargs: Additional parameters for the model or training
 
     Returns:
-        Denoised 3D tensor of shape (Z, Y, X)
+        Denoised 3D tensor of shape (Z, Y, X) on same device as input
 
     Raises:
         ValueError: If the input is not a 3D tensor
-        RuntimeError: If CUDA is not available when device="cuda"
+        RuntimeError: If input tensor is not on CUDA device (NO CPU FALLBACK)
     """
+    # Get device from input tensor - NO CPU FALLBACK ALLOWED
+    device = image.device
+
     # Validate input
     if image.ndim != 3:
         raise ValueError(f"Input must be a 3D tensor, got {image.ndim}D")
 
-    # Check if CUDA is available when device is "cuda"
-    if str(device) == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA is not available but device='cuda' was specified")
+    # FAIL LOUDLY if not on CUDA - no CPU fallback allowed
+    if device.type != "cuda":
+        raise RuntimeError(f"@torch_func requires CUDA tensor, got device: {device}")
 
     # Set random seed for reproducibility
     torch.manual_seed(random_seed)
-    if str(device) == "cuda":
-        torch.cuda.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
 
-    # Move image to device and normalize
-    image = image.to(device).float()
+    # Normalize image (already on correct device)
+    image = image.float()
     max_val = image.max()
     image = image / max_val  # Normalize to [0, 1]
 
-    # Create model
-    model = N2V2UNet(**kwargs).to(device)
+    # Create model with N2V2 specifications (depth=3, 64 initial features for microscopy)
+    model = N2V2UNet(features=[64, 128, 256, 512], **kwargs).to(device)
 
     # Load pre-trained model if provided
     if model_path is not None:
         if verbose:
             logger.info(f"Loading model from {model_path}")
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        # FAIL LOUDLY if model loading fails - no CPU fallback
+        state_dict = torch.load(model_path, map_location=device)
+        model.load_state_dict(state_dict)
     else:
         # Train model on-the-fly
         if verbose:
@@ -405,24 +513,27 @@ def n2v2_denoise_torch(
         model.train()
         for epoch in range(max_epochs):
             epoch_loss = 0.0
-            num_batches = max(1, min(100, int(math.prod(image.shape) / (patch_size**3 * batch_size))))
+            num_batches = max(1, min(100, int(math.prod(image.shape) / (patch_size**2 * batch_size))))
 
             for _ in range(num_batches):
-                # Extract random patches
-                patches = extract_random_patches(image, patch_size, batch_size, device)
+                # Extract random 2D patches
+                patches = extract_random_patches_2d(image, patch_size, batch_size)
 
-                # Generate blind-spot masks
+                # Generate blind-spot masks for 2D patches
                 masks = torch.stack([
-                    generate_blindspot_mask((patch_size, patch_size, patch_size), blindspot_prob, device)
+                    generate_blindspot_mask((patch_size, patch_size), blindspot_prob, device)
                     for _ in range(batch_size)
                 ])
 
-                # Create masked input (set masked pixels to 0)
-                masked_input = patches.clone()
-                masked_input[masks] = 0
+                # Apply N2V2 masking (replace with median, not zero)
+                masked_input = apply_n2v2_masking(patches, masks)
+
+                # Add channel dimension for network: (batch_size, 1, patch_size, patch_size)
+                patches_input = patches.unsqueeze(1)
+                masked_input = masked_input.unsqueeze(1)
 
                 # Forward pass
-                prediction = model(masked_input.unsqueeze(1))  # Add channel dimension
+                prediction = model(masked_input)
 
                 # Compute loss only on masked pixels
                 loss = loss_fn(prediction.squeeze(1), patches)
@@ -444,63 +555,61 @@ def n2v2_denoise_torch(
                 logger.info(f"Saving model to {save_model_path}")
             torch.save(model.state_dict(), save_model_path)
 
-    # Inference
+    # Inference: Process each 2D slice individually using the learned 2D model
     model.eval()
     with torch.no_grad():
-        # Process the entire image at once if it fits in memory
-        # Otherwise, process in patches and stitch the results
         z, y, x = image.shape
+        denoised = torch.zeros_like(image)
 
-        if max(z, y, x) <= 256:  # Small enough to process at once
-            prediction = model(image.unsqueeze(0).unsqueeze(0))  # Add batch and channel dimensions
-            denoised = prediction.squeeze()  # Remove batch and channel dimensions
-        else:
-            # Process in overlapping patches
-            stride = patch_size // 2
-            denoised = torch.zeros_like(image)
-            count = torch.zeros_like(image)
+        # Process each 2D slice separately
+        for slice_idx in range(z):
+            slice_2d = image[slice_idx]  # Shape: (y, x)
 
-            # Pad image to ensure all pixels are processed
-            padded = F.pad(image, [patch_size//2] * 6, mode='reflect')
-            padded = padded.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
+            if max(y, x) <= 256:  # Small enough to process at once
+                # Add batch and channel dimensions: (1, 1, y, x) for 2D model
+                slice_input = slice_2d.unsqueeze(0).unsqueeze(0)
+                prediction = model(slice_input)
+                denoised[slice_idx] = prediction.squeeze()  # Remove extra dimensions
+            else:
+                # Process in overlapping 2D patches
+                stride = patch_size // 2
+                slice_denoised = torch.zeros_like(slice_2d)
+                count = torch.zeros_like(slice_2d)
 
-            for z_start in range(0, z, stride):
+                # Pad 2D slice
+                padded_2d = F.pad(slice_2d, [patch_size//2] * 4, mode='reflect')
+
                 for y_start in range(0, y, stride):
                     for x_start in range(0, x, stride):
-                        # Extract patch with padding
-                        z_end = min(z_start + patch_size, z)
+                        # Extract 2D patch
                         y_end = min(y_start + patch_size, y)
                         x_end = min(x_start + patch_size, x)
 
-                        # Process patch
-                        patch = padded[
-                            :, :,
-                            z_start:z_start + patch_size,
+                        # Get 2D patch and add dimensions for 2D model: (1, 1, patch_size, patch_size)
+                        patch_2d = padded_2d[
                             y_start:y_start + patch_size,
                             x_start:x_start + patch_size
                         ]
+                        patch_input = patch_2d.unsqueeze(0).unsqueeze(0)
 
-                        pred_patch = model(patch)
+                        pred_patch = model(patch_input)
 
-                        # Add to result with proper alignment
-                        denoised[
-                            z_start:z_end,
+                        # Add to result
+                        slice_denoised[
                             y_start:y_end,
                             x_start:x_end
                         ] += pred_patch.squeeze()[
-                            :z_end-z_start,
                             :y_end-y_start,
                             :x_end-x_start
                         ]
 
                         count[
-                            z_start:z_end,
                             y_start:y_end,
                             x_start:x_end
                         ] += 1
 
-            # Average overlapping regions
-            denoised = denoised / count.clamp(min=1)
+                # Average overlapping regions
+                denoised[slice_idx] = slice_denoised / count.clamp(min=1)
 
     # Rescale to original range and convert to uint16
     denoised = denoised.clip(0, 1) * max_val

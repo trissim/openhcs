@@ -140,14 +140,41 @@ def _cupy_to_torch(data: Any, allow_cpu_roundtrip: bool = False, device_id: Opti
     """
     torch = _ensure_module("torch")
 
-    # Direct GPU-to-GPU conversion using CUDA Array Interface
-    if _supports_cuda_array_interface(data):
+    # Use DLPack for zero-copy GPU-to-GPU conversion
+    if _supports_dlpack(data):
         try:
+            dlpack = data.toDlpack()
+            result = torch.from_dlpack(dlpack)
+
+            # Move to specified device if needed
             if device_id is not None:
-                return torch.as_tensor(data, device=f"cuda:{device_id}")
-            else:
-                return torch.as_tensor(data, device="cuda")
+                target_device = f"cuda:{device_id}"
+                if str(result.device) != target_device:
+                    result = result.to(target_device)
+
+            return result
         except Exception as e:
+            if not allow_cpu_roundtrip:
+                raise MemoryConversionError(
+                    source_type=MemoryType.CUPY.value,
+                    target_type=MemoryType.TORCH.value,
+                    method="DLPack",
+                    reason=str(e)
+                ) from e
+
+    # Fallback to CUDA Array Interface
+    elif _supports_cuda_array_interface(data):
+        print(f"🔥 CONVERSION DEBUG: CUDA Array Interface supported, data shape: {data.shape}")
+        try:
+            print(f"🔥 CONVERSION DEBUG: About to call torch.as_tensor...")
+            if device_id is not None:
+                result = torch.as_tensor(data, device=f"cuda:{device_id}")
+            else:
+                result = torch.as_tensor(data, device="cuda")
+            print(f"🔥 CONVERSION DEBUG: torch.as_tensor completed successfully")
+            return result
+        except Exception as e:
+            print(f"🔥 CONVERSION DEBUG: torch.as_tensor failed with error: {e}")
             if not allow_cpu_roundtrip:
                 raise MemoryConversionError(
                     source_type=MemoryType.CUPY.value,
