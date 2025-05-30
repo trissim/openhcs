@@ -15,7 +15,6 @@ from typing import Any, List, Optional, Tuple
 
 from openhcs.core.utils import optional_import
 from openhcs.core.memory.decorators import torch as torch_func
-from openhcs.processing.processor import ImageProcessorInterface
 
 # Import PyTorch as an optional dependency
 torch = optional_import("torch")
@@ -25,7 +24,6 @@ HAS_TORCH = torch is not None
 logger = logging.getLogger(__name__)
 
 
-@torch_func
 def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "torch.Tensor":
     """
     Create a 2D weight mask that linearly ramps from 0 at the edges to 1 in the center.
@@ -64,7 +62,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
+def _validate_3d_array(array: Any, name: str = "input") -> None:
     """
     Validate that the input is a 3D PyTorch tensor.
 
@@ -87,7 +85,7 @@ def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
     if array.ndim != 3:
         raise ValueError(f"{name} must be a 3D tensor, got {array.ndim}D")
 
-def _gaussian_blur(cls, image: "torch.Tensor", sigma: float) -> "torch.Tensor":
+def _gaussian_blur(image: "torch.Tensor", sigma: float) -> "torch.Tensor":
     """
     Apply Gaussian blur to a 2D image.
 
@@ -126,7 +124,7 @@ def _gaussian_blur(cls, image: "torch.Tensor", sigma: float) -> "torch.Tensor":
     return blurred.squeeze(0).squeeze(0)
 
 @torch_func
-def sharpen(cls, image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0) -> "torch.Tensor":
+def sharpen(image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0) -> "torch.Tensor":
     """
     Sharpen a 3D image using unsharp masking.
 
@@ -140,7 +138,7 @@ def sharpen(cls, image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0
     Returns:
         Sharpened 3D PyTorch tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store original dtype
     dtype = image.dtype
@@ -150,10 +148,11 @@ def sharpen(cls, image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0
 
     for z in range(image.shape[0]):
         # Convert to float for processing
-        slice_float = image[z].float() / torch.max(image[z])
+        slice_float_raw = image[z].float()
+        slice_float = slice_float_raw / torch.max(slice_float_raw)
 
         # Create blurred version for unsharp mask
-        blurred = cls._gaussian_blur(slice_float, sigma=radius)
+        blurred = _gaussian_blur(slice_float, sigma=radius)
 
         # Apply unsharp mask: original + amount * (original - blurred)
         sharpened = slice_float + amount * (slice_float - blurred)
@@ -179,7 +178,7 @@ def sharpen(cls, image: "torch.Tensor", radius: float = 1.0, amount: float = 1.0
 
 @torch_func
 def percentile_normalize(
-    cls, image: "torch.Tensor",
+    image: "torch.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -200,7 +199,7 @@ def percentile_normalize(
     Returns:
         Normalized 3D PyTorch tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result = torch.zeros_like(image, dtype=torch.float32)
@@ -229,7 +228,7 @@ def percentile_normalize(
 
 @torch_func
 def stack_percentile_normalize(
-    cls, stack: "torch.Tensor",
+    stack: "torch.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -251,7 +250,7 @@ def stack_percentile_normalize(
     Returns:
         Normalized 3D PyTorch tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
     p_low = torch.quantile(stack.float(), low_percentile / 100.0)
@@ -270,66 +269,52 @@ def stack_percentile_normalize(
 
 @torch_func
 def create_composite(
-    cls, images: List["torch.Tensor"], weights: Optional[List[float]] = None
+    stack: "torch.Tensor", weights: Optional[List[float]] = None
 ) -> "torch.Tensor":
     """
-    Create a composite image from multiple 3D arrays.
+    Create a composite image from a 3D stack of 2D images.
 
     Args:
-        images: List of 3D PyTorch tensors, each of shape (Z, Y, X)
+        stack: 3D PyTorch tensor of shape (N, Y, X) where N is number of images
         weights: List of weights for each image. If None, equal weights are used.
 
     Returns:
-        Composite 3D PyTorch tensor of shape (Z, Y, X)
+        Composite 3D PyTorch tensor of shape (1, Y, X)
     """
-    # Ensure images is a list
-    if not isinstance(images, list):
-        raise TypeError("images must be a list of PyTorch tensors")
+    # Validate input is 3D tensor
+    _validate_3d_array(stack)
 
-    # Check for empty list early
-    if not images:
-        raise ValueError("images list cannot be empty")
-
-    # Validate all images are 3D PyTorch tensors with the same shape
-    for i, img in enumerate(images):
-        cls._validate_3d_array(img, f"images[{i}]")
-        if img.shape != images[0].shape:
-            raise ValueError(
-                f"All images must have the same shape. "
-                f"images[0] has shape {images[0].shape}, "
-                f"images[{i}] has shape {img.shape}"
-            )
+    n_images, height, width = stack.shape
 
     # Default weights if none provided
     if weights is None:
         # Equal weights for all images
-        weights = [1.0 / len(images)] * len(images)
+        weights = [1.0 / n_images] * n_images
     elif not isinstance(weights, list):
         raise TypeError("weights must be a list of values")
 
-    # Make sure weights list is at least as long as images list
-    if len(weights) < len(images):
-        weights = weights + [0.0] * (len(images) - len(weights))
-    # Truncate weights if longer than images
-    weights = weights[:len(images)]
+    # FAIL FAST: No fallback weights - weights must match exactly
+    if len(weights) != n_images:
+        raise ValueError(
+            f"Weights list length ({len(weights)}) must exactly match number of images ({n_images}). "
+            f"No automatic padding or truncation allowed."
+        )
 
-    first_image = images[0]
-    shape = first_image.shape
-    dtype = first_image.dtype
-    device = first_image.device
+    dtype = stack.dtype
+    device = stack.device
 
     # Create empty composite
-    composite = torch.zeros(shape, dtype=torch.float32, device=device)
+    composite = torch.zeros((height, width), dtype=torch.float32, device=device)
     total_weight = 0.0
 
     # Add each image with its weight
-    for i, image in enumerate(images):
+    for i in range(n_images):
         weight = weights[i]
         if weight <= 0.0:
             continue
 
         # Add to composite
-        composite += image.float() * weight
+        composite += stack[i].float() * weight
         total_weight += weight
 
     # Normalize by total weight
@@ -342,10 +327,11 @@ def create_composite(
     else:
         composite = composite.to(dtype)
 
-    return composite
+    # Return as 3D tensor with shape (1, Y, X)
+    return composite.reshape(1, height, width)
 
 @torch_func
-def apply_mask(cls, image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
+def apply_mask(image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
     """
     Apply a mask to a 3D image while maintaining 3D structure.
 
@@ -359,7 +345,7 @@ def apply_mask(cls, image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tenso
     Returns:
         Masked 3D PyTorch tensor of shape (Z, Y, X) - dimensionality preserved
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Handle 2D mask (apply to each Z-slice)
     if isinstance(mask, torch.Tensor) and mask.ndim == 2:
@@ -391,7 +377,7 @@ def apply_mask(cls, image: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tenso
 
 @torch_func
 def create_weight_mask(
-    cls, shape: Tuple[int, int], margin_ratio: float = 0.1
+    shape: Tuple[int, int], margin_ratio: float = 0.1
 ) -> "torch.Tensor":
     """
     Create a weight mask for blending images.
@@ -410,7 +396,7 @@ def create_weight_mask(
     return create_linear_weight_mask(height, width, margin_ratio)
 
 @torch_func
-def max_projection(cls, stack: "torch.Tensor") -> "torch.Tensor":
+def max_projection(stack: "torch.Tensor") -> "torch.Tensor":
     """
     Create a maximum intensity projection from a Z-stack.
 
@@ -420,14 +406,27 @@ def max_projection(cls, stack: "torch.Tensor") -> "torch.Tensor":
     Returns:
         3D PyTorch tensor of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
+
+    # Store original dtype for conversion back
+    original_dtype = stack.dtype
+
+    # Convert to float32 if needed for GPU operations
+    if stack.dtype == torch.uint16:
+        stack_float = stack.float()
+    else:
+        stack_float = stack
 
     # Create max projection
-    projection_2d = torch.max(stack, dim=0)[0]
+    projection_2d = torch.max(stack_float, dim=0)[0]
+
+    # Convert back to original dtype
+    projection_2d = projection_2d.to(original_dtype)
+
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 @torch_func
-def mean_projection(cls, stack: "torch.Tensor") -> "torch.Tensor":
+def mean_projection(stack: "torch.Tensor") -> "torch.Tensor":
     """
     Create a mean intensity projection from a Z-stack.
 
@@ -437,15 +436,25 @@ def mean_projection(cls, stack: "torch.Tensor") -> "torch.Tensor":
     Returns:
         3D PyTorch tensor of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
+
+    # Store original dtype for conversion back
+    original_dtype = stack.dtype
+
+    # Convert to float32 for mean calculation (always needed for mean)
+    stack_float = stack.float()
 
     # Create mean projection
-    projection_2d = torch.mean(stack.float(), dim=0).to(stack.dtype)
+    projection_2d = torch.mean(stack_float, dim=0)
+
+    # Convert back to original dtype
+    projection_2d = projection_2d.to(original_dtype)
+
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 @torch_func
 def stack_equalize_histogram(
-    cls, stack: "torch.Tensor",
+    stack: "torch.Tensor",
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
@@ -465,7 +474,7 @@ def stack_equalize_histogram(
     Returns:
         Equalized 3D PyTorch tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # PyTorch doesn't have a direct histogram equalization function
     # We'll implement it manually using torch.histc for the histogram
@@ -506,7 +515,7 @@ def stack_equalize_histogram(
 
 @torch_func
 def create_projection(
-    cls, stack: "torch.Tensor", method: str = "max_projection"
+    stack: "torch.Tensor", method: str = "max_projection"
 ) -> "torch.Tensor":
     """
     Create a projection from a stack using the specified method.
@@ -518,21 +527,20 @@ def create_projection(
     Returns:
         3D PyTorch tensor of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     if method == "max_projection":
-        return cls.max_projection(stack)
+        return max_projection(stack)
 
     if method == "mean_projection":
-        return cls.mean_projection(stack)
+        return mean_projection(stack)
 
-    # Default case for unknown methods
-    logger.warning("Unknown projection method: %s, using max_projection", method)
-    return cls.max_projection(stack)
+    # FAIL FAST: No fallback projection methods
+    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
 @torch_func
 def tophat(
-    cls, image: "torch.Tensor",
+    image: "torch.Tensor",
     selem_radius: int = 50,
     downsample_factor: int = 4
 ) -> "torch.Tensor":
@@ -550,7 +558,7 @@ def tophat(
     Returns:
         Filtered 3D PyTorch tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store device for later use
     device = image.device

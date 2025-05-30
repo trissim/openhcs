@@ -17,7 +17,6 @@ from prompt_toolkit.layout import (
     VSplit,
     DynamicContainer,
     FormattedTextControl,
-    ScrollablePane,
     Window,
     Container,
     ConditionalContainer # Added ConditionalContainer
@@ -25,35 +24,20 @@ from prompt_toolkit.layout import (
 from prompt_toolkit.filters import Condition # Added Condition
 from prompt_toolkit.widgets import Box, Button, Label, TextArea
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.formatted_text import HTML, FormattedText, to_formatted_text
+from prompt_toolkit.formatted_text import HTML
 
-from openhcs.io.filemanager import FileManager
-from openhcs.constants.constants import Backend
+# Lazy imports to avoid blocking
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from openhcs.io.filemanager import FileManager
+    from openhcs.constants.constants import Backend
 # from openhcs.tui.components import InteractiveListItem # Not used in current basic version
 
 # For logging
 import logging
 logger = logging.getLogger(__name__)
 
-# Define SafeButton locally to avoid circular imports
-class SafeButton(Button):
-    """Safe wrapper around Button that handles formatting errors."""
-    
-    def __init__(self, text="", handler=None, width=None, **kwargs):
-        # Sanitize text before passing to parent
-        if text is not None:
-            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
-        super().__init__(text=text, handler=handler, width=width, **kwargs)
-    
-    def _get_text_fragments(self):
-        """Safe version that handles formatting errors gracefully."""
-        try:
-            return super()._get_text_fragments()
-        except (ValueError, TypeError, AttributeError):
-            # Fallback to simple text formatting without centering
-            text = str(self.text) if self.text is not None else ""
-            safe_text = text.replace('{', '{{').replace('}', '}}')
-            return [("class:button", f" {safe_text} ")]
+# SafeButton removed - using regular Button with proper text cleaning
 
 class FileManagerBrowser:
     """
@@ -65,17 +49,17 @@ class FileManagerBrowser:
 
     def __init__(
         self,
-        file_manager: FileManager,
+        file_manager: Any,  # FileManager
         on_path_selected: Callable[[List[Path]], Coroutine[Any, Any, None]], # Expects a List of Paths
         on_cancel: Callable[[], Coroutine[Any, Any, None]],
         initial_path: Optional[Union[str, Path]] = None,
-        backend: Optional[Backend] = None, # Backend for FileManager operations
+        backend: Optional[Any] = None, # Backend for FileManager operations
         select_files: bool = True, # True to select files, False to select directories
         select_multiple: bool = False, # TODO: Implement multi-select later
         show_hidden_files: bool = False,
         filter_extensions: Optional[List[str]] = None # e.g., [".h5", ".zarr"]
     ):
-        self.file_manager = file_manager
+        # Remove this line - using lazy property instead
         self.on_path_selected = on_path_selected
         self.on_cancel = on_cancel
         self.backend = backend
@@ -84,7 +68,10 @@ class FileManagerBrowser:
         self.show_hidden_files = show_hidden_files
         self.filter_extensions = [ext.lower() for ext in filter_extensions] if filter_extensions else None
 
-        self.current_path: Path = self._resolve_initial_path(initial_path)
+        # Lazy initialization - no I/O during import
+        self.initial_path_input = initial_path
+        self._current_path = None
+        self._file_manager = file_manager  # Store reference, don't use yet
         self.current_listing: List[Dict[str, Any]] = [] # List of {'name': str, 'path': Path, 'is_dir': bool}
         self.focused_item_index: int = 0 # For keyboard navigation focus
         self.selected_item_indices: List[int] = [] # For multi-selection
@@ -94,23 +81,144 @@ class FileManagerBrowser:
         self.path_display = FormattedTextControl(text=self._get_path_display_text)
         self.item_list_container = DynamicContainer(lambda: self._build_item_list_ui())
 
-        self.ok_button = SafeButton("Select", handler=lambda: get_app().create_background_task(self._handle_ok()))
-        self.cancel_button = SafeButton("Cancel", handler=lambda: get_app().create_background_task(self._handle_cancel()))
-        self.up_button = SafeButton("Up ..", handler=lambda: get_app().create_background_task(self._handle_up_directory()))
-        self.refresh_button = SafeButton("Refresh", handler=lambda: get_app().create_background_task(self._handle_refresh()))
+        self.ok_button = Button("Select", handler=lambda: get_app().create_background_task(self._handle_ok()))
+        self.cancel_button = Button("Cancel", handler=lambda: get_app().create_background_task(self._handle_cancel()))
+        self.up_button = Button("Up ..", handler=lambda: get_app().create_background_task(self._handle_up_directory()))
+        self.refresh_button = Button("Refresh", handler=lambda: get_app().create_background_task(self._handle_refresh()))
         # TODO: toggle hidden files button
 
+        # Set up key bindings for navigation
+        self.key_bindings = self._create_key_bindings()
+
         self.container = self._build_ui()
-        # Initial load is now async, schedule it
-        get_app().create_background_task(self._load_directory_listing())
+        # Initial load will be triggered when the dialog is shown
+        # Don't load immediately to avoid event loop issues
 
 
-    def get_initial_focus_target(self) -> Optional[Button]:
+    def _create_key_bindings(self) -> KeyBindings:
+        """Create key bindings for file browser navigation."""
+        kb = KeyBindings()
+
+        @kb.add('up')
+        def _(event):
+            """Move focus up in the file list."""
+            if self.current_listing and self.focused_item_index > 0:
+                self.focused_item_index -= 1
+                get_app().invalidate()
+
+        @kb.add('down')
+        def _(event):
+            """Move focus down in the file list."""
+            if self.current_listing and self.focused_item_index < len(self.current_listing) - 1:
+                self.focused_item_index += 1
+                get_app().invalidate()
+
+        @kb.add('pageup')
+        def _(event):
+            """Move focus up by 10 items."""
+            if self.current_listing:
+                self.focused_item_index = max(0, self.focused_item_index - 10)
+                get_app().invalidate()
+
+        @kb.add('pagedown')
+        def _(event):
+            """Move focus down by 10 items."""
+            if self.current_listing:
+                self.focused_item_index = min(len(self.current_listing) - 1, self.focused_item_index + 10)
+                get_app().invalidate()
+
+        @kb.add('home')
+        def _(event):
+            """Move focus to first item."""
+            if self.current_listing:
+                self.focused_item_index = 0
+                get_app().invalidate()
+
+        @kb.add('end')
+        def _(event):
+            """Move focus to last item."""
+            if self.current_listing:
+                self.focused_item_index = len(self.current_listing) - 1
+                get_app().invalidate()
+
+        @kb.add('enter')
+        def _(event):
+            """Activate the focused item."""
+            if self.select_multiple:
+                # In multi-select mode, Enter confirms selection
+                get_app().create_background_task(self._handle_ok())
+            elif self.current_listing and 0 <= self.focused_item_index < len(self.current_listing):
+                # In single-select mode, Enter activates the focused item
+                get_app().create_background_task(self._handle_item_activated(self.focused_item_index))
+            elif not self.select_files and not self.current_listing:
+                # Enter on empty dir in directory selection mode
+                get_app().create_background_task(self._handle_ok())
+
+        @kb.add('space')
+        def _(event):
+            """Toggle selection in multi-select mode."""
+            if self.select_multiple and self.current_listing and 0 <= self.focused_item_index < len(self.current_listing):
+                get_app().create_background_task(self._handle_item_activated(self.focused_item_index))
+
+        @kb.add('escape')
+        def _(event):
+            """Cancel the file browser."""
+            get_app().create_background_task(self._handle_cancel())
+
+        @kb.add('backspace')
+        def _(event):
+            """Navigate up one directory."""
+            get_app().create_background_task(self._handle_up_directory())
+
+        @kb.add('f5')
+        def _(event):
+            """Refresh the current directory."""
+            get_app().create_background_task(self._handle_refresh())
+
+        @kb.add('tab')
+        def _(event):
+            """Tab to next focusable element."""
+            event.app.layout.focus_next()
+
+        @kb.add('s-tab')  # Shift+Tab
+        def _(event):
+            """Tab to previous focusable element."""
+            event.app.layout.focus_previous()
+
+        return kb
+
+    def get_initial_focus_target(self):
         """Returns the element that should receive initial focus."""
-        # Try to focus the first item if list is not empty,
-        # otherwise fallback to a button like 'Up' or 'Select'.
-        # For now, let's consistently focus the 'Up' button as it's always present.
+        # Focus the up button as it's always available and clickable
         return self.up_button
+
+    @property
+    def file_manager(self):
+        """Lazy file manager access."""
+        return self._file_manager
+
+    @property
+    def current_path(self):
+        """Lazy current path resolution."""
+        if self._current_path is None:
+            self._current_path = self._resolve_initial_path(self.initial_path_input)
+        return self._current_path
+
+    @current_path.setter
+    def current_path(self, value):
+        """Set current path."""
+        self._current_path = value
+
+    def start_initial_load(self):
+        """Start the initial directory loading when the dialog is shown."""
+        try:
+            # Now safe to access properties - event loop is running
+            _ = self.current_path  # Trigger lazy initialization
+            # Schedule the initial load as a background task
+            get_app().create_background_task(self._load_directory_listing())
+        except Exception as e:
+            logger.error(f"Error starting initial load: {e}")
+            self.error_message = f"Error loading directory: {e}"
 
     def _resolve_initial_path(self, initial_path: Optional[Union[str, Path]]) -> Path:
         """Resolves the initial path to a valid, absolute directory."""
@@ -123,17 +231,18 @@ class FileManagerBrowser:
         # For now, assume initial_path is generally valid or local.
         # A more robust solution would involve an async check here.
         try:
-            if self.file_manager.exists(str(path_to_check), backend=self.backend):
-                if not self.file_manager.isdir(str(path_to_check), backend=self.backend):
-                    path_to_check = path_to_check.parent
-            else: # Path doesn't exist, default to CWD or root
-                path_to_check = Path.cwd() # Or perhaps file_manager.get_root_for_backend(self.backend)
+            backend_str = self.backend.value if self.backend else "disk"
+            if self.file_manager.exists(str(path_to_check), backend_str):
+                # Since FileManager doesn't have isdir, assume path is valid if it exists
+                pass
+            else: # Path doesn't exist, default to CWD
+                path_to_check = Path.cwd()
         except Exception as e:
             logger.warning(f"Error resolving initial path '{initial_path}': {e}. Defaulting to CWD.")
             path_to_check = Path.cwd()
         return path_to_check.resolve()
 
-    def _get_path_display_text(self) -> FormattedText:
+    def _get_path_display_text(self):
         """Returns the formatted text for the current path display."""
         return HTML(f"<b>Path:</b> {self.current_path}")
 
@@ -155,7 +264,7 @@ class FileManagerBrowser:
         bottom_bar = VSplit([
             nav_buttons,
             # This will push nav_buttons left and action_buttons right
-            Box(style="class:filebrowser.bottombar.spacer", width=Dimension(weight=1)),
+            Window(width=Dimension(weight=1), style="class:filebrowser.bottombar.spacer"),
             action_buttons
         ])
 
@@ -163,18 +272,30 @@ class FileManagerBrowser:
         # Error display area
         self.error_label = Label(lambda: HTML(f"<ansired>{self.error_message}</ansired>") if self.error_message else "")
         error_container = ConditionalContainer(
-            Box(self.error_label, padding_left=1, height=1),
+            Box(body=self.error_label, padding_left=1, height=1),
             filter=Condition(lambda: bool(self.error_message))
         )
 
-        return HSplit([
+        # Create the main file list area with proper scrolling
+        from prompt_toolkit.layout import ScrollablePane
+        from prompt_toolkit.layout.dimension import Dimension
+
+        file_list_area = ScrollablePane(
+            self.item_list_container
+        )
+
+        main_container = HSplit([
             path_window,
             Window(height=1, char='─', style="class:filebrowser.separator"), # Separator
-            ScrollablePane(self.item_list_container),
+            file_list_area,  # Scrollable file list
             error_container,
             Window(height=1, char='─', style="class:filebrowser.separator"), # Separator
             bottom_bar, # Use the new VSplit for buttons
         ])
+
+        # Attach key bindings to the main container
+        main_container.key_bindings = self.key_bindings
+        return main_container
 
     def _format_size(self, size_bytes: Optional[int]) -> str:
         """Formats size in bytes to a human-readable string."""
@@ -226,27 +347,28 @@ class FileManagerBrowser:
             size_part = self._format_size(item_info.get('size')) if not item_info['is_dir'] else ""
             mtime_part = self._format_mtime(item_info.get('mtime'))
 
-            # Construct display text with fixed-width columns for alignment (using spaces)
-            # This is a basic way; for perfect columns, FormattedText with (width, text) tuples is better.
-            # For simplicity with Button, we'll use string formatting.
-            # Max width for name can be estimated or fixed.
-
-            # Using FormattedText for better control with Button text
-            text_fragments = []
-            text_fragments.append(('', f"{name_part:<{max_name_width}}")) # Left align name
+            # Create clean display text without FormattedText complexity
+            display_text = f"{name_part:<{max_name_width}}"
             if not item_info['is_dir']:
-                 text_fragments.append(('', f"{size_part:>10}  ")) # Right align size
+                display_text += f"{size_part:>10}  "
             else:
-                 text_fragments.append(('', f"{'':>10}  ")) # Spacer for dirs
-            text_fragments.append(('', f"{mtime_part}"))
+                display_text += f"{'':>10}  "
+            display_text += f"{mtime_part}"
 
-            display_formatted_text = to_formatted_text(HTML("".join(t[1] for t in text_fragments)))
+            # Ensure display_text is a clean string
+            display_text = str(display_text).strip()
 
+            # Create button with proper focus handling
+            # Clean the text to avoid formatting issues
+            clean_text = display_text.replace('{', '{{').replace('}', '}}')
 
-            item_button = SafeButton(text=display_formatted_text, # Use FormattedText
-                handler=lambda idx=i: get_app().create_background_task(self._handle_item_activated(idx)),
-                width=None
+            # Don't set width=None, let it auto-size
+            item_button = Button(
+                text=clean_text,
+                handler=lambda idx=i: get_app().create_background_task(self._handle_item_activated(idx))
             )
+
+            # Apply styling based on state
             if is_focused: # Style based on focus for navigation
                 item_button.style = "class:filebrowser.item.focused"
             elif is_selected_for_multi: # Different style for multi-selected items
@@ -256,7 +378,9 @@ class FileManagerBrowser:
 
             items_ui.append(item_button)
 
-        return HSplit(items_ui)
+        # Create HSplit with proper focus handling
+        file_list = HSplit(items_ui)
+        return file_list
 
     async def _load_directory_listing(self): # Made async
         """Loads and displays the content of the current_path."""
@@ -269,7 +393,8 @@ class FileManagerBrowser:
 
             # To make this non-blocking for TUI, run sync FM calls in executor
             loop = asyncio.get_event_loop()
-            raw_items = await loop.run_in_executor(None, self.file_manager.listdir, str(self.current_path), self.backend)
+            backend_str = self.backend.value if self.backend else "disk"
+            raw_items = await loop.run_in_executor(None, self.file_manager.list_dir, str(self.current_path), backend_str)
 
             processed_listing = []
             for item_name in raw_items:
@@ -280,17 +405,27 @@ class FileManagerBrowser:
 
                 # Fetch stats for each item
                 try:
-                    stats = await loop.run_in_executor(None, self.file_manager.stat, str(item_path), self.backend)
-                    is_dir = stats.get('is_dir', False)
-                    size = stats.get('size')
-                    mtime = stats.get('mtime')
+                    # Use exists to check if path exists, then check if it's a directory
+                    path_exists = await loop.run_in_executor(None, self.file_manager.exists, str(item_path), backend_str)
+                    if path_exists:
+                        # For now, assume all existing paths are valid and try to determine if directory
+                        # This is a simplified approach since FileManager doesn't have stat/isdir methods
+                        try:
+                            # Try to list the path as a directory - if it works, it's a directory
+                            await loop.run_in_executor(None, self.file_manager.list_dir, str(item_path), backend_str)
+                            is_dir = True
+                        except:
+                            is_dir = False
+                    else:
+                        is_dir = False
+
+                    # FileManager doesn't provide size/mtime, so set to None
+                    size = None
+                    mtime = None
+
                 except Exception as stat_exc:
-                    logger.warning(f"Could not stat {item_path}: {stat_exc}")
-                    # Fallback if stat fails, try isdir at least
-                    try:
-                        is_dir = await loop.run_in_executor(None, self.file_manager.isdir, str(item_path), self.backend)
-                    except Exception:
-                        is_dir = False # Assume not a dir if isdir also fails
+                    logger.warning(f"Could not check {item_path}: {stat_exc}")
+                    is_dir = False
                     size = None
                     mtime = None
 
@@ -492,113 +627,10 @@ class FileManagerBrowser:
 
     def get_key_bindings(self) -> KeyBindings:
         """Returns key bindings for the file browser."""
-        kb = KeyBindings()
-
-        @kb.add('up')
-        def _move_focus_up(event):
-            if self.focused_item_index > 0:
-                self.focused_item_index -= 1
-                get_app().invalidate()
-
-        @kb.add('down')
-        def _move_focus_down(event):
-            if self.focused_item_index < len(self.current_listing) - 1:
-                self.focused_item_index += 1
-                get_app().invalidate()
-
-        @kb.add('pageup')
-        def _page_up(event):
-            self.focused_item_index = max(0, self.focused_item_index - 10)
-            get_app().invalidate()
-
-        @kb.add('pagedown')
-        def _page_down(event):
-            self.focused_item_index = min(len(self.current_listing) - 1, self.focused_item_index + 10)
-            get_app().invalidate()
-
-        @kb.add('space')
-        def _toggle_selection_space(event):
-            if self.select_multiple and self.current_listing and \
-               0 <= self.focused_item_index < len(self.current_listing):
-                event.app.create_background_task(self._handle_item_activated(self.focused_item_index))
-
-
-        @kb.add('enter')
-        def _activate_item_enter(event):
-            # In multi-select mode, Enter triggers OK action with current selections
-            if self.select_multiple:
-                event.app.create_background_task(self._handle_ok())
-            # In single-select mode, Enter activates the focused item (navigates dir or selects file)
-            elif self.current_listing and 0 <= self.focused_item_index < len(self.current_listing):
-                event.app.create_background_task(self._handle_item_activated(self.focused_item_index))
-            # Enter on empty dir in single dir selection mode
-            elif not self.select_files and not self.current_listing:
-                event.app.create_background_task(self._handle_ok())
-
-
-        @kb.add('escape')
-        def _cancel_dialog(event):
-            event.app.create_background_task(self._handle_cancel())
-
-        @kb.add('backspace')
-        def _go_up_directory_key(event):
-            """Handles backspace key to navigate up a directory."""
-            event.app.create_background_task(self._handle_up_directory())
-
-        # TODO: Add keybindings for home/end, refresh (e.g. F5)
-
-        return kb
+        return self.key_bindings
 
     def __pt_container__(self):
+        """Return the container for prompt_toolkit integration."""
         return self.container
 
-if __name__ == '__main__':
-    # Example Usage (requires a running prompt_toolkit application)
-    # This is a placeholder for how it might be tested or integrated.
-    from prompt_toolkit.application import Application
-    from prompt_toolkit.layout.layout import Layout
-    from openhcs.io.filemanager import FileManager
-    from openhcs.constants.constants import Backend
-
-    logging.basicConfig(level=logging.DEBUG)
-
-    async def main_async():
-        # Dummy callbacks
-        async def on_path_selected_cb(path: Path):
-            print(f"Path selected: {path}")
-            get_app().exit(result=path)
-
-        async def on_cancel_cb():
-            print("Cancelled.")
-            get_app().exit(result=None)
-
-        # Create a FileManager instance (assuming local backend for example)
-        # In a real app, this would come from a StorageRegistry
-        fm = FileManager()
-
-        # Create the browser
-        file_browser = FileManagerBrowser(
-            file_manager=fm,
-            on_path_selected=on_path_selected_cb,
-            on_cancel=on_cancel_cb,
-            initial_path=Path.home(), # Start at home directory
-            backend=Backend.DISK, # Specify backend
-            select_files=True
-        )
-
-        # Create a simple layout for testing
-        layout = Layout(
-            container=Dialog(title="File Browser Test", body=file_browser, modal=True, width=Dimension(preferred=80)),
-            focused_element=file_browser.ok_button # Focus an element within the browser
-        )
-
-        # Create and run the application
-        app = Application(layout=layout, full_screen=True, key_bindings=file_browser.get_key_bindings())
-
-        selected_path = await app.run_async()
-        if selected_path:
-            print(f"Application exited with selected path: {selected_path}")
-        else:
-            print("Application exited without selection.")
-
-    asyncio.run(main_async())
+# Removed __main__ block to avoid import issues

@@ -24,14 +24,8 @@ class SafeButton(Button):
         super().__init__(text=text, handler=handler, width=width, **kwargs)
     
     def _get_text_fragments(self):
-        """Safe version that handles formatting errors gracefully."""
-        try:
-            return super()._get_text_fragments()
-        except (ValueError, TypeError, AttributeError):
-            # Fallback to simple text formatting without centering
-            text = str(self.text) if self.text is not None else ""
-            safe_text = text.replace('{', '{{').replace('}', '}}')
-            return [("class:button", f" {safe_text} ")]
+        """FAIL FAST: No fallback text formatting - if formatting fails, crash immediately."""
+        return super()._get_text_fragments()
 
 DEFAULT_HELP_TEXT = """
 OpenHCS TUI - Help

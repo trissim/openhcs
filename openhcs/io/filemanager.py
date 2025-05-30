@@ -47,14 +47,16 @@ class FileManager:
         # Store registry
         self.registry = registry
 
+
+
         logger.debug("FileManager initialized with registry")
 
     def _get_backend(self, backend_name: str) -> StorageBackend:
         """
         Get a backend by name.
 
-        This method uses the instance registry to get the backend class,
-        but creates and caches instances per FileManager instance.
+        This method uses the instance registry to get the backend instance directly.
+        All FileManagers that use the same registry share the same backend instances.
 
         Args:
             backend_name: Name of the backend to get (e.g., "disk", "memory", "zarr")
@@ -66,31 +68,82 @@ class FileManager:
             StorageResolutionError: If the backend is not found in the registry
 
         Thread Safety:
-            This method is thread-safe for a single FileManager instance.
-            Do NOT share FileManager instances across threads.
-            Each FileManager instance maintains its own backend cache.
-            Backend instances are NOT shared across FileManager instances.
-
-        Backend Requirements:
-            All backends must support parameterless constructors.
-            Any configuration must be enforced internally or passed through VirtualPath semantics.
-            This prevents reintroduction of global configuration.
+            Backend instances are shared across all FileManager instances that use
+            the same registry. This ensures shared state (especially for memory backend).
         """
         # Normalize backend name
         backend_name = backend_name.lower()
 
         if backend_name is None:
             raise StorageResolutionError(f"Backend '{backend_name}' not found in registry")
+
         try:
-            # Get the backend class from the registry dictionary
+            # Get the backend instance from the registry dictionary
             if backend_name not in self.registry:
                 raise KeyError(f"Backend '{backend_name}' not found in registry")
 
-            # Create an instance of the backend class
-            backend_class = self.registry[backend_name]
-            return backend_class()
+            # Return the backend instance directly
+            return self.registry[backend_name]
         except Exception as e:
             raise StorageResolutionError(f"Failed to get backend '{backend_name}': {e}") from e
+
+    def load(self, file_path: Union[str, Path], backend: str, **kwargs) -> Any:
+        """
+        Load data from a file using the specified backend.
+
+        This method assumes the file path is already backend-compatible and performs no inference or fallback.
+        All semantic validation and file format decoding must occur within the backend.
+
+        Args:
+        file_path: Path to the file to load (str or Path)
+        backend: Backend enum to use for loading (StorageBackendType.DISK, etc.) — POSITIONAL argument
+        **kwargs: Additional keyword arguments passed to the backend's load method
+
+        Returns:
+        Any: The loaded data object
+
+        Raises:
+        StorageResolutionError: If the backend is not supported or load fails
+        """
+
+        try:
+            backend_instance = self._get_backend(backend)
+            return backend_instance.load(file_path, **kwargs)
+        except StorageResolutionError: # Allow specific backend errors to propagate
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during load from {file_path} with backend {backend}: {e}", exc_info=True)
+            raise StorageResolutionError(
+                f"Failed to load file at {file_path} using backend '{backend}'"
+            ) from e
+
+    def save(self, data: Any, output_path: Union[str, Path], backend: str, **kwargs) -> None:
+        """
+        Save data to a file using the specified backend.
+
+        This method performs no semantic transformation, format inference, or fallback logic.
+        It assumes the output path and data are valid and structurally aligned with the backend’s expectations.
+
+        Args:
+        data: The data object to save (e.g., np.ndarray, torch.Tensor, dict, etc.)
+        output_path: Destination path to write to (str or Path)
+        backend: Backend enum to use for saving (StorageBackendType.DISK, etc.) — POSITIONAL argument
+        **kwargs: Additional keyword arguments passed to the backend's save method
+
+        Raises:
+        StorageResolutionError: If the backend is not supported or save fails
+        """
+
+        try:
+            backend_instance = self._get_backend(backend)
+            backend_instance.save(data, output_path, **kwargs)
+        except StorageResolutionError: # Allow specific backend errors to propagate if they are StorageResolutionError
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during save to {output_path} with backend {backend}: {e}", exc_info=True)
+            raise StorageResolutionError(
+                f"Failed to save data to {output_path} using backend '{backend}'"
+            ) from e
 
     def list_image_files(self, directory: Union[str, Path], backend: str,
                          pattern: str = None, extensions: Set[str] = DEFAULT_IMAGE_EXTENSIONS, recursive: bool = False) -> List[str]:
@@ -121,15 +174,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # List image files
-        try:
-            # Pass directory path directly to backend
-            # No virtual path conversion needed
-            paths = backend_instance.list_files(str(directory), pattern, extensions, recursive)
-
-            # Return the paths directly
-            return paths
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to list image files in {directory} with backend {backend}") from e
+        return backend_instance.list_files(str(directory), pattern, extensions, recursive)
 
 
     def list_files(self, directory: Union[str, Path], backend: str,
@@ -161,15 +206,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # List files
-        try:
-            # Pass directory path directly to backend
-            # No virtual path conversion needed
-            paths = backend_instance.list_files(str(directory), pattern, extensions, recursive)
-
-            # Return the paths directly
-            return paths
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to list files in {directory} with backend {backend}") from e
+        return backend_instance.list_files(str(directory), pattern, extensions, recursive)
 
 
     def find_file_recursive(self, directory: Union[str, Path], backend: str, filename: str) -> Union[str, None]:
@@ -244,13 +281,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # Ensure directory
-        try:
-            result = backend_instance.ensure_directory(str(directory))
-
-            # Return the result directly
-            return result
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to ensure directory {directory} with backend {backend}") from e
+        return backend_instance.ensure_directory(str(directory))
 
 
 
@@ -279,11 +310,7 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         # Check if path exists
-        try:
-            # No virtual path conversion needed
-            return backend_instance.exists(str(path))
-        except Exception as e:
-            raise StorageResolutionError(f"Failed to check if {path} exists with backend {backend}") from e
+        return backend_instance.exists(str(path))
 
 
     def mirror_directory_with_symlinks(
@@ -606,3 +633,4 @@ class FileManager:
             raise StorageResolutionError(
                 f"Failed to check if {path} is a directory with backend '{backend}'"
             ) from e
+

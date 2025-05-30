@@ -33,6 +33,27 @@ if TYPE_CHECKING:
 # StepResult is no longer returned by process()
 
 
+def get_step_id(step: 'AbstractStep') -> str:
+    """
+    Generate a stable step ID from a step object reference.
+
+    This function provides a deterministic way to derive a step's ID
+    from its object reference, enabling stateless execution where
+    step objects don't need to store their own IDs as attributes.
+
+    Args:
+        step: The step object to generate an ID for
+
+    Returns:
+        A stable string ID based on the step object's identity
+
+    Note:
+        This uses the same algorithm as step.__init__() to ensure
+        consistency between compilation and execution phases.
+    """
+    return str(id(step))
+
+
 class AbstractStep(abc.ABC):
     """
     Abstract base class for all steps in the OpenHCS pipeline.

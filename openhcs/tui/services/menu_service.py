@@ -147,7 +147,7 @@ class MenuService:
         """
         # Get current application state
         has_active_plate = hasattr(self.state, 'selected_plate') and self.state.selected_plate is not None
-        has_active_pipeline = hasattr(self.state, 'active_orchestrator') and self.state.active_orchestrator is not None
+        has_active_pipeline = hasattr(self.state, 'current_pipeline_definition') and self.state.current_pipeline_definition is not None
         is_compiled = getattr(self.state, 'is_compiled', False)
         is_running = getattr(self.state, 'is_running', False)
         
@@ -212,15 +212,48 @@ class MenuService:
     
     async def _handle_save_pipeline(self, **kwargs):
         """Handle Save Pipeline command."""
-        if not hasattr(self.state, 'active_orchestrator') or self.state.active_orchestrator is None:
+        if not hasattr(self.state, 'current_pipeline_definition') or self.state.current_pipeline_definition is None:
             await self._notify_error("No active pipeline to save")
             return
-        
+
         try:
-            # TODO: Implement actual save logic
-            await self._notify_status('save_pipeline', 'success', 'Pipeline saved successfully')
+            # Get pipeline from pipeline editor
+            pipeline = self.state.current_pipeline_definition
+
+            # Use file browser to choose save path
+            await self.state.notify('show_file_browser_requested', {
+                'mode': 'save',
+                'title': 'Save Pipeline',
+                'default_extension': '.pipeline',
+                'file_types': [('Pipeline files', '*.pipeline')],
+                'callback': self._save_pipeline_to_file,
+                'callback_data': {'pipeline': pipeline}
+            })
+
         except Exception as e:
             await self._notify_error(f"Failed to save pipeline: {str(e)}")
+
+    async def _save_pipeline_to_file(self, file_path: str, callback_data: dict):
+        """Save pipeline to the selected file path."""
+        import pickle
+        from pathlib import Path
+
+        try:
+            pipeline = callback_data['pipeline']
+
+            # Ensure .pipeline extension
+            path = Path(file_path)
+            if path.suffix != '.pipeline':
+                path = path.with_suffix('.pipeline')
+
+            # Save as pickle file
+            with open(path, 'wb') as f:
+                pickle.dump(pipeline, f)
+
+            await self._notify_status('save_pipeline', 'success', f'Pipeline saved to {path}')
+
+        except Exception as e:
+            await self._notify_error(f"Failed to save pipeline to file: {str(e)}")
     
     async def _handle_save_pipeline_as(self, **kwargs):
         """Handle Save Pipeline As command."""
@@ -300,7 +333,16 @@ class MenuService:
     
     async def _handle_validate_pipeline(self, **kwargs):
         """Handle Validate Pipeline command."""
-        await self.state.notify('validate_pipeline_requested', {})
+        if not hasattr(self.state, 'active_orchestrator') or self.state.active_orchestrator is None:
+            await self._notify_error("No active pipeline to validate")
+            return
+
+        try:
+            # Call the orchestrator's validate_pipeline method
+            await self.state.active_orchestrator.validate_pipeline()
+            await self._notify_status('validate_pipeline', 'success', 'Pipeline validated successfully')
+        except Exception as e:
+            await self._notify_error(f"Failed to validate pipeline: {str(e)}")
     
     async def _handle_debug_pipeline(self, **kwargs):
         """Handle Debug Pipeline command."""

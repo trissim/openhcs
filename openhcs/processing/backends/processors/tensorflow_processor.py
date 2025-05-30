@@ -17,7 +17,6 @@ import pkg_resources
 
 from openhcs.core.memory.decorators import tensorflow as tensorflow_func
 from openhcs.core.utils import optional_import
-from openhcs.processing.processor import ImageProcessorInterface
 
 # Define error variable
 TENSORFLOW_ERROR = ""
@@ -104,7 +103,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
+def _validate_3d_array(array: Any, name: str = "input") -> None:
     """
     Validate that the input is a 3D TensorFlow tensor.
 
@@ -127,7 +126,7 @@ def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
     if len(array.shape) != 3:
         raise ValueError(f"{name} must be a 3D tensor, got {len(array.shape)}D")
 
-def _gaussian_blur(cls, image: "tf.Tensor", sigma: float) -> "tf.Tensor":
+def _gaussian_blur(image: "tf.Tensor", sigma: float) -> "tf.Tensor":
     """
     Apply Gaussian blur to a 2D image.
 
@@ -174,7 +173,7 @@ def sharpen(
     Returns:
         Sharpened 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store original dtype
     dtype = image.dtype
@@ -187,7 +186,7 @@ def sharpen(
         slice_float = tf.cast(image[z], tf.float32) / tf.reduce_max(image[z])
 
         # Create blurred version for unsharp mask
-        blurred = cls._gaussian_blur(slice_float, sigma=radius)
+        blurred = _gaussian_blur(slice_float, sigma=radius)
 
         # Apply unsharp mask: original + amount * (original - blurred)
         sharpened = slice_float + amount * (slice_float - blurred)
@@ -237,7 +236,7 @@ def percentile_normalize(
     Returns:
         Normalized 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result_list = []
@@ -300,7 +299,7 @@ def stack_percentile_normalize(
     Returns:
         Normalized 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
     flat_stack = tf.reshape(stack, [-1])
@@ -351,7 +350,7 @@ def create_composite(
 
     # Validate all images are 3D TensorFlow tensors with the same shape
     for i, img in enumerate(images):
-        cls._validate_3d_array(img, f"images[{i}]")
+        _validate_3d_array(img, f"images[{i}]")
         if img.shape != images[0].shape:
             raise ValueError(
                 f"All images must have the same shape. "
@@ -403,7 +402,7 @@ def create_composite(
     return composite
 
 @tensorflow_func
-def apply_mask(cls, image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
+def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
     """
     Apply a mask to a 3D image.
 
@@ -417,7 +416,7 @@ def apply_mask(cls, image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
     Returns:
         Masked 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Handle 2D mask (apply to each Z-slice)
     if isinstance(mask, tf.Tensor) and len(mask.shape) == 2:
@@ -469,7 +468,7 @@ def create_weight_mask(
     return create_linear_weight_mask(height, width, margin_ratio)
 
 @tensorflow_func
-def max_projection(cls, stack: "tf.Tensor") -> "tf.Tensor":
+def max_projection(stack: "tf.Tensor") -> "tf.Tensor":
     """
     Create a maximum intensity projection from a Z-stack.
 
@@ -479,13 +478,13 @@ def max_projection(cls, stack: "tf.Tensor") -> "tf.Tensor":
     Returns:
         2D TensorFlow tensor of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create max projection
     return tf.reduce_max(stack, axis=0)
 
 @tensorflow_func
-def mean_projection(cls, stack: "tf.Tensor") -> "tf.Tensor":
+def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
     """
     Create a mean intensity projection from a Z-stack.
 
@@ -495,7 +494,7 @@ def mean_projection(cls, stack: "tf.Tensor") -> "tf.Tensor":
     Returns:
         2D TensorFlow tensor of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create mean projection
     return tf.cast(tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype)
@@ -522,7 +521,7 @@ def stack_equalize_histogram(
     Returns:
         Equalized 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # TensorFlow doesn't have a direct histogram equalization function
     # We'll implement it manually
@@ -578,17 +577,17 @@ def create_projection(
     Returns:
         2D TensorFlow tensor of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     if method == "max_projection":
-        return cls.max_projection(stack)
+        return max_projection(stack)
 
     if method == "mean_projection":
-        return cls.mean_projection(stack)
+        return mean_projection(stack)
 
     # Default case for unknown methods
     logger.warning("Unknown projection method: %s, using max_projection", method)
-    return cls.max_projection(stack)
+    return max_projection(stack)
 
 @tensorflow_func
 def tophat(
@@ -610,7 +609,7 @@ def tophat(
     Returns:
         Filtered 3D TensorFlow tensor of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result_list = []

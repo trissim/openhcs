@@ -11,6 +11,10 @@ from openhcs.tui.commands.pipeline_commands import (
     DeleteSelectedPlatesCommand, ShowEditPlateConfigDialogCommand,
     InitializePlatesCommand, CompilePlatesCommand, RunPlatesCommand
 )
+from openhcs.tui.commands.pipeline_step_commands import (
+    AddStepCommand, RemoveStepCommand, ValidatePipelineCommand
+)
+# pipeline_commands.py contains the COMPREHENSIVE implementations with direct orchestrator integration
 
 __all__ = [
     'CommandRegistry',
@@ -24,5 +28,8 @@ __all__ = [
     'ShowEditPlateConfigDialogCommand',
     'InitializePlatesCommand',
     'CompilePlatesCommand',
-    'RunPlatesCommand'
+    'RunPlatesCommand',
+    'AddStepCommand',
+    'RemoveStepCommand',
+    'ValidatePipelineCommand'
 ]

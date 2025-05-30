@@ -35,16 +35,25 @@ class PlateManagerController:
         self.state = state
         self.service = service
         self.validation_service = validation_service
-        
+
         # UI state
         self.selected_index = 0
         self.is_loading = False
-        
+
         # Initialize dialog manager
         self.dialog_manager = PlateDialogManager(state)
-        
+
+        # Set up validation service callbacks
+        self._setup_validation_callbacks()
+
         # Register event handlers
         self._register_event_handlers()
+
+    def _setup_validation_callbacks(self):
+        """Set up callbacks for the validation service."""
+        # Set the validation result callback to handle successful validation
+        self.validation_service.on_validation_result = self._handle_validation_result
+        # Error callback is already handled by _handle_error method
     
     def _register_event_handlers(self):
         """Register event handlers with the state manager."""
@@ -121,7 +130,64 @@ class PlateManagerController:
                 await self._handle_error(f"Error validating plate '{path}'", str(e))
 
         logger.info(f"Submitted {len(paths)} paths for validation.")
-    
+
+    async def _handle_validation_result(self, plate: Dict[str, Any]):
+        """
+        Handle validation result from validation service.
+
+        This method is called by PlateValidationService when validation completes.
+        It adds the plate to the service and emits appropriate events.
+        """
+        try:
+            plate_id = plate.get('id')
+            status = plate.get('status')
+
+            if not plate_id:
+                logger.warning("Validation result received without plate_id")
+                return
+
+            if status == 'ready':
+                # Plate validation succeeded - add to service and emit event
+                plate_path = plate.get('path')
+                if not plate_path:
+                    logger.error(f"Plate {plate_id} missing path - cannot add to service")
+                    return
+
+                # Get global config from state
+                global_config = getattr(self.state, 'global_config', None)
+                if not global_config:
+                    logger.error(f"No global config available in state - cannot add plate {plate_id}")
+                    return
+
+                try:
+                    # Add plate to service (this creates the orchestrator)
+                    service_plate = await self.service.add_plate(plate_path, global_config)
+                    await self._notify_ui_update()
+
+                    # Emit plate_added event for coordination bridge with service plate data
+                    await self.state.notify('plate_added', {
+                        'plate': service_plate
+                    })
+
+                    logger.info(f"Successfully added plate: {plate_id}")
+
+                except Exception as e:
+                    logger.error(f"Error adding plate to service: {e}", exc_info=True)
+                    await self._handle_error(f"Failed to add plate: {plate_id}", str(e))
+
+            elif status == 'error':
+                # Validation failed - just update UI to show error
+                error_message = plate.get('error_message', 'Validation failed')
+                await self._handle_error(f"Plate validation failed: {plate_id}", error_message)
+
+            else:
+                # Intermediate status (e.g., 'validating') - just update UI
+                logger.debug(f"Plate validation status update: {plate_id} -> {status}")
+
+        except Exception as e:
+            logger.error(f"Error handling validation result: {e}", exc_info=True)
+            await self._handle_error("Error processing validation result", str(e))
+
     async def remove_selected_plates(self, plate_ids: List[str]):
         """Remove the specified plates."""
         try:

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union # Callable removed
 from collections import OrderedDict # For special_outputs and special_inputs order (used by PathPlanner)
 
-from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
+from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES, READ_BACKEND, WRITE_BACKEND
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.funcstep_contract_validator import \
     FuncStepContractValidator
@@ -67,6 +67,17 @@ class PipelineCompiler:
 
         if not hasattr(context, 'step_plans') or context.step_plans is None:
             context.step_plans = {} # Ensure step_plans dict exists
+
+        # Pre-initialize step_plans with basic entries for each step
+        # This ensures step_plans is not empty when path planner checks it
+        for step in steps_definition:
+            if step.step_id not in context.step_plans:
+                context.step_plans[step.step_id] = {
+                    "step_name": step.name,
+                    "step_type": step.__class__.__name__,
+                    "well_id": context.well_id,
+                }
+
         # The well_id and base_input_dir are available from the context object.
         PipelinePathPlanner.prepare_pipeline_paths(
             context,
@@ -76,7 +87,7 @@ class PipelineCompiler:
         # Loop to supplement step_plans with non-I/O, non-path attributes
         # after PipelinePathPlanner has fully populated them with I/O info.
         for step in steps_definition:
-            step_id = step.uid
+            step_id = step.step_id
             if step_id not in context.step_plans:
                 logger.error(
                     f"Critical error: Step {step.name} (ID: {step_id}) "
@@ -111,6 +122,16 @@ class PipelineCompiler:
             if isinstance(step, FunctionStep):
                 current_plan["variable_components"] = step.variable_components
                 current_plan["group_by"] = step.group_by
+
+                # 🎯 SEMANTIC COHERENCE FIX: Prevent group_by/variable_components conflict
+                # When variable_components contains the same value as group_by,
+                # set group_by to None to avoid EZStitcher heritage rule violation
+                if (step.variable_components and step.group_by and
+                    step.group_by in step.variable_components):
+                    logger.debug(f"Step {step.name}: Detected group_by='{step.group_by}' in variable_components={step.variable_components}. "
+                                f"Setting group_by=None to maintain semantic coherence.")
+                    current_plan["group_by"] = None
+
                 if hasattr(step, 'func'): # func attribute is set in FunctionStep.__init__
                     current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
 
@@ -152,17 +173,20 @@ class PipelineCompiler:
 
         # Post-check (optional, but good for ensuring contracts are met by the planner)
         for step in steps_definition:
-            step_id = step.uid
+            step_id = step.step_id
             if step_id not in context.step_plans:
                  # This should not happen if prepare_pipeline_flags guarantees plans for all steps
                 logger.error(f"Step {step.name} (ID: {step_id}) missing from step_plans after materialization planning.")
                 continue
 
             plan = context.step_plans[step_id]
-            if not all(k in plan for k in ["requires_disk_input", "requires_disk_output", "read_backend", "write_backend"]):
+            # Check for keys that FunctionStep actually uses during execution
+            required_keys = [READ_BACKEND, WRITE_BACKEND]
+            if not all(k in plan for k in required_keys):
+                missing_keys = [k for k in required_keys if k not in plan]
                 logger.error(
                     f"Materialization flag planning incomplete for step {step.name} (ID: {step_id}). "
-                    f"Missing one or more required flags (Clause 273)."
+                    f"Missing required keys: {missing_keys} (Clause 273)."
                 )
 
 
@@ -181,7 +205,7 @@ class PipelineCompiler:
         # FuncStepContractValidator might need access to input/output_memory_type_hint from plan
         step_memory_types = FuncStepContractValidator.validate_pipeline(
             steps=steps_definition,
-            step_plans=context.step_plans # Pass step_plans for hints
+            pipeline_context=None # Pass None for now, validator will use fallback verification
         )
 
         for step_id, memory_types in step_memory_types.items():

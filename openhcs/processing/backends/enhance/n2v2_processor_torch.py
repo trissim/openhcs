@@ -303,23 +303,21 @@ def extract_random_patches(
     """
     z, y, x = image.shape
 
-    # Ensure patch_size is not larger than any dimension
-    if patch_size > min(z, y, x):
-        raise ValueError(f"Patch size {patch_size} is larger than the smallest dimension of the image {min(z, y, x)}")
+    # Ensure patch_size is not larger than the spatial dimensions (ignore stack dimension)
+    if patch_size > min(y, x):
+        raise ValueError(f"Patch size {patch_size} is larger than the smallest spatial dimension of the image {min(y, x)}")
 
     patches = []
     for _ in range(num_patches):
-        # Random starting indices
-        z_start = torch.randint(0, z - patch_size + 1, (1,)).item()
+        # Random slice selection and 2D patch extraction
+        z_idx = torch.randint(0, z, (1,)).item()  # Random slice
         y_start = torch.randint(0, y - patch_size + 1, (1,)).item()
         x_start = torch.randint(0, x - patch_size + 1, (1,)).item()
 
-        # Extract patch
-        patch = image[
-            z_start:z_start + patch_size,
-            y_start:y_start + patch_size,
-            x_start:x_start + patch_size
-        ]
+        # Extract 2D patch from random slice, then expand to 3D for consistency
+        patch_2d = image[z_idx, y_start:y_start + patch_size, x_start:x_start + patch_size]
+        # Expand to (1, patch_size, patch_size) to maintain 3D structure
+        patch = patch_2d.unsqueeze(0)
 
         patches.append(patch)
 

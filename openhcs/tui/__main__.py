@@ -20,7 +20,7 @@ import dataclasses # For asdict, if needed for complex merging (not used in this
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig, get_default_global_config
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 
-from openhcs.tui.tui_launcher import OpenHCSTUILauncher
+from openhcs.tui.simple_launcher import SimpleOpenHCSTUILauncher
 
 
 async def main():
@@ -138,14 +138,14 @@ async def _setup_gpu_registry(core_global_config: GlobalPipelineConfig, logger):
     except Exception as e:
         logger.error(f"Error during GPU registry setup: {e}", exc_info=True)
 
-def _create_launcher(args, core_global_config: GlobalPipelineConfig) -> OpenHCSTUILauncher:
+def _create_launcher(args, core_global_config: GlobalPipelineConfig) -> SimpleOpenHCSTUILauncher:
     """Create and configure the TUI launcher."""
-    return OpenHCSTUILauncher(
+    return SimpleOpenHCSTUILauncher(
         common_output_directory=args.workspace,
         core_global_config=core_global_config
     )
 
-async def _run_tui_application(launcher: OpenHCSTUILauncher, logger):
+async def _run_tui_application(launcher: SimpleOpenHCSTUILauncher, logger):
     """Run the TUI application with error handling."""
     try:
         logger.info("Starting TUI launcher.run()")

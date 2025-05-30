@@ -25,6 +25,8 @@ from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
+logger = logging.getLogger(__name__)
+
 
 
 
@@ -73,7 +75,7 @@ class MaterializationFlagPlanner:
         # Process each step in the pipeline
         for i, step in enumerate(pipeline_definition): # Use pipeline_definition
             # Get step UID
-            step_id = step.uid
+            step_id = step.step_id
             step_name = step.name
 
             # Ensure the step_plan for this step exists
@@ -160,8 +162,8 @@ class MaterializationFlagPlanner:
             # Log backend selection
             logger.debug(
                 f"Step {step_name} backend selection: "
-                f"read_backend={read_backend}, "
-                f"write_backend={write_backend}"
+                f"read_backend={current_step_plan[READ_BACKEND]}, "
+                f"write_backend={current_step_plan[WRITE_BACKEND]}"
             )
 
         # No return value as step_plans is modified in place

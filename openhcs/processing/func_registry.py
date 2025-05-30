@@ -238,8 +238,50 @@ def is_registry_initialized() -> bool:
 def get_valid_memory_types() -> Set[str]:
     """
     Get the set of valid memory types.
-    
+
     Returns:
         A set of valid memory type names
     """
     return VALID_MEMORY_TYPES.copy()
+
+
+def get_function_by_name(function_name: str, memory_type: str) -> Optional[Callable]:
+    """
+    Get a specific function by name and memory type from the registry.
+
+    Args:
+        function_name: Name of the function to find
+        memory_type: The memory type (e.g., "numpy", "cupy", "torch")
+
+    Returns:
+        The function if found, None otherwise
+
+    Raises:
+        RuntimeError: If the registry is not initialized
+        ValueError: If the memory type is not valid
+    """
+    functions = get_functions_by_memory_type(memory_type)
+
+    for func in functions:
+        if func.__name__ == function_name:
+            return func
+
+    return None
+
+
+def get_all_function_names(memory_type: str) -> List[str]:
+    """
+    Get all function names registered for a specific memory type.
+
+    Args:
+        memory_type: The memory type (e.g., "numpy", "cupy", "torch")
+
+    Returns:
+        A list of function names
+
+    Raises:
+        RuntimeError: If the registry is not initialized
+        ValueError: If the memory type is not valid
+    """
+    functions = get_functions_by_memory_type(memory_type)
+    return [func.__name__ for func in functions]

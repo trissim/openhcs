@@ -200,7 +200,7 @@ class OperaPhenixHandler(MicroscopeHandler):
             # Copy the file to the temporary directory
             # Clause 245: Workspace operations are disk-only by design
             # This call is structurally hardcoded to use the "disk" backend
-            filemanager.copy_file(file_path, new_path, Backend.DISK.value)
+            filemanager.copy(file_path, new_path, Backend.DISK.value)
 
         # Clean up and replace old files
         for file_path in image_files:
@@ -232,7 +232,7 @@ class OperaPhenixHandler(MicroscopeHandler):
             # Copy the file to the image directory
             # Clause 245: Workspace operations are disk-only by design
             # This call is structurally hardcoded to use the "disk" backend
-            filemanager.copy_file(temp_file, dest_path, Backend.DISK.value)
+            filemanager.copy(temp_file, dest_path, Backend.DISK.value)
 
             # Remove the file from the temporary directory
             # Clause 245: Workspace operations are disk-only by design

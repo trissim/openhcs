@@ -65,7 +65,7 @@ class StepAttributeStripper:
         # Process each step
         for step in steps:
             # Get step identifier for error messages
-            step_id = getattr(step, "uid", str(id(step)))
+            step_id = getattr(step, "step_id", str(id(step)))
             step_name = getattr(step, "name", f"Step {step_id}")
 
             # Get all attributes

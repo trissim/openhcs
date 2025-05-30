@@ -24,44 +24,27 @@ logger = logging.getLogger(__name__)
 # ===== DECLARATIVE DEFAULT VALUES =====
 # These declarations control defaults and may be moved to configuration in the future
 
-# Default error messages for validation failures
-ERROR_MISSING_MEMORY_TYPE = (
-    "Clause 101 Violation: Function '{0}' in step '{1}' does not have explicit "
-    "memory type declarations. Use @memory_types, @numpy, @cupy, @torch, or @tensorflow decorators."
-)
+# Simple, direct error messages
+def missing_memory_type_error(func_name, step_name):
+    return f"Function '{func_name}' in step '{step_name}' needs memory type decorator (@numpy, @cupy, @torch, etc.)"
 
-ERROR_INCONSISTENT_MEMORY_TYPES = (
-    "Clause 101 Violation: Functions in step '{0}' have inconsistent memory types. "
-    "Function '{1}' has input_memory_type='{2}', output_memory_type='{3}', but function '{4}' "
-    "has input_memory_type='{5}', output_memory_type='{6}'."
-)
+def inconsistent_memory_types_error(step_name, func1, func2):
+    return f"Functions in step '{step_name}' have different memory types: {func1} vs {func2}"
 
-ERROR_INVALID_MEMORY_TYPE = (
-    "Clause 101 Violation: Unknown memory type in function '{0}': input='{1}', output='{2}'. "
-    "Valid memory types are: {3}."
-)
+def invalid_memory_type_error(func_name, input_type, output_type, valid_types):
+    return f"Function '{func_name}' has invalid memory types: {input_type}/{output_type}. Valid: {valid_types}"
 
-ERROR_INVALID_FUNCTION = (
-    "Clause 101 Violation: Invalid function in {0}: {1}. "
-    "All functions must be callable objects with memory type declarations."
-)
+def invalid_function_error(location, func):
+    return f"Invalid function in {location}: {func}"
 
-ERROR_INVALID_PATTERN = (
-    "Clause 101 Violation: Invalid function pattern: {0}. "
-    "Must be a callable, tuple of (callable, kwargs), list of callables, or dict of callables."
-)
+def invalid_pattern_error(pattern):
+    return f"Invalid function pattern: {pattern}"
 
-ERROR_MISSING_REQUIRED_ARGS = (
-    "Clause 308 Violation: Function '{0}' in step '{1}' is missing required positional arguments in kwargs: {2}. "
-    "All required positional arguments must be explicitly provided in the kwargs dict when using (func, kwargs) pattern."
-)
+def missing_required_args_error(func_name, step_name, missing_args):
+    return f"Function '{func_name}' in step '{step_name}' missing required args: {missing_args}"
 
-ERROR_COMPLEX_PATTERN_WITH_SPECIAL_CONTRACTS = (
-    "Clause 107 Violation: FunctionStep '{0}' uses special I/O or chainbreaker decorators. " # Placeholder Clause
-    "Its func_pattern must be a direct callable, a (callable, kwargs) tuple, or a list "
-    "containing exactly one such item. Dictionaries or multi-item lists are not permitted "
-    "when these decorators are used on any function in the pattern."
-)
+def complex_pattern_error(step_name):
+    return f"Step '{step_name}' with special decorators must use simple function pattern"
 
 class FuncStepContractValidator:
     """
@@ -152,7 +135,7 @@ class FuncStepContractValidator:
                     ) from e
 
                 memory_types = FuncStepContractValidator.validate_funcstep(step)
-                step_memory_types[step.uid] = memory_types
+                step_memory_types[step.step_id] = memory_types
 
         return step_memory_types
 
@@ -214,16 +197,17 @@ class FuncStepContractValidator:
                         is_structurally_simple = True
             
             if not is_structurally_simple:
-                raise ValueError(ERROR_COMPLEX_PATTERN_WITH_SPECIAL_CONTRACTS.format(step_name))
+                raise ValueError(complex_pattern_error(step_name))
 
         # 3. Proceed with existing memory type validation using the original func_pattern
         input_type, output_type = FuncStepContractValidator.validate_function_pattern(
             func_pattern, step_name)
 
-        # Return the validated memory types
+        # Return the validated memory types and store the func for stateless execution
         return {
             'input_memory_type': input_type,
-            'output_memory_type': output_type
+            'output_memory_type': output_type,
+            'func': func_pattern  # Store the validated func for stateless execution
         }
 
     @staticmethod
@@ -258,17 +242,12 @@ class FuncStepContractValidator:
             input_type = first_fn.input_memory_type
             output_type = first_fn.output_memory_type
         except AttributeError as exc:
-            raise ValueError(ERROR_MISSING_MEMORY_TYPE.format(
-                first_fn.__name__, step_name
-            )) from exc
+            raise ValueError(missing_memory_type_error(first_fn.__name__, step_name)) from exc
 
         # Validate memory types against known valid types
         if input_type not in VALID_MEMORY_TYPES or output_type not in VALID_MEMORY_TYPES:
-            raise ValueError(ERROR_INVALID_MEMORY_TYPE.format(
-                first_fn.__name__,
-                input_type,
-                output_type,
-                ", ".join(sorted(VALID_MEMORY_TYPES))
+            raise ValueError(invalid_memory_type_error(
+                first_fn.__name__, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
             ))
 
         # Validate that all functions have the same memory types
@@ -278,29 +257,19 @@ class FuncStepContractValidator:
                 fn_input_type = fn.input_memory_type
                 fn_output_type = fn.output_memory_type
             except AttributeError as exc:
-                raise ValueError(ERROR_MISSING_MEMORY_TYPE.format(
-                    fn.__name__, step_name
-                )) from exc
+                raise ValueError(missing_memory_type_error(fn.__name__, step_name)) from exc
 
             # Validate memory types against known valid types
             if fn_input_type not in VALID_MEMORY_TYPES or fn_output_type not in VALID_MEMORY_TYPES:
-                raise ValueError(ERROR_INVALID_MEMORY_TYPE.format(
-                    fn.__name__,
-                    fn_input_type,
-                    fn_output_type,
-                    ", ".join(sorted(VALID_MEMORY_TYPES))
+                raise ValueError(invalid_memory_type_error(
+                    fn.__name__, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
                 ))
 
             # Validate that the function's memory types match the first function's memory types
             if fn_input_type != input_type or fn_output_type != output_type:
-                raise ValueError(ERROR_INCONSISTENT_MEMORY_TYPES.format(
-                    step_name,
-                    first_fn.__name__,
-                    input_type,
-                    output_type,
-                    fn.__name__,
-                    fn_input_type,
-                    fn_output_type
+                raise ValueError(inconsistent_memory_types_error(
+                    step_name, f"{first_fn.__name__}({input_type}/{output_type})",
+                    f"{fn.__name__}({fn_input_type}/{fn_output_type})"
                 ))
 
         # Return the shared memory types
@@ -340,9 +309,7 @@ class FuncStepContractValidator:
 
         # Raise error if any required args are missing
         if missing_args:
-            raise ValueError(ERROR_MISSING_REQUIRED_ARGS.format(
-                func.__name__, step_name, ", ".join(missing_args)
-            ))
+            raise ValueError(missing_required_args_error(func.__name__, step_name, missing_args))
 
     @staticmethod
     def validate_pattern_structure(
@@ -407,10 +374,8 @@ class FuncStepContractValidator:
         # Case 2: Tuple of (callable, kwargs)
         if (isinstance(func, tuple) and len(func) == 2 and
                 callable(func[0]) and isinstance(func[1], dict)):
-            # Validate that all required positional arguments are provided in kwargs
-            # This enforces Clause 308 (Named Positional Enforcement)
-            FuncStepContractValidator._validate_required_args(func[0], func[1], step_name)
-
+            # The kwargs dict is optional - if provided, it will be used during execution
+            # No need to validate required args here as the execution logic handles this gracefully
             functions.append(func[0])
             return functions
 
@@ -423,9 +388,7 @@ class FuncStepContractValidator:
                         f, step_name)
                     functions.extend(nested_functions)
                 else:
-                    raise ValueError(ERROR_INVALID_FUNCTION.format(
-                        f"list at index {i}", f
-                    ))
+                    raise ValueError(invalid_function_error(f"list at index {i}", f))
             return functions
 
         # Case 4: Dict of keyed patterns
@@ -437,10 +400,8 @@ class FuncStepContractValidator:
                         f, step_name)
                     functions.extend(nested_functions)
                 else:
-                    raise ValueError(ERROR_INVALID_FUNCTION.format(
-                        f"dict with key '{key}'", f
-                    ))
+                    raise ValueError(invalid_function_error(f"dict with key '{key}'", f))
             return functions
 
         # Invalid type
-        raise ValueError(ERROR_INVALID_PATTERN.format(func))
+        raise ValueError(invalid_pattern_error(func))

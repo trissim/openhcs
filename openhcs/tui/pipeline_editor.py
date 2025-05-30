@@ -437,7 +437,7 @@ class PipelineEditorPane: # Renamed from StepViewerPane
 
         for step_in_pipeline in active_orchestrator.pipeline_definition:
             if (isinstance(step_in_pipeline, AbstractStep) and
-                step_in_pipeline.id == step_id_to_edit):
+                step_in_pipeline.step_id == step_id_to_edit):
                 return step_in_pipeline
 
         logger.error(f"PipelineEditorPane: Could not find actual step instance for ID: {step_id_to_edit}")

@@ -15,7 +15,6 @@ from typing import Any, List, Optional, Tuple
 
 from openhcs.core.memory.decorators import jax as jax_func
 from openhcs.core.utils import optional_import
-from openhcs.processing.processor import ImageProcessorInterface
 
 # Import JAX as an optional dependency
 jax = optional_import("jax")
@@ -64,7 +63,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
+def _validate_3d_array(array: Any, name: str = "input") -> None:
     """
     Validate that the input is a 3D JAX array.
 
@@ -88,7 +87,7 @@ def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
         raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
 @jax_func
-def _gaussian_kernel(cls, sigma: float, kernel_size: int) -> "jnp.ndarray":
+def _gaussian_kernel(sigma: float, kernel_size: int) -> "jnp.ndarray":
     """
     Create a 2D Gaussian kernel.
 
@@ -114,7 +113,7 @@ def _gaussian_kernel(cls, sigma: float, kernel_size: int) -> "jnp.ndarray":
     return kernel_2d
 
 @jax_func
-def _gaussian_blur(cls, image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
+def _gaussian_blur(image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
     """
     Apply Gaussian blur to a 2D image.
 
@@ -172,7 +171,7 @@ def sharpen(
     Returns:
         Sharpened 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store original dtype
     dtype = image.dtype
@@ -185,7 +184,7 @@ def sharpen(
         slice_float = image[z].astype(jnp.float32) / jnp.max(image[z])
 
         # Create blurred version for unsharp mask
-        blurred = cls._gaussian_blur(slice_float, sigma=radius)
+        blurred = _gaussian_blur(slice_float, sigma=radius)
 
         # Apply unsharp mask: original + amount * (original - blurred)
         sharpened = slice_float + amount * (slice_float - blurred)
@@ -235,7 +234,7 @@ def percentile_normalize(
     Returns:
         Normalized 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result_list = []
@@ -311,7 +310,7 @@ def stack_percentile_normalize(
     Returns:
         Normalized 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
     p_low = jnp.percentile(stack, low_percentile)
@@ -371,7 +370,7 @@ def create_composite(
 
     # Validate all images are 3D JAX arrays with the same shape
     for i, img in enumerate(images):
-        cls._validate_3d_array(img, f"images[{i}]")
+        _validate_3d_array(img, f"images[{i}]")
         if img.shape != images[0].shape:
             raise ValueError(
                 f"All images must have the same shape. "
@@ -423,7 +422,7 @@ def create_composite(
     return composite
 
 @jax_func
-def apply_mask(cls, image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
+def apply_mask(image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
     """
     Apply a mask to a 3D image.
 
@@ -437,7 +436,7 @@ def apply_mask(cls, image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
     Returns:
         Masked 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Handle 2D mask (apply to each Z-slice)
     if isinstance(mask, jnp.ndarray) and mask.ndim == 2:
@@ -489,7 +488,7 @@ def create_weight_mask(
     return create_linear_weight_mask(height, width, margin_ratio)
 
 @jax_func
-def max_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
+def max_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
     """
     Create a maximum intensity projection from a Z-stack.
 
@@ -499,13 +498,13 @@ def max_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
     Returns:
         2D JAX array of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create max projection
     return jnp.max(stack, axis=0)
 
 @jax_func
-def mean_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
+def mean_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
     """
     Create a mean intensity projection from a Z-stack.
 
@@ -515,7 +514,7 @@ def mean_projection(cls, stack: "jnp.ndarray") -> "jnp.ndarray":
     Returns:
         2D JAX array of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create mean projection
     return jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
@@ -542,7 +541,7 @@ def stack_equalize_histogram(
     Returns:
         Equalized 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Flatten the entire stack to compute the global histogram
     flat_stack = stack.flatten()
@@ -593,17 +592,17 @@ def create_projection(
     Returns:
         2D JAX array of shape (Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     if method == "max_projection":
-        return cls.max_projection(stack)
+        return max_projection(stack)
 
     if method == "mean_projection":
-        return cls.mean_projection(stack)
+        return mean_projection(stack)
 
     # Default case for unknown methods
     logger.warning("Unknown projection method: %s, using max_projection", method)
-    return cls.max_projection(stack)
+    return max_projection(stack)
 
 @jax_func
 def tophat(
@@ -625,7 +624,7 @@ def tophat(
     Returns:
         Filtered 3D JAX array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result_list = []

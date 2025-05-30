@@ -73,10 +73,12 @@ from prompt_toolkit.layout.containers import (DynamicContainer, Float,
 from prompt_toolkit.widgets import Box, Button, Frame, Label, TextArea
 
 from openhcs.core.context.processing_context import ProcessingContext
+# Import FunctionStep for runtime use (not just type hints)
+from openhcs.core.steps.function_step import FunctionStep
+
 if TYPE_CHECKING: # Add for PipelineOrchestrator type hint
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.steps.abstract import AbstractStep # Added for current_pipeline_definition
-    from openhcs.core.steps.function_step import FunctionStep # Added for step_to_edit_config
 # Import from func_registry instead of function_registry to avoid circular imports
 from openhcs.processing.func_registry import FUNC_REGISTRY
 
@@ -688,9 +690,9 @@ class OpenHCSTUI:
         """Create or update the step editor."""
         # Check if we need to create/recreate the editor
         if (self.dual_step_func_editor is None or
-            self.dual_step_func_editor.original_func_step.id != step.id):
+            self.dual_step_func_editor.original_func_step.step_id != step.step_id):
 
-            logger.info(f"OpenHCSTUI: Instantiating DualStepFuncEditorPane for step: {step.name or step.id}")
+            logger.info(f"OpenHCSTUI: Instantiating DualStepFuncEditorPane for step: {step.name or step.step_id}")
             try:
                 self.dual_step_func_editor = DualStepFuncEditorPane(state=self.state, func_step=step)
             except Exception as e:

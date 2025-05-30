@@ -15,7 +15,6 @@ from typing import Any, List, Optional, Tuple
 
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.utils import optional_import
-from openhcs.processing.processor import ImageProcessorInterface
 
 # Import CuPy as an optional dependency
 cp = optional_import("cupy")
@@ -67,7 +66,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
+def _validate_3d_array(array: Any, name: str = "input") -> None:
     """
     Validate that the input is a 3D CuPy array.
 
@@ -91,7 +90,7 @@ def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
         raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
 @cupy_func
-def sharpen(cls, image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
+def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
     """
     Sharpen a 3D image using unsharp masking.
 
@@ -105,7 +104,7 @@ def sharpen(cls, image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) 
     Returns:
         Sharpened 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store original dtype
     dtype = image.dtype
@@ -162,7 +161,7 @@ def percentile_normalize(
     Returns:
         Normalized 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result = cp.zeros_like(image, dtype=cp.float32)
@@ -209,7 +208,7 @@ def stack_percentile_normalize(
     Returns:
         Normalized 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
     p_low = cp.percentile(stack, low_percentile)
@@ -250,7 +249,7 @@ def create_composite(
 
     # Validate all images are 3D CuPy arrays with the same shape
     for i, img in enumerate(images):
-        cls._validate_3d_array(img, f"images[{i}]")
+        _validate_3d_array(img, f"images[{i}]")
         if img.shape != images[0].shape:
             raise ValueError(
                 f"All images must have the same shape. "
@@ -303,7 +302,7 @@ def create_composite(
     return composite
 
 @cupy_func
-def apply_mask(cls, image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
+def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
     """
     Apply a mask to a 3D image.
 
@@ -317,7 +316,7 @@ def apply_mask(cls, image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
     Returns:
         Masked 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Handle 2D mask (apply to each Z-slice)
     if isinstance(mask, cp.ndarray) and mask.ndim == 2:
@@ -348,7 +347,7 @@ def apply_mask(cls, image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
     raise TypeError(f"mask must be a 2D or 3D CuPy array, got {type(mask)}")
 
 @cupy_func
-def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp.ndarray":
+def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> "cp.ndarray":
     """
     Create a weight mask for blending images.
 
@@ -366,7 +365,7 @@ def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -
     return create_linear_weight_mask(height, width, margin_ratio)
 
 @cupy_func
-def max_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
+def max_projection(stack: "cp.ndarray") -> "cp.ndarray":
     """
     Create a maximum intensity projection from a Z-stack.
 
@@ -376,14 +375,14 @@ def max_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
     Returns:
         3D CuPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create max projection
     projection_2d = cp.max(stack, axis=0)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 @cupy_func
-def mean_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
+def mean_projection(stack: "cp.ndarray") -> "cp.ndarray":
     """
     Create a mean intensity projection from a Z-stack.
 
@@ -393,7 +392,7 @@ def mean_projection(cls, stack: "cp.ndarray") -> "cp.ndarray":
     Returns:
         3D CuPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create mean projection
     projection_2d = cp.mean(stack, axis=0).astype(stack.dtype)
@@ -421,7 +420,7 @@ def stack_equalize_histogram(
     Returns:
         Equalized 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Flatten the entire stack to compute the global histogram
     flat_stack = stack.flatten()
@@ -466,17 +465,16 @@ def create_projection(
     Returns:
         3D CuPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     if method == "max_projection":
-        return cls.max_projection(stack)
+        return max_projection(stack)
 
     if method == "mean_projection":
-        return cls.mean_projection(stack)
+        return mean_projection(stack)
 
-    # Default case for unknown methods
-    logger.warning("Unknown projection method: %s, using max_projection", method)
-    return cls.max_projection(stack)
+    # FAIL FAST: No fallback projection methods
+    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
 @cupy_func
 def tophat(
@@ -498,7 +496,7 @@ def tophat(
     Returns:
         Filtered 3D CuPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result = cp.zeros_like(image)

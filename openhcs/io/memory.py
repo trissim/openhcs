@@ -32,37 +32,31 @@ class MemoryStorageBackend(StorageBackend):
         return Path(path).as_posix()
 
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
-        key = Path(file_path).as_posix()
+        key = self._normalize(file_path)
 
         if key not in self._memory_store:
-            raise FileNotFoundError(f"Memory key '{key}' not found.")
+            raise FileNotFoundError(f"Memory path not found: {file_path}")
 
-        visited = set()
+        value = self._memory_store[key]
+        if value is None:
+            raise IsADirectoryError(f"Path is a directory: {file_path}")
 
-        while self.is_symlink(key):
-            if key in visited:
-                raise RuntimeError(f"Symlink loop detected at {key}")
-            visited.add(key)
-            key = self._memory_store[key].target
-
-            if key not in self._memory_store:
-                raise FileNotFoundError(f"Symlink target not found: {key}")
-
-        return self._memory_store[key]  
+        return value
 
     def save(self, data: Any, output_path: Union[str, Path], **kwargs) -> None:
-        parts = str(output_path).strip("/").split("/")
-        parent = self._memory_store
-        for part in parts[:-1]:
-            if part not in parent:
-                raise FileNotFoundError(f"Parent path does not exist: {output_path}")
-            parent = parent[part]
-            if not isinstance(parent, dict):
-                raise NotADirectoryError(f"Path segment is not a directory: {part}")
-        name = parts[-1]
-        if name in parent:
+        key = self._normalize(output_path)
+
+        # Check if parent directory exists (simple flat structure)
+        parent_path = self._normalize(Path(key).parent)
+        if parent_path != '.' and parent_path not in self._memory_store:
+            raise FileNotFoundError(f"Parent path does not exist: {output_path}")
+
+        # Check if file already exists
+        if key in self._memory_store:
             raise FileExistsError(f"Path already exists: {output_path}")
-        parent[name] = data
+
+        # Save the file
+        self._memory_store[key] = data
 
     def list_files(
         self,
@@ -73,40 +67,64 @@ class MemoryStorageBackend(StorageBackend):
     ) -> List[Path]:
         from fnmatch import fnmatch
 
-        def recurse(base_dict, base_path):
-            result = []
-            for k, v in base_dict.items():
-                full_path = base_path / k
-                if isinstance(v, dict):
-                    if recursive:
-                        result.extend(recurse(v, full_path))
-                else:
-                    if fnmatch(k, pattern):
-                        if not extensions or Path(k).suffix in extensions:
-                            result.append(full_path)
-            return result
+        dir_key = self._normalize(directory)
 
-        parts = str(directory).strip("/").split("/")
-        current = self._memory_store
-        for part in parts:
-            current = current.get(part)
-            if current is None:
-                raise FileNotFoundError(f"Directory not found: {directory}")
-            if not isinstance(current, dict):
-                raise NotADirectoryError(f"Path is not a directory: {directory}")
+        # Check if directory exists and is a directory
+        if dir_key not in self._memory_store:
+            raise FileNotFoundError(f"Directory not found: {directory}")
+        if self._memory_store[dir_key] is not None:
+            raise NotADirectoryError(f"Path is not a directory: {directory}")
 
-        return recurse(current, Path(directory))
+        result = []
+        dir_prefix = dir_key + "/" if not dir_key.endswith("/") else dir_key
+
+        for path, value in self._memory_store.items():
+            # Skip if not under this directory
+            if not path.startswith(dir_prefix):
+                continue
+
+            # Get relative path from directory
+            rel_path = path[len(dir_prefix):]
+
+            # Skip if recursive=False and path has subdirectories
+            if not recursive and "/" in rel_path:
+                continue
+
+            # Only include files (value is not None)
+            if value is not None:
+                filename = Path(rel_path).name
+                # If pattern is None, match all files
+                if pattern is None or fnmatch(filename, pattern):
+                    if not extensions or Path(filename).suffix in extensions:
+                        result.append(Path(path))
+
+        return result
 
     def list_dir(self, path: Union[str, Path]) -> List[str]:
-        parts = str(path).strip("/").split("/")
-        current = self._memory_store
-        for part in parts:
-            current = current.get(part)
-            if current is None:
-                raise FileNotFoundError(f"Directory not found: {path}")
-            if not isinstance(current, dict):
-                raise NotADirectoryError(f"Path is not a directory: {path}")
-        return list(current.keys())
+        dir_key = self._normalize(path)
+
+        # Check if directory exists and is a directory
+        if dir_key not in self._memory_store:
+            raise FileNotFoundError(f"Directory not found: {path}")
+        if self._memory_store[dir_key] is not None:
+            raise NotADirectoryError(f"Path is not a directory: {path}")
+
+        # Find all direct children of this directory
+        result = set()
+        dir_prefix = dir_key + "/" if not dir_key.endswith("/") else dir_key
+
+        for stored_path in self._memory_store.keys():
+            if stored_path.startswith(dir_prefix):
+                rel_path = stored_path[len(dir_prefix):]
+                # Only direct children (no subdirectories)
+                if "/" not in rel_path:
+                    result.add(rel_path)
+                else:
+                    # Add the first directory component
+                    first_dir = rel_path.split("/")[0]
+                    result.add(first_dir)
+
+        return list(result)
 
     
     def delete(self, path: Union[str, Path]) -> None:
@@ -123,28 +141,21 @@ class MemoryStorageBackend(StorageBackend):
             IsADirectoryError: If path is a non-empty directory
             StorageResolutionError: For unexpected internal failures
         """
-        components = str(path).strip("/").split("/")
-        current = self._memory_store
-        parent_stack = []
+        key = self._normalize(path)
 
-        # Traverse to the parent of the target
-        for comp in components[:-1]:
-            if not isinstance(current, dict) or comp not in current:
-                raise FileNotFoundError(f"Path not found: {path}")
-            parent_stack.append((current, comp))
-            current = current[comp]
-
-        final_key = components[-1]
-        if final_key not in current:
+        if key not in self._memory_store:
             raise FileNotFoundError(f"Path not found: {path}")
 
-        target = current[final_key]
-
-        if isinstance(target, dict) and target:
-            raise IsADirectoryError(f"Cannot delete non-empty directory: {path}")
+        # If it's a directory, check if it's empty
+        if self._memory_store[key] is None:
+            # Check if directory has any children
+            dir_prefix = key + "/" if not key.endswith("/") else key
+            for stored_path in self._memory_store.keys():
+                if stored_path.startswith(dir_prefix):
+                    raise IsADirectoryError(f"Cannot delete non-empty directory: {path}")
 
         try:
-            del current[final_key]
+            del self._memory_store[key]
         except Exception as e:
             raise StorageResolutionError(f"Failed to delete path from memory store: {path}") from e
     
@@ -162,28 +173,38 @@ class MemoryStorageBackend(StorageBackend):
             FileNotFoundError: If the path does not exist
             StorageResolutionError: If internal deletion fails
         """
-        components = str(path).strip("/").split("/")
-        current = self._memory_store
+        key = self._normalize(path)
 
-        # Traverse to the parent of the target
-        for comp in components[:-1]:
-            if not isinstance(current, dict) or comp not in current:
-                raise FileNotFoundError(f"Path not found: {path}")
-            current = current[comp]
-
-        final_key = components[-1]
-        if final_key not in current:
+        if key not in self._memory_store:
             raise FileNotFoundError(f"Path not found: {path}")
 
         try:
-            # Just delete the key — whether it's file or nested dict
-            del current[final_key]
+            # Delete the path itself
+            del self._memory_store[key]
+
+            # If it was a directory, delete all children
+            dir_prefix = key + "/" if not key.endswith("/") else key
+            keys_to_delete = [k for k in self._memory_store.keys() if k.startswith(dir_prefix)]
+            for k in keys_to_delete:
+                del self._memory_store[k]
+
         except Exception as e:
             raise StorageResolutionError(f"Failed to recursively delete path: {path}") from e
 
     def ensure_directory(self, directory: Union[str, Path]) -> Path:
         key = self._normalize(directory)
         self._prefixes.add(key if key.endswith("/") else key + "/")
+
+        # Create the entire directory hierarchy
+        path_obj = Path(key)
+        parts = path_obj.parts
+
+        # Create each parent directory in the hierarchy
+        for i in range(1, len(parts) + 1):
+            partial_path = self._normalize(Path(*parts[:i]))
+            if partial_path not in self._memory_store:
+                self._memory_store[partial_path] = None  # Directory = None value
+
         return Path(key)
 
 
@@ -230,66 +251,42 @@ class MemoryStorageBackend(StorageBackend):
         """
         Check if a memory path points to a file.
 
-        Follows MemorySymlink objects to their resolved targets before checking type.
-
         Raises:
             FileNotFoundError: If path does not exist
-            IsADirectoryError: If resolved target is a directory
-            StorageResolutionError: On symlink cycles
+            IsADirectoryError: If path is a directory
         """
-        resolved = self._resolve_path(path)
+        key = self._normalize(path)
 
-        if resolved is None:
+        if key not in self._memory_store:
             raise FileNotFoundError(f"Memory path does not exist: {path}")
 
-        seen = set()
-        while isinstance(resolved, MemorySymlink):
-            if resolved.target in seen:
-                raise StorageResolutionError(f"Symlink cycle detected at: {resolved.target}")
-            seen.add(resolved.target)
-            resolved = self._resolve_path(resolved.target)
-
-            if resolved is None:
-                raise FileNotFoundError(f"Broken memory symlink: {resolved.target}")
-
-        if isinstance(resolved, dict):
+        value = self._memory_store[key]
+        if value is None:
             raise IsADirectoryError(f"Path is a directory: {path}")
 
         return True
     
     def is_dir(self, path: Union[str, Path]) -> bool:
         """
-        Check if a memory path points to a directory (i.e., a dict).
-
-        Follows MemorySymlink objects to their resolved targets before checking type.
+        Check if a memory path points to a directory.
 
         Args:
-            path: Memory-style key path (e.g., 'root/data')
+            path: Path to check
 
         Returns:
-            bool: True if path resolves to a directory
+            bool: True if path is a directory
 
         Raises:
-            FileNotFoundError: If path or resolved target does not exist
-            NotADirectoryError: If resolved target is not a directory
+            FileNotFoundError: If path does not exist
+            NotADirectoryError: If path is not a directory
         """
-        resolved = self._resolve_path(path)
+        key = self._normalize(path)
 
-        if resolved is None:
+        if key not in self._memory_store:
             raise FileNotFoundError(f"Memory path does not exist: {path}")
 
-        # Follow symlinks recursively
-        seen = set()
-        while isinstance(resolved, MemorySymlink):
-            if resolved.target in seen:
-                raise StorageResolutionError(f"Symlink cycle detected at: {resolved.target}")
-            seen.add(resolved.target)
-            resolved = self._resolve_path(resolved.target)
-
-            if resolved is None:
-                raise FileNotFoundError(f"Broken symlink target: {resolved.target}")
-
-        if not isinstance(resolved, dict):
+        value = self._memory_store[key]
+        if value is not None:
             raise NotADirectoryError(f"Path is not a directory: {path}")
 
         return True

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Type, Union, Callable
 from functools import wraps
 from openhcs.constants.constants import Backend
+from openhcs.io.exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -257,30 +258,37 @@ class StorageBackend(ABC):
             bool: True if path structurally resolves to a real object
         """
         try:
-            return self.is_file(path) or self.is_dir(path)
-        except FileNotFoundError:
-            return False
-        except NotADirectoryError:
-            return False
-        except StorageResolutionError:
+            return self.is_file(path)
+        except (FileNotFoundError, NotADirectoryError, StorageResolutionError):
+            pass
+        except IsADirectoryError:
+            # Path exists but is a directory, so check if it's a valid directory
+            try:
+                return self.is_dir(path)
+            except (FileNotFoundError, NotADirectoryError, StorageResolutionError):
+                return False
+
+        # If is_file failed for other reasons, try is_dir
+        try:
+            return self.is_dir(path)
+        except (FileNotFoundError, NotADirectoryError, StorageResolutionError):
             return False
 
 
-def storage_registry() -> Dict[str, Type[StorageBackend]]:
+def _create_storage_registry() -> Dict[str, StorageBackend]:
     """
     Create a new storage registry.
 
     This function creates a dictionary mapping backend names to their respective
-    storage backend classes. It is the canonical factory for creating backend
+    storage backend instances. It is the canonical factory for creating backend
     registries in the system.
 
     Returns:
-        A dictionary mapping backend names to backend classes
+        A dictionary mapping backend names to backend instances
 
     Note:
-        This is a factory function that should be called by any component
-        that needs a backend registry. The orchestrator is just one user
-        of this registry, not responsible for it.
+        This is an internal factory function. Use the global storage_registry
+        instance instead of calling this directly.
     """
     # Import here to avoid circular imports
     from openhcs.io.disk import DiskStorageBackend
@@ -288,7 +296,12 @@ def storage_registry() -> Dict[str, Type[StorageBackend]]:
     from openhcs.io.zarr import ZarrStorageBackend
 
     return {
-        Backend.DISK.value: DiskStorageBackend,
-        Backend.MEMORY.value: MemoryStorageBackend,
-        Backend.ZARR.value: ZarrStorageBackend
+        Backend.DISK.value: DiskStorageBackend(),
+        Backend.MEMORY.value: MemoryStorageBackend(),
+        Backend.ZARR.value: ZarrStorageBackend()
     }
+
+
+# Global singleton storage registry - created once at module import time
+# This is the shared registry instance that all components should use
+storage_registry = _create_storage_registry()

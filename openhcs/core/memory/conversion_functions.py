@@ -65,6 +65,8 @@ def _numpy_to_torch(data: Any, gpu_id: int) -> Any:
     torch = _ensure_module("torch")
 
     # Validate gpu_id
+    if gpu_id is None:
+        raise ValueError("🔥 GPU ID IS NONE! The compiler failed to assign a GPU to this torch function. This is a GPU registry/compiler bug!")
     if gpu_id < 0:
         raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
 
@@ -90,6 +92,8 @@ def _numpy_to_tensorflow(data: Any, gpu_id: int) -> Any:
     tf = _ensure_module("tensorflow")
 
     # Validate gpu_id
+    if gpu_id is None:
+        raise ValueError("🔥 GPU ID IS NONE! The compiler failed to assign a GPU to this tensorflow function. This is a GPU registry/compiler bug!")
     if gpu_id < 0:
         raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
 

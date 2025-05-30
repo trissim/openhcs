@@ -38,27 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_cupy_array(array: Any, name: str = "input") -> None:  # type: ignore
-    """
-    Validate that the input is a CuPy array.
-
-    Args:
-        array: Array to validate
-        name: Name of the array for error messages
-
-    Raises:
-        ImportError: If CuPy is not available
-        TypeError: If the array is not a CuPy array
-        ValueError: If the array doesn't support DLPack
-    """
-    # The compiler will ensure this function is only called when CuPy is available
-    # No need to check for CuPy availability here
-
+    """Validate that the input is a CuPy array."""
     if not isinstance(array, cp.ndarray):
-        raise TypeError(
-            f"{name} must be a CuPy array, got {type(array)}. "
-            f"No automatic conversion is performed to maintain explicit contracts. "
-            f"Use DLPack for zero-copy GPU-to-GPU transfers."
-        )
+        raise TypeError(f"{name} must be a CuPy array, got {type(array)}")
 
 
 def phase_correlation(

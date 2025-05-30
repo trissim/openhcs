@@ -13,7 +13,7 @@ The implementation follows the OpenHCS doctrinal principles:
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Tuple
+from typing import TYPE_CHECKING, Any, Tuple, Optional
 
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import special_outputs, chain_breaker
@@ -23,6 +23,7 @@ from openhcs.core.utils import optional_import
 if TYPE_CHECKING:
     import cupy as cp
     from cupyx.scipy import ndimage
+    from openhcs.core.context import ProcessingContext
 
 # Import CuPy as an optional dependency
 cp = optional_import("cupy")
@@ -146,8 +147,6 @@ def phase_correlation(
 @cupy_func
 def gpu_ashlar_align_cupy(
     tiles: "cp.ndarray",  # type: ignore
-    num_rows: int,
-    num_cols: int,
     *,
     patch_size: int = 128,
     search_radius: int = 20,
@@ -155,6 +154,7 @@ def gpu_ashlar_align_cupy(
     method: str = "phase_correlation",
     return_affine: bool = False,
     verbose: bool = False,
+    context: Optional['ProcessingContext'] = None,
     **kwargs
 ) -> Tuple["cp.ndarray", "cp.ndarray"]:  # type: ignore # Return type changed
     """
@@ -163,14 +163,13 @@ def gpu_ashlar_align_cupy(
 
     Args:
         tiles: 3D tensor of shape (Z, Y, X) where each Z slice is a 2D tile
-        num_rows: Number of rows in the grid
-        num_cols: Number of columns in the grid
         patch_size: Size of the patches used for correlation
         search_radius: Maximum search radius for correlation
         normalize: Whether to normalize the images before correlation
         method: Method for computing correlation (only "phase_correlation" is supported)
         return_affine: Whether to return affine transformation matrices
         verbose: Whether to print progress information
+        context: Processing context containing microscope handler for grid dimensions
         **kwargs: Additional parameters
 
     Returns:
@@ -183,12 +182,28 @@ def gpu_ashlar_align_cupy(
         ImportError: If CuPy is not available
         ValueError: If the input shape is invalid
         TypeError: If the input is not a CuPy array
+        RuntimeError: If context or microscope handler is not available
     """
     # Validate inputs
     _validate_cupy_array(tiles, "tiles")
 
     if tiles.ndim != 3:
         raise ValueError(f"Input must be a 3D tensor, got {tiles.ndim}D")
+
+    # Get grid dimensions from microscope handler
+    if context is None:
+        raise RuntimeError("Processing context is required to get grid dimensions")
+
+    if not hasattr(context, 'microscope_handler') or context.microscope_handler is None:
+        raise RuntimeError("Microscope handler not available in context")
+
+    # Get the plate path from context (use workspace path as plate path)
+    plate_path = getattr(context, 'workspace_path', None)
+    if plate_path is None:
+        raise RuntimeError("Workspace path not available in context")
+
+    # Get grid dimensions from metadata
+    num_cols, num_rows = context.microscope_handler.get_grid_dimensions(plate_path)
 
     Z, H, W = tiles.shape
     if Z != num_rows * num_cols:

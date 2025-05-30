@@ -126,7 +126,7 @@ def _enforce_gpu_device_requirements(memory_type: str, gpu_id: int) -> None:
             raise ValueError(f"Invalid GPU device ID: {gpu_id}. Must be a non-negative integer.")
 
 
-def stack_slices(slices: List[Any], memory_type: str, gpu_id: int, allow_single_slice: bool = False) -> Any:
+def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
     """
     Stack 2D slices into a 3D array with the specified memory type.
 
@@ -137,26 +137,18 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int, allow_single_
         slices: List of 2D slices (numpy arrays, cupy arrays, torch tensors, etc.)
         memory_type: The memory type to use for the stacked array (REQUIRED)
         gpu_id: The target GPU device ID (REQUIRED)
-        allow_single_slice: If True, allows stacking a single slice into a 3D array with shape [1, Y, X].
-                           If False (default), raises an error when only one slice is provided.
 
     Returns:
         A 3D array with the specified memory type of shape [Z, Y, X]
 
     Raises:
         ValueError: If memory_type is not supported or slices is empty
-        ValueError: If slices contains only one element and allow_single_slice is False
         ValueError: If gpu_id is negative for GPU memory types
         ValueError: If slices are not 2D arrays
         MemoryConversionError: If conversion fails
     """
     if not slices:
         raise ValueError("Cannot stack empty list of slices")
-
-    # Check for single slice case
-    if len(slices) == 1 and not allow_single_slice:
-        raise ValueError("Cannot stack a single slice unless allow_single_slice=True. "
-                         "This prevents silent shape coercion and enforces explicit intent.")
 
     # Verify all slices are 2D
     for i, slice_data in enumerate(slices):
@@ -175,19 +167,20 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int, allow_single_
 
         # Use the appropriate conversion method based on the target memory type
         if memory_type == MEMORY_TYPE_NUMPY:
-            converted_slice = wrapped.to_numpy()
+            converted_wrapper = wrapped.to_numpy()
         elif memory_type == MEMORY_TYPE_CUPY:
-            converted_slice = wrapped.to_cupy(allow_cpu_roundtrip=False)
+            converted_wrapper = wrapped.to_cupy(allow_cpu_roundtrip=False)
         elif memory_type == MEMORY_TYPE_TORCH:
-            converted_slice = wrapped.to_torch(allow_cpu_roundtrip=False)
+            converted_wrapper = wrapped.to_torch(allow_cpu_roundtrip=False)
         elif memory_type == MEMORY_TYPE_TENSORFLOW:
-            converted_slice = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
+            converted_wrapper = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
         elif memory_type == MEMORY_TYPE_JAX:
-            converted_slice = wrapped.to_jax(allow_cpu_roundtrip=False)
+            converted_wrapper = wrapped.to_jax(allow_cpu_roundtrip=False)
         else:
             raise ValueError(f"Unsupported memory type: {memory_type}")
 
-        converted_slices.append(converted_slice)
+        # Extract the raw data from the MemoryWrapper for stacking
+        converted_slices.append(converted_wrapper.data)
 
     # Stack the converted slices using the appropriate function
     if memory_type == MemoryType.NUMPY.value:
@@ -252,17 +245,20 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
 
     # Use the appropriate conversion method based on the target memory type
     if memory_type == MemoryType.NUMPY.value:
-        array = wrapped.to_numpy()
+        array_wrapper = wrapped.to_numpy()
     elif memory_type == MemoryType.CUPY.value:
-        array = wrapped.to_cupy(allow_cpu_roundtrip=False)
+        array_wrapper = wrapped.to_cupy(allow_cpu_roundtrip=False)
     elif memory_type == MemoryType.TORCH.value:
-        array = wrapped.to_torch(allow_cpu_roundtrip=False)
+        array_wrapper = wrapped.to_torch(allow_cpu_roundtrip=False)
     elif memory_type == MemoryType.TENSORFLOW.value:
-        array = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
+        array_wrapper = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
     elif memory_type == MemoryType.JAX.value:
-        array = wrapped.to_jax(allow_cpu_roundtrip=False)
+        array_wrapper = wrapped.to_jax(allow_cpu_roundtrip=False)
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
+
+    # Extract the raw data from the MemoryWrapper
+    array = array_wrapper.data
 
     # Extract slices along axis 0 (already in the target memory type)
     slices = [array[i] for i in range(array.shape[0])]

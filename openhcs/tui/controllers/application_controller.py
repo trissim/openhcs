@@ -15,7 +15,7 @@ from prompt_toolkit.application import Application, get_app
 from prompt_toolkit.layout import Layout
 
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.config.global_config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.tui.tui_architecture import TUIState
 from openhcs.tui.services.dialog_service import DialogService
 from openhcs.tui.controllers.layout_controller import LayoutController

@@ -23,7 +23,7 @@ from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
-from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.io.exceptions import StorageWriteError
 from openhcs.io.filemanager import FileManager
 from openhcs.io.base import storage_registry
@@ -89,7 +89,8 @@ class PipelineOrchestrator:
             self.registry = storage_registry
             logger.info("PipelineOrchestrator using provided StorageRegistry instance.")
         else:
-            self.registry = storage_registry() # Get the global singleton registry
+            from openhcs.io.base import storage_registry as global_registry
+            self.registry = global_registry  # Use the global singleton registry
             logger.info("PipelineOrchestrator created its own StorageRegistry instance (global singleton).")
         
         # Orchestrator always creates its own FileManager, using the determined registry
@@ -166,9 +167,18 @@ class PipelineOrchestrator:
         if self._initialized:
             logger.info("Orchestrator already initialized.")
             return self
-        
+
         self.initialize_workspace(workspace_path)
         self.initialize_microscope_handler()
+
+        # Process workspace with microscope-specific logic
+        logger.info("Processing workspace with microscope handler...")
+        actual_image_dir = self.microscope_handler.post_workspace(self.workspace_path, self.filemanager)
+
+        # Use the actual image directory returned by the microscope handler
+        self.input_dir = Path(actual_image_dir)
+        logger.info(f"Set input directory to: {self.input_dir}")
+
         self._initialized = True
         logger.info("PipelineOrchestrator fully initialized.")
         return self
@@ -185,10 +195,11 @@ class PipelineOrchestrator:
         if self.input_dir is None:
              raise RuntimeError("Orchestrator input_dir is not set; initialize orchestrator first.")
 
-        context = ProcessingContext(well_id=well_id, filemanager=self.filemanager)
-        # Pass the global_config to the context
-        # ProcessingContext will need to be updated to store this
-        context.global_config = self.global_config
+        context = ProcessingContext(
+            global_config=self.global_config,
+            well_id=well_id,
+            filemanager=self.filemanager
+        )
         context.orchestrator = self
         context.microscope_handler = self.microscope_handler
         context.input_dir = self.input_dir
@@ -273,24 +284,28 @@ class PipelineOrchestrator:
 
         try:
             for step in pipeline_definition:
-                logger.info(f"Executing step {step.uid} ({step.name if hasattr(step, 'name') else 'N/A'}) for well {well_id}")
+                # Generate step_id from object reference (elegant stateless approach)
+                step_id = get_step_id(step)
+                step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+
+                logger.info(f"Executing step {step_id} ({step_name}) for well {well_id}")
                 step.process(frozen_context)
 
                 if visualizer:
-                    step_plan = frozen_context.get_step_plan(step.uid)
+                    step_plan = frozen_context.get_step_plan(step_id)
                     if step_plan and step_plan.get('visualize', False):
                         output_dir = step_plan.get('output_dir')
                         write_backend = step_plan.get('write_backend', Backend.DISK.value)
                         if output_dir:
-                            logger.debug(f"Visualizing output for step {step.uid} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                            logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
                             visualizer.visualize_path(
-                                step_id=step.uid,
+                                step_id=step_id,
                                 path=str(output_dir),
                                 backend=write_backend,
                                 well_id=well_id
                             )
                         else:
-                            logger.warning(f"Step {step.uid} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+                            logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
             
             logger.info(f"Pipeline execution completed successfully for well {well_id}")
             return {"status": "success", "well_id": well_id}

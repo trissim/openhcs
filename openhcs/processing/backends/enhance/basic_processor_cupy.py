@@ -30,11 +30,9 @@ if TYPE_CHECKING:
 
 # Import CuPy as an optional dependency
 cp = optional_import("cupy")
-linalg = None
+cupyx_scipy = None
 if cp is not None:
     cupyx_scipy = optional_import("cupyx.scipy")
-    if cupyx_scipy is not None:
-        linalg = cupyx_scipy.linalg
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +79,8 @@ def _low_rank_approximation(matrix: "cp.ndarray", rank: int = 3) -> "cp.ndarray"
     Returns:
         Low-rank approximation of the input matrix
     """
-    # Perform SVD
-    U, s, Vh = linalg.svd(matrix, full_matrices=False)
+    # Perform SVD using CuPy's built-in linalg
+    U, s, Vh = cp.linalg.svd(matrix, full_matrices=False)
 
     # Truncate to the specified rank
     s[rank:] = 0

@@ -55,14 +55,11 @@ class MemoryWrapper:
         self._data = data
         self._memory_type = memory_type
 
-        # For CPU memory types (numpy), set gpu_id to None
-        if memory_type == MemoryType.NUMPY.value:
-            self._gpu_id = None
-        else:
-            # For GPU memory types, use the provided gpu_id
-            if gpu_id < 0:
-                raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
-            self._gpu_id = gpu_id
+        # Store the provided gpu_id for all memory types
+        # We need gpu_id even for numpy data when converting TO GPU memory types
+        if gpu_id is not None and gpu_id < 0:
+            raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
+        self._gpu_id = gpu_id
 
     @property
     def memory_type(self) -> str:

@@ -32,13 +32,23 @@ try:
 except ImportError:
     pass
 
+# Import self-supervised 3D deconvolution implementation
+try:
+    from openhcs.processing.backends.enhance.self_supervised_3d_deconvolution import \
+        self_supervised_3d_deconvolution
+except ImportError:
+    pass
+
 __all__ = [
     # BaSiC processor implementations
     "basic_flatfield_correction_numpy",
     "basic_flatfield_correction_batch_numpy",
     "basic_flatfield_correction_cupy",
     "basic_flatfield_correction_batch_cupy",
-    
+
     # N2V2 processor implementation
     "n2v2_denoise_torch",
+
+    # Self-supervised 3D deconvolution implementation
+    "self_supervised_3d_deconvolution",
 ]

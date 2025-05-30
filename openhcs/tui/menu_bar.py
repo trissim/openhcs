@@ -1098,9 +1098,9 @@ class MenuBar(Container):
 
     def _get_step_uid_for_removal(self, selected_step_dict: Dict[str, Any]) -> Optional[str]:
         """Get and validate step UID for removal."""
-        step_uid_to_remove = selected_step_dict.get('uid')
+        step_uid_to_remove = selected_step_dict.get('step_id')
         if not step_uid_to_remove:
-            self._notify_error("remove_step", "error", "Selected step has no UID, cannot remove.")
+            self._notify_error("remove_step", "error", "Selected step has no step_id, cannot remove.")
             return None
         return step_uid_to_remove
 
@@ -1109,7 +1109,7 @@ class MenuBar(Container):
         current_pipeline = active_orchestrator.pipeline_definition
         original_length = len(current_pipeline)
 
-        active_orchestrator.pipeline_definition = [step for step in current_pipeline if step.uid != step_uid_to_remove]
+        active_orchestrator.pipeline_definition = [step for step in current_pipeline if step.step_id != step_uid_to_remove]
 
         return len(active_orchestrator.pipeline_definition) < original_length
 

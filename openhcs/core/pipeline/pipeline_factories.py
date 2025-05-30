@@ -92,19 +92,30 @@ class AutoPipelineFactory:
         """
         # Create position generation pipeline
         pos_pipeline = Pipeline(
-            input_dir=self.input_dir,
             steps=[
                 # Always include Z-flattening for position generation
-                ZFlatStep(method="max"),
+                FunctionStep(
+                    func=(create_projection, {'method': 'max_projection'}),
+                    variable_components=['z_index'],
+                    name="Z-Stack Flattening"
+                ),
 
                 # Include normalization if enabled
-                NormStep(**self.normalization_params) if self.normalize else None,
+                FunctionStep(
+                    func=(stack_percentile_normalize, self.normalization_params),
+                    variable_components=['site'],
+                    name="Image Normalization"
+                ) if self.normalize else None,
 
                 # Always include channel compositing for reference image
-                CompositeStep(weights=self.channel_weights),
+                FunctionStep(
+                    func=(create_composite, {'weights': self.channel_weights}),
+                    variable_components=['channel'],
+                    name="Channel Compositing"
+                ),
 
-                # Always include position generation
-                PositionGenerationStep()
+                # TODO: Replace with actual position generation function
+                # PositionGenerationStep()
             ],
             name="Position Generation Pipeline"
         )
@@ -117,22 +128,28 @@ class AutoPipelineFactory:
 
         # Create assembly pipeline
         assembly_pipeline = Pipeline(
-            input_dir=self.input_dir,
-            output_dir=self.output_dir,
             steps=[
                 # Include normalization if enabled (create new instance)
-                NormStep(**self.normalization_params) if self.normalize else None,
+                FunctionStep(
+                    func=(stack_percentile_normalize, self.normalization_params),
+                    variable_components=['site'],
+                    name="Image Normalization"
+                ) if self.normalize else None,
 
                 # Include Z-flattening for assembly if enabled
-                (FocusStep(
-                    focus_options={'metric': self.z_method}
+                (FunctionStep(
+                    func=deep_focus,
+                    variable_components=['z_index'],
+                    name="Focus Selection"
                 ) if self.is_focus_method else
-                ZFlatStep(
-                    method=self.z_method
+                FunctionStep(
+                    func=(create_projection, {'method': f'{self.z_method}_projection'}),
+                    variable_components=['z_index'],
+                    name="Z-Stack Flattening"
                 )) if self.flatten_z else None,
 
-                # Always include image stitching with explicit positions directory
-                ImageStitchingStep(positions_dir=positions_dir)
+                # TODO: Replace with actual image stitching function
+                # ImageStitchingStep(positions_dir=positions_dir)
             ],
             name="Image Assembly Pipeline"
         )

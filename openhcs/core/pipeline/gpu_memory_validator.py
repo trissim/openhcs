@@ -17,22 +17,48 @@ from typing import Any, Dict
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
 from openhcs.core.utils import optional_import
 
-# Define a fallback function for when the orchestrator module is not available
-def get_gpu_registry_status():
-    """
-    Fallback function that returns a simple GPU registry status.
-    Used when the orchestrator module is not available.
-    """
-    return {0: {"max_pipelines": 1, "active": 0}}
-
-# Try to import the real function if available
-try:
-    from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
-except ImportError:
-    # Keep the fallback function defined above
-    pass
+# FAIL FAST: No fallback GPU registry - if orchestrator is not available, crash immediately
+from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_required_libraries(required_libraries: set) -> None:
+    """
+    Validate that required GPU libraries are installed.
+
+    Args:
+        required_libraries: Set of memory types that require library validation
+
+    Raises:
+        ValueError: If any required library is not installed
+    """
+    missing_libraries = []
+
+    for memory_type in required_libraries:
+        if memory_type == "cupy":
+            cupy = optional_import("cupy")
+            if cupy is None:
+                missing_libraries.append("cupy")
+        elif memory_type == "torch":
+            torch = optional_import("torch")
+            if torch is None:
+                missing_libraries.append("torch")
+        elif memory_type == "tensorflow":
+            tensorflow = optional_import("tensorflow")
+            if tensorflow is None:
+                missing_libraries.append("tensorflow")
+        elif memory_type == "jax":
+            jax = optional_import("jax")
+            if jax is None:
+                missing_libraries.append("jax")
+
+    if missing_libraries:
+        raise ValueError(
+            f"🔥 COMPILATION FAILED: Required GPU libraries not installed: {', '.join(missing_libraries)}. "
+            f"Pipeline contains functions decorated with @{'/'.join(missing_libraries)}_func but the corresponding "
+            f"libraries are not available. Install the missing libraries or remove the functions from your pipeline."
+        )
 
 
 class GPUMemoryTypeValidator:
@@ -72,34 +98,39 @@ class GPUMemoryTypeValidator:
         Raises:
             ValueError: If no GPUs are available
         """
-        # Check if any step requires GPU
+        # Check if any step requires GPU and validate library availability
         requires_gpu = False
+        required_libraries = set()
 
         for step_id, step_plan in step_plans.items():
             input_memory_type = step_plan.get('input_memory_type')
             output_memory_type = step_plan.get('output_memory_type')
 
-            if (input_memory_type in VALID_GPU_MEMORY_TYPES or
-                output_memory_type in VALID_GPU_MEMORY_TYPES):
+            if input_memory_type in VALID_GPU_MEMORY_TYPES:
                 requires_gpu = True
-                break
+                required_libraries.add(input_memory_type)
+
+            if output_memory_type in VALID_GPU_MEMORY_TYPES:
+                requires_gpu = True
+                required_libraries.add(output_memory_type)
 
         # If no step requires GPU, return empty assignments
         if not requires_gpu:
             return {}
+
+        # Validate that required libraries are installed
+        _validate_required_libraries(required_libraries)
 
         # Get GPU registry status
         try:
             gpu_registry = get_gpu_registry_status()
             logger.info("GPU registry status: %s", gpu_registry)
         except Exception as e:
-            logger.warning("Failed to get GPU registry status: %s", e)
-            gpu_registry = {}
+            raise ValueError(f"🔥 COMPILATION FAILED: Cannot access GPU registry: {e}. GPU functions require initialized GPU registry!") from e
 
         if not gpu_registry:
             raise ValueError(
-                "Clause 293 Violation: No GPUs available for assignment. "
-                "Cannot validate GPU memory types."
+                "🔥 COMPILATION FAILED: No GPUs available in registry but pipeline contains GPU-decorated functions (@torch, @cupy, etc.)!"
             )
 
         # Find the least loaded GPU

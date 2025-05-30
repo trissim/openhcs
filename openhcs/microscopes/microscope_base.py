@@ -282,8 +282,8 @@ class MicroscopeHandler(ABC):
         elif not isinstance(folder_path, Path):
             raise TypeError(f"Expected string or Path object, got {type(folder_path).__name__}")
 
-        # Ensure the path exists
-        if not folder_path.exists():
+        # Ensure the path exists using FileManager abstraction
+        if not filemanager.exists(str(folder_path), backend):
             raise ValueError(f"Folder path does not exist: {folder_path}")
 
         # Create pattern engine on demand with the provided filemanager
@@ -307,7 +307,7 @@ class MicroscopeHandler(ABC):
 
         return patterns_by_well
 
-    def path_list_from_pattern(self, directory: Union[str, Path], pattern, filemanager: FileManager, backend: str):
+    def path_list_from_pattern(self, directory: Union[str, Path], pattern, filemanager: FileManager, backend: str, variable_components: Optional[List[str]] = None):
         """
         Delegate to pattern engine.
 
@@ -316,6 +316,7 @@ class MicroscopeHandler(ABC):
             pattern: Pattern to match (str for literal filenames)
             filemanager: FileManager instance for file operations
             backend: Backend to use for file operations (required)
+            variable_components: List of components that can vary (will be ignored during matching)
 
         Returns:
             List of matching filenames
@@ -324,31 +325,26 @@ class MicroscopeHandler(ABC):
             TypeError: If a string with braces is passed (pattern paths are no longer supported)
             ValueError: If directory does not exist
         """
-        # Ensure directory is a valid path
+        # Ensure directory is a valid path using FileManager abstraction
         if isinstance(directory, str):
             directory_path = Path(directory)
-            if not directory_path.exists():
+            if not filemanager.exists(str(directory_path), backend):
                 raise ValueError(f"Directory does not exist: {directory}")
         elif isinstance(directory, Path):
             directory_path = directory
-            if not directory_path.exists():
+            if not filemanager.exists(str(directory_path), backend):
                 raise ValueError(f"Directory does not exist: {directory}")
         else:
             raise TypeError(f"Expected string or Path object, got {type(directory).__name__}")
 
-        # Enforce Clause 88 - No Inferred Capabilities
-        # Reject strings with braces as pattern paths are no longer supported
-        if isinstance(pattern, str) and '{' in pattern and '}' in pattern:
-            raise TypeError(
-                f"Clause 88 Violation: String '{pattern}' contains braces which indicates a pattern. "
-                "Pattern paths are no longer supported."
-            )
+        # Allow string patterns with braces - they are used for template matching
+        # The pattern engine will handle template expansion to find matching files
 
         # Create pattern engine on demand with the provided filemanager
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
 
         # Delegate to the pattern engine
-        return pattern_engine.path_list_from_pattern(directory_path, pattern, backend=backend)
+        return pattern_engine.path_list_from_pattern(directory_path, pattern, backend=backend, variable_components=variable_components)
 
     # Delegate metadata handling methods to metadata_handler with context
 

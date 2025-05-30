@@ -395,8 +395,8 @@ class ImageXpressMetadataHandler(MetadataHandler):
 
         # Parse HTD file
         try:
-            # Use filemanager instead of direct open()
-            with self.filemanager.open_file(htd_file, 'r') as f:
+            # HTD files are plain text, read directly
+            with open(htd_file, 'r', encoding='utf-8') as f:
                 htd_content = f.read()
 
             # Extract grid dimensions - try multiple formats

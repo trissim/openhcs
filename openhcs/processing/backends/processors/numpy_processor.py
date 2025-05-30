@@ -20,7 +20,6 @@ from skimage import transform as trans
 
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory.decorators import numpy as numpy_func
-from openhcs.processing.processor import ImageProcessorInterface
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     return weight_mask
 
 
-def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
+def _validate_3d_array(array: Any, name: str = "input") -> None:
     """
     Validate that the input is a 3D NumPy array.
 
@@ -80,7 +79,7 @@ def _validate_3d_array(cls, array: Any, name: str = "input") -> None:
         raise ValueError(f"{name} must be a 3D array, got {array.ndim}D")
 
 @numpy_func
-def sharpen(cls, image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.ndarray:
+def sharpen(image: np.ndarray, radius: float = 1.0, amount: float = 1.0) -> np.ndarray:
     """
     Sharpen a 3D image using unsharp masking.
 
@@ -94,7 +93,7 @@ def sharpen(cls, image: np.ndarray, radius: float = 1.0, amount: float = 1.0) ->
     Returns:
         Sharpened 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Store original dtype
     dtype = image.dtype
@@ -123,7 +122,7 @@ def sharpen(cls, image: np.ndarray, radius: float = 1.0, amount: float = 1.0) ->
     return result.astype(dtype)
 
 @numpy_func
-def percentile_normalize(cls, image: np.ndarray,
+def percentile_normalize(image: np.ndarray,
                         low_percentile: float = 1.0,
                         high_percentile: float = 99.0,
                         target_min: float = 0.0,
@@ -143,7 +142,7 @@ def percentile_normalize(cls, image: np.ndarray,
     Returns:
         Normalized 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result = np.zeros_like(image, dtype=np.float32)
@@ -166,7 +165,7 @@ def percentile_normalize(cls, image: np.ndarray,
     return result.astype(np.uint16)
 
 @numpy_func
-def stack_percentile_normalize(cls, stack: np.ndarray,
+def stack_percentile_normalize(stack: np.ndarray,
                               low_percentile: float = 1.0,
                               high_percentile: float = 99.0,
                               target_min: float = 0.0,
@@ -187,7 +186,7 @@ def stack_percentile_normalize(cls, stack: np.ndarray,
     Returns:
         Normalized 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
     p_low = np.percentile(stack, low_percentile)
@@ -228,7 +227,7 @@ def create_composite(
 
     # Validate all images are 3D NumPy arrays with the same shape
     for i, img in enumerate(images):
-        cls._validate_3d_array(img, f"images[{i}]")
+        _validate_3d_array(img, f"images[{i}]")
         if img.shape != images[0].shape:
             raise ValueError(f"All images must have the same shape. "
                             f"images[0] has shape {images[0].shape}, "
@@ -279,7 +278,7 @@ def create_composite(
     return composite
 
 @numpy_func
-def apply_mask(cls, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """
     Apply a mask to a 3D image.
 
@@ -293,7 +292,7 @@ def apply_mask(cls, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     Returns:
         Masked 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Handle 2D mask (apply to each Z-slice)
     if isinstance(mask, np.ndarray) and mask.ndim == 2:
@@ -324,7 +323,7 @@ def apply_mask(cls, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     raise TypeError(f"mask must be a 2D or 3D NumPy array, got {type(mask)}")
 
 @numpy_func
-def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.ndarray:
+def create_weight_mask(shape: Tuple[int, int], margin_ratio: float = 0.1) -> np.ndarray:
     """
     Create a weight mask for blending images.
 
@@ -342,7 +341,7 @@ def create_weight_mask(cls, shape: Tuple[int, int], margin_ratio: float = 0.1) -
     return create_linear_weight_mask(height, width, margin_ratio)
 
 @numpy_func
-def max_projection(cls, stack: np.ndarray) -> np.ndarray:
+def max_projection(stack: np.ndarray) -> np.ndarray:
     """
     Create a maximum intensity projection from a Z-stack.
 
@@ -352,14 +351,14 @@ def max_projection(cls, stack: np.ndarray) -> np.ndarray:
     Returns:
         3D NumPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create max projection
     projection_2d = np.max(stack, axis=0)
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 @numpy_func
-def mean_projection(cls, stack: np.ndarray) -> np.ndarray:
+def mean_projection(stack: np.ndarray) -> np.ndarray:
     """
     Create a mean intensity projection from a Z-stack.
 
@@ -369,7 +368,7 @@ def mean_projection(cls, stack: np.ndarray) -> np.ndarray:
     Returns:
         3D NumPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Create mean projection
     projection_2d = np.mean(stack, axis=0).astype(stack.dtype)
@@ -397,7 +396,7 @@ def stack_equalize_histogram(
     Returns:
         Equalized 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     # Flatten the entire stack to compute the global histogram
     flat_stack = stack.flatten()
@@ -418,7 +417,7 @@ def stack_equalize_histogram(
     return equalized_stack.astype(np.uint16)
 
 @numpy_func
-def create_projection(cls, stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
+def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.ndarray:
     """
     Create a projection from a stack using the specified method.
 
@@ -429,17 +428,16 @@ def create_projection(cls, stack: np.ndarray, method: str = "max_projection") ->
     Returns:
         3D NumPy array of shape (1, Y, X)
     """
-    cls._validate_3d_array(stack)
+    _validate_3d_array(stack)
 
     if method == "max_projection":
-        return cls.max_projection(stack)
+        return max_projection(stack)
 
     if method == "mean_projection":
-        return cls.mean_projection(stack)
+        return mean_projection(stack)
 
-    # Default case for unknown methods
-    logger.warning("Unknown projection method: %s, using max_projection", method)
-    return cls.max_projection(stack)
+    # FAIL FAST: No fallback projection methods
+    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
 @numpy_func
 def tophat(
@@ -460,7 +458,7 @@ def tophat(
     Returns:
         Filtered 3D NumPy array of shape (Z, Y, X)
     """
-    cls._validate_3d_array(image)
+    _validate_3d_array(image)
 
     # Process each Z-slice independently
     result = np.zeros_like(image)

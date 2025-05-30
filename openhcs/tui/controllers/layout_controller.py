@@ -12,12 +12,12 @@ import logging
 from typing import Any, Dict, Optional
 
 from prompt_toolkit.layout import Container, HSplit, VSplit, Window, Dimension
-from prompt_toolkit.layout.containers import DynamicContainer, Frame
-from prompt_toolkit.widgets import Box, Label
+from prompt_toolkit.layout.containers import DynamicContainer
+from prompt_toolkit.widgets import Box, Label, Frame
 from prompt_toolkit.key_binding import KeyBindings
 
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.config.global_config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.tui.tui_architecture import TUIState
 from openhcs.tui.components import FramedButton
 from openhcs.tui.controllers.plate_manager_controller import PlateManagerController
