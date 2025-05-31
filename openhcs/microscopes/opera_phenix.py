@@ -40,7 +40,7 @@ class OperaPhenixHandler(MicroscopeHandler):
     @property
     def common_dirs(self) -> List[str]:
         """Subdirectory names commonly used by Opera Phenix."""
-        return 'image'
+        return ['Images']
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager):
         """
