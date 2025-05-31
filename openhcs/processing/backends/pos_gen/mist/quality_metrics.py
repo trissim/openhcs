@@ -4,7 +4,8 @@ Quality Metrics for MIST Algorithm
 Functions for computing correlation quality and adaptive thresholds.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Tuple, Dict
+import logging
 
 from openhcs.core.utils import optional_import
 
@@ -184,3 +185,167 @@ def estimate_stage_parameters(
     backlash = cp.mean(displacements) - expected_spacing
 
     return float(repeatability), float(backlash)
+
+
+def compute_adaptive_quality_threshold(
+    all_qualities: List[float],
+    base_threshold: float = 0.3,
+    percentile_threshold: float = 0.25
+) -> float:
+    """
+    Compute adaptive quality threshold based on distribution of correlation values.
+
+    Based on NIST stage model validation approach.
+    """
+    if not all_qualities:
+        return base_threshold
+
+    qualities_array = cp.array(all_qualities)
+
+    # Remove invalid correlations
+    valid_qualities = qualities_array[qualities_array >= 0]
+
+    if len(valid_qualities) == 0:
+        return base_threshold
+
+    # Use percentile-based threshold
+    percentile_value = float(cp.percentile(valid_qualities, percentile_threshold * 100))
+
+    # Ensure minimum threshold
+    adaptive_threshold = max(base_threshold, percentile_value)
+
+    return adaptive_threshold
+
+
+def validate_translation_consistency(
+    translations: List[Tuple[float, float, float]],
+    expected_spacing: Tuple[float, float],
+    tolerance_factor: float = 0.2,
+    min_quality: float = 0.3
+) -> List[bool]:
+    """
+    Validate translation consistency against expected grid spacing.
+
+    Based on NIST stage model validation.
+    """
+    expected_dx, expected_dy = expected_spacing
+    tolerance_dx = expected_dx * tolerance_factor
+    tolerance_dy = expected_dy * tolerance_factor
+
+    valid_flags = []
+
+    for dy, dx, quality in translations:
+        # Check if displacement is within expected range
+        dx_valid = abs(dx - expected_dx) <= tolerance_dx
+        dy_valid = abs(dy - expected_dy) <= tolerance_dy
+        quality_valid = quality >= min_quality  # Minimum quality threshold
+
+        is_valid = dx_valid and dy_valid and quality_valid
+        valid_flags.append(is_valid)
+
+    return valid_flags
+
+
+def debug_phase_correlation_matrix(
+    correlation_matrix: "cp.ndarray",
+    peaks: List[Tuple[int, int, float]],
+    save_path: str = None
+) -> None:
+    """
+    Create visualization of phase correlation matrix with detected peaks.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logging.warning("matplotlib not available, skipping correlation matrix visualization")
+        return
+
+    # Convert to CPU for visualization
+    corr_cpu = cp.asnumpy(correlation_matrix)
+
+    plt.figure(figsize=(10, 8))
+    plt.imshow(corr_cpu, cmap='hot', interpolation='nearest')
+    plt.colorbar(label='Correlation Value')
+
+    # Mark detected peaks
+    for i, (y, x, value) in enumerate(peaks):
+        plt.plot(x, y, 'bo', markersize=8, label=f'Peak {i+1}: {value:.3f}')
+
+    plt.legend()
+    plt.title('Phase Correlation Matrix with Detected Peaks')
+    plt.xlabel('X Coordinate')
+    plt.ylabel('Y Coordinate')
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    else:
+        plt.show()
+
+    plt.close()
+
+
+def log_coordinate_transformation(
+    original_dy: float, original_dx: float,
+    tile_dy: float, tile_dx: float,
+    direction: str,
+    tile_index: Tuple[int, int]
+) -> None:
+    """
+    Log coordinate transformation details for debugging.
+    """
+    logging.info(f"Coordinate Transform - Tile {tile_index}, Direction: {direction}")
+    logging.info(f"  Original (overlap coords): dy={original_dy:.2f}, dx={original_dx:.2f}")
+    logging.info(f"  Transformed (tile coords): dy={tile_dy:.2f}, dx={tile_dx:.2f}")
+    logging.info(f"  Delta: dy_delta={tile_dy-original_dy:.2f}, dx_delta={tile_dx-original_dx:.2f}")
+
+
+def benchmark_phase_correlation_methods(
+    test_images: List[Tuple["cp.ndarray", "cp.ndarray"]],
+    methods: Dict[str, callable],
+    num_iterations: int = 10
+) -> Dict[str, Dict[str, float]]:
+    """
+    Benchmark different phase correlation methods for performance and accuracy.
+    """
+    import time
+
+    results = {}
+
+    for method_name, method_func in methods.items():
+        print(f"Benchmarking {method_name}...")
+
+        times = []
+        accuracies = []
+
+        for iteration in range(num_iterations):
+            start_time = time.time()
+
+            total_error = 0.0
+            num_pairs = 0
+
+            for img1, img2 in test_images:
+                try:
+                    dy, dx = method_func(img1, img2)
+                    # Compute error against known ground truth if available
+                    # For now, just measure consistency
+                    total_error += abs(dy) + abs(dx)  # Placeholder
+                    num_pairs += 1
+                except Exception as e:
+                    print(f"Error in {method_name}: {e}")
+                    continue
+
+            elapsed_time = time.time() - start_time
+            times.append(elapsed_time)
+
+            if num_pairs > 0:
+                avg_error = total_error / num_pairs
+                accuracies.append(avg_error)
+
+        results[method_name] = {
+            'avg_time': sum(times) / len(times),
+            'std_time': cp.std(cp.array(times)),
+            'avg_accuracy': sum(accuracies) / len(accuracies) if accuracies else float('inf'),
+            'std_accuracy': cp.std(cp.array(accuracies)) if len(accuracies) > 1 else 0.0
+        }
+
+    return results

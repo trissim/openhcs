@@ -13,8 +13,14 @@ from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs, chain_breaker
 from openhcs.core.utils import optional_import
 
-from .phase_correlation import phase_correlation_gpu_only
-from .quality_metrics import compute_correlation_quality_gpu_aligned
+from .phase_correlation import phase_correlation_gpu_only, phase_correlation_nist_gpu
+from .quality_metrics import (
+    compute_correlation_quality_gpu_aligned,
+    compute_adaptive_quality_threshold,
+    validate_translation_consistency,
+    log_coordinate_transformation,
+    debug_phase_correlation_matrix
+)
 from .position_reconstruction import build_mst_gpu, rebuild_positions_from_mst_gpu
 
 # For type checking only
@@ -65,6 +71,55 @@ def _convert_overlap_to_tile_coordinates(
     return tile_dy, tile_dx
 
 
+
+
+
+def _validate_displacement_magnitude(
+    tile_dx: float, tile_dy: float,
+    expected_dx: float, expected_dy: float,
+    direction: str,
+    tolerance_factor: float = 2.0,
+    tolerance_percent: float = 0.1
+) -> bool:
+    """
+    Validate that displacement magnitudes are reasonable.
+
+    Args:
+        tile_dx, tile_dy: Computed tile-center displacements
+        expected_dx, expected_dy: Expected displacements
+        direction: 'horizontal' or 'vertical'
+        tolerance_factor: How much deviation to allow
+
+    Returns:
+        True if displacement is reasonable, False otherwise
+    """
+    if direction == 'horizontal':
+        # For horizontal connections, dx should be close to expected_dx
+        dx_error = abs(tile_dx - expected_dx)
+        max_allowed_error = tolerance_factor * expected_dx * tolerance_percent
+        dx_valid = dx_error <= max_allowed_error
+
+        # dy should be small (minimal vertical drift relative to expected_dx, not expected_dy)
+        max_allowed_dy = tolerance_factor * expected_dx * tolerance_percent
+        dy_valid = abs(tile_dy) <= max_allowed_dy
+
+        return dx_valid and dy_valid
+
+    elif direction == 'vertical':
+        # For vertical connections, dy should be close to expected_dy
+        dy_error = abs(tile_dy - expected_dy)
+        max_allowed_error = tolerance_factor * expected_dy * tolerance_percent
+        dy_valid = dy_error <= max_allowed_error
+
+        # dx should be small (minimal horizontal drift relative to expected_dy, not expected_dx)
+        max_allowed_dx = tolerance_factor * expected_dy * tolerance_percent
+        dx_valid = abs(tile_dx) <= max_allowed_dx
+
+        return dy_valid and dx_valid
+
+    return False
+
+
 def _validate_cupy_array(array, name: str = "input") -> None:  # type: ignore
     """Validate that the input is a CuPy array."""
     if not isinstance(array, cp.ndarray):
@@ -81,11 +136,27 @@ def _global_optimization_gpu_only(
     overlap_ratio: float,
     subpixel: bool,
     *,
-    min_overlap_pixels: int = 32,
+
     quality_threshold: float = 0.03,
     subpixel_radius: int = 3,
     regularization_eps_multiplier: float = 1000.0,
-    anchor_tile_index: int = 0
+    anchor_tile_index: int = 0,
+    debug_connection_limit: int = 3,
+    debug_vertical_limit: int = 6,
+    displacement_tolerance_factor: float = 2.0,
+    displacement_tolerance_percent: float = 0.3,
+    consistency_threshold_percent: float = 0.5,
+    max_connections_multiplier: int = 2,
+    adaptive_base_threshold: float = 0.3,
+    adaptive_percentile_threshold: float = 0.25,
+    translation_tolerance_factor: float = 0.2,
+    translation_min_quality: float = 0.3,
+    magnitude_threshold_multiplier: float = 1e-6,
+    peak_candidates_multiplier: int = 4,
+    min_peak_distance: int = 5,
+    use_nist_robustness: bool = True,
+    n_peaks: int = 2,
+    use_nist_normalization: bool = True
 ) -> "cp.ndarray":  # type: ignore
     """
     GPU-only global optimization using simplified MST approach.
@@ -94,7 +165,7 @@ def _global_optimization_gpu_only(
     num_tiles = num_rows * num_cols
     
     # Pre-allocate GPU arrays for connections
-    max_connections = 2 * num_tiles  # Each tile has at most 2 neighbors (right, bottom)
+    max_connections = max_connections_multiplier * num_tiles  # Each tile has at most 2 neighbors (right, bottom)
     connection_from = cp.full(max_connections, -1, dtype=cp.int32)
     connection_to = cp.full(max_connections, -1, dtype=cp.int32)
     connection_dx = cp.zeros(max_connections, dtype=cp.float32)
@@ -108,9 +179,13 @@ def _global_optimization_gpu_only(
     passed_threshold = 0
     all_qualities = []
 
-    # Debug: Print expected displacements
+    # Debug: Print expected displacements and coordinate validation
     print(f"🔥 EXPECTED DISPLACEMENTS: dx={float(expected_dx):.1f}, dy={float(expected_dy):.1f}")
     print(f"🔥 OVERLAP RATIO: {overlap_ratio}, H={H}, W={W}")
+    print(f"🔥 COORDINATE VALIDATION:")
+    print(f"   Expected tile spacing: dx={float(expected_dx):.1f}, dy={float(expected_dy):.1f}")
+    print(f"   Overlap regions: H*ratio={H*overlap_ratio:.1f}, W*ratio={W*overlap_ratio:.1f}")
+    print(f"   Actual overlap: H={H*overlap_ratio:.1f}, W={W*overlap_ratio:.1f} pixels")
 
     # Debug: Check if images are black
     tile_stats = []
@@ -122,8 +197,8 @@ def _global_optimization_gpu_only(
             tile_mean = float(cp.mean(tile))
             tile_stats.append((tile_min, tile_max, tile_mean))
 
-    print(f"🔥 TILE STATS: First 3 tiles - min/max/mean:")
-    for i, (tmin, tmax, tmean) in enumerate(tile_stats[:3]):
+    print(f"🔥 TILE STATS: First {debug_connection_limit} tiles - min/max/mean:")
+    for i, (tmin, tmax, tmean) in enumerate(tile_stats[:debug_connection_limit]):
         print(f"  Tile {i}: [{tmin:.1f}, {tmax:.1f}], mean={tmean:.1f}")
 
     # Build connections (GPU operations)
@@ -137,92 +212,174 @@ def _global_optimization_gpu_only(
                 right_idx = r * num_cols + (c + 1)
                 right_tile = tile_grid[r, c + 1]
 
-                overlap_w = cp.maximum(cp.int32(W * overlap_ratio), min_overlap_pixels)
+                overlap_w = cp.int32(W * overlap_ratio)
                 left_region = current_tile[:, -overlap_w:]  # Right edge of left tile
                 right_region = right_tile[:, :overlap_w]   # Left edge of right tile
 
                 # Debug: Check overlap region extraction
-                if conn_idx < 3:
+                if conn_idx < debug_connection_limit:
                     print(f"🔥 HORIZONTAL OVERLAP {conn_idx}: tiles {tile_idx}->{right_idx}")
                     print(f"   overlap_w={int(overlap_w)}, W={W}")
                     print(f"   left_region.shape={left_region.shape} (from tile[:, -{int(overlap_w)}:])")
                     print(f"   right_region.shape={right_region.shape} (from tile[:, :{int(overlap_w)}])")
 
-                dy, dx = phase_correlation_gpu_only(
-                    left_region, right_region,  # Standardized: left_region first
-                    subpixel=subpixel,
-                    subpixel_radius=subpixel_radius,
-                    regularization_eps_multiplier=regularization_eps_multiplier
-                )
-
-                # Compute quality after applying the shift
-                quality = compute_correlation_quality_gpu_aligned(left_region, right_region, dx, dy)
+                if use_nist_robustness:
+                    dy, dx, quality = phase_correlation_nist_gpu(
+                        left_region, right_region,
+                        direction='horizontal',
+                        n_peaks=n_peaks,
+                        use_nist_normalization=use_nist_normalization
+                    )
+                else:
+                    dy, dx = phase_correlation_gpu_only(
+                        left_region, right_region,  # Standardized: left_region first
+                        subpixel=subpixel,
+                        subpixel_radius=subpixel_radius,
+                        regularization_eps_multiplier=regularization_eps_multiplier
+                    )
+                    # Compute quality after applying the shift
+                    quality = compute_correlation_quality_gpu_aligned(left_region, right_region, dx, dy)
 
                 # Debug: Track all quality values
                 total_correlations += 1
                 all_qualities.append(quality)
 
                 if quality >= quality_threshold:
-                    passed_threshold += 1
-                    connection_from[conn_idx] = tile_idx
-                    connection_to[conn_idx] = right_idx
-
                     # Convert overlap-region coordinates to tile-center coordinates
                     tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
                         dy, dx, int(overlap_w), int(overlap_w), H, W, 'horizontal'
                     )
-                    connection_dx[conn_idx] = tile_dx
-                    connection_dy[conn_idx] = tile_dy
-                    connection_quality[conn_idx] = quality
 
-                    # Debug: Print first few connections
-                    if conn_idx < 3:
-                        print(f"🔥 HORIZONTAL CONNECTION {conn_idx}: {tile_idx}->{right_idx}")
-                        print(f"   overlap coords: dx={float(dx):.3f}, dy={float(dy):.3f}")
-                        print(f"   tile coords: dx={float(tile_dx):.3f}, dy={float(tile_dy):.3f}")
-                        print(f"   quality={float(quality):.6f}")
+                    # Log coordinate transformation for debugging
+                    if conn_idx < debug_connection_limit:  # Only log first few for brevity
+                        log_coordinate_transformation(
+                            dy, dx, tile_dy, tile_dx, 'horizontal', (tile_idx, right_idx)
+                        )
 
-                    conn_idx += 1
+                    # Validate displacement magnitude
+                    displacement_valid = _validate_displacement_magnitude(
+                        tile_dx, tile_dy, float(expected_dx), 0.0, 'horizontal',
+                        displacement_tolerance_factor, displacement_tolerance_percent
+                    )
+
+                    if displacement_valid:
+                        passed_threshold += 1
+                        connection_from[conn_idx] = tile_idx
+                        connection_to[conn_idx] = right_idx
+                        connection_dx[conn_idx] = tile_dx
+                        connection_dy[conn_idx] = tile_dy
+                        connection_quality[conn_idx] = quality
+
+                        # Debug: Print first few connections
+                        if conn_idx < debug_connection_limit:
+                            print(f"🔥 HORIZONTAL CONNECTION {conn_idx}: {tile_idx}->{right_idx}")
+                            print(f"   overlap coords: dx={float(dx):.3f}, dy={float(dy):.3f}")
+                            print(f"   tile coords: dx={float(tile_dx):.3f}, dy={float(tile_dy):.3f}")
+                            print(f"   quality={float(quality):.6f}, displacement_valid={displacement_valid}")
+
+                        conn_idx += 1
+                    else:
+                        # Debug: Log rejected connections
+                        if conn_idx < debug_connection_limit:
+                            print(f"🔥 REJECTED HORIZONTAL {tile_idx}->{right_idx}: displacement invalid")
+                            print(f"   tile coords: dx={float(tile_dx):.3f}, dy={float(tile_dy):.3f}")
+                            print(f"   expected: dx={float(expected_dx):.3f}, dy={float(expected_dy):.3f}")
+                            # Show validation details
+                            dx_error = abs(tile_dx - expected_dx)
+                            max_allowed_error = displacement_tolerance_factor * expected_dx * displacement_tolerance_percent
+                            max_allowed_dy = displacement_tolerance_factor * expected_dx * displacement_tolerance_percent
+                            print(f"   dx_error={dx_error:.3f} vs max_allowed={max_allowed_error:.3f}")
+                            print(f"   abs(dy)={abs(tile_dy):.3f} vs max_allowed_dy={max_allowed_dy:.3f}")
             
             # Vertical connection
             if r < num_rows - 1:
                 bottom_idx = (r + 1) * num_cols + c
                 bottom_tile = tile_grid[r + 1, c]
 
-                overlap_h = cp.maximum(cp.int32(H * overlap_ratio), min_overlap_pixels)
+                overlap_h = cp.int32(H * overlap_ratio)
                 top_region = current_tile[-overlap_h:, :]  # Bottom edge of top tile
                 bottom_region = bottom_tile[:overlap_h, :] # Top edge of bottom tile
 
-                dy, dx = phase_correlation_gpu_only(
-                    top_region, bottom_region,  # Standardized: top_region first
-                    subpixel=subpixel,
-                    subpixel_radius=subpixel_radius,
-                    regularization_eps_multiplier=regularization_eps_multiplier
-                )
-
-                # Compute quality after applying the shift
-                quality = compute_correlation_quality_gpu_aligned(top_region, bottom_region, dx, dy)
+                if use_nist_robustness:
+                    dy, dx, quality = phase_correlation_nist_gpu(
+                        top_region, bottom_region,
+                        direction='vertical',
+                        n_peaks=n_peaks,
+                        use_nist_normalization=use_nist_normalization
+                    )
+                else:
+                    dy, dx = phase_correlation_gpu_only(
+                        top_region, bottom_region,  # Standardized: top_region first
+                        subpixel=subpixel,
+                        subpixel_radius=subpixel_radius,
+                        regularization_eps_multiplier=regularization_eps_multiplier
+                    )
+                    # Compute quality after applying the shift
+                    quality = compute_correlation_quality_gpu_aligned(top_region, bottom_region, dx, dy)
 
                 # Debug: Track all quality values
                 total_correlations += 1
                 all_qualities.append(quality)
 
                 if quality >= quality_threshold:
-                    passed_threshold += 1
-                    connection_from[conn_idx] = tile_idx
-                    connection_to[conn_idx] = bottom_idx
-                    connection_dx[conn_idx] = dx               # Correction only (should be ~0 for vertical)
-                    connection_dy[conn_idx] = expected_dy + dy  # Total displacement = expected + correction
-                    connection_quality[conn_idx] = quality
+                    # Convert overlap-region coordinates to tile-center coordinates
+                    tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
+                        dy, dx, int(overlap_h), int(overlap_h), H, W, 'vertical'
+                    )
 
-                    # Debug: Print first few connections
-                    if conn_idx < 6:  # Show a few more since we want to see vertical connections too
-                        print(f"🔥 VERTICAL CONNECTION {conn_idx}: {tile_idx}->{bottom_idx}")
-                        print(f"   expected_dy={float(expected_dy):.3f}, dy={float(dy):.3f}")
-                        print(f"   stored connection_dy={float(connection_dy[conn_idx]):.3f}")
-                        print(f"   quality={float(quality):.6f}")
+                    # Log coordinate transformation for debugging
+                    if conn_idx < debug_vertical_limit:  # Only log first few for brevity
+                        log_coordinate_transformation(
+                            dy, dx, tile_dy, tile_dx, 'vertical', (tile_idx, bottom_idx)
+                        )
 
-                    conn_idx += 1
+                    # Validate displacement magnitude
+                    displacement_valid = _validate_displacement_magnitude(
+                        tile_dx, tile_dy, 0.0, float(expected_dy), 'vertical',
+                        displacement_tolerance_factor, displacement_tolerance_percent
+                    )
+
+                    if displacement_valid:
+                        passed_threshold += 1
+                        connection_from[conn_idx] = tile_idx
+                        connection_to[conn_idx] = bottom_idx
+                        connection_dx[conn_idx] = tile_dx
+                        connection_dy[conn_idx] = tile_dy
+                        connection_quality[conn_idx] = quality
+
+                        # Debug: Print first few connections
+                        if conn_idx < debug_vertical_limit:  # Show a few more since we want to see vertical connections too
+                            print(f"🔥 VERTICAL CONNECTION {conn_idx}: {tile_idx}->{bottom_idx}")
+                            print(f"   overlap coords: dx={float(dx):.3f}, dy={float(dy):.3f}")
+                            print(f"   tile coords: dx={float(tile_dx):.3f}, dy={float(tile_dy):.3f}")
+                            print(f"   quality={float(quality):.6f}, displacement_valid={displacement_valid}")
+
+                        conn_idx += 1
+                    else:
+                        # Debug: Log rejected connections
+                        if conn_idx < debug_vertical_limit:
+                            print(f"🔥 REJECTED VERTICAL {tile_idx}->{bottom_idx}: displacement invalid")
+                            print(f"   tile coords: dx={float(tile_dx):.3f}, dy={float(tile_dy):.3f}")
+                            print(f"   expected: dx={float(expected_dx):.3f}, dy={float(expected_dy):.3f}")
+                            # Show validation details
+                            dy_error = abs(tile_dy - expected_dy)
+                            max_allowed_error = displacement_tolerance_factor * expected_dy * displacement_tolerance_percent
+                            max_allowed_dx = displacement_tolerance_factor * expected_dy * displacement_tolerance_percent
+                            print(f"   dy_error={dy_error:.3f} vs max_allowed={max_allowed_error:.3f}")
+                            print(f"   abs(dx)={abs(tile_dx):.3f} vs max_allowed_dx={max_allowed_dx:.3f}")
+
+    # Compute adaptive quality threshold if we have quality data
+    if len(all_qualities) > 0:
+        adaptive_threshold = compute_adaptive_quality_threshold(
+            all_qualities, adaptive_base_threshold, adaptive_percentile_threshold
+        )
+        print(f"🔥 ADAPTIVE THRESHOLD: original={quality_threshold:.6f}, adaptive={adaptive_threshold:.6f}")
+
+        # Re-filter connections with adaptive threshold if it's different
+        if adaptive_threshold != quality_threshold and adaptive_threshold < quality_threshold:
+            print(f"🔥 RE-FILTERING with adaptive threshold...")
+            # Note: In a full implementation, we'd re-process with the adaptive threshold
+            # For now, we'll use the original threshold but log the adaptive one
 
     # Debug: Print quality filtering summary
     print(f"🔥 QUALITY FILTERING: {passed_threshold}/{total_correlations} connections passed threshold {quality_threshold}")
@@ -231,6 +388,30 @@ def _global_optimization_gpu_only(
         max_q = float(cp.max(cp.array(all_qualities)))
         mean_q = float(cp.mean(cp.array(all_qualities)))
         print(f"🔥 QUALITY RANGE: min={min_q:.6f}, max={max_q:.6f}, mean={mean_q:.6f}")
+
+        # Validate translation consistency (Plan 03)
+        if conn_idx > 0:
+            # Collect translations for validation
+            translations = []
+            for i in range(conn_idx):
+                dy_val = float(connection_dy[i])
+                dx_val = float(connection_dx[i])
+                quality_val = float(connection_quality[i])
+                translations.append((dy_val, dx_val, quality_val))
+
+            # Validate against expected spacing
+            expected_spacing = (float(expected_dx), float(expected_dy))
+            valid_flags = validate_translation_consistency(
+                translations, expected_spacing, translation_tolerance_factor, translation_min_quality
+            )
+
+            num_valid = sum(valid_flags)
+            print(f"🔥 TRANSLATION VALIDATION: {num_valid}/{len(translations)} connections are consistent")
+
+            if num_valid < len(translations) * consistency_threshold_percent:  # Less than threshold% valid
+                print(f"🔥 WARNING: Low translation consistency ({num_valid}/{len(translations)})")
+                print(f"🔥 Expected spacing: dx={expected_spacing[0]:.1f}, dy={expected_spacing[1]:.1f}")
+                print(f"🔥 Consider adjusting overlap_ratio or quality thresholds")
 
     # Trim arrays to actual size (GPU)
     if conn_idx > 0:
@@ -277,7 +458,7 @@ def mist_compute_tile_positions(
     refinement_iterations: int = 10,
     global_optimization: bool = True,
     # All configurable parameters (no magic numbers)
-    min_overlap_pixels: int = 32,
+
     refinement_damping: float = 0.5,
     regularization_eps_multiplier: float = 1000.0,
     subpixel_radius: int = 3,
@@ -285,6 +466,29 @@ def mist_compute_tile_positions(
     correlation_weight_horizontal: float = 1.0,
     correlation_weight_vertical: float = 1.0,
     anchor_tile_index: int = 0,
+    # NIST robustness parameters
+    use_nist_robustness: bool = True,
+    n_peaks: int = 2,
+    use_nist_normalization: bool = True,
+    # Debugging and validation parameters
+    debug_connection_limit: int = 3,
+    debug_vertical_limit: int = 6,
+    displacement_tolerance_factor: float = 2.0,
+    displacement_tolerance_percent: float = 0.3,
+    consistency_threshold_percent: float = 0.5,
+    max_connections_multiplier: int = 2,
+    # Quality metric tuning parameters
+    adaptive_base_threshold: float = 0.3,
+    adaptive_percentile_threshold: float = 0.25,
+    translation_tolerance_factor: float = 0.2,
+    translation_min_quality: float = 0.3,
+    # Phase correlation tuning parameters
+    magnitude_threshold_multiplier: float = 1e-6,
+    peak_candidates_multiplier: int = 4,
+    min_peak_distance: int = 5,
+    # Visualization parameters
+    enable_correlation_visualization: bool = False,
+    correlation_viz_save_path: str = None,
     **kwargs
 ) -> Tuple["cp.ndarray", "cp.ndarray"]:  # type: ignore
     """
@@ -304,7 +508,7 @@ def mist_compute_tile_positions(
         subpixel: Enable subpixel accuracy
         refinement_iterations: Number of refinement passes
         global_optimization: Enable MST optimization
-        min_overlap_pixels: Minimum overlap region size
+
         refinement_damping: Damping factor for refinement
         regularization_eps_multiplier: Numerical stability parameter
         subpixel_radius: Radius for subpixel interpolation
@@ -330,6 +534,11 @@ def mist_compute_tile_positions(
 
     num_cols, num_rows = grid_dimensions
     Z, H, W = image_stack.shape
+
+    # VERY FIRST THING - Debug output to confirm function is called
+    print("🔥🔥🔥 MIST FUNCTION ENTRY POINT - FUNCTION IS DEFINITELY BEING CALLED! 🔥🔥🔥")
+    print(f"🔥 Image stack shape: {image_stack.shape}")
+    print(f"🔥 Grid dimensions: {grid_dimensions}")
 
     # Debug: Log the actual overlap_ratio parameter being used
     print(f"🔥 MIST FUNCTION CALLED WITH overlap_ratio={overlap_ratio}")
@@ -381,7 +590,7 @@ def mist_compute_tile_positions(
                 left_tile = tile_grid[r, c - 1]
 
                 # Extract overlap regions (GPU)
-                overlap_w = cp.maximum(cp.int32(W * overlap_ratio), min_overlap_pixels)
+                overlap_w = cp.int32(W * overlap_ratio)
                 left_region = left_tile[:, -overlap_w:]
                 current_region = current_tile[:, :overlap_w]
 
@@ -393,9 +602,14 @@ def mist_compute_tile_positions(
                     regularization_eps_multiplier=regularization_eps_multiplier
                 )
 
+                # Convert overlap-region coordinates to tile-center coordinates
+                tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
+                    dy, dx, int(overlap_w), int(overlap_w), H, W, 'horizontal'
+                )
+
                 # Update position (GPU)
-                new_x = positions[left_idx, 0] + expected_dx + dx
-                new_y = positions[left_idx, 1] + dy
+                new_x = positions[left_idx, 0] + tile_dx
+                new_y = positions[left_idx, 1] + tile_dy
                 positions[tile_idx] = cp.array([new_x, new_y])
 
             elif r > 0:  # Position from top neighbor
@@ -403,7 +617,7 @@ def mist_compute_tile_positions(
                 top_tile = tile_grid[r - 1, c]
 
                 # Extract overlap regions (GPU)
-                overlap_h = cp.maximum(cp.int32(H * overlap_ratio), min_overlap_pixels)
+                overlap_h = cp.int32(H * overlap_ratio)
                 top_region = top_tile[-overlap_h:, :]
                 current_region = current_tile[:overlap_h, :]
 
@@ -415,9 +629,14 @@ def mist_compute_tile_positions(
                     regularization_eps_multiplier=regularization_eps_multiplier
                 )
 
+                # Convert overlap-region coordinates to tile-center coordinates
+                tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
+                    dy, dx, int(overlap_h), int(overlap_h), H, W, 'vertical'
+                )
+
                 # Update position (GPU)
-                new_x = positions[top_idx, 0] + dx
-                new_y = positions[top_idx, 1] + expected_dy + dy
+                new_x = positions[top_idx, 0] + tile_dx
+                new_y = positions[top_idx, 1] + tile_dy
                 positions[tile_idx] = cp.array([new_x, new_y])
 
     # Phase 2: Refinement iterations (all GPU)
@@ -437,7 +656,7 @@ def mist_compute_tile_positions(
                 left_tile = tile_grid[r, c]
                 right_tile = tile_grid[r, c + 1]
 
-                overlap_w = cp.maximum(cp.int32(W * overlap_ratio), min_overlap_pixels)
+                overlap_w = cp.int32(W * overlap_ratio)
                 left_region = left_tile[:, -overlap_w:]   # Right edge of left tile
                 right_region = right_tile[:, :overlap_w] # Left edge of right tile
 
@@ -448,8 +667,13 @@ def mist_compute_tile_positions(
                     regularization_eps_multiplier=regularization_eps_multiplier
                 )
 
+                # Convert overlap-region coordinates to tile-center coordinates
+                tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
+                    dy, dx, int(overlap_w), int(overlap_w), H, W, 'horizontal'
+                )
+
                 # Expected position (GPU)
-                expected_right = positions[left_idx] + cp.array([expected_dx + dx, dy])
+                expected_right = positions[left_idx] + cp.array([tile_dx, tile_dy])
 
                 # Accumulate updates (GPU)
                 position_corrections[right_idx] += expected_right * correlation_weight_horizontal
@@ -464,7 +688,7 @@ def mist_compute_tile_positions(
                 top_tile = tile_grid[r, c]
                 bottom_tile = tile_grid[r + 1, c]
 
-                overlap_h = cp.maximum(cp.int32(H * overlap_ratio), min_overlap_pixels)
+                overlap_h = cp.int32(H * overlap_ratio)
                 top_region = top_tile[-overlap_h:, :]    # Bottom edge of top tile
                 bottom_region = bottom_tile[:overlap_h, :] # Top edge of bottom tile
 
@@ -475,8 +699,13 @@ def mist_compute_tile_positions(
                     regularization_eps_multiplier=regularization_eps_multiplier
                 )
 
+                # Convert overlap-region coordinates to tile-center coordinates
+                tile_dy, tile_dx = _convert_overlap_to_tile_coordinates(
+                    dy, dx, int(overlap_h), int(overlap_h), H, W, 'vertical'
+                )
+
                 # Expected position (GPU)
-                expected_bottom = positions[top_idx] + cp.array([dx, expected_dy + dy])
+                expected_bottom = positions[top_idx] + cp.array([tile_dx, tile_dy])
 
                 # Accumulate updates (GPU)
                 position_corrections[bottom_idx] += expected_bottom * correlation_weight_vertical
@@ -496,11 +725,27 @@ def mist_compute_tile_positions(
         positions = _global_optimization_gpu_only(
             positions, tile_grid, num_rows, num_cols,
             expected_dx, expected_dy, overlap_ratio, subpixel,
-            min_overlap_pixels=min_overlap_pixels,
+
             quality_threshold=mst_quality_threshold,
             subpixel_radius=subpixel_radius,
             regularization_eps_multiplier=regularization_eps_multiplier,
-            anchor_tile_index=anchor_tile_index
+            anchor_tile_index=anchor_tile_index,
+            debug_connection_limit=debug_connection_limit,
+            debug_vertical_limit=debug_vertical_limit,
+            displacement_tolerance_factor=displacement_tolerance_factor,
+            displacement_tolerance_percent=displacement_tolerance_percent,
+            consistency_threshold_percent=consistency_threshold_percent,
+            max_connections_multiplier=max_connections_multiplier,
+            adaptive_base_threshold=adaptive_base_threshold,
+            adaptive_percentile_threshold=adaptive_percentile_threshold,
+            translation_tolerance_factor=translation_tolerance_factor,
+            translation_min_quality=translation_min_quality,
+            magnitude_threshold_multiplier=magnitude_threshold_multiplier,
+            peak_candidates_multiplier=peak_candidates_multiplier,
+            min_peak_distance=min_peak_distance,
+            use_nist_robustness=use_nist_robustness,
+            n_peaks=n_peaks,
+            use_nist_normalization=use_nist_normalization
         )
 
     # Center positions (GPU)

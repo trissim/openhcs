@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from openhcs.constants.constants import Backend
-# XML parser is implemented directly in this file
-# from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
+from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
 from openhcs.io.filemanager import FileManager
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces_base import (FilenameParser,
@@ -21,58 +20,6 @@ from openhcs.microscopes.microscope_interfaces_base import (FilenameParser,
 
 logger = logging.getLogger(__name__)
 
-
-class OperaPhenixXmlParser:
-    """
-    Parser for Opera Phenix Index.xml files.
-
-    This class extracts field ID mappings and other metadata from Opera Phenix
-    Index.xml files.
-    """
-
-    def __init__(self, xml_path: str):
-        """
-        Initialize the parser with the path to an Index.xml file.
-
-        Args:
-            xml_path: Path to the Index.xml file
-        """
-        self.xml_path = xml_path
-        self._field_mapping = None
-
-    def get_field_id_mapping(self) -> Dict[str, int]:
-        """
-        Get a mapping from field IDs to remapped field IDs.
-
-        Returns:
-            Dictionary mapping original field IDs to remapped field IDs
-        """
-        if self._field_mapping is not None:
-            return self._field_mapping
-
-        try:
-            import xml.etree.ElementTree as ET
-            tree = ET.parse(self.xml_path)
-            root = tree.getroot()
-
-            # Find all field elements
-            fields = []
-            for field in root.findall(".//Field"):
-                field_id = field.get("id")
-                x = float(field.get("x", "0"))
-                y = float(field.get("y", "0"))
-                fields.append((field_id, x, y))
-
-            # Sort fields by y (row) then x (column)
-            fields.sort(key=lambda f: (f[2], f[1]))
-
-            # Create mapping from original field ID to remapped field ID
-            self._field_mapping = {field_id: i+1 for i, (field_id, _, _) in enumerate(fields)}
-            return self._field_mapping
-
-        except Exception as e:
-            logger.error("Error parsing Index.xml: %s", e)
-            return {}
 
 
 class OperaPhenixHandler(MicroscopeHandler):
