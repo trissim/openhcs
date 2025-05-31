@@ -111,12 +111,29 @@ class OperaPhenixHandler(MicroscopeHandler):
             # FileManager should return strings, but handle Path objects too
             if isinstance(file_path, str):
                 file_name = os.path.basename(file_path)
+                file_path_obj = Path(file_path)
             elif isinstance(file_path, Path):
                 file_name = file_path.name
+                file_path_obj = file_path
             else:
                 # Skip any unexpected types
                 logger.warning("Unexpected file path type: %s", type(file_path).__name__)
                 continue
+
+            # If this is a symlink, resolve it to get the real file
+            if file_path_obj.is_symlink():
+                try:
+                    real_file_path = file_path_obj.resolve()
+                    if not real_file_path.exists():
+                        logger.warning("Broken symlink detected: %s -> %s", file_path, real_file_path)
+                        continue
+                    # Use the real file path for copying
+                    source_path = str(real_file_path)
+                except Exception as e:
+                    logger.warning("Failed to resolve symlink %s: %s", file_path, e)
+                    continue
+            else:
+                source_path = str(file_path_obj)
 
             # Parse file metadata
             metadata = self.parser.parse_filename(file_name)
@@ -144,16 +161,32 @@ class OperaPhenixHandler(MicroscopeHandler):
             else:  # Path object
                 new_path = temp_dir / new_name
 
-            # Copy the file to the temporary directory
+            # Copy the real file (not the symlink) to the temporary directory
             # Clause 245: Workspace operations are disk-only by design
             # This call is structurally hardcoded to use the "disk" backend
-            filemanager.copy(file_path, new_path, Backend.DISK.value)
+            filemanager.copy(source_path, new_path, Backend.DISK.value)
 
-        # Clean up and replace old files
+        # Clean up and replace old files - ONLY delete symlinks in workspace, NEVER original files
         for file_path in image_files:
-            # Clause 245: Workspace operations are disk-only by design
-            # This call is structurally hardcoded to use the "disk" backend
-            filemanager.delete(file_path, Backend.DISK.value)
+            # Convert to Path object for symlink checking
+            file_path_obj = Path(file_path) if isinstance(file_path, str) else file_path
+
+            # SAFETY CHECK: Only delete if it's within the workspace directory
+            if not str(file_path_obj).startswith(str(workspace_path)):
+                logger.error("SAFETY VIOLATION: Attempted to delete file outside workspace: %s", file_path)
+                raise RuntimeError(f"Workspace preparation tried to delete file outside workspace: {file_path}")
+
+            # SAFETY CHECK: In workspace, only delete symlinks, never real files
+            if file_path_obj.is_symlink():
+                # Safe to delete - it's a symlink in the workspace
+                logger.debug("Deleting symlink in workspace: %s", file_path)
+                filemanager.delete(file_path, Backend.DISK.value)
+            elif file_path_obj.is_file():
+                # This should never happen in a properly mirrored workspace
+                logger.error("SAFETY VIOLATION: Found real file in workspace (should be symlink): %s", file_path)
+                raise RuntimeError(f"Workspace contains real file instead of symlink: {file_path}")
+            else:
+                logger.warning("File not found or not accessible: %s", file_path)
 
         # Get all files in the temporary directory
         # Clause 245: Workspace operations are disk-only by design
