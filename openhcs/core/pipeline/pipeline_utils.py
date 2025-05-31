@@ -13,7 +13,7 @@ def get_core_callable(func_pattern: Any) -> Optional[Callable[..., Any]]:
         # It's a direct callable (and not an uninstantiated class)
         return func_pattern
     elif isinstance(func_pattern, tuple) and func_pattern and \
-         isinstance(func_pattern[0], Callable) and \
+         callable(func_pattern[0]) and \
          not isinstance(func_pattern[0], type):
         # It's a (callable, kwargs) tuple, ensure first element is a callable function
         return func_pattern[0]

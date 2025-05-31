@@ -292,10 +292,10 @@ class PipelineOrchestrator:
                 step.process(frozen_context)
 
                 if visualizer:
-                    step_plan = frozen_context.get_step_plan(step_id)
-                    if step_plan and step_plan.get('visualize', False):
-                        output_dir = step_plan.get('output_dir')
-                        write_backend = step_plan.get('write_backend', Backend.DISK.value)
+                    step_plan = frozen_context.step_plans[step_id]
+                    if step_plan['visualize']:
+                        output_dir = step_plan['output_dir']
+                        write_backend = step_plan['write_backend']
                         if output_dir:
                             logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
                             visualizer.visualize_path(

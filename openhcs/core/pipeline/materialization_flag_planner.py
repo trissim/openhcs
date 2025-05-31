@@ -132,7 +132,10 @@ class MaterializationFlagPlanner:
             # Default to persistent for safety, then adjust.
 
             # READ BACKEND determination
-            if requires_disk_input: # Includes first step.
+            # Check if read_backend was already set by path planner (e.g., chain breaker logic)
+            if READ_BACKEND in current_step_plan:
+                logger.debug(f"Step {step_name} read_backend already set to '{current_step_plan[READ_BACKEND]}' by path planner, preserving it.")
+            elif requires_disk_input: # Includes first step.
                 current_step_plan[READ_BACKEND] = "disk" # Reading initial dataset is 'disk'.
                 logger.debug(f"Step {step_name} requires disk input, using 'disk' for reading.")
             elif is_function_step: # Can read from an intermediate backend.

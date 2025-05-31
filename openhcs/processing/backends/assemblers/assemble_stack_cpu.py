@@ -22,28 +22,101 @@ from scipy.ndimage import shift as subpixel_shift  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "np.ndarray":  # type: ignore
+def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", blend_radius: float = 10.0) -> "np.ndarray":  # type: ignore
     """
-    Creates a 2D Gaussian mask normalized to sum to 1, for blending.
-    The blend_radius acts as sigma.
+    Creates a 2D blending mask for tile assembly.
+
+    Args:
+        tile_shape: (height, width) of the tile
+        blend_method: Blending method - "none", "gaussian", "rectangular", "linear_edge"
+        blend_radius: Blending parameter (pixels for feathering)
+
+    Returns:
+        2D mask array with blending weights
     """
-    if blend_radius <= 0: # No blending, return uniform weights
+    height, width = tile_shape
+
+    if blend_method == "none" or blend_radius <= 0:
+        # No blending - uniform weights
         return np.ones(tile_shape, dtype=np.float32)
 
-    # Create a grid of coordinates
-    coords_y = np.arange(tile_shape[0]) - (tile_shape[0] - 1) / 2.0
-    coords_x = np.arange(tile_shape[1]) - (tile_shape[1] - 1) / 2.0
-    yy, xx = np.meshgrid(coords_y, coords_x, indexing='ij')
+    elif blend_method == "gaussian":
+        # Original circular Gaussian mask (for compatibility)
+        coords_y = np.arange(height) - (height - 1) / 2.0
+        coords_x = np.arange(width) - (width - 1) / 2.0
+        yy, xx = np.meshgrid(coords_y, coords_x, indexing='ij')
+        mask = np.exp(-(xx**2 + yy**2) / (2 * blend_radius**2))
+        mask = mask / np.max(mask)  # Center will be 1.0
+        return mask.astype(np.float32)
 
-    # Gaussian formula: exp(-(x^2 + y^2) / (2 * sigma^2))
-    # Here, sigma is blend_radius
-    mask = np.exp(-(xx**2 + yy**2) / (2 * blend_radius**2))
+    elif blend_method == "rectangular":
+        # Rectangular feathering - blend near edges only
+        mask = np.ones(tile_shape, dtype=np.float32)
+        blend_pixels = int(blend_radius)
 
-    # Normalize the mask so its sum is 1, or close to it, to act as weights.
-    # For blending, it's often better if the center is 1 and it falls off.
-    # Let's ensure the center is 1.
-    mask = mask / np.max(mask) # Center will be 1.0
-    return mask.astype(np.float32)
+        if blend_pixels > 0:
+            # Create distance-to-edge maps
+            y_coords = np.arange(height, dtype=np.float32)
+            x_coords = np.arange(width, dtype=np.float32)
+
+            # Distance from top/bottom edges
+            dist_from_top = y_coords
+            dist_from_bottom = height - 1 - y_coords
+            y_edge_dist = np.minimum(dist_from_top, dist_from_bottom)
+
+            # Distance from left/right edges
+            dist_from_left = x_coords
+            dist_from_right = width - 1 - x_coords
+            x_edge_dist = np.minimum(dist_from_left, dist_from_right)
+
+            # Create 2D distance maps
+            y_dist_2d = y_edge_dist[:, np.newaxis]  # Shape: (height, 1)
+            x_dist_2d = x_edge_dist[np.newaxis, :]  # Shape: (1, width)
+
+            # Feathering weights based on distance to nearest edge
+            y_weight = np.minimum(y_dist_2d / blend_pixels, 1.0)
+            x_weight = np.minimum(x_dist_2d / blend_pixels, 1.0)
+
+            # Combine weights (minimum ensures feathering at ALL edges)
+            mask = np.minimum(y_weight, x_weight)
+
+        return mask.astype(np.float32)
+
+    elif blend_method == "linear_edge":
+        # Linear falloff from edges (softer than rectangular)
+        mask = np.ones(tile_shape, dtype=np.float32)
+        blend_pixels = int(blend_radius)
+
+        if blend_pixels > 0:
+            # Create coordinate grids
+            y_coords = np.arange(height, dtype=np.float32)
+            x_coords = np.arange(width, dtype=np.float32)
+
+            # Linear weights from edges
+            y_weight_top = np.minimum(y_coords / blend_pixels, 1.0)
+            y_weight_bottom = np.minimum((height - 1 - y_coords) / blend_pixels, 1.0)
+            x_weight_left = np.minimum(x_coords / blend_pixels, 1.0)
+            x_weight_right = np.minimum((width - 1 - x_coords) / blend_pixels, 1.0)
+
+            # Create 2D weight maps
+            y_weight = np.minimum(y_weight_top[:, np.newaxis], y_weight_bottom[:, np.newaxis])
+            x_weight = np.minimum(x_weight_left[np.newaxis, :], x_weight_right[np.newaxis, :])
+
+            # Combine weights multiplicatively for smoother transitions
+            mask = y_weight * x_weight
+
+        return mask.astype(np.float32)
+
+    else:
+        raise ValueError(f"Unknown blend_method: {blend_method}. Supported: 'none', 'gaussian', 'rectangular', 'linear_edge'")
+
+
+def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "np.ndarray":  # type: ignore
+    """
+    Legacy function for backward compatibility.
+    Use _create_blend_mask with blend_method="gaussian" instead.
+    """
+    return _create_blend_mask(tile_shape, "gaussian", blend_radius)
 
 
 @special_inputs("positions") # The input name is "positions"
@@ -51,12 +124,26 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "np.n
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",  # type: ignore
     positions: "np.ndarray",  # type: ignore # Renamed from positions_xy
-    blend_radius: float = 10.0
+    blend_radius: float = 10.0,
+    blend_method: str = "rectangular"
 ) -> "np.ndarray":  # type: ignore
     """
     Assembles a 3D stack of 2D image tiles (N, H, W) into a composited 2D image,
     returned as a 3D array (1, H_canvas, W_canvas), using subpixel XY positions
-    and Gaussian blending.
+    and configurable blending.
+
+    Args:
+        image_tiles: 3D array of tiles (N, H, W)
+        positions: 2D array of tile positions (N, 2) as [x, y] coordinates
+        blend_radius: Blending parameter in pixels (default: 10.0)
+        blend_method: Blending method (default: "rectangular")
+            - "none": No blending, uniform weights
+            - "gaussian": Circular Gaussian mask (original behavior)
+            - "rectangular": Rectangular feathering from edges
+            - "linear_edge": Linear falloff from edges
+
+    Returns:
+        3D array (1, H_canvas, W_canvas) with assembled image
     """
     # --- 1. Validate and standardize inputs ---
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
@@ -108,9 +195,9 @@ def assemble_stack_cpu(
     composite_accum = np.zeros((canvas_height, canvas_width), dtype=np.float32)
     weight_accum = np.zeros((canvas_height, canvas_width), dtype=np.float32)
 
-    # --- 3. Generate Gaussian blending mask ---
+    # --- 3. Generate blending mask ---
     # Assuming all tiles have the same shape as the first tile for the blend mask
-    blend_mask = _create_gaussian_blend_mask(first_tile_shape, blend_radius)
+    blend_mask = _create_blend_mask(first_tile_shape, blend_method, blend_radius)
 
     # --- 4. Place tiles with subpixel shifts ---
     for i in range(num_tiles):

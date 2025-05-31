@@ -7,9 +7,9 @@ determining input and output paths for each step in a pipeline in a single pass.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 
-# DEFAULT_OUT_DIR_SUFFIX removed
+from openhcs.constants.constants import READ_BACKEND
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.pipeline.pipeline_utils import get_core_callable, to_snake_case
 from openhcs.core.steps.abstract import AbstractStep
@@ -17,6 +17,86 @@ from openhcs.core.steps.function_step import FunctionStep
 
 
 logger = logging.getLogger(__name__)
+
+# Metadata resolver registry for extensible metadata injection
+METADATA_RESOLVERS: Dict[str, Dict[str, Any]] = {
+    "grid_dimensions": {
+        "resolver": lambda context: context.microscope_handler.get_grid_dimensions(context.input_dir),
+        "description": "Grid dimensions (num_cols, num_rows) for position generation functions"
+    },
+    # Future extensions can be added here:
+    # "pixel_size": {
+    #     "resolver": lambda context: context.microscope_handler.get_pixel_size(context.input_dir),
+    #     "description": "Pixel size in micrometers"
+    # },
+}
+
+def resolve_metadata(key: str, context: ProcessingContext) -> Any:
+    """
+    Resolve metadata using registered resolvers.
+
+    Args:
+        key: The metadata key to resolve
+        context: The processing context containing microscope handler
+
+    Returns:
+        The resolved metadata value
+
+    Raises:
+        ValueError: If no resolver is registered for the key
+    """
+    if key not in METADATA_RESOLVERS:
+        raise ValueError(f"No metadata resolver registered for key '{key}'. Available keys: {list(METADATA_RESOLVERS.keys())}")
+
+    resolver_func = METADATA_RESOLVERS[key]["resolver"]
+    try:
+        return resolver_func(context)
+    except Exception as e:
+        raise ValueError(f"Failed to resolve metadata for key '{key}': {e}") from e
+
+def register_metadata_resolver(key: str, resolver_func: Callable[[ProcessingContext], Any], description: str) -> None:
+    """
+    Register a new metadata resolver.
+
+    Args:
+        key: The metadata key
+        resolver_func: Function that takes ProcessingContext and returns the metadata value
+        description: Human-readable description of what this metadata provides
+    """
+    METADATA_RESOLVERS[key] = {
+        "resolver": resolver_func,
+        "description": description
+    }
+    logger.debug(f"Registered metadata resolver for key '{key}': {description}")
+
+def inject_metadata_into_pattern(func_pattern: Any, metadata_key: str, metadata_value: Any) -> Any:
+    """
+    Inject metadata into a function pattern by modifying or creating kwargs.
+
+    Args:
+        func_pattern: The original function pattern (callable, tuple, list, or dict)
+        metadata_key: The parameter name to inject
+        metadata_value: The value to inject
+
+    Returns:
+        Modified function pattern with metadata injected
+    """
+    # Case 1: Direct callable -> convert to (callable, {metadata_key: metadata_value})
+    if callable(func_pattern) and not isinstance(func_pattern, type):
+        return (func_pattern, {metadata_key: metadata_value})
+
+    # Case 2: (callable, kwargs) tuple -> update kwargs
+    elif isinstance(func_pattern, tuple) and len(func_pattern) == 2 and callable(func_pattern[0]):
+        func, existing_kwargs = func_pattern
+        updated_kwargs = existing_kwargs.copy()
+        updated_kwargs.update({metadata_key: metadata_value})
+        return (func, updated_kwargs)
+
+    # Case 3: List or dict patterns -> not supported for metadata injection
+    # These complex patterns should not be used with metadata-requiring functions
+    else:
+        raise ValueError(f"Cannot inject metadata into complex function pattern: {type(func_pattern)}. "
+                        f"Functions requiring metadata should use simple patterns (callable or (callable, kwargs)).")
 
 # FIRST_STEP_OUTPUT_SUFFIX removed
 
@@ -63,13 +143,6 @@ class PipelinePathPlanner:
     
         # Track available special outputs by key for validation
         declared_outputs = {}
-        first_step_input: Optional[Path] = None # Added type hint
-    
-        # Get base input dir from first step if available
-        if steps and len(steps) > 0:
-            first_step_instance = steps[0]
-            if first_step_instance.step_id in step_paths and "input_dir" in step_paths[first_step_instance.step_id]:
-                 first_step_input = Path(step_paths[first_step_instance.step_id]["input_dir"])
     
         # Single pass through steps
         for i, step in enumerate(steps):
@@ -79,14 +152,12 @@ class PipelinePathPlanner:
             # --- Determine contract sources ---
             s_outputs_keys: Set[str] = set()
             s_inputs_info: Dict[str, bool] = {}
-            is_cb: bool = False
 
             if isinstance(step, FunctionStep):
                 core_callable = get_core_callable(step.func)
                 if core_callable:
                     s_outputs_keys = getattr(core_callable, '__special_outputs__', set())
                     s_inputs_info = getattr(core_callable, '__special_inputs__', {})
-                    is_cb = getattr(core_callable, '__chain_breaker__', False)
             else: # For non-FunctionSteps, assume contracts are direct attributes if they exist
                 raw_s_outputs = getattr(step, 'special_outputs', set())
                 if isinstance(raw_s_outputs, str):
@@ -130,9 +201,31 @@ class PipelinePathPlanner:
                         # This should ideally not be reached if previous steps always have output_dir
                         raise ValueError(f"Previous step {prev_step.name} (ID: {prev_step_id}) has no output_dir in step_plans.")
 
-            # Save first step's actual input_dir for potential use by chain breakers
-            if i == 0:
-                first_step_input = step_input_dir
+            # --- Chain breaker logic ---
+            chain_breaker_read_backend = None  # Track if this step should use disk backend
+            if i > 0:  # Not the first step
+                # Check if the PREVIOUS step is a chain breaker
+                prev_step = steps[i-1]
+                prev_is_chain_breaker = False
+                if isinstance(prev_step, FunctionStep):
+                    func_to_check = prev_step.func
+                    if isinstance(func_to_check, (tuple, list)) and func_to_check:
+                        func_to_check = func_to_check[0]
+                    if callable(func_to_check):
+                        prev_is_chain_breaker = getattr(func_to_check, '__chain_breaker__', False)
+
+                # If previous step is chain breaker, use first step's input dir and set disk backend
+                if prev_is_chain_breaker:
+                    # Get first step's input_dir from step_plans
+                    first_step = steps[0]
+                    first_step_id = first_step.step_id
+                    if first_step_id in step_plans and "input_dir" in step_plans[first_step_id]:
+                        first_step_input_from_plans = step_plans[first_step_id]["input_dir"]
+                        step_input_dir = Path(first_step_input_from_plans)
+                        chain_breaker_read_backend = 'disk'  # Store for later application
+                        logger.debug(f"Step '{step_name}' follows chain breaker '{prev_step.name}' - redirected to first step input '{first_step_input_from_plans}' and will use disk backend")
+                    else:
+                        logger.warning(f"Step '{step_name}' follows chain breaker '{prev_step.name}' but could not find first step input_dir in step_plans")
                 
             # --- Process output directory ---
             # Check if step_paths already has this step with output_dir
@@ -172,26 +265,20 @@ class PipelinePathPlanner:
                         # Subsequent steps work in place - use same directory as input
                         step_output_dir = step_input_dir
             else:
-                # Last step: For first step (i == 0), create output directory with suffix
-                # For subsequent steps (i > 0), work in place (use same directory as input)
-                if i == 0:
-                    # Last step uses input directory with appropriate suffix
-                    step_name_lower = step_name.lower()
-                    current_suffix = path_config.output_dir_suffix # Default
-                    if "position" in step_name_lower:
-                        current_suffix = path_config.positions_dir_suffix
-                    elif "stitch" in step_name_lower:
-                        current_suffix = path_config.stitched_dir_suffix
+                # Last step: Always create output directory with suffix (final results)
+                step_name_lower = step_name.lower()
+                current_suffix = path_config.output_dir_suffix # Default
+                if "position" in step_name_lower:
+                    current_suffix = path_config.positions_dir_suffix
+                elif "stitch" in step_name_lower:
+                    current_suffix = path_config.stitched_dir_suffix
 
-                    # For first step, use workspace directory name instead of input directory name
-                    if hasattr(context, 'workspace_path') and context.workspace_path:
-                        workspace_path = Path(context.workspace_path)
-                        step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
-                    else:
-                        step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
+                # For last step, use workspace directory name instead of input directory name
+                if hasattr(context, 'workspace_path') and context.workspace_path:
+                    workspace_path = Path(context.workspace_path)
+                    step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
                 else:
-                    # Subsequent steps work in place - use same directory as input
-                    step_output_dir = step_input_dir
+                    step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
                 
             # --- Rule: First step must have different input and output ---
             if i == 0 and step_output_dir == step_input_dir:
@@ -222,39 +309,66 @@ class PipelinePathPlanner:
                     }
                 
             # Process special inputs
+            metadata_injected_steps = {}  # Track steps that need metadata injection
             if s_inputs_info: # Use the info derived from core_callable or step attribute
                 for key in sorted(list(s_inputs_info.keys())): # Iterate over sorted keys
-                    # Validate special input exists from earlier step
-                    if key not in declared_outputs:
-                        raise PlanError(f"Step '{step_name}' requires special input '{key}', but no upstream step produces it")
+                    # Check if special input exists from earlier step
+                    if key in declared_outputs:
+                        # Normal step-to-step special input linking
+                        producer = declared_outputs[key]
+                        # Validate producer comes before consumer
+                        if producer["position"] >= i:
+                            producer_step_name = steps[producer["position"]].name # Ensure 'steps' is the pipeline_definition list
+                            raise PlanError(f"Step '{step_name}' cannot consume special input '{key}' from later step '{producer_step_name}'")
 
-                    producer = declared_outputs[key]
-                    # Validate producer comes before consumer
-                    if producer["position"] >= i:
-                        producer_step_name = steps[producer["position"]].name # Ensure 'steps' is the pipeline_definition list
-                        raise PlanError(f"Step '{step_name}' cannot consume special input '{key}' from later step '{producer_step_name}'")
+                        special_inputs[key] = {
+                            "path": producer["path"],
+                            "source_step_id": producer["step_id"]
+                        }
+                    elif key in s_outputs_keys:
+                        # Current step produces this special input itself - self-fulfilling
+                        # This will be handled when special outputs are processed
+                        # For now, we'll create a placeholder that will be updated
+                        snake_case_key = to_snake_case(key)
+                        output_path = Path(step_output_dir) / f"{snake_case_key}.pkl"
+                        special_inputs[key] = {
+                            "path": str(output_path),
+                            "source_step_id": step_id  # Self-reference
+                        }
+                    elif key in METADATA_RESOLVERS:
+                        # Metadata special input - resolve and inject into function pattern
+                        try:
+                            metadata_value = resolve_metadata(key, context)
+                            logger.debug(f"Resolved metadata '{key}' = {metadata_value} for step '{step_name}'")
 
-                    special_inputs[key] = {
-                        "path": producer["path"],
-                        "source_step_id": producer["step_id"]
-                    }
+                            # Store metadata for injection into function pattern
+                            # This will be handled by FuncStepContractValidator
+                            metadata_injected_steps[key] = metadata_value
 
-            # --- Process chain breaker ---
-            # Use the 'is_cb' flag derived earlier
-            if is_cb and i > 0:
-                # If this is a chain breaker and not the first step,
-                # the next step's input should be the first step's input
-                if i < len(steps) - 1:
-                    # Find the next step
-                    # next_step = steps[i+1] # Not used directly here
-                    # Set this step's output to match first step's input
-                    # This logic ensures the next step's input_dir will be first_step_input
-                    # if it normally chains from this step's output_dir.
-                    if first_step_input is not None: # Ensure first_step_input was set
-                        step_output_dir = first_step_input
+                        except Exception as e:
+                            raise PlanError(f"Step '{step_name}' requires metadata '{key}', but resolution failed: {e}")
                     else:
-                        # This case should ideally not happen if pipeline has >1 steps and first_step_input is always captured
-                        logger.warning(f"Chain breaker step {step_name} encountered but first_step_input is not available.")
+                        # No producer step and no metadata resolver
+                        available_metadata = list(METADATA_RESOLVERS.keys())
+                        raise PlanError(f"Step '{step_name}' requires special input '{key}', but no upstream step produces it "
+                                      f"and no metadata resolver is available. Available metadata keys: {available_metadata}")
+
+            # Store metadata injection info for FuncStepContractValidator
+            if metadata_injected_steps and isinstance(step, FunctionStep):
+                # We need to modify the function pattern to inject metadata
+                # This will be stored in step_plans and picked up by FuncStepContractValidator
+                original_func = step.func
+                modified_func = original_func
+
+                # Inject each metadata value into the function pattern
+                for metadata_key, metadata_value in metadata_injected_steps.items():
+                    modified_func = inject_metadata_into_pattern(modified_func, metadata_key, metadata_value)
+                    logger.debug(f"Injected metadata '{metadata_key}' into function pattern for step '{step_name}'")
+
+                # Store the modified function pattern - FuncStepContractValidator will pick this up
+                step.func = modified_func
+
+
 
             # Create step path info
             step_paths[step_id] = {
@@ -263,8 +377,11 @@ class PipelinePathPlanner:
                 "pipeline_position": i,
                 "special_inputs": special_inputs,
                 "special_outputs": special_outputs,
-                "chainbreaker": is_cb # Store the chainbreaker status
             }
+
+            # Apply chain breaker read backend if needed
+            if chain_breaker_read_backend is not None:
+                step_paths[step_id][READ_BACKEND] = chain_breaker_read_backend
 
         # --- Final path connectivity validation after all steps are processed ---
         for i, step in enumerate(steps):
@@ -279,12 +396,18 @@ class PipelinePathPlanner:
             curr_step_input_dir = step_paths[curr_step_id]["input_dir"]
             prev_step_output_dir = step_paths[prev_step_id]["output_dir"]
 
-            # Check if this step is a chain breaker using the stored flag
-            # is_chain_breaker_flag_from_plan = hasattr(step, "chain_breaker") and step.chain_breaker # Old way
-            is_chain_breaker_flag_from_plan = step_paths[curr_step_id].get("chainbreaker", False) # New way
+            # Check if the PREVIOUS step is a chain breaker
+            prev_step = steps[i-1]
+            prev_is_chain_breaker_flag_from_plan = False
+            if isinstance(prev_step, FunctionStep):
+                func_to_check = prev_step.func
+                if isinstance(func_to_check, (tuple, list)) and func_to_check:
+                    func_to_check = func_to_check[0]
+                if callable(func_to_check):
+                    prev_is_chain_breaker_flag_from_plan = getattr(func_to_check, '__chain_breaker__', False)
 
-            # Check path connectivity unless it's a chain breaker
-            if not is_chain_breaker_flag_from_plan and curr_step_input_dir != prev_step_output_dir:
+            # Check path connectivity unless the previous step is a chain breaker
+            if not prev_is_chain_breaker_flag_from_plan and curr_step_input_dir != prev_step_output_dir:
                 # Check if connected through special I/O
                 has_special_connection = False
                 for _, input_info in step_paths[curr_step_id].get("special_inputs", {}).items(): # key variable renamed to _

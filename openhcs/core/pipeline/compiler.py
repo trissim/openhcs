@@ -122,6 +122,7 @@ class PipelineCompiler:
             if isinstance(step, FunctionStep):
                 current_plan["variable_components"] = step.variable_components
                 current_plan["group_by"] = step.group_by
+                current_plan["force_disk_output"] = step.force_disk_output
 
                 # 🎯 SEMANTIC COHERENCE FIX: Prevent group_by/variable_components conflict
                 # When variable_components contains the same value as group_by,
@@ -205,12 +206,12 @@ class PipelineCompiler:
         # FuncStepContractValidator might need access to input/output_memory_type_hint from plan
         step_memory_types = FuncStepContractValidator.validate_pipeline(
             steps=steps_definition,
-            pipeline_context=None # Pass None for now, validator will use fallback verification
+            pipeline_context=context # Pass context so validator can access step plans for memory type overrides
         )
 
         for step_id, memory_types in step_memory_types.items():
             if "input_memory_type" not in memory_types or "output_memory_type" not in memory_types:
-                step_name = context.step_plans.get(step_id, {}).get("step_name", step_id)
+                step_name = context.step_plans[step_id]["step_name"]
                 raise AssertionError(
                     f"Memory type validation must set input/output_memory_type for FunctionStep {step_name} (ID: {step_id}) (Clause 101)."
                 )
@@ -218,6 +219,19 @@ class PipelineCompiler:
                 context.step_plans[step_id].update(memory_types)
             else:
                 logger.warning(f"Step ID {step_id} found in memory_types but not in context.step_plans. Skipping.")
+
+        # Apply memory type override: Last step with disk output must use numpy for disk writing
+        for i, step in enumerate(steps_definition):
+            if isinstance(step, FunctionStep):
+                step_id = step.step_id
+                if step_id in context.step_plans:
+                    step_plan = context.step_plans[step_id]
+                    is_last_step = (i == len(steps_definition) - 1)
+                    write_backend = step_plan['write_backend']
+
+                    if is_last_step and write_backend == 'disk':
+                        logger.debug(f"Last step {step.name} has disk output, overriding output_memory_type to numpy")
+                        step_plan['output_memory_type'] = 'numpy'
 
 
     @staticmethod
@@ -235,20 +249,20 @@ class PipelineCompiler:
 
         for step_id, step_plan_val in context.step_plans.items(): # Renamed step_plan to step_plan_val to avoid conflict
             is_gpu_step = False
-            input_type = step_plan_val.get("input_memory_type")
+            input_type = step_plan_val["input_memory_type"]
             if input_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
 
-            output_type = step_plan_val.get("output_memory_type")
+            output_type = step_plan_val["output_memory_type"]
             if output_type in VALID_GPU_MEMORY_TYPES:
                 is_gpu_step = True
 
             if is_gpu_step:
                 # Ensure gpu_assignments has an entry for this step_id if it's a GPU step
                 # And that entry contains a 'gpu_id'
-                step_gpu_assignment = gpu_assignments.get(step_id, {})
+                step_gpu_assignment = gpu_assignments[step_id]
                 if "gpu_id" not in step_gpu_assignment:
-                    step_name = step_plan_val.get("step_name", step_id)
+                    step_name = step_plan_val["step_name"]
                     raise AssertionError(
                         f"GPU validation must assign gpu_id for step {step_name} (ID: {step_id}) "
                         f"with GPU memory types (Clause 295)."
@@ -276,7 +290,7 @@ class PipelineCompiler:
             if not context.step_plans: return # Guard against empty step_plans
             for step_id, plan in context.step_plans.items():
                 plan["visualize"] = True
-                logger.info(f"Global visualizer override: Step '{plan.get('step_name', step_id)}' marked for visualization.")
+                logger.info(f"Global visualizer override: Step '{plan['step_name']}' marked for visualization.")
 
 # The monolithic compile() method is removed.
 # Orchestrator will call the static methods above in sequence.

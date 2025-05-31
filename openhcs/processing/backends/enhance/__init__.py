@@ -32,7 +32,13 @@ try:
 except ImportError:
     pass
 
-# Import self-supervised 3D deconvolution implementation
+# Import self-supervised deconvolution implementations
+try:
+    from openhcs.processing.backends.enhance.self_supervised_2d_deconvolution import \
+        self_supervised_2d_deconvolution
+except ImportError:
+    pass
+
 try:
     from openhcs.processing.backends.enhance.self_supervised_3d_deconvolution import \
         self_supervised_3d_deconvolution
@@ -49,6 +55,7 @@ __all__ = [
     # N2V2 processor implementation
     "n2v2_denoise_torch",
 
-    # Self-supervised 3D deconvolution implementation
+    # Self-supervised deconvolution implementations
+    "self_supervised_2d_deconvolution",
     "self_supervised_3d_deconvolution",
 ]

@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 # --- PyTorch Specific Models and Helpers ---
 class _Simple3DCNN_torch(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, features=(16, 32)):
+    """Simple 3D CNN for deconvolution - optimized for 3D data per paper."""
+    def __init__(self, in_channels=1, out_channels=1, features=(48, 96)):  # Paper: 48 initial features for 3D
         super().__init__()
         self.conv_block = nn.Sequential(
             nn.Conv3d(in_channels, features[0], kernel_size=3, padding=1),
@@ -32,81 +33,83 @@ class _Simple3DCNN_torch(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (B, C, D, H, W)
         return self.conv_block(x)
 
-    class _LearnedBlur3D_torch(nn.Module):
-        def __init__(self, kernel_size=3):
-            super().__init__()
-            self.blur_conv = nn.Conv3d(1, 1, kernel_size=kernel_size, padding=kernel_size//2, bias=False)
-            # Initialize weights to be somewhat like a Gaussian blur
-            # For simplicity, using default initialization or a simple averaging kernel
-            if kernel_size > 0 :
-                weights = torch.ones(kernel_size, kernel_size, kernel_size)
-                weights = weights / weights.sum()
-                self.blur_conv.weight.data = weights.reshape(1,1,kernel_size,kernel_size,kernel_size)
+class _LearnedBlur3D_torch(nn.Module):
+    def __init__(self, kernel_size=3):
+        super().__init__()
+        self.blur_conv = nn.Conv3d(1, 1, kernel_size=kernel_size, padding=kernel_size//2, bias=False)
+        # Initialize weights to be somewhat like a Gaussian blur
+        # For simplicity, using default initialization or a simple averaging kernel
+        if kernel_size > 0 :
+            weights = torch.ones(kernel_size, kernel_size, kernel_size)
+            weights = weights / weights.sum()
+            self.blur_conv.weight.data = weights.reshape(1,1,kernel_size,kernel_size,kernel_size)
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor: # x: (B, 1, D, H, W)
-            return self.blur_conv(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor: # x: (B, 1, D, H, W)
+        return self.blur_conv(x)
 
-    def _gaussian_kernel_3d_torch(shape: Tuple[int, int, int], sigma: Tuple[float, float, float], device) -> torch.Tensor:
-        coords_d = torch.arange(shape[0], dtype=torch.float32, device=device) - (shape[0] - 1) / 2.0
-        coords_h = torch.arange(shape[1], dtype=torch.float32, device=device) - (shape[1] - 1) / 2.0
-        coords_w = torch.arange(shape[2], dtype=torch.float32, device=device) - (shape[2] - 1) / 2.0
+def _gaussian_kernel_3d_torch(shape: Tuple[int, int, int], sigma: Tuple[float, float, float], device) -> torch.Tensor:
+    coords_d = torch.arange(shape[0], dtype=torch.float32, device=device) - (shape[0] - 1) / 2.0
+    coords_h = torch.arange(shape[1], dtype=torch.float32, device=device) - (shape[1] - 1) / 2.0
+    coords_w = torch.arange(shape[2], dtype=torch.float32, device=device) - (shape[2] - 1) / 2.0
 
-        kernel_d = torch.exp(-coords_d**2 / (2 * sigma[0]**2))
-        kernel_h = torch.exp(-coords_h**2 / (2 * sigma[1]**2))
-        kernel_w = torch.exp(-coords_w**2 / (2 * sigma[2]**2))
+    kernel_d = torch.exp(-coords_d**2 / (2 * sigma[0]**2))
+    kernel_h = torch.exp(-coords_h**2 / (2 * sigma[1]**2))
+    kernel_w = torch.exp(-coords_w**2 / (2 * sigma[2]**2))
 
-        kernel = torch.outer(kernel_d, torch.outer(kernel_h, kernel_w)).reshape(shape[0], shape[1], shape[2])
-        return kernel / torch.sum(kernel)
+    # Create 3D kernel using broadcasting instead of nested outer products
+    kernel = kernel_d[:, None, None] * kernel_h[None, :, None] * kernel_w[None, None, :]
+    return kernel / torch.sum(kernel)
 
-    def _blur_fft_torch(volume: torch.Tensor, kernel: torch.Tensor, device) -> torch.Tensor:
-        # volume: (B, 1, D, H, W), kernel: (kD, kH, kW)
-        B, C, D, H, W = volume.shape
-        kD, kH, kW = kernel.shape
+def _blur_fft_torch(volume: torch.Tensor, kernel: torch.Tensor, device) -> torch.Tensor:
+    # volume: (B, 1, D, H, W), kernel: (kD, kH, kW)
+    B, C, D, H, W = volume.shape
+    kD, kH, kW = kernel.shape
 
-        # Pad kernel to volume size for FFT
-        kernel_padded = F.pad(kernel, (
-            (W - kW) // 2, (W - kW + 1) // 2,
-            (H - kH) // 2, (H - kH + 1) // 2,
-            (D - kD) // 2, (D - kD + 1) // 2,
-        ))
-        kernel_padded = kernel_padded.unsqueeze(0).unsqueeze(0) # (1, 1, D, H, W)
+    # Pad kernel to volume size for FFT
+    kernel_padded = F.pad(kernel, (
+        (W - kW) // 2, (W - kW + 1) // 2,
+        (H - kH) // 2, (H - kH + 1) // 2,
+        (D - kD) // 2, (D - kD + 1) // 2,
+    ))
+    kernel_padded = kernel_padded.unsqueeze(0).unsqueeze(0) # (1, 1, D, H, W)
 
-        vol_fft = rfftn(volume, dim=(-3, -2, -1))
-        ker_fft = rfftn(kernel_padded.to(device), dim=(-3, -2, -1))
+    vol_fft = rfftn(volume, dim=(-3, -2, -1))
+    ker_fft = rfftn(kernel_padded.to(device), dim=(-3, -2, -1))
 
-        blurred_fft = vol_fft * ker_fft
-        blurred_vol = irfftn(blurred_fft, s=(D, H, W), dim=(-3, -2, -1))
-        return blurred_vol
+    blurred_fft = vol_fft * ker_fft
+    blurred_vol = irfftn(blurred_fft, s=(D, H, W), dim=(-3, -2, -1))
+    return blurred_vol
 
-    def _blur_gaussian_conv_torch(volume: torch.Tensor, sigma_spatial: float, sigma_depth: float, kernel_size: int, device) -> torch.Tensor:
-        kernel_d_1d = _gaussian_kernel_3d_torch((kernel_size,1,1), (sigma_depth,1,1), device)[:,0,0]
-        kernel_h_1d = _gaussian_kernel_3d_torch((1,kernel_size,1), (1,sigma_spatial,1), device)[0,:,0]
-        kernel_w_1d = _gaussian_kernel_3d_torch((1,1,kernel_size), (1,1,sigma_spatial), device)[0,0,:]
+def _blur_gaussian_conv_torch(volume: torch.Tensor, sigma_spatial: float, sigma_depth: float, kernel_size: int, device) -> torch.Tensor:
+    kernel_d_1d = _gaussian_kernel_3d_torch((kernel_size,1,1), (sigma_depth,1,1), device)[:,0,0]
+    kernel_h_1d = _gaussian_kernel_3d_torch((1,kernel_size,1), (1,sigma_spatial,1), device)[0,:,0]
+    kernel_w_1d = _gaussian_kernel_3d_torch((1,1,kernel_size), (1,1,sigma_spatial), device)[0,0,:]
 
-        kernel = kernel_d_1d[:,None,None] * kernel_h_1d[None,:,None] * kernel_w_1d[None,None,:]
-        kernel = kernel.unsqueeze(0).unsqueeze(0).to(device) # (1, 1, kD, kH, kW)
+    kernel = kernel_d_1d[:,None,None] * kernel_h_1d[None,:,None] * kernel_w_1d[None,None,:]
+    kernel = kernel.unsqueeze(0).unsqueeze(0).to(device) # (1, 1, kD, kH, kW)
 
-        padding = kernel_size // 2
-        return F.conv3d(volume, kernel, padding=padding)
+    padding = kernel_size // 2
+    return F.conv3d(volume, kernel, padding=padding)
 
-    def _extract_random_patches_torch(
-        volume_single_batch_channel: torch.Tensor, # (D, H, W)
-        patch_size_dhw: Tuple[int, int, int],
-        num_patches: int,
-        device
-    ) -> torch.Tensor: # (num_patches, 1, pD, pH, pW)
-        D, H, W = volume_single_batch_channel.shape
-        pD, pH, pW = patch_size_dhw
-        patches = torch.empty((num_patches, 1, pD, pH, pW), device=device)
-        for i in range(num_patches):
-            d_start = torch.randint(0, D - pD + 1, (1,)).item()
-            h_start = torch.randint(0, H - pH + 1, (1,)).item()
-            w_start = torch.randint(0, W - pW + 1, (1,)).item()
-            patch = volume_single_batch_channel[
-                d_start:d_start+pD, h_start:h_start+pH, w_start:w_start+pW
-            ]
-            patches[i, 0, ...] = patch
-        return patches
+def _extract_random_patches_torch(
+    volume_single_batch_channel: torch.Tensor, # (D, H, W)
+    patch_size_dhw: Tuple[int, int, int],
+    num_patches: int,
+    device
+) -> torch.Tensor: # (num_patches, 1, pD, pH, pW)
+    D, H, W = volume_single_batch_channel.shape
+    pD, pH, pW = patch_size_dhw
+    patches = torch.empty((num_patches, 1, pD, pH, pW), device=device)
+    for i in range(num_patches):
+        # Force GPU device for random operations - NO CPU FALLBACK
+        d_start = torch.randint(0, D - pD + 1, (1,), device=device).item()
+        h_start = torch.randint(0, H - pH + 1, (1,), device=device).item()
+        w_start = torch.randint(0, W - pW + 1, (1,), device=device).item()
+        patch = volume_single_batch_channel[
+            d_start:d_start+pD, h_start:h_start+pH, w_start:w_start+pW
+        ]
+        patches[i, 0, ...] = patch
+    return patches
 
 # --- Main Deconvolution Function ---
 @torch_func
@@ -119,14 +122,14 @@ def self_supervised_3d_deconvolution(
     if not isinstance(image_volume, torch.Tensor):
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")
 
-    # --- Default KWARGS ---
-    n_epochs = int(kwargs.get("n_epochs", 100)) # Reduced default for quick test
-    patch_size_dhw = tuple(kwargs.get("patch_size", (32, 32, 32))) # Reduced default
-    mask_fraction = float(kwargs.get("mask_fraction", 0.005))
+    # --- Default KWARGS optimized for 3D per paper ---
+    n_epochs = int(kwargs.get("n_epochs", 10)) # Reduced default for quick test (was 100)
+    patch_size_dhw = tuple(kwargs.get("patch_size", (16, 32, 32))) # Reduced for small test images (paper: 64x64x64)
+    mask_fraction = float(kwargs.get("mask_fraction", 0.005)) # Paper: 0.5%
     sigma_noise = float(kwargs.get("sigma_noise", 0.2))
     lambda_rec = float(kwargs.get("lambda_rec", 1.0))
-    lambda_inv = float(kwargs.get("lambda_inv", 2.0))
-    lambda_bound = float(kwargs.get("lambda_bound", 0.1))
+    lambda_inv = float(kwargs.get("lambda_inv", 2.0)) # Paper: reconvolved invariance for 3D
+    lambda_bound = float(kwargs.get("lambda_bound", 0.0)) # Paper: λbound = 0 for 3D
     min_val = float(kwargs.get("min_val", 0.0))
     max_val = float(kwargs.get("max_val", 1.0))
     learning_rate = float(kwargs.get("learning_rate", 4e-4))
@@ -141,6 +144,10 @@ def self_supervised_3d_deconvolution(
 
     # --- PyTorch Backend Implementation ---
     device = image_volume.device
+
+    # FAIL LOUDLY if not on CUDA - no CPU fallback allowed
+    if device.type != "cuda":
+        raise RuntimeError(f"@torch_func requires CUDA tensor, got device: {device}")
 
     # Ensure input is (1, 1, D, H, W)
     if image_volume.ndim == 3:  # (D, H, W)
@@ -214,16 +221,20 @@ def self_supervised_3d_deconvolution(
         else:
             raise ValueError(f"Unknown blur_mode: {blur_mode}")
 
-        # Losses
+        # Losses - Paper's optimal Loss (3) for 3D: reconvolved invariance
         loss_rec = F.mse_loss(g_f_x_masked, current_patch_orig)
 
+        # Reconvolved invariance loss (after PSF) - optimal for 3D per paper
         loss_inv = torch.tensor(0.0, device=device)
         if mask.sum() > 0: # Only if some pixels were masked
             loss_inv = F.mse_loss(g_f_x_orig[mask], g_f_x_masked[mask])
 
-        loss_bound_f_masked = (torch.relu(f_x_masked - max_val) + torch.relu(min_val - f_x_masked)).mean()
-        loss_bound_f_orig = (torch.relu(f_x_orig - max_val) + torch.relu(min_val - f_x_orig)).mean()
-        loss_bound = (loss_bound_f_masked + loss_bound_f_orig) / 2.0
+        # Boundary loss on reconvolved output (λbound = 0 for 3D per paper)
+        loss_bound = torch.tensor(0.0, device=device)
+        if lambda_bound > 0:
+            loss_bound_f_masked = (torch.relu(g_f_x_masked - max_val) + torch.relu(min_val - g_f_x_masked)).mean()
+            loss_bound_f_orig = (torch.relu(g_f_x_orig - max_val) + torch.relu(min_val - g_f_x_orig)).mean()
+            loss_bound = (loss_bound_f_masked + loss_bound_f_orig) / 2.0
 
         total_loss = lambda_rec * loss_rec + lambda_inv * loss_inv + lambda_bound * loss_bound
 
@@ -232,7 +243,8 @@ def self_supervised_3d_deconvolution(
         optimizer.step()
 
         if epoch % (n_epochs // 10 if n_epochs >=10 else 1) == 0:
-            logger.info(f"Epoch {epoch}/{n_epochs}, Loss: {total_loss.item():.4f} (Rec: {loss_rec.item():.4f}, Inv: {loss_inv.item():.4f}, Bound: {loss_bound.item():.4f})")
+            logger.info(f"3D Deconv Epoch {epoch}/{n_epochs}, Loss: {total_loss.item():.4f} "
+                       f"(Rec: {loss_rec.item():.4f}, Inv: {loss_inv.item():.4f}, Bound: {loss_bound.item():.4f})")
 
     # Inference
     f_model.eval()

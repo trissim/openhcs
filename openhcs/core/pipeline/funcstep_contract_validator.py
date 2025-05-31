@@ -93,17 +93,19 @@ class FuncStepContractValidator:
 
         # Verify that required planners have run before this validator
         if pipeline_context is not None:
-            # Check for planner execution flags in the context
-            if not pipeline_context.get("path_planner_done", False):
+            # Check that step plans exist and have required fields from planners
+            if not pipeline_context.step_plans:
                 raise AssertionError(
-                    "Clause 101 Violation: Path planner must run before FuncStepContractValidator. "
-                    "Set pipeline_context['path_planner_done'] = True after running the path planner."
+                    "Clause 101 Violation: Step plans must be initialized before FuncStepContractValidator."
                 )
 
-            if not pipeline_context.get("materialization_planner_done", False):
+            # Check that materialization planner has run by verifying read_backend/write_backend exist
+            sample_step_id = next(iter(pipeline_context.step_plans.keys()))
+            sample_plan = pipeline_context.step_plans[sample_step_id]
+            if 'read_backend' not in sample_plan or 'write_backend' not in sample_plan:
                 raise AssertionError(
                     "Clause 101 Violation: Materialization planner must run before FuncStepContractValidator. "
-                    "Set pipeline_context['materialization_planner_done'] = True after running the materialization planner."
+                    "Step plans missing read_backend/write_backend fields."
                 )
         else:
             logger.warning(
@@ -115,7 +117,7 @@ class FuncStepContractValidator:
         step_memory_types = {}
 
         # Process each step in the pipeline
-        for step in steps:
+        for i, step in enumerate(steps):
             # Only validate FunctionStep instances
             if isinstance(step, FunctionStep):
                 # Verify that other planners have run before this validator by checking attributes
@@ -136,6 +138,8 @@ class FuncStepContractValidator:
 
                 memory_types = FuncStepContractValidator.validate_funcstep(step)
                 step_memory_types[step.step_id] = memory_types
+
+
 
         return step_memory_types
 

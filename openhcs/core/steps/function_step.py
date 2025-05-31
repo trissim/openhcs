@@ -54,11 +54,18 @@ def _execute_function_core(
                 special_path_value = path_info['path']
             else:
                 special_path_value = path_info  # Fallback if it's already a string
-            logger.debug(f"Loading special input '{arg_name}' from path '{special_path_value}' (memory backend)")
+
+            # Add well_id prefix to filename for memory backend to match special output logic
+            from pathlib import Path
+            special_path_obj = Path(special_path_value)
+            prefixed_filename = f"{well_id}_{special_path_obj.name}"
+            prefixed_special_path = str(special_path_obj.parent / prefixed_filename)
+
+            logger.debug(f"Loading special input '{arg_name}' from path '{prefixed_special_path}' (memory backend)")
             try:
-                final_kwargs[arg_name] = context.filemanager.load(special_path_value, Backend.MEMORY.value)
+                final_kwargs[arg_name] = context.filemanager.load(prefixed_special_path, Backend.MEMORY.value)
             except Exception as e:
-                logger.error(f"Failed to load special input '{arg_name}' from '{special_path_value}': {e}", exc_info=True)
+                logger.error(f"Failed to load special input '{arg_name}' from '{prefixed_special_path}': {e}", exc_info=True)
                 raise
 
     # Auto-inject context if function signature expects it
@@ -315,38 +322,35 @@ class FunctionStep(AbstractStep):
     def process(self, context: 'ProcessingContext') -> None:
         # Generate step_id from object reference (elegant stateless approach)
         step_id = get_step_id(self)
-        step_plan = context.get_step_plan(step_id)
-        if not step_plan:
-            step_name = getattr(self, 'name', 'Unknown') if hasattr(self, 'name') else 'Unknown'
-            raise ValueError(f"Step plan not found for step: {step_name} (ID: {step_id})")
+        step_plan = context.step_plans[step_id]
 
         # Get step name for logging
-        step_name = step_plan.get('step_name') or (getattr(self, 'name', 'Unknown') if hasattr(self, 'name') else 'Unknown')
+        step_name = step_plan['step_name']
 
         try:
-            well_id = step_plan.get('well_id')
-            step_input_dir = Path(step_plan.get('input_dir'))
-            step_output_dir = Path(step_plan.get('output_dir'))
-            variable_components = step_plan.get('variable_components', ['site'])
-            group_by = step_plan.get('group_by', 'channel')
+            well_id = step_plan['well_id']
+            step_input_dir = Path(step_plan['input_dir'])
+            step_output_dir = Path(step_plan['output_dir'])
+            variable_components = step_plan['variable_components']
+            group_by = step_plan['group_by']
             
             # special_inputs/outputs are dicts: {'key': 'vfs_path_value'}
-            special_inputs = step_plan.get('special_inputs', {}) 
-            special_outputs = step_plan.get('special_outputs', {}) # Should be OrderedDict if order matters
+            special_inputs = step_plan['special_inputs']
+            special_outputs = step_plan['special_outputs'] # Should be OrderedDict if order matters
 
-            force_disk_output = step_plan.get('force_disk_output', False)
-            read_backend = step_plan.get('read_backend', Backend.DISK.value)
-            write_backend = step_plan.get('write_backend', Backend.DISK.value)
-            input_mem_type = step_plan.get('input_memory_type', MemoryType.NUMPY.value)
-            output_mem_type = step_plan.get('output_memory_type', MemoryType.NUMPY.value)
-            device_id = step_plan.get('gpu_id')
+            force_disk_output = step_plan['force_disk_output']
+            read_backend = step_plan['read_backend']
+            write_backend = step_plan['write_backend']
+            input_mem_type = step_plan['input_memory_type']
+            output_mem_type = step_plan['output_memory_type']
+            device_id = step_plan['gpu_id']
             logger.debug(f"🔥 DEBUG: Step {step_id} gpu_id from plan: {device_id}, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+            logger.debug(f"🔥 DEBUG: Step {step_id} read_backend: {read_backend}, write_backend: {write_backend}")
 
             if not all([well_id, step_input_dir, step_output_dir]):
                 raise ValueError(f"Plan missing essential keys for step {step_id}")
 
             same_dir = str(step_input_dir) == str(step_output_dir)
-            step_name = step_plan.get('step_name') or (getattr(self, 'name', 'Unknown') if hasattr(self, 'name') else 'Unknown')
             logger.info(f"Step {step_id} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
 
             if not context.microscope_handler:
@@ -401,9 +405,7 @@ class FunctionStep(AbstractStep):
                         special_inputs, special_outputs, # Pass the maps from step_plan
                         variable_components
                     )
-            step_name = step_plan.get('step_name') or (getattr(self, 'name', 'Unknown') if hasattr(self, 'name') else 'Unknown')
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
         except Exception as e:
-            step_name = step_plan.get('step_name') or (getattr(self, 'name', 'Unknown') if hasattr(self, 'name') else 'Unknown')
             logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)
             raise

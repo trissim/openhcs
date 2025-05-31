@@ -119,17 +119,7 @@ class ProcessingContext:
         """
         return self._is_frozen
 
-    def get_step_plan(self, step_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve the execution plan for a specific step.
 
-        Args:
-            step_id: The unique identifier of the step.
-
-        Returns:
-            The step plan dictionary if found, else None.
-        """
-        return self.step_plans.get(step_id)
 
     # update_from_step_result method is removed as per plan.
 

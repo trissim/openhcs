@@ -36,28 +36,101 @@ else:
 
 logger = logging.getLogger(__name__)
 
-def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.ndarray":  # type: ignore
+def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", blend_radius: float = 10.0) -> "cp.ndarray":  # type: ignore
     """
-    Creates a 2D Gaussian mask normalized to sum to 1, for blending.
-    The blend_radius acts as sigma.
+    Creates a 2D blending mask for tile assembly.
+
+    Args:
+        tile_shape: (height, width) of the tile
+        blend_method: Blending method - "none", "gaussian", "rectangular", "linear_edge"
+        blend_radius: Blending parameter (pixels for feathering)
+
+    Returns:
+        2D mask array with blending weights
     """
-    if blend_radius <= 0: # No blending, return uniform weights
+    height, width = tile_shape
+
+    if blend_method == "none" or blend_radius <= 0:
+        # No blending - uniform weights
         return cp.ones(tile_shape, dtype=cp.float32)
 
-    # Create a grid of coordinates
-    coords_y = cp.arange(tile_shape[0]) - (tile_shape[0] - 1) / 2.0
-    coords_x = cp.arange(tile_shape[1]) - (tile_shape[1] - 1) / 2.0
-    yy, xx = cp.meshgrid(coords_y, coords_x, indexing='ij')
+    elif blend_method == "gaussian":
+        # Original circular Gaussian mask (for compatibility)
+        coords_y = cp.arange(height) - (height - 1) / 2.0
+        coords_x = cp.arange(width) - (width - 1) / 2.0
+        yy, xx = cp.meshgrid(coords_y, coords_x, indexing='ij')
+        mask = cp.exp(-(xx**2 + yy**2) / (2 * blend_radius**2))
+        mask = mask / cp.max(mask)  # Center will be 1.0
+        return mask.astype(cp.float32)
 
-    # Gaussian formula: exp(-(x^2 + y^2) / (2 * sigma^2))
-    # Here, sigma is blend_radius
-    mask = cp.exp(-(xx**2 + yy**2) / (2 * blend_radius**2))
+    elif blend_method == "rectangular":
+        # Rectangular feathering - blend near edges only
+        mask = cp.ones(tile_shape, dtype=cp.float32)
+        blend_pixels = int(blend_radius)
 
-    # Normalize the mask so its sum is 1, or close to it, to act as weights.
-    # For blending, it's often better if the center is 1 and it falls off.
-    # Let's ensure the center is 1.
-    mask = mask / cp.max(mask) # Center will be 1.0
-    return mask.astype(cp.float32)
+        if blend_pixels > 0:
+            # Create distance-to-edge maps
+            y_coords = cp.arange(height, dtype=cp.float32)
+            x_coords = cp.arange(width, dtype=cp.float32)
+
+            # Distance from top/bottom edges
+            dist_from_top = y_coords
+            dist_from_bottom = height - 1 - y_coords
+            y_edge_dist = cp.minimum(dist_from_top, dist_from_bottom)
+
+            # Distance from left/right edges
+            dist_from_left = x_coords
+            dist_from_right = width - 1 - x_coords
+            x_edge_dist = cp.minimum(dist_from_left, dist_from_right)
+
+            # Create 2D distance maps
+            y_dist_2d = y_edge_dist[:, cp.newaxis]  # Shape: (height, 1)
+            x_dist_2d = x_edge_dist[cp.newaxis, :]  # Shape: (1, width)
+
+            # Feathering weights based on distance to nearest edge
+            y_weight = cp.minimum(y_dist_2d / blend_pixels, 1.0)
+            x_weight = cp.minimum(x_dist_2d / blend_pixels, 1.0)
+
+            # Combine weights (minimum ensures feathering at ALL edges)
+            mask = cp.minimum(y_weight, x_weight)
+
+        return mask.astype(cp.float32)
+
+    elif blend_method == "linear_edge":
+        # Linear falloff from edges (softer than rectangular)
+        mask = cp.ones(tile_shape, dtype=cp.float32)
+        blend_pixels = int(blend_radius)
+
+        if blend_pixels > 0:
+            # Create coordinate grids
+            y_coords = cp.arange(height, dtype=cp.float32)
+            x_coords = cp.arange(width, dtype=cp.float32)
+
+            # Linear weights from edges
+            y_weight_top = cp.minimum(y_coords / blend_pixels, 1.0)
+            y_weight_bottom = cp.minimum((height - 1 - y_coords) / blend_pixels, 1.0)
+            x_weight_left = cp.minimum(x_coords / blend_pixels, 1.0)
+            x_weight_right = cp.minimum((width - 1 - x_coords) / blend_pixels, 1.0)
+
+            # Create 2D weight maps
+            y_weight = cp.minimum(y_weight_top[:, cp.newaxis], y_weight_bottom[:, cp.newaxis])
+            x_weight = cp.minimum(x_weight_left[cp.newaxis, :], x_weight_right[cp.newaxis, :])
+
+            # Combine weights multiplicatively for smoother transitions
+            mask = y_weight * x_weight
+
+        return mask.astype(cp.float32)
+
+    else:
+        raise ValueError(f"Unknown blend_method: {blend_method}. Supported: 'none', 'gaussian', 'rectangular', 'linear_edge'")
+
+
+def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.ndarray":  # type: ignore
+    """
+    Legacy function for backward compatibility.
+    Use _create_blend_mask with blend_method="gaussian" instead.
+    """
+    return _create_blend_mask(tile_shape, "gaussian", blend_radius)
 
 
 @special_inputs("positions") # The input name is "positions"
@@ -65,12 +138,26 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.n
 def assemble_stack_cupy(
     image_tiles: "cp.ndarray",  # type: ignore
     positions: "cp.ndarray",  # type: ignore # Renamed from positions_xy
-    blend_radius: float = 10.0
+    blend_radius: float = 10.0,
+    blend_method: str = "rectangular"
 ) -> "cp.ndarray":  # type: ignore
     """
     Assembles a 3D stack of 2D image tiles (N, H, W) into a composited 2D image,
     returned as a 3D array (1, H_canvas, W_canvas), using subpixel XY positions
-    and Gaussian blending.
+    and configurable blending.
+
+    Args:
+        image_tiles: 3D array of tiles (N, H, W)
+        positions: 2D array of tile positions (N, 2) as [x, y] coordinates
+        blend_radius: Blending parameter in pixels (default: 10.0)
+        blend_method: Blending method (default: "rectangular")
+            - "none": No blending, uniform weights
+            - "gaussian": Circular Gaussian mask (original behavior)
+            - "rectangular": Rectangular feathering from edges
+            - "linear_edge": Linear falloff from edges
+
+    Returns:
+        3D array (1, H_canvas, W_canvas) with assembled image
     """
     # The compiler will ensure this function is only called when CuPy is available
     # No need to check for CuPy availability here
@@ -81,10 +168,33 @@ def assemble_stack_cupy(
         logger.warning("image_tiles array is empty (0 tiles). Returning an empty array.")
         return cp.array([[[]]], dtype=cp.uint16) # Shape (1,0,0) to indicate empty 3D
 
-    if not isinstance(positions, cp.ndarray) or positions.ndim != 2 or positions.shape[1] != 2:
-        raise TypeError("positions must be a CuPy ndarray of shape [N, 2].") # Updated error message
+    # Convert positions to cupy for GPU-native operations (positions come in as numpy from special input)
+    if not hasattr(positions, 'ndim') or positions.ndim != 2 or positions.shape[1] != 2:
+        raise TypeError("positions must be an array of shape [N, 2].")
+    positions = cp.asarray(positions)  # Convert to cupy for GPU operations
+
+    # Debug: Print positions information
+    print(f"Assembly: Received {positions.shape[0]} positions for {image_tiles.shape[0]} tiles")
+    print(f"Position range: X=[{float(cp.min(positions[:, 0])):.1f}, {float(cp.max(positions[:, 0])):.1f}], Y=[{float(cp.min(positions[:, 1])):.1f}, {float(cp.max(positions[:, 1])):.1f}]")
+    print(f"First 3 positions: {positions[:3].tolist()}")
+
+    # Debug: Check image tile statistics
+    print(f"🔥 ASSEMBLY DEBUG: Image tiles shape: {image_tiles.shape}")
+    print(f"🔥 ASSEMBLY DEBUG: Image tiles dtype: {image_tiles.dtype}")
+    for i in range(min(3, image_tiles.shape[0])):
+        tile_min = float(cp.min(image_tiles[i]))
+        tile_max = float(cp.max(image_tiles[i]))
+        tile_mean = float(cp.mean(image_tiles[i]))
+        tile_nonzero = int(cp.count_nonzero(image_tiles[i]))
+        print(f"🔥 ASSEMBLY DEBUG: Tile {i}: min={tile_min:.3f}, max={tile_max:.3f}, mean={tile_mean:.3f}, nonzero={tile_nonzero}")
+
+    # Debug: Check if tiles are all zeros
+    total_nonzero = int(cp.count_nonzero(image_tiles))
+    total_pixels = int(cp.prod(cp.array(image_tiles.shape)))
+    print(f"🔥 ASSEMBLY DEBUG: Total nonzero pixels: {total_nonzero}/{total_pixels} ({100*total_nonzero/total_pixels:.1f}%)")
+
     if image_tiles.shape[0] != positions.shape[0]:
-        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).") # Updated error message
+        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).")
 
     num_tiles, tile_h, tile_w = image_tiles.shape
     first_tile_shape = (tile_h, tile_w) # Used for blend mask, assumes all tiles same H, W
@@ -117,16 +227,20 @@ def assemble_stack_cupy(
     canvas_width = canvas_max_x - canvas_min_x
     canvas_height = canvas_max_y - canvas_min_y
 
+    # Debug: Print canvas information
+    print(f"Canvas: {int(canvas_width)}x{int(canvas_height)} pixels, origin=({float(canvas_min_x):.1f}, {float(canvas_min_y):.1f})")
+    print(f"Tile size: {tile_w}x{tile_h} pixels")
+
     if canvas_width <= 0 or canvas_height <= 0:
         logger.warning(f"Calculated canvas dimensions are non-positive ({canvas_height}x{canvas_width}). Check positions and tile sizes.")
         return cp.array([], dtype=cp.uint16)
 
-    composite_accum = cp.zeros((canvas_height, canvas_width), dtype=cp.float32)
-    weight_accum = cp.zeros((canvas_height, canvas_width), dtype=cp.float32)
+    composite_accum = cp.zeros((int(canvas_height), int(canvas_width)), dtype=cp.float32)
+    weight_accum = cp.zeros((int(canvas_height), int(canvas_width)), dtype=cp.float32)
 
-    # --- 3. Generate Gaussian blending mask ---
+    # --- 3. Generate blending mask ---
     # Assuming all tiles have the same shape as the first tile for the blend mask
-    blend_mask = _create_gaussian_blend_mask(first_tile_shape, blend_radius)
+    blend_mask = _create_blend_mask(first_tile_shape, blend_method, blend_radius)
 
     # --- 4. Place tiles with subpixel shifts ---
     for i in range(num_tiles):

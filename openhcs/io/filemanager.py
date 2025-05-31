@@ -173,8 +173,10 @@ class FileManager:
         # Get backend instance
         backend_instance = self._get_backend(backend)
 
-        # List image files
-        return backend_instance.list_files(str(directory), pattern, extensions, recursive)
+        # List image files and apply natural sorting
+        from openhcs.core.utils import natural_sort
+        files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
+        return natural_sort(files)
 
 
     def list_files(self, directory: Union[str, Path], backend: str,
@@ -205,8 +207,10 @@ class FileManager:
         # Get backend instance
         backend_instance = self._get_backend(backend)
 
-        # List files
-        return backend_instance.list_files(str(directory), pattern, extensions, recursive)
+        # List files and apply natural sorting
+        from openhcs.core.utils import natural_sort
+        files = backend_instance.list_files(str(directory), pattern, extensions, recursive)
+        return natural_sort(files)
 
 
     def find_file_recursive(self, directory: Union[str, Path], backend: str, filename: str) -> Union[str, None]:
@@ -248,7 +252,10 @@ class FileManager:
         backend_instance = self._get_backend(backend)
 
         try:
-            return backend_instance.list_dir(str(path))
+            # Get directory listing and apply natural sorting
+            from openhcs.core.utils import natural_sort
+            entries = backend_instance.list_dir(str(path))
+            return natural_sort(entries)
         except (FileNotFoundError, NotADirectoryError):
             # Let these bubble up for structural truth-checking
             raise
@@ -579,8 +586,10 @@ class FileManager:
                 except Exception as e:
                     print(f"[collect_dirs_and_files] Skipping {full_path}: {type(e).__name__} — {e}")
                     continue
-                
-        return dirs, files
+
+        # Apply natural sorting to both dirs and files before returning
+        from openhcs.core.utils import natural_sort
+        return natural_sort(dirs), natural_sort(files)
     
     def is_file(self, path: Union[str, Path], backend: str) -> bool:
         """

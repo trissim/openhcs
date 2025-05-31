@@ -4,9 +4,11 @@ Utility functions for the OpenHCS package.
 
 import functools
 import logging
+import re
 import threading
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -278,5 +280,75 @@ def print_thread_activity_report():
     return analysis
 
 
+# Natural sorting utilities
+def natural_sort_key(text: Union[str, Path]) -> List[Union[str, int]]:
+    """
+    Generate a natural sorting key for a string or Path.
+
+    This function converts a string into a list of strings and integers
+    that can be used as a sorting key to achieve natural (human-friendly)
+    sorting order.
+
+    Args:
+        text: String or Path to generate sorting key for
+
+    Returns:
+        List of strings and integers for natural sorting
+
+    Examples:
+        >>> natural_sort_key("file10.txt")
+        ['file', 10, '.txt']
+        >>> natural_sort_key("A01_s001_w1_z001.tif")
+        ['A', 1, '_s', 1, '_w', 1, '_z', 1, '.tif']
+    """
+    text = str(text)
+
+    # Split on sequences of digits, keeping the digits
+    parts = re.split(r'(\d+)', text)
+
+    # Convert digit sequences to integers, leave other parts as strings
+    result = []
+    for part in parts:
+        if part.isdigit():
+            result.append(int(part))
+        else:
+            result.append(part)
+
+    return result
+
+
+def natural_sort(items: List[Union[str, Path]]) -> List[Union[str, Path]]:
+    """
+    Sort a list of strings or Paths using natural sorting.
+
+    Args:
+        items: List of strings or Paths to sort
+
+    Returns:
+        New list sorted in natural order
+
+    Examples:
+        >>> natural_sort(["file1.txt", "file10.txt", "file2.txt"])
+        ['file1.txt', 'file2.txt', 'file10.txt']
+        >>> natural_sort(["A01_s001.tif", "A01_s010.tif", "A01_s002.tif"])
+        ['A01_s001.tif', 'A01_s002.tif', 'A01_s010.tif']
+    """
+    return sorted(items, key=natural_sort_key)
+
+
+def natural_sort_inplace(items: List[Union[str, Path]]) -> None:
+    """
+    Sort a list of strings or Paths using natural sorting in-place.
+
+    Args:
+        items: List of strings or Paths to sort in-place
+
+    Examples:
+        >>> files = ["file1.txt", "file10.txt", "file2.txt"]
+        >>> natural_sort_inplace(files)
+        >>> files
+        ['file1.txt', 'file2.txt', 'file10.txt']
+    """
+    items.sort(key=natural_sort_key)
 
 
