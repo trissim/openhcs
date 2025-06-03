@@ -17,25 +17,7 @@ from prompt_toolkit.widgets import Box, Button, Label, TextArea
 
 logger = logging.getLogger(__name__)
 
-# Define SafeButton locally to avoid circular imports
-class SafeButton(Button):
-    """Safe wrapper around Button that handles formatting errors."""
-
-    def __init__(self, text="", handler=None, width=None, **kwargs):
-        # Sanitize text before passing to parent
-        if text is not None:
-            text = str(text).replace('{', '{{').replace('}', '}}').replace(':', ' ')
-        super().__init__(text=text, handler=handler, width=width, **kwargs)
-
-    def _get_text_fragments(self):
-        """Safe version that handles formatting errors gracefully."""
-        try:
-            return super()._get_text_fragments()
-        except (ValueError, TypeError, AttributeError):
-            # Fallback to simple text formatting without centering
-            text = str(self.text) if self.text is not None else ""
-            safe_text = text.replace('{', '{{').replace('}', '}}')
-            return [("class:button", f" {safe_text} ")]
+# SafeButton eliminated - use Button directly
 
 
 class ParameterEditor(Container):
@@ -83,8 +65,9 @@ class ParameterEditor(Container):
     def _build_ui(self):
         """Build the UI components."""
         # Reset all parameters button
-        reset_all_button = SafeButton("Reset All Parameters",
-            handler=lambda: self._handle_reset_all()
+        reset_all_button = Button("Reset All Parameters",
+            handler=lambda: self._handle_reset_all(),
+            width=len("Reset All Parameters") + 2
         )
 
         # Create parameter editors
@@ -148,8 +131,9 @@ class ParameterEditor(Container):
         text_area.buffer.accept_handler = accept_handler
 
         # Create reset button
-        reset_button = SafeButton("Reset",
-            handler=lambda: self._handle_reset_parameter(name)
+        reset_button = Button("Reset",
+            handler=lambda: self._handle_reset_parameter(name),
+            width=len("Reset") + 2
         )
 
         # Create container
@@ -199,14 +183,7 @@ class ParameterEditor(Container):
         return self.container.get_children()
 
     def preferred_width(self, max_available_width):
-        # Delegate to the container but ensure a minimum width
-        container_width = self.container.preferred_width(max_available_width)
-
-        # If the container has a valid preferred width, use it
-        if container_width.preferred is not None and container_width.preferred > 0:
-            return container_width
-
-        # Otherwise, use a reasonable default
+        # Container should return Dimension, not int
         return Dimension(min=40, preferred=max(40, max_available_width - 10))
 
     def preferred_height(self, width, max_available_height):

@@ -113,10 +113,7 @@ class LoadingScreen(Container):
         return self.container.get_children()
 
     def preferred_width(self, max_available_width):
-        # Use the container's preferred width, but ensure it's at least 40 characters
-        container_width = self.container.preferred_width(max_available_width)
-        if container_width.min is not None and container_width.min > 0:
-            return container_width
+        # Container should return Dimension, not int
         return Dimension(min=40, preferred=40)
 
     def preferred_height(self, width, max_available_height):

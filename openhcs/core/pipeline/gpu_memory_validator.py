@@ -17,8 +17,8 @@ from typing import Any, Dict
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
 from openhcs.core.utils import optional_import
 
-# FAIL FAST: No fallback GPU registry - if orchestrator is not available, crash immediately
-from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
+# LAZY IMPORT: Import gpu_scheduler only when needed to avoid circular dependency
+# from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
 
 logger = logging.getLogger(__name__)
 
@@ -121,8 +121,9 @@ class GPUMemoryTypeValidator:
         # Validate that required libraries are installed
         _validate_required_libraries(required_libraries)
 
-        # Get GPU registry status
+        # Get GPU registry status (lazy import to avoid circular dependency)
         try:
+            from openhcs.core.orchestrator.gpu_scheduler import get_gpu_registry_status
             gpu_registry = get_gpu_registry_status()
             logger.info("GPU registry status: %s", gpu_registry)
         except Exception as e:

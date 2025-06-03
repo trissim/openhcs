@@ -20,7 +20,7 @@ import dataclasses # For asdict, if needed for complex merging (not used in this
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig, get_default_global_config
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 
-from openhcs.tui.simple_launcher import SimpleOpenHCSTUILauncher
+from openhcs.tui.layout.simple_launcher import SimpleOpenHCSTUILauncher
 
 
 async def main():
@@ -52,8 +52,10 @@ def _setup_logging(debug_mode: bool):
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / f"openhcs_tui_{time.strftime('%Y%m%d_%H%M%S')}.log"
+    print(f"Logging to: {log_file}")
 
     if not logging.getLogger().hasHandlers():
+        # File handler only - console interferes with TUI
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 

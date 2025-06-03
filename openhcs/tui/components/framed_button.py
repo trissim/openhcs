@@ -39,6 +39,7 @@ class FramedButton:
         self.handler = handler
         self.width = width
         self.style = style
+        self.disabled = False
 
         # Create a custom button with fixed text (no formatting)
         # This avoids the center-alignment issue in prompt_toolkit's Button
@@ -46,7 +47,7 @@ class FramedButton:
 
         # Add mouse handler to the control
         def mouse_handler(mouse_event):
-            if mouse_event.event_type == MouseEventType.MOUSE_UP and self.handler:
+            if mouse_event.event_type == MouseEventType.MOUSE_UP and self.handler and not self.disabled:
                 self.handler()
                 return True
             return False

@@ -2,13 +2,20 @@
 Terminal User Interface (TUI) for OpenHCS.
 
 This package provides a TUI for interacting with OpenHCS, featuring:
-- Function pattern editing
+- Clean layout architecture
+- Modular editor components
 - Pipeline visualization
 - Step configuration
 """
 
-__all__ = [
-    'FunctionPatternEditor',
-]
+# Import key components from organized submodules
+from openhcs.tui.layout import CanonicalTUILayout, SimpleOpenHCSTUILauncher
+from openhcs.tui.editors import StepParameterEditor, FunctionPatternEditor, DualEditorPane
 
-from openhcs.tui.function_pattern_editor import FunctionPatternEditor
+__all__ = [
+    'CanonicalTUILayout',
+    'SimpleOpenHCSTUILauncher',
+    'StepParameterEditor',
+    'FunctionPatternEditor',
+    'DualEditorPane',
+]

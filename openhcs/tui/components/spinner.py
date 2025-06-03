@@ -83,7 +83,7 @@ class Spinner(Container):
         return self.spinner_chars[self.current_index]
 
     def preferred_width(self, max_available_width):
-        # Calculate width based on the spinner character plus some padding
+        # Container should return Dimension, not int
         return Dimension.exact(3)  # Exact width of 3 characters
 
     def preferred_height(self, width, max_available_height):

@@ -86,14 +86,7 @@ class GroupedDropdown(Container):
         return self.container.get_children()
 
     def preferred_width(self, max_available_width):
-        # Delegate to the container but ensure a minimum width
-        container_width = self.container.preferred_width(max_available_width)
-
-        # If the container has a valid preferred width, use it
-        if container_width.preferred is not None and container_width.preferred > 0:
-            return container_width
-
-        # Otherwise, use a reasonable default
+        # Container should return Dimension, not int
         return Dimension(min=30, preferred=max(30, max_available_width // 2))
 
     def preferred_height(self, width, max_available_height):
