@@ -6,15 +6,20 @@ import logging
 import pickle
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import copy
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout import Container, VSplit, Window
-from prompt_toolkit.widgets import Label
+from prompt_toolkit.widgets import Label, Dialog
 
 from openhcs.tui.components import ListManagerPane, ListConfig, ButtonConfig
 from openhcs.tui.utils.dialog_helpers import show_error_dialog, prompt_for_file_dialog
+from openhcs.tui.interfaces.swappable_pane import SwappablePaneInterface
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.constants.constants import Backend
+from openhcs.core.pipeline import Pipeline
+from openhcs.tui.services.visual_programming_dialog_service import VisualProgrammingDialogService
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,17 @@ class PipelineEditorPane:
         self.state = state
         self.context = context
         self.steps_lock = asyncio.Lock()
+
+        # EXACT: Pipeline-plate association storage
+        self.plate_pipelines: Dict[str, Pipeline] = {}  # {plate_path: Pipeline}
+        self.current_selected_plates: List[str] = []    # Currently selected plate paths
+        self.pipeline_differs_across_plates: bool = False
+
+        # EXACT: Visual programming dialog service
+        self.visual_programming_service = VisualProgrammingDialogService(
+            state=self.state,
+            context=self.context
+        )
 
         # Create unified list manager with declarative config (without enabled_func initially)
         config = ListConfig(
@@ -42,7 +58,7 @@ class PipelineEditorPane:
             display_func=self._get_display_text,
             can_move_up_func=self._can_move_up,
             can_move_down_func=self._can_move_down,
-            empty_message="No steps available. Select a plate first."
+            empty_message="No steps available.\n\nSelect a plate first."
         )
 
         self.list_manager = ListManagerPane(config, context)
@@ -54,6 +70,9 @@ class PipelineEditorPane:
         self.list_manager._on_model_changed = self._on_selection_changed
 
         logger.info("PipelineEditorPane: Initialized with clean architecture")
+
+        # EXACT: Register state observer for real-time updates
+        self._register_plate_selection_observer()
 
     @classmethod
     async def create(cls, state, context: ProcessingContext):
@@ -211,71 +230,169 @@ class PipelineEditorPane:
 
     # Action handlers
     async def _handle_add_step(self):
-        """Add step handler."""
-        logger.info("PipelineEditor: _handle_add_step called!")
-        if not self._validate_orchestrator():
+        """EXACT: Add step handler with visual programming integration."""
+        if not self.current_selected_plates:
+            await show_error_dialog(
+                "No Plate Selected",
+                "Please select a plate to add steps to its pipeline.",
+                self.state
+            )
             return
-        
-        # Placeholder for step addition UI
-        await show_error_dialog(
-            "Add Step",
-            "Step addition interface will be implemented.",
-            self.state
-        )
+
+        if self.pipeline_differs_across_plates:
+            await show_error_dialog(
+                "Multiple Different Pipelines",
+                "Cannot add steps when selected plates have different pipelines. Please select plates with identical pipelines or edit them individually.",
+                self.state
+            )
+            return
+
+        # EXACT: Get target pipeline(s)
+        target_pipelines = []
+        for plate_path in self.current_selected_plates:
+            pipeline = self.plate_pipelines.get(plate_path)
+            if not pipeline:
+                # EXACT: Create new pipeline if none exists
+                pipeline = Pipeline(name=f"Pipeline for {Path(plate_path).name}")
+                self.plate_pipelines[plate_path] = pipeline
+            target_pipelines.append(pipeline)
+
+        # EXACT: Launch visual programming dialog using service
+        created_step = await self.visual_programming_service.show_add_step_dialog(target_pipelines)
+
+        if created_step:
+            # EXACT: Add step to all target pipelines
+            for pipeline in target_pipelines:
+                pipeline.append(copy.deepcopy(created_step))
+
+            # EXACT: Refresh display
+            await self._update_pipeline_display_for_selection(self.current_selected_plates)
 
     async def _handle_delete_step(self):
-        """Delete step handler."""
-        if not self._validate_orchestrator() or not self._validate_selection():
+        """EXACT: Delete step handler with multi-plate support."""
+        if not self.current_selected_plates:
+            await show_error_dialog(
+                "No Plate Selected",
+                "Please select a plate to delete steps from its pipeline.",
+                self.state
+            )
+            return
+
+        if self.pipeline_differs_across_plates:
+            await show_error_dialog(
+                "Multiple Different Pipelines",
+                "Cannot delete steps when selected plates have different pipelines. Please select plates with identical pipelines or edit them individually.",
+                self.state
+            )
             return
 
         selected_step = self.list_manager.get_selected_item()
+        if not selected_step:
+            await show_error_dialog("No Selection", "Please select a step to delete.", self.state)
+            return
+
         step_id = selected_step.get('id')
-        
         if not step_id:
             await show_error_dialog("Delete Error", "Selected step has no ID.", self.state)
             return
 
-        # Remove from orchestrator
-        pipeline = self.state.active_orchestrator.pipeline_definition
-        for i, step in enumerate(pipeline):
-            if getattr(step, 'step_id', None) == step_id:
-                pipeline.pop(i)
-                logger.info(f"Removed step {step_id}")
-                await self._refresh_steps()
-                return
-        
-        await show_error_dialog("Delete Error", f"Step {step_id} not found.", self.state)
+        # EXACT: Remove from all target pipelines
+        removed_count = 0
+        for plate_path in self.current_selected_plates:
+            pipeline = self.plate_pipelines.get(plate_path)
+            if pipeline:
+                # EXACT: Find and remove step by object ID
+                for i, step in enumerate(pipeline):
+                    if str(id(step)) == step_id:
+                        pipeline.pop(i)
+                        removed_count += 1
+                        break
+
+        if removed_count > 0:
+            # EXACT: Refresh display
+            await self._update_pipeline_display_for_selection(self.current_selected_plates)
+            logger.info(f"Removed step {step_id} from {removed_count} pipeline(s)")
+        else:
+            await show_error_dialog("Delete Error", f"Step {step_id} not found in any selected pipeline.", self.state)
 
     async def _handle_edit_step(self):
-        """Edit step handler."""
-        if not self._validate_orchestrator() or not self._validate_selection():
+        """EXACT: Edit step handler with visual programming integration."""
+        if not self.current_selected_plates:
+            await show_error_dialog(
+                "No Plate Selected",
+                "Please select a plate to edit steps in its pipeline.",
+                self.state
+            )
+            return
+
+        if self.pipeline_differs_across_plates:
+            await show_error_dialog(
+                "Multiple Different Pipelines",
+                "Cannot edit steps when selected plates have different pipelines. Please select plates with identical pipelines or edit them individually.",
+                self.state
+            )
             return
 
         selected_step = self.list_manager.get_selected_item()
-        step_id = selected_step.get('id')
+        if not selected_step:
+            await show_error_dialog("No Selection", "Please select a step to edit.", self.state)
+            return
 
-        # Find step instance in orchestrator
-        for step in self.state.active_orchestrator.pipeline_definition:
-            if getattr(step, 'step_id', None) == step_id:
-                if isinstance(step, FunctionStep):
-                    # Activate step editor
-                    self.state.step_to_edit_config = step
-                    self.state.editing_step_config = True
-                    await self.state.notify('editing_step_config_changed', True)
-                    return
-        
-        await show_error_dialog("Edit Error", f"Step {step_id} not found.", self.state)
+        step_id = selected_step.get('id')
+        if not step_id:
+            await show_error_dialog("Edit Error", "Selected step has no ID.", self.state)
+            return
+
+        # EXACT: Find step instance in first pipeline (they're identical)
+        first_plate_path = self.current_selected_plates[0]
+        pipeline = self.plate_pipelines.get(first_plate_path)
+
+        if not pipeline:
+            await show_error_dialog("Edit Error", "No pipeline found for selected plate.", self.state)
+            return
+
+        target_step = None
+        for step in pipeline:
+            if str(id(step)) == step_id:
+                target_step = step
+                break
+
+        if not target_step:
+            await show_error_dialog("Edit Error", f"Step {step_id} not found in pipeline.", self.state)
+            return
+
+        # EXACT: Launch visual programming dialog for editing using service
+        edited_step = await self.visual_programming_service.show_edit_step_dialog(target_step)
+
+        if edited_step:
+            # EXACT: Update step in all target pipelines
+            for plate_path in self.current_selected_plates:
+                pipeline = self.plate_pipelines.get(plate_path)
+                if pipeline:
+                    # EXACT: Find and replace step by object ID
+                    for i, step in enumerate(pipeline):
+                        if step is target_step:
+                            pipeline[i] = copy.deepcopy(edited_step)
+                            break
+
+            # EXACT: Refresh display
+            await self._update_pipeline_display_for_selection(self.current_selected_plates)
 
     async def _handle_load_pipeline(self):
-        """Load pipeline handler."""
-        if not self._validate_orchestrator():
+        """EXACT: Load pipeline handler with multi-plate support."""
+        if not self.current_selected_plates:
+            await show_error_dialog(
+                "No Plate Selected",
+                "Please select plates to load pipeline into.",
+                self.state
+            )
             return
 
         file_path = await prompt_for_file_dialog(
             title="Load Pipeline",
             prompt_message="Select pipeline file:",
             app_state=self.state,
-            filemanager=getattr(self.context, 'filemanager', None),
+            filemanager=self.context.filemanager,
             selection_mode="files",
             filter_extensions=[".pipeline"]
         )
@@ -284,35 +401,59 @@ class PipelineEditorPane:
             return
 
         try:
-            backend = getattr(self.context.global_config, 'backend', 'disk')
-            loaded_data = self.context.filemanager.load(file_path, backend)
-            
+            # EXACT: Load pipeline data
+            loaded_data = self.context.filemanager.load(file_path, Backend.DISK.value)
+
             if not isinstance(loaded_data, list):
-                await show_error_dialog("Load Error", "Invalid pipeline format.", self.state)
+                await show_error_dialog("Load Error", "Invalid pipeline format - must be a list of steps.", self.state)
                 return
 
-            self.state.active_orchestrator.pipeline_definition = loaded_data
-            await self._refresh_steps()
-            logger.info(f"Loaded pipeline from {file_path}")
-            
+            # EXACT: Create Pipeline object from loaded data
+            loaded_pipeline = Pipeline(name=f"Loaded from {Path(file_path).name}")
+            loaded_pipeline.extend(loaded_data)
+
+            # EXACT: Apply to all selected plates
+            for plate_path in self.current_selected_plates:
+                self.plate_pipelines[plate_path] = copy.deepcopy(loaded_pipeline)
+
+            # EXACT: Refresh display
+            await self._update_pipeline_display_for_selection(self.current_selected_plates)
+            logger.info(f"Loaded pipeline from {file_path} into {len(self.current_selected_plates)} plate(s)")
+
         except Exception as e:
-            await show_error_dialog("Load Error", f"Failed to load: {e}", self.state)
+            await show_error_dialog("Load Error", f"Failed to load pipeline: {str(e)}", self.state)
 
     async def _handle_save_pipeline(self):
-        """Save pipeline handler."""
-        if not self._validate_orchestrator():
+        """EXACT: Save pipeline handler with multi-plate support."""
+        if not self.current_selected_plates:
+            await show_error_dialog(
+                "No Plate Selected",
+                "Please select a plate to save its pipeline.",
+                self.state
+            )
             return
 
-        pipeline = self.state.active_orchestrator.pipeline_definition
-        if not pipeline:
-            await show_error_dialog("Save Error", "No pipeline to save.", self.state)
+        if self.pipeline_differs_across_plates:
+            await show_error_dialog(
+                "Multiple Different Pipelines",
+                "Cannot save when selected plates have different pipelines. Please select plates with identical pipelines or save them individually.",
+                self.state
+            )
+            return
+
+        # EXACT: Get pipeline to save (from first selected plate)
+        first_plate_path = self.current_selected_plates[0]
+        pipeline = self.plate_pipelines.get(first_plate_path)
+
+        if not pipeline or len(pipeline) == 0:
+            await show_error_dialog("Save Error", "No pipeline steps to save.", self.state)
             return
 
         file_path = await prompt_for_file_dialog(
             title="Save Pipeline",
             prompt_message="Select save location:",
             app_state=self.state,
-            filemanager=getattr(self.context, 'filemanager', None),
+            filemanager=self.context.filemanager,
             selection_mode="files",
             filter_extensions=[".pipeline"]
         )
@@ -321,54 +462,152 @@ class PipelineEditorPane:
             return
 
         try:
-            backend = getattr(self.context.global_config, 'backend', 'disk')
-            self.context.filemanager.save(pipeline, file_path, backend)
-            logger.info(f"Saved pipeline to {file_path}")
-            
+            # EXACT: Save pipeline as list (Pipeline IS a list)
+            pipeline_data = list(pipeline)
+            self.context.filemanager.save(pipeline_data, file_path, Backend.DISK.value)
+            logger.info(f"Saved pipeline to {file_path} ({len(pipeline_data)} steps)")
+
         except Exception as e:
-            await show_error_dialog("Save Error", f"Failed to save: {e}", self.state)
+            await show_error_dialog("Save Error", f"Failed to save pipeline: {str(e)}", self.state)
 
-    # Validation helpers
-    def _validate_orchestrator(self) -> bool:
-        """Validate orchestrator is available."""
-        if not self.state.active_orchestrator:
-            get_app().create_background_task(
-                show_error_dialog("No Orchestrator", "No active plate selected.", self.state)
+    # EXACT: Legacy cleanup - these methods are no longer needed
+
+    def _register_plate_selection_observer(self):
+        """EXACT: Register observer for plate selection changes."""
+        self.state.add_observer('plate_selected',
+            lambda plate: get_app().create_background_task(self._on_plate_selection_changed(plate)))
+
+    async def _on_plate_selection_changed(self, plate_data):
+        """EXACT: Handle plate selection changes in real-time."""
+        try:
+            # EXACT: Get current selection state from PlateManager
+            selected_plates = self._get_current_selected_plates()
+            self.current_selected_plates = selected_plates
+
+            # EXACT: Update pipeline display based on selection
+            await self._update_pipeline_display_for_selection(selected_plates)
+
+        except Exception as e:
+            await show_error_dialog(
+                "Selection Update Error",
+                f"Failed to update pipeline display: {str(e)}",
+                self.state
             )
-            return False
-        return True
 
-    def _validate_selection(self) -> bool:
-        """Validate item is selected."""
-        if not self.list_manager.get_selected_item():
-            get_app().create_background_task(
-                show_error_dialog("No Selection", "Please select a step.", self.state)
-            )
-            return False
-        return True
+    def _get_current_selected_plates(self) -> List[str]:
+        """EXACT: Get currently selected plate paths from PlateManager."""
+        # EXACT: Access PlateManager selection state
+        if hasattr(self.state, 'selected_plate') and self.state.selected_plate:
+            return [self.state.selected_plate['path']]
+        return []
 
-    # Event handlers for step updates
-    async def _handle_step_pattern_saved(self, data: Dict[str, Any]):
-        """Handle step pattern saved event."""
-        saved_step = data.get('step')
-        if not saved_step:
+    async def _update_pipeline_display_for_selection(self, selected_plates: List[str]):
+        """EXACT: Update pipeline display based on selected plates."""
+        if not selected_plates:
+            # EXACT: No plates selected - show empty
+            self.pipeline_differs_across_plates = False
+            self.list_manager.load_items([])
             return
 
-        async with self.steps_lock:
-            items = self.list_manager.model.items
-            for i, step in enumerate(items):
-                if step.get('id') == saved_step.get('id'):
-                    items[i] = saved_step
-                    break
-            else:
-                items.append(saved_step)
+        if len(selected_plates) == 1:
+            # EXACT: Single plate selected - show its pipeline
+            plate_path = selected_plates[0]
+            pipeline = self.plate_pipelines.get(plate_path)
 
-            self.list_manager.load_items(items)
-            self.state.notify('steps_updated', {'steps': items})
+            if not pipeline:
+                # EXACT: Create default empty pipeline for new plate
+                pipeline = Pipeline(name=f"Pipeline for {Path(plate_path).name}")
+                self.plate_pipelines[plate_path] = pipeline
+
+            self.pipeline_differs_across_plates = False
+            self._refresh_step_list_for_pipeline(pipeline)
+
+        else:
+            # EXACT: Multiple plates selected - check if pipelines match
+            pipelines = [self.plate_pipelines.get(plate_path) for plate_path in selected_plates]
+
+            if self._all_pipelines_identical(pipelines):
+                # EXACT: All pipelines identical - show common pipeline
+                common_pipeline = pipelines[0] if pipelines[0] else Pipeline(name="Common Pipeline")
+                self.pipeline_differs_across_plates = False
+                self._refresh_step_list_for_pipeline(common_pipeline)
+            else:
+                # EXACT: Pipelines differ - show "differs" message
+                self.pipeline_differs_across_plates = True
+                self._show_pipeline_differs_message()
+
+    def _all_pipelines_identical(self, pipelines: List[Optional[Pipeline]]) -> bool:
+        """EXACT: Check if all pipelines are identical."""
+        # EXACT: Handle None pipelines (treat as empty)
+        normalized_pipelines = []
+        for p in pipelines:
+            if p is None:
+                normalized_pipelines.append([])  # Empty pipeline
+            else:
+                normalized_pipelines.append(list(p))  # Pipeline IS a list
+
+        # EXACT: Check if all normalized pipelines are identical
+        if not normalized_pipelines:
+            return True
+
+        first_pipeline = normalized_pipelines[0]
+        return all(pipeline == first_pipeline for pipeline in normalized_pipelines[1:])
+
+    def _show_pipeline_differs_message(self):
+        """EXACT: Show 'pipeline differs across plates' message."""
+        self.list_manager.load_items([{
+            'id': 'differs_message',
+            'name': 'Pipeline differs across plates',
+            'func': 'Cannot show pipeline - selected plates have different pipelines',
+            'variable_components': '',
+            'group_by': ''
+        }])
+
+    def _refresh_step_list_for_pipeline(self, pipeline: Pipeline):
+        """EXACT: Refresh step list for specific pipeline."""
+        step_items = []
+        for i, step in enumerate(pipeline):
+            step_items.append({
+                'id': str(id(step)),  # Use object ID as unique identifier
+                'name': getattr(step, 'name', f'Step {i+1}'),
+                'func': self._format_func_display(step.func),
+                'variable_components': ', '.join(step.variable_components or []),
+                'group_by': step.group_by
+            })
+
+        self.list_manager.load_items(step_items)
+
+    def _format_func_display(self, func) -> str:
+        """EXACT: Format function for display."""
+        if func is None:
+            return "No function"
+        elif callable(func):
+            return getattr(func, '__name__', str(func))
+        elif isinstance(func, tuple) and len(func) >= 1:
+            return getattr(func[0], '__name__', str(func[0]))
+        elif isinstance(func, list) and len(func) > 0:
+            first_func = func[0]
+            if isinstance(first_func, tuple):
+                return f"{getattr(first_func[0], '__name__', str(first_func[0]))} + {len(func)-1} more"
+            else:
+                return f"{getattr(first_func, '__name__', str(first_func))} + {len(func)-1} more"
+        else:
+            return str(func)
+
+    # EXACT: Dialog methods removed - now handled by VisualProgrammingDialogService
+
+
+
+
 
     async def shutdown(self):
-        """Cleanup observers."""
+        """EXACT: Cleanup observers."""
         logger.info("PipelineEditorPane: Shutting down")
-        self.state.remove_observer('plate_selected', self._on_plate_selected)
-        self.state.remove_observer('steps_updated', self._refresh_steps)
-        logger.info("PipelineEditorPane: Observers unregistered")
+
+        # EXACT: Remove observers (updated for new architecture)
+        try:
+            self.state.remove_observer('plate_selected', self._on_plate_selection_changed)
+        except (AttributeError, ValueError):
+            pass  # Observer may not exist or already removed
+
+        logger.info("PipelineEditorPane: Observers unregistered and cleanup complete")

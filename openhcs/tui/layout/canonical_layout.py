@@ -191,17 +191,20 @@ class CanonicalTUILayout:
     def _create_key_bindings(self) -> KeyBindings:
         """Create key bindings for the application."""
         kb = KeyBindings()
-        
+
         @kb.add('c-c')
         def _(event):
             """Exit the application."""
             event.app.exit()
-        
+
         @kb.add('q')
         def _(event):
             """Exit the application with 'q'."""
             event.app.exit()
-            
+
+        # Mouse wheel events are handled by individual focused components
+        # No global mouse wheel interceptors needed
+
         return kb
     
     def _create_canonical_layout(self) -> Container:
@@ -310,7 +313,8 @@ class CanonicalTUILayout:
 
         self.plate_manager = PlateManagerPane(
             state=self.state,
-            filemanager=self.context.filemanager
+            filemanager=self.context.filemanager,
+            global_config=self.global_config
         )
 
         self._plate_manager_container = None
@@ -331,6 +335,17 @@ class CanonicalTUILayout:
             # PlateManagerPane is ready immediately - no async initialization needed
             self._plate_manager_container = self.plate_manager.container
             await self._initialize_coordination_bridge()
+
+            # CRITICAL: Set initial focus to PlateManager so keyboard events work
+            # Reference: FileManagerBrowser dialog focus patterns
+            try:
+                focus_window = self.plate_manager.get_focus_window()
+                from prompt_toolkit.application import get_app
+                app = get_app()
+                app.layout.focus(focus_window)
+                logger.info("PlateManagerPane: Initial focus set successfully")
+            except Exception as e:
+                logger.warning(f"PlateManagerPane: Failed to set initial focus: {e}")
 
             from prompt_toolkit.application import get_app
             get_app().invalidate()
@@ -426,6 +441,12 @@ class CanonicalTUILayout:
 
     async def run_async(self):
         """Run the application asynchronously."""
-        await self.application.run_async()
+        # Setup global exception handler to catch ALL errors
+        from openhcs.tui.utils.dialog_helpers import setup_global_exception_handler
+        setup_global_exception_handler(self.state)
+        logger.info("Global exception handler installed - all errors will show in dialog")
+
+        # Disable prompt_toolkit's default exception handler so our global handler works
+        await self.application.run_async(set_exception_handler=False)
 
     # Layout class should only handle layout, not menu business logic

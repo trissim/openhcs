@@ -169,7 +169,7 @@ if __name__ == "__main__":
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         print("OpenHCS TUI terminated by user.")
-        logger.info("OpenHCS TUI terminated by user.")
+        logging.getLogger("openhcs.tui.main").info("OpenHCS TUI terminated by user.")
         sys.exit(0)
     except Exception as e:
         print(f"ERROR: Unhandled exception in TUI main: {e}")

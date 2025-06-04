@@ -159,9 +159,9 @@ class FileManagerBrowser:
         # This should work better than trying to scroll individual Windows
         self.item_list_control = FormattedTextControl(
             text=self._get_item_list_text,
-            focusable=True
+            focusable=True,
+            key_bindings=self._create_key_bindings()  # Attach key bindings to the control
         )
-        self.item_list_control.mouse_handler = self._handle_list_mouse_event
 
         self.scrollable_pane = ScrollablePane(
             Window(content=self.item_list_control),
@@ -170,8 +170,7 @@ class FileManagerBrowser:
             display_arrows=True,  # Show up/down arrows on scrollbar
         )
 
-        # Patch the existing scrollbar window for click-to-jump functionality
-        self._setup_scrollbar_click_handler()
+        # Mouse wheel will be handled in FormattedTextControl mouse handlers
 
         # Let Dialog handle padding - don't add extra Box
         file_area = self.scrollable_pane
@@ -188,37 +187,8 @@ class FileManagerBrowser:
             error_box,
             buttons,
         ])
-        
-        self.container.key_bindings = self._create_key_bindings()
 
-    def _setup_scrollbar_click_handler(self) -> None:
-        """Setup click-to-jump functionality on the existing scrollbar."""
-        try:
-            # Access the internal scrollbar window
-            sb_window = self.scrollable_pane._scrollbar_window
-
-            def scrollbar_click(mouse_event):
-                if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                    info = self.scrollable_pane.render_info
-                    if not info:
-                        return False
-
-                    track_height = info.window_height
-                    click_row = mouse_event.position.y
-                    max_scroll = max(0, len(self.listing) - track_height)
-
-                    # Proportional jump
-                    self.scrollable_pane.vertical_scroll = int(
-                        click_row / track_height * max_scroll
-                    )
-                    get_app().invalidate()
-                    return True
-                return False
-
-            sb_window.content.mouse_handler = scrollbar_click
-        except AttributeError:
-            # Fallback if _scrollbar_window doesn't exist
-            logger.warning("Could not access scrollbar window for click handling")
+    # Removed _setup_scrollbar_click_handler - ScrollablePane handles this natively
 
     def _create_key_bindings(self) -> KeyBindings:
         kb = KeyBindings()
@@ -266,8 +236,25 @@ class FileManagerBrowser:
         @kb.add('f5')
         def _(event): self._on_refresh()
 
-        # ScrollablePane will handle scrolling automatically with individual Windows
-        # No manual scroll manipulation needed
+        # Mouse wheel support for smooth scrolling
+        @kb.add('<scroll-up>')
+        def _(event):
+            self._move_focus(-3)  # Scroll 3 lines up
+
+        @kb.add('<scroll-down>')
+        def _(event):
+            self._move_focus(3)   # Scroll 3 lines down
+
+        # Test with regular keys to verify key bindings work
+        @kb.add('j')
+        def _(event):
+            logger.info("🔤 J key pressed - moving down!")
+            self._move_focus(1)
+
+        @kb.add('k')
+        def _(event):
+            logger.info("🔤 K key pressed - moving up!")
+            self._move_focus(-1)
 
         return kb
 
@@ -281,7 +268,42 @@ class FileManagerBrowser:
     def _set_focus(self, index: int) -> None:
         if 0 <= index < len(self.listing):
             self.focused_index = index
+            self._ensure_focused_visible()
             self._update_ui()
+
+    def _ensure_focused_visible(self) -> None:
+        """Ensure the focused item is visible by making FormattedTextControl report cursor position."""
+        try:
+            # Make the FormattedTextControl show a cursor at the focused line
+            # This will trigger ScrollablePane's automatic scrolling
+            from prompt_toolkit.data_structures import Point
+
+            # Validate cursor position against current content
+            # When listing is empty, we have 1 line of content ("Loading..." or "(empty directory)")
+            # When listing has items, we have len(self.listing) lines (plus newlines, but cursor should be on item lines)
+            if not self.listing:
+                # Empty/loading state - cursor should be at line 0
+                cursor_y = 0
+            else:
+                # Ensure focused_index is within bounds of the listing
+                cursor_y = max(0, min(self.focused_index, len(self.listing) - 1))
+
+            cursor_pos = Point(x=0, y=cursor_y)
+
+            # Override the get_cursor_position method of FormattedTextControl
+            def get_cursor_position():
+                return cursor_pos
+
+            # Monkey patch the method
+            self.item_list_control.get_cursor_position = get_cursor_position
+
+            # Also make the control show cursor
+            self.item_list_control.show_cursor = True
+
+        except Exception as e:
+            pass  # Silently handle cursor positioning errors
+
+    # Removed broken mouse wheel handler - ScrollablePane doesn't work that way
 
     def _toggle_selection(self) -> None:
         if not self._valid_focus():
@@ -387,6 +409,10 @@ class FileManagerBrowser:
         self.selected_paths.clear()
         self._clear_error()
 
+        # CRITICAL: Reset cursor position immediately to prevent race condition
+        # This ensures cursor position is valid for the current listing state
+        self._ensure_focused_visible()
+
         # Create and schedule the task - no need for _run_async since create_task already schedules it
         self.load_task = asyncio.create_task(self._load_directory())
 
@@ -488,9 +514,11 @@ class FileManagerBrowser:
         return HTML(f"<b>Path:</b> {self.current_path}{status}")
 
     def _get_item_list_text(self):
-        """Get formatted text for the entire item list."""
+        """Generate formatted text with mouse handlers for FormattedTextControl."""
         if not self.listing:
-            return "Loading..." if self.loading else "(empty directory)"
+            # Return properly formatted text tuples, not plain strings
+            message = "Loading..." if self.loading else "(empty directory)"
+            return [("class:file-browser.empty", message)]
 
         lines = []
         max_name_width = min(60, max(20, max(len(item.name) for item in self.listing) + 6))
@@ -515,112 +543,72 @@ class FileManagerBrowser:
             display += item.display_mtime
 
             # Add selection/focus styling
+            style = ""
             if is_focused:
+                style = "reverse"
                 display = f"> {display}"
             else:
                 display = f"  {display}"
 
-            lines.append(display)
+            # Create mouse handler for this line
+            def make_handler(index):
+                def handler(mouse_event):
+                    # Handle mouse wheel events FIRST
+                    if mouse_event.event_type == MouseEventType.SCROLL_UP:
+                        self._move_focus(-3)  # Scroll 3 lines up
+                        return True
+                    elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                        self._move_focus(3)   # Scroll 3 lines down
+                        return True
 
-        return "\n".join(lines)
+                    # Handle regular mouse clicks
+                    elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+                        current_time = time.time()
 
-    def _handle_list_mouse_event(self, mouse_event):
-        """Handle mouse events on the item list."""
-        if mouse_event.event_type == MouseEventType.MOUSE_UP:
-            # Calculate which item was clicked based on Y position
-            if self.listing and mouse_event.position.y < len(self.listing):
-                clicked_index = mouse_event.position.y
-                current_time = time.time()
+                        # Check for double-click
+                        is_double_click = (
+                            index == self.last_click_index and
+                            current_time - self.last_click_time < 0.5
+                        )
 
-                # Check for double-click (within 500ms of same item)
-                is_double_click = (
-                    clicked_index == self.last_click_index and
-                    current_time - self.last_click_time < 0.5
-                )
+                        # Update click tracking
+                        self.last_click_time = current_time
+                        self.last_click_index = index
 
-                # Update click tracking
-                self.last_click_time = current_time
-                self.last_click_index = clicked_index
+                        # Handle click based on position and type
+                        x_pos = mouse_event.position.x
 
-                # Determine click area based on X position
-                x_pos = mouse_event.position.x
+                        if self.allow_multiple and x_pos <= 4:  # Checkbox area
+                            self._set_focus(index)
+                            self._toggle_selection()
+                        elif is_double_click:
+                            # Double click - navigate or select
+                            item = self.listing[index]
+                            if item.is_dir:
+                                self._navigate_to(item.path)
+                            else:
+                                self._set_focus(index)
+                                self._on_activate()
+                        else:
+                            # Single click - just focus
+                            self._set_focus(index)
 
-                if self.allow_multiple and x_pos <= 4:  # Checkbox area "[x] " or "[ ] "
-                    # Single click on checkbox - toggle selection
-                    self._set_focus(clicked_index)
-                    self._toggle_selection()
-                elif is_double_click:
-                    # Double click on folder name - navigate into folder
-                    item = self.listing[clicked_index]
-                    if item.is_dir:
-                        self._navigate_to(item.path)
-                    else:
-                        # Double click on file - select and close dialog
-                        self._set_focus(clicked_index)
-                        self._on_activate()
-                else:
-                    # Single click on folder/file name - just focus
-                    self._set_focus(clicked_index)
+                        return True  # Event handled
+                    return False  # Event not handled
+                return handler
 
-                return True
-        return False
+            # Add line with mouse handler - format: (style, text, mouse_handler)
+            lines.append((style, display, make_handler(i)))
+            if i < len(self.listing) - 1:  # Add newline except for last item
+                lines.append(("", "\n"))
+
+        return lines
+
+    # Removed _handle_list_mouse_event - using FormattedTextControl's built-in mouse support
 
     # Manual scroll methods removed - ScrollablePane handles scrolling automatically
 
-    def _build_item_list(self) -> Container:
-        if not self.listing:
-            return Label("Loading..." if self.loading else "(empty directory)")
-
-        max_name_width = min(60, max(20, max(len(item.name) for item in self.listing) + 6))
-
-        items = []
-        for i, item in enumerate(self.listing):
-            is_selected = item.path in self.selected_paths
-
-            # Build display text (exact same logic as before)
-            prefix = ""
-            if self.allow_multiple:
-                prefix = "[x] " if is_selected else "[ ] "
-
-            icon = "📁" if item.is_dir else "📄"
-            name_part = f"{prefix}{icon} {item.name}"
-
-            display = f"{name_part:<{max_name_width}}"
-            if not item.is_dir:
-                display += f"{item.display_size:>10}  "
-            else:
-                display += f"{'':>10}  "
-            display += item.display_mtime
-
-            # Create control with mouse handler (FramedButton pattern)
-            control = FormattedTextControl(display, focusable=True)
-
-            # Closure capture fix
-            def make_handler(index):
-                def handler(mouse_event):
-                    if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                        self._item_clicked(index)
-                        return True
-                    return False
-                return handler
-
-            control.mouse_handler = make_handler(i)
-
-            # Direct Window (no duck typing)
-            item_window = Window(
-                control,
-                style="reverse" if is_selected else "",
-                height=1
-            )
-
-            items.append(item_window)
-
-        return HSplit(items)
-
-    def _item_clicked(self, index: int) -> None:
-        """Handle item click."""
-        self._set_focus(index)
-        self._on_activate()
+    # Removed _build_item_list() and _item_clicked() - using FormattedTextControl approach
 
     # Public interface
     def start_load(self) -> None:
@@ -628,7 +616,7 @@ class FileManagerBrowser:
         self._navigate_to(self.current_path)
 
     def get_key_bindings(self) -> KeyBindings:
-        return self.container.key_bindings
+        return self.item_list_control.key_bindings
 
     def __pt_container__(self) -> Container:
         return self.container

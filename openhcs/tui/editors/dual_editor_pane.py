@@ -229,3 +229,9 @@ class DualEditorPane:
             self.save_btn,
             self.cancel_btn,
         ], height=1, padding=1)
+
+    def get_created_step(self) -> FunctionStep:
+        """Get the current edited step with latest changes."""
+        # Ensure func pattern is up to date
+        self.editing_step.func = self.func_editor.get_pattern()
+        return copy.deepcopy(self.editing_step)

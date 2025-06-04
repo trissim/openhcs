@@ -100,17 +100,17 @@ class InteractiveListItem:
             up_button = Button(
                 text="^",
                 handler=self._handle_move_up,
-                width=1
+                width=3  # Minimum width: 2 (symbols) + 1 (text) = 3
             )
             up_style = "class:move-button" if self.can_move_up else "class:disabled-button"
             up_box = Box(up_button, style=up_style)
             buttons.append(up_box)
-        
+
         if self.on_move_down:
             down_button = Button(
-                text="v", 
+                text="v",
                 handler=self._handle_move_down,
-                width=1
+                width=3  # Minimum width: 2 (symbols) + 1 (text) = 3
             )
             down_style = "class:move-button" if self.can_move_down else "class:disabled-button"
             down_box = Box(down_button, style=down_style)

@@ -396,9 +396,17 @@ class StatusBar(Container):
             # Example: Adjust level of the logger that TUIStatusBarLogHandler is attached to
             logger_to_adjust = logging.getLogger("openhcs") # Or logging.getLogger()
             logger_to_adjust.setLevel(logging_level)
-            asyncio.create_task(self.add_log_entry(f"TUI log capture level set to {level_enum.value}", LogLevel.INFO, "StatusBar"))
+            try:
+                get_app().create_background_task(self.add_log_entry(f"TUI log capture level set to {level_enum.value}", LogLevel.INFO, "StatusBar"))
+            except RuntimeError:
+                # Fallback if no app available
+                pass
         except ValueError:
-            asyncio.create_task(self.add_log_entry(f"Invalid TUI log level received: {new_level_str}", LogLevel.WARNING, "StatusBar"))
+            try:
+                get_app().create_background_task(self.add_log_entry(f"Invalid TUI log level received: {new_level_str}", LogLevel.WARNING, "StatusBar"))
+            except RuntimeError:
+                # Fallback if no app available
+                pass
 
 
     def __pt_container__(self):
@@ -478,9 +486,18 @@ class TUIStatusBarLogHandler(logging.Handler):
         message = self.format(record) # Use handler's formatter if set, else record.getMessage()
 
         # Get app and schedule the async task
+        # Check if app is available before creating the coroutine
         try:
             app = get_app()
-            # Schedule add_log_entry as a background task on the app's event loop
+        except RuntimeError:
+            # get_app() fails if no event loop is running or app not fully set up.
+            # This can happen during early startup or late shutdown.
+            # Fallback to stderr - don't create the coroutine at all
+            print(f"TUI Log Handler Error: Could not get_app(). Log: {log_level_enum.value} - {message}", file=sys.stderr)
+            return
+
+        # App is available, safe to create and schedule the coroutine
+        try:
             app.create_background_task(
                 self.status_bar.add_log_entry(
                     message=message, # Or record.getMessage() if not using handler's formatter
@@ -489,8 +506,5 @@ class TUIStatusBarLogHandler(logging.Handler):
                 )
             )
         except RuntimeError:
-            # get_app() fails if no event loop is running or app not fully set up.
-            # This can happen during early startup or late shutdown.
-            # Fallback to stderr or a temporary buffer if critical.
-            # For now, we might lose these logs, or print to stderr.
-            print(f"TUI Log Handler Error: Could not get_app(). Log: {log_level_enum.value} - {message}", file=sys.stderr)
+            # Event loop might be shutting down
+            print(f"TUI Log Handler Error: Event loop not running. Log: {log_level_enum.value} - {message}", file=sys.stderr)

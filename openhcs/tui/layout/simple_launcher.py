@@ -159,6 +159,22 @@ class SimpleOpenHCSTUILauncher:
             
         except Exception as e:
             self.logger.error(f"Error running TUI: {e}", exc_info=True)
+
+            # Show error dialog if possible
+            try:
+                from openhcs.tui.utils.dialog_helpers import show_scrollable_error_dialog
+                await show_scrollable_error_dialog(
+                    title="TUI Application Error",
+                    message="A critical error occurred in the TUI application",
+                    exception=e,
+                    app_state=self.state
+                )
+            except Exception as dialog_error:
+                self.logger.error(f"Failed to show error dialog: {dialog_error}")
+                # Fallback to console output
+                print(f"CRITICAL ERROR: {e}")
+                print("Check the log file for details.")
+
             raise
         finally:
             self.logger.info("TUI application finished")

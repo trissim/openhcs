@@ -40,6 +40,15 @@ async def handle_async_errors(
         if error_types is None or isinstance(e, error_types):
             logger.error(f"{error_message}: {e}", exc_info=True)
 
+            # Show error dialog if state supports it
+            if notify_state is not None and hasattr(notify_state, 'show_dialog'):
+                await show_error_dialog(
+                    title=f"Error in {operation_name}",
+                    message=error_message,
+                    exception=e,
+                    app_state=notify_state
+                )
+
             # Notify state if provided
             if notify_state is not None and hasattr(notify_state, 'notify'):
                 await notify_state.notify('operation_status_changed', {
@@ -94,26 +103,30 @@ def handle_async_errors_decorator(
 async def show_error_dialog(
     title: str = "Error",
     message: str = "An error occurred",
-    app_state: Optional[Any] = None
+    app_state: Optional[Any] = None,
+    exception: Optional[Exception] = None
 ) -> None:
     """
-    Show an error dialog.
+    Show a scrollable error dialog with optional stack trace.
 
     Args:
         title: The title of the dialog
         message: The error message to display
         app_state: Optional AppState to notify of the error
+        exception: Optional exception to show stack trace for
 
     Returns:
         None
     """
-    from prompt_toolkit.shortcuts import message_dialog
+    # Use the new scrollable error dialog
+    from openhcs.tui.utils.dialog_helpers import show_scrollable_error_dialog
 
-    # Show the dialog
-    await message_dialog(
+    await show_scrollable_error_dialog(
         title=title,
-        text=message
-    ).run_async()
+        message=message,
+        exception=exception,
+        app_state=app_state
+    )
 
     # Notify state if provided
     if app_state is not None and hasattr(app_state, 'notify'):
