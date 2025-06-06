@@ -127,3 +127,11 @@ tests/integration/tests_data/
 
 # Embedded repositories
 dna/
+
+# Development/analysis folders (local only)
+archive/
+audit/
+plans/
+semantic_matrix_analyzer/
+tools/
+bin/
