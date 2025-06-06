@@ -1,7 +1,7 @@
 """
 Dual Editor Pane for OpenHCS TUI.
 
-Clean tab coordinator that composes StepParameterEditor and FunctionPatternEditor.
+Clean tab coordinator that composes StepParameterEditor and FunctionPatternView.
 Follows the same composition pattern as ListManagerPane.
 """
 import copy
@@ -14,7 +14,7 @@ from prompt_toolkit.widgets import Button, Label, Frame
 
 from openhcs.core.steps.function_step import FunctionStep
 from .step_parameter_editor import StepParameterEditor
-from .function_pattern_editor import FunctionPatternEditor
+from openhcs.tui.views import FunctionPatternView
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ class DualEditorPane:
     """
     Clean dual editor pane - just tab coordination.
     
-    Composes StepParameterEditor + FunctionPatternEditor.
+    Composes StepParameterEditor + FunctionPatternView.
     No god class responsibilities, just simple coordination.
     """
     
@@ -63,10 +63,14 @@ class DualEditorPane:
             on_save_as=self._on_save_step_as
         )
         
-        self.func_editor = FunctionPatternEditor(
+        self.func_editor = FunctionPatternView(
             state=self.state,
             initial_pattern=self.editing_step.func,
-            change_callback=self._on_func_change
+            change_callback=self._on_func_change,
+            step_context={
+                'group_by': self.editing_step.group_by,
+                'variable_components': self.editing_step.variable_components
+            }
         )
         
         # Create UI
@@ -175,8 +179,8 @@ class DualEditorPane:
     
     def _detect_step_changes(self) -> bool:
         """Detect if step parameters have changed."""
-        # Compare key attributes
-        for attr in ['name', 'description', 'variable_components', 'group_by']:
+        # Compare key attributes - BACKEND API COMPLIANT (no 'description')
+        for attr in ['name', 'variable_components', 'group_by', 'force_disk_output']:
             original_val = getattr(self.original_step, attr, None)
             editing_val = getattr(self.editing_step, attr, None)
             if original_val != editing_val:

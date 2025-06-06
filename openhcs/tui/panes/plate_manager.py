@@ -60,7 +60,9 @@ class PlateManagerPane(SwappablePaneInterface):
         # Now set enabled functions after list_manager exists
         config.button_configs[1].enabled_func = lambda: len(self.list_manager.model.items) > 0  # Del
         config.button_configs[2].enabled_func = lambda: self.list_manager.get_selected_item() is not None  # Edit
-        self.list_manager._on_model_changed = self._on_selection_changed
+
+        # CRITICAL: Register with model observer, not override ListManagerPane method
+        self.list_manager.model.add_observer(self._on_selection_changed)
 
         logger.info("PlateManagerPane: Initialized")
     
@@ -111,6 +113,14 @@ class PlateManagerPane(SwappablePaneInterface):
         selected_item = self.list_manager.get_selected_item()
         if selected_item:
             self.state.set_selected_plate(selected_item)
+
+            # CRITICAL: Set active orchestrator for PipelineEditor
+            plate_path = selected_item['path']
+            orchestrator = self.orchestrators.get(plate_path)
+            if orchestrator:
+                self.state.active_orchestrator = orchestrator
+            else:
+                self.state.active_orchestrator = None
 
     # Selection state logic (BULLETPROOF)
     def get_selection_state(self) -> Tuple[List[Dict], str]:
@@ -260,7 +270,8 @@ class PlateManagerPane(SwappablePaneInterface):
             # Update orchestrator if it exists
             if plate_path in self.orchestrators:
                 orchestrator = self.orchestrators[plate_path]
-                get_app().create_background_task(orchestrator.apply_new_global_config(updated_config))
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(orchestrator.apply_new_global_config(updated_config), "plate_manager_apply_config")
 
             logger.info(f"Plate config updated for {selected_plate['name']}: {updated_config}")
             self._hide_dialog()
@@ -558,8 +569,12 @@ class PlateManagerPane(SwappablePaneInterface):
         return [selected] if selected else self.list_manager.model.items
 
     def _get_current_pipeline_definition(self) -> List:
-        """Get current pipeline definition from active orchestrator."""
-        return self.state.active_orchestrator.pipeline_definition
+        """Get current pipeline definition from PipelineEditor's stored pipelines."""
+        # Pipeline definitions are stored in PipelineEditor, not orchestrator
+        # For now, return empty list - this method needs to be redesigned
+        # to get pipeline from PipelineEditor or shared state
+        logger.warning("_get_current_pipeline_definition called but pipeline storage is in PipelineEditor")
+        return []
 
     # Compatibility methods
     async def shutdown(self):

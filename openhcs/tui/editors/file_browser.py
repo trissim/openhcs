@@ -30,7 +30,8 @@ from prompt_toolkit.layout import (
 from prompt_toolkit.layout.controls import FormattedTextControl
 
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.widgets import Box, Button, Label
+from prompt_toolkit.widgets import Button, Label
+from prompt_toolkit.widgets import Box
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.formatted_text import HTML
 from openhcs.tui.utils.button_utils import action_button, nav_button
@@ -40,6 +41,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from openhcs.io.filemanager import FileManager
     from openhcs.constants.constants import Backend
+    from openhcs.tui.utils.path_cache import PathCacheKey
 
 try:
     from openhcs.io.exceptions import StorageResolutionError
@@ -93,26 +95,30 @@ class FileManagerBrowser:
     def __init__(
         self,
         file_manager: "FileManager",
-        backend: "Backend", 
+        backend: "Backend",
         on_path_selected: Callable[[List[Path]], Coroutine[Any, Any, None]],
         on_cancel: Callable[[], Coroutine[Any, Any, None]],
         initial_path: Path,
         selection_mode: SelectionMode = SelectionMode.FILES_ONLY,
         allow_multiple: bool = False,
         show_hidden_files: bool = False,
-        filter_extensions: Optional[List[str]] = None
+        filter_extensions: Optional[List[str]] = None,
+        cache_key: Optional["PathCacheKey"] = None
     ):
         # Core dependencies - all required, no optionals
         self.file_manager = file_manager
         self.backend_str = backend.value
         self.on_path_selected = on_path_selected
         self.on_cancel = on_cancel
-        
+
         # Configuration - all explicit
         self.selection_mode = selection_mode
         self.allow_multiple = allow_multiple
         self.show_hidden_files = show_hidden_files
         self.filter_extensions = [ext.lower() for ext in filter_extensions] if filter_extensions else None
+
+        # Path caching - aggressive UX improvement
+        self.cache_key = cache_key
 
         # State - single source of truth
         self.current_path = initial_path
@@ -397,24 +403,40 @@ class FileManagerBrowser:
 
     def _run_async(self, coro: Coroutine) -> None:
         """Centralized async task management."""
-        get_app().create_background_task(coro)
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+        get_task_manager().fire_and_forget(coro, "file_browser_async")
 
     def _navigate_to(self, path: Path) -> None:
         """Navigate to path - cancel previous load, start new one."""
         if self.load_task and not self.load_task.done():
+            # MATHEMATICALLY CORRECT: Cancel and schedule proper cleanup
             self.load_task.cancel()
+            # Schedule cleanup task to await the cancelled task
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+            async def cleanup_cancelled_task():
+                try:
+                    await self.load_task
+                except asyncio.CancelledError:
+                    pass  # Expected when cancelling
+            get_task_manager().fire_and_forget(cleanup_cancelled_task(), "file_browser_cleanup")
 
         self.current_path = path
         self.focused_index = 0
         self.selected_paths.clear()
         self._clear_error()
 
+        # AGGRESSIVE: Cache the path for future use
+        if self.cache_key:
+            from openhcs.tui.utils.path_cache import cache_browser_path
+            cache_browser_path(self.cache_key, path)
+
         # CRITICAL: Reset cursor position immediately to prevent race condition
         # This ensures cursor position is valid for the current listing state
         self._ensure_focused_visible()
 
-        # Create and schedule the task - no need for _run_async since create_task already schedules it
-        self.load_task = asyncio.create_task(self._load_directory())
+        # Use unified task manager instead of raw asyncio.create_task
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+        self.load_task = get_task_manager().create_task(self._load_directory(), "file_browser_load")
 
     # Async operations - clean, focused
     async def _load_directory(self) -> None:

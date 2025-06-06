@@ -30,21 +30,23 @@ class MenuBar(Container):
         self.context = context
 
         # Create buttons with dynamic width calculation
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+
         self.global_config_button = FramedButton(
             "Global Config",
-            handler=lambda: get_app().create_background_task(self._handle_global_config()),
+            handler=lambda: get_task_manager().fire_and_forget(self._handle_global_config(), "global_config"),
             width=len("Global Config") + 2
         )
 
         self.help_button = FramedButton(
             "Help",
-            handler=lambda: get_app().create_background_task(self._handle_help()),
+            handler=lambda: get_task_manager().fire_and_forget(self._handle_help(), "help"),
             width=len("Help") + 2
         )
 
         self.quit_button = FramedButton(
             "Quit",
-            handler=lambda: get_app().create_background_task(self._handle_quit()),
+            handler=lambda: get_task_manager().fire_and_forget(self._handle_quit(), "quit"),
             width=len("Quit") + 2
         )
 

@@ -1,0 +1,2 @@
+file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
+openhcs/tui/commands.py	114.23	36	789	105	3	21	49473fcf

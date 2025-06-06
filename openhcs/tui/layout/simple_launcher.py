@@ -71,9 +71,25 @@ class SimpleTUIState:
         if 'step_selected' in self.observers:
             for callback in self.observers['step_selected']:
                 if asyncio.iscoroutinefunction(callback):
-                    asyncio.create_task(callback(step))
+                    from openhcs.tui.utils.unified_task_manager import get_task_manager
+                    get_task_manager().fire_and_forget(callback(step), "simple_launcher_step_selected")
                 else:
                     callback(step)
+
+    def set_selected_plate(self, plate):
+        """Set the selected plate and notify observers."""
+        self.selected_plate = plate
+        # Reset compilation state when plate changes
+        self.is_compiled = False
+        self.error_message = None
+        # Use synchronous notify for compatibility
+        if 'plate_selected' in self.observers:
+            for callback in self.observers['plate_selected']:
+                if asyncio.iscoroutinefunction(callback):
+                    from openhcs.tui.utils.unified_task_manager import get_task_manager
+                    get_task_manager().fire_and_forget(callback(plate), "simple_launcher_plate_selected")
+                else:
+                    callback(plate)
 
     async def show_dialog(self, dialog, result_future):
         """

@@ -1,0 +1,31 @@
+file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
+openhcs/processing/backends/assemblers/self_supervised_stitcher.py	4.947	1.000	23.496	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	14.7	1.0
+openhcs/processing/backends/processors/tensorflow_processor.py	4.587	1.000	23.548	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	11.7	1.4
+openhcs/processing/backends/processors/jax_processor.py	4.537	1.000	23.532	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	11.4	2.1
+openhcs/processing/backends/processors/torch_processor.py	4.410	1.000	23.604	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	11.4	1.4
+openhcs/processing/backends/processors/cupy_processor.py	4.096	1.000	23.607	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	10.8	1.3
+openhcs/processing/backends/pos_gen/mist_processor_cupy.py	4.039	1.000	21.893	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	11.7	0.4
+openhcs/processing/backends/processors/numpy_processor.py	3.824	1.000	23.440	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	9.9	1.3
+openhcs/processing/backends/analysis/dxf_mask_pipeline.py	3.528	1.000	23.806	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	10.5	0.6
+openhcs/processing/backends/enhance/n2v2_processor_torch.py	3.502	1.000	22.637	LOW	KNOT_THEORY: Untangle dependency crossings	8.1	0.5
+openhcs/processing/backends/analysis/straighten_object_3d.py	3.436	1.000	23.796	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	9.6	0.2
+openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py	3.408	1.000	24.153	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	9.6	0.7
+openhcs/processing/backends/enhance/basic_processor_cupy.py	2.989	1.000	23.429	LOW	KNOT_THEORY: Untangle dependency crossings	7.5	0.5
+openhcs/processing/backends/enhance/self_supervised_3d_deconvolution.py	2.867	1.000	24.188	LOW	KNOT_THEORY: Untangle dependency crossings	6.9	0.7
+openhcs/processing/backends/pos_gen/ashlar_processor_cupy.py	2.851	1.000	23.099	LOW	KNOT_THEORY: Untangle dependency crossings	6.9	0.3
+openhcs/processing/backends/assemblers/assemble_stack_cupy.py	2.734	1.000	23.599	LOW	KNOT_THEORY: Untangle dependency crossings	6.6	0.2
+openhcs/processing/backends/enhance/basic_processor_numpy.py	2.674	1.000	23.289	LOW	KNOT_THEORY: Untangle dependency crossings	6.0	0.5
+openhcs/processing/backends/analysis/rrs_vectorized_tracer.py	2.651	1.000	23.139	LOW	KNOT_THEORY: Untangle dependency crossings	6.6	0.1
+openhcs/processing/backends/assemblers/assemble_stack_cpu.py	2.601	1.000	23.590	LOW	KNOT_THEORY: Untangle dependency crossings	6.0	0.2
+openhcs/processing/backends/analysis/focus_analyzer.py	2.578	1.000	22.514	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.9
+openhcs/processing/backends/enhance/dl_edof_unsupervised.py	2.446	1.000	23.922	LOW	KNOT_THEORY: Untangle dependency crossings	5.1	0.8
+openhcs/processing/func_registry.py	2.423	1.000	22.667	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.7
+openhcs/processing/backends/enhance/focus_torch.py	2.236	1.000	23.991	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.2
+openhcs/processing/function_registry.py	2.060	1.000	23.431	LOW	KNOT_THEORY: Untangle dependency crossings	2.1	0.8
+openhcs/processing/registry_base.py	1.688	0.913	23.712	LOW	KNOT_THEORY: Untangle dependency crossings	1.8	0.4
+openhcs/processing/backends/enhance/__init__.py	1.486	0.679	23.951	LOW	KNOT_THEORY: Untangle dependency crossings	1.2	0.0
+openhcs/processing/backends/analysis/__init__.py	1.431	0.667	24.270	LOW	KNOT_THEORY: Untangle dependency crossings	0.9	0.0
+openhcs/processing/backends/pos_gen/__init__.py	1.396	0.649	23.555	LOW	KNOT_THEORY: Untangle dependency crossings	0.9	0.0
+openhcs/processing/__init__.py	1.252	0.575	22.209	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/processing/backends/assemblers/__init__.py	1.183	0.575	22.210	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/processing/backends/__init__.py	0.050	0.020	0.000	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0

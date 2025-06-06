@@ -38,10 +38,12 @@ class PipelineEditorPane:
         self.current_selected_plates: List[str] = []    # Currently selected plate paths
         self.pipeline_differs_across_plates: bool = False
 
-        # EXACT: Visual programming dialog service
+        # EXACT: Visual programming dialog service with dependency injection
+        from openhcs.tui.editors.dual_editor_pane import DualEditorPane
         self.visual_programming_service = VisualProgrammingDialogService(
             state=self.state,
-            context=self.context
+            context=self.context,
+            dual_editor_pane_class=DualEditorPane
         )
 
         # Create unified list manager with declarative config (without enabled_func initially)
@@ -71,18 +73,14 @@ class PipelineEditorPane:
 
         logger.info("PipelineEditorPane: Initialized with clean architecture")
 
-        # EXACT: Register state observer for real-time updates
-        self._register_plate_selection_observer()
-
     @classmethod
     async def create(cls, state, context: ProcessingContext):
         """Factory for backward compatibility - simplified."""
         instance = cls(state, context)
         await instance._register_observers()
         
-        # Load initial steps if plate already selected
-        if state.selected_plate:
-            await instance._load_steps_for_plate(state.selected_plate.get('id'))
+        # Load initial display based on current state
+        await instance._update_pipeline_display_for_cursor_plate()
         
         return instance
 
@@ -164,12 +162,14 @@ class PipelineEditorPane:
     async def _register_observers(self):
         """Register observers for state integration."""
         try:
-            self.state.add_observer('plate_selected', 
-                lambda plate: get_app().create_background_task(self._on_plate_selected(plate)))
-            self.state.add_observer('steps_updated', 
-                lambda _: get_app().create_background_task(self._refresh_steps()))
-            self.state.add_observer('step_pattern_saved', 
-                lambda data: get_app().create_background_task(self._handle_step_pattern_saved(data)))
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+
+            self.state.add_observer('plate_selected',
+                lambda plate: get_task_manager().fire_and_forget(self._on_plate_selected(plate), "pipeline_plate_selected"))
+            self.state.add_observer('steps_updated',
+                lambda _: get_task_manager().fire_and_forget(self._refresh_steps(), "pipeline_steps_updated"))
+            self.state.add_observer('step_pattern_saved',
+                lambda data: get_task_manager().fire_and_forget(self._handle_step_pattern_saved(data), "pipeline_step_pattern_saved"))
             logger.info("PipelineEditorPane: Observers registered")
         except Exception as e:
             logger.error(f"Error registering observers: {e}", exc_info=True)
@@ -188,13 +188,66 @@ class PipelineEditorPane:
     async def _on_plate_selected(self, plate):
         """Handle plate selection event."""
         if plate:
-            await self._load_steps_for_plate(plate['id'])
+            await self._update_pipeline_display_for_cursor_plate()
 
     async def _refresh_steps(self, _=None):
         """Refresh the step list."""
-        if self.state.selected_plate:
-            await self._load_steps_for_plate(self.state.selected_plate['id'])
+        await self._update_pipeline_display_for_cursor_plate()
+
+    async def _update_pipeline_display_for_cursor_plate(self):
+        """Update pipeline display based on cursor position and orchestrator state."""
+        # Check if we have an active orchestrator (set by PlateManager)
+        if not hasattr(self.state, 'active_orchestrator') or not self.state.active_orchestrator:
+            # No orchestrator selected - clear everything
+            self.current_selected_plates = []
+            self.list_manager.load_items([])
+            return
+
+        orchestrator = self.state.active_orchestrator
+
+        # Update current_selected_plates for button handlers
+        if hasattr(self.state, 'selected_plate') and self.state.selected_plate:
+            plate_path = self.state.selected_plate['path']
+            self.current_selected_plates = [plate_path]
         else:
+            self.current_selected_plates = []
+
+        # Check if orchestrator is initialized
+        if not orchestrator.is_initialized():
+            # Orchestrator exists but not initialized - show message
+            self.list_manager.load_items([{
+                'id': 'not_initialized',
+                'name': 'Plate not initialized',
+                'func': 'Click "Init" button to initialize this plate before editing pipeline',
+                'status': 'not_initialized',
+                'pipeline_id': None,
+                'output_memory_type': '[N/A]'
+            }])
+            return
+
+        # Orchestrator is initialized - check if we have a pipeline for this plate
+        # Pipeline definitions are stored separately, not in the orchestrator
+        if hasattr(self.state, 'selected_plate') and self.state.selected_plate:
+            plate_path = self.state.selected_plate['path']
+            pipeline = self.plate_pipelines.get(plate_path)
+
+            if pipeline and len(pipeline) > 0:
+                # Convert Pipeline (list of steps) to display format
+                steps = [self._transform_step_to_dict(step) for step in pipeline
+                        if isinstance(step, FunctionStep)]
+                self.list_manager.load_items(steps)
+            else:
+                # Initialized but no pipeline steps yet
+                self.list_manager.load_items([{
+                    'id': 'no_steps',
+                    'name': 'No pipeline steps',
+                    'func': 'Click "Add" button to add steps to this pipeline',
+                    'status': 'ready',
+                    'pipeline_id': None,
+                    'output_memory_type': '[N/A]'
+                }])
+        else:
+            # No plate selected
             self.list_manager.load_items([])
 
     # Step loading
@@ -212,9 +265,11 @@ class PipelineEditorPane:
             self.list_manager.load_items(steps)
 
     def _get_orchestrator_steps(self) -> List[Any]:
-        """Get step objects from active orchestrator."""
-        if self.state.active_orchestrator and self.state.active_orchestrator.pipeline_definition:
-            return self.state.active_orchestrator.pipeline_definition
+        """Get step objects from stored pipeline (orchestrator doesn't store pipeline_definition)."""
+        if hasattr(self.state, 'selected_plate') and self.state.selected_plate:
+            plate_path = self.state.selected_plate['path']
+            pipeline = self.plate_pipelines.get(plate_path)
+            return list(pipeline) if pipeline else []
         return []
 
     def _transform_step_to_dict(self, step_obj: FunctionStep) -> Dict[str, Any]:
@@ -470,144 +525,14 @@ class PipelineEditorPane:
         except Exception as e:
             await show_error_dialog("Save Error", f"Failed to save pipeline: {str(e)}", self.state)
 
-    # EXACT: Legacy cleanup - these methods are no longer needed
 
-    def _register_plate_selection_observer(self):
-        """EXACT: Register observer for plate selection changes."""
-        self.state.add_observer('plate_selected',
-            lambda plate: get_app().create_background_task(self._on_plate_selection_changed(plate)))
-
-    async def _on_plate_selection_changed(self, plate_data):
-        """EXACT: Handle plate selection changes in real-time."""
-        try:
-            # EXACT: Get current selection state from PlateManager
-            selected_plates = self._get_current_selected_plates()
-            self.current_selected_plates = selected_plates
-
-            # EXACT: Update pipeline display based on selection
-            await self._update_pipeline_display_for_selection(selected_plates)
-
-        except Exception as e:
-            await show_error_dialog(
-                "Selection Update Error",
-                f"Failed to update pipeline display: {str(e)}",
-                self.state
-            )
-
-    def _get_current_selected_plates(self) -> List[str]:
-        """EXACT: Get currently selected plate paths from PlateManager."""
-        # EXACT: Access PlateManager selection state
-        if hasattr(self.state, 'selected_plate') and self.state.selected_plate:
-            return [self.state.selected_plate['path']]
-        return []
-
-    async def _update_pipeline_display_for_selection(self, selected_plates: List[str]):
-        """EXACT: Update pipeline display based on selected plates."""
-        if not selected_plates:
-            # EXACT: No plates selected - show empty
-            self.pipeline_differs_across_plates = False
-            self.list_manager.load_items([])
-            return
-
-        if len(selected_plates) == 1:
-            # EXACT: Single plate selected - show its pipeline
-            plate_path = selected_plates[0]
-            pipeline = self.plate_pipelines.get(plate_path)
-
-            if not pipeline:
-                # EXACT: Create default empty pipeline for new plate
-                pipeline = Pipeline(name=f"Pipeline for {Path(plate_path).name}")
-                self.plate_pipelines[plate_path] = pipeline
-
-            self.pipeline_differs_across_plates = False
-            self._refresh_step_list_for_pipeline(pipeline)
-
-        else:
-            # EXACT: Multiple plates selected - check if pipelines match
-            pipelines = [self.plate_pipelines.get(plate_path) for plate_path in selected_plates]
-
-            if self._all_pipelines_identical(pipelines):
-                # EXACT: All pipelines identical - show common pipeline
-                common_pipeline = pipelines[0] if pipelines[0] else Pipeline(name="Common Pipeline")
-                self.pipeline_differs_across_plates = False
-                self._refresh_step_list_for_pipeline(common_pipeline)
-            else:
-                # EXACT: Pipelines differ - show "differs" message
-                self.pipeline_differs_across_plates = True
-                self._show_pipeline_differs_message()
-
-    def _all_pipelines_identical(self, pipelines: List[Optional[Pipeline]]) -> bool:
-        """EXACT: Check if all pipelines are identical."""
-        # EXACT: Handle None pipelines (treat as empty)
-        normalized_pipelines = []
-        for p in pipelines:
-            if p is None:
-                normalized_pipelines.append([])  # Empty pipeline
-            else:
-                normalized_pipelines.append(list(p))  # Pipeline IS a list
-
-        # EXACT: Check if all normalized pipelines are identical
-        if not normalized_pipelines:
-            return True
-
-        first_pipeline = normalized_pipelines[0]
-        return all(pipeline == first_pipeline for pipeline in normalized_pipelines[1:])
-
-    def _show_pipeline_differs_message(self):
-        """EXACT: Show 'pipeline differs across plates' message."""
-        self.list_manager.load_items([{
-            'id': 'differs_message',
-            'name': 'Pipeline differs across plates',
-            'func': 'Cannot show pipeline - selected plates have different pipelines',
-            'variable_components': '',
-            'group_by': ''
-        }])
-
-    def _refresh_step_list_for_pipeline(self, pipeline: Pipeline):
-        """EXACT: Refresh step list for specific pipeline."""
-        step_items = []
-        for i, step in enumerate(pipeline):
-            step_items.append({
-                'id': str(id(step)),  # Use object ID as unique identifier
-                'name': getattr(step, 'name', f'Step {i+1}'),
-                'func': self._format_func_display(step.func),
-                'variable_components': ', '.join(step.variable_components or []),
-                'group_by': step.group_by
-            })
-
-        self.list_manager.load_items(step_items)
-
-    def _format_func_display(self, func) -> str:
-        """EXACT: Format function for display."""
-        if func is None:
-            return "No function"
-        elif callable(func):
-            return getattr(func, '__name__', str(func))
-        elif isinstance(func, tuple) and len(func) >= 1:
-            return getattr(func[0], '__name__', str(func[0]))
-        elif isinstance(func, list) and len(func) > 0:
-            first_func = func[0]
-            if isinstance(first_func, tuple):
-                return f"{getattr(first_func[0], '__name__', str(first_func[0]))} + {len(func)-1} more"
-            else:
-                return f"{getattr(first_func, '__name__', str(first_func))} + {len(func)-1} more"
-        else:
-            return str(func)
-
-    # EXACT: Dialog methods removed - now handled by VisualProgrammingDialogService
 
 
 
 
 
     async def shutdown(self):
-        """EXACT: Cleanup observers."""
+        """Cleanup observers."""
         logger.info("PipelineEditorPane: Shutting down")
-
-        # EXACT: Remove observers (updated for new architecture)
-        try:
-            self.state.remove_observer('plate_selected', self._on_plate_selection_changed)
-        except (AttributeError, ValueError):
-            pass  # Observer may not exist or already removed
-
-        logger.info("PipelineEditorPane: Observers unregistered and cleanup complete")
+        # No observers to remove - they're handled automatically by the state system
+        logger.info("PipelineEditorPane: Shutdown complete")

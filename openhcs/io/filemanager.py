@@ -326,13 +326,16 @@ class FileManager:
         target_dir: Union[str, Path],
         backend: str,
         recursive: bool = True,
-        overwrite: bool = True
+        overwrite_symlinks_only: bool = False
     ) -> int:
         """
         Mirror a directory structure from source to target and create symlinks to all files.
 
         This method performs no semantic validation, normalization, or naming enforcement on the input paths.
         It assumes the caller has provided valid, backend-compatible paths and merely dispatches them for execution.
+
+        By default, this method will NOT overwrite existing files. Use overwrite_symlinks_only=True to allow
+        overwriting existing symlinks (but not regular files).
 
         Note: ONLY backend is a POSITIONAL argument. Other parameters may remain as kwargs.
 
@@ -341,13 +344,15 @@ class FileManager:
             target_dir: Path to the target directory where the mirrored structure will be created (str or Path)
             backend: Backend to use for mirroring ('disk', 'memory', 'zarr') - POSITIONAL
             recursive: Whether to recursively mirror subdirectories - can be keyword arg
-            overwrite: Whether to overwrite the target directory if it exists - can be keyword arg
+            overwrite_symlinks_only: If True, allows overwriting existing symlinks but blocks overwriting regular files.
+                                    If False (default), no overwriting is allowed. - can be keyword arg
 
         Returns:
             int: Number of symlinks created
 
         Raises:
             StorageResolutionError: If the backend is not supported
+            FileExistsError: If target files exist and overwrite_symlinks_only=False, or if trying to overwrite regular files
             TypeError: If source_dir or target_dir is not a valid path type
             PathMismatchError: If the path scheme doesn't match the expected scheme for the backend
         """
@@ -372,8 +377,11 @@ class FileManager:
             for file_path in all_files:
                 rel_path = Path(file_path).relative_to(Path(source_dir))
                 symlink_path = Path(target_dir) / rel_path
-                self.create_symlink(file_path, str(symlink_path), backend)
-            
+                self.create_symlink(file_path, str(symlink_path), backend, overwrite_symlinks_only=overwrite_symlinks_only)
+                symlink_count += 1
+
+            return symlink_count
+
         except Exception as e:
             raise StorageResolutionError(f"Failed to mirror directory {source_dir} to {target_dir} with backend {backend}") from e
 
@@ -381,7 +389,8 @@ class FileManager:
         self,
         source_path: Union[str, Path],
         symlink_path: Union[str, Path],
-        backend: str
+        backend: str,
+        overwrite_symlinks_only: bool = False
     ) -> bool:
         """
         Create a symbolic link from source_path to symlink_path.
@@ -395,21 +404,42 @@ class FileManager:
             source_path: Path to the source file or directory (str or Path)
             symlink_path: Path where the symlink should be created (str or Path)
             backend: Backend to use for symlink creation ('disk', 'memory', 'zarr') - POSITIONAL
+            overwrite_symlinks_only: If True, only allow overwriting existing symlinks (not regular files)
 
         Returns:
             bool: True if successful, False otherwise
 
         Raises:
             StorageResolutionError: If the backend is not supported
+            FileExistsError: If target exists and is not a symlink when overwrite_symlinks_only=True
             VFSTypeError: If source_path or symlink_path cannot be converted to internal path format
             PathMismatchError: If the path scheme doesn't match the expected scheme for the backend
         """
         # Get backend instance
         backend_instance = self._get_backend(backend)
 
-        # Create the symlink
+        # Check if target exists and handle overwrite policy
         try:
-            return backend_instance.create_symlink(str(source_path), str(symlink_path))
+            if backend_instance.exists(str(symlink_path)):
+                if overwrite_symlinks_only:
+                    # Check if existing target is a symlink
+                    if not backend_instance.is_symlink(str(symlink_path)):
+                        raise FileExistsError(
+                            f"Target exists and is not a symlink (overwrite_symlinks_only=True): {symlink_path}"
+                        )
+                    # Target is a symlink, allow overwrite
+                    backend_instance.create_symlink(str(source_path), str(symlink_path), overwrite=True)
+                else:
+                    # No overwrite allowed
+                    raise FileExistsError(f"Target already exists: {symlink_path}")
+            else:
+                # Target doesn't exist, create new symlink
+                backend_instance.create_symlink(str(source_path), str(symlink_path), overwrite=False)
+
+            return True
+        except FileExistsError:
+            # Re-raise FileExistsError from our check or from backend
+            raise
         except Exception as e:
             raise StorageResolutionError(
                 f"Failed to create symlink from {source_path} to {symlink_path} with backend {backend}"

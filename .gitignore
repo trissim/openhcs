@@ -124,3 +124,6 @@ output/
 *.json
 !examples/*.json
 tests/integration/tests_data/
+
+# Embedded repositories
+dna/

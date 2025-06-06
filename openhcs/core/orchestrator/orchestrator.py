@@ -112,6 +112,11 @@ class PipelineOrchestrator:
 
         self.filemanager.ensure_directory(str(self.workspace_path), Backend.DISK.value)
 
+#        if self.microscope_handler is not None and self.input_dir is not None:
+#            logger.debug("Workspace already initialized.")
+#            return
+
+
         if self.plate_path and self.workspace_path:
             logger.info(f"Mirroring plate directory {self.plate_path} to workspace {self.workspace_path}...")
             try:
@@ -120,7 +125,7 @@ class PipelineOrchestrator:
                     target_dir=str(self.workspace_path),
                     backend=Backend.DISK.value,
                     recursive=True,
-                    overwrite=True
+                    overwrite_symlinks_only=True,
                 )
                 logger.info(f"Created {num_links} symlinks in workspace.")
                 self.input_dir = Path(self.workspace_path)
@@ -137,18 +142,26 @@ class PipelineOrchestrator:
         else:
             raise RuntimeError("Cannot determine input_dir due to missing plate_path and workspace_path.")
 
+        #set microscope handler's plate_folder to workspace path
+        try:
+            self.microscope_handler.plate_folder = self.workspace_path
+        except Exception as e:
+            error_msg = f"Failed to set plate_folder on microscope handler: {e}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
+
     def initialize_microscope_handler(self):
         """Initializes the microscope handler."""
         if self.microscope_handler is not None:
             logger.debug("Microscope handler already initialized.")
             return
-        if self.input_dir is None:
-            raise RuntimeError("Workspace (and input_dir) must be initialized before microscope handler.")
+#        if self.input_dir is None:
+#            raise RuntimeError("Workspace (and input_dir) must be initialized before microscope handler.")
 
         logger.info(f"Initializing microscope handler using input directory: {self.input_dir}...")
         try:
             self.microscope_handler = create_microscope_handler(
-                plate_folder=str(self.input_dir),
+                plate_folder=str(self.plate_path),
                 filemanager=self.filemanager,
                 microscope_type='auto',
             )
@@ -168,8 +181,8 @@ class PipelineOrchestrator:
             logger.info("Orchestrator already initialized.")
             return self
 
-        self.initialize_workspace(workspace_path)
         self.initialize_microscope_handler()
+        self.initialize_workspace(workspace_path)
 
         # Process workspace with microscope-specific logic
         logger.info("Processing workspace with microscope handler...")
@@ -405,10 +418,6 @@ class PipelineOrchestrator:
             return selected_wells
         else:
             return all_wells
-
-    # The run() method has been removed.
-    # UI/callers should use initialize(), then compile_plate_for_processing(),
-    # then (if needed, setup visualizer), then execute_compiled_plate().
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """

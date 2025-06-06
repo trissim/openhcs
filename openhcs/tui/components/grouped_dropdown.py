@@ -74,15 +74,16 @@ class GroupedDropdown(Container):
 
         self.dropdown.handler = on_change
 
-        # Create container
-        self.container = Box(self.dropdown)
+        # Create container - HSplit IS a Container with preferred_height
+        self.container = HSplit([self.dropdown])
 
     def __pt_container__(self):
         """Return the container to be rendered."""
         return self.container
 
-    # Implement abstract methods by delegating to the container
+    # Implement abstract methods - delegate to HSplit
     def get_children(self):
+        # HSplit has proper get_children() method
         return self.container.get_children()
 
     def preferred_width(self, max_available_width):

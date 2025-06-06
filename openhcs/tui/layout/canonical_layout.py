@@ -43,6 +43,27 @@ class CanonicalTUILayout:
         self.orchestrator_manager = orchestrator_manager  # For orchestrator integration
         self.storage_registry = storage_registry  # For storage integration
 
+        # Initialize unified task manager
+        from openhcs.tui.utils.unified_task_manager import initialize_task_manager
+        self.task_manager = initialize_task_manager()
+
+        # Initialize focus manager
+        from openhcs.tui.utils.focus_manager import get_focus_manager
+        self.focus_manager = get_focus_manager()
+        logger.info("FocusManager initialized")
+
+        # Initialize safe error handler
+        from openhcs.tui.utils.safe_error_handler import get_error_handler
+        self.error_handler = get_error_handler()
+        logger.info("SafeErrorHandler initialized")
+
+        # Update task manager error handler to use SafeErrorHandler with app_state
+        def unified_error_handler(exception: Exception, context: str):
+            self.error_handler.handle_error_sync(exception, context, self.state)
+
+        self.task_manager.set_error_handler(unified_error_handler)
+        logger.info("Unified async infrastructure initialized with app_state support")
+
         # Status message for dynamic updates
         self.status_message = "Ready"
 
@@ -55,11 +76,21 @@ class CanonicalTUILayout:
         self.main_layout = self._create_canonical_layout()
         self.kb = self._create_key_bindings()
 
+        # Create style for proper text area appearance
+        from prompt_toolkit.styles import Style
+        style = Style.from_dict({
+            'text-area': '#ffffff bg:#000000',  # white text on black background
+            'text-area.focused': '#ffffff bg:#000000 bold',  # focused state
+            'frame': '#ffffff bg:#000000',  # frame styling
+            'frame.border': '#ffffff',  # frame borders
+        })
+
         self.application = Application(
             layout=Layout(self.main_layout),
             key_bindings=self.kb,
             mouse_support=True,
-            full_screen=True
+            full_screen=True,
+            style=style
         )
 
         # Set up dialog event handling
@@ -274,12 +305,17 @@ class CanonicalTUILayout:
         # Right pane: Pipeline Editor
         right_pane = self._create_pipeline_editor_pane()
 
-        # Create VSplit with equal weight distribution
+        # Create VSplit with explicit width management to prevent wall collapse
         main_vsplit = VSplit([
             left_pane,
             right_pane,
         ], style="class:main-content", padding=1)
         main_vsplit.height = Dimension(weight=1)  # Take all remaining space
+
+        # Ensure both panes have explicit width to prevent collapse
+        left_pane.width = Dimension(weight=1)  # 50% of available width
+        right_pane.width = Dimension(weight=1)  # 50% of available width
+
         return main_vsplit
 
     def _get_proportional_width(self, percentage: float) -> Dimension:
@@ -351,7 +387,9 @@ class CanonicalTUILayout:
             get_app().invalidate()
             logger.info("PlateManagerPane: Initialization complete")
 
-        asyncio.create_task(initialize_plate_manager())
+        # Use unified task manager instead of raw asyncio.create_task
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+        get_task_manager().fire_and_forget(initialize_plate_manager(), "plate_manager_init")
         return dynamic_container
 
     def _create_pipeline_editor_pane(self) -> Container:
@@ -386,7 +424,9 @@ class CanonicalTUILayout:
             get_app().invalidate()
             logger.info("PipelineEditorPane: Async initialization complete")
 
-        asyncio.create_task(create_pipeline_editor())
+        # Use unified task manager instead of raw asyncio.create_task
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+        get_task_manager().fire_and_forget(create_pipeline_editor(), "pipeline_editor_init")
         return dynamic_container
     
     def _create_status_bar(self) -> Container:
@@ -446,7 +486,24 @@ class CanonicalTUILayout:
         setup_global_exception_handler(self.state)
         logger.info("Global exception handler installed - all errors will show in dialog")
 
-        # Disable prompt_toolkit's default exception handler so our global handler works
-        await self.application.run_async(set_exception_handler=False)
+        try:
+            # Disable prompt_toolkit's default exception handler so our global handler works
+            await self.application.run_async(set_exception_handler=False)
+        finally:
+            # Shutdown async infrastructure in correct order
+            logger.info("Shutting down async infrastructure")
+
+            # 1. Shutdown status bar first (removes TUI log handler)
+            if hasattr(self, 'status_bar'):
+                await self.status_bar.shutdown()
+                logger.info("Status bar shutdown complete")
+
+            # 2. Cancel focus manager
+            self.focus_manager.cancel_active_focus()
+            # SafeErrorHandler has no active resources to clean up
+
+            # 3. Shutdown task manager last (after all components that use it)
+            from openhcs.tui.utils.unified_task_manager import shutdown_task_manager
+            await shutdown_task_manager()
 
     # Layout class should only handle layout, not menu business logic

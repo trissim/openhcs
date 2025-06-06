@@ -1,0 +1,6 @@
+metric	value	interpretation
+framework_agreement	0.000000	Higher = more agreement between frameworks
+mathematical_consensus	0.122773	Weighted consensus across all frameworks
+convergence_score	0.000000	Overall convergence of framework results
+stability_index	0.439725	Stability of framework results
+outlier_frameworks	gauge	Frameworks with divergent results

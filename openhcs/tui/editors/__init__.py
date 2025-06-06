@@ -3,13 +3,13 @@ Complex editor components for OpenHCS TUI.
 
 This module contains specialized editors for complex data structures:
 - StepParameterEditor: Pure AbstractStep parameter editing
-- FunctionPatternEditor: Function pattern editor with parameter editing
+- FunctionPatternView: Function pattern editor with parameter editing (via views module)
 - DualEditorPane: Clean tab coordinator for step + function editing
 - FileManagerBrowser: File browser with FileManager integration
 """
 
 from .step_parameter_editor import StepParameterEditor
-from .function_pattern_editor import FunctionPatternEditor
+# FunctionPatternEditor replaced by FunctionPatternView in views module
 from .dual_editor_pane import DualEditorPane
 from .file_browser import FileManagerBrowser
 
@@ -17,7 +17,7 @@ from .file_browser import FileManagerBrowser
 
 __all__ = [
     'StepParameterEditor',
-    'FunctionPatternEditor',
     'DualEditorPane',
     'FileManagerBrowser'
+    # FunctionPatternEditor replaced by FunctionPatternView in views module
 ]

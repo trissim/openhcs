@@ -12,7 +12,7 @@ from pathlib import Path
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.layout import HSplit, VSplit, Container, ScrollablePane, Window, Dimension
-from prompt_toolkit.widgets import Button, Frame, Label, TextArea, RadioList, Checkbox
+from prompt_toolkit.widgets import Button, Frame, Label, TextArea, RadioList, Checkbox, Box
 
 from openhcs.constants.constants import VariableComponents, GroupBy
 from openhcs.core.steps.abstract import AbstractStep
@@ -63,17 +63,17 @@ class StepParameterEditor:
     
     def _build_ui(self) -> Container:
         """Build the step parameter editor UI."""
-        # Create parameter rows
-        sig = inspect.signature(AbstractStep.__init__)
+        # Create parameter rows - BACKEND API COMPLIANT
+        sig = inspect.signature(FunctionStep.__init__)
         rows = self._create_parameter_rows(sig)
-        
+
         # Create toolbar
         toolbar = self._create_toolbar()
-        
+
         # Combine
         content = HSplit([
             toolbar,
-            Frame(HSplit(rows), title="Step Parameters (AbstractStep)")
+            Frame(HSplit(rows), title="Step Parameters (FunctionStep)")
         ])
         
         return ScrollablePane(content)
@@ -90,7 +90,7 @@ class StepParameterEditor:
         
         buttons.append(Window(width=0, char=' '))  # Spacer
         
-        return VSplit(buttons, height=1, padding_left=1)
+        return Box(VSplit(buttons, height=1), padding_left=1)
     
     def _create_parameter_rows(self, sig: inspect.Signature) -> List[Container]:
         """Create UI rows for each parameter."""
@@ -216,8 +216,7 @@ class StepParameterEditor:
         widget = TextArea(
             text=default_text,
             multiline=False,
-            height=1,
-            style="class:input-field"
+            height=1
         )
         widget.buffer.on_text_changed += lambda buff: self.on_change(param_name, buff.text)
         return widget
@@ -229,8 +228,7 @@ class StepParameterEditor:
         widget = TextArea(
             text=str(current_value or ""),
             multiline=False,
-            height=1,
-            style="class:input-field"
+            height=1
         )
         widget.buffer.on_text_changed += lambda buff: self.on_change(param_name, buff.text)
         return widget
@@ -245,6 +243,8 @@ class StepParameterEditor:
             width=8
         )
         
+        # RadioList can be used directly in VSplit - no wrapping needed
+
         return VSplit([
             Label(f"{field_label}:", width=25),
             widget,

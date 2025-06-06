@@ -1,0 +1,16 @@
+file_path	function_name	complexity	lines	args
+openhcs/tui/dialogs/plate_config_editor.py	__init__	4	29	3
+openhcs/tui/dialogs/plate_config_editor.py	_get_text_fragments	2	9	1
+openhcs/tui/dialogs/plate_config_editor.py	_config_value_changed	15	59	4
+openhcs/tui/dialogs/plate_config_editor.py	_create_config_widgets	11	68	3
+openhcs/tui/dialogs/plate_config_editor.py	_build_layout	3	29	1
+openhcs/tui/dialogs/plate_config_editor.py	container	1	2	1
+openhcs/tui/dialogs/plate_config_editor.py	_handle_save	9	60	1
+openhcs/tui/dialogs/plate_config_editor.py	_handle_close	1	5	1
+openhcs/tui/dialogs/plate_config_editor.py	shutdown	1	3	1
+openhcs/tui/dialogs/plate_config_editor.py	notify_cancel	1	2	0
+openhcs/tui/dialogs/plate_config_editor.py	notify_save_success	1	2	0
+openhcs/tui/dialogs/plate_config_editor.py	int_accept_handler	1	2	2
+openhcs/tui/dialogs/plate_config_editor.py	notify_error_no_config_attr	1	2	0
+openhcs/tui/dialogs/plate_config_editor.py	notify_apply_error	1	2	0
+openhcs/tui/dialogs/plate_config_editor.py	str_accept_handler	1	2	2

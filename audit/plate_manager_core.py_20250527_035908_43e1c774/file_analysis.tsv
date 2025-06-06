@@ -1,0 +1,2 @@
+file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
+openhcs/tui/plate_manager_core.py	111.49	24	1039	147	44	24	459427d9

@@ -495,9 +495,11 @@ class ListView:
     
     def _wrap_handler(self, handler: Callable) -> Callable:
         """Wrap handler for async support."""
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
         def wrapped():
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
             if asyncio.iscoroutinefunction(handler):
-                get_app().create_background_task(handler())
+                get_task_manager().fire_and_forget(handler(), "list_handler")
             else:
                 handler()
         return wrapped

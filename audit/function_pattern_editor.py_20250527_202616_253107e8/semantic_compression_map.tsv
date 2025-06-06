@@ -1,0 +1,2 @@
+file_path	semantic_profile	entropy_char	complexity_char	function_count_char	dependency_char	risk_char	priority_char	coupling_char	cohesion_char
+openhcs/tui/function_pattern_editor.py	4F99H2HL	4	F	9	9	H	2	H	L

@@ -141,8 +141,9 @@ class InteractiveListItem:
 
     def _run_callback(self, callback: Callable, *args):
         """Run callback with proper async handling."""
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
         if asyncio.iscoroutinefunction(callback):
-            get_app().create_background_task(callback(*args))
+            get_task_manager().fire_and_forget(callback(*args), f"callback_{callback.__name__}")
         else:
             callback(*args)
 

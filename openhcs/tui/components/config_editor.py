@@ -298,6 +298,8 @@ class ConfigEditor:
             width=8
         )
         
+        # RadioList can be used directly in VSplit - no wrapping needed
+
         return VSplit([
             Label(label_text, width=25),
             widget,
@@ -398,7 +400,8 @@ class ConfigEditor:
     
     def _run_async(self, coro: Coroutine) -> None:
         """Centralized async task dispatch."""
-        get_app().create_background_task(coro)
+        from openhcs.tui.utils.unified_task_manager import get_task_manager
+        get_task_manager().fire_and_forget(coro, "config_async")
     
     def _invalidate_ui(self) -> None:
         """Invalidate UI."""

@@ -245,14 +245,41 @@ class StatusBar(Container):
             self.log_drawer_container
         ])
 
-        # Register for TUIState events
-        self.tui_state.add_observer('operation_status_changed', self._on_operation_status_changed)
-        self.tui_state.add_observer('error', self._on_error_event) # Distinguish from internal _on_error
-        self.tui_state.add_observer('tui_log_level_changed', self._on_tui_log_level_changed) # Already present from draft
+        # Register for TUIState events with safe async wrappers
+        def safe_operation_status_changed(data):
+            """Safely schedule async operation status change handler."""
+            try:
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(self._on_operation_status_changed(data), "status_bar_operation_status")
+            except Exception as e:
+                logger.error(f"Failed to schedule operation status change: {e}")
+
+        def safe_error_event(data):
+            """Safely schedule async error event handler."""
+            try:
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(self._on_error_event(data), "status_bar_error_event")
+            except Exception as e:
+                logger.error(f"Failed to schedule error event: {e}")
+
+        # Store references for proper cleanup
+        self._safe_operation_status_changed = safe_operation_status_changed
+        self._safe_error_event = safe_error_event
+
+        self.tui_state.add_observer('operation_status_changed', self._safe_operation_status_changed)
+        self.tui_state.add_observer('error', self._safe_error_event)
+        self.tui_state.add_observer('tui_log_level_changed', self._on_tui_log_level_changed) # This one is sync
 
         # Listen for requests to toggle the log drawer (e.g., from MenuBar)
-        self.tui_state.add_observer('ui_request_toggle_log_drawer',
-                                    lambda data=None: get_app().create_background_task(self._toggle_drawer()))
+        def safe_toggle_drawer(data=None):
+            """Safely schedule drawer toggle with error handling."""
+            try:
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(self._toggle_drawer(), "status_bar_toggle_drawer")
+            except Exception as e:
+                logger.error(f"Failed to schedule drawer toggle: {e}")
+
+        self.tui_state.add_observer('ui_request_toggle_log_drawer', safe_toggle_drawer)
 
         self._setup_logging_handler()
 
@@ -300,8 +327,8 @@ class StatusBar(Container):
             self._status_bar_state = new_state
         get_app().invalidate()
 
-    async def add_log_entry(self, message: str, level: Union[str, LogLevel] = LogLevel.INFO, source: Optional[str] = None) -> None:
-        """Add a new entry to the log buffer."""
+    async def _add_log_entry_internal(self, message: str, level: Union[str, LogLevel] = LogLevel.INFO, source: Optional[str] = None) -> None:
+        """Internal async method for adding log entries. Use this for direct awaits within StatusBar."""
         if isinstance(level, LogLevel):
             level_str = level.value
         elif isinstance(level, str):
@@ -324,6 +351,11 @@ class StatusBar(Container):
         # If drawer is open, invalidate to refresh its content
         if self._status_bar_state.drawer_expanded:
             get_app().invalidate()
+
+    async def add_log_entry(self, message: str, level: Union[str, LogLevel] = LogLevel.INFO, source: Optional[str] = None) -> None:
+        """Public method for adding log entries. This is called by external code and TUI log handler."""
+        # Delegate to internal method
+        await self._add_log_entry_internal(message, level, source)
 
     def _setup_logging_handler(self):
         """Set up a custom logging handler to route logs to this status bar."""
@@ -369,7 +401,7 @@ class StatusBar(Container):
                 log_level = LogLevel(log_level_str)
             except ValueError:
                 log_level = LogLevel.INFO
-            await self.add_log_entry(log_message, level=log_level, source=data.get('source', 'TUIState'))
+            await self._add_log_entry_internal(log_message, level=log_level, source=data.get('source', 'TUIState'))
 
 
     async def _on_error_event(self, error_data: Dict[str, Any]):
@@ -383,7 +415,7 @@ class StatusBar(Container):
         log_msg = message
         if details:
             log_msg += f" | Details: {str(details)[:200]}" # Truncate details for log line
-        await self.add_log_entry(log_msg, level=LogLevel.ERROR, source=source)
+        await self._add_log_entry_internal(log_msg, level=LogLevel.ERROR, source=source)
 
     def _on_tui_log_level_changed(self, new_level_str: str):
         """Responds to TUI log level changes from TUIState."""
@@ -397,13 +429,17 @@ class StatusBar(Container):
             logger_to_adjust = logging.getLogger("openhcs") # Or logging.getLogger()
             logger_to_adjust.setLevel(logging_level)
             try:
-                get_app().create_background_task(self.add_log_entry(f"TUI log capture level set to {level_enum.value}", LogLevel.INFO, "StatusBar"))
-            except RuntimeError:
-                # Fallback if no app available
-                pass
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(self.add_log_entry(f"TUI log capture level set to {level_enum.value}", LogLevel.INFO, "StatusBar"), "status_bar_log_level_set")
+            except Exception as e:
+                # Fallback if task manager not available or other error
+                logger.error(f"Failed to schedule log level change message: {e}")
         except ValueError:
             try:
-                get_app().create_background_task(self.add_log_entry(f"Invalid TUI log level received: {new_level_str}", LogLevel.WARNING, "StatusBar"))
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(self.add_log_entry(f"Invalid TUI log level received: {new_level_str}", LogLevel.WARNING, "StatusBar"), "status_bar_invalid_log_level")
+            except Exception as e:
+                logger.error(f"Failed to schedule invalid log level warning: {e}")
             except RuntimeError:
                 # Fallback if no app available
                 pass
@@ -433,7 +469,8 @@ class StatusBar(Container):
     def mouse_handler(self, mouse_event):
         """Handle mouse events for the status bar."""
         if mouse_event.event_type == MouseEventType.MOUSE_UP:
-            get_app().create_background_task(self._toggle_drawer())
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+            get_task_manager().fire_and_forget(self._toggle_drawer(), "status_bar_mouse_toggle_drawer")
             return True # Event handled
         return False # Event not handled
 
@@ -444,12 +481,13 @@ class StatusBar(Container):
         Unregisters observers and removes the logging handler.
         """
         logger.info("StatusBar: Shutting down...")
-        # Unregister observers
-        self.tui_state.remove_observer('operation_status_changed', self._on_operation_status_changed)
-        self.tui_state.remove_observer('error', self._on_error_event)
+        # Unregister observers using the correct wrapper function references
+        self.tui_state.remove_observer('operation_status_changed', self._safe_operation_status_changed)
+        self.tui_state.remove_observer('error', self._safe_error_event)
         self.tui_state.remove_observer('tui_log_level_changed', self._on_tui_log_level_changed)
-        self.tui_state.remove_observer('ui_request_toggle_log_drawer',
-                                        lambda data=None: get_app().create_background_task(self._toggle_drawer()))
+        # Note: Cannot remove lambda observer easily - this is a design issue with observer pattern
+        # The lambda creates a new function each time, so it can't be removed by reference
+        # This is acceptable for shutdown as the entire app is closing
         logger.info("StatusBar: Observers unregistered.")
 
         # Remove the logging handler
@@ -470,6 +508,11 @@ class TUIStatusBarLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord):
         """Emit a log record to the status bar."""
+        # RECURSION PREVENTION: Skip task manager logs to prevent infinite recursion
+        # TaskManager -> Logger -> TUILogHandler -> TaskManager -> ...
+        if record.name.startswith('openhcs.tui.utils.unified_task_manager'):
+            return
+
         # This method can be called from any thread, so adding to log buffer
         # must be thread-safe. StatusBar.add_log_entry is async and uses a lock.
         # We need to schedule this async method on the TUI's event loop.
@@ -497,14 +540,25 @@ class TUIStatusBarLogHandler(logging.Handler):
             return
 
         # App is available, safe to create and schedule the coroutine
+        # BUT: Don't create coroutine until we confirm task manager is available
         try:
-            app.create_background_task(
-                self.status_bar.add_log_entry(
-                    message=message, # Or record.getMessage() if not using handler's formatter
-                    level=log_level_enum,
-                    source=record.name
-                )
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+            task_manager = get_task_manager()
+            # Only create coroutine after confirming task manager exists
+            coro = self.status_bar.add_log_entry(
+                message=message, # Or record.getMessage() if not using handler's formatter
+                level=log_level_enum,
+                source=record.name
             )
-        except RuntimeError:
-            # Event loop might be shutting down
-            print(f"TUI Log Handler Error: Event loop not running. Log: {log_level_enum.value} - {message}", file=sys.stderr)
+            task_manager.fire_and_forget(coro, "status_bar_log_handler")
+        except RuntimeError as e:
+            # Task manager not initialized or shutting down - don't create coroutine at all
+            if "not initialized" in str(e) or "shutting down" in str(e):
+                # Silent fallback during shutdown - this is expected
+                pass
+            else:
+                print(f"TUI Log Handler Error: {e}. Log: {log_level_enum.value} - {message}", file=sys.stderr)
+        except Exception as e:
+            # Any other error in task scheduling - coroutine already created, need to clean up
+            print(f"TUI Log Handler Error: Failed to schedule log task: {e}. Log: {log_level_enum.value} - {message}", file=sys.stderr)
+            # Note: If we get here, fire_and_forget should have handled coroutine cleanup

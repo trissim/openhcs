@@ -166,11 +166,11 @@ class DualStepFuncEditorPane:
         return "Function Pattern Editor"
 
     def _create_step_settings_view(self) -> ScrollablePane:
-        """Creates the UI for editing AbstractStep __init__ parameters dynamically."""
+        """Creates the UI for editing FunctionStep __init__ parameters dynamically."""
         self.step_param_inputs.clear()
 
-        # Get signature and create parameter rows
-        sig = inspect.signature(AbstractStep.__init__)
+        # Get FunctionStep signature - BACKEND API COMPLIANT
+        sig = inspect.signature(FunctionStep.__init__)
         rows = self._create_parameter_rows(sig)
 
         # Create main content
@@ -179,7 +179,7 @@ class DualStepFuncEditorPane:
 
         view_content = HSplit([
             step_settings_toolbar,
-            Frame(parameter_fields_container, title="Step Parameters (AbstractStep)")
+            Frame(parameter_fields_container, title="Step Parameters (FunctionStep)")
         ])
 
         return ScrollablePane(view_content)

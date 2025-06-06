@@ -312,15 +312,18 @@ class DiskStorageBackend(StorageBackend):
     def exists(self, path: Union[str, Path]) -> bool:
         return Path(path).exists()
 
-    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path]):
+    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
         source = Path(source).resolve()
-        link_name = Path(link_name).resolve()
+        link_name = Path(link_name)  # Don't resolve link_name - we want the actual symlink path
 
         if not source.exists():
             raise FileNotFoundError(f"Source path does not exist: {source}")
 
+        # Check if target exists and handle overwrite policy
         if link_name.exists() or link_name.is_symlink():
-            link_name.unlink()  # Replace if already exists
+            if not overwrite:
+                raise FileExistsError(f"Target already exists: {link_name}")
+            link_name.unlink()  # Remove existing file/symlink only if overwrite=True
 
         link_name.parent.mkdir(parents=True, exist_ok=True)
         link_name.symlink_to(source)

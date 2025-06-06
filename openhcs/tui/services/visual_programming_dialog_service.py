@@ -16,7 +16,7 @@ from prompt_toolkit.layout import HSplit
 from openhcs.constants.constants import Backend
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.tui.editors.dual_editor_pane import DualEditorPane
+# DualEditorPane injected via constructor to break circular dependency
 # Global error handling will catch all exceptions automatically
 
 logger = logging.getLogger(__name__)
@@ -25,22 +25,25 @@ logger = logging.getLogger(__name__)
 class VisualProgrammingDialogService:
     """
     Service for managing visual programming dialogs.
-    
+
     Handles dialog creation, lifecycle, and integration with DualEditorPane.
     Keeps dialog concerns separate from pipeline management.
+    Uses dependency injection to avoid circular imports.
     """
-    
-    def __init__(self, state: Any, context: Any):
+
+    def __init__(self, state: Any, context: Any, dual_editor_pane_class: type):
         """
         Initialize the visual programming dialog service.
-        
+
         Args:
             state: TUI state object
             context: Processing context
+            dual_editor_pane_class: DualEditorPane class injected to break circular dependency
         """
         self.state = state
         self.context = context
-        
+        self.dual_editor_pane_class = dual_editor_pane_class
+
         # Dialog state management
         self.current_dialog = None
         self.current_dialog_future = None
@@ -55,19 +58,20 @@ class VisualProgrammingDialogService:
         Returns:
             Created FunctionStep if successful, None if cancelled
         """
-        # Create empty FunctionStep for new step creation
+        # Create empty FunctionStep for new step creation - BACKEND API COMPLIANT
         empty_step = FunctionStep(
+            func=None,  # Required positional parameter
             name="New Step",
-            description="",
-            func=None,
             variable_components=[],
             group_by=""
         )
 
-        # Create DualEditorPane for visual programming
-        dual_editor = DualEditorPane(
+        # Create DualEditorPane for visual programming with dialog callbacks
+        dual_editor = self.dual_editor_pane_class(
             state=self.state,
-            func_step=empty_step
+            func_step=empty_step,
+            on_save=lambda step: self._handle_save_and_close(step),
+            on_cancel=lambda: self._handle_cancel_and_close()
         )
 
         # Create and show dialog
@@ -89,10 +93,12 @@ class VisualProgrammingDialogService:
         Returns:
             Edited FunctionStep if successful, None if cancelled
         """
-        # Create DualEditorPane for visual programming with existing step
-        dual_editor = DualEditorPane(
+        # Create DualEditorPane for visual programming with existing step and dialog callbacks
+        dual_editor = self.dual_editor_pane_class(
             state=self.state,
-            func_step=target_step
+            func_step=target_step,
+            on_save=lambda step: self._handle_save_and_close(step),
+            on_cancel=lambda: self._handle_cancel_and_close()
         )
 
         # Create and show dialog
@@ -104,7 +110,7 @@ class VisualProgrammingDialogService:
 
         return result
     
-    async def _show_dialog(self, title: str, dual_editor: DualEditorPane, ok_handler) -> Optional[FunctionStep]:
+    async def _show_dialog(self, title: str, dual_editor: Any, ok_handler) -> Optional[FunctionStep]:
         """
         Show a visual programming dialog with the given DualEditorPane.
         
@@ -119,16 +125,12 @@ class VisualProgrammingDialogService:
         # Create dialog result future
         self.current_dialog_future = asyncio.Future()
         
-        # Create dialog
+        # Create dialog WITHOUT buttons - DualEditorPane handles its own save/cancel
         dialog = Dialog(
             title=title,
             body=dual_editor.container,
-            buttons=[
-                Button("OK", handler=lambda: self._handle_ok(ok_handler)),
-                Button("Cancel", handler=self._handle_cancel)
-            ],
+            buttons=[],  # No buttons - DualEditorPane has its own Save/Cancel
             width=120,
-            height=40,
             modal=True
         )
         
@@ -162,13 +164,23 @@ class VisualProgrammingDialogService:
         """Handle Cancel button click."""
         if self.current_dialog_future and not self.current_dialog_future.done():
             self.current_dialog_future.set_result(None)
+
+    def _handle_save_and_close(self, step: FunctionStep):
+        """Handle save from DualEditorPane and close dialog."""
+        if self.current_dialog_future and not self.current_dialog_future.done():
+            self.current_dialog_future.set_result(step)
+
+    def _handle_cancel_and_close(self):
+        """Handle cancel from DualEditorPane and close dialog."""
+        if self.current_dialog_future and not self.current_dialog_future.done():
+            self.current_dialog_future.set_result(None)
     
-    def _handle_add_step_ok(self, dual_editor: DualEditorPane) -> Optional[FunctionStep]:
+    def _handle_add_step_ok(self, dual_editor: Any) -> Optional[FunctionStep]:
         """Handle OK button for add step dialog."""
         created_step = dual_editor.get_created_step()
         return created_step
-    
-    def _handle_edit_step_ok(self, dual_editor: DualEditorPane) -> Optional[FunctionStep]:
+
+    def _handle_edit_step_ok(self, dual_editor: Any) -> Optional[FunctionStep]:
         """Handle OK button for edit step dialog."""
         edited_step = dual_editor.get_created_step()
         return edited_step

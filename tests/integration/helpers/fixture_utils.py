@@ -12,15 +12,15 @@ from pathlib import Path
 import numpy as np
 from typing import List, Union
 
-from ezstitcher.core.orchestrator import PipelineOrchestrator
-# from ezstitcher.core.config import StitcherConfig, PipelineConfig
-from ezstitcher.core.pipeline import Pipeline
-# from ezstitcher.core.step_base import Step
-# from ezstitcher.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
-# from ezstitcher.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
-from ezstitcher.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
-# from ezstitcher.core.utils import stack
-from ezstitcher.io.filemanager import FileManager
+from openhcs.core.orchestrator import PipelineOrchestrator
+# from openhcs.core.config import StitcherConfig, PipelineConfig
+from openhcs.core.pipeline import Pipeline
+# from openhcs.core.step_base import Step
+# from openhcs.core.step_registry import PositionGenerationStep, ImageStitchingStep, NormStep, CompositeStep
+# from openhcs.backends.position_generator.ashlar_backend import AshlarPositionGeneratorBackend as IP
+from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopyGenerator
+# from openhcs.core.utils import stack
+from openhcs.io.filemanager import FileManager
 # Using a simple list for image extensions
 DEFAULT_IMAGE_EXTENSIONS = ['.tif', '.tiff', '.png', '.jpg', '.jpeg']
 # from ezstitcher.io.virtual_path.factory import VirtualPathFactory
@@ -55,7 +55,7 @@ MICROSCOPE_CONFIGS = {
 # Test parameters
 syn_data_params = {
     "grid_size": (4, 4),
-    "tile_size": (64, 64),
+    "tile_size": (128, 128),  # Increased from 64x64 to 128x128 for patch size compatibility
     "overlap_percent": 10,
     "wavelengths": 2,
     "cell_size_range": (3, 6),

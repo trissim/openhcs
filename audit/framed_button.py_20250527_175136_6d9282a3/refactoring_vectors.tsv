@@ -1,0 +1,2 @@
+file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
+openhcs/tui/components/framed_button.py	1.391	0.754	21.778	LOW	KNOT_THEORY: Untangle dependency crossings	0.9	0.3

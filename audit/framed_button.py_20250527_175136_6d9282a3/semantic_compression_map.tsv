@@ -1,0 +1,2 @@
+file_path	semantic_profile	entropy_char	complexity_char	function_count_char	dependency_char	risk_char	priority_char	coupling_char	cohesion_char
+openhcs/tui/components/framed_button.py	3A36M3LH	3	A	3	6	M	3	L	H

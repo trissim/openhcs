@@ -1,0 +1,8 @@
+file_path	function_name	complexity	lines	args
+openhcs/tui/tui_launcher.py	__init__	2	65	4
+openhcs/tui/tui_launcher.py	_handle_global_config_update	6	48	2
+openhcs/tui/tui_launcher.py	_on_plate_added	4	43	2
+openhcs/tui/tui_launcher.py	_on_plate_removed	5	37	2
+openhcs/tui/tui_launcher.py	_on_plate_selected	10	68	2
+openhcs/tui/tui_launcher.py	run	4	33	1
+openhcs/tui/tui_launcher.py	_cleanup	11	50	1

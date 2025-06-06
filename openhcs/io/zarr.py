@@ -221,7 +221,7 @@ class ZarrStorageBackend(StorageBackend):
         group.require_group(key)
         return Path(store.dir_path) / key
 
-    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path]):
+    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
         store, src_key = self._split_store_and_key(source)
         store2, dst_key = self._split_store_and_key(link_name)
 
@@ -231,9 +231,12 @@ class ZarrStorageBackend(StorageBackend):
         group = zarr.group(store=store)
         if src_key not in group:
             raise FileNotFoundError(f"Source key '{src_key}' not found in Zarr store")
-        
+
         if dst_key in group:
-            raise FileExistsError(f"Symlink target already exists at: {dst_key}")
+            if not overwrite:
+                raise FileExistsError(f"Symlink target already exists at: {dst_key}")
+            # Remove existing entry if overwrite=True
+            del group[dst_key]
 
         # Create a new group at the symlink path
         link_group = group.require_group(dst_key)

@@ -14,3 +14,4 @@ torch-vision
 jaxlib
 cupy
 tf-nightly
+pygments>=2.10.0  # For syntax highlighting in TUI error dialogs

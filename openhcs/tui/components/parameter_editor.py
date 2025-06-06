@@ -123,8 +123,9 @@ class ParameterEditor(Container):
         # Set accept handler
         def accept_handler(buffer):
             if self.on_parameter_change:
-                get_app().create_background_task(
-                    self.on_parameter_change(name, buffer.text, self.func_index)
+                from openhcs.tui.utils.unified_task_manager import get_task_manager
+                get_task_manager().fire_and_forget(
+                    self.on_parameter_change(name, buffer.text, self.func_index), f"param_change_{name}"
                 )
             return True
 
@@ -150,15 +151,17 @@ class ParameterEditor(Container):
     def _handle_reset_parameter(self, name: str):
         """Handle reset parameter button click."""
         if self.on_reset_parameter:
-            get_app().create_background_task(
-                self.on_reset_parameter(name, self.func_index)
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+            get_task_manager().fire_and_forget(
+                self.on_reset_parameter(name, self.func_index), f"reset_param_{name}"
             )
 
     def _handle_reset_all(self):
         """Handle reset all parameters button click."""
         if self.on_reset_all_parameters:
-            get_app().create_background_task(
-                self.on_reset_all_parameters(self.func_index)
+            from openhcs.tui.utils.unified_task_manager import get_task_manager
+            get_task_manager().fire_and_forget(
+                self.on_reset_all_parameters(self.func_index), f"reset_all_{self.func_index}"
             )
 
     def update_function(self, func: Callable, kwargs: Dict[str, Any]):

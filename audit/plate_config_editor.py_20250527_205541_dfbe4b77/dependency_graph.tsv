@@ -1,0 +1,15 @@
+source_file	dependency	entropy_flow
+openhcs/tui/dialogs/plate_config_editor.py	logging	8.09
+openhcs/tui/dialogs/plate_config_editor.py	prompt_toolkit.application	8.09
+openhcs/tui/dialogs/plate_config_editor.py	openhcs.tui.tui_architecture	8.09
+openhcs/tui/dialogs/plate_config_editor.py	dataclasses	8.09
+openhcs/tui/dialogs/plate_config_editor.py	openhcs.constants	8.09
+openhcs/tui/dialogs/plate_config_editor.py	copy	8.09
+openhcs/tui/dialogs/plate_config_editor.py	asyncio	8.09
+openhcs/tui/dialogs/plate_config_editor.py	enum	8.09
+openhcs/tui/dialogs/plate_config_editor.py	prompt_toolkit.layout	8.09
+openhcs/tui/dialogs/plate_config_editor.py	openhcs.core.orchestrator.orchestrator	8.09
+openhcs/tui/dialogs/plate_config_editor.py	openhcs.core.config	8.09
+openhcs/tui/dialogs/plate_config_editor.py	typing	8.09
+openhcs/tui/dialogs/plate_config_editor.py	prompt_toolkit.formatted_text	8.09
+openhcs/tui/dialogs/plate_config_editor.py	prompt_toolkit.widgets	8.09

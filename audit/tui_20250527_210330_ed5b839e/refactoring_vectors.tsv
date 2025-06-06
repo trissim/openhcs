@@ -1,0 +1,43 @@
+file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
+openhcs/tui/plate_manager_core.py	10.501	1.000	22.308	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	43.5	5.0
+openhcs/tui/menu_bar.py	9.429	1.000	22.378	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	34.8	7.5
+openhcs/tui/tui_architecture.py	8.467	1.000	22.584	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	30.0	4.8
+openhcs/tui/commands.py	8.110	1.000	22.880	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	31.8	1.1
+openhcs/tui/function_pattern_editor.py	7.640	1.000	22.399	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	27.9	4.3
+openhcs/tui/pipeline_editor.py	7.163	1.000	22.146	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	26.7	3.6
+openhcs/tui/dual_step_func_editor.py	7.092	1.000	22.479	HIGH	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	27.3	4.0
+openhcs/tui/dialogs/global_settings_editor.py	6.427	1.000	22.508	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	25.8	3.1
+openhcs/tui/file_browser.py	6.041	1.000	22.467	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	22.5	3.6
+openhcs/tui/dialogs/plate_dialog_manager.py	5.021	1.000	21.909	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	16.8	2.3
+openhcs/tui/dialogs/plate_config_editor.py	4.486	1.000	23.006	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	15.3	3.1
+openhcs/tui/tui_launcher.py	4.239	1.000	22.258	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	14.1	0.7
+openhcs/tui/status_bar.py	4.061	1.000	23.371	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	11.4	3.1
+openhcs/tui/commands/pipeline_commands.py	3.369	1.000	20.463	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	9.3	0.3
+openhcs/tui/components/interactive_list_item.py	2.626	1.000	22.312	LOW	KNOT_THEORY: Untangle dependency crossings	6.3	1.5
+openhcs/tui/utils/safe_formatting.py	2.599	1.000	22.538	LOW	KNOT_THEORY: Untangle dependency crossings	5.4	1.2
+openhcs/tui/components.py	2.566	1.000	22.631	LOW	KNOT_THEORY: Untangle dependency crossings	5.4	1.4
+openhcs/tui/services/plate_validation.py	2.394	1.000	21.555	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.7
+openhcs/tui/components/parameter_editor.py	2.346	1.000	22.160	LOW	KNOT_THEORY: Untangle dependency crossings	4.5	1.8
+openhcs/tui/__main__.py	2.321	0.970	23.988	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.1
+openhcs/tui/dialogs/help_dialog.py	2.268	1.000	22.761	LOW	KNOT_THEORY: Untangle dependency crossings	4.8	0.4
+openhcs/tui/services/external_editor_service.py	2.150	1.000	22.073	LOW	KNOT_THEORY: Untangle dependency crossings	4.5	0.5
+openhcs/tui/commands/plate_commands.py	2.012	0.910	21.594	LOW	KNOT_THEORY: Untangle dependency crossings	3.3	0.3
+openhcs/tui/commands/registry.py	1.957	1.000	21.582	LOW	KNOT_THEORY: Untangle dependency crossings	3.6	0.7
+openhcs/tui/commands/dialog_commands.py	1.938	0.906	22.250	LOW	KNOT_THEORY: Untangle dependency crossings	3.0	0.3
+openhcs/tui/utils/error_handling.py	1.891	1.000	21.823	LOW	KNOT_THEORY: Untangle dependency crossings	3.3	0.5
+openhcs/tui/utils/dialog_helpers.py	1.846	1.000	22.632	LOW	KNOT_THEORY: Untangle dependency crossings	2.1	0.9
+openhcs/tui/components/grouped_dropdown.py	1.830	1.000	22.402	LOW	KNOT_THEORY: Untangle dependency crossings	2.7	1.1
+openhcs/tui/components/loading_screen.py	1.695	1.000	22.012	LOW	KNOT_THEORY: Untangle dependency crossings	1.8	1.2
+openhcs/tui/layout_components.py	1.649	1.000	21.331	LOW	KNOT_THEORY: Untangle dependency crossings	1.2	0.8
+openhcs/tui/components/spinner.py	1.621	1.000	22.413	LOW	KNOT_THEORY: Untangle dependency crossings	1.5	1.4
+openhcs/tui/utils.py	1.596	0.959	22.370	LOW	KNOT_THEORY: Untangle dependency crossings	1.5	0.6
+openhcs/tui/dialogs/manager.py	1.573	0.952	21.295	LOW	KNOT_THEORY: Untangle dependency crossings	1.8	0.6
+openhcs/tui/dialogs/base.py	1.550	0.940	21.609	LOW	KNOT_THEORY: Untangle dependency crossings	1.5	0.6
+openhcs/tui/menu_handlers.py	1.490	1.000	22.206	LOW	KNOT_THEORY: Untangle dependency crossings	0.6	1.8
+openhcs/tui/components/framed_button.py	1.391	0.754	21.778	LOW	KNOT_THEORY: Untangle dependency crossings	0.9	0.3
+openhcs/tui/menu_structure.py	1.390	0.591	22.838	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/tui/commands/__init__.py	1.283	0.608	23.539	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/tui/__init__.py	1.267	0.614	23.774	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/tui/components/__init__.py	1.252	0.607	23.474	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/tui/utils/__init__.py	1.239	0.587	22.666	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
+openhcs/tui/dialogs/__init__.py	1.219	0.590	22.783	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0

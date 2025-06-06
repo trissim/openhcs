@@ -208,7 +208,7 @@ class MemoryStorageBackend(StorageBackend):
         return Path(key)
 
 
-    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path]):
+    def create_symlink(self, source: Union[str, Path], link_name: Union[str, Path], overwrite: bool = False):
         src_parts = str(source).strip("/").split("/")
         dst_parts = str(link_name).strip("/").split("/")
 
@@ -231,7 +231,10 @@ class MemoryStorageBackend(StorageBackend):
 
         dst_key = dst_parts[-1]
         if dst_key in dst_dict:
-            raise FileExistsError(f"Symlink destination already exists: {link_name}")
+            if not overwrite:
+                raise FileExistsError(f"Symlink destination already exists: {link_name}")
+            # Remove existing entry if overwrite=True
+            del dst_dict[dst_key]
 
         dst_dict[dst_key] = MemorySymlink(target=str(source))
 

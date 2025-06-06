@@ -1,0 +1,11 @@
+metric_category	metric_name	value	interpretation
+entropy_distribution	mean	109.712475	Average entropy across files
+entropy_distribution	std	3.510548	Standard deviation of entropy
+entropy_distribution	skewness	0.788734	Distribution asymmetry
+entropy_distribution	kurtosis	-1.146018	Distribution tail heaviness
+complexity_distribution	mean	35.285714	Average complexity
+complexity_distribution	std	31.508340	Complexity variation
+complexity_distribution	max	78.000000	Maximum complexity
+landscape	entropy_complexity_correlation	-0.636543	Entropy-complexity correlation
+landscape	hotspot_density	0.000000	Proportion of high-entropy files
+landscape	signature	1201	4-char landscape fingerprint

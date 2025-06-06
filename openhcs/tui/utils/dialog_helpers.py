@@ -136,7 +136,7 @@ async def show_scrollable_error_dialog(
     import asyncio, traceback, logging
     from prompt_toolkit.application import get_app
     from prompt_toolkit.layout import Dimension, HSplit, Window
-    from prompt_toolkit.layout.containers import ScrollablePane
+    from prompt_toolkit.layout import ScrollablePane
     from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.widgets import Button, Dialog, Label
     from prompt_toolkit.key_binding import KeyBindings
@@ -161,13 +161,29 @@ async def show_scrollable_error_dialog(
     total_lines = sum(txt.count("\n") for _, txt in frags) + 1
     cursor_y = 0  # virtual cursor row that keeps the current view centred
 
+    # Dynamic text content function like FileManagerBrowser
+    def _get_error_text():
+        """Dynamic text content function like FileManagerBrowser._get_item_list_text"""
+        return frags
+
     # ───────────────────────── key bindings ─────────────────────────────────
     kb = KeyBindings()
 
     def _scroll(dy: int) -> None:
         nonlocal cursor_y
         cursor_y = max(0, min(total_lines - 1, cursor_y + dy))
-        ft_control.get_cursor_position = lambda: Point(x=0, y=cursor_y)
+
+        # Simple cursor position like FileManagerBrowser - just use cursor_y directly
+        cursor_pos = Point(x=0, y=cursor_y)
+
+        # Override the get_cursor_position method (exact FileManagerBrowser pattern)
+        def get_cursor_position():
+            return cursor_pos
+
+        # Apply the cursor position to FormattedTextControl
+        ft_control.get_cursor_position = get_cursor_position
+        # Note: show_cursor=False for aesthetics, but position still tracked for ScrollablePane
+
         app.invalidate()
 
     for k, dy in [("up", -1), ("k", -1), ("down", 1), ("j", 1)]:
@@ -176,6 +192,10 @@ async def show_scrollable_error_dialog(
     kb.add("pagedown")(lambda e: _scroll(10))
     kb.add("home")(lambda e: _scroll(-10_000))
     kb.add("end")(lambda e: _scroll(10_000))
+
+    # Add scroll key bindings like FileManagerBrowser
+    kb.add('<scroll-up>')(lambda e: _scroll(-3))
+    kb.add('<scroll-down>')(lambda e: _scroll(3))
 
     # ───────────────────── mouse handler (at control level) ─────────────────
     def mouse_handler(mev):
@@ -189,15 +209,31 @@ async def show_scrollable_error_dialog(
 
     # ────────────────────────── text control & pane ─────────────────────────
     ft_control = FormattedTextControl(
-        text=frags,
+        text=_get_error_text,  # Use dynamic text function like FileManagerBrowser
         focusable=True,
         key_bindings=kb,
-        mouse_handler=mouse_handler,
-        show_cursor=False,
+        show_cursor=False,  # Invisible cursor for aesthetics, but position still tracked
+    )
+
+    # Assign mouse handler after creation (prompt_toolkit 3.0.51 pattern)
+    ft_control.mouse_handler = mouse_handler
+
+    # Initialize cursor position (like FileManagerBrowser does)
+    # Cursor is invisible but position is tracked for ScrollablePane auto-scroll
+    initial_cursor_pos = Point(x=0, y=0)
+    def get_initial_cursor_position():
+        return initial_cursor_pos
+    ft_control.get_cursor_position = get_initial_cursor_position
+
+    # Wrap in Window with text wrapping enabled (like interactive_list_item.py)
+    text_window = Window(
+        content=ft_control,
+        wrap_lines=True,  # Enable text wrapping for long lines
+        dont_extend_width=True,  # Don't expand beyond allocated width
     )
 
     scrollable = ScrollablePane(
-        Window(ft_control),
+        text_window,
         height=Dimension(min=10, max=30),
         show_scrollbar=True,
         display_arrows=True,
@@ -215,22 +251,67 @@ async def show_scrollable_error_dialog(
         if not done.done():
             done.set_result(True)
 
+    # Calculate responsive dialog size based on available space
+    from prompt_toolkit.application import get_app
+    from prompt_toolkit.layout.dimension import Dimension
+    from prompt_toolkit.widgets import Box
+
+    app = get_app()
+
+    # Get terminal size for responsive sizing
+    try:
+        output_size = app.output.get_size()
+        terminal_width = output_size.columns
+        terminal_height = output_size.rows
+    except:
+        # Fallback to reasonable defaults
+        terminal_width = 120
+        terminal_height = 40
+
+    # Calculate dialog dimensions with minimum padding
+    min_padding = 8  # Minimum padding on sides
+    min_width = 60   # Minimum dialog width
+    max_width_ratio = 0.9  # Use up to 90% of terminal width
+    max_height_ratio = 0.8  # Use up to 80% of terminal height
+
+    # Calculate responsive width
+    available_width = max(min_width, int(terminal_width * max_width_ratio))
+    dialog_width = max(min_width, min(available_width, terminal_width - min_padding))
+
+    # Calculate responsive height for the scrollable area
+    available_height = max(10, int(terminal_height * max_height_ratio))
+
+    # Create dialog body with padding and responsive sizing
+    dialog_body = Box(
+        HSplit([
+            Label(message, dont_extend_height=True),
+            scrollable,
+        ]),
+        padding_left=2,
+        padding_right=2,
+        padding_top=1,
+        padding_bottom=1,
+    )
+
     dlg = Dialog(
         title=title,
-        body=HSplit(
-            [
-                Label(message, dont_extend_height=True),
-                scrollable,
-            ]
-        ),
+        body=dialog_body,
         buttons=[Button(text="OK", handler=_close, width=6)],
-        width=100,
+        width=Dimension(preferred=dialog_width, max=dialog_width),
         modal=True,
     )
 
     # ─────────────────────────── show modal ─────────────────────────────────
     if hasattr(app_state, "show_dialog") and callable(app_state.show_dialog):
-        await app_state.show_dialog(dlg, result_future=done)
+        # Use focus management like FileManagerBrowser dialogs
+        from openhcs.tui.utils.focus_manager import get_focus_manager
+
+        # Show dialog with managed focus to ensure scrolling works
+        await get_focus_manager().managed_focus_during_dialog(
+            target=ft_control,  # Focus the FormattedTextControl directly
+            dialog_coro=app_state.show_dialog(dlg, result_future=done),
+            delay=0.1
+        )
     else:
         log.error("app_state missing .show_dialog; cannot open error dialog")
         done.set_result(False)
@@ -273,16 +354,21 @@ async def prompt_for_file_dialog(title: str, prompt_message: str, app_state: Any
         """Handle cancel from FileManagerBrowser."""
         future.set_result(None)
 
+    # Get cached path for better UX
+    from openhcs.tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+    initial_path = get_cached_browser_path(PathCacheKey.FILE_SELECTION, Path.home())
+
     # Create FileManagerBrowser for file selection
     file_browser = FileManagerBrowser(
         file_manager=filemanager,
         backend=Backend.DISK,  # Explicit backend in correct position
         on_path_selected=on_file_selected,
         on_cancel=on_browser_cancel,
-        initial_path=Path.home(),  # Start from user home directory
+        initial_path=initial_path,  # Use cached path
         selection_mode=SelectionMode.FILES_AND_DIRECTORIES,  # Allow files and directories
         allow_multiple=False,  # Single file selection
-        show_hidden_files=False
+        show_hidden_files=False,
+        cache_key=PathCacheKey.FILE_SELECTION  # Enable path caching
     )
 
     # Create dialog body
@@ -408,16 +494,21 @@ async def prompt_for_multi_folder_dialog(title: str, prompt_message: str, app_st
         selected_folders = []
         update_selected_display()
 
+    # Get cached path for better UX
+    from openhcs.tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+    initial_path = get_cached_browser_path(PathCacheKey.DIRECTORY_SELECTION, Path.home())
+
     # Create FileManagerBrowser for directory selection
     file_browser = FileManagerBrowser(
         file_manager=filemanager,
         backend=Backend.DISK,  # Explicit backend in correct position
         on_path_selected=on_folder_selected,
         on_cancel=on_browser_cancel,
-        initial_path=Path.home(),  # Start from user home directory
+        initial_path=initial_path,  # Use cached path
         selection_mode=SelectionMode.DIRECTORIES_ONLY,  # Select directories only
         allow_multiple=True,  # Add missing parameter for multi-folder selection
-        show_hidden_files=False
+        show_hidden_files=False,
+        cache_key=PathCacheKey.DIRECTORY_SELECTION  # Enable path caching
     )
 
     # Create display for selected folders
@@ -484,15 +575,15 @@ async def prompt_for_multi_folder_dialog(title: str, prompt_message: str, app_st
             except Exception as e:
                 logger.warning(f"Could not set focus to file browser: {e}")
 
-        # Start the focus task
-        focus_task = asyncio.create_task(set_focus_after_delay())
+        # Use mathematically correct focus management
+        from openhcs.tui.utils.focus_manager import get_focus_manager
 
-        # Show the dialog
-        await app_state.show_dialog(dialog, result_future=future)
-
-        # Cancel focus task if still running
-        if not focus_task.done():
-            focus_task.cancel()
+        # Show dialog with managed focus (eliminates RuntimeWarning)
+        await get_focus_manager().managed_focus_during_dialog(
+            target=file_browser.item_list_control,
+            dialog_coro=app_state.show_dialog(dialog, result_future=future),
+            delay=0.1
+        )
     else:
         # Fallback if app_state doesn't have a show_dialog
         # Create a basic dialog without focus management
@@ -551,7 +642,7 @@ def cancel_dialog(future: asyncio.Future) -> Callable[[], None]:
             future.set_result(None)
     return handler
 
-async def focus_text_area(text_area: TextArea) -> None:
+async def focus_text_area(text_area: TextArea) -> bool:
     """
     Focus a text area after a short delay.
 
@@ -559,10 +650,10 @@ async def focus_text_area(text_area: TextArea) -> None:
         text_area: The text area to focus
 
     Returns:
-        None
+        True if successful, False if failed
     """
-    await asyncio.sleep(0.1)  # Short delay to ensure dialog is rendered
-    get_app().layout.focus(text_area)
+    from openhcs.tui.utils.focus_manager import focus_after_delay
+    return await focus_after_delay(text_area, 0.1)
 
 # Removed unused catch_and_show_error decorator to eliminate potential unawaited coroutines
 
@@ -593,17 +684,9 @@ async def show_global_error(exception: Exception, context: str = "operation", ap
     )
 
 def show_global_error_sync(exception: Exception, context: str = "operation", app_state: Optional[Any] = None) -> None:
-    """
-    Schedule the global-error dialog on the running PTK event-loop and return
-    immediately. Use this from synchronous code.
-
-    Args:
-        exception: The exception to display
-        context: Context description for the error
-        app_state: The TUIState for dialog management
-    """
-    from prompt_toolkit.application import get_app
-    get_app().create_background_task(show_global_error(exception, context, app_state))
+    """MATHEMATICALLY SAFE global error display - eliminates recursion bombs"""
+    from openhcs.tui.utils.safe_error_handler import safe_show_error_sync
+    safe_show_error_sync(exception, context, app_state)
 
 def setup_global_exception_handler(app_state):
     """
@@ -706,27 +789,101 @@ def setup_global_exception_handler(app_state):
     builtins.safe_run_in_executor = create_safe_run_in_executor()
     logger.info("Created safe_run_in_executor wrapper for better exception handling")
 
-    # Also patch prompt_toolkit Application to catch internal exceptions
-    try:
-        from prompt_toolkit.application import Application
-        original_run_async = Application.run_async
-
-        async def patched_run_async(self, *args, **kwargs):
-            """Patched run_async that catches prompt_toolkit internal exceptions."""
-            try:
-                return await original_run_async(self, *args, **kwargs)
-            except Exception as e:
-                if not isinstance(e, KeyboardInterrupt):
-                    # Show error dialog for prompt_toolkit exceptions using sync wrapper
-                    try:
-                        show_global_error_sync(e, "prompt_toolkit", app_state)
-                    except Exception:
-                        logger.error(f"Prompt_toolkit exception: {e}", exc_info=e)
-                raise
-
-        Application.run_async = patched_run_async
-        logger.info("Patched prompt_toolkit Application.run_async for global error handling")
-    except Exception as e:
-        logger.warning(f"Failed to patch prompt_toolkit: {e}")
+    # REMOVED DANGEROUS PROMPT_TOOLKIT PATCHING
+    # The previous patching created recursion bombs when error dialogs failed
+    # SafeErrorHandler now provides recursion-safe error handling without patching
+    logger.info("SAFE global exception handlers installed - no recursion possible")
 
 # Global error handler replaces handle_error_with_dialog - use show_global_error instead
+
+async def prompt_for_save_file_dialog(title: str, message: str, state: Any,
+                                     initial_path: str = "", filemanager=None) -> Optional[str]:
+    """
+    Dialog with text input for typing file save path.
+
+    Args:
+        title: Dialog title
+        message: Prompt message
+        state: TUIState instance with show_dialog method
+        initial_path: Initial text in the input field
+        filemanager: FileManager instance (unused but kept for compatibility)
+
+    Returns:
+        File path string if entered, None if cancelled
+    """
+    from prompt_toolkit.widgets import TextArea
+
+    text_area = TextArea(text=initial_path, multiline=False)
+
+    dialog_body = HSplit([
+        Label(message),
+        Label(""),
+        Label("File path:"),
+        text_area,
+    ])
+
+    future = asyncio.Future()
+
+    def accept_path():
+        path = text_area.text.strip()
+        if path:
+            future.set_result(path)
+        else:
+            future.set_result(None)
+
+    dialog = Dialog(
+        title=title,
+        body=dialog_body,
+        buttons=[
+            Button("Save", handler=accept_path),
+            Button("Cancel", handler=lambda: future.set_result(None)),
+        ],
+        modal=True
+    )
+
+    await state.show_dialog(dialog, result_future=future)
+    return await future
+
+
+async def prompt_for_text_input(title: str, message: str, app_state: Any,
+                                initial_text: str = "") -> Optional[str]:
+    """
+    Dialog with text input for entering any text value.
+
+    Args:
+        title: Dialog title
+        message: Prompt message
+        app_state: TUIState instance with show_dialog method
+        initial_text: Initial text in the input field
+
+    Returns:
+        Text string if entered, None if cancelled
+    """
+    from prompt_toolkit.widgets import TextArea
+
+    text_area = TextArea(text=initial_text, multiline=False)
+
+    dialog_body = HSplit([
+        Label(message),
+        Label(""),
+        text_area,
+    ])
+
+    future = asyncio.Future()
+
+    def accept_text():
+        text = text_area.text.strip()
+        future.set_result(text if text else None)
+
+    dialog = Dialog(
+        title=title,
+        body=dialog_body,
+        buttons=[
+            Button("OK", handler=accept_text),
+            Button("Cancel", handler=lambda: future.set_result(None)),
+        ],
+        modal=True
+    )
+
+    await app_state.show_dialog(dialog, result_future=future)
+    return await future
