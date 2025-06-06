@@ -1,2 +1,0 @@
-file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
-openhcs/tui/dialogs/global_settings_editor.py	6.133	1.000	22.213	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	25.5	1.4

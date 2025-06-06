@@ -1,6 +1,0 @@
-metric	value	interpretation
-framework_agreement	0.000000	Higher = more agreement between frameworks
-mathematical_consensus	0.000546	Weighted consensus across all frameworks
-convergence_score	0.000000	Overall convergence of framework results
-stability_index	0.422436	Stability of framework results
-outlier_frameworks	unified, tropical	Frameworks with divergent results

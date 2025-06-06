@@ -1,8 +1,0 @@
-file_path	priority_score	entropy_reduction_potential	complexity_reduction_potential	risk_assessment	mathematical_guidance	cyclomatic_reduction	function_extraction_potential
-openhcs/io/memory.py	5.942	1.000	21.607	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	23.4	2.0
-openhcs/io/zarr.py	5.934	1.000	21.369	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	22.5	2.2
-openhcs/io/disk.py	4.663	1.000	21.469	MEDIUM	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	15.6	2.2
-openhcs/io/filemanager.py	4.058	1.000	21.839	LOW	HIGH_COMPLEXITY: Use gauge theory transformations; KNOT_THEORY: Untangle dependency crossings	10.5	1.7
-openhcs/io/base.py	1.902	1.000	21.276	LOW	KNOT_THEORY: Untangle dependency crossings	1.5	1.6
-openhcs/io/exceptions.py	1.271	0.598	23.105	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0
-openhcs/io/__init__.py	1.235	0.593	22.932	LOW	KNOT_THEORY: Untangle dependency crossings	0.3	0.0

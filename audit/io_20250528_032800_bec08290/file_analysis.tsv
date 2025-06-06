@@ -1,8 +1,0 @@
-file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
-openhcs/io/filemanager.py	109.19	2	608	35	17	9	e2316caa
-openhcs/io/__init__.py	114.66	0	19	1	0	5	37e5f0bd
-openhcs/io/memory.py	108.03	0	481	78	20	7	5e3d81db
-openhcs/io/zarr.py	106.85	0	558	75	22	9	e9a57743
-openhcs/io/base.py	106.38	0	294	5	16	9	333c71b1
-openhcs/io/exceptions.py	115.53	0	33	1	0	0	ace28581
-openhcs/io/disk.py	107.35	0	495	52	22	9	cc6ea5d2

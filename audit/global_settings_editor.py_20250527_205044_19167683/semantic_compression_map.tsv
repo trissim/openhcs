@@ -1,2 +1,0 @@
-file_path	semantic_profile	entropy_char	complexity_char	function_count_char	dependency_char	risk_char	priority_char	coupling_char	cohesion_char
-openhcs/tui/dialogs/global_settings_editor.py	4F99H2MH	4	F	9	9	H	2	M	H

@@ -1,3 +1,0 @@
-file_path	entropy	error_count	lines	complexity	function_count	dependency_count	semantic_fingerprint
-openhcs/tui/layout_components.py	106.65	0	189	4	8	7	647082d9
-openhcs/tui/dialogs/help_dialog.py	113.01	0	145	14	3	6	f3f2a6ea
