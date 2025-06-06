@@ -73,16 +73,16 @@ class ParameterEditor(Container):
         # Create parameter editors
         self._create_parameter_editors()
 
-        # Create container
+        # Create container - flatten redundant nesting
+        from prompt_toolkit.layout.dimension import Dimension
         if self.func:
-            self.container = HSplit([
-                Box(reset_all_button),
-                HSplit(self.parameter_containers)
-            ])
+            # Flatten: put parameter containers directly in main HSplit
+            containers = [Box(reset_all_button)] + self.parameter_containers
+            self.container = HSplit(containers, width=Dimension(weight=1))
         else:
             self.container = HSplit([
                 Label("No function selected")
-            ])
+            ], width=Dimension(weight=1))
 
     def _create_parameter_editors(self):
         """Create editors for each parameter of the function."""
@@ -92,32 +92,58 @@ class ParameterEditor(Container):
         # Get function signature
         sig = inspect.signature(self.func)
 
-        # Create editors for each parameter
+        # STEP 1: Collect all parameter names for width calculation
+        param_names = []
+        param_data = []
+
         for name, param in sig.parameters.items():
             # Skip self and cls parameters
             if name in ('self', 'cls'):
                 continue
 
+            param_names.append(f"{name}: ")  # Include trailing space for accurate width calculation
+
             # Get default value
             default_value = param.default if param.default is not inspect.Parameter.empty else None
-
             # Get current value
             current_value = self.current_kwargs.get(name, default_value)
 
-            # Create editor
-            self._create_parameter_editor(name, current_value, default_value)
+            param_data.append((name, current_value, default_value))
 
-    def _create_parameter_editor(self, name: str, current_value: Any, default_value: Any):
+        # STEP 2: Calculate optimal widths using FormLayoutCalculator
+        from openhcs.tui.utils.layout_calculator import FormLayoutCalculator
+        optimal_label_width = FormLayoutCalculator.calculate_label_width(param_names)
+        reset_button_width = FormLayoutCalculator.calculate_button_width("Reset")
+
+        # STEP 2.5: Cap widths based on available space to prevent "Window too small" errors
+        # Reserve space for: label + text_area (min 10) + button + box padding
+        min_text_area_width = 10
+        total_fixed_width = optimal_label_width + reset_button_width + 2  # +2 for Box padding
+        min_total_width = total_fixed_width + min_text_area_width
+
+        # If our calculated widths are too large, scale them down proportionally
+        if min_total_width > 60:  # Reasonable maximum for parameter rows
+            scale_factor = 50 / min_total_width  # Leave some margin
+            optimal_label_width = max(8, int(optimal_label_width * scale_factor))
+            reset_button_width = max(5, int(reset_button_width * scale_factor))
+
+        # STEP 3: Create editors using calculated widths
+        for name, current_value, default_value in param_data:
+            self._create_parameter_editor(name, current_value, default_value, optimal_label_width, reset_button_width)
+
+    def _create_parameter_editor(self, name: str, current_value: Any, default_value: Any, label_width: int, button_width: int):
         """Create an editor for a single parameter."""
         # Convert current value to string for display
         current_value_str = str(current_value) if current_value is not None else ""
 
-        # Create text area for editing
+        # Create text area for editing - clean weight-based expansion
+        from prompt_toolkit.layout.dimension import Dimension
         text_area = TextArea(
             text=current_value_str,
             multiline=False,
             height=1,
-            width=Dimension(preferred=30)
+            width=Dimension(weight=1),  # Clean weight-based expansion
+            dont_extend_width=False
         )
 
         # Set accept handler
@@ -134,15 +160,18 @@ class ParameterEditor(Container):
         # Create reset button
         reset_button = Button("Reset",
             handler=lambda: self._handle_reset_parameter(name),
-            width=len("Reset") + 2
+            width=button_width
         )
 
-        # Create container
+        # Create container with proper width propagation - THE REAL FIX
         param_container = VSplit([
-            Label(f"{name}: ", width=15),
+            # Label with fixed width
+            Label(f"{name}: ", width=label_width),
+            # TextArea with weight=1 for expansion
             text_area,
-            Box(reset_button, width=8)
-        ])
+            # Reset button with fixed width
+            Box(reset_button, width=button_width + 2, padding_left=1)
+        ], width=Dimension(weight=1))  # THIS is what was missing - VSplit needs to expand!
 
         # Store editor
         self.parameter_editors[name] = text_area
@@ -175,6 +204,7 @@ class ParameterEditor(Container):
         self._build_ui()
 
         # Invalidate UI
+        from prompt_toolkit.application import get_app
         get_app().invalidate()
 
     def __pt_container__(self):
@@ -186,22 +216,33 @@ class ParameterEditor(Container):
         return self.container.get_children()
 
     def preferred_width(self, max_available_width):
-        # Container should return Dimension, not int
-        return Dimension(min=40, preferred=max(40, max_available_width - 10))
+        # Use all available width with a small, fixed minimum
+        # Don't tie minimum to max_available_width - that's backwards!
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"ParameterEditor.preferred_width: max_available={max_available_width}, returning min=20, preferred={max_available_width}")
+        return Dimension(min=20, preferred=max_available_width)
 
     def preferred_height(self, width, max_available_height):
         # Delegate to the container but ensure a minimum height
+        import logging
+        logger = logging.getLogger(__name__)
+
         container_height = self.container.preferred_height(width, max_available_height)
+        logger.info(f"ParameterEditor.preferred_height: width={width}, max_available={max_available_height}, container_height={container_height}")
 
         # If the container has a valid preferred height, use it
         if container_height.preferred is not None and container_height.preferred > 0:
+            logger.info(f"ParameterEditor.preferred_height: using container height {container_height}")
             return container_height
 
         # Otherwise, use a reasonable default based on number of parameters
         # At least 3 lines, or more if we have many parameters
         param_count = len(self.parameter_editors) if hasattr(self, 'parameter_editors') else 0
         min_height = min(max(3, param_count + 2), max_available_height)
-        return Dimension(min=min_height, preferred=min_height)
+        result = Dimension(min=min_height, preferred=min_height)
+        logger.info(f"ParameterEditor.preferred_height: fallback height param_count={param_count}, result={result}")
+        return result
 
     def reset(self):
         self.container.reset()

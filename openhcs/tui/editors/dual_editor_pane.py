@@ -106,7 +106,7 @@ class DualEditorPane:
             self.cancel_btn,
         ], height=1, padding=1)
         
-        # Dynamic content area
+        # Dynamic content area - back to working state
         def get_current_editor():
             if self.current_tab == "step":
                 return HSplit([
@@ -127,7 +127,7 @@ class DualEditorPane:
         
         content_area = DynamicContainer(get_current_editor)
         
-        # Main container
+        # Main container - let prompt-toolkit handle sizing naturally
         self._container = HSplit([
             tab_bar,
             Frame(content_area)

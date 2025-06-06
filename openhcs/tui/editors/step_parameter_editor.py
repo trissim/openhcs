@@ -70,13 +70,13 @@ class StepParameterEditor:
         # Create toolbar
         toolbar = self._create_toolbar()
 
-        # Combine
-        content = HSplit([
+        # Combine with fixed height for testing - no ScrollablePane wrapper
+        from prompt_toolkit.layout.dimension import Dimension
+        return HSplit([
             toolbar,
-            Frame(HSplit(rows), title="Step Parameters (FunctionStep)")
+            Frame(HSplit(rows), title="Step Parameters (FunctionStep)",
+                  style="class:dialog-content", height=Dimension(min=10, preferred=15))
         ])
-        
-        return ScrollablePane(content)
     
     def _create_toolbar(self) -> VSplit:
         """Create toolbar with load and save buttons."""
@@ -93,22 +93,37 @@ class StepParameterEditor:
         return Box(VSplit(buttons, height=1), padding_left=1)
     
     def _create_parameter_rows(self, sig: inspect.Signature) -> List[Container]:
-        """Create UI rows for each parameter."""
-        rows = []
-        self.param_inputs.clear()
-        
+        """Create UI rows for each parameter with content-based width calculation."""
+
+        # STEP 1: Collect all field labels FIRST (before creating any widgets)
+        field_labels = []
+        param_infos = []
+
         for param_name, param_obj in sig.parameters.items():
             if self._should_skip_parameter(param_name, param_obj):
                 continue
-            
+
             param_info = self._extract_parameter_info(param_name, param_obj)
+            param_infos.append(param_info)
+            field_labels.append(param_info['field_label'])
+
+        # STEP 2: Calculate optimal width from all labels
+        from openhcs.tui.utils.layout_calculator import FormLayoutCalculator
+        optimal_label_width = FormLayoutCalculator.calculate_label_width(field_labels)
+        reset_button_width = FormLayoutCalculator.calculate_button_width("Reset")
+
+        # STEP 3: Create rows using calculated widths
+        rows = []
+        self.param_inputs.clear()
+
+        for param_info in param_infos:
             widget = self._create_parameter_widget(param_info)
-            
             if widget:
+                param_name = param_info['param_name']
                 self.param_inputs[param_name] = widget
-                row = self._create_parameter_row(param_info, widget)
+                row = self._create_parameter_row(param_info, widget, optimal_label_width, reset_button_width)
                 rows.append(row)
-        
+
         return rows
     
     def _should_skip_parameter(self, param_name: str, param_obj: inspect.Parameter) -> bool:
@@ -233,22 +248,20 @@ class StepParameterEditor:
         widget.buffer.on_text_changed += lambda buff: self.on_change(param_name, buff.text)
         return widget
     
-    def _create_parameter_row(self, param_info: dict, widget: Any) -> VSplit:
-        """Create a UI row for a parameter."""
+    def _create_parameter_row(self, param_info: dict, widget: Any, label_width: int, button_width: int) -> VSplit:
+        """Create a UI row for a parameter with calculated widths."""
         param_name = param_info['param_name']
         field_label = param_info['field_label']
-        
+
         reset_button = Button("Reset",
             handler=lambda: self._reset_parameter(param_name, widget),
-            width=8
+            width=button_width
         )
-        
-        # RadioList can be used directly in VSplit - no wrapping needed
 
         return VSplit([
-            Label(f"{field_label}:", width=25),
-            widget,
-            Box(reset_button, width=10, padding_left=1)
+            Label(f"{field_label}:", width=label_width),
+            widget,  # Takes remaining space
+            Box(reset_button, width=button_width + 2, padding_left=1)  # +2 for Box padding
         ], padding=0)
     
     def _reset_parameter(self, param_name: str, widget: Any):

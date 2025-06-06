@@ -76,21 +76,13 @@ class CanonicalTUILayout:
         self.main_layout = self._create_canonical_layout()
         self.kb = self._create_key_bindings()
 
-        # Create style for proper text area appearance
-        from prompt_toolkit.styles import Style
-        style = Style.from_dict({
-            'text-area': '#ffffff bg:#000000',  # white text on black background
-            'text-area.focused': '#ffffff bg:#000000 bold',  # focused state
-            'frame': '#ffffff bg:#000000',  # frame styling
-            'frame.border': '#ffffff',  # frame borders
-        })
-
+        # Use prompt_toolkit default styling (no custom colors)
         self.application = Application(
             layout=Layout(self.main_layout),
             key_bindings=self.kb,
             mouse_support=True,
-            full_screen=True,
-            style=style
+            full_screen=True
+            # No custom style - use prompt_toolkit defaults
         )
 
         # Set up dialog event handling
@@ -111,13 +103,14 @@ class CanonicalTUILayout:
             self._hide_dialog()
 
     def _show_dialog(self, dialog):
-        """Show a dialog by adding it to the layout."""
+        """Show a dialog by adding it to the layout with proper centering."""
         from prompt_toolkit.layout.containers import Float
         from prompt_toolkit.application import get_app
 
         # Get the main layout (FloatContainer) and add the dialog as a float
         layout = get_app().layout
         if hasattr(layout, 'container') and hasattr(layout.container, 'floats'):
+            # Create float dialog - let it center naturally
             float_dialog = Float(content=dialog)
             layout.container.floats.append(float_dialog)
             get_app().invalidate()

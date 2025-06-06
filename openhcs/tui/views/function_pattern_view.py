@@ -9,7 +9,8 @@ from typing import Union, List, Dict, Any, Optional, Callable
 import logging
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Container
-from prompt_toolkit.widgets import Button, Label, Box
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.widgets import Button, Label, Box, Frame
 from prompt_toolkit.formatted_text import HTML
 
 from openhcs.tui.services.pattern_data_manager import PatternDataManager
@@ -66,11 +67,11 @@ class FunctionPatternView:
         self.key_selector = self._create_key_selector()
         self.function_list = self._create_function_list()
         
-        # Create main container
+        # Create main container - function_list.container is already a Frame with proper height
         self._container = HSplit([
             self.header,
             self.key_selector.container,
-            self.function_list.container
+            self.function_list.container  # Already has height set at creation time
         ])
     
     @property
@@ -161,6 +162,8 @@ class FunctionPatternView:
             on_parameter_change=self._handle_parameter_change,
             app_state=self.state
         )
+
+
     
     def _notify_change(self):
         """Notify parent component of pattern changes."""
@@ -187,13 +190,17 @@ class FunctionPatternView:
             logger.info("DEBUG: Function list updated")
 
             logger.info("DEBUG: Rebuilding main container")
-            # Rebuild main container
+            # Rebuild main container - let prompt-toolkit size naturally
             self._container = HSplit([
                 self.header,
                 self.key_selector.container,
                 self.function_list.container
             ])
-            logger.info("DEBUG: _refresh_ui completed successfully")
+
+            # Force parent layout to re-render with new container
+            from prompt_toolkit.application import get_app
+            get_app().invalidate()
+            logger.info("DEBUG: _refresh_ui completed successfully - app invalidated")
         except Exception as e:
             logger.error(f"DEBUG: Exception in _refresh_ui: {e}", exc_info=True)
     

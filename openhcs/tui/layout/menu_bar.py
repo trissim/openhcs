@@ -153,7 +153,6 @@ class MenuBar(Container):
                 ], height=1)
             ]),
             buttons=[],
-            width=80,
             modal=True
         )
 
@@ -193,7 +192,6 @@ class MenuBar(Container):
             title="OpenHCS Help",
             body=help_content,
             buttons=[],
-            width=70,
             modal=True
         )
 

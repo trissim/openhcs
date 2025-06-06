@@ -300,7 +300,6 @@ class PlateManagerPane(SwappablePaneInterface):
                 ], height=1)
             ]),
             buttons=[],
-            width=80,
             modal=True
         )
 

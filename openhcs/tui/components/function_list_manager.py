@@ -11,7 +11,7 @@ import time
 
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window, Container
 from prompt_toolkit.layout import ScrollablePane
-from prompt_toolkit.widgets import Button, Frame, Box
+from prompt_toolkit.widgets import Button, Frame, Box, Label
 from prompt_toolkit.mouse_events import MouseEventType
 
 from openhcs.tui.components.parameter_editor import ParameterEditor
@@ -84,11 +84,24 @@ class FunctionListManager:
             func, kwargs = self._extract_func_and_kwargs(func_item)
             function_items.append(self._create_function_item(i, func, kwargs))
 
-        # ScrollablePane now automatically gets proper height management
-        scrollable_content = ScrollablePane(HSplit(function_items))
+        # ScrollablePane will now correctly receive height=None from registry pattern
+        from prompt_toolkit.layout.dimension import Dimension
 
-        # Frame now automatically gets proper width/height management
-        return Frame(scrollable_content, title="Function Pattern Editor")
+        if not function_items:
+            function_items = [Label("No functions defined")]
+
+        # Calculate intelligent height based on content and terminal size
+        intelligent_height = self._calculate_content_based_height(len(function_items))
+
+        from prompt_toolkit.layout.dimension import Dimension
+        scrollable_content = ScrollablePane(
+            HSplit(function_items, padding=0, width=Dimension(weight=1)),  # Add width to HSplit
+            height=intelligent_height,  # Add height constraint back to ScrollablePane
+            width=Dimension(weight=1)   # Add width expansion to ScrollablePane
+        )
+
+        # Return ScrollablePane directly - no redundant Frame wrapper
+        return scrollable_content
     
     def _create_function_item(self, index: int, func: Callable, kwargs: Dict) -> Frame:
         """
@@ -115,14 +128,17 @@ class FunctionListManager:
         title_text = f"{index+1}: {func_info['name']} ({func_info['backend']})"
 
         # Combine components with Frame title (this shows the red title)
+        from prompt_toolkit.layout.dimension import Dimension
         frame = Frame(
             HSplit([
                 # Function controls
-                VSplit(controls),
-                # Parameter editor
+                VSplit(controls, height=1),  # Fixed height for button row
+                # Parameter editor - let it size itself based on content
                 param_editor.container if param_editor else HSplit([])
-            ]),
-            title=title_text  # This creates the red clickable title
+            ], width=Dimension(weight=1)),  # Remove height=weight=1 from HSplit
+            title=title_text,  # This creates the red clickable title
+            width=Dimension(weight=1)   # Force Frame to expand width, but let height be content-based
+            # Remove height=Dimension(weight=1) to allow content-based sizing
         )
 
         # Make frame title clickable using the working async handler pattern
@@ -141,7 +157,37 @@ class FunctionListManager:
         frame.mouse_handler = title_click_handler
 
         return frame
-    
+
+    def _calculate_content_based_height(self, num_functions: int) -> 'Dimension':
+        """Calculate intelligent height based on content and terminal constraints."""
+        from prompt_toolkit.layout.dimension import Dimension
+        from prompt_toolkit.application import get_app
+
+        # Base height for empty/minimal content
+        min_height = 5
+
+        # Estimate lines per function (function title + parameters)
+        # Each function typically has: title (1) + 3-5 parameters (3-5) + spacing (1) = ~5-7 lines
+        lines_per_function = 6
+        content_height = min_height + (num_functions * lines_per_function)
+
+        # Get terminal size for max calculation
+        try:
+            app = get_app()
+            terminal_height = app.output.get_size().rows if app.output else 40
+        except:
+            terminal_height = 40  # Fallback
+
+        # Calculate max height (terminal - padding for header, tabs, buttons, status)
+        # Reserve space for: dialog title (3) + tab bar (3) + header buttons (3) + status (3) = 12 lines
+        padding = 12
+        max_height = max(min_height, terminal_height - padding)
+
+        # Use content height but cap at max to enable scrolling
+        preferred_height = min(content_height, max_height)
+
+        return Dimension(min=min_height, preferred=preferred_height, max=max_height)
+
     async def _open_function_dialog(self, index: int):
         """Open function selection dialog for the given function index."""
         from openhcs.tui.dialogs.function_selector_dialog import FunctionSelectorDialog
@@ -342,7 +388,7 @@ class FunctionListManager:
     
     def update_functions(self, functions: List):
         """
-        Update the function list with new data.
+        Update the function list with new data and recalculate height.
 
         Args:
             functions: New function list
@@ -350,9 +396,9 @@ class FunctionListManager:
         logger.info(f"DEBUG: FunctionListManager.update_functions called with {len(functions)} functions")
         try:
             self.functions = functions
-            logger.info("DEBUG: About to call _build_function_list")
+            logger.info("DEBUG: About to call _build_function_list with content-based height")
             self._container = self._build_function_list()
-            logger.info("DEBUG: FunctionListManager.update_functions completed")
+            logger.info("DEBUG: FunctionListManager.update_functions completed with intelligent height")
         except Exception as e:
             logger.error(f"DEBUG: Exception in update_functions: {e}", exc_info=True)
     

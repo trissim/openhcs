@@ -184,6 +184,7 @@ class FunctionSelectorDialog:
     async def show(self, app_state):
         """Show the function selector dialog using proper app_state integration."""
         import asyncio
+        from prompt_toolkit.layout.dimension import Dimension
 
         # Create result future for dialog completion
         self.result_future = asyncio.Future()
@@ -192,14 +193,16 @@ class FunctionSelectorDialog:
         content = HSplit([
             # Search field
             Frame(self.search_field, title="Search"),
-            # Function list
+            # Function list with fixed height for testing
             Frame(
                 self._build_function_list_container(),
-                title="Functions"
+                title="Functions",
+                style="class:dialog-content",
+                height=Dimension(min=10, preferred=15)
             )
         ])
 
-        # Create dialog with buttons using FileManagerBrowser working pattern
+        # Create dialog with buttons - let prompt-toolkit size naturally
         self.dialog = Dialog(
             title="Select Function",
             body=content,
@@ -207,7 +210,6 @@ class FunctionSelectorDialog:
                 Button("Select", handler=self._handle_select),
                 Button("Cancel", handler=self._handle_cancel)
             ],
-            width=100,  # Simple integer width like FileManagerBrowser
             modal=True
         )
 

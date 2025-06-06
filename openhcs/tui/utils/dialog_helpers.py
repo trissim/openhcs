@@ -107,7 +107,6 @@ async def show_error_dialog(title: str, message: str, app_state: Optional[Any] =
         buttons=[
             Button("OK", handler=ok_handler, width=len("OK") + 2)
         ],
-        width=80,  # Standard width
         modal=True
     )
 

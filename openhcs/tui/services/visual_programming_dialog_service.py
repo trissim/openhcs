@@ -126,11 +126,19 @@ class VisualProgrammingDialogService:
         self.current_dialog_future = asyncio.Future()
         
         # Create dialog WITHOUT buttons - DualEditorPane handles its own save/cancel
+        # Set minimum width to accommodate Function Pattern Editor button row
+        from prompt_toolkit.layout.dimension import Dimension
+
+        # Calculate minimum width for Function Pattern Editor buttons:
+        # "Function Pattern Editor" (title) + "Add Function" + "Load .func" + "Save .func As" + "Edit in Vim"
+        # ≈ 23 + 15 + 12 + 15 + 12 + padding ≈ 85 characters
+        min_dialog_width = 85
+
         dialog = Dialog(
             title=title,
             body=dual_editor.container,
             buttons=[],  # No buttons - DualEditorPane has its own Save/Cancel
-            width=120,
+            width=Dimension(min=min_dialog_width),  # Ensure minimum width for button row
             modal=True
         )
         
