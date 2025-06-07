@@ -86,10 +86,17 @@ class FunctionPatternView:
     def get_pattern(self) -> Union[List, Dict]:
         """
         Return the current pattern state.
-        
+
         EXACT INTERFACE: Preserves original method for DualEditorPane compatibility.
         """
         return self.data_manager.clone_pattern(self.current_pattern)
+
+    def get_focus_window(self):
+        """Return the focusable control for key bindings (like PlateManagerPane)."""
+        if hasattr(self.function_list, 'get_focus_window'):
+            return self.function_list.get_focus_window()
+        else:
+            raise RuntimeError("FunctionPatternView: FunctionListManager focus window not found")
     
     def _create_header(self) -> VSplit:
         """Create the header with title and file operation buttons."""
@@ -155,11 +162,11 @@ class FunctionPatternView:
         
         return FunctionListManager(
             functions=current_functions,
-            on_function_change=self._handle_function_change,
-            on_add_function=self._handle_add_function,
-            on_delete_function=self._handle_delete_function,
-            on_move_function=self._handle_move_function,
-            on_parameter_change=self._handle_parameter_change,
+            on_function_change=self._on_function_changed,  # Renamed to avoid collision
+            on_add_function=self._on_add_function_requested,  # Renamed to avoid collision
+            on_delete_function=self._on_delete_function_requested,  # Renamed to avoid collision
+            on_move_function=self._on_move_function_requested,  # Renamed to avoid collision
+            on_parameter_change=self._on_parameter_changed,  # Renamed to avoid collision
             app_state=self.state
         )
 
@@ -249,8 +256,8 @@ class FunctionPatternView:
             self._refresh_ui()
             self._notify_change()
     
-    async def _handle_function_change(self, index: int, new_func: Callable):
-        """Handle function selection change."""
+    async def _on_function_changed(self, index: int, new_func: Callable):
+        """Handle function selection change from FunctionListManager."""
         current_functions = self.data_manager.get_current_functions(
             self.current_pattern, self.current_key, self.is_dict
         )
@@ -323,9 +330,15 @@ class FunctionPatternView:
 
         except Exception as e:
             logger.error(f"DEBUG: Exception in _handle_add_function: {e}", exc_info=True)
-    
-    async def _handle_delete_function(self, index: int):
-        """Handle delete function request."""
+
+    async def _on_add_function_requested(self, index: Optional[int] = None):
+        """Handle add function request from FunctionListManager buttons."""
+        logger.info(f"DEBUG: _on_add_function_requested called with index: {index}")
+        # Delegate to the main add function handler
+        await self._handle_add_function(index)
+
+    async def _on_delete_function_requested(self, index: int):
+        """Handle delete function request from FunctionListManager."""
         current_functions = self.data_manager.get_current_functions(
             self.current_pattern, self.current_key, self.is_dict
         )
@@ -340,8 +353,8 @@ class FunctionPatternView:
             self._refresh_ui()
             self._notify_change()
     
-    async def _handle_move_function(self, index: int, direction: int):
-        """Handle move function request."""
+    async def _on_move_function_requested(self, index: int, direction: int):
+        """Handle move function request from FunctionListManager."""
         current_functions = self.data_manager.get_current_functions(
             self.current_pattern, self.current_key, self.is_dict
         )
@@ -359,8 +372,8 @@ class FunctionPatternView:
             self._refresh_ui()
             self._notify_change()
     
-    async def _handle_parameter_change(self, param_name: str, param_value: str, index: int):
-        """Handle parameter change request."""
+    async def _on_parameter_changed(self, param_name: str, param_value: str, index: int):
+        """Handle parameter change request from FunctionListManager."""
         # Implementation depends on specific parameter change logic
         # This is a simplified version - full implementation would parse values
         logger.info(f"Parameter change: {param_name}={param_value} for function {index}")

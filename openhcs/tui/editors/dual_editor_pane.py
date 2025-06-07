@@ -50,7 +50,7 @@ class DualEditorPane:
         self.on_cancel = on_cancel
         
         # Tab state
-        self.current_tab = "step"  # "step" or "func"
+        self.current_tab = "step"  # "step" or "func" - start on step tab for easier focus
         
         # Change tracking
         self.has_changes = False
@@ -72,7 +72,7 @@ class DualEditorPane:
                 'variable_components': self.editing_step.variable_components
             }
         )
-        
+
         # Create UI
         self._build_ui()
     
@@ -80,6 +80,14 @@ class DualEditorPane:
     def container(self) -> Container:
         """Get the container for this pane."""
         return self._container
+
+    def get_focus_window(self):
+        """Return the focusable control for the current tab."""
+        if self.current_tab == "func" and hasattr(self.func_editor, 'get_focus_window'):
+            return self.func_editor.get_focus_window()
+        else:
+            # For step tab or fallback, we don't have a specific focus target
+            raise RuntimeError("DualEditorPane: No focusable control for current tab")
     
     def _build_ui(self):
         """Build the dual editor UI."""
@@ -127,19 +135,23 @@ class DualEditorPane:
         
         content_area = DynamicContainer(get_current_editor)
         
-        # Main container - let prompt-toolkit handle sizing naturally
+        # Main container
         self._container = HSplit([
             tab_bar,
             Frame(content_area)
         ])
-        
+
         self._update_tab_styles()
-    
+
     def _switch_tab(self, tab_name: str):
         """Switch to the specified tab."""
         self.current_tab = tab_name
         self._update_tab_styles()
+
         get_app().invalidate()
+
+        # No focus management needed - global key bindings handle navigation
+        logger.info(f"DEBUG: Tab switched to {tab_name}, global key bindings active")
     
     def _update_tab_styles(self):
         """Update tab button styles to show active tab."""
