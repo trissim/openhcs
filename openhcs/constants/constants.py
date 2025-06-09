@@ -9,10 +9,10 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Set, TypeVar
 
 class VariableComponents(Enum):
-    SITE = ["site"]
-    CHANNEL = ["channel"]
-    Z_INDEX = ["z_index"]
-    WELL = ["well"]
+    SITE = "site"
+    CHANNEL = "channel"
+    Z_INDEX = "z_index"
+    WELL = "well"
 
 class Microscope(Enum):
     AUTO = "auto"
@@ -20,10 +20,11 @@ class Microscope(Enum):
     OPERAPHENIX = "OperaPhenix"
 
 class GroupBy(Enum):
-    CHANNEL = VariableComponents.CHANNEL.value
-    Z_INDEX = VariableComponents.Z_INDEX.value
-    SITE = VariableComponents.SITE.value
-    WELL = VariableComponents.WELL.value
+    CHANNEL = VariableComponents.CHANNEL.value # Will be "channel"
+    Z_INDEX = VariableComponents.Z_INDEX.value # Will be "z_index"
+    SITE = VariableComponents.SITE.value     # Will be "site"
+    WELL = VariableComponents.WELL.value     # Will be "well"
+    NONE = "" # Added for allow_blank in Select
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"

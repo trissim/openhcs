@@ -17,6 +17,8 @@ class FieldSpec:
     current_value: Any
     default_value: Any
     is_optional: bool
+    is_nested_dataclass: bool = False
+    nested_fields: Optional[List['FieldSpec']] = None
 
 
 class FieldIntrospector:
@@ -45,22 +47,30 @@ class FieldIntrospector:
         field_type = field.type
         actual_type = field_type
         is_optional = get_origin(field_type) is TypingUnion and type(None) in get_args(field_type)
-        
+
         if is_optional:
             actual_type = next((t for t in get_args(field_type) if t is not type(None)), actual_type)
-        
+
         # Get values
         current_value = getattr(instance, field.name, None)
         default_value = None
-        
+
         if field.default is not dataclasses.MISSING:
             default_value = field.default
         elif field.default_factory is not dataclasses.MISSING:
             default_value = field.default_factory()
-        
+
         # Create label
         label = field.name.replace('_', ' ').title()
-        
+
+        # Check if this is a nested dataclass
+        is_nested_dataclass = dataclasses.is_dataclass(actual_type)
+        nested_fields = None
+
+        if is_nested_dataclass and current_value is not None:
+            # Recursively analyze nested dataclass
+            nested_fields = FieldIntrospector.analyze_dataclass(actual_type, current_value)
+
         return FieldSpec(
             name=field.name,
             label=label,
@@ -68,5 +78,7 @@ class FieldIntrospector:
             actual_type=actual_type,
             current_value=current_value,
             default_value=default_value,
-            is_optional=is_optional
+            is_optional=is_optional,
+            is_nested_dataclass=is_nested_dataclass,
+            nested_fields=nested_fields
         )

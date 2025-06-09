@@ -46,29 +46,63 @@ VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax"}
 _registry_initialized = False
 
 
+def _auto_initialize_registry() -> None:
+    """
+    Auto-initialize the function registry on module import.
+
+    This follows the same pattern as storage_registry in openhcs.io.base.
+    """
+    global _registry_initialized
+
+    if _registry_initialized:
+        return
+
+    try:
+        # Clear and initialize the registry with valid memory types
+        FUNC_REGISTRY.clear()
+        for memory_type in VALID_MEMORY_TYPES:
+            FUNC_REGISTRY[memory_type] = []
+
+        # Scan processing directory and register functions
+        _scan_and_register_functions()
+
+        logger.info(
+            "Function registry auto-initialized with %d functions across %d backends",
+            sum(len(funcs) for funcs in FUNC_REGISTRY.values()),
+            len(VALID_MEMORY_TYPES)
+        )
+
+        # Mark registry as initialized
+        _registry_initialized = True
+
+    except Exception as e:
+        logger.error(f"Failed to auto-initialize function registry: {e}")
+        # Initialize empty registry as fallback
+        FUNC_REGISTRY.clear()
+        for memory_type in VALID_MEMORY_TYPES:
+            FUNC_REGISTRY[memory_type] = []
+        _registry_initialized = True
+
+
 def initialize_registry() -> None:
     """
     Initialize the function registry and scan for functions to register.
-    
-    This function must be called once during application startup. It:
-    1. Creates empty lists for each valid memory type
-    2. Scans the processing directory for functions with matching input/output memory types
-    3. Automatically registers these functions
-    
+
+    This function is now optional since the registry auto-initializes on import.
+    It can be called to force re-initialization if needed.
+
     Thread-safe: Uses a lock to ensure consistent access to the global registry.
-    
+
     Raises:
-        RuntimeError: If the registry is already initialized
+        RuntimeError: If the registry is already initialized and force=False
     """
     with _registry_lock:
         global _registry_initialized
-        
+
         # Check if registry is already initialized
         if _registry_initialized:
-            raise RuntimeError(
-                "Function registry already initialized. "
-                "Cannot reinitialize during execution."
-            )
+            logger.info("Function registry already initialized, skipping manual initialization")
+            return
         
         # Clear and initialize the registry with valid memory types
         FUNC_REGISTRY.clear()
@@ -109,22 +143,28 @@ def _scan_and_register_functions() -> None:
     for _, module_name, is_pkg in pkgutil.walk_packages([processing_path], f"{processing_package}."):
         try:
             # Import the module
+            logger.debug(f"Scanning module: {module_name}")
             module = importlib.import_module(module_name)
-            
+
             # Skip packages (we'll process their modules separately)
             if is_pkg:
+                logger.debug(f"Skipping package: {module_name}")
                 continue
-            
+
             # Find all functions in the module
+            function_count = 0
             for name, obj in inspect.getmembers(module, inspect.isfunction):
                 # Check if the function has the required attributes
                 if hasattr(obj, "input_memory_type") and hasattr(obj, "output_memory_type"):
                     input_type = getattr(obj, "input_memory_type")
                     output_type = getattr(obj, "output_memory_type")
-                    
+
                     # Register if input and output types match and are valid
                     if input_type == output_type and input_type in VALID_MEMORY_TYPES:
                         _register_function(obj, input_type)
+                        function_count += 1
+
+            logger.debug(f"Module {module_name}: found {function_count} registerable functions")
         except Exception as e:
             logger.warning("Error importing module %s: %s", module_name, e)
 
@@ -176,12 +216,10 @@ def get_functions_by_memory_type(memory_type: str) -> List[Callable]:
         ValueError: If the memory type is not valid
     """
     with _registry_lock:
-        # Check if registry is initialized
+        # Check if registry is initialized (should be auto-initialized on import)
         if not _registry_initialized:
-            raise RuntimeError(
-                "Function registry not initialized. "
-                "Must call initialize_registry() first."
-            )
+            logger.warning("Function registry not initialized, auto-initializing now")
+            _auto_initialize_registry()
         
         # Check if memory type is valid
         if memory_type not in VALID_MEMORY_TYPES:
@@ -285,3 +323,7 @@ def get_all_function_names(memory_type: str) -> List[str]:
     """
     functions = get_functions_by_memory_type(memory_type)
     return [func.__name__ for func in functions]
+
+
+# Auto-initialize the registry on module import (following storage_registry pattern)
+_auto_initialize_registry()

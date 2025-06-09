@@ -6,7 +6,7 @@ Matches the layout from the current prompt-toolkit TUI.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
@@ -68,7 +68,7 @@ class MenuBar(Widget):
         """Show global configuration dialog."""
         logger.info("Global Config button pressed")
 
-        def handle_result(result):
+        def handle_result(result: Any) -> None:
             if result:  # User saved config changes
                 # Apply config changes to app
                 self.app.global_config = result

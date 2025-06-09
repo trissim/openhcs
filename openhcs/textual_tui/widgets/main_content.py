@@ -70,12 +70,19 @@ class MainContent(Widget):
         # Set up communication between panes
         plate_manager = self.query_one(PlateManagerWidget)
         pipeline_editor = self.query_one(PipelineEditorWidget)
-        
+
+        # Set up bidirectional references
+        plate_manager.pipeline_editor = pipeline_editor
+        pipeline_editor.plate_manager = plate_manager
+
         # Connect plate selection to pipeline editor
         def on_plate_selected(plate_path: str):
             """Handle plate selection from PlateManager."""
             pipeline_editor.current_plate = plate_path
-            logger.debug(f"Plate selected: {plate_path}")
-        
+            # Also send plate status for constraint checking
+            plate_status = plate_manager.get_plate_status(plate_path)
+            pipeline_editor.current_plate_status = plate_status
+            logger.debug(f"Plate selected: {plate_path} (status: {plate_status})")
+
         # Store the callback for future use
         plate_manager.on_plate_selected = on_plate_selected

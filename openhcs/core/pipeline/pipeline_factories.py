@@ -16,9 +16,8 @@ from openhcs.core.pipeline import Pipeline
 # Import step classes from the appropriate modules
 # This is a cleaner approach that avoids circular imports
 # Import steps from the core steps module
-from openhcs.core.steps import CompositeStep, FocusStep
-from openhcs.core.steps import ImageAssemblyStep as ImageStitchingStep
-from openhcs.core.steps import NormStep, PositionGenerationStep, ZFlatStep
+# TODO: Fix step imports when needed - using direct import for now
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.io.virtual_path_factory import VirtualPathFactory
 
 
@@ -96,21 +95,21 @@ class AutoPipelineFactory:
                 # Always include Z-flattening for position generation
                 FunctionStep(
                     func=(create_projection, {'method': 'max_projection'}),
-                    variable_components=['z_index'],
+                    variable_components=[VariableComponents.Z_INDEX],
                     name="Z-Stack Flattening"
                 ),
 
                 # Include normalization if enabled
                 FunctionStep(
                     func=(stack_percentile_normalize, self.normalization_params),
-                    variable_components=['site'],
+                    variable_components=[VariableComponents.SITE],
                     name="Image Normalization"
                 ) if self.normalize else None,
 
                 # Always include channel compositing for reference image
                 FunctionStep(
                     func=(create_composite, {'weights': self.channel_weights}),
-                    variable_components=['channel'],
+                    variable_components=[VariableComponents.CHANNEL],
                     name="Channel Compositing"
                 ),
 
@@ -132,19 +131,19 @@ class AutoPipelineFactory:
                 # Include normalization if enabled (create new instance)
                 FunctionStep(
                     func=(stack_percentile_normalize, self.normalization_params),
-                    variable_components=['site'],
+                    variable_components=[VariableComponents.SITE],
                     name="Image Normalization"
                 ) if self.normalize else None,
 
                 # Include Z-flattening for assembly if enabled
                 (FunctionStep(
                     func=deep_focus,
-                    variable_components=['z_index'],
+                    variable_components=[VariableComponents.Z_INDEX],
                     name="Focus Selection"
                 ) if self.is_focus_method else
                 FunctionStep(
                     func=(create_projection, {'method': f'{self.z_method}_projection'}),
-                    variable_components=['z_index'],
+                    variable_components=[VariableComponents.Z_INDEX],
                     name="Z-Stack Flattening"
                 )) if self.flatten_z else None,
 

@@ -40,21 +40,36 @@ def _parse_command_line_arguments():
 
 
 def _setup_logging(debug: bool = False):
-    """Setup logging configuration."""
+    """Setup unified logging configuration for entire OpenHCS system."""
     log_level = logging.DEBUG if debug else logging.INFO
-    
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
+
+    # Create logs directory
+    log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create timestamped log file
+    import time
+    log_file = log_dir / f"openhcs_unified_{time.strftime('%Y%m%d_%H%M%S')}.log"
+
+    # Only setup logging if not already configured
+    if not logging.getLogger().hasHandlers():
+        # Setup both file and console logging
+        handlers = [
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stderr)  # Use stderr to avoid TUI interference
         ]
-    )
-    
-    # Set OpenHCS logger level
+
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            handlers=handlers
+        )
+
+    # Set OpenHCS logger level for all components
     logging.getLogger("openhcs").setLevel(log_level)
-    logger = logging.getLogger("openhcs.textual_tui.main")
-    logger.info(f"OpenHCS Textual TUI starting with log level: {logging.getLevelName(log_level)}")
+    logger = logging.getLogger("openhcs.main")
+    logger.info(f"OpenHCS unified logging started - Level: {logging.getLevelName(log_level)}")
+    logger.info(f"Log file: {log_file}")
     return logger
 
 

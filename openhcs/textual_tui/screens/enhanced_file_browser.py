@@ -7,74 +7,30 @@ textual-universal-directorytree widget adapted for OpenHCS backends.
 
 import logging
 from pathlib import Path
-from typing import Optional, Set, List
+from typing import Optional, Set, List, Dict
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.screen import ModalScreen
+from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
 from textual.widgets import Button, DirectoryTree, Static, Checkbox
 
 from openhcs.constants.constants import Backend
 from openhcs.io.filemanager import FileManager
 from openhcs.textual_tui.adapters.universal_directorytree import OpenHCSDirectoryTree
+from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
 
 logger = logging.getLogger(__name__)
 
 
-class EnhancedFileBrowserScreen(ModalScreen):
+class EnhancedFileBrowserScreen(BaseFloatingWindow):
     """
-    Enhanced file browser dialog using OpenHCS DirectoryTree adapter.
-    
+    Enhanced file browser dialog using OpenHCS DirectoryTree adapter with global floating window system.
+
     This provides a more robust file browsing experience using the mature
     textual-universal-directorytree widget adapted to work with OpenHCS's
     FileManager backend system.
     """
-    
-    DEFAULT_CSS = """
-    EnhancedFileBrowserScreen {
-        align: center middle;
-        background: $background 60%;
-    }
-    
-    #file_browser {
-        /* Inherit app's dialog style */
-        max-width: 90%;
-        max-height: 80%;
-        min-width: 80;
-        min-height: 35;
-    }
-    
-    #path_display {
-        margin-bottom: 1;
-        text-style: italic;
-        color: $text-muted;
-    }
 
-    #selection_panel {
-        width: 30%;
-        height: 1fr;
-        border: solid $primary;
-        padding: 1;
-    }
-
-    #tree_panel {
-        width: 70%;
-        height: 1fr;
-    }
-
-    OpenHCSDirectoryTree {
-        height: 1fr;
-        border: solid $primary;
-    }
-
-    #selected_list {
-        height: 1fr;
-        border: solid $accent;
-        padding: 1;
-    }
-    """
-    
     def __init__(
         self,
         file_manager: FileManager,
@@ -83,50 +39,86 @@ class EnhancedFileBrowserScreen(ModalScreen):
         title: str = "Select Directory",
         **kwargs
     ):
-        super().__init__(**kwargs)
         self.file_manager = file_manager
         self.initial_path = initial_path
         self.backend = backend
-        self.title = title
+        self.browser_title = title
         self.selected_path: Optional[Path] = None
         self.selected_paths: Set[Path] = set()  # For multi-selection
-        
+
+        # Path caching for performance
+        self.path_cache: Dict[str, List[Path]] = {}
+
+        # Hidden files toggle
+        self.show_hidden_files = False
+
         # Create OpenHCS DirectoryTree
         self.directory_tree = OpenHCSDirectoryTree(
             filemanager=file_manager,
             backend=backend,
-            path=initial_path
+            path=initial_path,
+            show_hidden=self.show_hidden_files
         )
-        
+
+        super().__init__(title=title, **kwargs)
         logger.debug(f"EnhancedFileBrowserScreen created for {backend.value} at {initial_path}")
     
-    def compose(self) -> ComposeResult:
-        """Compose the enhanced file browser dialog."""
-        # Use app's dialog class for consistent styling
-        with Container(id="file_browser", classes="dialog"):
-            yield Static(self.title, classes="dialog-title")
+    def get_content_info(self) -> dict:
+        """Provide content information for dynamic sizing."""
+        return {
+            'title': self.browser_title,
+            'content_text': '',  # No text content, complex layout
+            'button_texts': ['Add Current', 'Remove Selected', 'Select All', 'Cancel'],
+            'extra_content_width': 80  # Wide for tree + selection panels
+        }
 
-            # Path display
-            yield Static(f"Path: {self.initial_path}", id="path_display")
+    def compose_content(self) -> ComposeResult:
+        """Compose the enhanced file browser content."""
+        # Path display (always visible)
+        yield Static(f"Path: {self.initial_path}", id="path_display")
 
-            # Main content area with tree and selection panel
-            with Horizontal():
-                # Directory tree panel
-                with Container(id="tree_panel"):
-                    yield self.directory_tree
+        # Directory tree - scrollable area
+        with ScrollableContainer(id="tree_panel"):
+            yield self.directory_tree
 
-                # Selection panel for multi-select
-                with Vertical(id="selection_panel"):
-                    yield Static("Selected Directories:", classes="dialog-title")
-                    with Container(id="selected_list"):
-                        yield Static("(none selected)", id="selected_display")
+        # Bottom area: buttons left, selected panel right (always visible)
+        with Horizontal(id="bottom_area"):
+            # Buttons on left (auto width)
+            with Vertical(id="buttons_panel"):
+                yield Button("Add Current", id="add_current", compact=True)
+                yield Button("Remove Selected", id="remove_selected", compact=True)
+                yield Button("Select All", id="select_all", compact=True)
+                yield Checkbox(
+                    label="Show Hidden Files",
+                    value=self.show_hidden_files,
+                    id="show_hidden_checkbox"
+                )
+                yield Button("Cancel", id="cancel", compact=True)
 
-            # Buttons
-            with Horizontal(classes="dialog-buttons"):
-                yield Button("Add Current", id="add_current_btn", compact=True)
-                yield Button("Remove Selected", id="remove_selected_btn", compact=True)
-                yield Button("Select All", id="select_all_btn", variant="primary", compact=True)
-                yield Button("Cancel", id="cancel_btn", compact=True)
+            # Selection panel on right (remaining width)
+            with Vertical(id="selection_panel"):
+                yield Static("Selected:", classes="dialog-title")
+                with ScrollableContainer(id="selected_list"):
+                    yield Static("(none)", id="selected_display")
+
+    def compose_buttons(self) -> ComposeResult:
+        """Buttons are now part of content layout - return empty."""
+        return
+        yield  # This line will never execute, but satisfies the generator requirement
+
+    def handle_button_action(self, button_id: str, button_text: str):
+        """Handle button actions - Add/Remove/Select/Cancel logic."""
+        if button_text == 'Add Current':
+            self._handle_add_current()
+            return False  # Don't dismiss dialog
+        elif button_text == 'Remove Selected':
+            self._handle_remove_selected()
+            return False  # Don't dismiss dialog
+        elif button_text == 'Select All':
+            return self._handle_select_all()
+        elif button_text == 'Cancel':
+            return None  # Dismiss with None
+        return False  # Don't dismiss by default
     
     def on_mount(self) -> None:
         """Called when the screen is mounted."""
@@ -159,16 +151,53 @@ class EnhancedFileBrowserScreen(ModalScreen):
         # But we could extend this for file selection modes
         logger.debug(f"File selected: {event.path}")
     
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        if event.button.id == "add_current_btn":
-            self._handle_add_current()
-        elif event.button.id == "remove_selected_btn":
-            self._handle_remove_selected()
-        elif event.button.id == "select_all_btn":
-            self._handle_select_all()
-        elif event.button.id == "cancel_btn":
-            self.dismiss(None)
+    # Button handling now done through handle_button_action method
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox changes."""
+        if event.checkbox.id == "show_hidden_checkbox":
+            self.show_hidden_files = event.value
+            self._refresh_directory_tree()
+            logger.debug(f"Hidden files toggle: {self.show_hidden_files}")
+
+    def _refresh_directory_tree(self) -> None:
+        """Refresh directory tree with current settings."""
+        # Clear path cache when settings change
+        self.path_cache.clear()
+
+        # Recreate directory tree with new settings
+        current_path = self.selected_path or self.initial_path
+        self.directory_tree = OpenHCSDirectoryTree(
+            filemanager=self.file_manager,
+            backend=self.backend,
+            path=current_path,
+            show_hidden=self.show_hidden_files
+        )
+
+        # Replace the tree in the UI
+        try:
+            tree_container = self.query_one("#tree_panel", Container)
+            tree_container.remove_children()
+            tree_container.mount(self.directory_tree)
+            self.directory_tree.focus()
+        except Exception as e:
+            logger.warning(f"Failed to refresh directory tree: {e}")
+
+    def _get_cached_paths(self, path: Path) -> Optional[List[Path]]:
+        """Get cached directory contents."""
+        cache_key = f"{path}:{self.show_hidden_files}"
+        return self.path_cache.get(cache_key)
+
+    def _cache_paths(self, path: Path, paths: List[Path]) -> None:
+        """Cache directory contents."""
+        cache_key = f"{path}:{self.show_hidden_files}"
+        self.path_cache[cache_key] = paths
+
+        # Limit cache size to prevent memory issues
+        if len(self.path_cache) > 100:
+            # Remove oldest entries (simple FIFO)
+            oldest_key = next(iter(self.path_cache))
+            del self.path_cache[oldest_key]
 
     def _handle_add_current(self) -> None:
         """Add current directory to selection."""
@@ -184,27 +213,28 @@ class EnhancedFileBrowserScreen(ModalScreen):
             self._update_selected_display()
             logger.debug(f"Removed {self.selected_path} from selection")
 
-    def _handle_select_all(self) -> None:
+    def _handle_select_all(self):
         """Return all selected directories."""
         if self.selected_paths:
             # Return list of selected paths
-            self.dismiss(list(self.selected_paths))
+            return list(self.selected_paths)
         else:
             # No selection, return current path if it's a directory
             if self.selected_path and self.selected_path.is_dir():
-                self.dismiss([self.selected_path])
+                return [self.selected_path]
             else:
-                self.dismiss([self.initial_path])
+                return [self.initial_path]
 
     def _update_selected_display(self) -> None:
         """Update the selected directories display."""
         try:
             display_widget = self.query_one("#selected_display", Static)
             if self.selected_paths:
+                # Show just the directory names for compact display
                 paths_text = "\n".join([f"📁 {path.name}" for path in sorted(self.selected_paths)])
                 display_widget.update(paths_text)
             else:
-                display_widget.update("(none selected)")
+                display_widget.update("(none)")
         except Exception:
             # Widget might not be mounted yet
             pass
@@ -217,3 +247,96 @@ class EnhancedFileBrowserScreen(ModalScreen):
         except Exception:
             # Widget might not be mounted yet
             pass
+
+    DEFAULT_CSS = """
+    EnhancedFileBrowserScreen {
+        align: center middle;
+        background: $background 60%;
+    }
+
+    #floating_window {
+        background: $surface;
+        border: solid $primary;
+        padding: 2;
+        height: auto;
+    }
+
+    .dialog-title {
+        text-style: bold;
+        text-align: center;
+        margin-bottom: 1;
+    }
+
+    #path_display {
+        margin-bottom: 1;
+        text-style: italic;
+        color: $text-muted;
+    }
+
+
+
+    #tree_panel {
+        width: 100%;
+        height: 1fr;
+        min-height: 15;
+        max-height: 30;
+        margin-bottom: 1;
+    }
+
+    #bottom_area {
+        height: auto;
+        margin-top: 1;
+    }
+
+    #buttons_panel {
+        width: auto;
+        height: auto;
+        margin-right: 2;
+    }
+
+    #buttons_panel Button {
+        margin-bottom: 1;
+        width: 15;
+    }
+
+    #buttons_panel Checkbox {
+        margin-bottom: 1;
+        width: 15;
+    }
+
+    #selection_panel {
+        width: 1fr;
+        height: auto;
+        max-height: 8;
+        border: solid $primary;
+        padding: 1;
+    }
+
+    #selected_list {
+        height: auto;
+        min-height: 2;
+        max-height: 5;
+        border: solid $accent;
+        padding: 1;
+    }
+
+    OpenHCSDirectoryTree {
+        height: 1fr;
+        border: solid $primary;
+    }
+
+    .dialog-content {
+        height: auto;
+        margin: 0;
+    }
+
+    .dialog-buttons {
+        height: auto;
+        align: center middle;
+        margin-top: 1;
+    }
+
+    .dialog-buttons Button {
+        margin: 0 1;
+    }
+    """

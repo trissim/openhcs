@@ -34,17 +34,37 @@ class SelectableListItem(ListItem):
         super().__init__(Static(f"{checkbox} {display_text}"))
     
     def _format_item_display(self, item_data: Dict[str, Any]) -> str:
-        """Format item data for display. Override in subclasses for custom formatting."""
+        """Format item data for display with rich status indicators."""
         name = item_data.get('name', 'Unknown')
         status = item_data.get('status', '?')
-        return f"{name} ({status})"
+
+        # Enhanced status symbols with colors
+        status_symbols = {
+            '?': '🔵',  # Added (blue circle)
+            '-': '🟡',  # Initialized (yellow circle)
+            'o': '🟢',  # Compiled (green circle)
+            '!': '🔴',  # Running (red circle)
+            'X': '❌'   # Error (red X)
+        }
+
+        symbol = status_symbols.get(status, '❓')
+
+        # Add error details if available
+        error_msg = item_data.get('error', '')
+        if error_msg and status == 'X':
+            # Truncate long error messages
+            if len(error_msg) > 30:
+                error_msg = error_msg[:27] + "..."
+            return f"{symbol} {name} - {error_msg}"
+        else:
+            return f"{symbol} {name}"
     
-    def update_checkbox(self, is_checked: bool):
+    def update_checkbox(self, is_checked: bool) -> None:
         """Update checkbox state and re-render."""
         self.is_checked = is_checked
         checkbox = "☑" if is_checked else "☐"
         display_text = self._format_item_display(self.item_data)
-        
+
         # Update the Static widget content
         static_widget = self.children[0]
         static_widget.update(f"{checkbox} {display_text}")
@@ -73,6 +93,7 @@ class SelectableListView(Widget):
             super().__init__()
     
     def __init__(self, items: List[Dict[str, Any]] = None, **kwargs):
+        print(f"SelectableListView.__init__ called with {len(items or [])} items")
         super().__init__(**kwargs)
         self._list_view = None
         self._initializing = True
@@ -81,6 +102,7 @@ class SelectableListView(Widget):
         self.checked_indices = set()
         self.highlighted_index = 0
         self.items = items or []
+        print(f"SelectableListView initialized with {len(self.items)} items")
 
         self._initializing = False
     
@@ -92,28 +114,36 @@ class SelectableListView(Widget):
         # Populate initial items
         self._rebuild_list_items()
     
-    def _rebuild_list_items(self):
+    def _rebuild_list_items(self) -> None:
         """Rebuild ListView items with current state."""
+        logger.debug(f"_rebuild_list_items called, _list_view exists: {self._list_view is not None}")
+
         if not self._list_view:
+            logger.debug("No _list_view, returning early")
             return
-            
+
+        logger.debug(f"Clearing existing items, current children count: {len(self._list_view.children)}")
         # Clear existing items
         self._list_view.clear()
-        
+
+        logger.debug(f"Adding {len(self.items)} items to ListView")
         # Add items with current checkbox state
         for index, item_data in enumerate(self.items):
             is_checked = index in self.checked_indices
             list_item = SelectableListItem(item_data, index, is_checked)
+            logger.debug(f"Adding item {index}: {item_data.get('name', 'Unknown')}")
             self._list_view.append(list_item)
-        
+
         # Set highlighted item
         if self.items and 0 <= self.highlighted_index < len(self.items):
             self._list_view.index = self.highlighted_index
+
+        logger.debug(f"Rebuild complete, ListView now has {len(self._list_view.children)} children")
     
-    def watch_items(self, new_items: List[Dict[str, Any]]):
+    def watch_items(self, new_items: List[Dict[str, Any]]) -> None:
         """React to items changes."""
-        if getattr(self, '_initializing', False):
-            return
+        print(f"watch_items called with {len(new_items)} items")
+        logger.debug(f"watch_items called with {len(new_items)} items")
 
         # Validate checked indices are still valid
         max_index = len(new_items) - 1
@@ -127,31 +157,30 @@ class SelectableListView(Widget):
             self.highlighted_index = max(0, len(new_items) - 1)
 
         # Rebuild list
+        logger.debug(f"Calling _rebuild_list_items with {len(new_items)} items")
         self._rebuild_list_items()
 
         # Emit selection change
         self._emit_selection_changed()
     
-    def watch_checked_indices(self, new_checked: Set[int]):
+    def watch_checked_indices(self, new_checked: Set[int]) -> None:
         """React to checked indices changes."""
-        if getattr(self, '_initializing', False):
-            return
+        print(f"watch_checked_indices called with {len(new_checked)} indices")
         self._update_checkbox_display()
         self._emit_selection_changed()
 
-    def watch_highlighted_index(self, new_index: int):
+    def watch_highlighted_index(self, new_index: int) -> None:
         """React to highlighted index changes."""
-        if getattr(self, '_initializing', False):
-            return
+        print(f"watch_highlighted_index called with index {new_index}")
         if self._list_view and 0 <= new_index < len(self.items):
             self._list_view.index = new_index
         self._emit_selection_changed()
     
-    def _update_checkbox_display(self):
+    def _update_checkbox_display(self) -> None:
         """Update checkbox display for all items."""
         if not self._list_view:
             return
-            
+
         for index, list_item in enumerate(self._list_view.children):
             if isinstance(list_item, SelectableListItem):
                 is_checked = index in self.checked_indices
@@ -212,23 +241,23 @@ class SelectableListView(Widget):
         else:
             raise ValueError(f"Unknown selection_mode: {selection_mode}")
     
-    def toggle_checkbox(self, index: int):
+    def toggle_checkbox(self, index: int) -> None:
         """Toggle checkbox state for item at index."""
         if 0 <= index < len(self.items):
             if index in self.checked_indices:
                 self.checked_indices = self.checked_indices - {index}
             else:
                 self.checked_indices = self.checked_indices | {index}
-    
-    def clear_all_checks(self):
+
+    def clear_all_checks(self) -> None:
         """Clear all checkbox selections."""
         self.checked_indices = set()
-    
-    def check_all(self):
+
+    def check_all(self) -> None:
         """Check all items."""
         self.checked_indices = set(range(len(self.items)))
-    
-    def _emit_selection_changed(self):
+
+    def _emit_selection_changed(self) -> None:
         """Emit selection changed message."""
         selected_items, selection_mode = self.get_selection_state()
         self.post_message(self.SelectionChanged(selected_items, selection_mode))
@@ -253,9 +282,15 @@ class SelectableListView(Widget):
             self.clear_all_checks()
             event.prevent_default()
     
-    def load_items(self, new_items: List[Dict[str, Any]]):
+    def load_items(self, new_items: List[Dict[str, Any]]) -> None:
         """Load new items into the list."""
-        self.items = new_items.copy()
+        logger.debug(f"load_items called with {len(new_items)} items")
+        logger.debug(f"Before assignment: self.items has {len(self.items)} items")
+
+        # Force reactive update by creating a new list object
+        self.items = list(new_items)
+
+        logger.debug(f"After assignment: self.items has {len(self.items)} items")
     
     def get_checked_items(self) -> List[Dict[str, Any]]:
         """Get all checked items."""

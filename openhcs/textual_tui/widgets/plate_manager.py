@@ -5,20 +5,20 @@ Plate management widget with complete button set and reactive state management.
 Matches the functionality from the current prompt-toolkit TUI.
 """
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.reactive import reactive
-from textual.widgets import Button, Static
+from textual.widgets import Button, Static, SelectionList
 from textual.widget import Widget
 from textual import work
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
-from .selectable_list_view import SelectableListView
 
 logger = logging.getLogger(__name__)
 
@@ -62,18 +62,29 @@ class PlateManagerWidget(Widget):
     
     def compose(self) -> ComposeResult:
         """Compose the plate manager layout."""
-        # Complete button set with compact uniform styling
-        with Horizontal():
-            yield Button("Add", id="add_plate", compact=True)
-            yield Button("Del", id="del_plate", disabled=True, compact=True)
-            yield Button("Edit", id="edit_plate", disabled=True, compact=True)
-            yield Button("Init", id="init_plate", disabled=True, compact=True)
-            yield Button("Compile", id="compile_plate", disabled=True, compact=True)
-            yield Button("Run", id="run_plate", disabled=True, compact=True)
+        from textual.containers import Vertical
 
-        # Scrollable content area with SelectableListView
-        with ScrollableContainer(id="plate_list"):
-            yield SelectableListView(items=self.plates, id="plate_content")
+        with Vertical():
+            # Complete button set with compact uniform styling - should take minimal height
+            with Horizontal() as button_row:
+                button_row.styles.height = "auto"  # Take only the height needed for buttons
+                yield Button("Add", id="add_plate", compact=True)
+                yield Button("Del", id="del_plate", disabled=True, compact=True)
+                yield Button("Edit", id="edit_plate", disabled=True, compact=True)
+                yield Button("Init", id="init_plate", disabled=True, compact=True)
+                yield Button("Compile", id="compile_plate", disabled=True, compact=True)
+                yield Button("Run", id="run_plate", disabled=True, compact=True)
+
+            # Scrollable content area with SelectionList - should take remaining space
+            with ScrollableContainer(id="plate_list") as container:
+                # This container should expand to fill ALL remaining vertical space
+                container.styles.height = "1fr"  # Use fractional unit to fill remaining space
+
+                selection_list = SelectionList(id="plate_content")
+                # Make SelectionList fill the entire container
+                selection_list.styles.width = "100%"
+                selection_list.styles.height = "100%"
+                yield selection_list
 
     def on_mount(self) -> None:
         """Called when the widget is mounted - ensure display is up to date."""
@@ -87,18 +98,37 @@ class PlateManagerWidget(Widget):
     
     def watch_plates(self, plates: List[Dict]) -> None:
         """Automatically update UI when plates reactive property changes."""
-        logger.info(f"watch_plates called with {len(plates)} plates: {[p.get('name', 'Unknown') for p in plates]}")
-
-        # Update SelectableListView content
         try:
-            list_view = self.query_one("#plate_content", SelectableListView)
-            list_view.load_items(plates)
-            logger.info(f"✅ Updated SelectableListView successfully - now showing {len(plates)} plates")
+            logger.info(f"watch_plates called with {len(plates)} plates: {[p.get('name', 'Unknown') for p in plates]}")
+
+            # Update SelectionList content
+            try:
+                selection_list = self.query_one("#plate_content", SelectionList)
+
+                # Clear existing options
+                selection_list.clear_options()
+
+                # Add plates as selection options
+                plate_options = []
+                for plate in plates:
+                    # Format: (display_text, value)
+                    # Status symbols: ? = added, - = initialized, o = compiled, X = error
+                    status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
+                    status_icon = status_symbols.get(plate.get("status", "?"), "❓")
+                    display_text = f"{status_icon} {plate.get('name', 'Unknown')}"
+                    plate_options.append((display_text, plate.get('path', '')))
+
+                selection_list.add_options(plate_options)
+                logger.info(f"✅ Updated SelectionList successfully - now showing {len(plates)} plates")
+
+            except Exception as e:
+                logger.warning(f"Could not update plate content (widget may not be mounted): {e}")
+                # Schedule delayed update attempts using proper Textual API
+                self.call_later(self._delayed_update_display)
 
         except Exception as e:
-            logger.warning(f"Could not update plate content (widget may not be mounted): {e}")
-            # Schedule delayed update attempts using proper Textual API
-            self.call_later(self._delayed_update_display)
+            # Show global error for any unexpected exceptions
+            self.app.show_error(f"Error in watch_plates: {str(e)}", e)
             self.set_timer(0.1, self._delayed_update_display)
             self.set_timer(0.5, self._delayed_update_display)
 
@@ -117,72 +147,135 @@ class PlateManagerWidget(Widget):
         
         logger.debug(f"Selected plate: {plate_path}")
 
-    def on_selectable_list_view_selection_changed(self, event: SelectableListView.SelectionChanged) -> None:
-        """Handle selection changes from SelectableListView."""
-        selected_items = event.selected_items
-        selection_mode = event.selection_mode
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        """Handle selection changes from SelectionList."""
+        selected_values = event.selection_list.selected
 
-        logger.info(f"Selection changed: {len(selected_items)} items in '{selection_mode}' mode")
+        logger.info(f"Selection changed: {len(selected_values)} items selected")
 
-        # Update selected_plate based on selection mode
-        if selection_mode == "cursor" and selected_items:
-            self.selected_plate = selected_items[0]['path']
-        elif selection_mode == "checkbox" and len(selected_items) == 1:
-            self.selected_plate = selected_items[0]['path']
+        # Update selected_plate - use first selected item if any
+        if selected_values:
+            self.selected_plate = selected_values[0]  # This is the plate path
         else:
             self.selected_plate = ""
 
         # Update button states based on selection
-        self._update_button_states_for_selection(selected_items, selection_mode)
+        self._update_button_states_for_selection(selected_values)
 
-    def _update_button_states_for_selection(self, selected_items: List[Dict], selection_mode: str) -> None:
-        """Update button states based on current selection."""
+    def _update_button_states_for_selection(self, selected_values: List[str]) -> None:
+        """Update button states based on mathematical constraints."""
         try:
             has_plates = len(self.plates) > 0
-            has_selection = len(selected_items) > 0
+            has_selection = len(selected_values) > 0
 
-            # Basic button states
+            # Get selected plates for constraint checking
+            selected_plates = []
+            for plate in self.plates:
+                if plate.get('path') in selected_values:
+                    selected_plates.append(plate)
+
+            # Mathematical constraints
+            can_init = any(p.get('status') in ['?', '-'] for p in selected_plates)
+            can_compile = any(p.get('status') in ['-'] for p in selected_plates) and self._has_pipelines(selected_plates)
+            can_run = any(p.get('status') == 'o' for p in selected_plates)
+
             self.query_one("#del_plate").disabled = not has_selection
-            self.query_one("#edit_plate").disabled = not (selection_mode in ["cursor", "checkbox"] and len(selected_items) == 1)
-            self.query_one("#init_plate").disabled = not has_selection
-            self.query_one("#compile_plate").disabled = not has_selection
-            self.query_one("#run_plate").disabled = not has_selection
+            self.query_one("#edit_plate").disabled = not (len(selected_values) == 1)  # Edit requires exactly one selection
+            self.query_one("#init_plate").disabled = not (has_selection and can_init)
+            self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
+            self.query_one("#run_plate").disabled = not (has_selection and can_run)
 
         except Exception:
             # Buttons might not be mounted yet
             pass
 
     def get_selection_state(self) -> tuple[List[Dict], str]:
-        """Get current selection state from SelectableListView."""
+        """Get current selection state from SelectionList."""
         try:
-            list_view = self.query_one("#plate_content", SelectableListView)
-            return list_view.get_selection_state()
+            selection_list = self.query_one("#plate_content", SelectionList)
+            selected_paths = selection_list.selected
+
+            # Convert selected paths back to plate dictionaries
+            selected_items = []
+            for plate in self.plates:
+                if plate.get('path') in selected_paths:
+                    selected_items.append(plate)
+
+            # Determine selection mode
+            if not selected_items:
+                selection_mode = "empty"
+            elif len(selected_items) == len(self.plates):
+                selection_mode = "all"
+            else:
+                selection_mode = "checkbox"  # SelectionList is always checkbox-based
+
+            return selected_items, selection_mode
         except Exception:
             # Fallback if widget not mounted
             return [], "empty"
 
+    def get_operation_description(self, selected_items: List[Dict], selection_mode: str, operation: str) -> str:
+        """Generate human-readable description of what will be operated on."""
+        count = len(selected_items)
+        if selection_mode == "empty":
+            return f"No items available for {operation}"
+        elif selection_mode == "all":
+            return f"{operation.title()} ALL {count} items"
+        elif selection_mode == "checkbox":
+            if count == 1:
+                item_name = selected_items[0].get('name', 'Unknown')
+                return f"{operation.title()} selected item: {item_name}"
+            else:
+                return f"{operation.title()} {count} selected items"
+        else:
+            return f"{operation.title()} {count} items"
+
     def _delayed_update_display(self) -> None:
         """Update the plate display - called when widget is mounted or as fallback."""
         try:
-            list_view = self.query_one("#plate_content", SelectableListView)
-            list_view.load_items(self.plates)
-            logger.info(f"✅ Delayed SelectableListView update successful - showing {len(self.plates)} plates")
+            selection_list = self.query_one("#plate_content", SelectionList)
+
+            # Clear and rebuild options
+            selection_list.clear_options()
+            plate_options = []
+            for plate in self.plates:
+                # Status symbols: ? = added, - = initialized, o = compiled, X = error
+                status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
+                status_icon = status_symbols.get(plate.get("status", "?"), "❓")
+                display_text = f"{status_icon} {plate.get('name', 'Unknown')}"
+                plate_options.append((display_text, plate.get('path', '')))
+
+            selection_list.add_options(plate_options)
+            logger.info(f"✅ Delayed SelectionList update successful - showing {len(self.plates)} plates")
         except Exception as e:
             logger.warning(f"Delayed update failed (widget may not be ready): {e}")
             # Try again in a moment using proper Textual API
             self.set_timer(0.1, self._delayed_update_display)
 
     def _update_button_states(self) -> None:
-        """Update button enabled/disabled states based on current state."""
+        """Update button enabled/disabled states based on mathematical constraints."""
         try:
             has_plates = len(self.plates) > 0
             has_selection = bool(self.selected_plate)
-            
+
+            # Get selected plate for constraint checking
+            selected_plate = None
+            if self.selected_plate:
+                for plate in self.plates:
+                    if plate.get('path') == self.selected_plate:
+                        selected_plate = plate
+                        break
+
+            # Mathematical constraints
+            can_init = selected_plate and selected_plate.get('status') in ['?', '-']
+            can_compile = selected_plate and selected_plate.get('status') == '-' and self._has_pipelines([selected_plate])
+            can_run = selected_plate and selected_plate.get('status') == 'o'
+
             self.query_one("#del_plate").disabled = not has_plates
             self.query_one("#edit_plate").disabled = not has_selection
-            self.query_one("#init_plate").disabled = not has_selection
-            self.query_one("#compile_plate").disabled = not has_selection
-            self.query_one("#run_plate").disabled = not has_selection
+            self.query_one("#init_plate").disabled = not (has_selection and can_init)
+            self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
+            self.query_one("#run_plate").disabled = not (has_selection and can_run)
         except Exception:
             # Buttons might not be mounted yet
             pass
@@ -209,21 +302,26 @@ class PlateManagerWidget(Widget):
         logger.info("Add Plate button pressed")
         self.app.push_screen(self._create_file_browser_screen(), self._on_plate_directory_selected)
 
-    def _create_file_browser_screen(self):
-        """Create enhanced file browser screen for plate selection."""
+    def _create_file_browser_screen(self) -> Any:
+        """Create enhanced file browser screen for plate selection with path caching."""
         from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen
         from openhcs.constants.constants import Backend
+        from openhcs.tui.utils.path_cache import get_path_cache, PathCacheKey
         from pathlib import Path
+
+        # Get cached path for better UX - remembers last used directory
+        path_cache = get_path_cache()
+        initial_path = path_cache.get_initial_path(PathCacheKey.PLATE_IMPORT, Path.home())
 
         # Create enhanced file browser for directory selection
         return EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=Path.home(),
+            initial_path=initial_path,
             backend=Backend.DISK,
             title="Select Plate Directory"
         )
 
-    def _on_plate_directory_selected(self, selected_paths) -> None:
+    def _on_plate_directory_selected(self, selected_paths: Any) -> None:
         """Handle directory selection from file browser."""
         if selected_paths is None:
             logger.info("Plate directory selection cancelled")
@@ -297,6 +395,14 @@ class PlateManagerWidget(Widget):
                 added_plates.append(f"{plate_name} (ERROR)")
                 logger.warning(f"Added plate without orchestrator: {plate_name}")
 
+        # Cache the parent directory for next time (save user navigation time)
+        if selected_paths:
+            from openhcs.tui.utils.path_cache import get_path_cache, PathCacheKey
+            # Use parent of first selected path as the cached directory
+            first_path = selected_paths[0] if isinstance(selected_paths[0], Path) else Path(selected_paths[0])
+            parent_dir = first_path.parent
+            get_path_cache().set_cached_path(PathCacheKey.PLATE_IMPORT, parent_dir)
+
         # Update plates list using reactive property (triggers automatic UI update)
         self.plates = current_plates
 
@@ -352,10 +458,49 @@ class PlateManagerWidget(Widget):
         self.app.current_status = f"Deleted {len(selected_items)} plates"
     
     def action_edit_plate(self) -> None:
-        """Handle Edit Plate button."""
+        """Handle Edit Plate button - edit configuration for selected plate."""
         logger.info("Edit Plate button pressed")
-        # TODO: Implement edit functionality in Sprint 2
-        self.app.current_status = "Edit Plate not yet implemented"
+
+        # Get current selection state
+        selected_items, selection_mode = self.get_selection_state()
+
+        if selection_mode == "empty":
+            self.app.current_status = "No plates available for editing"
+            return
+
+        if selection_mode != "cursor" or len(selected_items) != 1:
+            self.app.current_status = "Please select exactly one plate to edit"
+            return
+
+        plate_data = selected_items[0]
+        plate_path = plate_data['path']
+
+        # Get current config for this plate (or global default)
+        current_config = self.plate_configs.get(plate_path, self.global_config)
+
+        # Launch configuration form
+        def handle_result(result_config: Any) -> None:
+            if result_config:
+                # Save plate-specific config
+                current_configs = dict(self.plate_configs)
+                current_configs[plate_path] = result_config
+                self.plate_configs = current_configs
+
+                self.app.current_status = f"Updated configuration for {plate_data['name']}"
+                logger.info(f"Saved configuration for plate: {plate_path}")
+            else:
+                self.app.current_status = "Configuration edit cancelled"
+
+        # Create and show config form
+        from openhcs.textual_tui.screens.config_form import ConfigFormScreen
+
+        config_form = ConfigFormScreen(
+            plate_path=plate_path,
+            current_config=current_config,
+            title="Plate Configuration"
+        )
+
+        self.app.push_screen(config_form, handle_result)
     
     def action_init_plate(self) -> None:
         """Handle Init Plate button - initialize selected plates."""
@@ -393,50 +538,52 @@ class PlateManagerWidget(Widget):
     @work(exclusive=True)
     async def _init_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate initialization."""
-        try:
-            for plate_data in selected_items:
-                plate_path = plate_data['path']
+        for plate_data in selected_items:
+            plate_path = plate_data['path']
 
-                # Get orchestrator
-                orchestrator = self.orchestrators.get(plate_path)
-                if not orchestrator:
-                    logger.error(f"No orchestrator found for {plate_path}")
-                    plate_data['status'] = 'X'
-                    plate_data['error'] = "No orchestrator found"
-                    continue
+            # Find the actual plate in self.plates (not the copy from get_selection_state)
+            actual_plate = None
+            for plate in self.plates:
+                if plate['path'] == plate_path:
+                    actual_plate = plate
+                    break
 
-                # Check if already initialized
-                if orchestrator.is_initialized():
-                    logger.info(f"Orchestrator for {plate_data['name']} already initialized")
-                    plate_data['status'] = '-'
-                    continue
+            if not actual_plate:
+                logger.error(f"Plate not found in plates list: {plate_path}")
+                continue
 
-                # Initialize orchestrator (heavy operation)
-                try:
-                    await orchestrator.initialize()
-                    plate_data['status'] = '-'  # Initialized
-                    logger.info(f"Initialized orchestrator for plate: {plate_data['name']}")
+            # Get orchestrator
+            orchestrator = self.orchestrators.get(plate_path)
+            if not orchestrator:
+                logger.error(f"No orchestrator found for {plate_path}")
+                actual_plate['status'] = 'X'
+                actual_plate['error'] = "No orchestrator found"
+                continue
 
-                except Exception as e:
-                    logger.error(f"Failed to initialize {plate_data['name']}: {e}")
-                    plate_data['status'] = 'X'  # Error
-                    plate_data['error'] = str(e)
+            # Check if already initialized
+            if orchestrator.is_initialized():
+                logger.info(f"Orchestrator for {actual_plate['name']} already initialized")
+                actual_plate['status'] = '-'
+                continue
 
-            # Update UI - trigger reactive update
-            self.plates = list(self.plates)  # Force reactive update
+            # Initialize orchestrator (heavy operation - run in executor to avoid blocking UI)
+            await asyncio.get_event_loop().run_in_executor(None, orchestrator.initialize)
+            actual_plate['status'] = '-'  # Initialized
+            logger.info(f"Initialized orchestrator for plate: {actual_plate['name']}")
 
-            # Update status
-            success_count = len([p for p in selected_items if p.get('status') == '-'])
-            error_count = len([p for p in selected_items if p.get('status') == 'X'])
+        # Update UI - trigger reactive update for mutable list
+        self.mutate_reactive(PlateManagerWidget.plates)
 
-            if error_count == 0:
-                self.app.current_status = f"Successfully initialized {success_count} plates"
-            else:
-                self.app.current_status = f"Initialized {success_count} plates, {error_count} errors"
+        # Update status
+        success_count = len([p for p in selected_items if p.get('status') == '-'])
+        error_count = len([p for p in selected_items if p.get('status') == 'X'])
 
-        except Exception as e:
-            logger.error(f"Initialization worker failed: {e}")
-            self.app.current_status = f"Initialization failed: {e}"
+        if error_count == 0:
+            self.app.current_status = f"Successfully initialized {success_count} plates"
+        else:
+            self.app.current_status = f"Initialized {success_count} plates, {error_count} errors"
+
+
     
     def action_compile_plate(self) -> None:
         """Handle Compile Plate button - compile pipelines for selected plates."""
@@ -454,6 +601,18 @@ class PlateManagerWidget(Widget):
         if uninitialized:
             names = [item['name'] for item in uninitialized]
             self.app.current_status = f"Cannot compile uninitialized plates: {', '.join(names)}"
+            return
+
+        # Validate all selected plates have pipelines
+        no_pipeline = []
+        for item in selected_items:
+            pipeline = self._get_current_pipeline_definition(item['path'])
+            if not pipeline:
+                no_pipeline.append(item)
+
+        if no_pipeline:
+            names = [item['name'] for item in no_pipeline]
+            self.app.current_status = f"Cannot compile plates without pipelines: {', '.join(names)}"
             return
 
         # Start async compilation
@@ -474,60 +633,69 @@ class PlateManagerWidget(Widget):
     @work(exclusive=True)
     async def _compile_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate compilation."""
-        try:
-            for plate_data in selected_items:
-                plate_path = plate_data['path']
+        for plate_data in selected_items:
+            plate_path = plate_data['path']
 
-                # Get orchestrator
-                orchestrator = self.orchestrators.get(plate_path)
-                if not orchestrator:
-                    logger.error(f"No orchestrator found for {plate_path}")
-                    plate_data['status'] = 'X'
-                    plate_data['error'] = "No orchestrator found"
-                    continue
+            # Get orchestrator
+            orchestrator = self.orchestrators.get(plate_path)
+            if not orchestrator:
+                logger.error(f"No orchestrator found for {plate_path}")
+                plate_data['status'] = 'X'
+                plate_data['error'] = "No orchestrator found"
+                continue
 
-                # Get pipeline definition (TODO: get from PipelineEditor)
-                pipeline_definition = self._get_current_pipeline_definition()
-                if not pipeline_definition:
-                    logger.warning(f"No pipeline defined for {plate_data['name']}, using empty pipeline")
-                    pipeline_definition = []
+            # Get pipeline definition for this specific plate
+            pipeline_definition = self._get_current_pipeline_definition(plate_path)
+            if not pipeline_definition:
+                logger.warning(f"No pipeline defined for {plate_data['name']}, using empty pipeline")
+                pipeline_definition = []
 
-                try:
-                    # Get wells (heavy operation)
-                    wells = await orchestrator.get_wells()
+            # Get wells (heavy operation)
+            wells = await orchestrator.get_wells()
 
-                    # Compile pipelines (heavy operation)
-                    compiled_contexts = await orchestrator.compile_pipelines(
-                        pipeline_definition=pipeline_definition,
-                        well_filter=wells
-                    )
+            # Compile pipelines (heavy operation)
+            compiled_contexts = await orchestrator.compile_pipelines(
+                pipeline_definition=pipeline_definition,
+                well_filter=wells
+            )
 
-                    # Store compiled data
-                    plate_data['compiled_contexts'] = compiled_contexts
-                    plate_data['pipeline_definition'] = pipeline_definition
-                    plate_data['status'] = 'o'  # Compiled
-                    logger.info(f"Compiled pipeline for plate: {plate_data['name']}")
+            # Store compiled data
+            plate_data['compiled_contexts'] = compiled_contexts
+            plate_data['pipeline_definition'] = pipeline_definition
+            plate_data['status'] = 'o'  # Compiled
+            logger.info(f"Compiled pipeline for plate: {plate_data['name']}")
 
-                except Exception as e:
-                    logger.error(f"Failed to compile {plate_data['name']}: {e}")
-                    plate_data['status'] = 'X'  # Error
-                    plate_data['error'] = str(e)
+        # Update UI - trigger reactive update
+        self.plates = list(self.plates)  # Force reactive update
 
-            # Update UI - trigger reactive update
-            self.plates = list(self.plates)  # Force reactive update
+        # Update status
+        success_count = len([p for p in selected_items if p.get('status') == 'o'])
+        error_count = len([p for p in selected_items if p.get('status') == 'X'])
 
-            # Update status
-            success_count = len([p for p in selected_items if p.get('status') == 'o'])
-            error_count = len([p for p in selected_items if p.get('status') == 'X'])
+        if error_count == 0:
+            self.app.current_status = f"Successfully compiled {success_count} plates"
+        else:
+            self.app.current_status = f"Compiled {success_count} plates, {error_count} errors"
 
-            if error_count == 0:
-                self.app.current_status = f"Successfully compiled {success_count} plates"
-            else:
-                self.app.current_status = f"Compiled {success_count} plates, {error_count} errors"
 
-        except Exception as e:
-            logger.error(f"Compilation worker failed: {e}")
-            self.app.current_status = f"Compilation failed: {e}"
+
+    def get_plate_status(self, plate_path: str) -> str:
+        """Get status for specific plate."""
+        for plate in self.plates:
+            if plate.get('path') == plate_path:
+                return plate.get('status', '?')
+        return '?'  # Default to added status
+
+    def _has_pipelines(self, plates: List[Dict]) -> bool:
+        """Check if all plates have pipeline definitions."""
+        if not self.pipeline_editor:
+            return False
+
+        for plate in plates:
+            pipeline = self.pipeline_editor.get_pipeline_for_plate(plate['path'])
+            if not pipeline:
+                return False
+        return True
 
     def _get_current_pipeline_definition(self, plate_path: str = None) -> List:
         """Get current pipeline definition from PipelineEditor."""
@@ -582,65 +750,54 @@ class PlateManagerWidget(Widget):
     @work(exclusive=True)
     async def _run_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate execution."""
-        try:
-            for plate_data in selected_items:
-                plate_path = plate_data['path']
+        for plate_data in selected_items:
+            plate_path = plate_data['path']
 
-                # Get orchestrator and compiled data
-                orchestrator = self.orchestrators.get(plate_path)
-                if not orchestrator:
-                    logger.error(f"No orchestrator found for {plate_path}")
-                    plate_data['status'] = 'X'
-                    plate_data['error'] = "No orchestrator found"
-                    continue
+            # Get orchestrator and compiled data
+            orchestrator = self.orchestrators.get(plate_path)
+            if not orchestrator:
+                logger.error(f"No orchestrator found for {plate_path}")
+                plate_data['status'] = 'X'
+                plate_data['error'] = "No orchestrator found"
+                continue
 
-                compiled_contexts = plate_data.get('compiled_contexts')
-                pipeline_definition = plate_data.get('pipeline_definition')
+            compiled_contexts = plate_data.get('compiled_contexts')
+            pipeline_definition = plate_data.get('pipeline_definition')
 
-                if not compiled_contexts or not pipeline_definition:
-                    logger.error(f"No compiled data found for {plate_data['name']}")
-                    plate_data['status'] = 'X'
-                    plate_data['error'] = "No compiled data found"
-                    continue
+            if not compiled_contexts or not pipeline_definition:
+                logger.error(f"No compiled data found for {plate_data['name']}")
+                plate_data['status'] = 'X'
+                plate_data['error'] = "No compiled data found"
+                continue
 
-                # Set status to running
-                plate_data['status'] = '!'  # Running
-                self.plates = list(self.plates)  # Force UI update
+            # Set status to running
+            plate_data['status'] = '!'  # Running
+            self.plates = list(self.plates)  # Force UI update
 
-                try:
-                    # Execute compiled plate (heavy operation)
-                    results = await orchestrator.execute_compiled_plate(
-                        pipeline_definition=pipeline_definition,
-                        compiled_contexts=compiled_contexts
-                    )
+            # Execute compiled plate (heavy operation)
+            results = await orchestrator.execute_compiled_plate(
+                pipeline_definition=pipeline_definition,
+                compiled_contexts=compiled_contexts
+            )
 
-                    # Store results and update status
-                    plate_data['execution_results'] = results
-                    if results and all(r.get('status') != 'error' for r in results.values()):
-                        plate_data['status'] = 'o'  # Completed successfully
-                        logger.info(f"Successfully executed plate: {plate_data['name']}")
-                    else:
-                        plate_data['status'] = 'X'  # Execution error
-                        plate_data['error'] = "Execution failed - check logs"
-                        logger.error(f"Execution failed for {plate_data['name']}")
-
-                except Exception as e:
-                    logger.error(f"Failed to execute {plate_data['name']}: {e}")
-                    plate_data['status'] = 'X'  # Error
-                    plate_data['error'] = str(e)
-
-            # Update UI - trigger reactive update
-            self.plates = list(self.plates)  # Force reactive update
-
-            # Update status
-            success_count = len([p for p in selected_items if p.get('status') == 'o'])
-            error_count = len([p for p in selected_items if p.get('status') == 'X'])
-
-            if error_count == 0:
-                self.app.current_status = f"Successfully executed {success_count} plates"
+            # Store results and update status
+            plate_data['execution_results'] = results
+            if results and all(r.get('status') != 'error' for r in results.values()):
+                plate_data['status'] = 'o'  # Completed successfully
+                logger.info(f"Successfully executed plate: {plate_data['name']}")
             else:
-                self.app.current_status = f"Executed {success_count} plates, {error_count} errors"
+                plate_data['status'] = 'X'  # Execution error
+                plate_data['error'] = "Execution failed - check logs"
+                logger.error(f"Execution failed for {plate_data['name']}")
 
-        except Exception as e:
-            logger.error(f"Execution worker failed: {e}")
-            self.app.current_status = f"Execution failed: {e}"
+        # Update UI - trigger reactive update
+        self.plates = list(self.plates)  # Force reactive update
+
+        # Update status
+        success_count = len([p for p in selected_items if p.get('status') == 'o'])
+        error_count = len([p for p in selected_items if p.get('status') == 'X'])
+
+        if error_count == 0:
+            self.app.current_status = f"Successfully executed {success_count} plates"
+        else:
+            self.app.current_status = f"Executed {success_count} plates, {error_count} errors"

@@ -1,14 +1,12 @@
 import sys
 import json
 from pathlib import Path
-from datetime import datetime
-from docs.ai_collaboration.stateful_interpreter import StatefulInterpreter
+from datetime import datetime, timezone
 
 class PersistentCLI:
     def __init__(self, state_file="cli_state.json"):
         self.state_file = Path(state_file)
         self.state = self._load_state()
-        self.interpreter = StatefulInterpreter()
         
     def _load_state(self):
         default_state = {
@@ -36,7 +34,7 @@ class PersistentCLI:
         
     def process_input(self, input_str):
         self.state["message_count"] += 1
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         # Store command with timestamp
         self.state["input_log"][f"msg_{self.state['message_count']}"] = {
@@ -66,7 +64,7 @@ class PersistentCLI:
                 try:
                     value = float(parts[1].strip())
                     self.state["metrics"][key] = value
-                    response = f"Metric set: {key} = {value}"
+                    response = f"Metric set: {极ey} = {value}"
                 except ValueError:
                     response = "Metric value must be a number"
             else:
@@ -90,15 +88,6 @@ class PersistentCLI:
             response = self._get_progress_report()
         elif input_str == "metrics":
             response = self._get_metrics()
-        elif input_str.startswith("run "):
-            code = input_str[4:].strip()
-            result = self.interpreter.execute(code)
-            if 'output' in result:
-                response = result['output']
-            elif 'error' in result:
-                response = f"Error: {result['error']}"
-            else:
-                response = str(result)
         else:
             response = f"Processed: {input_str}"
             
@@ -125,12 +114,22 @@ class PersistentCLI:
             report += f"- {objective}: {current}/{target} ({progress:.1f}%)\n"
         return report
 
-if __name__ == "__main__":
+def main():
     cli = PersistentCLI()
-    print("Persistent CLI started. Type 'exit' to quit.")
-    while True:
-        user_input = input("> ")
-        if user_input.strip().lower() == "exit":
-            break
-        response = cli.process_input(user_input)
+    if len(sys.argv) > 1:
+        # Non-interactive mode
+        command = " ".join(sys.argv[1:])
+        response = cli.process_input(command)
         print(response)
+    else:
+        # Interactive mode
+        print("Persistent CLI started. Type 'exit' to quit.")
+        while True:
+            user_input = input("> ")
+            if user_input.strip().lower() == "exit":
+                break
+            response = cli.process_input(user_input)
+            print(response)
+
+if __name__ == "__main__":
+    main()

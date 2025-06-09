@@ -1,52 +1,15 @@
 """Help dialog screen for OpenHCS Textual TUI."""
 
-from textual.screen import ModalScreen
 from textual.app import ComposeResult
-from textual.containers import Container, VerticalScroll
-from textual.widgets import Button, Static
+from textual.widgets import Static, Button
+from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
 
 
-class HelpDialogScreen(ModalScreen):
-    """Help dialog with static content from old TUI - floating window style."""
+class HelpDialogScreen(BaseFloatingWindow):
+    """Help dialog using the global floating window system."""
 
-    DEFAULT_CSS = """
-    HelpDialogScreen {
-        align: center middle;
-        background: $background 60%;
-    }
-
-    #help_dialog {
-        /* Compact sizing */
-        width: auto;
-        height: auto;
-        max-width: 60;
-        max-height: 25;
-        padding: 1 2;  /* Reasonable padding */
-    }
-    
-    .dialog-title {
-        text-style: bold;
-        text-align: center;
-        margin: 0 0 1 0;  /* Tighter spacing */
-    }
-    
-    #help_content {
-        height: auto;
-        margin: 0;  /* No extra margin */
-    }
-    
-    .dialog-buttons {
-        /* Don't dock - let it flow naturally */
-        height: auto;
-        align: center middle;
-        margin-top: 1;  /* Small gap before button */
-    }
-    
-    .dialog-buttons Button {
-        width: 16;
-        margin: 0;
-    }
-    """
+    def __init__(self, **kwargs):
+        super().__init__(title="OpenHCS Help", **kwargs)
 
     HELP_TEXT = """OpenHCS - Open High-Content Screening
 
@@ -64,23 +27,18 @@ Workflow:
 3. Compile → Create execution plan
 4. Run → Process images
 
-For detailed documentation, see Nature Methods publication."""
+For detailed documentation, see Nature Methods
+publication."""
 
-    def compose(self) -> ComposeResult:
-        """Compose the floating help dialog."""
-        with Container(id="help_dialog", classes="dialog"):
-            yield Static("OpenHCS Help", classes="dialog-title")
-            
-            # Just a container - no need for scroll on small content
-            yield Container(
-                Static(self.HELP_TEXT),
-                id="help_content"
-            )
-            
-            with Container(classes="dialog-buttons"):
-                yield Button("Close", id="close_btn", variant="default", compact=True)
+    def compose_content(self) -> ComposeResult:
+        """Compose the help dialog content."""
+        yield Static(self.HELP_TEXT)
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        if event.button.id == "close_btn":
-            self.dismiss(None)
+    def compose_buttons(self) -> ComposeResult:
+        """Provide Close button."""
+        yield Button("Close", id="close", compact=True)
+
+    def handle_button_action(self, button_id: str, button_text: str):
+        """Handle button actions - Close button dismisses dialog."""
+        return None  # Dismiss with None result
+    

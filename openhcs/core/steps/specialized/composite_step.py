@@ -59,5 +59,5 @@ class CompositeStep(FunctionStep):
         )
 
         # Set variable components
-        self.variable_components = ['channel']
+        self.variable_components = [VariableComponents.CHANNEL]
         self.group_by = None

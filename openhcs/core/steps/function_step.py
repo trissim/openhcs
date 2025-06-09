@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDic
 from openhcs.constants.constants import (DEFAULT_IMAGE_EXTENSION,
                                              DEFAULT_IMAGE_EXTENSIONS,
                                              DEFAULT_SITE_PADDING, Backend,
-                                             MemoryType)
+                                             MemoryType, VariableComponents, GroupBy)
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
@@ -181,7 +181,8 @@ def _process_single_pattern_group(
              raise RuntimeError("MicroscopeHandler not available in context.")
 
         matching_files = context.microscope_handler.path_list_from_pattern(
-            str(step_input_dir), pattern_group_info, context.filemanager, read_backend, variable_components
+            str(step_input_dir), pattern_group_info, context.filemanager, read_backend,
+            [vc.value for vc in variable_components] if variable_components else None
         )
 
         if not matching_files:
@@ -301,9 +302,9 @@ class FunctionStep(AbstractStep):
 
     def __init__(
         self,
-        func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]], 
-        *, name: Optional[str] = None, variable_components: Optional[List[str]] = ['site'], 
-        group_by: str = "channel", force_disk_output: bool = False
+        func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
+        *, name: Optional[str] = None, variable_components: Optional[List[VariableComponents]] = [VariableComponents.SITE],
+        group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False
     ):
         actual_func_for_name = func
         if isinstance(func, tuple): actual_func_for_name = func[0]
@@ -362,8 +363,8 @@ class FunctionStep(AbstractStep):
                 read_backend,                  # backend
                 well_filter=[well_id],         # well_filter
                 extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
-                group_by=group_by,             # group_by
-                variable_components=variable_components  # variable_components
+                group_by=group_by.value if group_by else None,             # group_by
+                variable_components=[vc.value for vc in variable_components] if variable_components else None  # variable_components
             )
 
             # 🔥 STEP EXECUTION DEBUG
@@ -390,7 +391,7 @@ class FunctionStep(AbstractStep):
                 raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")
 
             grouped_patterns, comp_to_funcs, comp_to_base_args = prepare_patterns_and_functions(
-                patterns_by_well[well_id], func_from_plan, component=group_by
+                patterns_by_well[well_id], func_from_plan, component=group_by.value if group_by else None
             )
 
             for comp_val, current_pattern_list in grouped_patterns.items():

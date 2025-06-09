@@ -25,9 +25,9 @@ from openhcs.processing.func_registry import (FUNC_REGISTRY,
                                                  get_functions_by_memory_type,
                                                  get_valid_memory_types,
                                                  is_registry_initialized)
-# Import function registry components
-from openhcs.processing.function_registry import (cupy, jax, numpy,
-                                                     tensorflow, torch)
+# Import decorators directly from core module (function_registry.py is deprecated)
+from openhcs.core.memory.decorators import (cupy, jax, numpy,
+                                           tensorflow, torch)
 
 __all__ = [
     # Image processor components

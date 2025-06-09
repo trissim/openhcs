@@ -7,11 +7,16 @@ This is the main application class that orchestrates the entire TUI.
 
 import asyncio
 import logging
+import traceback
 from pathlib import Path
 from typing import Optional
 
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
+from textual.screen import ModalScreen
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.widgets import Static, Button, TextArea
+from rich.syntax import Syntax
 
 # OpenHCS imports
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
@@ -23,8 +28,60 @@ from openhcs.io.filemanager import FileManager
 from .widgets.main_content import MainContent
 from .widgets.menu_bar import MenuBar
 from .widgets.status_bar import StatusBar
+from .widgets.floating_window import BaseFloatingWindow
 
 logger = logging.getLogger(__name__)
+
+
+class ErrorDialog(BaseFloatingWindow):
+    """Error dialog with syntax highlighting using global floating window system."""
+
+    def __init__(self, error_message: str, error_details: str = ""):
+        self.error_message = error_message
+        self.error_details = error_details
+        super().__init__(title="🚨 ERROR")
+
+    def compose_content(self) -> ComposeResult:
+        """Compose the error dialog content."""
+        # Error message
+        yield Static(self.error_message, classes="error-message", markup=False)
+
+        # Error details with syntax highlighting if available
+        if self.error_details:
+            yield TextArea(
+                text=self.error_details,
+                language="python",  # Python syntax highlighting for tracebacks
+                theme="monokai",
+                read_only=True,  # Make it read-only but selectable
+                show_line_numbers=True,
+                soft_wrap=True,
+                id="error_content"
+            )
+
+    def compose_buttons(self) -> ComposeResult:
+        """Provide Close button."""
+        yield Button("Close", id="close", compact=True)
+
+    def handle_button_action(self, button_id: str, button_text: str):
+        """Handle button actions - Close button dismisses dialog."""
+        return None  # Dismiss with None result
+
+    DEFAULT_CSS = """
+    .error-message {
+        color: $error;
+        text-style: bold;
+        margin-bottom: 1;
+        text-align: center;
+    }
+
+    #error_content {
+        height: auto;
+        margin: 0;
+        max-height: 20;
+        min-height: 10;
+        border: solid $primary;
+    }
+    """
 
 
 class OpenHCSTUIApp(App):
@@ -34,115 +91,122 @@ class OpenHCSTUIApp(App):
     This app provides a complete interface for OpenHCS pipeline management
     with proper reactive state management and clean architectural boundaries.
     """
-
-    CSS = """
-    /* Consistent dialog styling */
-    .dialog {
-        background: $surface;
-        border: tall $primary;
-        padding: 1 2;
-        width: auto;
-        height: auto;
-    }
-
-    .dialog-title {
-        text-align: center;
-        text-style: bold;
-        color: $primary;
-        margin-bottom: 1;
-    }
-
-    .dialog-buttons {
-        dock: bottom;
-        height: 3;
-        content-align: center middle;
-    }
-
-    /* MenuBar */
-    MenuBar {
-        height: 3;
-        border: solid white;
-    }
-
-    /* All buttons - uniform height and styling */
-    Button {
-        height: 1;
-    }
-
-    /* MenuBar buttons - content-based width */
-    MenuBar Button {
-        margin: 0 1;
-        width: auto;
-    }
-
-    /* MenuBar title - properly centered */
-    MenuBar Static {
-        text-align: center;
-        content-align: center middle;
-        width: 1fr;
-        text-style: bold;
-    }
-
-    /* Main content containers with proper borders and responsive sizing */
-    #plate_manager_container {
-        border: solid white;
-        width: 1fr;
-        min-width: 0;
-    }
-
-    #pipeline_editor_container {
-        border: solid white;
-        width: 1fr;
-        min-width: 0;
-    }
-
-    /* StatusBar */
-    StatusBar {
-        height: 3;
-        border: solid white;
-    }
-
-    /* Button containers - full width */
-    #plate_manager_container Horizontal,
-    #pipeline_editor_container Horizontal {
-        width: 100%;
-    }
-
-    /* Content area buttons - responsive width distribution */
-    #plate_manager_container Button,
-    #pipeline_editor_container Button {
-        width: 1fr;
-        margin: 0;
-        min-width: 0;
-    }
-
-    /* App fills terminal height properly */
-    OpenHCSTUIApp {
-        height: 100vh;
-    }
-
-    /* Main content layout fills remaining space and is responsive */
-    MainContent {
-        height: 1fr;
-        width: 100%;
-    }
-
-    /* Main horizontal layout is responsive */
-    MainContent > Horizontal {
-        width: 100%;
-        height: 100%;
-    }
-
-    /* Content areas adapt to available space */
-    ScrollableContainer {
-        height: 1fr;
-    }
-
-    /* Static content styling */
-    Static {
-        text-align: center;
-    }
-    """
+    CSS_PATH = "styles.css"
+#    CSS = """
+#    /* General dialog styling */
+#    .dialog {
+#        background: $surface;
+#        border: tall $primary;
+#        padding: 1 2;
+#        width: auto;
+#        height: auto;
+#    }
+#
+#    /* SelectionList styling - remove circles, keep highlighting */
+#    SelectionList > .selection-list--option {
+#        padding-left: 1;
+#        text-style: none;
+#    }
+#
+#    SelectionList > .selection-list--option-highlighted {
+#        background: $accent;
+#        color: $text;
+#    }
+#
+#    /* MenuBar */
+#    MenuBar {
+#        height: 3;
+#        border: solid white;
+#    }
+#
+#    /* All buttons - uniform height and styling */
+#    Button {
+#        height: 1;
+#    }
+#
+#    /* MenuBar buttons - content-based width */
+#    MenuBar Button {
+#        margin: 0 1;
+#        width: auto;
+#    }
+#
+#    /* MenuBar title - properly centered */
+#    MenuBar Static {
+#        text-align: center;
+#        content-align: center middle;
+#        width: 1fr;
+#        text-style: bold;
+#    }
+#
+#    /* Function list header buttons - specific styling for spacing */
+#    #function_list_header Button {
+#        margin: 0 1; /* 0 vertical, 1 horizontal margin */
+#        width: auto; /* Let buttons size to their content */
+#    }
+#
+#    /* Main content containers with proper borders and responsive sizing */
+#    #plate_manager_container {
+#        border: solid white;
+#        width: 1fr;
+#        min-width: 0;
+#    }
+#
+#    #pipeline_editor_container {
+#        border: solid white;
+#        width: 1fr;
+#        min-width: 0;
+#    }
+#
+#    /* StatusBar */
+#    StatusBar {
+#        height: 3;
+#        border: solid white;
+#    }
+#
+#    /* Button containers - full width */
+#    #plate_manager_container Horizontal,
+#    #pipeline_editor_container Horizontal {
+#        width: 100%;
+#    }
+#
+#    /* Content area buttons - responsive width distribution */
+#    #plate_manager_container Button,
+#    #pipeline_editor_container Button {
+#        width: 1fr;
+#        margin: 0;
+#        min-width: 0;
+#    }
+#
+#    /* App fills terminal height properly */
+#    OpenHCSTUIApp {
+#        height: 100vh;
+#    }
+#
+#    /* Main content layout fills remaining space and is responsive */
+#    MainContent {
+#        height: 1fr;
+#        width: 100%;
+#    }
+#
+#    /* Main horizontal layout is responsive */
+#    MainContent > Horizontal {
+#        width: 100%;
+#        height: 100%;
+#    }
+#
+#
+#    /* Content areas adapt to available space */
+#    ScrollableContainer {
+#        height: 1fr;
+#    }
+#
+#    /* Static content styling */
+#    Static {
+#        text-align: center;
+#    }
+#
+#
+#    """
     
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
@@ -204,29 +268,55 @@ class OpenHCSTUIApp(App):
         logger.info("OpenHCS TUI shutting down")
         self.exit()
 
+    def show_error(self, error_message: str, exception: Exception = None) -> None:
+        """Show a global error dialog with optional exception details."""
+        error_details = ""
+        if exception:
+            error_details = f"Exception: {type(exception).__name__}\n"
+            error_details += f"Message: {str(exception)}\n\n"
+            error_details += "Traceback:\n"
+            error_details += traceback.format_exc()
+
+        logger.error(f"Global error: {error_message}", exc_info=exception)
+
+        # Show error dialog
+        error_dialog = ErrorDialog(error_message, error_details)
+        self.push_screen(error_dialog)
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Override Textual's exception handling to show all errors in dialogs."""
+        # Show the error in our dialog
+        self.show_error(f"Unhandled exception: {str(error)}", error)
+
+        # Don't call super() to prevent Textual's default handling
+        # This keeps the app running instead of crashing
+
+    async def _on_exception(self, error: Exception) -> None:
+        """Override async exception handling."""
+        self._handle_exception(error)
+
+    def _on_unhandled_exception(self, error: Exception) -> None:
+        """Override unhandled exception handling."""
+        self._handle_exception(error)
+
 
 async def main():
     """
     Main entry point for the OpenHCS Textual TUI.
-    
+
     This function handles initialization and runs the application.
+    Note: Logging is setup by the main entry point, not here.
     """
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    
-    logger.info("Starting OpenHCS Textual TUI...")
-    
+    logger.info("Starting OpenHCS Textual TUI from app.py...")
+
     try:
         # Load configuration
         global_config = get_default_global_config()
-        
+
         # Setup GPU registry
         setup_global_gpu_registry(global_config=global_config)
         logger.info("GPU registry setup completed")
-        
+
         # Create and run the app
         app = OpenHCSTUIApp(global_config=global_config)
         await app.run_async()

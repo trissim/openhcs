@@ -27,6 +27,8 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
+from openhcs.constants.constants import VariableComponents, GroupBy
+
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
     from openhcs.core.context.processing_context import ProcessingContext
@@ -100,9 +102,9 @@ class AbstractStep(abc.ABC):
         self,
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
-        variable_components: Optional[List[str]] = None,
+        variable_components: Optional[List[VariableComponents]] = None,
         force_disk_output: Optional[bool] = False,
-        group_by: Optional[str] = None,
+        group_by: Optional[GroupBy] = None,
         input_dir: Optional[Union[str,Path]] = None, # Used during path planning
         output_dir: Optional[Union[str,Path]] = None # Used during path planning
     ) -> None:

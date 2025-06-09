@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple, Callable, Any, Optional
 import logging
 
 # Import from func_registry to avoid circular imports
+# The FUNC_REGISTRY is auto-initialized on import (following storage_registry pattern)
 from openhcs.processing.func_registry import FUNC_REGISTRY, get_function_info, get_functions_by_memory_type
 
 logger = logging.getLogger(__name__)

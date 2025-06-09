@@ -5,7 +5,6 @@ This module exports all constants defined in the constants submodules.
 """
 
 # These imports are re-exported through __all__
-from openhcs.constants.clauses import Clause
 from openhcs.constants.constants import (  # Backend constants; Memory constants; I/O constants; Pipeline constants; Default constants
     CPU_MEMORY_TYPES, DEFAULT_ASSEMBLER_LOG_LEVEL, DEFAULT_BACKEND,
     DEFAULT_CPU_THREAD_COUNT, DEFAULT_GROUP_BY, DEFAULT_IMAGE_EXTENSION,
@@ -22,9 +21,6 @@ from openhcs.constants.constants import (  # Backend constants; Memory constants
     GroupBy, MemoryType, Microscope, VariableComponents)
 
 __all__ = [
-    # Clauses
-    'Clause',
-
     # Backends
     'Backend', 'DEFAULT_BACKEND', 'REQUIRES_DISK_READ', 'REQUIRES_DISK_WRITE',
     'FORCE_DISK_WRITE', 'READ_BACKEND', 'WRITE_BACKEND',
