@@ -325,20 +325,7 @@ class PipelineEditorWidget(ButtonListWidget):
             # Buttons might not be mounted yet
             pass
     
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        button_id = event.button.id
-        
-        if button_id == "add_step":
-            self.action_add_step()
-        elif button_id == "del_step":
-            self.action_delete_step()
-        elif button_id == "edit_step":
-            self.action_edit_step()
-        elif button_id == "load_pipeline":
-            self.action_load_pipeline()
-        elif button_id == "save_pipeline":
-            self.action_save_pipeline()
+
     
     def action_add_step(self) -> None:
         """Handle Add Step button - now triggers modal."""

@@ -16,7 +16,7 @@ from textual.reactive import reactive
 from textual.widgets import Button, Static, SelectionList
 from textual.widget import Widget
 from .button_list_widget import ButtonListWidget, ButtonConfig
-from textual import work
+from textual import work, on
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
@@ -105,16 +105,10 @@ class PlateManagerWidget(ButtonListWidget):
             self.action_run_plate()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
-        """Handle selection changes from ButtonListWidget."""
-        # Update selected_plate - use first selected item if any
-        if selected_values:
-            self.selected_plate = selected_values[0]  # This is the plate path
-        else:
-            self.selected_plate = ""
-
-        # Notify parent about selection
-        if self.on_plate_selected and self.selected_plate:
-            self.on_plate_selected(self.selected_plate)
+        """Handle selection changes from ButtonListWidget (checkmarks only)."""
+        # This handles multi-selection (checkmarks) for operations like Init/Compile/Run
+        # Pipeline editor responds to blue highlight via watch_highlighted_item()
+        logger.debug(f"Checkmarks changed: {len(selected_values)} items selected")
 
     def _handle_item_moved(self, from_index: int, to_index: int) -> None:
         """Handle item movement from ButtonListWidget."""
@@ -130,6 +124,10 @@ class PlateManagerWidget(ButtonListWidget):
         plate_name = plate['name']
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved plate '{plate_name}' {direction}"
+
+
+
+
 
     def on_mount(self) -> None:
         """Called when the widget is mounted - ensure display is up to date."""
@@ -162,14 +160,20 @@ class PlateManagerWidget(ButtonListWidget):
         self._update_button_states()
 
     
+    def watch_highlighted_item(self, plate_path: str) -> None:
+        """Automatically update pipeline editor when highlighted_item changes (blue highlight)."""
+        # Update selected_plate for pipeline editor
+        self.selected_plate = plate_path
+        logger.debug(f"Highlighted plate: {plate_path}")
+
     def watch_selected_plate(self, plate_path: str) -> None:
         """Automatically update UI when selected_plate changes."""
         self._update_button_states()
-        
+
         # Notify parent about selection
         if self.on_plate_selected and plate_path:
             self.on_plate_selected(plate_path)
-        
+
         logger.debug(f"Selected plate: {plate_path}")
 
 
@@ -177,19 +181,44 @@ class PlateManagerWidget(ButtonListWidget):
 
 
     def get_selection_state(self) -> tuple[List[Dict], str]:
-        """Get current selection state."""
-        # Use the selected_plate from ButtonListWidget
-        if self.selected_plate:
-            # Find the selected plate
-            selected_items = []
-            for plate in self.plates:
-                if plate.get('path') == self.selected_plate:
-                    selected_items.append(plate)
-                    break
+        """Get current selection state - supports both single and multi-selection."""
+        try:
+            # Get the SelectionList widget to check for multi-selection (checkmarks)
+            selection_list = self.query_one(f"#{self.list_id}")
+            multi_selected_values = selection_list.selected
 
-            return selected_items, "cursor"
-        else:
-            return [], "empty"
+            if multi_selected_values:
+                # Multi-selection mode (checkmarks) - return all checked items
+                selected_items = []
+                for plate in self.plates:
+                    if plate.get('path') in multi_selected_values:
+                        selected_items.append(plate)
+                return selected_items, "checkbox"
+
+            elif self.selected_plate:
+                # Single selection mode (blue highlight) - return highlighted item
+                selected_items = []
+                for plate in self.plates:
+                    if plate.get('path') == self.selected_plate:
+                        selected_items.append(plate)
+                        break
+                return selected_items, "cursor"
+
+            else:
+                return [], "empty"
+
+        except Exception as e:
+            logger.warning(f"Failed to get selection state: {e}")
+            # Fallback to single selection mode
+            if self.selected_plate:
+                selected_items = []
+                for plate in self.plates:
+                    if plate.get('path') == self.selected_plate:
+                        selected_items.append(plate)
+                        break
+                return selected_items, "cursor"
+            else:
+                return [], "empty"
 
     def get_operation_description(self, selected_items: List[Dict], selection_mode: str, operation: str) -> str:
         """Generate human-readable description of what will be operated on."""

@@ -118,7 +118,9 @@ class ButtonListWidget(Widget):
     
     # Reactive properties for data and selection
     items: reactive[List[Dict]] = reactive([])
-    selected_item: reactive[str] = reactive("")
+    selected_item: reactive[str] = reactive("")  # First selected item (for backward compatibility)
+    highlighted_item: reactive[str] = reactive("")  # Currently highlighted item (blue highlight)
+    selected_items: reactive[List[str]] = reactive([])  # All selected items (checkmarks)
     
     def __init__(
         self,
@@ -229,17 +231,44 @@ class ButtonListWidget(Widget):
     
     @on(SelectionList.SelectedChanged)
     def handle_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
-        """Handle SelectionList selection changes."""
-        # Get the first selected item (for single selection behavior)
+        """Handle SelectionList selection changes (checkmarks)."""
+        # Get all selected items (checkmarks)
         selected_values = event.selection_list.selected
+        self.selected_items = list(selected_values)
+
+        # Update selected_item for backward compatibility (first selected item)
         if selected_values:
             self.selected_item = selected_values[0]
         else:
-            self.selected_item = None
+            self.selected_item = ""
 
         # Notify callback if provided
         if self.on_selection_changed_callback:
             self.on_selection_changed_callback(selected_values)
+
+        # Update button states
+        self._update_button_states()
+
+    @on(SelectionList.SelectionHighlighted)
+    def handle_highlight_changed(self, event: SelectionList.SelectionHighlighted) -> None:
+        """Handle SelectionList highlight changes (blue highlight)."""
+        try:
+            # Get the highlighted item using the selection_list's highlighted property
+            selection_list = event.selection_list
+            highlighted_index = selection_list.highlighted
+
+            if highlighted_index is not None and 0 <= highlighted_index < len(self.items):
+                # Get the value for the highlighted item
+                highlighted_item = self.items[highlighted_index]
+                _, value = self.format_item_for_display(highlighted_item)
+                self.highlighted_item = value
+                logger.debug(f"Highlight changed to index {highlighted_index}: {value}")
+            else:
+                self.highlighted_item = ""
+                logger.debug("No highlight (cleared)")
+        except Exception as e:
+            logger.warning(f"Failed to handle highlight change: {e}")
+            self.highlighted_item = ""
 
         # Update button states
         self._update_button_states()
