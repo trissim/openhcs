@@ -80,7 +80,7 @@ class InlineButtonSelectionList(SelectionList):
         # Get content offset to account for padding/borders
         content_offset = event.get_content_offset(self)
         if content_offset is None:
-            logger.info(f"Click outside content area at ({event.x}, {event.y})")
+            # Click outside content area - let it bubble up normally
             return
 
         # Use content-relative coordinates
@@ -94,16 +94,17 @@ class InlineButtonSelectionList(SelectionList):
                 logger.info(f"UP button clicked: moving item {row} to {row - 1}")
                 if row > 0 and self.on_item_moved_callback:
                     self.on_item_moved_callback(row, row - 1)
-                    event.stop()
+                    event.stop()  # Stop event - this was a button click
                     return
             elif 3 <= x <= 5:  # ↓ button area
                 logger.info(f"DOWN button clicked: moving item {row} to {row + 1}")
                 if row < self.option_count - 1 and self.on_item_moved_callback:
                     self.on_item_moved_callback(row, row + 1)
-                    event.stop()
+                    event.stop()  # Stop event - this was a button click
                     return
 
         # Not a button click - let normal SelectionList behavior continue
+        # DO NOT call event.stop() here - let the event bubble to SelectionList
         logger.info(f"Click outside button area at content ({x}, {y}) - letting SelectionList handle it")
 
 
@@ -231,19 +232,27 @@ class ButtonListWidget(Widget):
             sanitized = "item_unknown"
         return sanitized
     
-    @on(SelectionList.OptionSelected)
-    def handle_option_selected(self, event: SelectionList.OptionSelected) -> None:
+    @on(SelectionList.SelectedChanged)
+    def handle_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         """Handle SelectionList selection changes."""
-        self.selected_item = event.option.value
+        logger.info(f"🎯 SelectionList.SelectedChanged event received: {event.selection_list.selected}")
+
+        # Get the first selected item (for single selection behavior)
+        selected_values = event.selection_list.selected
+        if selected_values:
+            self.selected_item = selected_values[0]
+        else:
+            self.selected_item = None
 
         # Notify callback if provided
         if self.on_selection_changed_callback:
-            self.on_selection_changed_callback([event.option.value])
+            logger.info(f"🔄 Calling selection callback with: {selected_values}")
+            self.on_selection_changed_callback(selected_values)
 
         # Update button states
         self._update_button_states()
 
-        logger.debug(f"Selected item: {event.option.value}")
+        logger.info(f"✅ Selection handled: {selected_values}")
     
     @on(Button.Pressed)
     def handle_button_pressed(self, event: Button.Pressed) -> None:
