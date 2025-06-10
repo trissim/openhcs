@@ -85,19 +85,16 @@ class InlineButtonSelectionList(SelectionList):
 
         # Use content-relative coordinates
         x, y = content_offset.x, content_offset.y
-        logger.info(f"Click at content offset ({x}, {y}), option_count={self.option_count}")
 
         # Check if click is in button area (first 7 characters: " ↑  ↓  ")
         if x < 7 and y < self.option_count:
             row = int(y)  # Ensure integer row
             if 0 <= x <= 2:  # ↑ button area
-                logger.info(f"UP button clicked: moving item {row} to {row - 1}")
                 if row > 0 and self.on_item_moved_callback:
                     self.on_item_moved_callback(row, row - 1)
                     event.stop()  # Stop event - this was a button click
                     return
             elif 3 <= x <= 5:  # ↓ button area
-                logger.info(f"DOWN button clicked: moving item {row} to {row + 1}")
                 if row < self.option_count - 1 and self.on_item_moved_callback:
                     self.on_item_moved_callback(row, row + 1)
                     event.stop()  # Stop event - this was a button click
@@ -105,7 +102,6 @@ class InlineButtonSelectionList(SelectionList):
 
         # Not a button click - let normal SelectionList behavior continue
         # DO NOT call event.stop() here - let the event bubble to SelectionList
-        logger.info(f"Click outside button area at content ({x}, {y}) - letting SelectionList handle it")
 
 
 
@@ -178,7 +174,6 @@ class ButtonListWidget(Widget):
     
     def on_mount(self) -> None:
         """Called when widget is mounted."""
-        logger.info(f"ButtonListWidget mounted with {len(self.button_configs)} buttons")
         self._update_button_states()
         # Update the SelectionList when mounted
         if self.items:
@@ -235,8 +230,6 @@ class ButtonListWidget(Widget):
     @on(SelectionList.SelectedChanged)
     def handle_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         """Handle SelectionList selection changes."""
-        logger.info(f"🎯 SelectionList.SelectedChanged event received: {event.selection_list.selected}")
-
         # Get the first selected item (for single selection behavior)
         selected_values = event.selection_list.selected
         if selected_values:
@@ -246,19 +239,15 @@ class ButtonListWidget(Widget):
 
         # Notify callback if provided
         if self.on_selection_changed_callback:
-            logger.info(f"🔄 Calling selection callback with: {selected_values}")
             self.on_selection_changed_callback(selected_values)
 
         # Update button states
         self._update_button_states()
-
-        logger.info(f"✅ Selection handled: {selected_values}")
     
     @on(Button.Pressed)
     def handle_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses from the top button bar."""
         button_id = event.button.id
-        logger.info(f"Button pressed: {button_id}")
 
         # CRITICAL: Stop event propagation
         event.stop()
@@ -316,18 +305,13 @@ class ButtonListWidget(Widget):
                 except Exception:
                     pass  # Item not found, ignore
 
-            logger.info(f"✅ Updated InlineButtonSelectionList with {len(self.items)} items")
-
         except Exception as e:
-            logger.error(f"Failed to update InlineButtonSelectionList: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Failed to update InlineButtonSelectionList: {e}", exc_info=True)
 
     def _delayed_update_display(self) -> None:
         """Update the display - called when widget is mounted or as fallback."""
         try:
             self._update_selection_list()
-            logger.info(f"✅ Delayed list update successful - showing {len(self.items)} items with inline buttons")
         except Exception as e:
             logger.warning(f"Delayed update failed (widget may not be ready): {e}")
             self.set_timer(0.1, self._delayed_update_display)

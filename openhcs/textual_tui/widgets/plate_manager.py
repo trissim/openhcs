@@ -106,15 +106,11 @@ class PlateManagerWidget(ButtonListWidget):
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
         """Handle selection changes from ButtonListWidget."""
-        logger.info(f"Selection change detected: {selected_values}")
-
         # Update selected_plate - use first selected item if any
         if selected_values:
             self.selected_plate = selected_values[0]  # This is the plate path
-            logger.info(f"Selected plate set to: {self.selected_plate}")
         else:
             self.selected_plate = ""
-            logger.info("No plate selected")
 
         # Notify parent about selection
         if self.on_plate_selected and self.selected_plate:
@@ -227,8 +223,6 @@ class PlateManagerWidget(ButtonListWidget):
             has_plates = len(self.plates) > 0
             has_selection = bool(self.selected_plate)
 
-            logger.info(f"Updating button states: has_plates={has_plates}, has_selection={has_selection}, selected_plate='{self.selected_plate}'")
-
             # Get selected plate for constraint checking
             selected_plate = None
             if self.selected_plate:
@@ -237,25 +231,16 @@ class PlateManagerWidget(ButtonListWidget):
                         selected_plate = plate
                         break
 
-                if selected_plate:
-                    logger.info(f"Found selected plate: {selected_plate['name']} with status '{selected_plate.get('status')}'")
-                else:
-                    logger.warning(f"Selected plate path '{self.selected_plate}' not found in plates list")
-
             # Mathematical constraints
             can_init = selected_plate and selected_plate.get('status') in ['?', '-']
             can_compile = selected_plate and selected_plate.get('status') == '-' and self._has_pipelines([selected_plate])
             can_run = selected_plate and selected_plate.get('status') == 'o'
-
-            logger.info(f"Button constraints: can_init={can_init}, can_compile={can_compile}, can_run={can_run}")
 
             self.query_one("#del_plate").disabled = not has_plates
             self.query_one("#edit_plate").disabled = not has_selection
             self.query_one("#init_plate").disabled = not (has_selection and can_init)
             self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
             self.query_one("#run_plate").disabled = not (has_selection and can_run)
-
-            logger.info("Button states updated successfully")
         except Exception as e:
             # Buttons might not be mounted yet
             logger.warning(f"Failed to update button states: {e}")
@@ -264,7 +249,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_add_plate(self) -> None:
         """Handle Add Plate button."""
-        logger.info("Add Plate button pressed")
         self.app.push_screen(self._create_file_browser_screen(), self._on_plate_directory_selected)
 
     def _create_file_browser_screen(self) -> Any:
@@ -289,7 +273,6 @@ class PlateManagerWidget(ButtonListWidget):
     def _on_plate_directory_selected(self, selected_paths: Any) -> None:
         """Handle directory selection from file browser."""
         if selected_paths is None:
-            logger.info("Plate directory selection cancelled")
             self.app.current_status = "Plate selection cancelled"
             return
 
@@ -381,7 +364,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_delete_plate(self) -> None:
         """Handle Delete Plate button - delete selected plates with orchestrator cleanup."""
-        logger.info("Delete Plate button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
@@ -424,7 +406,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_edit_plate(self) -> None:
         """Handle Edit Plate button - edit configuration for selected plate."""
-        logger.info("Edit Plate button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
@@ -469,7 +450,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_init_plate(self) -> None:
         """Handle Init Plate button - initialize selected plates."""
-        logger.info("Init Plate button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
@@ -552,7 +532,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_compile_plate(self) -> None:
         """Handle Compile Plate button - compile pipelines for selected plates."""
-        logger.info("Compile Plate button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
@@ -681,7 +660,6 @@ class PlateManagerWidget(ButtonListWidget):
     
     def action_run_plate(self) -> None:
         """Handle Run Plate button - execute compiled plates."""
-        logger.info("Run Plate button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
