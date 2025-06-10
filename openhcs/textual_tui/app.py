@@ -325,7 +325,6 @@ async def main():
         logger.info("TUI terminated by user")
     except Exception as e:
         logger.error(f"Unhandled error: {e}", exc_info=True)
-        print(f"ERROR: {e}")
     finally:
         logger.info("OpenHCS Textual TUI finished")
 

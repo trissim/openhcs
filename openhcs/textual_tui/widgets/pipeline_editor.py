@@ -6,7 +6,7 @@ Matches the functionality from the current prompt-toolkit TUI.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -14,6 +14,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Static, SelectionList
 from textual.widget import Widget
+from .button_list_widget import ButtonListWidget, ButtonConfig
 from textual import work
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -23,7 +24,7 @@ from openhcs.core.steps.function_step import FunctionStep
 logger = logging.getLogger(__name__)
 
 
-class PipelineEditorWidget(Widget):
+class PipelineEditorWidget(ButtonListWidget):
     """
     Pipeline editing widget using Textual reactive state.
     
@@ -44,12 +45,29 @@ class PipelineEditorWidget(Widget):
     def __init__(self, filemanager: FileManager, global_config: GlobalPipelineConfig):
         """
         Initialize the pipeline editor widget.
-        
+
         Args:
             filemanager: FileManager instance for file operations
             global_config: Global configuration
         """
-        super().__init__()
+        # Define button configuration
+        button_configs = [
+            ButtonConfig("Add", "add_step", disabled=True),
+            ButtonConfig("Del", "del_step", disabled=True),
+            ButtonConfig("Edit", "edit_step", disabled=True),
+            ButtonConfig("Load", "load_pipeline", disabled=True),
+            ButtonConfig("Save", "save_pipeline", disabled=True),
+        ]
+
+        super().__init__(
+            button_configs=button_configs,
+            list_id="step_content",
+            container_id="step_list",
+            on_button_pressed=self._handle_button_press,
+            on_selection_changed=self._handle_selection_change,
+            on_item_moved=self._handle_item_moved
+        )
+
         self.filemanager = filemanager
         self.global_config = global_config
 
@@ -58,27 +76,49 @@ class PipelineEditorWidget(Widget):
 
         logger.debug("PipelineEditorWidget initialized")
     
-    def compose(self) -> ComposeResult:
-        """Compose the pipeline editor layout using the perfect layout pattern."""
-        with Vertical():
-            # Button row - takes minimal height needed for buttons
-            with Horizontal() as button_row:
-                button_row.styles.height = "auto"  # CRITICAL: Take only needed height
-                yield Button("Add", id="add_step", disabled=True, compact=True)
-                yield Button("Del", id="del_step", disabled=True, compact=True)
-                yield Button("Edit", id="edit_step", disabled=True, compact=True)
-                yield Button("Load", id="load_pipeline", disabled=True, compact=True)
-                yield Button("Save", id="save_pipeline", disabled=True, compact=True)
+    def format_item_for_display(self, step: Dict) -> Tuple[str, str]:
+        """Format step for display in the list."""
+        step_name = step.get('name', 'Unknown Step')
+        step_type = step.get('type', 'function')
+        display_text = f"📋 {step_name} ({step_type})"
+        return display_text, step_name
 
-            # List area - expands to fill ALL remaining vertical space
-            with ScrollableContainer(id="pipeline_steps") as container:
-                container.styles.height = "1fr"  # CRITICAL: Fill remaining space
+    def _handle_button_press(self, button_id: str) -> None:
+        """Handle button presses from ButtonListWidget."""
+        if button_id == "add_step":
+            self.action_add_step()
+        elif button_id == "del_step":
+            self.action_delete_step()
+        elif button_id == "edit_step":
+            self.action_edit_step()
+        elif button_id == "load_pipeline":
+            self.action_load_pipeline()
+        elif button_id == "save_pipeline":
+            self.action_save_pipeline()
 
-                selection_list = SelectionList(id="pipeline_content")
-                # Make SelectionList fill the entire container
-                selection_list.styles.width = "100%"
-                selection_list.styles.height = "100%"  # CRITICAL: Fill container
-                yield selection_list
+    def _handle_selection_change(self, selected_values: List[str]) -> None:
+        """Handle selection changes from ButtonListWidget."""
+        # Update selected_step - use first selected item if any
+        if selected_values:
+            self.selected_step = selected_values[0]  # This is the step name
+        else:
+            self.selected_step = ""
+
+    def _handle_item_moved(self, from_index: int, to_index: int) -> None:
+        """Handle item movement from ButtonListWidget."""
+        current_steps = list(self.pipeline_steps)
+
+        # Move the step
+        step = current_steps.pop(from_index)
+        current_steps.insert(to_index, step)
+
+        # Update pipeline steps
+        self.pipeline_steps = current_steps
+
+        step_name = step['name']
+        direction = "up" if to_index < from_index else "down"
+        self.app.current_status = f"Moved step '{step_name}' {direction}"
+        logger.info(f"Moved step '{step_name}' from index {from_index} to {to_index}")
     
     def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         """Handle selection changes from SelectionList."""

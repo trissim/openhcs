@@ -8,13 +8,14 @@ Matches the functionality from the current prompt-toolkit TUI.
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any
+from typing import Dict, List, Optional, Callable, Any, Tuple
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.reactive import reactive
 from textual.widgets import Button, Static, SelectionList
 from textual.widget import Widget
+from .button_list_widget import ButtonListWidget, ButtonConfig
 from textual import work
 
 from openhcs.core.config import GlobalPipelineConfig
@@ -23,7 +24,7 @@ from openhcs.io.filemanager import FileManager
 logger = logging.getLogger(__name__)
 
 
-class PlateManagerWidget(Widget):
+class PlateManagerWidget(ButtonListWidget):
     """
     Plate management widget using Textual reactive state.
     
@@ -48,7 +49,25 @@ class PlateManagerWidget(Widget):
             filemanager: FileManager instance for file operations
             global_config: Global configuration
         """
-        super().__init__()
+        # Define button configuration
+        button_configs = [
+            ButtonConfig("Add", "add_plate"),
+            ButtonConfig("Del", "del_plate", disabled=True),
+            ButtonConfig("Edit", "edit_plate", disabled=True),
+            ButtonConfig("Init", "init_plate", disabled=True),
+            ButtonConfig("Compile", "compile_plate", disabled=True),
+            ButtonConfig("Run", "run_plate", disabled=True),
+        ]
+
+        super().__init__(
+            button_configs=button_configs,
+            list_id="plate_content",
+            container_id="plate_list",
+            on_button_pressed=self._handle_button_press,
+            on_selection_changed=self._handle_selection_change,
+            on_item_moved=self._handle_item_moved
+        )
+
         self.filemanager = filemanager
         self.global_config = global_config
 
@@ -60,31 +79,58 @@ class PlateManagerWidget(Widget):
 
         logger.debug("PlateManagerWidget initialized")
     
-    def compose(self) -> ComposeResult:
-        """Compose the plate manager layout."""
-        from textual.containers import Vertical
+    def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
+        """Format plate for display in the list."""
+        # Status symbols: ? = added, - = initialized, o = compiled, X = error
+        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
+        status_icon = status_symbols.get(plate.get("status", "?"), "❓")
+        plate_name = plate.get('name', 'Unknown')
+        plate_path = plate.get('path', '')
+        display_text = f"{status_icon} {plate_name} - {plate_path}"
+        return display_text, plate_path
 
-        with Vertical():
-            # Complete button set with compact uniform styling - should take minimal height
-            with Horizontal() as button_row:
-                button_row.styles.height = "auto"  # Take only the height needed for buttons
-                yield Button("Add", id="add_plate", compact=True)
-                yield Button("Del", id="del_plate", disabled=True, compact=True)
-                yield Button("Edit", id="edit_plate", disabled=True, compact=True)
-                yield Button("Init", id="init_plate", disabled=True, compact=True)
-                yield Button("Compile", id="compile_plate", disabled=True, compact=True)
-                yield Button("Run", id="run_plate", disabled=True, compact=True)
+    def _handle_button_press(self, button_id: str) -> None:
+        """Handle button presses from ButtonListWidget."""
+        if button_id == "add_plate":
+            self.action_add_plate()
+        elif button_id == "del_plate":
+            self.action_delete_plate()
+        elif button_id == "edit_plate":
+            self.action_edit_plate()
+        elif button_id == "init_plate":
+            self.action_init_plate()
+        elif button_id == "compile_plate":
+            self.action_compile_plate()
+        elif button_id == "run_plate":
+            self.action_run_plate()
 
-            # Scrollable content area with SelectionList - should take remaining space
-            with ScrollableContainer(id="plate_list") as container:
-                # This container should expand to fill ALL remaining vertical space
-                container.styles.height = "1fr"  # Use fractional unit to fill remaining space
+    def _handle_selection_change(self, selected_values: List[str]) -> None:
+        """Handle selection changes from ButtonListWidget."""
+        # Update selected_plate - use first selected item if any
+        if selected_values:
+            self.selected_plate = selected_values[0]  # This is the plate path
+        else:
+            self.selected_plate = ""
 
-                selection_list = SelectionList(id="plate_content")
-                # Make SelectionList fill the entire container
-                selection_list.styles.width = "100%"
-                selection_list.styles.height = "100%"
-                yield selection_list
+        # Notify parent about selection
+        if self.on_plate_selected and self.selected_plate:
+            self.on_plate_selected(self.selected_plate)
+
+    def _handle_item_moved(self, from_index: int, to_index: int) -> None:
+        """Handle item movement from ButtonListWidget."""
+        current_plates = list(self.plates)
+
+        # Move the plate
+        plate = current_plates.pop(from_index)
+        current_plates.insert(to_index, plate)
+
+        # Update plates list
+        self.plates = current_plates
+
+        plate_name = plate['name']
+        direction = "up" if to_index < from_index else "down"
+        self.app.current_status = f"Moved plate '{plate_name}' {direction}"
+        logger.info(f"Moved plate '{plate_name}' from index {from_index} to {to_index}")
 
     def on_mount(self) -> None:
         """Called when the widget is mounted - ensure display is up to date."""
@@ -101,36 +147,14 @@ class PlateManagerWidget(Widget):
         try:
             logger.info(f"watch_plates called with {len(plates)} plates: {[p.get('name', 'Unknown') for p in plates]}")
 
-            # Update SelectionList content
-            try:
-                selection_list = self.query_one("#plate_content", SelectionList)
+            # Update ButtonListWidget items - this will trigger the parent's watch_items
+            self.items = plates
 
-                # Clear existing options
-                selection_list.clear_options()
-
-                # Add plates as selection options
-                plate_options = []
-                for plate in plates:
-                    # Format: (display_text, value)
-                    # Status symbols: ? = added, - = initialized, o = compiled, X = error
-                    status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
-                    status_icon = status_symbols.get(plate.get("status", "?"), "❓")
-                    display_text = f"{status_icon} {plate.get('name', 'Unknown')}"
-                    plate_options.append((display_text, plate.get('path', '')))
-
-                selection_list.add_options(plate_options)
-                logger.info(f"✅ Updated SelectionList successfully - now showing {len(plates)} plates")
-
-            except Exception as e:
-                logger.warning(f"Could not update plate content (widget may not be mounted): {e}")
-                # Schedule delayed update attempts using proper Textual API
-                self.call_later(self._delayed_update_display)
+            logger.info(f"✅ Updated plate list successfully - now showing {len(plates)} plates")
 
         except Exception as e:
             # Show global error for any unexpected exceptions
             self.app.show_error(f"Error in watch_plates: {str(e)}", e)
-            self.set_timer(0.1, self._delayed_update_display)
-            self.set_timer(0.5, self._delayed_update_display)
 
         # Update button states
         self._update_button_states()
@@ -147,71 +171,23 @@ class PlateManagerWidget(Widget):
         
         logger.debug(f"Selected plate: {plate_path}")
 
-    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
-        """Handle selection changes from SelectionList."""
-        selected_values = event.selection_list.selected
 
-        logger.info(f"Selection changed: {len(selected_values)} items selected")
 
-        # Update selected_plate - use first selected item if any
-        if selected_values:
-            self.selected_plate = selected_values[0]  # This is the plate path
-        else:
-            self.selected_plate = ""
 
-        # Update button states based on selection
-        self._update_button_states_for_selection(selected_values)
-
-    def _update_button_states_for_selection(self, selected_values: List[str]) -> None:
-        """Update button states based on mathematical constraints."""
-        try:
-            has_plates = len(self.plates) > 0
-            has_selection = len(selected_values) > 0
-
-            # Get selected plates for constraint checking
-            selected_plates = []
-            for plate in self.plates:
-                if plate.get('path') in selected_values:
-                    selected_plates.append(plate)
-
-            # Mathematical constraints
-            can_init = any(p.get('status') in ['?', '-'] for p in selected_plates)
-            can_compile = any(p.get('status') in ['-'] for p in selected_plates) and self._has_pipelines(selected_plates)
-            can_run = any(p.get('status') == 'o' for p in selected_plates)
-
-            self.query_one("#del_plate").disabled = not has_selection
-            self.query_one("#edit_plate").disabled = not (len(selected_values) == 1)  # Edit requires exactly one selection
-            self.query_one("#init_plate").disabled = not (has_selection and can_init)
-            self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
-            self.query_one("#run_plate").disabled = not (has_selection and can_run)
-
-        except Exception:
-            # Buttons might not be mounted yet
-            pass
 
     def get_selection_state(self) -> tuple[List[Dict], str]:
-        """Get current selection state from SelectionList."""
-        try:
-            selection_list = self.query_one("#plate_content", SelectionList)
-            selected_paths = selection_list.selected
-
-            # Convert selected paths back to plate dictionaries
+        """Get current selection state."""
+        # Use the selected_plate from ButtonListWidget
+        if self.selected_plate:
+            # Find the selected plate
             selected_items = []
             for plate in self.plates:
-                if plate.get('path') in selected_paths:
+                if plate.get('path') == self.selected_plate:
                     selected_items.append(plate)
+                    break
 
-            # Determine selection mode
-            if not selected_items:
-                selection_mode = "empty"
-            elif len(selected_items) == len(self.plates):
-                selection_mode = "all"
-            else:
-                selection_mode = "checkbox"  # SelectionList is always checkbox-based
-
-            return selected_items, selection_mode
-        except Exception:
-            # Fallback if widget not mounted
+            return selected_items, "cursor"
+        else:
             return [], "empty"
 
     def get_operation_description(self, selected_items: List[Dict], selection_mode: str, operation: str) -> str:
@@ -233,20 +209,9 @@ class PlateManagerWidget(Widget):
     def _delayed_update_display(self) -> None:
         """Update the plate display - called when widget is mounted or as fallback."""
         try:
-            selection_list = self.query_one("#plate_content", SelectionList)
-
-            # Clear and rebuild options
-            selection_list.clear_options()
-            plate_options = []
-            for plate in self.plates:
-                # Status symbols: ? = added, - = initialized, o = compiled, X = error
-                status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
-                status_icon = status_symbols.get(plate.get("status", "?"), "❓")
-                display_text = f"{status_icon} {plate.get('name', 'Unknown')}"
-                plate_options.append((display_text, plate.get('path', '')))
-
-            selection_list.add_options(plate_options)
-            logger.info(f"✅ Delayed SelectionList update successful - showing {len(self.plates)} plates")
+            # Trigger the ButtonListWidget's watch_items method
+            self.mutate_reactive(PlateManagerWidget.items)
+            logger.info(f"✅ Delayed plate list update successful - showing {len(self.plates)} plates")
         except Exception as e:
             logger.warning(f"Delayed update failed (widget may not be ready): {e}")
             # Try again in a moment using proper Textual API
@@ -280,22 +245,7 @@ class PlateManagerWidget(Widget):
             # Buttons might not be mounted yet
             pass
     
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses."""
-        button_id = event.button.id
-        
-        if button_id == "add_plate":
-            self.action_add_plate()
-        elif button_id == "del_plate":
-            self.action_delete_plate()
-        elif button_id == "edit_plate":
-            self.action_edit_plate()
-        elif button_id == "init_plate":
-            self.action_init_plate()
-        elif button_id == "compile_plate":
-            self.action_compile_plate()
-        elif button_id == "run_plate":
-            self.action_run_plate()
+
     
     def action_add_plate(self) -> None:
         """Handle Add Plate button."""
