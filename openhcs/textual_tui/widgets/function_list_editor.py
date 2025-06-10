@@ -1,6 +1,7 @@
 """Function list editor widget - port of function_list_manager.py to Textual."""
 
 import logging
+from pathlib import Path
 from typing import List, Union, Dict, Any, Optional, Callable # Added Optional, Callable
 from textual.containers import ScrollableContainer, Container, Horizontal, Center
 from textual.widgets import Button, Static, Select
@@ -334,13 +335,68 @@ class FunctionListEditorWidget(Container):
 
     def _load_func(self) -> None:
         """Load function pattern from .func file."""
-        # TODO: Implement file loading functionality
-        logger.debug("Load .func button pressed - not implemented yet")
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._load_pattern_from_file(result)
+
+        # Launch enhanced file browser for .func files
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.app.filemanager,
+            initial_path=Path.home(),
+            backend=Backend.DISK,
+            title="Load Function Pattern (.func)",
+            mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.func']
+        )
+        self.app.push_screen(browser, handle_result)
 
     def _save_func_as(self) -> None:
         """Save function pattern to .func file."""
-        # TODO: Implement file saving functionality
-        logger.debug("Save .func As button pressed - not implemented yet")
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._save_pattern_to_file(result)
+
+        # Launch enhanced file browser for saving .func files
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.app.filemanager,
+            initial_path=Path.home(),
+            backend=Backend.DISK,
+            title="Save Function Pattern (.func)",
+            mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.func'],
+            default_filename="pattern.func"
+        )
+        self.app.push_screen(browser, handle_result)
+
+    def _load_pattern_from_file(self, file_path: Path) -> None:
+        """Load pattern from .func file."""
+        import pickle
+        try:
+            with open(file_path, 'rb') as f:
+                pattern = pickle.load(f)
+            self._initialize_pattern_data(pattern)
+            self._commit_and_notify()
+            logger.info(f"Loaded function pattern from {file_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to load pattern: {e}")
+
+    def _save_pattern_to_file(self, file_path: Path) -> None:
+        """Save pattern to .func file."""
+        import pickle
+        try:
+            with open(file_path, 'wb') as f:
+                pickle.dump(self.current_pattern, f)
+            logger.info(f"Saved function pattern to {file_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to save pattern: {e}")
 
     def _edit_in_vim(self) -> None:
         """Edit function pattern in Vim."""

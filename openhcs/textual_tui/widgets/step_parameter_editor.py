@@ -58,8 +58,8 @@ class StepParameterEditorWidget(ScrollableContainer):
 
         # Action buttons
         with Horizontal():
-            yield Button("Load Step (N/A)", id="load_step_btn", compact=True, disabled=True)
-            yield Button("Save As (N/A)", id="save_as_btn", compact=True, disabled=True)
+            yield Button("Load .step", id="load_step_btn", compact=True)
+            yield Button("Save .step As", id="save_as_btn", compact=True)
 
     def _build_step_parameter_form(self) -> ComposeResult:
         """Generate form widgets using shared ParameterFormManager."""
@@ -143,8 +143,67 @@ class StepParameterEditorWidget(ScrollableContainer):
 
     def _load_step(self) -> None:
         """Load step configuration from file."""
-        pass  # TODO: Implement
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._load_step_from_file(result)
+
+        # Launch enhanced file browser for .step files
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.app.filemanager,
+            initial_path=Path.home(),
+            backend=Backend.DISK,
+            title="Load Step Settings (.step)",
+            mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.step']
+        )
+        self.app.push_screen(browser, handle_result)
 
     def _save_step_as(self) -> None:
         """Save step configuration to file."""
-        pass  # TODO: Implement
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._save_step_to_file(result)
+
+        # Launch enhanced file browser for saving .step files
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.app.filemanager,
+            initial_path=Path.home(),
+            backend=Backend.DISK,
+            title="Save Step Settings (.step)",
+            mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.step'],
+            default_filename="step_settings.step"
+        )
+        self.app.push_screen(browser, handle_result)
+
+    def _load_step_from_file(self, file_path: Path) -> None:
+        """Load step parameters from .step file."""
+        import pickle
+        try:
+            with open(file_path, 'rb') as f:
+                step_data = pickle.load(f)
+            for param_name, value in step_data.items():
+                if param_name in self.form_manager.parameters:
+                    self._handle_parameter_change(param_name, value)
+            logger.info(f"Loaded step settings from {file_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to load step: {e}")
+
+    def _save_step_to_file(self, file_path: Path) -> None:
+        """Save step parameters to .step file."""
+        import pickle
+        try:
+            step_data = self.form_manager.get_current_values()
+            with open(file_path, 'wb') as f:
+                pickle.dump(step_data, f)
+            logger.info(f"Saved step settings to {file_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to save step: {e}")

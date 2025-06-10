@@ -462,78 +462,45 @@ class PipelineEditorWidget(Widget):
             self.app.current_status = "No plate selected for loading pipeline"
             return
 
-        # Launch file browser for .func files
-        def handle_result(selected_paths: List[Path]) -> None:
-            if selected_paths and len(selected_paths) > 0:
-                self._load_pipeline_from_file(selected_paths[0])
+        # Launch enhanced file browser for .func files
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._load_pipeline_from_file(result)
             else:
                 self.app.current_status = "Load pipeline cancelled"
 
-        # Create file browser for .func files
-        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen
+        # Create enhanced file browser for .func files
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
-        from pathlib import Path
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
             initial_path=Path.home(),
             backend=Backend.DISK,
-            title="Load Pipeline File (.func)"
+            title="Load Pipeline (.func)",
+            mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.func']
         )
 
         self.app.push_screen(browser, handle_result)
 
     def _load_pipeline_from_file(self, file_path: Path) -> None:
         """Load pipeline from .func file."""
+        import pickle
         try:
-            # Use pattern file service to load
-            from openhcs.textual_tui.services.pattern_file_service import PatternFileService
-            pattern_service = PatternFileService(None)  # No state needed for loading
+            with open(file_path, 'rb') as f:
+                pattern = pickle.load(f)
 
-            # Load pattern from file (async operation)
-            from textual import work
-            self._load_pipeline_worker(file_path, pattern_service)
-
-        except Exception as e:
-            logger.error(f"Failed to start pipeline loading: {e}")
-            self.app.current_status = f"Failed to load pipeline: {e}"
-
-    @work(exclusive=True)
-    async def _load_pipeline_worker(self, file_path: Path, pattern_service) -> None:
-        """Background worker for pipeline loading."""
-        try:
-            # Load pattern from file
-            pattern = await pattern_service.load_pattern_from_file(file_path)
-
-            # Convert pattern to pipeline steps
             if isinstance(pattern, list):
-                # Convert list of function steps to dict format
-                pipeline_steps = []
-                for i, step in enumerate(pattern):
-                    if hasattr(step, 'name'):
-                        step_dict = {
-                            "name": step.name,
-                            "type": "function",
-                            "func": step.func,
-                            "variable_components": getattr(step, 'variable_components', []),
-                            "group_by": getattr(step, 'group_by', "")
-                        }
-                        pipeline_steps.append(step_dict)
-                    else:
-                        # Handle dict format
-                        pipeline_steps.append(step)
-
-                # Update pipeline steps
-                self.pipeline_steps = pipeline_steps
-                self.app.current_status = f"Loaded {len(pipeline_steps)} steps from {file_path.name}"
-                logger.info(f"Loaded pipeline with {len(pipeline_steps)} steps for plate '{self.current_plate}'")
-
+                self.pipeline_steps = pattern
+                self.app.current_status = f"Loaded {len(pattern)} steps from {file_path.name}"
+                logger.info(f"Loaded pipeline with {len(pattern)} steps")
             else:
                 self.app.current_status = f"Invalid pipeline format in {file_path.name}"
                 logger.error(f"Invalid pipeline format: expected list, got {type(pattern)}")
-
         except Exception as e:
-            logger.error(f"Failed to load pipeline from {file_path}: {e}")
+            logger.error(f"Failed to load pipeline: {e}")
             self.app.current_status = f"Failed to load pipeline: {e}"
 
     def action_save_pipeline(self) -> None:
@@ -548,39 +515,42 @@ class PipelineEditorWidget(Widget):
             self.app.current_status = "No pipeline steps to save"
             return
 
-        # TODO: Implement file save dialog
-        # For now, save to default location
-        default_filename = f"pipeline_{self.current_plate.replace('/', '_')}.func"
-        self._save_pipeline_to_file(Path(default_filename))
+        # Launch enhanced file browser for saving pipeline
+        def handle_result(result):
+            if result and isinstance(result, Path):
+                self._save_pipeline_to_file(result)
+            else:
+                self.app.current_status = "Save pipeline cancelled"
+
+        # Create enhanced file browser for saving .func files
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+
+        # Generate default filename from plate name
+        plate_name = Path(self.current_plate).name if self.current_plate else "pipeline"
+        default_filename = f"{plate_name}.func"
+
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.filemanager,
+            initial_path=Path.home(),
+            backend=Backend.DISK,
+            title="Save Pipeline (.func)",
+            mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.func'],
+            default_filename=default_filename
+        )
+
+        self.app.push_screen(browser, handle_result)
 
     def _save_pipeline_to_file(self, file_path: Path) -> None:
         """Save pipeline to .func file."""
+        import pickle
         try:
-            # Use pattern file service to save
-            from openhcs.textual_tui.services.pattern_file_service import PatternFileService
-            pattern_service = PatternFileService(None)  # No state needed for saving
-
-            # Convert pipeline steps to pattern format
-            pattern = list(self.pipeline_steps)
-
-            # Save pattern to file (async operation)
-            from textual import work
-            self._save_pipeline_worker(file_path, pattern, pattern_service)
-
-        except Exception as e:
-            logger.error(f"Failed to start pipeline saving: {e}")
-            self.app.current_status = f"Failed to save pipeline: {e}"
-
-    @work(exclusive=True)
-    async def _save_pipeline_worker(self, file_path: Path, pattern, pattern_service) -> None:
-        """Background worker for pipeline saving."""
-        try:
-            # Save pattern to file
-            await pattern_service.save_pattern_to_file(pattern, file_path)
-
+            with open(file_path, 'wb') as f:
+                pickle.dump(list(self.pipeline_steps), f)
             self.app.current_status = f"Saved pipeline to {file_path.name}"
-            logger.info(f"Saved pipeline with {len(pattern)} steps to {file_path}")
-
+            logger.info(f"Saved pipeline with {len(self.pipeline_steps)} steps")
         except Exception as e:
-            logger.error(f"Failed to save pipeline to {file_path}: {e}")
+            logger.error(f"Failed to save pipeline: {e}")
             self.app.current_status = f"Failed to save pipeline: {e}"

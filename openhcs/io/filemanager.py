@@ -656,18 +656,17 @@ class FileManager:
             backend: Backend key ('disk', 'memory', 'zarr') — must be positional
 
         Returns:
-            bool: True if the path is a directory, False otherwise
+            bool: True if the path is a directory, False if it's a file or doesn't exist
 
         Raises:
             StorageResolutionError: If resolution fails or backend misbehaves
-            FileNotFoundError: If path does not exist
-            NotADirectoryError: If path is a file
         """
         try:
             backend_instance = self._get_backend(backend)
             return backend_instance.is_dir(path)
         except (FileNotFoundError, NotADirectoryError):
-            raise  # propagate known semantics
+            # Return False for files or non-existent paths instead of raising
+            return False
         except Exception as e:
             raise StorageResolutionError(
                 f"Failed to check if {path} is a directory with backend '{backend}'"

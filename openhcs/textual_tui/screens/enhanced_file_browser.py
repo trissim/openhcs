@@ -109,14 +109,16 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         # Directory tree - scrollable area
         yield self.directory_tree
 
-        # Filename input for save mode
+        # Filename input for save mode - horizontal layout
         if self.mode == BrowserMode.SAVE:
-            yield Static("Filename:", classes="dialog-title")
-            yield Input(
-                placeholder="Enter filename...",
-                value=self.default_filename,
-                id="filename_input"
-            )
+            with Horizontal(id="filename_area"):
+                yield Static("Filename:", classes="filename-label")
+                yield Input(
+                    placeholder="Enter filename...",
+                    value=self.default_filename,
+                    id="filename_input",
+                    compact=True
+                )
 
         # Bottom area: buttons left, selected panel right (always visible)
         with Horizontal(id="bottom_area"):
@@ -247,21 +249,13 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         # Clear path cache when settings change
         self.path_cache.clear()
 
-        # Recreate directory tree with new settings
-        current_path = self.selected_path or self.initial_path
-        self.directory_tree = OpenHCSDirectoryTree(
-            filemanager=self.file_manager,
-            backend=self.backend,
-            path=current_path,
-            show_hidden=self.show_hidden_files,
-            filter_extensions=self.filter_extensions
-        )
+        # Update tree settings and reload instead of recreating
+        self.directory_tree.show_hidden = self.show_hidden_files
+        self.directory_tree.filter_extensions = self.filter_extensions
 
-        # Replace the tree in the UI
         try:
-            tree_container = self.query_one("#tree_panel", ScrollableContainer)
-            tree_container.remove_children()
-            tree_container.mount(self.directory_tree)
+            # Reload the tree to apply new settings
+            self.directory_tree.reload()
             self.directory_tree.focus()
         except Exception as e:
             logger.warning(f"Failed to refresh directory tree: {e}")
@@ -305,20 +299,10 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         self.selected_path = new_path
         self._update_path_display(new_path)
 
-        # Recreate directory tree for new path
-        self.directory_tree = OpenHCSDirectoryTree(
-            filemanager=self.file_manager,
-            backend=self.backend,
-            path=new_path,
-            show_hidden=self.show_hidden_files,
-            filter_extensions=self.filter_extensions
-        )
-
-        # Replace the tree in the UI
+        # Update tree path and reload
         try:
-            tree_container = self.query_one("#tree_panel", ScrollableContainer)
-            tree_container.remove_children()
-            tree_container.mount(self.directory_tree)
+            self.directory_tree.path = new_path
+            self.directory_tree.reload()
             self.directory_tree.focus()
         except Exception as e:
             logger.warning(f"Failed to navigate to {new_path}: {e}")
