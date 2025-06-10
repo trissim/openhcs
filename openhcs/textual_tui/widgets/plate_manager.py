@@ -306,7 +306,7 @@ class PlateManagerWidget(Widget):
         """Create enhanced file browser screen for plate selection with path caching."""
         from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen
         from openhcs.constants.constants import Backend
-        from openhcs.tui.utils.path_cache import get_path_cache, PathCacheKey
+        from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
         from pathlib import Path
 
         # Get cached path for better UX - remembers last used directory
@@ -397,7 +397,7 @@ class PlateManagerWidget(Widget):
 
         # Cache the parent directory for next time (save user navigation time)
         if selected_paths:
-            from openhcs.tui.utils.path_cache import get_path_cache, PathCacheKey
+            from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
             # Use parent of first selected path as the cached directory
             first_path = selected_paths[0] if isinstance(selected_paths[0], Path) else Path(selected_paths[0])
             parent_dir = first_path.parent

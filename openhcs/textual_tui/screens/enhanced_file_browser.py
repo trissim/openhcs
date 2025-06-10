@@ -8,11 +8,12 @@ textual-universal-directorytree widget adapted for OpenHCS backends.
 import logging
 from pathlib import Path
 from typing import Optional, Set, List, Dict
+from enum import Enum
 
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer, VerticalScroll
-from textual.widgets import Button, DirectoryTree, Static, Checkbox
+from textual.widgets import Button, DirectoryTree, Static, Checkbox, Input
 
 from openhcs.constants.constants import Backend
 from openhcs.io.filemanager import FileManager
@@ -20,6 +21,19 @@ from openhcs.textual_tui.adapters.universal_directorytree import OpenHCSDirector
 from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
 
 logger = logging.getLogger(__name__)
+
+
+class BrowserMode(Enum):
+    """Browser operation mode."""
+    LOAD = "load"
+    SAVE = "save"
+
+
+class SelectionMode(Enum):
+    """File selection mode."""
+    FILES_ONLY = "files_only"
+    DIRECTORIES_ONLY = "directories_only"
+    FILES_AND_DIRECTORIES = "files_and_directories"
 
 
 class EnhancedFileBrowserScreen(BaseFloatingWindow):
@@ -37,12 +51,20 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         initial_path: Path,
         backend: Backend = Backend.DISK,
         title: str = "Select Directory",
+        mode: BrowserMode = BrowserMode.LOAD,
+        selection_mode: SelectionMode = SelectionMode.DIRECTORIES_ONLY,
+        filter_extensions: Optional[List[str]] = None,
+        default_filename: str = "",
         **kwargs
     ):
         self.file_manager = file_manager
         self.initial_path = initial_path
         self.backend = backend
         self.browser_title = title
+        self.mode = mode
+        self.selection_mode = selection_mode
+        self.filter_extensions = filter_extensions
+        self.default_filename = default_filename
         self.selected_path: Optional[Path] = None
         self.selected_paths: Set[Path] = set()  # For multi-selection
 
@@ -58,6 +80,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             backend=backend,
             path=initial_path,
             show_hidden=self.show_hidden_files,
+            filter_extensions=self.filter_extensions,
             id='tree_panel'
         )
 
@@ -66,10 +89,15 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
     
     def get_content_info(self) -> dict:
         """Provide content information for dynamic sizing."""
+        if self.mode == BrowserMode.LOAD:
+            button_texts = ['🏠 Home', '⬆️ Up', 'Add Current', 'Remove Selected', 'Select All', 'Cancel']
+        else:  # SAVE mode
+            button_texts = ['🏠 Home', '⬆️ Up', 'Save', 'Cancel']
+
         return {
             'title': self.browser_title,
             'content_text': '',  # No text content, complex layout
-            'button_texts': ['🏠 Home', '⬆️ Up', 'Add Current', 'Remove Selected', 'Select All', 'Cancel'],
+            'button_texts': button_texts,
             'extra_content_width': 80  # Wide for tree + selection panels
         }
 
@@ -79,9 +107,16 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         yield Static(f"Path: {self.initial_path}", id="path_display")
 
         # Directory tree - scrollable area
-        #with ScrollableContainer(id="tree_panel"):
-        #with VerticalScroll(id="tree_panel"):
         yield self.directory_tree
+
+        # Filename input for save mode
+        if self.mode == BrowserMode.SAVE:
+            yield Static("Filename:", classes="dialog-title")
+            yield Input(
+                placeholder="Enter filename...",
+                value=self.default_filename,
+                id="filename_input"
+            )
 
         # Bottom area: buttons left, selected panel right (always visible)
         with Horizontal(id="bottom_area"):
@@ -89,9 +124,15 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             with Vertical(id="buttons_panel"):
                 yield Button("🏠 Home", id="go_home", compact=True)
                 yield Button("⬆️ Up", id="go_up", compact=True)
-                yield Button("Add Current", id="add_current", compact=True)
-                yield Button("Remove Selected", id="remove_selected", compact=True)
-                yield Button("Select All", id="select_all", compact=True)
+
+                # Mode-specific buttons
+                if self.mode == BrowserMode.LOAD:
+                    yield Button("Add Current", id="add_current", compact=True)
+                    yield Button("Remove Selected", id="remove_selected", compact=True)
+                    yield Button("Select All", id="select_all", compact=True)
+                else:  # SAVE mode
+                    yield Button("Save", id="save_file", compact=True)
+
                 yield Checkbox(
                     label="Show Hidden Files",
                     value=self.show_hidden_files,
@@ -102,9 +143,17 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
             # Selection panel on right (remaining width)
             with Vertical(id="selection_panel"):
-                yield Static("Selected:", classes="dialog-title")
-                with ScrollableContainer(id="selected_list"):
-                    yield Static("(none)", id="selected_display")
+                if self.mode == BrowserMode.LOAD:
+                    yield Static("Selected:", classes="dialog-title")
+                    with ScrollableContainer(id="selected_list"):
+                        yield Static("(none)", id="selected_display")
+                else:  # SAVE mode
+                    yield Static("Save Info:", classes="dialog-title")
+                    with ScrollableContainer(id="save_info"):
+                        info_text = "Select directory and enter filename"
+                        if self.filter_extensions:
+                            info_text += f"\nAllowed extensions: {', '.join(self.filter_extensions)}"
+                        yield Static(info_text, id="save_info_display")
 
     def compose_buttons(self) -> ComposeResult:
         """Buttons are now part of content layout - return empty."""
@@ -112,7 +161,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         yield  # This line will never execute, but satisfies the generator requirement
 
     def handle_button_action(self, button_id: str, button_text: str):
-        """Handle button actions - Navigation/Add/Remove/Select/Cancel logic."""
+        """Handle button actions - Navigation/Add/Remove/Select/Save/Cancel logic."""
         if button_text == '🏠 Home':
             self._handle_go_home()
             return False  # Don't dismiss dialog
@@ -127,6 +176,8 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             return False  # Don't dismiss dialog
         elif button_text == 'Select All':
             return self._handle_select_all()
+        elif button_text == 'Save':
+            return self._handle_save_file()
         elif button_text == 'Cancel':
             return None  # Dismiss with None
         return False  # Don't dismiss by default
@@ -158,9 +209,28 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
     @on(DirectoryTree.FileSelected)
     def on_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         """Handle file selection from tree."""
-        # For directory selection, we ignore file selections
-        # But we could extend this for file selection modes
-        logger.debug(f"File selected: {event.path}")
+        if self.selection_mode in [SelectionMode.FILES_ONLY, SelectionMode.FILES_AND_DIRECTORIES]:
+            # Store selected file path
+            if hasattr(event.path, '_path'):
+                # OpenHCSPathAdapter
+                self.selected_path = Path(event.path._path)
+            elif isinstance(event.path, Path):
+                self.selected_path = event.path
+            else:
+                # Convert string or other types to Path
+                self.selected_path = Path(str(event.path))
+
+            # For save mode, populate filename input with selected file name
+            if self.mode == BrowserMode.SAVE:
+                try:
+                    filename_input = self.query_one("#filename_input", Input)
+                    filename_input.value = self.selected_path.name
+                except Exception:
+                    pass  # Input might not be mounted yet
+
+            logger.debug(f"File selected: {self.selected_path}")
+        else:
+            logger.debug(f"File selection ignored in directory-only mode: {event.path}")
     
     # Button handling now done through handle_button_action method
 
@@ -183,7 +253,8 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             filemanager=self.file_manager,
             backend=self.backend,
             path=current_path,
-            show_hidden=self.show_hidden_files
+            show_hidden=self.show_hidden_files,
+            filter_extensions=self.filter_extensions
         )
 
         # Replace the tree in the UI
@@ -239,7 +310,8 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             filemanager=self.file_manager,
             backend=self.backend,
             path=new_path,
-            show_hidden=self.show_hidden_files
+            show_hidden=self.show_hidden_files,
+            filter_extensions=self.filter_extensions
         )
 
         # Replace the tree in the UI
@@ -253,10 +325,16 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
     def _handle_add_current(self) -> None:
         """Add current directory to selection."""
-        if self.selected_path and self.selected_path.is_dir():
-            self.selected_paths.add(self.selected_path)
-            self._update_selected_display()
-            logger.debug(f"Added {self.selected_path} to selection")
+        if self.selected_path:
+            try:
+                # Use FileManager to check if it's a directory (respects backend abstraction)
+                is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+                if is_dir:
+                    self.selected_paths.add(self.selected_path)
+                    self._update_selected_display()
+                    logger.debug(f"Added {self.selected_path} to selection")
+            except Exception as e:
+                logger.warning(f"Could not verify if {self.selected_path} is a directory: {e}")
 
     def _handle_remove_selected(self) -> None:
         """Remove current directory from selection."""
@@ -266,16 +344,73 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             logger.debug(f"Removed {self.selected_path} from selection")
 
     def _handle_select_all(self):
-        """Return all selected directories."""
-        if self.selected_paths:
-            # Return list of selected paths
-            return list(self.selected_paths)
-        else:
-            # No selection, return current path if it's a directory
-            if self.selected_path and self.selected_path.is_dir():
-                return [self.selected_path]
+        """Return all selected directories or files based on mode."""
+        if self.mode == BrowserMode.LOAD:
+            if self.selected_paths:
+                # Return list of selected paths
+                return list(self.selected_paths)
             else:
+                # No selection, return current path if it's a directory
+                if self.selected_path:
+                    try:
+                        # Use FileManager to check if it's a directory (respects backend abstraction)
+                        is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+                        if is_dir:
+                            return [self.selected_path]
+                        elif self.selection_mode in [SelectionMode.FILES_ONLY, SelectionMode.FILES_AND_DIRECTORIES]:
+                            return [self.selected_path]
+                    except Exception:
+                        # If we can't determine type, fall back to initial path
+                        pass
                 return [self.initial_path]
+        else:
+            # Save mode - should use _handle_save_file instead
+            return self._handle_save_file()
+
+    def _handle_save_file(self):
+        """Handle save file operation."""
+        try:
+            # Get filename from input
+            filename_input = self.query_one("#filename_input", Input)
+            filename = filename_input.value.strip()
+
+            if not filename:
+                logger.warning("No filename provided for save operation")
+                return False  # Don't dismiss, show error
+
+            # Validate filename
+            if not self._validate_filename(filename):
+                logger.warning(f"Invalid filename: {filename}")
+                return False  # Don't dismiss, show error
+
+            # Ensure proper extension
+            if self.filter_extensions:
+                filename = self._ensure_extension(filename, self.filter_extensions[0])
+
+            # Get current directory (use selected_path if it's a directory, otherwise its parent)
+            if self.selected_path:
+                try:
+                    # Use FileManager to check if it's a directory (respects backend abstraction)
+                    is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+                    if is_dir:
+                        save_dir = self.selected_path
+                    else:
+                        save_dir = self.selected_path.parent
+                except Exception:
+                    # If we can't determine type, use parent directory
+                    save_dir = self.selected_path.parent
+            else:
+                save_dir = self.initial_path
+
+            # Construct full save path
+            save_path = save_dir / filename
+
+            logger.debug(f"Save file operation: {save_path}")
+            return save_path
+
+        except Exception as e:
+            logger.error(f"Error in save file operation: {e}")
+            return False  # Don't dismiss, show error
 
     def _update_selected_display(self) -> None:
         """Update the selected directories display."""
@@ -299,6 +434,35 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         except Exception:
             # Widget might not be mounted yet
             pass
+
+    def _ensure_extension(self, filename: str, extension: str) -> str:
+        """Ensure filename has the correct extension."""
+        if not extension.startswith('.'):
+            extension = f'.{extension}'
+        path = Path(filename)
+        if path.suffix.lower() != extension.lower():
+            return str(path.with_suffix(extension))
+        return filename
+
+    def _validate_filename(self, filename: str) -> bool:
+        """Validate filename for save operations."""
+        if not filename.strip():
+            return False
+
+        # Check for invalid characters (basic validation)
+        invalid_chars = '<>:"/\\|?*'
+        if any(char in filename for char in invalid_chars):
+            return False
+
+        # Check extension if filter is specified
+        if self.filter_extensions:
+            path = Path(filename)
+            if path.suffix:
+                # Has extension, check if it's allowed
+                return any(path.suffix.lower() == ext.lower() for ext in self.filter_extensions)
+            # No extension, will be added by _ensure_extension
+
+        return True
 
     CSS_PATH = "enhanced_browser.css"
 #    DEFAULT_CSS = """

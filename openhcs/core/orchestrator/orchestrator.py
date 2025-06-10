@@ -390,7 +390,7 @@ class PipelineOrchestrator:
         """
         if not self.is_initialized() or self.input_dir is None or self.microscope_handler is None:
             raise RuntimeError("Orchestrator must be initialized with input_dir and microscope_handler to get wells.")
-        
+
         all_wells_set: Set[str] = set()
         try:
             filenames = self.filemanager.list_files(str(self.input_dir), Backend.DISK.value, extensions=DEFAULT_IMAGE_EXTENSIONS)
@@ -403,7 +403,7 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.error(f"Error listing files or parsing well names from {self.input_dir}: {e}", exc_info=True)
             return []
-            
+
         all_wells = sorted(list(all_wells_set))
 
         if not all_wells:
@@ -418,6 +418,41 @@ class PipelineOrchestrator:
             return selected_wells
         else:
             return all_wells
+
+    def get_channels(self, channel_filter: Optional[List[Union[str, int]]] = None) -> List[int]:
+        """
+        Get the channels to process based on the filter.
+        """
+        if not self.is_initialized() or self.input_dir is None or self.microscope_handler is None:
+            raise RuntimeError("Orchestrator must be initialized with input_dir and microscope_handler to get channels.")
+
+        all_channels_set: Set[int] = set()
+        try:
+            filenames = self.filemanager.list_files(str(self.input_dir), Backend.DISK.value, extensions=DEFAULT_IMAGE_EXTENSIONS)
+            for filename in filenames:
+                parsed_info = self.microscope_handler.parser.parse_filename(str(filename))
+                if parsed_info and 'channel' in parsed_info and parsed_info['channel'] is not None:
+                    all_channels_set.add(int(parsed_info['channel']))
+                else:
+                    logger.warning(f"Could not parse channel information from filename: {filename}")
+        except Exception as e:
+            logger.error(f"Error listing files or parsing channel names from {self.input_dir}: {e}", exc_info=True)
+            return []
+
+        all_channels = sorted(list(all_channels_set))
+
+        if not all_channels:
+            logger.warning(f"No channels found in input directory: {self.input_dir} with extensions {DEFAULT_IMAGE_EXTENSIONS}")
+            return []
+
+        if channel_filter:
+            int_channel_filter = {int(c) for c in channel_filter}
+            selected_channels = [channel for channel in all_channels if channel in int_channel_filter]
+            if not selected_channels:
+                logger.warning(f"No channels from {all_channels} match the filter: {channel_filter}")
+            return selected_channels
+        else:
+            return all_channels
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """

@@ -182,7 +182,8 @@ class DualEditorScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Compose the enhanced dual editor modal."""
-        with Container(id="dual_editor_dialog"):
+        with Container(id="dual_editor_dialog") as container:
+            container.styles.border = ("solid", "white")
             # Dialog title with change indicator
             title_text = "Visual Programming - Edit Step" if not self.is_new else "Visual Programming - New Step"
             yield Static(title_text, id="dialog_title")
@@ -255,8 +256,8 @@ class DualEditorScreen(ModalScreen):
     ) -> None:
         """Handle function pattern changes from the function editor widget."""
         logger.debug("Received FunctionPatternChanged from child FunctionListEditorWidget")
-        # Direct assignment - backend handles List[(callable, kwargs)] format
-        self.editing_step.func = self.func_editor.functions
+        # Use current_pattern property to get List or Dict format
+        self.editing_step.func = self.func_editor.current_pattern
         self._update_change_tracking()
         self._update_status("Modified function pattern")
 

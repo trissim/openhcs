@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import Union, List, Dict, Optional, Any
 
-from openhcs.tui.services.external_editor_service import ExternalEditorService
+from openhcs.textual_tui.services.external_editor_service import ExternalEditorService
 
 logger = logging.getLogger(__name__)
 

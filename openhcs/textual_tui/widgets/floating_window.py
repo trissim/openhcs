@@ -26,7 +26,6 @@ class BaseFloatingWindow(ModalScreen):
         max-width: 80;
         max-height: 80%;
         background: $surface;
-        border: thick $background 80%;
         padding: 1;
     }
 
@@ -62,7 +61,8 @@ class BaseFloatingWindow(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Compose the complete floating window structure."""
-        with Container(id="dialog_container"):
+        with Container(id="dialog_container") as container:
+            container.styles.border = ("solid", "white")
             # Title (if provided)
             if self.window_title:
                 yield Static(self.window_title, classes="dialog-title")

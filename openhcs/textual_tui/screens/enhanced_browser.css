@@ -7,7 +7,6 @@ EnhancedFileBrowserScreen {
 
 #floating_window {
     background: $surface;
-    border: solid $primary;
     padding: 2;
     height: 90vh;
 }
