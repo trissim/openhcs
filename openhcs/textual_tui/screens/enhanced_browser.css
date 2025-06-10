@@ -1,0 +1,82 @@
+/* Enhanced file browser CSS using proper Textual layout */
+
+EnhancedFileBrowserScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#floating_window {
+    background: $surface;
+    border: solid $primary;
+    padding: 2;
+    height: 90vh;
+}
+
+/* Path display takes minimal space */
+#path_display {
+    color: $text-muted;
+    text-style: italic;
+    height: auto;
+}
+
+/* Tree panel expands to fill all available space */
+#tree_panel {
+    height: 1fr;
+    width: 100%;
+}
+
+/* OpenHCSDirectoryTree fills its container */
+OpenHCSDirectoryTree {
+    height: 100%;
+    width: 100%;
+    border: solid $primary;
+}
+
+/* Bottom area only takes space needed for its content */
+#bottom_area {
+    height: auto;
+    width: 100%;
+}
+
+/* Buttons panel takes minimal width */
+#buttons_panel {
+    width: auto;
+    height: auto;
+}
+
+#buttons_panel Button {
+    width: 16;
+    height: 1;
+    margin-bottom: 0;
+}
+
+#buttons_panel Checkbox {
+    width: 16;
+    height: 1;
+    margin-bottom: 0;
+}
+
+/* Selection panel takes remaining horizontal space */
+#selection_panel {
+    width: 1fr;
+    height: auto;
+    max-height: 8;
+    border: solid $primary;
+    padding: 1;
+}
+
+/* Selected list with fixed height and scrolling */
+#selected_list {
+    height: 5;
+    overflow-y: auto;
+}
+
+#selected_display {
+    width: 100%;
+}
+
+.dialog-title {
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 1;
+}

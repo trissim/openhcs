@@ -11,7 +11,7 @@ from typing import Optional, Set, List, Dict
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, Horizontal, Vertical, ScrollableContainer, VerticalScroll
 from textual.widgets import Button, DirectoryTree, Static, Checkbox
 
 from openhcs.constants.constants import Backend
@@ -57,7 +57,8 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             filemanager=file_manager,
             backend=backend,
             path=initial_path,
-            show_hidden=self.show_hidden_files
+            show_hidden=self.show_hidden_files,
+            id='tree_panel'
         )
 
         super().__init__(title=title, **kwargs)
@@ -68,7 +69,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         return {
             'title': self.browser_title,
             'content_text': '',  # No text content, complex layout
-            'button_texts': ['Add Current', 'Remove Selected', 'Select All', 'Cancel'],
+            'button_texts': ['🏠 Home', '⬆️ Up', 'Add Current', 'Remove Selected', 'Select All', 'Cancel'],
             'extra_content_width': 80  # Wide for tree + selection panels
         }
 
@@ -78,20 +79,24 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         yield Static(f"Path: {self.initial_path}", id="path_display")
 
         # Directory tree - scrollable area
-        with ScrollableContainer(id="tree_panel"):
-            yield self.directory_tree
+        #with ScrollableContainer(id="tree_panel"):
+        #with VerticalScroll(id="tree_panel"):
+        yield self.directory_tree
 
         # Bottom area: buttons left, selected panel right (always visible)
         with Horizontal(id="bottom_area"):
             # Buttons on left (auto width)
             with Vertical(id="buttons_panel"):
+                yield Button("🏠 Home", id="go_home", compact=True)
+                yield Button("⬆️ Up", id="go_up", compact=True)
                 yield Button("Add Current", id="add_current", compact=True)
                 yield Button("Remove Selected", id="remove_selected", compact=True)
                 yield Button("Select All", id="select_all", compact=True)
                 yield Checkbox(
                     label="Show Hidden Files",
                     value=self.show_hidden_files,
-                    id="show_hidden_checkbox"
+                    id="show_hidden_checkbox",
+                    compact=True
                 )
                 yield Button("Cancel", id="cancel", compact=True)
 
@@ -107,8 +112,14 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         yield  # This line will never execute, but satisfies the generator requirement
 
     def handle_button_action(self, button_id: str, button_text: str):
-        """Handle button actions - Add/Remove/Select/Cancel logic."""
-        if button_text == 'Add Current':
+        """Handle button actions - Navigation/Add/Remove/Select/Cancel logic."""
+        if button_text == '🏠 Home':
+            self._handle_go_home()
+            return False  # Don't dismiss dialog
+        elif button_text == '⬆️ Up':
+            self._handle_go_up()
+            return False  # Don't dismiss dialog
+        elif button_text == 'Add Current':
             self._handle_add_current()
             return False  # Don't dismiss dialog
         elif button_text == 'Remove Selected':
@@ -157,7 +168,8 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         """Handle checkbox changes."""
         if event.checkbox.id == "show_hidden_checkbox":
             self.show_hidden_files = event.value
-            self._refresh_directory_tree()
+            # Use call_after_refresh to ensure proper async context
+            self.call_after_refresh(self._refresh_directory_tree)
             logger.debug(f"Hidden files toggle: {self.show_hidden_files}")
 
     def _refresh_directory_tree(self) -> None:
@@ -176,7 +188,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
         # Replace the tree in the UI
         try:
-            tree_container = self.query_one("#tree_panel", Container)
+            tree_container = self.query_one("#tree_panel", ScrollableContainer)
             tree_container.remove_children()
             tree_container.mount(self.directory_tree)
             self.directory_tree.focus()
@@ -198,6 +210,46 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             # Remove oldest entries (simple FIFO)
             oldest_key = next(iter(self.path_cache))
             del self.path_cache[oldest_key]
+
+    def _handle_go_home(self) -> None:
+        """Navigate to home directory."""
+        home_path = Path.home()
+        self._navigate_to_path(home_path)
+        logger.debug(f"Navigated to home: {home_path}")
+
+    def _handle_go_up(self) -> None:
+        """Navigate to parent directory."""
+        current_path = self.selected_path or self.initial_path
+        parent_path = current_path.parent
+
+        # Don't go above root
+        if parent_path != current_path:
+            self._navigate_to_path(parent_path)
+            logger.debug(f"Navigated up from {current_path} to {parent_path}")
+        else:
+            logger.debug(f"Already at root directory: {current_path}")
+
+    def _navigate_to_path(self, new_path: Path) -> None:
+        """Navigate to a new path and refresh the tree."""
+        self.selected_path = new_path
+        self._update_path_display(new_path)
+
+        # Recreate directory tree for new path
+        self.directory_tree = OpenHCSDirectoryTree(
+            filemanager=self.file_manager,
+            backend=self.backend,
+            path=new_path,
+            show_hidden=self.show_hidden_files
+        )
+
+        # Replace the tree in the UI
+        try:
+            tree_container = self.query_one("#tree_panel", ScrollableContainer)
+            tree_container.remove_children()
+            tree_container.mount(self.directory_tree)
+            self.directory_tree.focus()
+        except Exception as e:
+            logger.warning(f"Failed to navigate to {new_path}: {e}")
 
     def _handle_add_current(self) -> None:
         """Add current directory to selection."""
@@ -248,95 +300,98 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             # Widget might not be mounted yet
             pass
 
-    DEFAULT_CSS = """
-    EnhancedFileBrowserScreen {
-        align: center middle;
-        background: $background 60%;
-    }
-
-    #floating_window {
-        background: $surface;
-        border: solid $primary;
-        padding: 2;
-        height: auto;
-    }
-
-    .dialog-title {
-        text-style: bold;
-        text-align: center;
-        margin-bottom: 1;
-    }
-
-    #path_display {
-        margin-bottom: 1;
-        text-style: italic;
-        color: $text-muted;
-    }
-
-
-
-    #tree_panel {
-        width: 100%;
-        height: 1fr;
-        min-height: 15;
-        max-height: 30;
-        margin-bottom: 1;
-    }
-
-    #bottom_area {
-        height: auto;
-        margin-top: 1;
-    }
-
-    #buttons_panel {
-        width: auto;
-        height: auto;
-        margin-right: 2;
-    }
-
-    #buttons_panel Button {
-        margin-bottom: 1;
-        width: 15;
-    }
-
-    #buttons_panel Checkbox {
-        margin-bottom: 1;
-        width: 15;
-    }
-
-    #selection_panel {
-        width: 1fr;
-        height: auto;
-        max-height: 8;
-        border: solid $primary;
-        padding: 1;
-    }
-
-    #selected_list {
-        height: auto;
-        min-height: 2;
-        max-height: 5;
-        border: solid $accent;
-        padding: 1;
-    }
-
-    OpenHCSDirectoryTree {
-        height: 1fr;
-        border: solid $primary;
-    }
-
-    .dialog-content {
-        height: auto;
-        margin: 0;
-    }
-
-    .dialog-buttons {
-        height: auto;
-        align: center middle;
-        margin-top: 1;
-    }
-
-    .dialog-buttons Button {
-        margin: 0 1;
-    }
-    """
+    CSS_PATH = "enhanced_browser.css"
+#    DEFAULT_CSS = """
+#    EnhancedFileBrowserScreen {
+#        align: center middle;
+#        background: $background 60%;
+#    }
+#
+#    #floating_window {
+#        background: $surface;
+#        border: solid $primary;
+#        padding: 2;
+#        height: auto;
+#    }
+#
+#    .dialog-title {
+#        text-style: bold;
+#        text-align: center;
+#        margin-bottom: 1;
+#    }
+#
+#    #path_display {
+#        margin-bottom: 1;
+#        text-style: italic;
+#        color: $text-muted;
+#    }
+#
+#
+#
+#    #tree_panel {
+#        width: 100%;
+#        height: 3fr;
+#        min-height: 10;
+#        margin-bottom: 1;
+#    }
+#
+#    #bottom_area {
+#        height: 1fr;
+#        margin-top: 1;
+#    }
+#
+#    #buttons_panel {
+#        width: auto;
+#        height: 8;
+#        margin-right: 2;
+#    }
+#
+#    #buttons_panel Button {
+#        margin-bottom: 0;
+#        width: 15;
+#        height: 1;
+#    }
+#
+#    #buttons_panel Checkbox {
+#        margin-bottom: 0;
+#        width: 15;
+#        height: 1;
+#    }
+#
+#    #selection_panel {
+#        width: 1fr;
+#        height: auto;
+#        max-height: 8;
+#        border: solid $primary;
+#        padding: 1;
+#    }
+#
+#    #selected_list {
+#        height: auto;
+#        min-height: 2;
+#        max-height: 5;
+#        border: solid $accent;
+#        padding: 1;
+#    }
+#
+#    OpenHCSDirectoryTree {
+#        height: 1fr;
+#        border: solid $primary;
+#    }
+#
+#    .dialog-content {
+#        height: auto;
+#        margin: 0;
+#    }
+#
+#    .dialog-buttons {
+#        height: auto;
+#        align: center middle;
+#        margin-top: 1;
+#    }
+#
+#    .dialog-buttons Button {
+#        margin: 0 1;
+#    }
+#    """
+#

@@ -5,8 +5,14 @@ from typing import Optional, Callable, Union, List, Dict
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Button, Static, TabbedContent, TabPane, Label, Input, Select
 from textual.reactive import reactive
+from textual.widgets._tabbed_content import ContentTabs, ContentSwitcher, ContentTab
+from textual.widgets._tabs import Tab
+from textual import events          # NEW
+from textual.widgets import Tabs    # NEW – for type hint below (optional)
+from itertools import zip_longest
 
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
@@ -20,6 +26,113 @@ from openhcs.textual_tui.widgets.function_list_editor import FunctionListEditorW
 logger = logging.getLogger(__name__)
 
 
+class ButtonTab(Tab):
+    """A fake tab that acts like a button."""
+
+    class ButtonClicked(Message):
+        """A button tab was clicked."""
+        def __init__(self, button_id: str) -> None:
+            self.button_id = button_id
+            super().__init__()
+
+    def __init__(self, label: str, button_id: str, disabled: bool = False):
+        # Use a unique ID for the button tab
+        super().__init__(label, id=f"button-{button_id}", disabled=disabled)
+        self.button_id = button_id
+        # Add button-like styling
+        self.add_class("button-tab")
+
+    def _on_click(self, event: events.Click) -> None:
+        """Send the ButtonClicked message and swallow the click."""
+        event.stop()                       # don't let real tab logic run
+        event.prevent_default()            # prevent default tab behavior
+        self.post_message(self.ButtonClicked(self.button_id))
+
+
+class TabbedContentWithButtons(TabbedContent):
+    """Custom TabbedContent that adds Save/Close buttons to the tab bar."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.save_callback = None
+        self.close_callback = None
+
+    def set_callbacks(self, save_callback: Optional[Callable] = None, close_callback: Optional[Callable] = None):
+        """Set the callbacks for save and close buttons."""
+        self.save_callback = save_callback
+        self.close_callback = close_callback
+
+    def compose(self) -> ComposeResult:
+        """Compose the tabbed content with button tabs in the tab bar."""
+        # Wrap content in a `TabPane` if required (copied from parent)
+        pane_content = [
+            self._set_id(
+                (
+                    content
+                    if isinstance(content, TabPane)
+                    else TabPane(title or self.render_str(f"Tab {index}"), content)
+                ),
+                self._generate_tab_id(),
+            )
+            for index, (title, content) in enumerate(
+                zip_longest(self.titles, self._tab_content), 1
+            )
+        ]
+
+        # Get a tab for each pane (copied from parent)
+        tabs = [
+            ContentTab(
+                content._title,
+                content.id or "",
+                disabled=content.disabled,
+            )
+            for content in pane_content
+        ]
+
+        # ── tab strip ───────────────────────────────────────────────────
+        # 1️⃣ regular content-selecting tabs
+        # 2️⃣ an elastic spacer tab (width: 1fr in CSS)
+        # 3️⃣ our two action "button-tabs"
+
+        spacer = Tab("", id="spacer_tab", disabled=True)        # visual gap
+        spacer.add_class("spacer-tab")
+
+        tabs.extend([
+            spacer,
+            ButtonTab("Save", "save", disabled=True),
+            ButtonTab("Close", "close"),
+        ])
+
+        # yield the single ContentTabs row (must be an immediate child)
+        yield ContentTabs(*tabs,
+                          active=self._initial or None,
+                          tabbed_content=self)
+
+        # Yield the content switcher and panes (copied from parent)
+        with ContentSwitcher(initial=self._initial or None):
+            yield from pane_content
+
+    def _on_tabs_tab_activated(
+        self, event: Tabs.TabActivated
+    ) -> None:
+        """Override to prevent button tabs from being activated as content tabs."""
+        # Check if the activated tab is a ButtonTab
+        if hasattr(event, 'tab') and isinstance(event.tab, ButtonTab):
+            # Don't activate button tabs as content tabs
+            event.stop()
+            return
+
+        # For regular tabs, use the normal behavior
+        super()._on_tabs_tab_activated(event)
+
+    def on_button_tab_button_clicked(self, event: ButtonTab.ButtonClicked) -> None:
+        """Handle button tab clicks."""
+        if event.button_id == "save" and self.save_callback:
+            self.save_callback()
+        elif event.button_id == "close" and self.close_callback:
+            self.close_callback()
+
+
 class DualEditorScreen(ModalScreen):
     """
     Enhanced modal screen for editing steps and functions.
@@ -30,6 +143,8 @@ class DualEditorScreen(ModalScreen):
     - Integration with all visual programming services
     - Proper error handling and user feedback
     """
+
+    CSS_PATH = "dual_editor.css"
 
     # Reactive state for change tracking
     has_changes = reactive(False)
@@ -75,7 +190,13 @@ class DualEditorScreen(ModalScreen):
             # Status bar for feedback
             yield Static("Ready", id="status_bar")
 
-            with TabbedContent(id="editor_tabs"):
+            # Custom tabbed content with buttons
+            with TabbedContentWithButtons(id="editor_tabs") as tabbed_content:
+                tabbed_content.set_callbacks(
+                    save_callback=self._handle_save,
+                    close_callback=self._handle_cancel
+                )
+
                 with TabPane("Step Settings", id="step_tab"):
                     # Create step editor with correct constructor
                     self.step_editor = StepParameterEditorWidget(self.editing_step)
@@ -87,10 +208,10 @@ class DualEditorScreen(ModalScreen):
                     self.func_editor = FunctionListEditorWidget(func_data)
                     yield self.func_editor
 
-            # Action buttons with dynamic state
-            with Horizontal(id="dialog_buttons"):
-                yield Button("Save", id="save_btn", variant="primary", compact=True, disabled=True)
-                yield Button("Cancel", id="cancel_btn", compact=True)
+    def on_mount(self) -> None:
+        """Called when the screen is mounted."""
+        # Update change tracking to set initial Save button state
+        self._update_change_tracking()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle input changes from child widgets."""
@@ -109,10 +230,11 @@ class DualEditorScreen(ModalScreen):
         self._update_status("Modified step parameters")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses from child widgets and dialog buttons."""
-        if event.button.id == "save_btn":
+        """Handle button presses from child widgets."""
+        # Handle Save/Close buttons
+        if event.button.id == "save_button":
             self._handle_save()
-        elif event.button.id == "cancel_btn":
+        elif event.button.id == "close_button":
             self._handle_cancel()
         else:
             # Handle other button presses from child widgets
@@ -146,12 +268,21 @@ class DualEditorScreen(ModalScreen):
         has_changes = not self._steps_equal(self.editing_step, self.original_step)
         self.has_changes = has_changes
 
+        # For new steps, always enable save button since they need to be saved
+        # For existing steps, enable only when there are changes
+        save_should_be_enabled = self.is_new or has_changes
+
         # Update save button state
         try:
-            save_btn = self.query_one("#save_btn", Button)
-            save_btn.disabled = not has_changes
-        except Exception:
-            pass
+            # Find the save button tab by looking for button tabs
+            tabs = self.query(ButtonTab)
+            for tab in tabs:
+                if tab.button_id == "save":
+                    tab.disabled = not save_should_be_enabled
+                    logger.debug(f"Save button disabled={not save_should_be_enabled} (is_new={self.is_new}, has_changes={has_changes})")
+                    break
+        except Exception as e:
+            logger.debug(f"Error updating save button state: {e}")
 
     def _validate_function_data(self, func_data) -> Union[List, callable, None]:
         """Validate and normalize function data for FunctionListEditorWidget."""
