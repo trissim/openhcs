@@ -53,10 +53,9 @@ def _setup_logging(debug: bool = False):
 
     # Only setup logging if not already configured
     if not logging.getLogger().hasHandlers():
-        # Setup both file and console logging
+        # Setup file-only logging (no console output for TUI)
         handlers = [
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stderr)  # Use stderr to avoid TUI interference
+            logging.FileHandler(log_file)
         ]
 
         logging.basicConfig(

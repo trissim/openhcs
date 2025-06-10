@@ -80,7 +80,7 @@ class StatusBar(Widget):
             info_message: Info message to display
         """
         self.status_message = f"INFO: {info_message}"
-        logger.info(f"Status info: {info_message}")
+
     
     def clear_status(self) -> None:
         """Clear the status message back to ready."""

@@ -65,7 +65,6 @@ class MainContent(Widget):
     
     def on_mount(self) -> None:
         """Called when the main content is mounted."""
-        logger.info("MainContent mounted")
         
         # Set up communication between panes
         plate_manager = self.query_one(PlateManagerWidget)

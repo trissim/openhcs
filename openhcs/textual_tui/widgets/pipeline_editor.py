@@ -118,13 +118,10 @@ class PipelineEditorWidget(ButtonListWidget):
         step_name = step['name']
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved step '{step_name}' {direction}"
-        logger.info(f"Moved step '{step_name}' from index {from_index} to {to_index}")
     
     def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         """Handle selection changes from SelectionList."""
         selected_values = event.selection_list.selected
-
-        logger.info(f"Step selection changed: {len(selected_values)} items selected")
 
         # Update selected_step - use first selected item if any
         if selected_values:
@@ -191,11 +188,9 @@ class PipelineEditorWidget(ButtonListWidget):
             # Get pipeline for this plate (or empty if none exists)
             plate_pipeline = self.plate_pipelines.get(plate_path, [])
             self.pipeline_steps = plate_pipeline
-            logger.info(f"Loaded {len(plate_pipeline)} steps for plate: {plate_path}")
         else:
             # No plate selected - clear steps
             self.pipeline_steps = []
-            logger.info("No plate selected - cleared pipeline steps")
 
         # Clear selection when plate changes
         self.selected_step = ""
@@ -274,7 +269,6 @@ class PipelineEditorWidget(ButtonListWidget):
         current_pipelines = dict(self.plate_pipelines)
         current_pipelines[plate_path] = pipeline
         self.plate_pipelines = current_pipelines
-        logger.info(f"Saved pipeline with {len(pipeline)} steps for plate: {plate_path}")
 
     def clear_pipeline_for_plate(self, plate_path: str) -> None:
         """Clear pipeline for specific plate."""
@@ -282,7 +276,6 @@ class PipelineEditorWidget(ButtonListWidget):
         if plate_path in current_pipelines:
             del current_pipelines[plate_path]
             self.plate_pipelines = current_pipelines
-            logger.info(f"Cleared pipeline for plate: {plate_path}")
 
     def _invalidate_compilation_status(self) -> None:
         """Reset plate status from compiled to initialized when pipeline changes."""
@@ -293,7 +286,6 @@ class PipelineEditorWidget(ButtonListWidget):
         for plate in self.plate_manager.plates:
             if plate.get('path') == self.current_plate and plate.get('status') == 'o':
                 plate['status'] = '-'  # Reset from compiled to initialized
-                logger.info(f"Reset plate {plate.get('name')} from compiled to initialized due to pipeline change")
 
                 # Trigger reactive update
                 self.plate_manager.mutate_reactive(self.plate_manager.__class__.plates)
@@ -350,7 +342,6 @@ class PipelineEditorWidget(ButtonListWidget):
     
     def action_add_step(self) -> None:
         """Handle Add Step button - now triggers modal."""
-        logger.info("Add Step button pressed")
 
         def handle_result(result: Optional[FunctionStep]) -> None:
             if result:  # User saved new step
@@ -359,7 +350,6 @@ class PipelineEditorWidget(ButtonListWidget):
                 new_steps = self.pipeline_steps + [new_step_dict]
                 self.pipeline_steps = new_steps
                 self.app.current_status = f"Added step: {result.name}"
-                logger.info(f"Added step '{result.name}' to plate '{self.current_plate}'")
             else:
                 self.app.current_status = "Add step cancelled"
 
@@ -371,7 +361,6 @@ class PipelineEditorWidget(ButtonListWidget):
     
     def action_delete_step(self) -> None:
         """Handle Delete Step button - delete selected steps."""
-        logger.info("Delete Step button pressed")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
@@ -392,8 +381,6 @@ class PipelineEditorWidget(ButtonListWidget):
         else:
             desc = f"Delete {count} selected items"
 
-        logger.info(f"Deleting steps: {desc}")
-
         # Remove selected steps
         current_steps = list(self.pipeline_steps)
         steps_to_remove = set(item.get('name', '') for item in selected_items)
@@ -406,7 +393,6 @@ class PipelineEditorWidget(ButtonListWidget):
 
         deleted_count = len(current_steps) - len(new_steps)
         self.app.current_status = f"Deleted {deleted_count} steps"
-        logger.info(f"Deleted {deleted_count} steps from plate '{self.current_plate}'")
     
     def _dict_to_function_step(self, step_dict: Dict) -> FunctionStep:
         """Convert step dict to FunctionStep object with proper data preservation."""
@@ -457,7 +443,6 @@ class PipelineEditorWidget(ButtonListWidget):
 
     def action_edit_step(self) -> None:
         """Handle Edit Step button with proper selection and data preservation."""
-        logger.info("Edit Step button pressed")
 
         if not self.pipeline_steps:
             self.app.current_status = "No steps to edit"
@@ -481,7 +466,6 @@ class PipelineEditorWidget(ButtonListWidget):
                 updated_steps[step_index] = updated_step_dict
                 self.pipeline_steps = updated_steps
                 self.app.current_status = f"Updated step: {result.name}"
-                logger.info(f"Updated step at index {step_index}: {result.name}")
             else:
                 self.app.current_status = "Edit step cancelled"
 
@@ -496,7 +480,6 @@ class PipelineEditorWidget(ButtonListWidget):
     
     def action_load_pipeline(self) -> None:
         """Handle Load Pipeline button - load pipeline from file."""
-        logger.info("Load Pipeline button pressed")
 
         if not self.current_plate:
             self.app.current_status = "No plate selected for loading pipeline"
@@ -535,7 +518,6 @@ class PipelineEditorWidget(ButtonListWidget):
             if isinstance(pattern, list):
                 self.pipeline_steps = pattern
                 self.app.current_status = f"Loaded {len(pattern)} steps from {file_path.name}"
-                logger.info(f"Loaded pipeline with {len(pattern)} steps")
             else:
                 self.app.current_status = f"Invalid pipeline format in {file_path.name}"
                 logger.error(f"Invalid pipeline format: expected list, got {type(pattern)}")
@@ -545,7 +527,6 @@ class PipelineEditorWidget(ButtonListWidget):
 
     def action_save_pipeline(self) -> None:
         """Handle Save Pipeline button - save pipeline to file."""
-        logger.info("Save Pipeline button pressed")
 
         if not self.current_plate:
             self.app.current_status = "No plate selected for saving pipeline"
@@ -590,7 +571,6 @@ class PipelineEditorWidget(ButtonListWidget):
             with open(file_path, 'wb') as f:
                 pickle.dump(list(self.pipeline_steps), f)
             self.app.current_status = f"Saved pipeline to {file_path.name}"
-            logger.info(f"Saved pipeline with {len(self.pipeline_steps)} steps")
         except Exception as e:
             logger.error(f"Failed to save pipeline: {e}")
             self.app.current_status = f"Failed to save pipeline: {e}"

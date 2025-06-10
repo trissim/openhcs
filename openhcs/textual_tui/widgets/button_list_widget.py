@@ -295,8 +295,21 @@ class ButtonListWidget(Widget):
             for item in self.items:
                 display_text, value = self.format_item_for_display(item)
                 options.append((display_text, value))
+                logger.info(f"Adding option: {display_text}")
 
             selection_list.add_options(options)
+            logger.info(f"Added {len(options)} options to SelectionList")
+
+            # Force refresh the SelectionList display
+            selection_list.refresh()
+            logger.info("Called refresh() on SelectionList")
+
+            # Force refresh the SelectionList display
+            try:
+                selection_list.refresh()
+                logger.info("Called refresh() on SelectionList")
+            except Exception as e:
+                logger.warning(f"Failed to refresh SelectionList: {e}")
 
             # Set selection if we have a selected item
             if self.selected_item:

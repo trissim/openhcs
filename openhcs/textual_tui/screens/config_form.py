@@ -58,8 +58,6 @@ class ConfigFormScreen(ModalScreen):
         
         # Form widgets storage
         self.form_widgets = {}
-        
-        logger.info(f"ConfigFormScreen initialized for plate: {plate_path}")
     
     def _clone_config(self, config: GlobalPipelineConfig) -> GlobalPipelineConfig:
         """Create a deep copy of configuration."""
@@ -247,13 +245,11 @@ class ConfigFormScreen(ModalScreen):
     
     def _handle_save(self) -> None:
         """Handle save button."""
-        logger.info(f"Saving configuration for plate: {self.plate_path}")
         self._update_status("Configuration saved")
         self.dismiss(self.editing_config)
     
     def _handle_reset(self) -> None:
         """Handle reset button - restore original values."""
-        logger.info("Resetting configuration to original values")
         
         # Reset editing config to original
         self.editing_config = self._clone_config(self.original_config)
@@ -286,10 +282,8 @@ class ConfigFormScreen(ModalScreen):
     def _handle_cancel(self) -> None:
         """Handle cancel button."""
         if self.has_changes:
-            logger.info("Cancelling configuration with unsaved changes")
             self._update_status("Cancelled - changes discarded")
         else:
-            logger.info("Cancelling configuration without changes")
             self._update_status("Cancelled")
         
         self.dismiss(None)

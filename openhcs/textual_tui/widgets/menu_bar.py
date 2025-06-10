@@ -66,7 +66,6 @@ class MenuBar(Widget):
     
     def action_show_global_config(self) -> None:
         """Show global configuration dialog."""
-        logger.info("Global Config button pressed")
 
         def handle_result(result: Any) -> None:
             if result:  # User saved config changes
@@ -91,7 +90,6 @@ class MenuBar(Widget):
     
     def action_show_help(self) -> None:
         """Show help dialog."""
-        logger.info("Help button pressed")
 
         # LAZY IMPORT to avoid circular import
         from openhcs.textual_tui.screens.help_dialog import HelpDialogScreen
@@ -101,7 +99,6 @@ class MenuBar(Widget):
     
     def action_quit(self) -> None:
         """Quit the application."""
-        logger.info("Quit button pressed")
         self.app.action_quit()
     
     def watch_app_title(self, title: str) -> None:

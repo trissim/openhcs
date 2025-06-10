@@ -193,7 +193,6 @@ class StepParameterEditorWidget(ScrollableContainer):
             for param_name, value in step_data.items():
                 if param_name in self.form_manager.parameters:
                     self._handle_parameter_change(param_name, value)
-            logger.info(f"Loaded step settings from {file_path.name}")
         except Exception as e:
             logger.error(f"Failed to load step: {e}")
 
@@ -204,6 +203,5 @@ class StepParameterEditorWidget(ScrollableContainer):
             step_data = self.form_manager.get_current_values()
             with open(file_path, 'wb') as f:
                 pickle.dump(step_data, f)
-            logger.info(f"Saved step settings to {file_path.name}")
         except Exception as e:
             logger.error(f"Failed to save step: {e}")

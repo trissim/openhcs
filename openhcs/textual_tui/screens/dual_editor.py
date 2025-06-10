@@ -162,7 +162,6 @@ class DualEditorScreen(ModalScreen):
         # Create working copy of step data
         if self.step_data:
             self.editing_step = self.pattern_manager.clone_pattern(self.step_data)
-            logger.info(f"Editing existing step: {self.editing_step.name}")
         else:
             # Create new step with empty function list (user adds functions manually)
             self.editing_step = FunctionStep(
@@ -171,7 +170,6 @@ class DualEditorScreen(ModalScreen):
                 variable_components=[],
                 group_by=""
             )
-            logger.info("Creating new step with empty function list")
 
         # Store original for change detection
         self.original_step = self.pattern_manager.clone_pattern(self.editing_step)
@@ -341,7 +339,6 @@ class DualEditorScreen(ModalScreen):
             return
 
         # Save successful
-        logger.info(f"Saving step: {self.editing_step.name}")
         self._update_status("Saved successfully")
         self.dismiss(self.editing_step)
 
@@ -349,10 +346,8 @@ class DualEditorScreen(ModalScreen):
         """Handle cancel button with change confirmation."""
         if self.has_changes:
             # TODO: Add confirmation dialog for unsaved changes
-            logger.info("Cancelling with unsaved changes")
             self._update_status("Cancelled - changes discarded")
         else:
-            logger.info("Cancelling without changes")
             self._update_status("Cancelled")
 
         self.dismiss(None)

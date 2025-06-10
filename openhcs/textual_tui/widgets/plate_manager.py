@@ -81,8 +81,8 @@ class PlateManagerWidget(ButtonListWidget):
     
     def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
         """Format plate for display in the list."""
-        # Status symbols: ? = added, - = initialized, o = compiled, X = error
-        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "X": "❌"}
+        # Status symbols: ? = added, - = initialized, o = compiled, ! = running, X = error
+        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "!": "🔄", "X": "❌"}
         status_icon = status_symbols.get(plate.get("status", "?"), "❓")
         plate_name = plate.get('name', 'Unknown')
         plate_path = plate.get('path', '')
@@ -130,11 +130,9 @@ class PlateManagerWidget(ButtonListWidget):
         plate_name = plate['name']
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved plate '{plate_name}' {direction}"
-        logger.info(f"Moved plate '{plate_name}' from index {from_index} to {to_index}")
 
     def on_mount(self) -> None:
         """Called when the widget is mounted - ensure display is up to date."""
-        logger.info("PlateManagerWidget mounted, updating display")
         # Schedule multiple update attempts to ensure it works
         self.call_later(self._delayed_update_display)
         self.set_timer(0.1, self._delayed_update_display)
@@ -145,12 +143,16 @@ class PlateManagerWidget(ButtonListWidget):
     def watch_plates(self, plates: List[Dict]) -> None:
         """Automatically update UI when plates reactive property changes."""
         try:
-            logger.info(f"watch_plates called with {len(plates)} plates: {[p.get('name', 'Unknown') for p in plates]}")
+            logger.info(f"watch_plates called with {len(plates)} plates")
+            for plate in plates:
+                logger.info(f"  - {plate['name']}: status={plate.get('status', '?')}")
 
             # Update ButtonListWidget items - this will trigger the parent's watch_items
-            self.items = plates
+            # Force a new list to ensure reactive update is triggered
+            self.items = list(plates)
+            # Also explicitly trigger the reactive update for items
+            self.mutate_reactive(ButtonListWidget.items)
 
-            logger.info(f"✅ Updated plate list successfully - now showing {len(plates)} plates")
 
         except Exception as e:
             # Show global error for any unexpected exceptions
@@ -159,7 +161,6 @@ class PlateManagerWidget(ButtonListWidget):
         # Update button states
         self._update_button_states()
 
-        logger.info(f"Plates UI update complete: {len(plates)} plates")
     
     def watch_selected_plate(self, plate_path: str) -> None:
         """Automatically update UI when selected_plate changes."""
@@ -211,7 +212,6 @@ class PlateManagerWidget(ButtonListWidget):
         try:
             # Trigger the ButtonListWidget's watch_items method
             self.mutate_reactive(PlateManagerWidget.items)
-            logger.info(f"✅ Delayed plate list update successful - showing {len(self.plates)} plates")
         except Exception as e:
             logger.warning(f"Delayed update failed (widget may not be ready): {e}")
             # Try again in a moment using proper Textual API
@@ -290,11 +290,9 @@ class PlateManagerWidget(ButtonListWidget):
             elif not isinstance(selected_path, Path):
                 selected_path = Path(str(selected_path))
 
-            logger.info(f"Processing plate directory: {selected_path}")
 
             # Check if plate already exists
             if any(plate['path'] == str(selected_path) for plate in current_plates):
-                logger.info(f"Plate {selected_path.name} already exists, skipping")
                 continue
 
             # Create orchestrator for the plate
@@ -327,7 +325,6 @@ class PlateManagerWidget(ButtonListWidget):
 
                 current_plates.append(plate_entry)
                 added_plates.append(plate_name)
-                logger.info(f"Added plate with orchestrator: {plate_name} at {selected_path}")
 
             except Exception as e:
                 logger.error(f"Failed to create orchestrator for {selected_path}: {e}")
@@ -374,7 +371,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate description and perform deletion
         desc = self.get_operation_description(selected_items, selection_mode, "delete")
-        logger.info(f"Deleting: {desc}")
 
         # Clean up orchestrators and remove items
         current_plates = list(self.plates)
@@ -387,12 +383,10 @@ class PlateManagerWidget(ButtonListWidget):
             # Remove orchestrator if it exists
             if plate_path in current_orchestrators:
                 del current_orchestrators[plate_path]
-                logger.info(f"Cleaned up orchestrator for: {item['name']}")
 
             # Remove plate-specific config if it exists
             if plate_path in current_configs:
                 del current_configs[plate_path]
-                logger.info(f"Cleaned up config for: {item['name']}")
 
             # Remove from plates list
             current_plates = [p for p in current_plates if p['path'] != plate_path]
@@ -433,7 +427,6 @@ class PlateManagerWidget(ButtonListWidget):
                 self.plate_configs = current_configs
 
                 self.app.current_status = f"Updated configuration for {plate_data['name']}"
-                logger.info(f"Saved configuration for plate: {plate_path}")
             else:
                 self.app.current_status = "Configuration edit cancelled"
 
@@ -474,7 +467,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "initialize")
-        logger.info(f"Starting initialization: {desc}")
         self.app.current_status = f"Initializing: {desc}"
 
         # Start background worker
@@ -503,20 +495,27 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(f"No orchestrator found for {plate_path}")
                 actual_plate['status'] = 'X'
                 actual_plate['error'] = "No orchestrator found"
+                # Force UI update immediately for error state
+                self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
             # Check if already initialized
             if orchestrator.is_initialized():
-                logger.info(f"Orchestrator for {actual_plate['name']} already initialized")
                 actual_plate['status'] = '-'
+                # Force UI update immediately
+                self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
             # Initialize orchestrator (heavy operation - run in executor to avoid blocking UI)
             await asyncio.get_event_loop().run_in_executor(None, orchestrator.initialize)
             actual_plate['status'] = '-'  # Initialized
-            logger.info(f"Initialized orchestrator for plate: {actual_plate['name']}")
+            logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
 
-        # Update UI - trigger reactive update for mutable list
+            # Force UI update immediately after each plate
+            self.mutate_reactive(PlateManagerWidget.plates)
+            logger.info(f"Called mutate_reactive for plate {actual_plate['name']}")
+
+        # Final UI update
         self.mutate_reactive(PlateManagerWidget.plates)
 
         # Update status
@@ -568,7 +567,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "compile")
-        logger.info(f"Starting compilation: {desc}")
         self.app.current_status = f"Compiling: {desc}"
 
         # Start background worker
@@ -580,18 +578,31 @@ class PlateManagerWidget(ButtonListWidget):
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
+            # Find the actual plate in self.plates (not the copy from get_selection_state)
+            actual_plate = None
+            for plate in self.plates:
+                if plate['path'] == plate_path:
+                    actual_plate = plate
+                    break
+
+            if not actual_plate:
+                logger.error(f"Plate not found in plates list: {plate_path}")
+                continue
+
             # Get orchestrator
             orchestrator = self.orchestrators.get(plate_path)
             if not orchestrator:
                 logger.error(f"No orchestrator found for {plate_path}")
-                plate_data['status'] = 'X'
-                plate_data['error'] = "No orchestrator found"
+                actual_plate['status'] = 'X'
+                actual_plate['error'] = "No orchestrator found"
+                # Force UI update immediately for error state
+                self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
             # Get pipeline definition for this specific plate
             pipeline_definition = self._get_current_pipeline_definition(plate_path)
             if not pipeline_definition:
-                logger.warning(f"No pipeline defined for {plate_data['name']}, using empty pipeline")
+                logger.warning(f"No pipeline defined for {actual_plate['name']}, using empty pipeline")
                 pipeline_definition = []
 
             # Get wells (heavy operation)
@@ -604,13 +615,15 @@ class PlateManagerWidget(ButtonListWidget):
             )
 
             # Store compiled data
-            plate_data['compiled_contexts'] = compiled_contexts
-            plate_data['pipeline_definition'] = pipeline_definition
-            plate_data['status'] = 'o'  # Compiled
-            logger.info(f"Compiled pipeline for plate: {plate_data['name']}")
+            actual_plate['compiled_contexts'] = compiled_contexts
+            actual_plate['pipeline_definition'] = pipeline_definition
+            actual_plate['status'] = 'o'  # Compiled
 
-        # Update UI - trigger reactive update
-        self.plates = list(self.plates)  # Force reactive update
+            # Force UI update immediately after each plate
+            self.mutate_reactive(PlateManagerWidget.plates)
+
+        # Final UI update
+        self.mutate_reactive(PlateManagerWidget.plates)
 
         # Update status
         success_count = len([p for p in selected_items if p.get('status') == 'o'])
@@ -655,7 +668,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Get pipeline from editor
         pipeline = self.pipeline_editor.get_pipeline_for_plate(target_plate)
-        logger.info(f"Retrieved pipeline with {len(pipeline)} steps for plate: {target_plate}")
         return pipeline
     
     def action_run_plate(self) -> None:
@@ -684,7 +696,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "run")
-        logger.info(f"Starting execution: {desc}")
         self.app.current_status = f"Running: {desc}"
 
         # Start background worker
@@ -696,26 +707,42 @@ class PlateManagerWidget(ButtonListWidget):
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
+            # Find the actual plate in self.plates (not the copy from get_selection_state)
+            actual_plate = None
+            for plate in self.plates:
+                if plate['path'] == plate_path:
+                    actual_plate = plate
+                    break
+
+            if not actual_plate:
+                logger.error(f"Plate not found in plates list: {plate_path}")
+                continue
+
             # Get orchestrator and compiled data
             orchestrator = self.orchestrators.get(plate_path)
             if not orchestrator:
                 logger.error(f"No orchestrator found for {plate_path}")
-                plate_data['status'] = 'X'
-                plate_data['error'] = "No orchestrator found"
+                actual_plate['status'] = 'X'
+                actual_plate['error'] = "No orchestrator found"
+                # Force UI update immediately for error state
+                self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
-            compiled_contexts = plate_data.get('compiled_contexts')
-            pipeline_definition = plate_data.get('pipeline_definition')
+            compiled_contexts = actual_plate.get('compiled_contexts')
+            pipeline_definition = actual_plate.get('pipeline_definition')
 
             if not compiled_contexts or not pipeline_definition:
-                logger.error(f"No compiled data found for {plate_data['name']}")
-                plate_data['status'] = 'X'
-                plate_data['error'] = "No compiled data found"
+                logger.error(f"No compiled data found for {actual_plate['name']}")
+                actual_plate['status'] = 'X'
+                actual_plate['error'] = "No compiled data found"
+                # Force UI update immediately for error state
+                self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
             # Set status to running
-            plate_data['status'] = '!'  # Running
-            self.plates = list(self.plates)  # Force UI update
+            actual_plate['status'] = '!'  # Running
+            # Force UI update to show running state
+            self.mutate_reactive(PlateManagerWidget.plates)
 
             # Execute compiled plate (heavy operation)
             results = await orchestrator.execute_compiled_plate(
@@ -724,17 +751,19 @@ class PlateManagerWidget(ButtonListWidget):
             )
 
             # Store results and update status
-            plate_data['execution_results'] = results
+            actual_plate['execution_results'] = results
             if results and all(r.get('status') != 'error' for r in results.values()):
-                plate_data['status'] = 'o'  # Completed successfully
-                logger.info(f"Successfully executed plate: {plate_data['name']}")
+                actual_plate['status'] = 'o'  # Completed successfully
             else:
-                plate_data['status'] = 'X'  # Execution error
-                plate_data['error'] = "Execution failed - check logs"
-                logger.error(f"Execution failed for {plate_data['name']}")
+                actual_plate['status'] = 'X'  # Execution error
+                actual_plate['error'] = "Execution failed - check logs"
+                logger.error(f"Execution failed for {actual_plate['name']}")
 
-        # Update UI - trigger reactive update
-        self.plates = list(self.plates)  # Force reactive update
+            # Force UI update immediately after each plate
+            self.mutate_reactive(PlateManagerWidget.plates)
+
+        # Final UI update
+        self.mutate_reactive(PlateManagerWidget.plates)
 
         # Update status
         success_count = len([p for p in selected_items if p.get('status') == 'o'])

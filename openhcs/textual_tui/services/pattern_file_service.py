@@ -229,7 +229,6 @@ class PatternFileService:
         try:
             loop = asyncio.get_running_loop()
             backup_path = await loop.run_in_executor(None, _sync_backup_file, file_path)
-            logger.info(f"Created backup: {backup_path}")
             return backup_path
         except Exception as e:
             logger.warning(f"Failed to create backup for {file_path}: {e}")

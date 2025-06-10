@@ -384,7 +384,6 @@ class FunctionListEditorWidget(Container):
                 pattern = pickle.load(f)
             self._initialize_pattern_data(pattern)
             self._commit_and_notify()
-            logger.info(f"Loaded function pattern from {file_path.name}")
         except Exception as e:
             logger.error(f"Failed to load pattern: {e}")
 
@@ -394,7 +393,6 @@ class FunctionListEditorWidget(Container):
         try:
             with open(file_path, 'wb') as f:
                 pickle.dump(self.current_pattern, f)
-            logger.info(f"Saved function pattern to {file_path.name}")
         except Exception as e:
             logger.error(f"Failed to save pattern: {e}")
 
