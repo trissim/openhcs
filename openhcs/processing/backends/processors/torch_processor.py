@@ -206,9 +206,30 @@ def percentile_normalize(
 
     for z in range(image.shape[0]):
         # Get percentile values for this slice
-        # PyTorch doesn't have a direct percentile function, so we use quantile
-        p_low = torch.quantile(image[z].float(), low_percentile / 100.0)
-        p_high = torch.quantile(image[z].float(), high_percentile / 100.0)
+        # Handle large slices that exceed PyTorch's quantile() size limits
+        slice_float = image[z].float()
+        slice_elements = slice_float.numel()
+
+        # PyTorch quantile() fails on very large tensors, so we use sampling for large slices
+        max_elements_for_quantile = 10_000_000  # ~10M elements, conservative limit for quantile()
+
+        logger.debug(f"🔥 QUANTILE DEBUG: percentile_normalize slice {z} shape {image[z].shape}, {slice_elements:,} elements")
+
+        if slice_elements > max_elements_for_quantile:
+            # Use random sampling for large slices to estimate percentiles
+            sample_size = min(max_elements_for_quantile, slice_elements // 10)  # Sample 10% or max size
+            flat_slice = slice_float.flatten()
+
+            # Generate random indices for sampling
+            indices = torch.randperm(slice_elements, device=image.device)[:sample_size]
+            sampled_values = flat_slice[indices]
+
+            p_low = torch.quantile(sampled_values, low_percentile / 100.0)
+            p_high = torch.quantile(sampled_values, high_percentile / 100.0)
+        else:
+            # Use full slice for smaller slices
+            p_low = torch.quantile(slice_float, low_percentile / 100.0)
+            p_high = torch.quantile(slice_float, high_percentile / 100.0)
 
         # Avoid division by zero
         if p_high == p_low:
@@ -253,8 +274,32 @@ def stack_percentile_normalize(
     _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
-    p_low = torch.quantile(stack.float(), low_percentile / 100.0)
-    p_high = torch.quantile(stack.float(), high_percentile / 100.0)
+    # Handle large tensors that exceed PyTorch's quantile() size limits
+    stack_float = stack.float()
+    total_elements = stack_float.numel()
+
+    # PyTorch quantile() fails on very large tensors, so we use sampling for large stacks
+    max_elements_for_quantile = 10_000_000  # ~10M elements, conservative limit for quantile()
+
+    logger.debug(f"🔥 QUANTILE DEBUG: stack_percentile_normalize called with tensor shape {stack.shape}, {total_elements:,} elements")
+
+    if total_elements > max_elements_for_quantile:
+        # Use random sampling for large tensors to estimate percentiles
+        sample_size = min(max_elements_for_quantile, total_elements // 10)  # Sample 10% or max size
+        flat_stack = stack_float.flatten()
+
+        # Generate random indices for sampling
+        indices = torch.randperm(total_elements, device=stack.device)[:sample_size]
+        sampled_values = flat_stack[indices]
+
+        p_low = torch.quantile(sampled_values, low_percentile / 100.0)
+        p_high = torch.quantile(sampled_values, high_percentile / 100.0)
+
+        logger.debug(f"Used sampling ({sample_size:,} of {total_elements:,} elements) for percentile calculation due to large tensor size")
+    else:
+        # Use full tensor for smaller stacks
+        p_low = torch.quantile(stack_float, low_percentile / 100.0)
+        p_high = torch.quantile(stack_float, high_percentile / 100.0)
 
     # Avoid division by zero
     if p_high == p_low:

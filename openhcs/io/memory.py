@@ -29,7 +29,37 @@ class MemoryStorageBackend(StorageBackend):
         self._prefixes = set()  # Declared directory-like namespaces
 
     def _normalize(self, path: Union[str, Path]) -> str:
-        return Path(path).as_posix()
+        """
+        Normalize paths for memory backend storage.
+
+        Memory backend uses relative paths internally to avoid conflicts
+        between absolute paths from different systems. This method converts
+        absolute paths to relative paths by removing the root component.
+
+        Args:
+            path: Path to normalize (absolute or relative)
+
+        Returns:
+            Normalized relative path string
+        """
+        path_obj = Path(path)
+
+        # Convert absolute paths to relative paths for memory backend
+        if path_obj.is_absolute():
+            # Remove the root component to make it relative
+            # /home/user/workspace_outputs -> workspace_outputs
+            # /workspace_outputs -> workspace_outputs
+            parts = path_obj.parts
+            if len(parts) > 1:
+                # Keep everything after the root
+                relative_path = Path(*parts[1:])
+            else:
+                # Single component absolute path like "/workspace"
+                relative_path = Path(parts[0].lstrip('/'))
+            return relative_path.as_posix()
+        else:
+            # Already relative, just normalize
+            return path_obj.as_posix()
 
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
         key = self._normalize(file_path)
@@ -472,6 +502,37 @@ class MemoryStorageBackend(StorageBackend):
 
         except Exception as e:
             raise StorageResolutionError(f"Failed to stat memory path: {path}") from e
+
+    def clear_files_only(self) -> None:
+        """
+        Clear all files from the memory store while preserving directory structure.
+
+        This method removes all file entries (non-None values) but keeps directory
+        entries (None values) intact. This prevents key collisions when reusing
+        the same processing context while maintaining the directory structure
+        needed for subsequent operations.
+
+        Note:
+            - Directories (entries with None values) are preserved
+            - Files (entries with non-None values) are deleted
+            - Symlinks are also deleted as they are considered file-like objects
+        """
+        try:
+            # Collect keys of files to delete (preserve directories)
+            files_to_delete = []
+            for key, value in self._memory_store.items():
+                # Delete files (non-None values) and symlinks, but keep directories (None values)
+                if value is not None:
+                    files_to_delete.append(key)
+
+            # Delete all file entries
+            for key in files_to_delete:
+                del self._memory_store[key]
+
+            logger.debug(f"Cleared {len(files_to_delete)} files from memory backend, preserved {len(self._memory_store)} directories")
+
+        except Exception as e:
+            raise StorageResolutionError(f"Failed to clear files from memory store") from e
 
 class MemorySymlink:
     def __init__(self, target: str):

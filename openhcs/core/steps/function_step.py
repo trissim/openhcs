@@ -20,6 +20,7 @@ from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
+from openhcs.core.memory.gpu_cleanup import cleanup_memory_by_type
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,17 @@ def _process_single_pattern_group(
                     context.filemanager.delete(str(unused_input_path), write_backend)
                     print(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
 
+        # 🔥 GPU CLEANUP: Clear GPU memory after processing pattern group
+        # Clean both input and output memory types to ensure comprehensive cleanup
+        cleanup_memory_by_type(input_memory_type_from_plan, device_id)
+        cleanup_memory_by_type(output_memory_type_from_plan, device_id)
+
+        # Force garbage collection to release any remaining references
+        import gc
+        gc.collect()
+
+        logger.debug(f"🔥 GPU CLEANUP: Cleared {input_memory_type_from_plan} and {output_memory_type_from_plan} GPU memory after pattern group")
+
         logger.debug(f"Finished pattern group {pattern_repr} in {(time.time() - start_time):.2f}s.")
     except Exception as e:
         logger.error(f"Error processing pattern group {pattern_repr}: {e}", exc_info=True)
@@ -344,8 +356,19 @@ class FunctionStep(AbstractStep):
             write_backend = step_plan['write_backend']
             input_mem_type = step_plan['input_memory_type']
             output_mem_type = step_plan['output_memory_type']
-            device_id = step_plan['gpu_id']
-            logger.debug(f"🔥 DEBUG: Step {step_id} gpu_id from plan: {device_id}, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+
+            # Only access gpu_id if the step requires GPU (has GPU memory types)
+            from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
+            requires_gpu = (input_mem_type in VALID_GPU_MEMORY_TYPES or
+                           output_mem_type in VALID_GPU_MEMORY_TYPES)
+
+            if requires_gpu:
+                device_id = step_plan['gpu_id']
+                logger.debug(f"🔥 DEBUG: Step {step_id} gpu_id from plan: {device_id}, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+            else:
+                device_id = None  # CPU-only step
+                logger.debug(f"🔥 DEBUG: Step {step_id} is CPU-only, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+
             logger.debug(f"🔥 DEBUG: Step {step_id} read_backend: {read_backend}, write_backend: {write_backend}")
 
             if not all([well_id, step_input_dir, step_output_dir]):
@@ -389,6 +412,31 @@ class FunctionStep(AbstractStep):
 
 
             if well_id not in patterns_by_well or not patterns_by_well[well_id]:
+                # DEBUG: Check what's actually available
+                logger.error(f"🔥 PATTERN DEBUG: Failed to find patterns for well {well_id}")
+                logger.error(f"🔥 PATTERN DEBUG: Looking in directory: {step_input_dir}")
+                logger.error(f"🔥 PATTERN DEBUG: Read backend: {read_backend}")
+                logger.error(f"🔥 PATTERN DEBUG: All detected wells: {list(patterns_by_well.keys())}")
+                logger.error(f"🔥 PATTERN DEBUG: Total patterns found: {sum(len(patterns) for patterns in patterns_by_well.values())}")
+
+                # Check memory backend state if using memory
+                if read_backend == "memory":
+                    from openhcs.io.base import storage_registry
+                    memory_backend = storage_registry["memory"]
+                    logger.error(f"🔥 PATTERN DEBUG: Memory backend has {len(memory_backend._memory_store)} entries")
+
+                    # Show memory keys that contain the well ID
+                    well_keys = [key for key in memory_backend._memory_store.keys() if well_id in key]
+                    logger.error(f"🔥 PATTERN DEBUG: Memory keys containing '{well_id}': {well_keys}")
+
+                    # Show all memory keys for context
+                    all_keys = list(memory_backend._memory_store.keys())[:10]  # First 10 keys
+                    logger.error(f"🔥 PATTERN DEBUG: First 10 memory keys: {all_keys}")
+
+                    # Check what the normalized directory path looks like
+                    normalized_dir = memory_backend._normalize(step_input_dir)
+                    logger.error(f"🔥 PATTERN DEBUG: Normalized directory path: '{normalized_dir}'")
+
                 raise ValueError(f"No patterns for well {well_id} in {step_input_dir} for step {step_id}.")
             
             # Get func from step plan (stored by FuncStepContractValidator during compilation)
@@ -413,6 +461,28 @@ class FunctionStep(AbstractStep):
                         variable_components
                     )
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
+
+            # 🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step completion
+            cleanup_memory_by_type(input_mem_type, device_id)
+            cleanup_memory_by_type(output_mem_type, device_id)
+
+            # Force garbage collection to ensure all references are released
+            import gc
+            gc.collect()
+
+            logger.debug(f"🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step {step_name} completion")
+
         except Exception as e:
             logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)
+
+            # 🔥 ERROR GPU CLEANUP: Clean up even on error to prevent memory leaks
+            try:
+                cleanup_memory_by_type(input_mem_type, device_id)
+                cleanup_memory_by_type(output_mem_type, device_id)
+                import gc
+                gc.collect()
+                logger.debug(f"🔥 ERROR GPU CLEANUP: Cleaned up GPU memory after error in step {step_name}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup GPU memory after error: {cleanup_error}")
+
             raise

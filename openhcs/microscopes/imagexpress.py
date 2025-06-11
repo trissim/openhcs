@@ -111,7 +111,9 @@ class ImageXpressHandler(MicroscopeHandler):
                 potential_z_folders.append(d)
 
         if not potential_z_folders:
-            logger.info("No Z step folders found in %s. Skipping flattening.", directory)
+            logger.info("No Z step folders found in %s. Processing files directly in directory.", directory)
+            # Process files directly in the directory to ensure complete metadata
+            self._process_files_in_directory(directory, fm)
             return
 
         # Sort Z folders by index
@@ -195,6 +197,76 @@ class ImageXpressHandler(MicroscopeHandler):
                 logger.debug("Removed Z-step folder: %s", z_dir)
             except Exception as e:
                 logger.warning("Failed to remove Z-step folder %s: %s", z_dir, e)
+
+    def _process_files_in_directory(self, directory: Path, fm: FileManager):
+        """
+        Process files directly in a directory to ensure complete metadata.
+
+        This handles files that are not in Z-step folders but may be missing
+        channel or z-index information. Similar to how Z-step processing adds
+        z_index, this adds default values for missing components.
+
+        Args:
+            directory: Path to directory containing image files
+            fm: FileManager instance for file operations
+        """
+        # List all image files in the directory
+        img_files = fm.list_files(directory, Backend.DISK.value)
+
+        for img_file in img_files:
+            # Skip if not a file
+            if not fm.is_file(img_file, Backend.DISK.value):
+                continue
+
+            # Get the filename
+            img_file_name = img_file.name if isinstance(img_file, Path) else os.path.basename(str(img_file))
+
+            # Parse the original filename to extract components
+            components = self.parser.parse_filename(img_file_name)
+
+            if not components:
+                continue
+
+            # Check if we need to add missing metadata
+            needs_rebuild = False
+
+            # Add default channel if missing (like we do for z_index in Z-step processing)
+            if components['channel'] is None:
+                components['channel'] = 1
+                needs_rebuild = True
+                logger.debug("Added default channel=1 to file without channel info: %s", img_file_name)
+
+            # Add default z_index if missing (for 2D images)
+            if components['z_index'] is None:
+                components['z_index'] = 1
+                needs_rebuild = True
+                logger.debug("Added default z_index=1 to file without z_index info: %s", img_file_name)
+
+            # Only rebuild filename if we added missing components
+            if needs_rebuild:
+                # Construct new filename with complete metadata
+                new_name = self.parser.construct_filename(
+                    well=components['well'],
+                    site=components['site'],
+                    channel=components['channel'],
+                    z_index=components['z_index'],
+                    extension=components['extension']
+                )
+
+                # Only rename if the filename actually changed
+                if new_name != img_file_name:
+                    new_path = directory / new_name
+
+                    try:
+                        # Pass the backend parameter as required by Clause 306
+                        fm.move(img_file, new_path, Backend.DISK.value)
+                        logger.debug("Rebuilt filename with complete metadata: %s -> %s", img_file_name, new_name)
+                    except FileExistsError as e:
+                        logger.error("Cannot rename %s to %s: %s", img_file, new_path, e)
+                        raise
+                    except Exception as e:
+                        logger.error("Error renaming %s to %s: %s", img_file, new_path, e)
+                        raise
 
 
 class ImageXpressFilenameParser(FilenameParser):
@@ -413,9 +485,23 @@ class ImageXpressMetadataHandler(MetadataHandler):
 
         # Parse HTD file
         try:
-            # HTD files are plain text, read directly
-            with open(htd_file, 'r', encoding='utf-8') as f:
-                htd_content = f.read()
+            # HTD files are plain text, but may use different encodings
+            # Try multiple encodings in order of likelihood
+            encodings_to_try = ['utf-8', 'windows-1252', 'latin-1', 'cp1252', 'iso-8859-1']
+            htd_content = None
+
+            for encoding in encodings_to_try:
+                try:
+                    with open(htd_file, 'r', encoding=encoding) as f:
+                        htd_content = f.read()
+                    logger.debug("Successfully read HTD file with encoding: %s", encoding)
+                    break
+                except UnicodeDecodeError:
+                    logger.debug("Failed to read HTD file with encoding: %s", encoding)
+                    continue
+
+            if htd_content is None:
+                raise ValueError(f"Could not read HTD file with any supported encoding: {encodings_to_try}")
 
             # Extract grid dimensions - try multiple formats
             # First try the new format with "XSites" and "YSites"

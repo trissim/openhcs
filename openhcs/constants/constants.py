@@ -28,7 +28,7 @@ class GroupBy(Enum):
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
-DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff"}
+DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff", ".TIF", ".TIFF"}
 DEFAULT_SITE_PADDING = 3
 DEFAULT_RECURSIVE_PATTERN_SEARCH = False
 DEFAULT_VARIABLE_COMPONENTS: VariableComponents = VariableComponents.SITE

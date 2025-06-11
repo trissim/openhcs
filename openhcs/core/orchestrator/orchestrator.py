@@ -20,7 +20,6 @@ from typing import Any, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS # DEFAULT_NUM_WORKERS removed
 from openhcs.constants import Microscope
-from openhcs.constants import Microscope
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler

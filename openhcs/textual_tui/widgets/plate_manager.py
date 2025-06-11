@@ -881,4 +881,19 @@ class PlateManagerWidget(ButtonListWidget):
             except Exception:
                 actual_plate['status'] = 'F'  # Failed
 
+            finally:
+                # 🔥 COMPREHENSIVE GPU CLEANUP: Clear all GPU memory after plate execution
+                try:
+                    from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+                    cleanup_all_gpu_frameworks()
+                    logger.info(f"🔥 COMPREHENSIVE GPU CLEANUP: Cleared all GPU frameworks after plate execution: {plate_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to perform comprehensive GPU cleanup: {cleanup_error}")
+
+                # Reset memory backend after each plate execution to prevent key collisions
+                # TEMPORARILY DISABLED FOR TESTING - checking if reset timing is causing pattern detection issues
+                from openhcs.io.base import reset_memory_backend
+                reset_memory_backend()
+                logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
+
             self.mutate_reactive(PlateManagerWidget.plates)

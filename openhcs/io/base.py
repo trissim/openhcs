@@ -305,3 +305,28 @@ def _create_storage_registry() -> Dict[str, StorageBackend]:
 # Global singleton storage registry - created once at module import time
 # This is the shared registry instance that all components should use
 storage_registry = _create_storage_registry()
+
+
+def reset_memory_backend() -> None:
+    """
+    Clear files from the memory backend while preserving directory structure.
+
+    This function clears all file entries from the existing memory backend but preserves
+    directory entries (None values). This prevents key collisions between plate executions
+    while maintaining the directory structure needed for subsequent operations.
+
+    Benefits over full reset:
+    - Preserves directory structure created by path planner
+    - Prevents "Parent path does not exist" errors on subsequent runs
+    - Avoids key collisions for special inputs/outputs
+    - Maintains performance by not recreating directory hierarchy
+
+    Note:
+        This only affects the memory backend. Other backends (disk, zarr) are not modified.
+    """
+    from openhcs.constants.constants import Backend
+
+    # Clear files from existing memory backend while preserving directories
+    memory_backend = storage_registry[Backend.MEMORY.value]
+    memory_backend.clear_files_only()
+    logger.info("Memory backend reset - files cleared, directories preserved")

@@ -220,7 +220,7 @@ class PipelineCompiler:
             else:
                 logger.warning(f"Step ID {step_id} found in memory_types but not in context.step_plans. Skipping.")
 
-        # Apply memory type override: Last step with disk output must use numpy for disk writing
+        # Apply memory type override: Any step with disk output must use numpy for disk writing
         for i, step in enumerate(steps_definition):
             if isinstance(step, FunctionStep):
                 step_id = step.step_id
@@ -229,8 +229,8 @@ class PipelineCompiler:
                     is_last_step = (i == len(steps_definition) - 1)
                     write_backend = step_plan['write_backend']
 
-                    if is_last_step and write_backend == 'disk':
-                        logger.debug(f"Last step {step.name} has disk output, overriding output_memory_type to numpy")
+                    if write_backend == 'disk':
+                        logger.debug(f"Step {step.name} has disk output, overriding output_memory_type to numpy")
                         step_plan['output_memory_type'] = 'numpy'
 
 

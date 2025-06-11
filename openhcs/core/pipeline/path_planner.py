@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
-from openhcs.constants.constants import READ_BACKEND
+from openhcs.constants.constants import READ_BACKEND, WRITE_BACKEND
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.pipeline.pipeline_utils import get_core_callable, to_snake_case
 from openhcs.core.steps.abstract import AbstractStep
@@ -433,6 +433,23 @@ class PipelinePathPlanner:
             if chain_breaker_read_backend is not None:
                 step_paths[step_id][READ_BACKEND] = chain_breaker_read_backend
 
+            # --- Ensure directories exist using appropriate backends ---
+            # Get the write backend for this step's output directory
+            if step_id in step_plans and WRITE_BACKEND in step_plans[step_id]:
+                output_backend = step_plans[step_id][WRITE_BACKEND]
+                context.filemanager.ensure_directory(step_output_dir, output_backend)
+                logger.debug(f"Created output directory {step_output_dir} using backend {output_backend}")
+
+            # Get the read backend for this step's input directory (if not first step)
+            if i > 0 and step_id in step_plans and READ_BACKEND in step_plans[step_id]:
+                input_backend = step_plans[step_id][READ_BACKEND]
+                context.filemanager.ensure_directory(step_input_dir, input_backend)
+                logger.debug(f"Created input directory {step_input_dir} using backend {input_backend}")
+            elif i == 0:
+                # First step always uses disk backend for input
+                context.filemanager.ensure_directory(step_input_dir, "disk")
+                logger.debug(f"Created first step input directory {step_input_dir} using disk backend")
+
         # --- Final path connectivity validation after all steps are processed ---
         for i, step in enumerate(steps):
             if i == 0:
@@ -451,8 +468,14 @@ class PipelinePathPlanner:
             prev_is_chain_breaker_flag_from_plan = False
             if isinstance(prev_step, FunctionStep):
                 func_to_check = prev_step.func
+
                 if isinstance(func_to_check, (tuple, list)) and func_to_check:
                     func_to_check = func_to_check[0]
+
+                # If func_to_check is a tuple (function, params), extract just the function
+                if isinstance(func_to_check, tuple) and len(func_to_check) >= 1:
+                    func_to_check = func_to_check[0]
+
                 if callable(func_to_check):
                     prev_is_chain_breaker_flag_from_plan = getattr(func_to_check, '__chain_breaker__', False)
 
