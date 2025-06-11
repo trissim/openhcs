@@ -164,10 +164,28 @@ class ImageXpressHandler(MicroscopeHandler):
 
                 try:
                     # Pass the backend parameter as required by Clause 306 (Backend Positional Parameters)
-                    fm.move(img_file, new_path, Backend.DISK.value)
-                    logger.debug("Moved %s to %s", img_file, new_path)
+                    # Check if destination already exists
+                    if fm.exists(new_path, Backend.DISK.value):
+                        # If it's a symlink, delete it and then move
+                        if fm.is_symlink(new_path, Backend.DISK.value):
+                            logger.debug("Destination is a symlink, removing before move: %s", new_path)
+                            fm.delete(new_path, Backend.DISK.value)
+                            fm.move(img_file, new_path, Backend.DISK.value)
+                            logger.debug("Moved %s to %s", img_file, new_path)
+                        else:
+                            # If it's a regular file, raise an error
+                            raise FileExistsError(f"Destination already exists and is not a symlink: {new_path}")
+                    else:
+                        # Destination doesn't exist, perform normal move
+                        fm.move(img_file, new_path, Backend.DISK.value)
+                        logger.debug("Moved %s to %s", img_file, new_path)
+                except FileExistsError as e:
+                    # Propagate FileExistsError with clear message
+                    logger.error("Cannot move %s to %s: %s", img_file, new_path, e)
+                    raise
                 except Exception as e:
-                    raise e
+                    logger.error("Error moving %s to %s: %s", img_file, new_path, e)
+                    raise
 
         # Remove Z folders after all files have been moved
         for _, z_dir in z_folders:

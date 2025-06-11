@@ -423,7 +423,7 @@ class FileManager:
             if backend_instance.exists(str(symlink_path)):
                 if overwrite_symlinks_only:
                     # Check if existing target is a symlink
-                    if not backend_instance.is_symlink(str(symlink_path)):
+                    if not self.is_symlink(symlink_path, backend):
                         raise FileExistsError(
                             f"Target exists and is not a symlink (overwrite_symlinks_only=True): {symlink_path}"
                         )
@@ -630,22 +630,14 @@ class FileManager:
             backend: Backend key ('disk', 'memory', 'zarr') — must be positional
 
         Returns:
-            bool: True if the path is a file, False otherwise
-
-        Raises:
-            StorageResolutionError: If resolution fails or backend misbehaves
-            FileNotFoundError: If path does not exist
-            IsADirectoryError: If path is a directory
+            bool: True if the path is a file, False otherwise (including if path doesn't exist)
         """
         try:
             backend_instance = self._get_backend(backend)
             return backend_instance.is_file(path)
-        except (FileNotFoundError, IsADirectoryError):
-            raise  # propagate known semantics
-        except Exception as e:
-            raise StorageResolutionError(
-                f"Failed to check if {path} is a file with backend '{backend}'"
-            ) from e
+        except Exception:
+            # Return False for any error (file not found, is a directory, backend issues)
+            return False
 
     def is_dir(self, path: Union[str, Path], backend: str) -> bool:
         """
@@ -671,4 +663,22 @@ class FileManager:
             raise StorageResolutionError(
                 f"Failed to check if {path} is a directory with backend '{backend}'"
             ) from e
+            
+    def is_symlink(self, path: Union[str, Path], backend: str) -> bool:
+        """
+        Check if a given path is a symbolic link using the specified backend.
+
+        Args:
+            path: Path to check (raw string or Path)
+            backend: Backend key ('disk', 'memory', 'zarr') — must be positional
+
+        Returns:
+            bool: True if the path is a symbolic link, False otherwise (including if path doesn't exist)
+        """
+        try:
+            backend_instance = self._get_backend(backend)
+            return backend_instance.is_symlink(str(path))
+        except Exception:
+            # Return False for any error (file not found, not a symlink, backend issues)
+            return False
 

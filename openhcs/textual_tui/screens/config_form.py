@@ -122,7 +122,8 @@ class ConfigFormScreen(ModalScreen):
             widget = Checkbox(
                 label="",
                 value=bool(current_value),
-                id=widget_id
+                id=widget_id,
+                compact=True
             )
             widget.on_changed = lambda checked: self._on_field_change(field_name, checked)
             return widget

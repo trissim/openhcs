@@ -137,9 +137,43 @@ class StepParameterEditorWidget(ScrollableContainer):
 
             # Update step instance and notify parent
             self._handle_parameter_change(param_name, default_value)
+
+            # Refresh the UI to show the reset value
+            self._refresh_form_widgets()
+
             logger.debug(f"Reset step parameter {param_name} to default: {default_value}")
         except Exception as e:
             logger.error(f"Error resetting step parameter {param_name}: {e}")
+
+    def _refresh_form_widgets(self) -> None:
+        """Refresh form widgets to show current parameter values."""
+        try:
+            current_values = self.form_manager.get_current_values()
+
+            # Update each widget with current value
+            for param_name, value in current_values.items():
+                widget_id = f"step_{param_name}"
+                try:
+                    widget = self.query_one(f"#{widget_id}")
+
+                    # Update widget based on type
+                    if hasattr(widget, 'value'):
+                        # Convert enum to string for display
+                        display_value = value.value if hasattr(value, 'value') else value
+                        widget.value = display_value
+                    elif hasattr(widget, 'pressed'):
+                        # RadioSet - find and press the correct radio button
+                        if hasattr(value, 'value'):
+                            target_id = f"enum_{value.value}"
+                            for radio in widget.query("RadioButton"):
+                                if radio.id == target_id:
+                                    radio.value = True
+                                    break
+                except Exception as widget_error:
+                    logger.debug(f"Could not update widget {widget_id}: {widget_error}")
+
+        except Exception as e:
+            logger.warning(f"Failed to refresh form widgets: {e}")
 
     def _load_step(self) -> None:
         """Load step configuration from file."""
@@ -151,9 +185,11 @@ class StepParameterEditorWidget(ScrollableContainer):
                 self._load_step_from_file(result)
 
         # Launch enhanced file browser for .step files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
             title="Load Step Settings (.step)",
             mode=BrowserMode.LOAD,
@@ -172,9 +208,11 @@ class StepParameterEditorWidget(ScrollableContainer):
                 self._save_step_to_file(result)
 
         # Launch enhanced file browser for saving .step files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
             title="Save Step Settings (.step)",
             mode=BrowserMode.SAVE,
@@ -190,9 +228,19 @@ class StepParameterEditorWidget(ScrollableContainer):
         try:
             with open(file_path, 'rb') as f:
                 step_data = pickle.load(f)
+
+            # Update both the step object and form manager
             for param_name, value in step_data.items():
                 if param_name in self.form_manager.parameters:
+                    # Update form manager first
+                    self.form_manager.update_parameter(param_name, value)
+                    # Then update step object and emit change message
                     self._handle_parameter_change(param_name, value)
+
+            # Refresh the UI to show loaded values
+            self._refresh_form_widgets()
+
+            logger.debug(f"Loaded {len(step_data)} parameters from {file_path.name}")
         except Exception as e:
             logger.error(f"Failed to load step: {e}")
 

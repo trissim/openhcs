@@ -92,11 +92,18 @@ def inject_metadata_into_pattern(func_pattern: Any, metadata_key: str, metadata_
         updated_kwargs.update({metadata_key: metadata_value})
         return (func, updated_kwargs)
 
-    # Case 3: List or dict patterns -> not supported for metadata injection
+    # Case 3: Single-item list -> inject into the single item and return as list
+    elif isinstance(func_pattern, list) and len(func_pattern) == 1:
+        single_item = func_pattern[0]
+        # Recursively inject into the single item
+        modified_item = inject_metadata_into_pattern(single_item, metadata_key, metadata_value)
+        return [modified_item]
+
+    # Case 4: Multi-item lists or dict patterns -> not supported for metadata injection
     # These complex patterns should not be used with metadata-requiring functions
     else:
         raise ValueError(f"Cannot inject metadata into complex function pattern: {type(func_pattern)}. "
-                        f"Functions requiring metadata should use simple patterns (callable or (callable, kwargs)).")
+                        f"Functions requiring metadata should use simple patterns (callable, (callable, kwargs), or single-item lists).")
 
 # FIRST_STEP_OUTPUT_SUFFIX removed
 
@@ -209,23 +216,42 @@ class PipelinePathPlanner:
                 prev_is_chain_breaker = False
                 if isinstance(prev_step, FunctionStep):
                     func_to_check = prev_step.func
+
                     if isinstance(func_to_check, (tuple, list)) and func_to_check:
                         func_to_check = func_to_check[0]
+
+                    # If func_to_check is a tuple (function, params), extract just the function
+                    if isinstance(func_to_check, tuple) and len(func_to_check) >= 1:
+                        func_to_check = func_to_check[0]
+
                     if callable(func_to_check):
                         prev_is_chain_breaker = getattr(func_to_check, '__chain_breaker__', False)
+                        if prev_is_chain_breaker:
+                            logger.info(f"🔗 CHAINBREAKER: Detected chainbreaker function '{func_to_check.__name__}' in step '{prev_step.name}'")
 
                 # If previous step is chain breaker, use first step's input dir and set disk backend
                 if prev_is_chain_breaker:
-                    # Get first step's input_dir from step_plans
+                    # Get first step's input_dir - check step_paths first, then calculate it
                     first_step = steps[0]
                     first_step_id = first_step.step_id
-                    if first_step_id in step_plans and "input_dir" in step_plans[first_step_id]:
-                        first_step_input_from_plans = step_plans[first_step_id]["input_dir"]
-                        step_input_dir = Path(first_step_input_from_plans)
-                        chain_breaker_read_backend = 'disk'  # Store for later application
-                        logger.debug(f"Step '{step_name}' follows chain breaker '{prev_step.name}' - redirected to first step input '{first_step_input_from_plans}' and will use disk backend")
+                    first_step_input_dir = None
+
+                    # Try to get from step_paths (if first step was already processed)
+                    if first_step_id in step_paths and "input_dir" in step_paths[first_step_id]:
+                        first_step_input_dir = step_paths[first_step_id]["input_dir"]
+                    # Otherwise, calculate it the same way we do for first step
+                    elif hasattr(first_step, "input_dir") and first_step.input_dir is not None:
+                        first_step_input_dir = str(first_step.input_dir)
                     else:
-                        logger.warning(f"Step '{step_name}' follows chain breaker '{prev_step.name}' but could not find first step input_dir in step_plans")
+                        first_step_input_dir = str(initial_pipeline_input_dir)
+
+                    if first_step_input_dir:
+                        original_step_input_dir = step_input_dir
+                        step_input_dir = Path(first_step_input_dir)
+                        chain_breaker_read_backend = 'disk'  # Store for later application
+                        logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' redirected from '{original_step_input_dir}' to first step input '{first_step_input_dir}' and will use disk backend")
+                    else:
+                        logger.warning(f"Step '{step_name}' follows chain breaker '{prev_step.name}' but could not determine first step input_dir")
                 
             # --- Process output directory ---
             # Check if step_paths already has this step with output_dir
@@ -258,7 +284,15 @@ class PipelinePathPlanner:
                         # For first step, use workspace directory name instead of input directory name
                         if hasattr(context, 'workspace_path') and context.workspace_path:
                             workspace_path = Path(context.workspace_path)
-                            step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
+                            # Check if global output folder is configured
+                            global_output_folder = path_config.global_output_folder
+                            if global_output_folder:
+                                # Use global output folder: {global_folder}/{workspace_name}{suffix}
+                                global_folder = Path(global_output_folder)
+                                step_output_dir = global_folder / f"{workspace_path.name}{current_suffix}"
+                            else:
+                                # Use current behavior: same parent as workspace
+                                step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
                         else:
                             step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
                     else:
@@ -276,7 +310,15 @@ class PipelinePathPlanner:
                 # For last step, use workspace directory name instead of input directory name
                 if hasattr(context, 'workspace_path') and context.workspace_path:
                     workspace_path = Path(context.workspace_path)
-                    step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
+                    # Check if global output folder is configured
+                    global_output_folder = path_config.global_output_folder
+                    if global_output_folder:
+                        # Use global output folder: {global_folder}/{workspace_name}{suffix}
+                        global_folder = Path(global_output_folder)
+                        step_output_dir = global_folder / f"{workspace_path.name}{current_suffix}"
+                    else:
+                        # Use current behavior: same parent as workspace
+                        step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
                 else:
                     step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
                 
@@ -286,7 +328,15 @@ class PipelinePathPlanner:
                 # Use workspace directory name instead of input directory name
                 if hasattr(context, 'workspace_path') and context.workspace_path:
                     workspace_path = Path(context.workspace_path)
-                    step_output_dir = workspace_path.with_name(f"{workspace_path.name}{path_config.output_dir_suffix}")
+                    # Check if global output folder is configured
+                    global_output_folder = path_config.global_output_folder
+                    if global_output_folder:
+                        # Use global output folder: {global_folder}/{workspace_name}{suffix}
+                        global_folder = Path(global_output_folder)
+                        step_output_dir = global_folder / f"{workspace_path.name}{path_config.output_dir_suffix}"
+                    else:
+                        # Use current behavior: same parent as workspace
+                        step_output_dir = workspace_path.with_name(f"{workspace_path.name}{path_config.output_dir_suffix}")
                 else:
                     step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{path_config.output_dir_suffix}")
 

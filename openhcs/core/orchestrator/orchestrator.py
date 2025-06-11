@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS # DEFAULT_NUM_WORKERS removed
+from openhcs.constants import Microscope
+from openhcs.constants import Microscope
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
@@ -104,9 +106,18 @@ class PipelineOrchestrator:
         """Initializes workspace path and mirrors plate directory if needed."""
         if workspace_path:
             self.workspace_path = Path(workspace_path) if isinstance(workspace_path, str) else workspace_path
-        
+
         if self.workspace_path is None and self.plate_path:
-            self.workspace_path = Path(str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX)
+            # Check if global output folder is configured
+            global_output_folder = self.global_config.path_planning.global_output_folder
+            if global_output_folder:
+                # Use global output folder: {global_folder}/{plate_name}_workspace
+                global_folder = Path(global_output_folder)
+                plate_name = self.plate_path.name
+                self.workspace_path = global_folder / f"{plate_name}{DEFAULT_WORKSPACE_DIR_SUFFIX}"
+            else:
+                # Use current behavior: {plate_path}_workspace
+                self.workspace_path = Path(str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX)
         elif self.workspace_path is None:
              raise ValueError("Cannot initialize workspace without either plate_path or a specified workspace_path.")
 
@@ -160,10 +171,12 @@ class PipelineOrchestrator:
 
         logger.info(f"Initializing microscope handler using input directory: {self.input_dir}...")
         try:
+            # Use configured microscope type or auto-detect
+            microscope_type = self.global_config.microscope.value if self.global_config.microscope != Microscope.AUTO else 'auto'
             self.microscope_handler = create_microscope_handler(
                 plate_folder=str(self.plate_path),
                 filemanager=self.filemanager,
-                microscope_type='auto',
+                microscope_type=microscope_type,
             )
             logger.info(f"Initialized microscope handler: {type(self.microscope_handler).__name__}")
         except Exception as e:

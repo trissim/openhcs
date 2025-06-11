@@ -40,7 +40,7 @@ class PipelineEditorWidget(ButtonListWidget):
     current_plate = reactive("")
     current_plate_status = reactive("?")  # Track plate initialization status
     selected_step = reactive("")
-    plate_pipelines = reactive({})  # {plate_path: List[Dict]} - per-plate pipeline storage
+    plate_pipelines = reactive({})  # {plate_path: List[FunctionStep]} - per-plate pipeline storage
     
     def __init__(self, filemanager: FileManager, global_config: GlobalPipelineConfig):
         """
@@ -61,25 +61,26 @@ class PipelineEditorWidget(ButtonListWidget):
 
         super().__init__(
             button_configs=button_configs,
-            list_id="step_content",
-            container_id="step_list",
+            list_id="pipeline_content",
+            container_id="pipeline_list",
             on_button_pressed=self._handle_button_press,
             on_selection_changed=self._handle_selection_change,
             on_item_moved=self._handle_item_moved
         )
 
         self.filemanager = filemanager
-        self.global_config = global_config
+        # Note: We don't store global_config as it can become stale
+        # Always use self.app.global_config to get the current config
 
         # Reference to plate manager (set by MainContent)
         self.plate_manager = None
 
         logger.debug("PipelineEditorWidget initialized")
     
-    def format_item_for_display(self, step: Dict) -> Tuple[str, str]:
+    def format_item_for_display(self, step: FunctionStep) -> Tuple[str, str]:
         """Format step for display in the list."""
-        step_name = step.get('name', 'Unknown Step')
-        step_type = step.get('type', 'function')
+        step_name = getattr(step, 'name', 'Unknown Step')
+        step_type = 'function'  # All steps are FunctionStep objects
         display_text = f"📋 {step_name} ({step_type})"
         return display_text, step_name
 
@@ -115,7 +116,7 @@ class PipelineEditorWidget(ButtonListWidget):
         # Update pipeline steps
         self.pipeline_steps = current_steps
 
-        step_name = step['name']
+        step_name = getattr(step, 'name', 'Unknown Step')
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved step '{step_name}' {direction}"
     
@@ -153,16 +154,16 @@ class PipelineEditorWidget(ButtonListWidget):
             # Buttons might not be mounted yet
             pass
 
-    def get_selection_state(self) -> tuple[List[Dict], str]:
+    def get_selection_state(self) -> tuple[List[FunctionStep], str]:
         """Get current selection state from SelectionList."""
         try:
             selection_list = self.query_one("#pipeline_content", SelectionList)
             selected_values = selection_list.selected
 
-            # Convert selected values back to step dictionaries
+            # Convert selected values back to step objects
             selected_items = []
             for step in self.pipeline_steps:
-                step_name = step.get('name', '')
+                step_name = getattr(step, 'name', '')
                 if step_name in selected_values:
                     selected_items.append(step)
 
@@ -183,70 +184,42 @@ class PipelineEditorWidget(ButtonListWidget):
         """Automatically update UI when current_plate changes."""
         logger.debug(f"Current plate changed: {plate_path}")
 
-        # Load pipeline for the new plate
+        # Load pipeline for the new plate WITHOUT triggering save/invalidation
         if plate_path:
             # Get pipeline for this plate (or empty if none exists)
             plate_pipeline = self.plate_pipelines.get(plate_path, [])
-            self.pipeline_steps = plate_pipeline
+            # Set pipeline_steps directly without triggering reactive save
+            self._set_pipeline_steps_without_save(plate_pipeline)
         else:
             # No plate selected - clear steps
-            self.pipeline_steps = []
+            self._set_pipeline_steps_without_save([])
 
         # Clear selection when plate changes
         self.selected_step = ""
 
-        # Update SelectionList content
-        try:
-            selection_list = self.query_one("#pipeline_content", SelectionList)
-
-            # Clear existing options
-            selection_list.clear_options()
-
-            # Add steps as selection options
-            step_options = []
-            for step in self.pipeline_steps:
-                # Format: (display_text, value)
-                step_name = step.get('name', 'Unknown Step')
-                step_type = step.get('type', 'function')
-                display_text = f"📋 {step_name} ({step_type})"
-                step_options.append((display_text, step_name))
-
-            selection_list.add_options(step_options)
-        except Exception:
-            pass
-
         # Update button states
         self._update_button_states()
 
-    def watch_pipeline_steps(self, steps: List[Dict]) -> None:
+    def _set_pipeline_steps_without_save(self, steps: List[FunctionStep]) -> None:
+        """Set pipeline steps without triggering save/invalidation (for loading existing data)."""
+        # Temporarily disable the reactive watcher to prevent save cascade
+        self._loading_existing_pipeline = True
+        self.pipeline_steps = steps
+        # Sync with ButtonListWidget's items property
+        self.items = list(steps)
+        self._loading_existing_pipeline = False
+
+    def watch_pipeline_steps(self, steps: List[FunctionStep]) -> None:
         """Automatically update UI when pipeline_steps changes."""
-        # Update SelectionList content
-        try:
-            selection_list = self.query_one("#pipeline_content", SelectionList)
-
-            # Clear existing options
-            selection_list.clear_options()
-
-            # Add steps as selection options
-            step_options = []
-            for step in steps:
-                # Format: (display_text, value)
-                step_name = step.get('name', 'Unknown Step')
-                step_type = step.get('type', 'function')
-                display_text = f"📋 {step_name} ({step_type})"
-                step_options.append((display_text, step_name))
-
-            selection_list.add_options(step_options)
-        except Exception:
-            pass
-
-        # Update button states
-        self._update_button_states()
+        # Sync with ButtonListWidget's items property to trigger its reactive system
+        self.items = list(steps)
 
         logger.debug(f"Pipeline steps updated: {len(steps)} steps")
 
-        # Save pipeline changes to plate storage
-        self._save_pipeline_to_plate_storage()
+        # Only save/invalidate if this is a real change, not loading existing data
+        if not getattr(self, '_loading_existing_pipeline', False):
+            # Save pipeline changes to plate storage
+            self._save_pipeline_to_plate_storage()
 
     def _save_pipeline_to_plate_storage(self) -> None:
         """Save current pipeline steps to plate storage and invalidate compilation."""
@@ -260,11 +233,11 @@ class PipelineEditorWidget(ButtonListWidget):
             # Invalidate compilation status when pipeline changes
             self._invalidate_compilation_status()
 
-    def get_pipeline_for_plate(self, plate_path: str) -> List[Dict]:
+    def get_pipeline_for_plate(self, plate_path: str) -> List[FunctionStep]:
         """Get pipeline for specific plate."""
         return self.plate_pipelines.get(plate_path, [])
 
-    def save_pipeline_for_plate(self, plate_path: str, pipeline: List[Dict]) -> None:
+    def save_pipeline_for_plate(self, plate_path: str, pipeline: List[FunctionStep]) -> None:
         """Save pipeline for specific plate."""
         current_pipelines = dict(self.plate_pipelines)
         current_pipelines[plate_path] = pipeline
@@ -278,14 +251,18 @@ class PipelineEditorWidget(ButtonListWidget):
             self.plate_pipelines = current_pipelines
 
     def _invalidate_compilation_status(self) -> None:
-        """Reset plate status from compiled to initialized when pipeline changes."""
+        """Reset compilation status when pipeline definition changes."""
         if not self.plate_manager or not self.current_plate:
             return
 
-        # Find the current plate and reset status if compiled
+        # Clear compiled data from simple state
+        if self.current_plate in self.plate_manager.plate_compiled_data:
+            del self.plate_manager.plate_compiled_data[self.current_plate]
+
+        # Find the current plate and reset status
         for plate in self.plate_manager.plates:
-            if plate.get('path') == self.current_plate and plate.get('status') == 'o':
-                plate['status'] = '-'  # Reset from compiled to initialized
+            if plate.get('path') == self.current_plate:
+                plate['status'] = '-'  # Reset to initialized
 
                 # Trigger reactive update
                 self.plate_manager.mutate_reactive(self.plate_manager.__class__.plates)
@@ -293,6 +270,10 @@ class PipelineEditorWidget(ButtonListWidget):
                 # Update our own status
                 self.current_plate_status = '-'
                 break
+
+        # Update plate manager button states immediately
+        if self.plate_manager:
+            self.plate_manager._update_button_states()
     
     def watch_current_plate_status(self, status: str) -> None:
         """Automatically update UI when plate status changes."""
@@ -332,9 +313,8 @@ class PipelineEditorWidget(ButtonListWidget):
 
         def handle_result(result: Optional[FunctionStep]) -> None:
             if result:  # User saved new step
-                # Convert to dict using consistent conversion method
-                new_step_dict = self._function_step_to_dict(result)
-                new_steps = self.pipeline_steps + [new_step_dict]
+                # Store the actual FunctionStep object directly (preserves memory type decorators)
+                new_steps = self.pipeline_steps + [result]
                 self.pipeline_steps = new_steps
                 self.app.current_status = f"Added step: {result.name}"
             else:
@@ -363,17 +343,17 @@ class PipelineEditorWidget(ButtonListWidget):
         elif selection_mode == "all":
             desc = f"Delete ALL {count} items"
         elif count == 1:
-            item_name = selected_items[0].get('name', 'Unknown')
+            item_name = getattr(selected_items[0], 'name', 'Unknown')
             desc = f"Delete selected item: {item_name}"
         else:
             desc = f"Delete {count} selected items"
 
         # Remove selected steps
         current_steps = list(self.pipeline_steps)
-        steps_to_remove = set(item.get('name', '') for item in selected_items)
+        steps_to_remove = set(getattr(item, 'name', '') for item in selected_items)
 
         # Filter out selected steps
-        new_steps = [step for step in current_steps if step.get('name', '') not in steps_to_remove]
+        new_steps = [step for step in current_steps if getattr(step, 'name', '') not in steps_to_remove]
 
         # Update pipeline steps (this will trigger save to plate storage)
         self.pipeline_steps = new_steps
@@ -423,7 +403,8 @@ class PipelineEditorWidget(ButtonListWidget):
 
         # selected_step contains the step name/id
         for i, step in enumerate(self.pipeline_steps):
-            step_name = step.get("name", f"Step {i+1}")
+            # Now step is a FunctionStep object, not a dict
+            step_name = getattr(step, 'name', f"Step {i+1}")
             if step_name == self.selected_step:
                 return i
         return None
@@ -445,19 +426,16 @@ class PipelineEditorWidget(ButtonListWidget):
 
         def handle_result(result: Optional[FunctionStep]) -> None:
             if result:  # User saved changes
-                # Convert back to dict with complete data preservation
-                updated_step_dict = self._function_step_to_dict(result)
-
-                # Update step in pipeline at correct index
+                # Store the actual FunctionStep object directly (preserves memory type decorators)
                 updated_steps = self.pipeline_steps.copy()
-                updated_steps[step_index] = updated_step_dict
+                updated_steps[step_index] = result
                 self.pipeline_steps = updated_steps
                 self.app.current_status = f"Updated step: {result.name}"
             else:
                 self.app.current_status = "Edit step cancelled"
 
-        # Convert dict to FunctionStep with proper data preservation
-        edit_step = self._dict_to_function_step(step_to_edit)
+        # Use the actual FunctionStep object directly (no conversion needed)
+        edit_step = step_to_edit
 
         # LAZY IMPORT to avoid circular import
         from openhcs.textual_tui.screens.dual_editor import DualEditorScreen
@@ -472,31 +450,32 @@ class PipelineEditorWidget(ButtonListWidget):
             self.app.current_status = "No plate selected for loading pipeline"
             return
 
-        # Launch enhanced file browser for .func files
+        # Launch enhanced file browser for .pipeline files
         def handle_result(result):
             if result and isinstance(result, Path):
                 self._load_pipeline_from_file(result)
             else:
                 self.app.current_status = "Load pipeline cancelled"
 
-        # Create enhanced file browser for .func files
+        # Create enhanced file browser for .pipeline files
         from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
-            title="Load Pipeline (.func)",
+            title="Load Pipeline (.pipeline)",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.func']
+            filter_extensions=['.pipeline']
         )
 
         self.app.push_screen(browser, handle_result)
 
     def _load_pipeline_from_file(self, file_path: Path) -> None:
-        """Load pipeline from .func file."""
+        """Load pipeline from .pipeline file."""
         import pickle
         try:
             with open(file_path, 'rb') as f:
@@ -530,29 +509,30 @@ class PipelineEditorWidget(ButtonListWidget):
             else:
                 self.app.current_status = "Save pipeline cancelled"
 
-        # Create enhanced file browser for saving .func files
+        # Create enhanced file browser for saving .pipeline files
         from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         # Generate default filename from plate name
         plate_name = Path(self.current_plate).name if self.current_plate else "pipeline"
-        default_filename = f"{plate_name}.func"
+        default_filename = f"{plate_name}.pipeline"
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
-            title="Save Pipeline (.func)",
+            title="Save Pipeline (.pipeline)",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.func'],
+            filter_extensions=['.pipeline'],
             default_filename=default_filename
         )
 
         self.app.push_screen(browser, handle_result)
 
     def _save_pipeline_to_file(self, file_path: Path) -> None:
-        """Save pipeline to .func file."""
+        """Save pipeline to .pipeline file."""
         import pickle
         try:
             with open(file_path, 'wb') as f:

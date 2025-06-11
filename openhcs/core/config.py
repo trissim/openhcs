@@ -36,12 +36,21 @@ class PathPlanningConfig:
     """Configuration for pipeline path planning, defining directory suffixes."""
     output_dir_suffix: str = "_outputs"
     """Default suffix for general step output directories."""
-    
+
     positions_dir_suffix: str = "_positions"
     """Suffix for directories containing position generation results."""
-    
+
     stitched_dir_suffix: str = "_stitched"
     """Suffix for directories containing stitched image results."""
+
+    global_output_folder: Optional[str] = None
+    """
+    Optional global output folder where all plate workspaces and outputs will be created.
+    If specified, plate workspaces will be created as {global_output_folder}/{plate_name}_workspace/
+    and outputs as {global_output_folder}/{plate_name}_workspace_outputs/.
+    If None, uses the current behavior (workspace and outputs in same directory as plate).
+    Example: "/data/results" or "/mnt/hcs_output"
+    """
 
 
 @dataclass(frozen=True)

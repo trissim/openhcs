@@ -202,10 +202,10 @@ class MicroscopeHandler(ABC):
                 parent_dir = os.path.dirname(new_path) if isinstance(new_path, str) else new_path.parent
                 filemanager.ensure_directory(parent_dir, Backend.DISK.value)
 
-                # Rename the file
+                # Rename the file using move operation
                 # Clause 245: Workspace operations are disk-only by design
                 # This call is structurally hardcoded to use the "disk" backend
-                filemanager.rename(original_path, new_path, Backend.DISK.value)
+                filemanager.move(original_path, new_path, Backend.DISK.value)
                 logger.debug("Renamed %s to %s", original_path, new_path)
             except (OSError, FileNotFoundError) as e:
                 logger.error("Filesystem error renaming %s to %s: %s", original_path, new_path, e)

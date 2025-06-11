@@ -312,10 +312,10 @@ async def main():
     try:
         # Load configuration
         global_config = get_default_global_config()
-
-        # Setup GPU registry
-        setup_global_gpu_registry(global_config=global_config)
-        logger.info("GPU registry setup completed")
+        
+        # REMOVED: setup_global_gpu_registry - this is now ONLY done in __main__.py
+        # to avoid duplicate initialization
+        logger.info("Using global_config with GPU registry already initialized by __main__.py")
 
         # Create and run the app
         app = OpenHCSTUIApp(global_config=global_config)

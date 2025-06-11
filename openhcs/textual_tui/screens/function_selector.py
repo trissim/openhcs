@@ -60,22 +60,23 @@ class FunctionSelectorScreen(BaseFloatingWindow):
     def _build_function_tree(self) -> Tree:
         """Build tree widget with functions grouped by backend."""
         tree = Tree("Functions", id="function_tree")
-        
+
+        # Expand the root node to show all categories
+        tree.root.expand()
+
         # Add backend nodes
         for backend, functions in self.functions_by_backend.items():
             backend_node = tree.root.add(f"{backend} ({len(functions)} functions)")
             backend_node.data = {"type": "backend", "name": backend}
-            
+
+            # Expand all backend nodes by default
+            backend_node.expand()
+
             # Add function nodes
             for func, display_name in functions:
                 func_node = backend_node.add(display_name)
                 func_node.data = {"type": "function", "func": func, "name": display_name}
-                
-                # Highlight current function
-                if func == self.current_function:
-                    func_node.expand()
-                    backend_node.expand()
-        
+
         return tree
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -131,15 +132,16 @@ class FunctionSelectorScreen(BaseFloatingWindow):
 
     def _populate_tree(self, tree: Tree, functions_by_backend: dict) -> None:
         """Populate tree with function data."""
+        # Expand the root node to show all categories
+        tree.root.expand()
+
         for backend, functions in functions_by_backend.items():
             backend_node = tree.root.add(f"{backend} ({len(functions)} functions)")
             backend_node.data = {"type": "backend", "name": backend}
-            
+
+            # Expand all backend nodes by default
+            backend_node.expand()
+
             for func, display_name in functions:
                 func_node = backend_node.add(display_name)
                 func_node.data = {"type": "function", "func": func, "name": display_name}
-                
-                # Highlight current function
-                if func == self.current_function:
-                    func_node.expand()
-                    backend_node.expand()

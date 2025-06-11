@@ -303,13 +303,7 @@ def setup_global_gpu_registry(global_config: Optional[GlobalPipelineConfig] = No
     else:
         config_to_use = global_config
     
-    try:
-        # initialize_gpu_registry is already designed to be called once and is thread-safe.
-        initialize_gpu_registry(configured_num_workers=config_to_use.num_workers)
-        # logger.info("Global GPU registry setup complete via setup_global_gpu_registry.") # initialize_gpu_registry already logs
-    except RuntimeError as e:
-        logger.error(f"Failed to setup GPU registry via setup_global_gpu_registry: {e}")
-        # Depending on application needs, this might re-raise or just log.
-        # If initialize_gpu_registry raises on no GPUs, that behavior is preserved.
-        # Pass for now, assuming initialize_gpu_registry handles logging of its specific errors.
-        pass
+    # initialize_gpu_registry is already designed to be called once and is thread-safe.
+    # FAIL LOUD: No try-except - let exceptions bubble up to caller
+    initialize_gpu_registry(configured_num_workers=config_to_use.num_workers)
+    logger.info("Global GPU registry setup complete via setup_global_gpu_registry.")

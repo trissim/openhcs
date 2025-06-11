@@ -92,14 +92,23 @@ class OperaPhenixHandler(MicroscopeHandler):
             logger.error("Error loading Index.xml: %s", e)
             logger.debug("Using default field mapping due to error.")
 
-        # Create a temporary directory for renamed files
+        # Create a uniquely named temporary directory for renamed files
+        # Use "__opera_phenix_temp" to make it clearly identifiable
         if isinstance(image_dir, str):
-            temp_dir = os.path.join(image_dir, "__renamed")
+            temp_dir = os.path.join(image_dir, "__opera_phenix_temp")
         else:  # Path object
-            temp_dir = image_dir / "__renamed"
+            temp_dir = image_dir / "__opera_phenix_temp"
+            
+        # SAFETY CHECK: Ensure temp directory is within workspace
+        if not str(temp_dir).startswith(str(workspace_path)):
+            logger.error("SAFETY VIOLATION: Temp directory would be created outside workspace: %s", temp_dir)
+            raise RuntimeError(f"Temp directory would be created outside workspace: {temp_dir}")
+            
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
         filemanager.ensure_directory(temp_dir, Backend.DISK.value)
+        
+        logger.debug("Created temporary directory for Opera Phenix workspace preparation: %s", temp_dir)
 
         # Get all image files in the directory
         # Clause 245: Workspace operations are disk-only by design
@@ -120,20 +129,27 @@ class OperaPhenixHandler(MicroscopeHandler):
                 logger.warning("Unexpected file path type: %s", type(file_path).__name__)
                 continue
 
-            # If this is a symlink, resolve it to get the real file
+            # Check if this is a symlink
             if file_path_obj.is_symlink():
                 try:
+                    # Get the target of the symlink (what it points to)
                     real_file_path = file_path_obj.resolve()
                     if not real_file_path.exists():
                         logger.warning("Broken symlink detected: %s -> %s", file_path, real_file_path)
                         continue
-                    # Use the real file path for copying
+                    # Store both the symlink path and the real file path
                     source_path = str(real_file_path)
+                    symlink_target = str(real_file_path)
                 except Exception as e:
                     logger.warning("Failed to resolve symlink %s: %s", file_path, e)
                     continue
             else:
-                source_path = str(file_path_obj)
+                # This should never happen in a properly mirrored workspace
+                logger.error("SAFETY VIOLATION: Found real file in workspace (should be symlink): %s", file_path)
+                raise RuntimeError(f"Workspace contains real file instead of symlink: {file_path}")
+                
+            # Store the original symlink path for reference
+            original_symlink_path = str(file_path_obj)
 
             # Parse file metadata
             metadata = self.parser.parse_filename(file_name)
@@ -161,10 +177,25 @@ class OperaPhenixHandler(MicroscopeHandler):
             else:  # Path object
                 new_path = temp_dir / new_name
 
-            # Copy the real file (not the symlink) to the temporary directory
-            # Clause 245: Workspace operations are disk-only by design
-            # This call is structurally hardcoded to use the "disk" backend
-            filemanager.copy(source_path, new_path, Backend.DISK.value)
+            # Check if destination already exists in temp directory
+            try:
+                # Clause 245: Workspace operations are disk-only by design
+                # This call is structurally hardcoded to use the "disk" backend
+                if filemanager.exists(new_path, Backend.DISK.value):
+                    # For temp directory, we can be more aggressive and delete any existing file
+                    logger.debug("File exists in temp directory, removing before copy: %s", new_path)
+                    filemanager.delete(new_path, Backend.DISK.value)
+                
+                # Create a symlink in the temp directory pointing to the original file
+                # Clause 245: Workspace operations are disk-only by design
+                # This call is structurally hardcoded to use the "disk" backend
+                filemanager.create_symlink(source_path, new_path, Backend.DISK.value)
+                logger.debug("Created symlink in temp directory: %s -> %s", new_path, source_path)
+                
+            except Exception as e:
+                logger.error("Failed to copy file to temp directory: %s -> %s: %s", 
+                             source_path, new_path, e)
+                raise RuntimeError(f"Failed to copy file to temp directory: {e}") from e
 
         # Clean up and replace old files - ONLY delete symlinks in workspace, NEVER original files
         for file_path in image_files:
@@ -209,20 +240,75 @@ class OperaPhenixHandler(MicroscopeHandler):
             else:  # Path object
                 dest_path = image_dir / temp_file_name
 
-            # Copy the file to the image directory
-            # Clause 245: Workspace operations are disk-only by design
-            # This call is structurally hardcoded to use the "disk" backend
-            filemanager.copy(temp_file, dest_path, Backend.DISK.value)
+            try:
+                # Check if destination already exists in image directory
+                # Clause 245: Workspace operations are disk-only by design
+                # This call is structurally hardcoded to use the "disk" backend
+                if filemanager.exists(dest_path, Backend.DISK.value):
+                    # If destination is a symlink, ok to remove and replace
+                    if filemanager.is_symlink(dest_path, Backend.DISK.value):
+                        logger.debug("Destination is a symlink, removing before copy: %s", dest_path)
+                        filemanager.delete(dest_path, Backend.DISK.value)
+                    else:
+                        # Not a symlink - could be a real file
+                        logger.error("SAFETY VIOLATION: Destination exists and is not a symlink: %s", dest_path)
+                        raise FileExistsError(f"Destination exists and is not a symlink: {dest_path}")
+                
+                # First, if the temp file is a symlink, get its target
+                temp_file_obj = Path(temp_file) if isinstance(temp_file, str) else temp_file
+                if temp_file_obj.is_symlink():
+                    try:
+                        # Get the target that the temp symlink points to
+                        real_target = temp_file_obj.resolve()
+                        real_target_path = str(real_target)
+                        
+                        # Create a new symlink in the image directory pointing to the original file
+                        # Clause 245: Workspace operations are disk-only by design
+                        # This call is structurally hardcoded to use the "disk" backend
+                        filemanager.create_symlink(real_target_path, dest_path, Backend.DISK.value)
+                        logger.debug("Created symlink in image directory: %s -> %s", dest_path, real_target_path)
+                    except Exception as e:
+                        logger.error("Failed to resolve symlink in temp directory: %s: %s", temp_file, e)
+                        raise RuntimeError(f"Failed to resolve symlink: {e}") from e
+                else:
+                    # This should never happen if we're using symlinks consistently
+                    logger.warning("Temp file is not a symlink: %s", temp_file)
+                    # Fall back to copying the file
+                    filemanager.copy(temp_file, dest_path, Backend.DISK.value)
+                    logger.debug("Copied file (not symlink) to image directory: %s -> %s", temp_file, dest_path)
+                
+                # Remove the file from the temporary directory
+                # Clause 245: Workspace operations are disk-only by design
+                # This call is structurally hardcoded to use the "disk" backend
+                filemanager.delete(temp_file, Backend.DISK.value)
+                
+            except FileExistsError as e:
+                # Re-raise with clear message
+                logger.error("Cannot copy to destination: %s", e)
+                raise
+            except Exception as e:
+                logger.error("Error copying from temp to destination: %s -> %s: %s", 
+                             temp_file, dest_path, e)
+                raise RuntimeError(f"Failed to process file from temp directory: {e}") from e
 
-            # Remove the file from the temporary directory
-            # Clause 245: Workspace operations are disk-only by design
-            # This call is structurally hardcoded to use the "disk" backend
-            filemanager.delete(temp_file, Backend.DISK.value)
-
+        # SAFETY CHECK: Validate temp directory before deletion 
+        if not str(temp_dir).startswith(str(workspace_path)):
+            logger.error("SAFETY VIOLATION: Attempted to delete temp directory outside workspace: %s", temp_dir)
+            raise RuntimeError(f"Attempted to delete temp directory outside workspace: {temp_dir}")
+            
+        if not "__opera_phenix_temp" in str(temp_dir):
+            logger.error("SAFETY VIOLATION: Attempted to delete non-temp directory: %s", temp_dir)
+            raise RuntimeError(f"Attempted to delete non-temp directory: {temp_dir}")
+            
         # Remove the temporary directory
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
-        filemanager.delete(temp_dir, Backend.DISK.value)
+        try:
+            filemanager.delete(temp_dir, Backend.DISK.value)
+            logger.debug("Successfully removed temporary directory: %s", temp_dir)
+        except Exception as e:
+            # Non-fatal error, just log it
+            logger.warning("Failed to remove temporary directory %s: %s", temp_dir, e)
 
         return image_dir
 

@@ -303,7 +303,7 @@ class FunctionStep(AbstractStep):
     def __init__(
         self,
         func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
-        *, name: Optional[str] = None, variable_components: Optional[List[VariableComponents]] = [VariableComponents.SITE],
+        *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
         group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False
     ):
         actual_func_for_name = func
@@ -353,9 +353,15 @@ class FunctionStep(AbstractStep):
 
             same_dir = str(step_input_dir) == str(step_output_dir)
             logger.info(f"Step {step_id} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
+            logger.info(f"Step {step_id} ({step_name}) Paths: input_dir='{step_input_dir}', output_dir='{step_output_dir}', same_dir={same_dir}")
 
             if not context.microscope_handler:
                 raise RuntimeError(f"MicroscopeHandler not in context for step {step_id}")
+
+            # Ensure variable_components is never None - use default if missing
+            if variable_components is None:
+                variable_components = [VariableComponents.SITE]  # Default fallback
+                logger.warning(f"Step {step_id} ({step_name}) had None variable_components, using default [SITE]")
 
             patterns_by_well = context.microscope_handler.auto_detect_patterns(
                 str(step_input_dir),           # folder_path
@@ -364,7 +370,7 @@ class FunctionStep(AbstractStep):
                 well_filter=[well_id],         # well_filter
                 extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
                 group_by=group_by.value if group_by else None,             # group_by
-                variable_components=[vc.value for vc in variable_components] if variable_components else None  # variable_components
+                variable_components=[vc.value for vc in variable_components]  # variable_components (guaranteed not None)
             )
 
             # 🔥 STEP EXECUTION DEBUG

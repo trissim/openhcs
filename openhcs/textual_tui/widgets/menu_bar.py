@@ -32,12 +32,13 @@ class MenuBar(Widget):
     def __init__(self, global_config: GlobalPipelineConfig):
         """
         Initialize the menu bar.
-        
+
         Args:
-            global_config: Global configuration for the application
+            global_config: Global configuration for the application (for initial setup only)
         """
         super().__init__()
-        self.global_config = global_config
+        # Note: We don't store global_config as it can become stale
+        # Always use self.app.global_config to get the current config
         logger.debug("MenuBar initialized")
     
     def compose(self) -> ComposeResult:
@@ -71,7 +72,11 @@ class MenuBar(Widget):
             if result:  # User saved config changes
                 # Apply config changes to app
                 self.app.global_config = result
-                self.app.current_status = "Configuration updated"
+
+                # Propagate config changes to all existing orchestrators
+                self._propagate_global_config_to_orchestrators(result)
+
+                self.app.current_status = "Configuration updated and applied to all plates"
             else:
                 self.app.current_status = "Configuration cancelled"
 
@@ -87,6 +92,33 @@ class MenuBar(Widget):
             ConfigDialogScreen(GlobalPipelineConfig, current_config),
             handle_result
         )
+
+    def _propagate_global_config_to_orchestrators(self, new_config: GlobalPipelineConfig) -> None:
+        """Propagate global config changes to all existing orchestrators."""
+        try:
+            # Find the plate manager widget
+            main_content = self.app.query_one("MainContent")
+            plate_manager = main_content.query_one("PlateManagerWidget")
+
+            # Update all orchestrators that don't have plate-specific configs
+            updated_count = 0
+            for plate_path, orchestrator in plate_manager.orchestrators.items():
+                # Only update if this plate doesn't have a plate-specific config override
+                if plate_path not in plate_manager.plate_configs:
+                    # Use the async method to apply the new config
+                    import asyncio
+                    asyncio.create_task(orchestrator.apply_new_global_config(new_config))
+                    updated_count += 1
+
+            if updated_count > 0:
+                logger.info(f"Applied global config changes to {updated_count} orchestrators")
+            else:
+                logger.info("No orchestrators updated (all have plate-specific configs)")
+
+        except Exception as e:
+            logger.error(f"Failed to propagate global config to orchestrators: {e}")
+            # Don't fail the config update if propagation fails
+            pass
     
     def action_show_help(self) -> None:
         """Show help dialog."""

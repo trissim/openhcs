@@ -69,7 +69,11 @@ class PlateManagerWidget(ButtonListWidget):
         )
 
         self.filemanager = filemanager
-        self.global_config = global_config
+        # Note: We don't store global_config as it can become stale
+        # Always use self.app.global_config to get the current config
+
+        # Simple state management - no reactive property issues
+        self.plate_compiled_data = {}  # {plate_path: (execution_pipeline, compiled_contexts)}
 
         # Callback for plate selection (set by MainContent)
         self.on_plate_selected: Optional[Callable[[str], None]] = None
@@ -260,10 +264,17 @@ class PlateManagerWidget(ButtonListWidget):
                         selected_plate = plate
                         break
 
-            # Mathematical constraints
-            can_init = selected_plate and selected_plate.get('status') in ['?', '-']
-            can_compile = selected_plate and selected_plate.get('status') == '-' and self._has_pipelines([selected_plate])
-            can_run = selected_plate and selected_plate.get('status') == 'o'
+            # Mathematical constraints (like test_main.py workflow)
+            # Init: available for plates that need initialization (not blocked by failures)
+            can_init = selected_plate and selected_plate.get('status') in ['?', '-', 'F']
+
+            # Compile: available for plates that are not compiled and have pipelines
+            can_compile = (selected_plate and
+                          selected_plate.get('path') not in self.plate_compiled_data and
+                          self._has_pipelines([selected_plate]))
+
+            # Run button: available if ANY plates are compiled
+            can_run = len(self.plate_compiled_data) > 0
 
             self.query_one("#del_plate").disabled = not has_plates
             self.query_one("#edit_plate").disabled = not has_selection
@@ -326,7 +337,7 @@ class PlateManagerWidget(ButtonListWidget):
 
             # Create orchestrator for the plate
             plate_path = str(selected_path)
-            plate_config = self.plate_configs.get(plate_path, self.global_config)
+            plate_config = self.plate_configs.get(plate_path, self.app.global_config)
 
             try:
                 # Import orchestrator
@@ -445,7 +456,7 @@ class PlateManagerWidget(ButtonListWidget):
         plate_path = plate_data['path']
 
         # Get current config for this plate (or global default)
-        current_config = self.plate_configs.get(plate_path, self.global_config)
+        current_config = self.plate_configs.get(plate_path, self.app.global_config)
 
         # Launch configuration form
         def handle_result(result_config: Any) -> None:
@@ -480,8 +491,8 @@ class PlateManagerWidget(ButtonListWidget):
             self.app.current_status = "No plates available for initialization"
             return
 
-        # Validate all selected plates can be initialized
-        invalid_plates = [item for item in selected_items if item.get('status') not in ['?', '-']]
+        # Validate all selected plates can be initialized (allow failed plates to be re-initialized)
+        invalid_plates = [item for item in selected_items if item.get('status') not in ['?', '-', 'F']]
         if invalid_plates:
             names = [item['name'] for item in invalid_plates]
             self.app.current_status = f"Cannot initialize plates with invalid status: {', '.join(names)}"
@@ -542,10 +553,16 @@ class PlateManagerWidget(ButtonListWidget):
 
             # Force UI update immediately after each plate
             self.mutate_reactive(PlateManagerWidget.plates)
+            # Update button states immediately
+            self._update_button_states()
+            # Notify pipeline editor of status change
+            self._notify_pipeline_editor_status_change(actual_plate['path'], actual_plate['status'])
             logger.info(f"Called mutate_reactive for plate {actual_plate['name']}")
 
         # Final UI update
         self.mutate_reactive(PlateManagerWidget.plates)
+        # Update button states after all plates processed
+        self._update_button_states()
 
         # Update status
         success_count = len([p for p in selected_items if p.get('status') == '-'])
@@ -568,8 +585,8 @@ class PlateManagerWidget(ButtonListWidget):
             self.app.current_status = "No plates available for compilation"
             return
 
-        # Validate all selected plates are initialized
-        uninitialized = [item for item in selected_items if item.get('status') == '?']
+        # Validate all selected plates are initialized (allow failed plates to be re-compiled)
+        uninitialized = [item for item in selected_items if item.get('status') not in ['-', 'F']]
         if uninitialized:
             names = [item['name'] for item in uninitialized]
             self.app.current_status = f"Cannot compile uninitialized plates: {', '.join(names)}"
@@ -628,31 +645,65 @@ class PlateManagerWidget(ButtonListWidget):
                 self.mutate_reactive(PlateManagerWidget.plates)
                 continue
 
-            # Get pipeline definition for this specific plate
-            pipeline_definition = self._get_current_pipeline_definition(plate_path)
-            if not pipeline_definition:
+            # Get definition pipeline and make fresh copy
+            definition_pipeline = self._get_current_pipeline_definition(plate_path)
+            if not definition_pipeline:
                 logger.warning(f"No pipeline defined for {actual_plate['name']}, using empty pipeline")
-                pipeline_definition = []
+                definition_pipeline = []
 
-            # Get wells (heavy operation)
-            wells = await orchestrator.get_wells()
+            try:
+                # Make fresh copy for compilation
+                import copy
+                from openhcs.constants.constants import VariableComponents
+                execution_pipeline = copy.deepcopy(definition_pipeline)
 
-            # Compile pipelines (heavy operation)
-            compiled_contexts = await orchestrator.compile_pipelines(
-                pipeline_definition=pipeline_definition,
-                well_filter=wells
-            )
+                # Fix step IDs after deep copy to match new object IDs
+                for step in execution_pipeline:
+                    step.step_id = str(id(step))
+                    # Debug: Check for None variable_components
+                    if step.variable_components is None:
+                        logger.warning(f"🔥 Step '{step.name}' has None variable_components, setting default")
+                        step.variable_components = [VariableComponents.SITE]
 
-            # Store compiled data
-            actual_plate['compiled_contexts'] = compiled_contexts
-            actual_plate['pipeline_definition'] = pipeline_definition
-            actual_plate['status'] = 'o'  # Compiled
+                # Get wells and compile (synchronous - like test_main.py)
+                # Wrap in Pipeline object like test_main.py does
+                from openhcs.core.pipeline import Pipeline
+                pipeline_obj = Pipeline(steps=execution_pipeline)
+                wells = orchestrator.get_wells()
+                compiled_contexts = orchestrator.compile_pipelines(pipeline_obj.steps, wells)
+
+                # Store state simply - no reactive property issues
+                step_ids_in_pipeline = [id(step) for step in execution_pipeline]
+                # Get step IDs from contexts (ProcessingContext objects)
+                first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
+                step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
+                logger.info(f"🔥 Storing compiled data for {plate_path}: pipeline={type(execution_pipeline)}, contexts={type(compiled_contexts)}")
+                logger.info(f"🔥 Step IDs in pipeline: {step_ids_in_pipeline}")
+                logger.info(f"🔥 Step IDs in contexts: {step_ids_in_contexts}")
+                self.plate_compiled_data[plate_path] = (execution_pipeline, compiled_contexts)
+                logger.info(f"🔥 Stored! Available compiled plates: {list(self.plate_compiled_data.keys())}")
+
+                # Update plate status ONLY on successful compilation
+                actual_plate['status'] = 'o'  # Compiled
+                logger.info(f"🔥 Successfully compiled {plate_path}")
+
+            except Exception as e:
+                logger.error(f"🔥 Compilation failed for {plate_path}: {e}")
+                actual_plate['status'] = 'F'  # Failed
+                actual_plate['error'] = str(e)
+                # Don't store anything in plate_compiled_data on failure
 
             # Force UI update immediately after each plate
             self.mutate_reactive(PlateManagerWidget.plates)
+            # Update button states immediately
+            self._update_button_states()
+            # Notify pipeline editor of status change
+            self._notify_pipeline_editor_status_change(actual_plate['path'], actual_plate['status'])
 
         # Final UI update
         self.mutate_reactive(PlateManagerWidget.plates)
+        # Update button states after all plates processed
+        self._update_button_states()
 
         # Update status
         success_count = len([p for p in selected_items if p.get('status') == 'o'])
@@ -683,8 +734,16 @@ class PlateManagerWidget(ButtonListWidget):
                 return False
         return True
 
+    def _notify_pipeline_editor_status_change(self, plate_path: str, new_status: str) -> None:
+        """Notify pipeline editor when plate status changes (enables Add button immediately)."""
+        if self.pipeline_editor and self.pipeline_editor.current_plate == plate_path:
+            # Update pipeline editor's status and trigger button state update
+            self.pipeline_editor.current_plate_status = new_status
+
+
+
     def _get_current_pipeline_definition(self, plate_path: str = None) -> List:
-        """Get current pipeline definition from PipelineEditor."""
+        """Get current pipeline definition from PipelineEditor (now returns FunctionStep objects directly)."""
         if not self.pipeline_editor:
             logger.warning("No pipeline editor reference - using empty pipeline")
             return []
@@ -695,110 +754,131 @@ class PlateManagerWidget(ButtonListWidget):
             logger.warning("No plate specified - using empty pipeline")
             return []
 
-        # Get pipeline from editor
-        pipeline = self.pipeline_editor.get_pipeline_for_plate(target_plate)
-        return pipeline
+        # Get pipeline from editor (now returns List[FunctionStep] directly)
+        pipeline_steps = self.pipeline_editor.get_pipeline_for_plate(target_plate)
+
+        # No conversion needed - pipeline_steps are already FunctionStep objects with memory type decorators
+        return pipeline_steps
     
     def action_run_plate(self) -> None:
-        """Handle Run Plate button - execute compiled plates."""
+        """Handle Run Plate button - execute compiled plates (like test_main.py)."""
+        logger.info("🔥 RUN BUTTON PRESSED")
 
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
+        logger.info(f"🔥 Selection mode: {selection_mode}, items: {len(selected_items)}")
 
         if selection_mode == "empty":
-            self.app.current_status = "No plates available for execution"
+            # No selection - run ALL ready plates (like test_main.py batch execution)
+            ready_plates = [p for p in self.plates
+                           if p.get('status') in ['o', 'C', 'F'] and p.get('compiled_contexts') and p.get('compiled_pipeline_definition')]
+            logger.info(f"🔥 No selection - found {len(ready_plates)} ready plates out of {len(self.plates)} total")
+            for plate in self.plates:
+                logger.info(f"🔥 Plate {plate.get('name')}: status={plate.get('status')}, "
+                           f"has_contexts={bool(plate.get('compiled_contexts'))}, "
+                           f"has_compiled_pipeline={bool(plate.get('compiled_pipeline_definition'))}")
+
+            if ready_plates:
+                self.app.current_status = f"Running all {len(ready_plates)} ready plates"
+                logger.info(f"🔥 Starting async run for {len(ready_plates)} plates")
+                self._start_async_run(ready_plates, "all_ready")
+            else:
+                self.app.current_status = "No plates ready for execution"
+                logger.warning("🔥 No plates ready for execution")
             return
 
-        # Validate all selected plates are compiled
-        uncompiled = [item for item in selected_items if item.get('status') != 'o']
-        if uncompiled:
-            names = [item['name'] for item in uncompiled]
-            self.app.current_status = f"Cannot run uncompiled plates: {', '.join(names)}"
+        # Selection exists - filter to only compiled plates
+        ready_items = [item for item in selected_items if item.get('path') in self.plate_compiled_data]
+
+        logger.info(f"🔥 Selection exists - {len(ready_items)} ready out of {len(selected_items)} selected")
+        for item in selected_items:
+            has_compiled_data = item.get('path') in self.plate_compiled_data
+            logger.info(f"🔥 Selected {item.get('name')}: status={item.get('status')}, "
+                       f"has_compiled_data={has_compiled_data}")
+
+        if not ready_items:
+            self.app.current_status = "No selected plates are ready for execution"
+            logger.warning("🔥 No selected plates ready for execution")
             return
 
-        # Start async execution
-        self._start_async_run(selected_items, selection_mode)
+        # Run only the ready selected plates
+        skipped_count = len(selected_items) - len(ready_items)
+        if skipped_count > 0:
+            self.app.current_status = f"Running {len(ready_items)} ready plates (skipped {skipped_count} unready)"
+        else:
+            self.app.current_status = f"Running {len(ready_items)} selected plates"
+
+        logger.info(f"🔥 Starting async run for {len(ready_items)} selected plates")
+        self._start_async_run(ready_items, selection_mode)
 
     def _start_async_run(self, selected_items: List[Dict], selection_mode: str) -> None:
         """Start async execution of selected plates."""
         from textual import work
 
+        logger.info(f"🔥 _start_async_run called with {len(selected_items)} items, mode: {selection_mode}")
+
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "run")
         self.app.current_status = f"Running: {desc}"
+        logger.info(f"🔥 Status set to: Running: {desc}")
 
         # Start background worker
+        logger.info("🔥 Starting background worker _run_plates_worker")
         self._run_plates_worker(selected_items)
 
     @work(exclusive=True)
     async def _run_plates_worker(self, selected_items: List[Dict]) -> None:
-        """Background worker for plate execution."""
+        """Run plates using orchestrator's execute method."""
+
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
-            # Find the actual plate in self.plates (not the copy from get_selection_state)
+            # Get orchestrator
+            orchestrator = self.orchestrators.get(plate_path)
+            if not orchestrator:
+                continue
+
+            # Find actual plate for status updates
             actual_plate = None
             for plate in self.plates:
                 if plate['path'] == plate_path:
                     actual_plate = plate
                     break
-
             if not actual_plate:
-                logger.error(f"Plate not found in plates list: {plate_path}")
                 continue
 
-            # Get orchestrator and compiled data
-            orchestrator = self.orchestrators.get(plate_path)
-            if not orchestrator:
-                logger.error(f"No orchestrator found for {plate_path}")
-                actual_plate['status'] = 'X'
-                actual_plate['error'] = "No orchestrator found"
-                # Force UI update immediately for error state
-                self.mutate_reactive(PlateManagerWidget.plates)
-                continue
+            # Get compiled data from simple state
+            logger.info(f"🔥 Checking compiled data for {plate_path}")
+            logger.info(f"🔥 Available compiled plates: {list(self.plate_compiled_data.keys())}")
 
-            compiled_contexts = actual_plate.get('compiled_contexts')
-            pipeline_definition = actual_plate.get('pipeline_definition')
+            if plate_path not in self.plate_compiled_data:
+                logger.warning(f"🔥 No compiled data found for {plate_path}")
+                continue  # Skip - no compiled data
 
-            if not compiled_contexts or not pipeline_definition:
-                logger.error(f"No compiled data found for {actual_plate['name']}")
-                actual_plate['status'] = 'X'
-                actual_plate['error'] = "No compiled data found"
-                # Force UI update immediately for error state
-                self.mutate_reactive(PlateManagerWidget.plates)
-                continue
+            execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
+            step_ids_in_pipeline = [id(step) for step in execution_pipeline]
+            # Get step IDs from contexts (ProcessingContext objects)
+            first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
+            step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
+            logger.info(f"🔥 Retrieved compiled data for {plate_path}: pipeline={type(execution_pipeline)}, contexts={type(compiled_contexts)}")
+            logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
+            logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
 
-            # Set status to running
+            # Run it
             actual_plate['status'] = '!'  # Running
-            # Force UI update to show running state
             self.mutate_reactive(PlateManagerWidget.plates)
 
-            # Execute compiled plate (heavy operation)
-            results = await orchestrator.execute_compiled_plate(
-                pipeline_definition=pipeline_definition,
-                compiled_contexts=compiled_contexts
-            )
+            try:
+                # Execute like test_main.py (synchronous)
+                results = orchestrator.execute_compiled_plate(execution_pipeline, compiled_contexts)
 
-            # Store results and update status
-            actual_plate['execution_results'] = results
-            if results and all(r.get('status') != 'error' for r in results.values()):
-                actual_plate['status'] = 'o'  # Completed successfully
-            else:
-                actual_plate['status'] = 'X'  # Execution error
-                actual_plate['error'] = "Execution failed - check logs"
-                logger.error(f"Execution failed for {actual_plate['name']}")
+                # Update status based on results
+                if results and all(r.get('status') != 'error' for r in results.values()):
+                    actual_plate['status'] = 'C'  # Success
+                else:
+                    actual_plate['status'] = 'F'  # Failed
 
-            # Force UI update immediately after each plate
+            except Exception:
+                actual_plate['status'] = 'F'  # Failed
+
             self.mutate_reactive(PlateManagerWidget.plates)
-
-        # Final UI update
-        self.mutate_reactive(PlateManagerWidget.plates)
-
-        # Update status
-        success_count = len([p for p in selected_items if p.get('status') == 'o'])
-        error_count = len([p for p in selected_items if p.get('status') == 'X'])
-
-        if error_count == 0:
-            self.app.current_status = f"Successfully executed {success_count} plates"
-        else:
-            self.app.current_status = f"Executed {success_count} plates, {error_count} errors"

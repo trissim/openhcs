@@ -330,6 +330,20 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
     def _handle_select_all(self):
         """Return all selected directories or files based on mode."""
         if self.mode == BrowserMode.LOAD:
+            # For FILES_ONLY mode, return single Path object (not list)
+            if self.selection_mode == SelectionMode.FILES_ONLY:
+                if self.selected_path:
+                    try:
+                        # Use FileManager to check if it's a file
+                        is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+                        if not is_dir:  # It's a file
+                            return self.selected_path  # Return single Path object
+                    except Exception:
+                        pass
+                # No valid file selected, return None to cancel
+                return None
+
+            # For other modes (DIRECTORIES_ONLY, FILES_AND_DIRECTORIES), return list
             if self.selected_paths:
                 # Return list of selected paths
                 return list(self.selected_paths)
@@ -341,7 +355,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
                         is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
                         if is_dir:
                             return [self.selected_path]
-                        elif self.selection_mode in [SelectionMode.FILES_ONLY, SelectionMode.FILES_AND_DIRECTORIES]:
+                        elif self.selection_mode == SelectionMode.FILES_AND_DIRECTORIES:
                             return [self.selected_path]
                     except Exception:
                         # If we can't determine type, fall back to initial path

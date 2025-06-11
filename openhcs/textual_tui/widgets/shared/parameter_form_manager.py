@@ -2,7 +2,7 @@
 
 import dataclasses
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, get_origin, get_args
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Collapsible
 from textual.app import ComposeResult
@@ -84,8 +84,9 @@ class ParameterFormManager:
             label.styles.height = "1"
             yield label
 
-            # Input widget (flexible width)
+            # Input widget (flexible width, left aligned)
             input_widget.styles.width = "1fr"
+            input_widget.styles.text_align = "left"
             yield input_widget
 
             # Reset button (auto width)
@@ -95,32 +96,67 @@ class ParameterFormManager:
     
     def update_parameter(self, param_name: str, value: Any):
         """Update parameter value with centralized enum conversion and nested dataclass support."""
-        # Parse hierarchical parameter name (e.g., "config_path_planning_output_dir_suffix")
+        # Parse hierarchical parameter name (e.g., "path_planning_global_output_folder")
         # Split and check if this is a nested parameter
         parts = param_name.split('_')
-        if len(parts) >= 3:  # config_nested_field format
-            # Try to find nested manager by checking if parts[1] is a nested parameter
-            potential_nested = parts[1]
-            if potential_nested in self.parameters and hasattr(self, 'nested_managers') and potential_nested in self.nested_managers:
-                # Reconstruct the nested field name from remaining parts
-                nested_field = '_'.join(parts[2:])
+        if len(parts) >= 2:  # nested_field format
+            # Try to find nested manager by checking all possible prefixes
+            for i in range(1, len(parts)):
+                potential_nested = '_'.join(parts[:i])
+                if potential_nested in self.parameters and hasattr(self, 'nested_managers') and potential_nested in self.nested_managers:
+                    # Reconstruct the nested field name from remaining parts
+                    nested_field = '_'.join(parts[i:])
 
-                # Update nested form manager
-                self.nested_managers[potential_nested].update_parameter(nested_field, value)
+                    # Update nested form manager
+                    self.nested_managers[potential_nested].update_parameter(nested_field, value)
 
-                # Rebuild nested dataclass instance
-                nested_values = self.nested_managers[potential_nested].get_current_values()
-                nested_type = self.parameter_types[potential_nested]
-                self.parameters[potential_nested] = nested_type(**nested_values)
-                return
+                    # Rebuild nested dataclass instance
+                    nested_values = self.nested_managers[potential_nested].get_current_values()
+                    nested_type = self.parameter_types[potential_nested]
+                    self.parameters[potential_nested] = nested_type(**nested_values)
+                    return
 
         # Handle regular parameters (direct match)
         if param_name in self.parameters:
-            # Convert string back to enum if needed (centralized conversion)
+            # Convert string back to proper type (comprehensive conversion)
             if param_name in self.parameter_types:
                 param_type = self.parameter_types[param_name]
                 if hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
                     value = param_type(value)  # Convert string → enum
+                elif self._is_list_of_enums(param_type):
+                    # Handle List[Enum] types (like List[VariableComponents])
+                    enum_type = self._get_enum_from_list(param_type)
+                    if enum_type:
+                        # Convert string value to enum, then wrap in list
+                        enum_value = enum_type(value)
+                        value = [enum_value]
+                elif param_type == float:
+                    # Convert string → float, handle empty based on parameter requirements
+                    try:
+                        if value == "":
+                            # For empty values, we need to check if parameter is required
+                            # This requires access to parameter info, but we don't have it here
+                            # For now, convert empty to None (safer than 0.0)
+                            value = None
+                        else:
+                            value = float(value)
+                    except (ValueError, TypeError):
+                        value = None  # Use None instead of 0.0 for failed conversions
+                elif param_type == int:
+                    # Convert string → int, handle empty based on parameter requirements
+                    try:
+                        if value == "":
+                            # For empty values, convert to None (safer than 0)
+                            value = None
+                        else:
+                            value = int(value)
+                    except (ValueError, TypeError):
+                        value = None  # Use None instead of 0 for failed conversions
+                elif param_type == bool:
+                    # Convert string → bool
+                    if isinstance(value, str):
+                        value = value.lower() in ('true', '1', 'yes', 'on')
+                # Add more type conversions as needed
 
             self.parameters[param_name] = value
     
@@ -128,24 +164,26 @@ class ParameterFormManager:
         """Reset parameter to default value with nested dataclass support."""
         # Parse hierarchical parameter name for nested parameters
         parts = param_name.split('_')
-        if len(parts) >= 3:  # config_nested_field format
-            potential_nested = parts[1]
-            if potential_nested in self.parameters and hasattr(self, 'nested_managers') and potential_nested in self.nested_managers:
-                # Reconstruct the nested field name
-                nested_field = '_'.join(parts[2:])
+        if len(parts) >= 2:  # nested_field format
+            # Try to find nested manager by checking all possible prefixes
+            for i in range(1, len(parts)):
+                potential_nested = '_'.join(parts[:i])
+                if potential_nested in self.parameters and hasattr(self, 'nested_managers') and potential_nested in self.nested_managers:
+                    # Reconstruct the nested field name
+                    nested_field = '_'.join(parts[i:])
 
-                # Get default value for nested field
-                nested_type = self.parameter_types[potential_nested]
-                nested_param_info = SignatureAnalyzer.analyze(nested_type)
-                nested_default = nested_param_info[nested_field].default_value
+                    # Get default value for nested field
+                    nested_type = self.parameter_types[potential_nested]
+                    nested_param_info = SignatureAnalyzer.analyze(nested_type)
+                    nested_default = nested_param_info[nested_field].default_value
 
-                # Reset in nested form manager
-                self.nested_managers[potential_nested].reset_parameter(nested_field, nested_default)
+                    # Reset in nested form manager
+                    self.nested_managers[potential_nested].reset_parameter(nested_field, nested_default)
 
-                # Rebuild nested dataclass instance
-                nested_values = self.nested_managers[potential_nested].get_current_values()
-                self.parameters[potential_nested] = nested_type(**nested_values)
-                return
+                    # Rebuild nested dataclass instance
+                    nested_values = self.nested_managers[potential_nested].get_current_values()
+                    self.parameters[potential_nested] = nested_type(**nested_values)
+                    return
 
         # Handle regular parameters
         if param_name in self.parameters:
@@ -172,6 +210,60 @@ class ParameterFormManager:
                 else:
                     self.parameters[param_name] = default_value
     
+    def _is_list_of_enums(self, param_type) -> bool:
+        """Check if parameter type is List[Enum]."""
+        try:
+            # Check if it's a generic type (like List[Something])
+            origin = get_origin(param_type)
+            if origin is list:
+                # Get the type arguments (e.g., VariableComponents from List[VariableComponents])
+                args = get_args(param_type)
+                if args and len(args) > 0:
+                    inner_type = args[0]
+                    # Check if the inner type is an enum
+                    return hasattr(inner_type, '__bases__') and Enum in inner_type.__bases__
+            return False
+        except Exception:
+            return False
+
+    def _get_enum_from_list(self, param_type):
+        """Extract enum type from List[Enum] type."""
+        try:
+            args = get_args(param_type)
+            if args and len(args) > 0:
+                return args[0]  # Return the enum type (e.g., VariableComponents)
+            return None
+        except Exception:
+            return None
+
     def get_current_values(self) -> Dict[str, Any]:
         """Get current parameter values."""
         return self.parameters.copy()
+
+    def _create_nested_managers_for_testing(self):
+        """Create nested managers without building widgets (for testing)."""
+        for param_name, param_type in self.parameter_types.items():
+            current_value = self.parameters[param_name]
+
+            # Handle nested dataclasses
+            if dataclasses.is_dataclass(param_type):
+                # Analyze nested dataclass
+                nested_param_info = SignatureAnalyzer.analyze(param_type)
+
+                # Get current values from nested dataclass instance
+                nested_parameters = {}
+                nested_parameter_types = {}
+
+                for nested_name, nested_info in nested_param_info.items():
+                    nested_current_value = getattr(current_value, nested_name, nested_info.default_value) if current_value else nested_info.default_value
+                    nested_parameters[nested_name] = nested_current_value
+                    nested_parameter_types[nested_name] = nested_info.param_type
+
+                # Create nested form manager with hierarchical underscore notation
+                nested_field_id = f"{self.field_id}_{param_name}"
+                nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id)
+
+                # Store reference to nested form manager for updates
+                if not hasattr(self, 'nested_managers'):
+                    self.nested_managers = {}
+                self.nested_managers[param_name] = nested_form_manager

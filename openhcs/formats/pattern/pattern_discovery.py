@@ -70,7 +70,7 @@ class PatternDiscoveryEngine:
         Raises:
             ValueError: If directory does not exist
         """
-        directory_path = str(directory)
+        directory_path = str(directory)  # Keep as string for FileManager consistency
         if not self.filemanager.is_dir(directory_path, backend):
             raise FileNotFoundError(f"Directory not found: {directory_path}")
 
@@ -79,10 +79,8 @@ class PatternDiscoveryEngine:
         # Handle literal filenames (patterns without placeholders)
         if not has_placeholders(pattern_str):
             # Use FileManager to check if file exists
-            file_exists = self.filemanager.exists(
-                str(directory_path / pattern_str),
-                backend
-            )
+            file_path = os.path.join(directory_path, pattern_str)  # Use os.path.join instead of /
+            file_exists = self.filemanager.exists(file_path, backend)
             if file_exists:
                 return [pattern_str]
             return []
@@ -98,7 +96,7 @@ class PatternDiscoveryEngine:
             return []
 
         # Get all image files in directory using FileManager
-        all_files = self.filemanager.list_image_files(directory_path, backend)
+        all_files = self.filemanager.list_image_files(str(directory_path), backend)
 
         matching_files = []
 

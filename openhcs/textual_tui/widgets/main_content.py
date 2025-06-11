@@ -32,14 +32,15 @@ class MainContent(Widget):
     def __init__(self, filemanager: FileManager, global_config: GlobalPipelineConfig):
         """
         Initialize the main content area.
-        
+
         Args:
             filemanager: FileManager instance for file operations
-            global_config: Global configuration
+            global_config: Global configuration (for initial setup only)
         """
         super().__init__()
         self.filemanager = filemanager
-        self.global_config = global_config
+        # Note: We don't store global_config as it can become stale
+        # Child widgets should use self.app.global_config to get current config
         logger.debug("MainContent initialized")
     
     def compose(self) -> ComposeResult:
@@ -51,7 +52,7 @@ class MainContent(Widget):
             with plate_container:
                 yield PlateManagerWidget(
                     filemanager=self.filemanager,
-                    global_config=self.global_config
+                    global_config=self.app.global_config  # Always use current config from app
                 )
 
             # Right pane: Pipeline Editor with proper border title
@@ -60,7 +61,7 @@ class MainContent(Widget):
             with pipeline_container:
                 yield PipelineEditorWidget(
                     filemanager=self.filemanager,
-                    global_config=self.global_config
+                    global_config=self.app.global_config  # Always use current config from app
                 )
     
     def on_mount(self) -> None:

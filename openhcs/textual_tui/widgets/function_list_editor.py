@@ -244,10 +244,42 @@ class FunctionListEditorWidget(Container):
         """Handle parameter change message from FunctionPaneWidget."""
         if hasattr(event, 'index') and hasattr(event, 'param_name') and hasattr(event, 'value'):
             if 0 <= event.index < len(self.functions):
-                # Update function kwargs
+                # Update function kwargs with proper type conversion
                 func, kwargs = self.functions[event.index]
                 new_kwargs = kwargs.copy()
-                new_kwargs[event.param_name] = event.value
+
+                # Convert value to proper type based on function signature
+                converted_value = event.value
+                try:
+                    from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+                    from enum import Enum
+
+                    param_info = SignatureAnalyzer.analyze(func)
+                    if event.param_name in param_info:
+                        param_details = param_info[event.param_name]
+                        param_type = param_details.param_type
+                        is_required = param_details.is_required
+                        default_value = param_details.default_value
+
+                        # Handle empty strings - always convert to None or default value
+                        if isinstance(event.value, str) and event.value.strip() == "":
+                            # Empty parameter - use default value (None for required params)
+                            converted_value = default_value
+                        elif isinstance(event.value, str) and event.value.strip() != "":
+                            # Non-empty string - convert to proper type
+                            if param_type == float:
+                                converted_value = float(event.value)
+                            elif param_type == int:
+                                converted_value = int(event.value)
+                            elif param_type == bool:
+                                converted_value = event.value.lower() in ('true', '1', 'yes', 'on')
+                            elif hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
+                                converted_value = param_type(event.value)
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.warning(f"Failed to convert parameter '{event.param_name}' value '{event.value}': {e}")
+                    converted_value = event.value  # Keep original value on conversion failure
+
+                new_kwargs[event.param_name] = converted_value
 
                 # Update functions list
                 new_functions = self.functions.copy()
@@ -255,7 +287,7 @@ class FunctionListEditorWidget(Container):
                 self.functions = new_functions
 
                 self._commit_and_notify()
-                logger.debug(f"Updated parameter {event.param_name}={event.value} for function {event.index}")
+                logger.debug(f"Updated parameter {event.param_name}={converted_value} (type: {type(converted_value)}) for function {event.index}")
 
     def on_function_pane_widget_change_function(self, event: Message) -> None:
         """Handle change function message from FunctionPaneWidget."""
@@ -343,9 +375,11 @@ class FunctionListEditorWidget(Container):
                 self._load_pattern_from_file(result)
 
         # Launch enhanced file browser for .func files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
             title="Load Function Pattern (.func)",
             mode=BrowserMode.LOAD,
@@ -364,9 +398,11 @@ class FunctionListEditorWidget(Container):
                 self._save_pattern_to_file(result)
 
         # Launch enhanced file browser for saving .func files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=Path.home(),
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
             backend=Backend.DISK,
             title="Save Function Pattern (.func)",
             mode=BrowserMode.SAVE,
