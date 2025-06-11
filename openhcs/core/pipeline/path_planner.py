@@ -210,6 +210,7 @@ class PipelinePathPlanner:
 
             # --- Chain breaker logic ---
             chain_breaker_read_backend = None  # Track if this step should use disk backend
+            prev_is_chain_breaker = False  # Initialize for all steps
             if i > 0:  # Not the first step
                 # Check if the PREVIOUS step is a chain breaker
                 prev_step = steps[i-1]
@@ -270,9 +271,9 @@ class PipelinePathPlanner:
                     # Use next step's input from step attribute
                     step_output_dir = Path(next_step.input_dir)
                 else:
-                    # For first step (i == 0), create output directory with suffix
-                    # For subsequent steps (i > 0), work in place (use same directory as input)
-                    if i == 0:
+                    # For first step (i == 0) OR steps following chainbreakers, create output directory with suffix
+                    # For other subsequent steps (i > 0), work in place (use same directory as input)
+                    if i == 0 or prev_is_chain_breaker:
                         # Use same directory as input with appropriate suffix based on step name
                         step_name_lower = step_name.lower()
                         current_suffix = path_config.output_dir_suffix # Default
@@ -322,8 +323,8 @@ class PipelinePathPlanner:
                 else:
                     step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
                 
-            # --- Rule: First step must have different input and output ---
-            if i == 0 and step_output_dir == step_input_dir:
+            # --- Rule: First step and chainbreaker followers must have different input and output ---
+            if (i == 0 or prev_is_chain_breaker) and step_output_dir == step_input_dir:
                 # For the first step, always use the general output_dir_suffix if it needs differentiation
                 # Use workspace directory name instead of input directory name
                 if hasattr(context, 'workspace_path') and context.workspace_path:

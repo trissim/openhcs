@@ -321,18 +321,32 @@ def basic_flatfield_correction_cupy(
             image_size_gb, estimated_peak_memory, z, y, x, orig_dtype
         )
    # except (cp.cuda.memory.OutOfMemoryError, cp.cuda.cuda.CUDAError):
-    except (cp.cuda.memory.OutOfMemoryError, 
+    except (cp.cuda.memory.OutOfMemoryError,
         cp.cuda.runtime.CUDARuntimeError,
         cp.cuda.cusolver.CUSOLVERError,
         cp.cuda.cublas.CUBLASError) as oom_error:
         logger.warning(f"🔧 GPU OOM: {oom_error}")
         logger.info(f"🔧 CPU FALLBACK: GPU processing failed, switching to CPU for {z}×{y}×{x} image")
 
-        # Clear GPU memory before CPU fallback
+        # 🔧 CRITICAL: Delete ALL intermediate variables from failed GPU processing
+        logger.debug(f"🔧 CPU FALLBACK: Cleaning up intermediate GPU variables...")
         try:
+            # These variables exist in _gpu_flatfield_correction scope, need to pass them out
+            # For now, just do aggressive memory cleanup
             cp.get_default_memory_pool().free_all_blocks()
-        except:
-            pass
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+            cp.cuda.runtime.deviceSynchronize()
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+
+            # Check memory after cleanup
+            free_after_cleanup, total = cp.cuda.runtime.memGetInfo()
+            logger.info(f"🔧 CPU FALLBACK: After cleanup: {free_after_cleanup / 1e9:.2f}GB free of {total / 1e9:.2f}GB total")
+
+        except Exception as cleanup_error:
+            logger.warning(f"🔧 CPU FALLBACK: Cleanup warning: {cleanup_error}")
 
         # Fallback to CPU processing
         return _cpu_fallback_flatfield_correction(
@@ -356,88 +370,131 @@ def _gpu_flatfield_correction(
     logger.debug(f"🔧 MEMORY INFO: Image size {z}×{y}×{x}, {image_size_gb:.2f}GB, "
                 f"max_memory_gb={max_memory_gb}, estimated peak={estimated_peak_memory:.2f}GB")
 
-    # Convert to float for processing
-    image_float = image.astype(cp.float32)
+    # Initialize variables to None for proper cleanup
+    image_float = None
+    D = None
+    L = None
+    S = None
+    L_stack = None
+    corrected = None
 
-    # Flatten each Z-slice into a row vector
-    # D has shape (Z, Y*X)
-    D = image_float.reshape(z, y * x)
+    try:
+        # Convert to float for processing
+        image_float = image.astype(cp.float32)
 
-    # Initialize variables for alternating minimization
-    L = cp.zeros_like(D)  # Low-rank component (background/illumination)
-    S = cp.zeros_like(D)  # Sparse component (foreground/structures)
+        # Flatten each Z-slice into a row vector
+        # D has shape (Z, Y*X)
+        D = image_float.reshape(z, y * x)
 
-    # Compute initial norm for convergence check
-    norm_D = cp.linalg.norm(D, 'fro')
+        # Initialize variables for alternating minimization
+        L = cp.zeros_like(D)  # Low-rank component (background/illumination)
+        S = cp.zeros_like(D)  # Sparse component (foreground/structures)
 
-    # Track convergence for early termination
-    prev_residual = float('inf')
-    stagnation_count = 0
-    max_stagnation = 5  # Stop if no improvement for 5 iterations
+        # Compute initial norm for convergence check
+        norm_D = cp.linalg.norm(D, 'fro')
 
-    # Alternating minimization loop
-    for iteration in range(max_iters):
-        # Update low-rank component (L) with memory optimization
-        L = _low_rank_approximation(D - S, rank=rank, max_memory_gb=max_memory_gb)
+        # Track convergence for early termination
+        prev_residual = float('inf')
+        stagnation_count = 0
+        max_stagnation = 5  # Stop if no improvement for 5 iterations
 
-        # Apply regularization to L if needed
-        if lambda_lowrank > 0:
-            L = L * (1 - lambda_lowrank)
+        # Alternating minimization loop
+        for iteration in range(max_iters):
+            # Update low-rank component (L) with memory optimization
+            L = _low_rank_approximation(D - S, rank=rank, max_memory_gb=max_memory_gb)
 
-        # Update sparse component (S)
-        S = _soft_threshold(D - L, lambda_sparse)
+            # Apply regularization to L if needed
+            if lambda_lowrank > 0:
+                L = L * (1 - lambda_lowrank)
 
-        # Check convergence
-        residual = cp.linalg.norm(D - L - S, 'fro') / norm_D
-        if verbose and (iteration % 10 == 0 or iteration == max_iters - 1):
-            logger.info(f"Iteration {iteration+1}/{max_iters}, residual: {residual:.6f}")
+            # Update sparse component (S)
+            S = _soft_threshold(D - L, lambda_sparse)
 
-        # Early termination conditions
-        if residual < tol:
-            if verbose:
-                logger.info(f"Converged after {iteration+1} iterations (residual < {tol})")
-            break
+            # Check convergence
+            residual = cp.linalg.norm(D - L - S, 'fro') / norm_D
+            if verbose and (iteration % 10 == 0 or iteration == max_iters - 1):
+                logger.info(f"Iteration {iteration+1}/{max_iters}, residual: {residual:.6f}")
 
-        # Check for stagnation (no significant improvement)
-        improvement = prev_residual - residual
-        if improvement < tol * 0.1:  # Less than 10% of tolerance improvement
-            stagnation_count += 1
-            if stagnation_count >= max_stagnation:
+            # Early termination conditions
+            if residual < tol:
                 if verbose:
-                    logger.info(f"Early termination after {iteration+1} iterations (stagnation)")
+                    logger.info(f"Converged after {iteration+1} iterations (residual < {tol})")
                 break
+
+            # Check for stagnation (no significant improvement)
+            improvement = prev_residual - residual
+            if improvement < tol * 0.1:  # Less than 10% of tolerance improvement
+                stagnation_count += 1
+                if stagnation_count >= max_stagnation:
+                    if verbose:
+                        logger.info(f"Early termination after {iteration+1} iterations (stagnation)")
+                    break
+            else:
+                stagnation_count = 0  # Reset counter if we see improvement
+
+            prev_residual = residual
+
+        # Reshape the low-rank component back to 3D
+        L_stack = L.reshape(z, y, x)
+
+        # Apply correction
+        if correction_mode == "divide":
+            # Add small epsilon to avoid division by zero
+            eps = 1e-6
+            corrected = image_float / (L_stack + eps)
+
+            # Normalize to preserve dynamic range
+            if normalize_output:
+                corrected *= cp.mean(L_stack)
+        else:  # subtract
+            corrected = image_float - L_stack
+
+            # Normalize to preserve dynamic range
+            if normalize_output:
+                corrected += cp.mean(L_stack)
+
+        # Clip to valid range and convert back to original dtype
+        if cp.issubdtype(orig_dtype, cp.integer):
+            max_val = cp.iinfo(orig_dtype).max
+            corrected = cp.clip(corrected, 0, max_val).astype(orig_dtype)
         else:
-            stagnation_count = 0  # Reset counter if we see improvement
+            corrected = cp.clip(corrected, 0, None).astype(orig_dtype)
 
-        prev_residual = residual
+        return corrected
 
-    # Reshape the low-rank component back to 3D
-    L_stack = L.reshape(z, y, x)
+    except (cp.cuda.memory.OutOfMemoryError,
+            cp.cuda.runtime.CUDARuntimeError,
+            cp.cuda.cusolver.CUSOLVERError,
+            cp.cuda.cublas.CUBLASError) as gpu_error:
 
-    # Apply correction
-    if correction_mode == "divide":
-        # Add small epsilon to avoid division by zero
-        eps = 1e-6
-        corrected = image_float / (L_stack + eps)
+        # 🔧 CRITICAL: Clean up ALL intermediate variables before re-raising
+        logger.debug(f"🔧 GPU PROCESSING: Cleaning up intermediate variables after OOM...")
+        try:
+            # Delete all local intermediate variables
+            if 'image_float' in locals() and image_float is not None:
+                del image_float
+            if 'D' in locals() and D is not None:
+                del D
+            if 'L' in locals() and L is not None:
+                del L
+            if 'S' in locals() and S is not None:
+                del S
+            if 'L_stack' in locals() and L_stack is not None:
+                del L_stack
+            if 'corrected' in locals() and corrected is not None:
+                del corrected
 
-        # Normalize to preserve dynamic range
-        if normalize_output:
-            corrected *= cp.mean(L_stack)
-    else:  # subtract
-        corrected = image_float - L_stack
+            # Force garbage collection
+            import gc
+            gc.collect()
 
-        # Normalize to preserve dynamic range
-        if normalize_output:
-            corrected += cp.mean(L_stack)
+            logger.debug(f"🔧 GPU PROCESSING: Intermediate variables cleaned up")
 
-    # Clip to valid range and convert back to original dtype
-    if cp.issubdtype(orig_dtype, cp.integer):
-        max_val = cp.iinfo(orig_dtype).max
-        corrected = cp.clip(corrected, 0, max_val).astype(orig_dtype)
-    else:
-        corrected = cp.clip(corrected, 0, None).astype(orig_dtype)
+        except Exception as cleanup_error:
+            logger.warning(f"🔧 GPU PROCESSING: Variable cleanup warning: {cleanup_error}")
 
-    return corrected
+        # Re-raise the original GPU error for the outer exception handler
+        raise gpu_error
 
 
 def basic_flatfield_correction_batch_cupy(

@@ -146,6 +146,9 @@ def assemble_stack_cpu(
         3D array (1, H_canvas, W_canvas) with assembled image
     """
     # --- 1. Validate and standardize inputs ---
+    if not isinstance(positions, np.ndarray):
+        positions = to_numpy(positions)
+
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
         raise TypeError("image_tiles must be a 3D NumPy ndarray of shape (N, H, W).")
     if image_tiles.shape[0] == 0:
@@ -296,3 +299,29 @@ def assemble_stack_cpu(
 
     # Return as a 3D array with a single Z-slice
     return stitched_image_uint16.reshape(1, canvas_height, canvas_width)
+
+def to_numpy(tensor):
+    """Convert CuPy, PyTorch, JAX, or TensorFlow tensor to numpy"""
+    
+    # Already numpy
+    if hasattr(tensor, 'dtype') and tensor.__class__.__module__ == 'numpy':
+        return tensor
+    
+    # CuPy
+    if hasattr(tensor, 'get'):  # CuPy arrays have .get() method
+        return tensor.get()
+    
+    # PyTorch
+    if hasattr(tensor, 'detach'):  # PyTorch tensors have .detach()
+        return tensor.detach().cpu().numpy()
+    
+#    # JAX
+#    if hasattr(tensor, 'device'):  # JAX arrays have .device
+#        import jax
+#        return jax.device_get(tensor)
+    
+    # TensorFlow
+    if hasattr(tensor, 'numpy') and hasattr(tensor, 'device'):  # TF tensors
+        return tensor.numpy()
+    
+    raise ValueError(f"Unsupported tensor type: {type(tensor)}")
