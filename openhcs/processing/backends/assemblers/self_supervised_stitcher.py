@@ -346,7 +346,8 @@ def self_supervised_stitcher_func(
                 print("No pairs to process in this iteration.")
                 continue
 
-            current_batch_pairs_indices = torch.randperm(len(adjacent_tile_pairs))[:num_pairs_in_batch]
+            # Use randint for memory efficiency (though len(adjacent_tile_pairs) is typically small)
+            current_batch_pairs_indices = torch.randint(0, len(adjacent_tile_pairs), (num_pairs_in_batch,))
 
             batch_idx1_list = []
             batch_idx2_list = []

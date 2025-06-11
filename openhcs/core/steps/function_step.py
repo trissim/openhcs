@@ -290,6 +290,13 @@ def _process_single_pattern_group(
                     context.filemanager.delete(str(unused_input_path), write_backend)
                     print(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
 
+        # 🔍 VRAM TRACKING: Log memory before cleanup
+        try:
+            from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+            log_gpu_memory_usage(f"pattern group {pattern_repr} (before cleanup)")
+        except Exception:
+            pass
+
         # 🔥 GPU CLEANUP: Clear GPU memory after processing pattern group
         # Clean both input and output memory types to ensure comprehensive cleanup
         cleanup_memory_by_type(input_memory_type_from_plan, device_id)
@@ -300,6 +307,13 @@ def _process_single_pattern_group(
         gc.collect()
 
         logger.debug(f"🔥 GPU CLEANUP: Cleared {input_memory_type_from_plan} and {output_memory_type_from_plan} GPU memory after pattern group")
+
+        # 🔍 VRAM TRACKING: Log memory after cleanup
+        try:
+            from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+            log_gpu_memory_usage(f"pattern group {pattern_repr} (after cleanup)")
+        except Exception:
+            pass
 
         logger.debug(f"Finished pattern group {pattern_repr} in {(time.time() - start_time):.2f}s.")
     except Exception as e:
@@ -377,6 +391,13 @@ class FunctionStep(AbstractStep):
             same_dir = str(step_input_dir) == str(step_output_dir)
             logger.info(f"Step {step_id} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
             logger.info(f"Step {step_id} ({step_name}) Paths: input_dir='{step_input_dir}', output_dir='{step_output_dir}', same_dir={same_dir}")
+
+            # 🔍 VRAM TRACKING: Log memory at step start
+            try:
+                from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                log_gpu_memory_usage(f"step {step_name} start")
+            except Exception:
+                pass
 
             if not context.microscope_handler:
                 raise RuntimeError(f"MicroscopeHandler not in context for step {step_id}")
@@ -462,6 +483,13 @@ class FunctionStep(AbstractStep):
                     )
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
+            # 🔍 VRAM TRACKING: Log memory before final cleanup
+            try:
+                from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                log_gpu_memory_usage(f"step {step_name} completion (before final cleanup)")
+            except Exception:
+                pass
+
             # 🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step completion
             cleanup_memory_by_type(input_mem_type, device_id)
             cleanup_memory_by_type(output_mem_type, device_id)
@@ -471,6 +499,13 @@ class FunctionStep(AbstractStep):
             gc.collect()
 
             logger.debug(f"🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step {step_name} completion")
+
+            # 🔍 VRAM TRACKING: Log memory after final cleanup
+            try:
+                from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                log_gpu_memory_usage(f"step {step_name} completion (after final cleanup)")
+            except Exception:
+                pass
 
         except Exception as e:
             logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)

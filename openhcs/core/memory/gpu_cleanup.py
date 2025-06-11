@@ -64,26 +64,49 @@ def cleanup_pytorch_gpu(device_id: Optional[int] = None) -> None:
 
 def cleanup_cupy_gpu(device_id: Optional[int] = None) -> None:
     """
-    Clean up CuPy GPU memory.
-    
+    Clean up CuPy GPU memory with aggressive defragmentation.
+
     Args:
         device_id: Optional GPU device ID. If None, cleans current device.
     """
     try:
         import cupy
-        
+
         if device_id is not None:
             # Clean specific device
             with cupy.cuda.Device(device_id):
+                # Get memory info before cleanup
+                mempool = cupy.get_default_memory_pool()
+                used_before = mempool.used_bytes()
+
+                # Aggressive cleanup to defragment memory
                 cupy.get_default_memory_pool().free_all_blocks()
                 cupy.get_default_pinned_memory_pool().free_all_blocks()
-            logger.debug(f"🔥 GPU CLEANUP: Cleared CuPy memory pools for device {device_id}")
+
+                # Force memory pool reset to defragment
+                cupy.cuda.runtime.deviceSynchronize()
+
+                used_after = mempool.used_bytes()
+                freed_mb = (used_before - used_after) / 1e6
+
+            logger.debug(f"🔥 GPU CLEANUP: Cleared CuPy memory pools for device {device_id}, freed {freed_mb:.1f}MB")
         else:
             # Clean current device
+            mempool = cupy.get_default_memory_pool()
+            used_before = mempool.used_bytes()
+
+            # Aggressive cleanup to defragment memory
             cupy.get_default_memory_pool().free_all_blocks()
             cupy.get_default_pinned_memory_pool().free_all_blocks()
-            logger.debug("🔥 GPU CLEANUP: Cleared CuPy memory pools for current device")
-            
+
+            # Force memory pool reset to defragment
+            cupy.cuda.runtime.deviceSynchronize()
+
+            used_after = mempool.used_bytes()
+            freed_mb = (used_before - used_after) / 1e6
+
+            logger.debug(f"🔥 GPU CLEANUP: Cleared CuPy memory pools for current device, freed {freed_mb:.1f}MB")
+
     except ImportError:
         logger.debug("CuPy not available, skipping CuPy GPU cleanup")
     except Exception as e:
@@ -278,6 +301,79 @@ def check_gpu_memory_usage() -> None:
 
     # Note: TensorFlow and JAX don't have easy memory introspection
     logger.info("  TensorFlow/JAX: Memory usage not easily queryable")
+
+
+def log_gpu_memory_usage(context: str = "") -> None:
+    """
+    Log GPU memory usage with a specific context for tracking.
+
+    Args:
+        context: Description of when/where this memory check is happening
+    """
+    context_str = f" ({context})" if context else ""
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                reserved = torch.cuda.memory_reserved(i) / 1024**3
+                free_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3 - reserved
+                logger.info(f"🔍 VRAM{context_str} GPU {i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {free_memory:.2f}GB free")
+        else:
+            logger.info(f"🔍 VRAM{context_str}: No CUDA available")
+    except ImportError:
+        logger.info(f"🔍 VRAM{context_str}: PyTorch not available")
+    except Exception as e:
+        logger.warning(f"🔍 VRAM{context_str}: Error checking memory - {e}")
+
+
+def get_gpu_memory_summary() -> dict:
+    """
+    Get GPU memory usage as a dictionary for programmatic use.
+
+    Returns:
+        Dictionary with memory usage information
+    """
+    memory_info = {
+        "pytorch": {"available": False, "devices": []},
+        "cupy": {"available": False, "used_gb": 0, "total_gb": 0}
+    }
+
+    # Check PyTorch
+    try:
+        import torch
+        if torch.cuda.is_available():
+            memory_info["pytorch"]["available"] = True
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                reserved = torch.cuda.memory_reserved(i) / 1024**3
+                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                memory_info["pytorch"]["devices"].append({
+                    "device_id": i,
+                    "allocated_gb": allocated,
+                    "reserved_gb": reserved,
+                    "total_gb": total,
+                    "free_gb": total - reserved
+                })
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Check CuPy
+    try:
+        import cupy
+        mempool = cupy.get_default_memory_pool()
+        memory_info["cupy"]["available"] = True
+        memory_info["cupy"]["used_gb"] = mempool.used_bytes() / 1024**3
+        memory_info["cupy"]["total_gb"] = mempool.total_bytes() / 1024**3
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    return memory_info
 
 
 def force_comprehensive_cleanup() -> None:

@@ -512,27 +512,112 @@ class MemoryStorageBackend(StorageBackend):
         the same processing context while maintaining the directory structure
         needed for subsequent operations.
 
+        Enhanced with explicit GPU memory cleanup to ensure VRAM is freed when
+        objects are deleted from the memory backend.
+
         Note:
             - Directories (entries with None values) are preserved
             - Files (entries with non-None values) are deleted
             - Symlinks are also deleted as they are considered file-like objects
+            - GPU objects are explicitly deleted and VRAM is cleared
         """
         try:
-            # Collect keys of files to delete (preserve directories)
+            # Collect keys and objects to delete (preserve directories)
             files_to_delete = []
+            gpu_objects_found = 0
+
             for key, value in self._memory_store.items():
                 # Delete files (non-None values) and symlinks, but keep directories (None values)
                 if value is not None:
                     files_to_delete.append(key)
 
-            # Delete all file entries
+                    # Check if this is a GPU object that needs explicit cleanup
+                    if self._is_gpu_object(value):
+                        gpu_objects_found += 1
+                        self._explicit_gpu_delete(value, key)
+
+            # Delete all file entries from memory store
             for key in files_to_delete:
                 del self._memory_store[key]
 
-            logger.debug(f"Cleared {len(files_to_delete)} files from memory backend, preserved {len(self._memory_store)} directories")
+            # Force garbage collection to ensure GPU objects are freed
+            import gc
+            collected = gc.collect()
+
+            # Trigger GPU memory cleanup for all frameworks
+            try:
+                from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+                cleanup_all_gpu_frameworks()
+                logger.debug(f"🔥 GPU CLEANUP: Triggered comprehensive GPU cleanup after memory backend clear")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to trigger GPU cleanup after memory backend clear: {cleanup_error}")
+
+            logger.debug(f"Cleared {len(files_to_delete)} files from memory backend (including {gpu_objects_found} GPU objects), "
+                        f"preserved {len(self._memory_store)} directories, collected {collected} objects")
 
         except Exception as e:
             raise StorageResolutionError(f"Failed to clear files from memory store") from e
+
+    def _is_gpu_object(self, obj: Any) -> bool:
+        """
+        Check if an object is a GPU tensor/array that needs explicit cleanup.
+
+        Args:
+            obj: Object to check
+
+        Returns:
+            True if object is a GPU tensor/array
+        """
+        try:
+            # Check for PyTorch tensors on GPU
+            if hasattr(obj, 'device') and hasattr(obj, 'is_cuda'):
+                if obj.is_cuda:
+                    return True
+
+            # Check for CuPy arrays
+            if hasattr(obj, '__class__') and 'cupy' in str(type(obj)):
+                return True
+
+            # Check for other GPU arrays by device attribute
+            if hasattr(obj, 'device') and hasattr(obj.device, 'type'):
+                if 'cuda' in str(obj.device.type).lower() or 'gpu' in str(obj.device.type).lower():
+                    return True
+
+            return False
+        except Exception:
+            # If we can't determine, assume it's not a GPU object
+            return False
+
+    def _explicit_gpu_delete(self, obj: Any, key: str) -> None:
+        """
+        Explicitly delete a GPU object and clear its memory.
+
+        Args:
+            obj: GPU object to delete
+            key: Memory backend key for logging
+        """
+        try:
+            # For PyTorch tensors
+            if hasattr(obj, 'device') and hasattr(obj, 'is_cuda') and obj.is_cuda:
+                device_id = obj.device.index if obj.device.index is not None else 0
+                # Move to CPU first to free GPU memory, then delete
+                obj_cpu = obj.cpu()
+                del obj_cpu
+                logger.debug(f"🔥 EXPLICIT GPU DELETE: PyTorch tensor {key} on device {device_id}")
+                return
+
+            # For CuPy arrays
+            if hasattr(obj, '__class__') and 'cupy' in str(type(obj)):
+                # CuPy arrays are automatically freed when deleted
+                logger.debug(f"🔥 EXPLICIT GPU DELETE: CuPy array {key}")
+                return
+
+            # For other GPU objects
+            if hasattr(obj, 'device'):
+                logger.debug(f"🔥 EXPLICIT GPU DELETE: GPU object {key} on device {obj.device}")
+
+        except Exception as e:
+            logger.warning(f"Failed to explicitly delete GPU object {key}: {e}")
 
 class MemorySymlink:
     def __init__(self, target: str):

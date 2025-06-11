@@ -136,7 +136,8 @@ def _kmeans_torch(X: torch.Tensor, K: int, n_iters: int = 20) -> Tuple[torch.Ten
     if N == 0: return torch.empty(0, dtype=torch.long, device=X.device), torch.empty((K,D_feat), device=X.device, dtype=X.dtype)
     if N < K : K = N
 
-    centroids = X[torch.randperm(N, device=X.device)[:K]]
+    # Use randint for memory efficiency (though N is typically small for K-means)
+    centroids = X[torch.randint(0, N, (K,), device=X.device)]
 
     for _ in range(n_iters):
         dists_sq = torch.sum((X[:, None, :] - centroids[None, :, :])**2, dim=2)

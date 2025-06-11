@@ -134,6 +134,28 @@ def dl_edof_unsupervised(
     device = image_stack.device
     original_dtype = image_stack.dtype
 
+    # Memory usage warning for large images
+    total_elements = Z_orig * H_orig * W_orig
+    if total_elements > 100_000_000:  # 100M elements
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"⚠️  Large image stack ({total_elements:,} elements) may cause high memory usage in deep learning EDoF. "
+                      f"Consider using smaller patch sizes or processing smaller regions.")
+        logger.warning(f"Current image size: {Z_orig}×{H_orig}×{W_orig}")
+
+    # Estimate patch memory usage
+    current_patch_size = patch_size or max(H_orig, W_orig) // 8
+    current_stride = stride or current_patch_size // 2
+    num_patches_h = (H_orig - current_patch_size) // current_stride + 1
+    num_patches_w = (W_orig - current_patch_size) // current_stride + 1
+    total_patches = num_patches_h * num_patches_w
+
+    if total_patches > 1000:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"⚠️  Large number of patches ({total_patches:,}) may cause high memory usage. "
+                      f"Consider increasing stride or reducing patch size.")
+
     current_patch_size = patch_size
     if current_patch_size is None:
         current_patch_size = max(H_orig, W_orig) // 8

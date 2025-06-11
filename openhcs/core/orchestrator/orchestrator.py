@@ -372,6 +372,14 @@ class PipelineOrchestrator:
             actual_max_workers = 1
 
         logger.info(f"Starting execution for {len(compiled_contexts)} wells with max_workers={actual_max_workers}.")
+
+        # 🔍 VRAM TRACKING: Log initial memory state
+        try:
+            from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+            log_gpu_memory_usage("plate execution start")
+        except Exception:
+            pass
+
         execution_results: Dict[str, Dict[str, Any]] = {}
 
         if actual_max_workers > 1 and len(compiled_contexts) > 1:
@@ -388,10 +396,55 @@ class PipelineOrchestrator:
                     except Exception as exc:
                         logger.error(f"Well {well_id} generated an exception during parallel execution: {exc}", exc_info=True)
                         execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": repr(exc)}
+
+                    # 🔥 GPU CLEANUP: Clear GPU memory after each well completion (parallel execution)
+                    try:
+                        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+                        cleanup_all_gpu_frameworks()
+                        logger.debug(f"🔥 GPU CLEANUP: Cleared all GPU frameworks after well {well_id} (parallel)")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup GPU memory after well {well_id} (parallel): {cleanup_error}")
         else:
             logger.info("Executing wells sequentially.")
             for well_id, context in compiled_contexts.items():
+                # 🔍 VRAM TRACKING: Log memory before well execution
+                try:
+                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                    log_gpu_memory_usage(f"before well {well_id}")
+                except Exception:
+                    pass
+
                 execution_results[well_id] = self._execute_single_well(pipeline_definition, context, visualizer)
+
+                # 🔍 VRAM TRACKING: Log memory after well execution (before cleanup)
+                try:
+                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                    log_gpu_memory_usage(f"after well {well_id} (before cleanup)")
+                except Exception:
+                    pass
+
+                # 🔥 GPU CLEANUP: Clear GPU memory after each well to prevent accumulation
+                try:
+                    from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+                    cleanup_all_gpu_frameworks()
+                    logger.debug(f"🔥 GPU CLEANUP: Cleared all GPU frameworks after well {well_id}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup GPU memory after well {well_id}: {cleanup_error}")
+
+                # 🔍 VRAM TRACKING: Log memory after cleanup
+                try:
+                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
+                    log_gpu_memory_usage(f"after well {well_id} (after cleanup)")
+                except Exception:
+                    pass
+
+                # 🔥 MEMORY BACKEND CLEANUP: Clear memory backend after each well to prevent accumulation
+                try:
+                    from openhcs.io.base import reset_memory_backend
+                    reset_memory_backend()
+                    logger.debug(f"🔥 MEMORY BACKEND CLEANUP: Reset memory backend after well {well_id}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to reset memory backend after well {well_id}: {cleanup_error}")
         
         logger.info(f"Plate execution finished. Results: {execution_results}")
         return execution_results

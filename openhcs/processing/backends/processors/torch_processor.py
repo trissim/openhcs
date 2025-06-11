@@ -220,8 +220,9 @@ def percentile_normalize(
             sample_size = min(max_elements_for_quantile, slice_elements // 10)  # Sample 10% or max size
             flat_slice = slice_float.flatten()
 
-            # Generate random indices for sampling
-            indices = torch.randperm(slice_elements, device=image.device)[:sample_size]
+            # Generate random indices for sampling (memory efficient)
+            # Use torch.randint instead of torch.randperm to avoid creating huge tensors
+            indices = torch.randint(0, slice_elements, (sample_size,), device=image.device)
             sampled_values = flat_slice[indices]
 
             p_low = torch.quantile(sampled_values, low_percentile / 100.0)
@@ -288,8 +289,9 @@ def stack_percentile_normalize(
         sample_size = min(max_elements_for_quantile, total_elements // 10)  # Sample 10% or max size
         flat_stack = stack_float.flatten()
 
-        # Generate random indices for sampling
-        indices = torch.randperm(total_elements, device=stack.device)[:sample_size]
+        # Generate random indices for sampling (memory efficient)
+        # Use torch.randint instead of torch.randperm to avoid creating huge tensors
+        indices = torch.randint(0, total_elements, (sample_size,), device=stack.device)
         sampled_values = flat_stack[indices]
 
         p_low = torch.quantile(sampled_values, low_percentile / 100.0)
@@ -527,8 +529,18 @@ def stack_equalize_histogram(
     # Flatten the entire stack to compute the global histogram
     flat_stack = stack.float().flatten()
 
-    # Calculate the histogram
-    hist = torch.histc(flat_stack, bins=bins, min=range_min, max=range_max)
+    # For very large stacks, use sampling to avoid memory issues
+    max_elements_for_histogram = 50_000_000  # 50M elements limit
+    if flat_stack.numel() > max_elements_for_histogram:
+        # Use random sampling for histogram computation
+        sample_size = max_elements_for_histogram
+        indices = torch.randint(0, flat_stack.numel(), (sample_size,), device=stack.device)
+        sampled_stack = flat_stack[indices]
+        hist = torch.histc(sampled_stack, bins=bins, min=range_min, max=range_max)
+        logger.debug(f"Used sampling ({sample_size:,} of {flat_stack.numel():,} elements) for histogram computation")
+    else:
+        # Use full stack for smaller stacks
+        hist = torch.histc(flat_stack, bins=bins, min=range_min, max=range_max)
 
     # We don't need bin edges for the lookup table approach
 
