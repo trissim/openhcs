@@ -76,9 +76,9 @@ class MenuBar(Widget):
                 # Propagate config changes to all existing orchestrators
                 self._propagate_global_config_to_orchestrators(result)
 
-                self.app.current_status = "Configuration updated and applied to all plates"
+                logger.info("Configuration updated and applied to all plates")
             else:
-                self.app.current_status = "Configuration cancelled"
+                logger.info("Configuration cancelled")
 
         # LAZY IMPORT to avoid circular import (evidence: pipeline_editor.py lines 166, 212)
         from openhcs.textual_tui.screens.config_dialog import ConfigDialogScreen

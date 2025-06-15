@@ -249,19 +249,14 @@ class OpenHCSTUIApp(App):
         """Called when the app is mounted."""
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
-        
-        # Update status bar
-        status_bar = self.query_one(StatusBar)
-        status_bar.status_message = self.current_status
-    
+
+        # Status bar will automatically show this log message
+        # No need to manually update it anymore
+
     def watch_current_status(self, status: str) -> None:
-        """Watch for status changes and update status bar."""
-        try:
-            status_bar = self.query_one(StatusBar)
-            status_bar.status_message = status
-        except Exception:
-            # Status bar might not be mounted yet
-            pass
+        """Watch for status changes and log them (status bar will show automatically)."""
+        # Log the status change - status bar will pick it up automatically
+        logger.info(status)
     
     def action_quit(self) -> None:
         """Handle quit action."""

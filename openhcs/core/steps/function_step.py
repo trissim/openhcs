@@ -34,14 +34,14 @@ def _universal_gpu_defrag_after_function(func_name: str, failed: bool = False) -
         return
 
     try:
-        from openhcs.core.memory.gpu_cleanup import cleanup_cupy_gpu
-        cleanup_cupy_gpu()  # Uses existing defrag logic
+        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+        cleanup_all_gpu_frameworks()  # Clean ALL frameworks, not just CuPy
 
         status = "FAILED" if failed else "SUCCESS"
         logger.debug(f"🔧 UNIVERSAL DEFRAG ({status}): {func_name} completed")
 
     except ImportError:
-        pass  # CuPy not available
+        pass  # GPU frameworks not available
     except Exception as e:
         logger.warning(f"🔧 UNIVERSAL DEFRAG: Failed for {func_name}: {e}")
 

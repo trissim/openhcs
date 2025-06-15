@@ -393,11 +393,11 @@ class PlateManagerWidget(ButtonListWidget):
 
         if added_plates:
             if len(added_plates) == 1:
-                self.app.current_status = f"Added plate: {added_plates[0]}"
+                logger.info(f"Added plate: {added_plates[0]}")
             else:
-                self.app.current_status = f"Added {len(added_plates)} plates: {', '.join(added_plates)}"
+                logger.info(f"Added {len(added_plates)} plates: {', '.join(added_plates)}")
         else:
-            self.app.current_status = "No new plates added (duplicates skipped)"
+            logger.info("No new plates added (duplicates skipped)")
     
     def action_delete_plate(self) -> None:
         """Handle Delete Plate button - delete selected plates with orchestrator cleanup."""
@@ -406,7 +406,7 @@ class PlateManagerWidget(ButtonListWidget):
         selected_items, selection_mode = self.get_selection_state()
 
         if selection_mode == "empty":
-            self.app.current_status = "No plates available for deletion"
+            logger.warning("No plates available for deletion")
             return
 
         # Generate description and perform deletion
@@ -488,14 +488,14 @@ class PlateManagerWidget(ButtonListWidget):
         selected_items, selection_mode = self.get_selection_state()
 
         if selection_mode == "empty":
-            self.app.current_status = "No plates available for initialization"
+            logger.warning("No plates available for initialization")
             return
 
         # Validate all selected plates can be initialized (allow failed plates to be re-initialized)
         invalid_plates = [item for item in selected_items if item.get('status') not in ['?', '-', 'F']]
         if invalid_plates:
             names = [item['name'] for item in invalid_plates]
-            self.app.current_status = f"Cannot initialize plates with invalid status: {', '.join(names)}"
+            logger.warning(f"Cannot initialize plates with invalid status: {', '.join(names)}")
             return
 
         # Start async initialization
@@ -507,7 +507,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "initialize")
-        self.app.current_status = f"Initializing: {desc}"
+        logger.info(f"Initializing: {desc}")
 
         # Start background worker
         self._init_plates_worker(selected_items)
@@ -569,9 +569,9 @@ class PlateManagerWidget(ButtonListWidget):
         error_count = len([p for p in selected_items if p.get('status') == 'X'])
 
         if error_count == 0:
-            self.app.current_status = f"Successfully initialized {success_count} plates"
+            logger.info(f"Successfully initialized {success_count} plates")
         else:
-            self.app.current_status = f"Initialized {success_count} plates, {error_count} errors"
+            logger.warning(f"Initialized {success_count} plates, {error_count} errors")
 
 
     
@@ -582,14 +582,14 @@ class PlateManagerWidget(ButtonListWidget):
         selected_items, selection_mode = self.get_selection_state()
 
         if selection_mode == "empty":
-            self.app.current_status = "No plates available for compilation"
+            logger.warning("No plates available for compilation")
             return
 
         # Validate all selected plates are initialized (allow failed plates to be re-compiled)
         uninitialized = [item for item in selected_items if item.get('status') not in ['-', 'F']]
         if uninitialized:
             names = [item['name'] for item in uninitialized]
-            self.app.current_status = f"Cannot compile uninitialized plates: {', '.join(names)}"
+            logger.warning(f"Cannot compile uninitialized plates: {', '.join(names)}")
             return
 
         # Validate all selected plates have pipelines
@@ -613,7 +613,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "compile")
-        self.app.current_status = f"Compiling: {desc}"
+        logger.info(f"Compiling: {desc}")
 
         # Start background worker
         self._compile_plates_worker(selected_items)
@@ -665,12 +665,16 @@ class PlateManagerWidget(ButtonListWidget):
                         logger.warning(f"🔥 Step '{step.name}' has None variable_components, setting default")
                         step.variable_components = [VariableComponents.SITE]
 
-                # Get wells and compile (synchronous - like test_main.py)
+                # Get wells and compile (async - run in executor to avoid blocking UI)
                 # Wrap in Pipeline object like test_main.py does
                 from openhcs.core.pipeline import Pipeline
                 pipeline_obj = Pipeline(steps=execution_pipeline)
-                wells = orchestrator.get_wells()
-                compiled_contexts = orchestrator.compile_pipelines(pipeline_obj.steps, wells)
+
+                # Run heavy operations in executor to avoid blocking UI
+                wells = await asyncio.get_event_loop().run_in_executor(None, orchestrator.get_wells)
+                compiled_contexts = await asyncio.get_event_loop().run_in_executor(
+                    None, orchestrator.compile_pipelines, pipeline_obj.steps, wells
+                )
 
                 # Store state simply - no reactive property issues
                 step_ids_in_pipeline = [id(step) for step in execution_pipeline]
@@ -710,9 +714,9 @@ class PlateManagerWidget(ButtonListWidget):
         error_count = len([p for p in selected_items if p.get('status') == 'X'])
 
         if error_count == 0:
-            self.app.current_status = f"Successfully compiled {success_count} plates"
+            logger.info(f"Successfully compiled {success_count} plates")
         else:
-            self.app.current_status = f"Compiled {success_count} plates, {error_count} errors"
+            logger.warning(f"Compiled {success_count} plates, {error_count} errors")
 
 
 
@@ -779,11 +783,11 @@ class PlateManagerWidget(ButtonListWidget):
                            f"has_compiled_pipeline={bool(plate.get('compiled_pipeline_definition'))}")
 
             if ready_plates:
-                self.app.current_status = f"Running all {len(ready_plates)} ready plates"
+                logger.info(f"Running all {len(ready_plates)} ready plates")
                 logger.info(f"🔥 Starting async run for {len(ready_plates)} plates")
                 self._start_async_run(ready_plates, "all_ready")
             else:
-                self.app.current_status = "No plates ready for execution"
+                logger.warning("No plates ready for execution")
                 logger.warning("🔥 No plates ready for execution")
             return
 
@@ -797,16 +801,16 @@ class PlateManagerWidget(ButtonListWidget):
                        f"has_compiled_data={has_compiled_data}")
 
         if not ready_items:
-            self.app.current_status = "No selected plates are ready for execution"
+            logger.warning("No selected plates are ready for execution")
             logger.warning("🔥 No selected plates ready for execution")
             return
 
         # Run only the ready selected plates
         skipped_count = len(selected_items) - len(ready_items)
         if skipped_count > 0:
-            self.app.current_status = f"Running {len(ready_items)} ready plates (skipped {skipped_count} unready)"
+            logger.info(f"Running {len(ready_items)} ready plates (skipped {skipped_count} unready)")
         else:
-            self.app.current_status = f"Running {len(ready_items)} selected plates"
+            logger.info(f"Running {len(ready_items)} selected plates")
 
         logger.info(f"🔥 Starting async run for {len(ready_items)} selected plates")
         self._start_async_run(ready_items, selection_mode)
@@ -819,7 +823,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "run")
-        self.app.current_status = f"Running: {desc}"
+        logger.info(f"Running: {desc}")
         logger.info(f"🔥 Status set to: Running: {desc}")
 
         # Start background worker
@@ -869,8 +873,10 @@ class PlateManagerWidget(ButtonListWidget):
             self.mutate_reactive(PlateManagerWidget.plates)
 
             try:
-                # Execute like test_main.py (synchronous)
-                results = orchestrator.execute_compiled_plate(execution_pipeline, compiled_contexts)
+                # Execute like test_main.py (async - run in executor to avoid blocking UI)
+                results = await asyncio.get_event_loop().run_in_executor(
+                    None, orchestrator.execute_compiled_plate, execution_pipeline, compiled_contexts
+                )
 
                 # Update status based on results
                 if results and all(r.get('status') != 'error' for r in results.values()):
