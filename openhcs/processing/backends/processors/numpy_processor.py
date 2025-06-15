@@ -9,6 +9,7 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit NumPy dependency
 - Clause 106-A — Declared Memory Types: All methods specify NumPy arrays
 """
+from __future__ import annotations 
 
 import logging
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple

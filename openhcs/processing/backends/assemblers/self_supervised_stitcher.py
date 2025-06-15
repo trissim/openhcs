@@ -1,7 +1,9 @@
+from __future__ import annotations 
+
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory.decorators import torch as torch_backend_func
 
 # Import torch modules as optional dependencies
@@ -10,9 +12,14 @@ nn = optional_import("torch.nn") if torch is not None else None
 F = optional_import("torch.nn.functional") if torch is not None else None
 models = optional_import("torchvision.models") if optional_import("torchvision") is not None else None
 
+nnModule = create_placeholder_class(
+    "Module", # Name for the placeholder if generated
+    base_class=nn.Module if nn else None,
+    required_library="PyTorch"
+)
 # --- Helper Modules and Functions (Placeholders or Simplified) ---
 
-class FeatureEncoder(nn.Module):
+class FeatureEncoder(nnModule):
     def __init__(self, pretrained: bool = True):
         super().__init__()
         resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT if pretrained else None)
@@ -43,7 +50,7 @@ class FeatureEncoder(nn.Module):
         # x = self.layer4(x)
         return x
 
-class HomographyPredictionNet(nn.Module):
+class HomographyPredictionNet(nnModule):
     def __init__(self, feature_dim: int):
         super().__init__()
         # Placeholder: A simple network to predict 8 parameters for homography (last one is 1)

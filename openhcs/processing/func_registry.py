@@ -20,6 +20,7 @@ Thread Safety:
     All functions in this module are thread-safe and use a lock to ensure
     consistent access to the global registry.
 """
+from __future__ import annotations 
 
 import importlib
 import inspect

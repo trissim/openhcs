@@ -5,6 +5,7 @@ All operations remain on GPU. All parameters are configurable via kwargs.
 Follows OpenHCS doctrinal principles for GPU-only execution.
 """
 
+from __future__ import annotations 
 import logging
 from typing import TYPE_CHECKING, Any, Tuple, Optional
 

@@ -9,6 +9,7 @@ Doctrinal Clauses:
 - Clause 88 — No Inferred Capabilities: Explicit CuPy dependency
 - Clause 106-A — Declared Memory Types: All methods specify CuPy arrays
 """
+from __future__ import annotations 
 
 import logging
 from typing import Any, List, Optional, Tuple

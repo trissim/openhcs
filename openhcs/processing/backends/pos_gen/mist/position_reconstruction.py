@@ -3,6 +3,7 @@ Position Reconstruction from MST for MIST Algorithm
 
 Functions for rebuilding tile positions from minimum spanning tree.
 """
+from __future__ import annotations 
 
 from typing import TYPE_CHECKING
 

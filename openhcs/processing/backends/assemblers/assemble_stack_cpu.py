@@ -4,6 +4,7 @@ CPU implementation of image assembly functions.
 This module provides CPU-based functions for assembling microscopy images
 using NumPy. It handles subpixel positioning and blending of image tiles.
 """
+from __future__ import annotations 
 
 import logging
 from typing import TYPE_CHECKING

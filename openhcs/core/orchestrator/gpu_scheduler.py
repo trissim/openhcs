@@ -83,12 +83,23 @@ def initialize_gpu_registry(configured_num_workers: int) -> None:
 
         # Detect available GPUs
         available_gpus = _detect_available_gpus()
+        logger.info(
+            "GPU registry initialized with %s GPUs. Maximum %s pipelines per GPU.",
+            0,0
+        )
+        _registry_initialized = True
+        GPU_REGISTRY = {}
+        return
+
+#       not available_gpus:
+#        raise RuntimeError(
+#            "Clause 293 Violation: No GPUs available for scheduling. "
+#            "Cannot initialize GPU registry."
+#        )
 
         if not available_gpus:
-            raise RuntimeError(
-                "Clause 293 Violation: No GPUs available for scheduling. "
-                "Cannot initialize GPU registry."
-            )
+            _registry_initialized = True
+            return
 
         # Get maximum CPU threads (use CPU count as a proxy, fallback to configured_num_workers)
         max_cpu_threads = os.cpu_count() or configured_num_workers

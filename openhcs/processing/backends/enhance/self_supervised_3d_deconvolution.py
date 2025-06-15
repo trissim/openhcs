@@ -1,8 +1,9 @@
+from __future__ import annotations 
 import logging
 from typing import Optional, Tuple
 
 # Import torch decorator and optional_import utility
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory.decorators import torch as torch_func
 
 # --- PyTorch Imports as optional dependencies ---
@@ -17,8 +18,14 @@ else:
 
 logger = logging.getLogger(__name__)
 
+nnModule = create_placeholder_class(
+    "Module", # Name for the placeholder if generated
+    base_class=nn.Module if nn else None,
+    required_library="PyTorch"
+)
+
 # --- PyTorch Specific Models and Helpers ---
-class _Simple3DCNN_torch(nn.Module):
+class _Simple3DCNN_torch(nnModule):
     """Simple 3D CNN for deconvolution - optimized for 3D data per paper."""
     def __init__(self, in_channels=1, out_channels=1, features=(48, 96)):  # Paper: 48 initial features for 3D
         super().__init__()
@@ -33,7 +40,7 @@ class _Simple3DCNN_torch(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # x: (B, C, D, H, W)
         return self.conv_block(x)
 
-class _LearnedBlur3D_torch(nn.Module):
+class _LearnedBlur3D_torch(nnModule):
     def __init__(self, kernel_size=3):
         super().__init__()
         self.blur_conv = nn.Conv3d(1, 1, kernel_size=kernel_size, padding=kernel_size//2, bias=False)

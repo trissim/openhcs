@@ -1,7 +1,9 @@
+from __future__ import annotations 
+
 import logging
 from typing import Tuple, Union
 
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import, create_placeholder_class
 from openhcs.core.memory.decorators import torch as torch_func
 
 # Import torch modules as optional dependencies
@@ -9,11 +11,16 @@ torch = optional_import("torch")
 nn = optional_import("torch.nn") if torch is not None else None
 F = optional_import("torch.nn.functional") if torch is not None else None
 
+nnModule = create_placeholder_class(
+    "Module", # Name for the placeholder if generated
+    base_class=nn.Module if nn else None,
+    required_library="PyTorch"
+)
 logger = logging.getLogger(__name__)
 
 # --- PyTorch Models and Helper Functions ---
 
-class Encoder3D(nn.Module):
+class Encoder3D(nnModule):
     def __init__(self, in_channels=1, features=(32, 64), embedding_dim=128):
         super().__init__()
         self.conv1 = nn.Conv3d(in_channels, features[0], kernel_size=3, padding=1)
@@ -38,7 +45,7 @@ class Encoder3D(nn.Module):
             return normalized_embedding, features_conv2 # Return features from last conv layer
         return normalized_embedding
 
-class Decoder3D(nn.Module):
+class Decoder3D(nnModule):
     def __init__(self, embedding_dim=128, features=(64, 32), out_channels=1, patch_size_dhw=(64,64,64)):
         super().__init__()
         self.patch_d, self.patch_h, self.patch_w = patch_size_dhw

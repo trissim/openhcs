@@ -4,6 +4,7 @@ Borůvka's Minimum Spanning Tree Algorithm for MIST
 GPU-accelerated MST construction using parallel Borůvka's algorithm.
 """
 
+from __future__ import annotations 
 from typing import TYPE_CHECKING
 
 from openhcs.core.utils import optional_import

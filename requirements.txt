@@ -9,9 +9,11 @@ ashlar>=1.14.0
 opencv-python>=4.5.0
 PyYAML>=6.0
 zarr>=2.10.0 # For ZarrStorageAdapter
-torch
-torch-vision
-jaxlib
-cupy
-tf-nightly
+#torch
+#torch-vision
+#jaxlib
+#cupy
+#tf-nightly
 pygments>=2.10.0  # For syntax highlighting in TUI error dialogs
+textual
+textual-universal-directorytree

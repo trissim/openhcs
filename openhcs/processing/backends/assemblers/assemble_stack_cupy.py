@@ -4,6 +4,7 @@ CuPy implementation of image assembly functions.
 This module provides GPU-accelerated functions for assembling microscopy images
 using CuPy. It handles subpixel positioning and blending of image tiles.
 """
+from __future__ import annotations 
 
 import logging
 from typing import TYPE_CHECKING
