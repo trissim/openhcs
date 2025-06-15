@@ -28,7 +28,7 @@ class FunctionListEditorWidget(Container):
         pass
 
     # Reactive properties for automatic UI updates
-    functions = reactive(list, recompose=True) # This will hold List[(callable, kwargs_dict)]
+    functions = reactive(list)  # This will hold List[(callable, kwargs_dict)] - removed recompose=True to prevent focus loss
     pattern_data = reactive(list, recompose=True)  # The actual pattern (List or Dict)
     is_dict_mode = reactive(False, recompose=True)  # Whether we're in channel-specific mode
     selected_channel = reactive(None, recompose=True)  # Currently selected channel (for dict mode)
@@ -103,6 +103,11 @@ class FunctionListEditorWidget(Container):
         """Post a change message to notify parent of function pattern changes."""
         self.post_message(self.FunctionPatternChanged())
         logger.debug("Posted FunctionPatternChanged message to parent.")
+
+    def _trigger_recomposition(self) -> None:
+        """Manually trigger recomposition when needed (e.g., adding/removing functions)."""
+        # Force recomposition by temporarily setting recompose=True and updating
+        self.mutate_reactive(FunctionListEditorWidget.functions)
 
     def _update_pattern_data(self) -> None:
         """Update pattern_data based on current functions and mode."""
@@ -281,7 +286,7 @@ class FunctionListEditorWidget(Container):
 
                 new_kwargs[event.param_name] = converted_value
 
-                # Update functions list
+                # Update functions list without triggering recomposition
                 new_functions = self.functions.copy()
                 new_functions[event.index] = (func, new_kwargs)
                 self.functions = new_functions
@@ -299,6 +304,7 @@ class FunctionListEditorWidget(Container):
         if hasattr(event, 'index') and 0 <= event.index < len(self.functions):
             new_functions = self.functions[:event.index] + self.functions[event.index+1:]
             self.functions = new_functions
+            self._trigger_recomposition()  # Trigger recomposition for structural changes
             self._commit_and_notify()
             logger.debug(f"Removed function at index {event.index}")
         else:
@@ -322,6 +328,7 @@ class FunctionListEditorWidget(Container):
         new_functions = self.functions.copy()
         new_functions[index], new_functions[new_index] = new_functions[new_index], new_functions[index]
         self.functions = new_functions
+        self._trigger_recomposition()  # Trigger recomposition for structural changes
         self._commit_and_notify()
         logger.debug(f"Moved function from index {index} to {new_index}")
 
@@ -332,6 +339,7 @@ class FunctionListEditorWidget(Container):
         def handle_function_selection(selected_function: Optional[Callable]) -> None:
             if selected_function:
                 self.functions = self.functions + [(selected_function, {})]
+                self._trigger_recomposition()  # Trigger recomposition for structural changes
                 self._commit_and_notify()
                 logger.debug(f"Added function: {selected_function.__name__}")
 
@@ -350,6 +358,7 @@ class FunctionListEditorWidget(Container):
                     new_functions = self.functions.copy()
                     new_functions[index] = (selected_function, {})
                     self.functions = new_functions
+                    self._trigger_recomposition()  # Trigger recomposition for structural changes
                     self._commit_and_notify()
                     logger.debug(f"Changed function at index {index} to: {selected_function.__name__}")
 
