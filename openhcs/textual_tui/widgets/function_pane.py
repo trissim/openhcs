@@ -160,13 +160,26 @@ class FunctionPaneWidget(Container):
 
     def _handle_parameter_change(self, param_name: str, value: Any) -> None:
         """Update kwargs and emit change message."""
-        # Update local kwargs
-        new_kwargs = self.kwargs.copy()
-        new_kwargs[param_name] = value
-        self.kwargs = new_kwargs
+        # Update local kwargs without triggering reactive update
+        # This prevents recomposition and focus loss during typing
+        if not hasattr(self, '_internal_kwargs'):
+            self._internal_kwargs = self.kwargs.copy()
+
+        self._internal_kwargs[param_name] = value
 
         # Emit parameter changed message
         self.post_message(self.ParameterChanged(self.index, param_name, value))
+
+    def _sync_kwargs(self) -> None:
+        """Sync internal kwargs to reactive property when safe to do so."""
+        if hasattr(self, '_internal_kwargs'):
+            self.kwargs = self._internal_kwargs.copy()
+
+    def get_current_kwargs(self) -> dict:
+        """Get current kwargs values (from internal storage if available)."""
+        if hasattr(self, '_internal_kwargs'):
+            return self._internal_kwargs.copy()
+        return self.kwargs.copy()
 
     def _remove_function(self) -> None:
         """Remove this function."""
@@ -198,9 +211,9 @@ class FunctionPaneWidget(Container):
         # Use form manager to reset all parameters
         self.form_manager.reset_all_parameters(self.param_defaults)
 
-        # Update local kwargs and notify parent
-        self.kwargs = self.form_manager.get_current_values()
-        self.post_message(self.ParameterChanged(self.index, 'all', self.kwargs))
+        # Update internal kwargs and notify parent
+        self._internal_kwargs = self.form_manager.get_current_values()
+        self.post_message(self.ParameterChanged(self.index, 'all', self._internal_kwargs))
 
     # Custom messages for parent communication
     class ParameterChanged(Message):

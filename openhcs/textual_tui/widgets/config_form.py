@@ -49,8 +49,10 @@ class ConfigFormWidget(ScrollableContainer):
         """Handle field value changes."""
         if self.form_manager:
             self.form_manager.update_parameter(field_name, value)
-            # Update reactive field values - for nested parameters, update the top-level parameter
-            current_values = self.field_values.copy()
+            # Update internal field values without triggering reactive update
+            # This prevents recomposition and focus loss during typing
+            if not hasattr(self, '_internal_field_values'):
+                self._internal_field_values = self.field_values.copy()
 
             # For nested parameters like "path_planning_output_dir_suffix",
             # update the top-level "path_planning" parameter
@@ -58,13 +60,11 @@ class ConfigFormWidget(ScrollableContainer):
             if len(parts) >= 2:
                 top_level_param = parts[0]
                 if top_level_param in self.form_manager.parameters:
-                    current_values[top_level_param] = self.form_manager.parameters[top_level_param]
+                    self._internal_field_values[top_level_param] = self.form_manager.parameters[top_level_param]
             else:
                 # Regular parameter
                 if field_name in self.form_manager.parameters:
-                    current_values[field_name] = self.form_manager.parameters[field_name]
-
-            self.field_values = current_values
+                    self._internal_field_values[field_name] = self.form_manager.parameters[field_name]
 
     def on_input_changed(self, event) -> None:
         """Handle input changes from shared components."""
@@ -100,12 +100,19 @@ class ConfigFormWidget(ScrollableContainer):
                 self.form_manager.reset_parameter(field_name, default_value)
                 self._on_field_change(field_name, default_value)
     
+    def _sync_field_values(self) -> None:
+        """Sync internal field values to reactive property when safe to do so."""
+        if hasattr(self, '_internal_field_values'):
+            self.field_values = self._internal_field_values.copy()
+
     def get_config_values(self) -> Dict[str, Any]:
         """Get current config values from form manager."""
         if self.form_manager:
             return self.form_manager.get_current_values()
         else:
-            # Fallback to field_values
+            # Fallback to internal field values if available, otherwise reactive field_values
+            if hasattr(self, '_internal_field_values'):
+                return self._internal_field_values.copy()
             return self.field_values.copy()
 
 
