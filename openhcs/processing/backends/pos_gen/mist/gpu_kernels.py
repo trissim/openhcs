@@ -25,7 +25,7 @@ def _reset_and_flatten_kernel(
     """
     Kernel 1: Reset cheapest edge arrays and flatten union-find trees.
     """
-    tid = cupyx.jit.blockIdx.x * cupyx.jit.blockDim.x + cupyx.jit.threadIdx.x
+    tid = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
 
     if tid < num_nodes:
         # Reset cheapest edge tracking for this node
@@ -48,7 +48,7 @@ def _find_minimum_edges_kernel(
     """
     Kernel 2: Find minimum weight edge for each component (using int32 for atomics).
     """
-    tid = cupyx.jit.blockIdx.x * cupyx.jit.blockDim.x + cupyx.jit.threadIdx.x
+    tid = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
 
     if tid < num_edges:
         # Get edge endpoints and their components
@@ -66,12 +66,12 @@ def _find_minimum_edges_kernel(
             edge_weight_int = int(-edge_quality * 1000000)
 
             # Atomic update cheapest edge for 'from' component
-            cupyx.jit.atomic_min(cheapest_edge_weight_int, from_comp, edge_weight_int)
+            jit.atomic_min(cheapest_edge_weight_int, from_comp, edge_weight_int)
             if cheapest_edge_weight_int[from_comp] == edge_weight_int:
                 cheapest_edge_idx[from_comp] = tid
 
             # Atomic update cheapest edge for 'to' component
-            cupyx.jit.atomic_min(cheapest_edge_weight_int, to_comp, edge_weight_int)
+            jit.atomic_min(cheapest_edge_weight_int, to_comp, edge_weight_int)
             if cheapest_edge_weight_int[to_comp] == edge_weight_int:
                 cheapest_edge_idx[to_comp] = tid
 
@@ -84,7 +84,7 @@ def _union_components_kernel(
     """
     Kernel 3: Union components (no return statements).
     """
-    tid = cupyx.jit.blockIdx.x * cupyx.jit.blockDim.x + cupyx.jit.threadIdx.x
+    tid = jit.blockIdx.x * jit.blockDim.x + jit.threadIdx.x
 
     if tid < num_nodes:
         edge_idx = cheapest_edge_idx[tid]
@@ -108,22 +108,22 @@ def _union_components_kernel(
                 union_success = False
                 if rank1 < rank2:
                     # Make to_root the parent of from_root
-                    old_parent = cupyx.jit.atomic_cas(parent, from_root, from_root, to_root)
+                    old_parent = jit.atomic_cas(parent, from_root, from_root, to_root)
                     union_success = (old_parent == from_root)
                 elif rank1 > rank2:
                     # Make from_root the parent of to_root
-                    old_parent = cupyx.jit.atomic_cas(parent, to_root, to_root, from_root)
+                    old_parent = jit.atomic_cas(parent, to_root, to_root, from_root)
                     union_success = (old_parent == to_root)
                 else:
                     # Equal ranks: make from_root parent and increment its rank
-                    old_parent = cupyx.jit.atomic_cas(parent, to_root, to_root, from_root)
+                    old_parent = jit.atomic_cas(parent, to_root, to_root, from_root)
                     if old_parent == to_root:
-                        cupyx.jit.atomic_add(rank, from_root, 1)
+                        jit.atomic_add(rank, from_root, 1)
                         union_success = True
 
                 # If union was successful, atomically add edge to MST
                 if union_success:
-                    mst_slot = cupyx.jit.atomic_add(mst_count, 0, 1)
+                    mst_slot = jit.atomic_add(mst_count, 0, 1)
                     if mst_slot < num_nodes - 1:
                         mst_from[mst_slot] = from_node
                         mst_to[mst_slot] = to_node

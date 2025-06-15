@@ -68,7 +68,7 @@ class StatusBar(Widget):
     
     def compose(self) -> ComposeResult:
         """Compose the status bar layout."""
-        yield Static(self.get_log_display(), id="log_display")
+        yield Static(self.get_log_display(), id="log_display", markup=False)
 
     def get_log_display(self) -> str:
         """Get the formatted log display string."""

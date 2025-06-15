@@ -84,6 +84,12 @@ StatusBar {
     border: solid white;
 }
 
+/* StatusBar log display - left aligned and expandable */
+StatusBar #log_display {
+    text-align: left;
+    width: 100%;
+}
+
 /* Button containers - full width */
 #plate_manager_container Horizontal,
 #pipeline_editor_container Horizontal {
