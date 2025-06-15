@@ -4,6 +4,7 @@ MIST (Microscopy Image Stitching Tool) GPU Implementation
 This module provides GPU-accelerated MIST implementation using CuPy.
 All legacy functions have been moved to the modular implementation in the mist/ subfolder.
 """
+from __future__ import annotations 
 
 import logging
 from typing import TYPE_CHECKING, Tuple

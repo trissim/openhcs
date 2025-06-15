@@ -13,6 +13,7 @@ Doctrinal Clauses:
 - Clause 3 — Declarative Primacy: All functions are pure and stateless
 - Clause 65 — Fail Loudly: No silent fallbacks or inferred capabilities
 """
+from __future__ import annotations 
 
 import logging
 from typing import Any

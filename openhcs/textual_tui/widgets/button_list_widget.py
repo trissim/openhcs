@@ -62,7 +62,8 @@ class InlineButtonSelectionList(SelectionList):
             from rich.style import Style
 
             # Create styled button segments
-            button_style = Style(bgcolor="blue", color="white", bold=True)
+            #button_style = Style(bgcolor="blue", color="white", bold=True)
+            button_style = Style( color="white", bold=True)
             up_segment = Segment(" ↑ ", button_style)
             down_segment = Segment(" ↓ ", button_style)
             space_segment = Segment(" ")

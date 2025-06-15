@@ -9,10 +9,11 @@ ashlar>=1.14.0
 opencv-python>=4.5.0
 PyYAML>=6.0
 zarr>=2.10.0 # For ZarrStorageAdapter
-torch
-torch-vision
-jaxlib
-cupy
-tf-nightly
+#torch  # Optional - install with: pip install .[gpu]
+#torch-vision  # Optional - install with: pip install .[gpu]
+#jaxlib  # Optional - install with: pip install .[gpu]
+#cupy  # Optional - install with: pip install .[gpu]
+#tf-nightly  # Optional - install with: pip install .[gpu]
 pygments>=2.10.0  # For syntax highlighting in TUI error dialogs
 textual>=0.41.0  # Modern TUI framework for new textual_tui
+textual-universal-directorytree

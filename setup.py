@@ -1,40 +1,32 @@
-#!/usr/bin/env python3
-"""
-Setup script for semantic_matrix_analyzer package.
-"""
-
-from setuptools import setup, find_packages
-
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+from setuptools import setup
 
 setup(
-    name="semantic_matrix_analyzer",
-    version="0.1.0",
-    author="OpenHCS Team",
-    author_email="your.email@example.com",
-    description="A tool for analyzing Python codebases using AST to create semantically dense matrices",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/semantic_matrix_analyzer",
-    packages=find_packages(),
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-    ],
-    python_requires=">=3.8",
+    name="openhcs",
     install_requires=[
-        "numpy",
-        "matplotlib",
-        "pyyaml",
+        "numpy>=1.20.0",
+        "scikit-image>=0.18.0",
+        "scipy>=1.6.0",
+        "pandas>=1.2.0",
+        "imageio>=2.9.0",
+        "tifffile>=2021.1.1",
+        "imagecodecs>=2021.1.1",
+        #"ashlar>=1.14.0",
+        "opencv-python>=4.5.0",
+        "PyYAML>=6.0",
+        "zarr>=2.10.0",
+        "pygments>=2.10.0",
+        "textual>=3.0.0",
+        "textual-universal-directorytree",
+        "napari",
+        "setuptools"
     ],
-    entry_points={
-        "console_scripts": [
-            "sma-cli=semantic_matrix_analyzer.sma_cli:main",
-            "semantic-matrix-analyzer=semantic_matrix_analyzer.cli:main",
-            "extract-intents=semantic_matrix_analyzer.extract_intents:main",
-            "conversation-memory=semantic_matrix_analyzer.conversation.memory_cli:main",
-        ],
-    },
+    extras_require={
+        "gpu": [
+            "torch",
+            "torch-vision",
+            "jaxlib",
+            "cupy",
+            "tf-nightly"
+        ]
+    }
 )

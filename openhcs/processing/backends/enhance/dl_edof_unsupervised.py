@@ -1,7 +1,10 @@
+from __future__ import annotations 
 from typing import TYPE_CHECKING, List, Optional
 
 from openhcs.core.memory.decorators import torch as torch_func
-from openhcs.core.utils import optional_import
+from openhcs.utils.import_utils import optional_import, create_placeholder_class
+
+
 
 # For type checking only
 if TYPE_CHECKING:
@@ -14,6 +17,11 @@ torch = optional_import("torch")
 nn = optional_import("torch.nn") if torch is not None else None
 F = optional_import("torch.nn.functional") if torch is not None else None
 
+nnModule = create_placeholder_class(
+    "Module", # Name for the placeholder if generated
+    base_class=nn.Module if nn else None,
+    required_library="PyTorch"
+)
 
 # Helper for sharpness loss
 def laplacian_filter_torch(image_batch: "torch.Tensor") -> "torch.Tensor":
@@ -82,7 +90,7 @@ def blend_patches_to_2d_image(
     fused_image /= count_map.clamp(min=1.0)
     return fused_image.unsqueeze(0)
 
-class UNetLite(nn.Module):
+class UNetLite(nnModule):
     def __init__(self, in_channels_z: int, model_config_depth: int):
         super().__init__()
         multiplier = 1 if model_config_depth == 3 else 2

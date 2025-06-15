@@ -3,12 +3,13 @@ GPU JIT Kernels for Borůvka's MST Algorithm
 
 All CUDA kernels for parallel MST construction using CuPy JIT.
 """
+from __future__ import annotations 
 
 from typing import TYPE_CHECKING
 
-import cupyx.jit
 from openhcs.core.utils import optional_import
 
+jit = optional_import("cupyx.jit")
 # For type checking only
 if TYPE_CHECKING:
     import cupy as cp
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 cp = optional_import("cupy")
 
 
-@cupyx.jit.rawkernel()
+@jit.rawkernel() if jit else lambda f: f
 def _reset_and_flatten_kernel(
     parent, rank, cheapest_edge_idx, cheapest_edge_weight_int, num_nodes
 ):
@@ -39,7 +40,7 @@ def _reset_and_flatten_kernel(
             current = parent[current]
 
 
-@cupyx.jit.rawkernel()
+@jit.rawkernel() if jit else lambda f: f
 def _find_minimum_edges_kernel(
     edges_from, edges_to, edges_quality, parent,
     cheapest_edge_idx, cheapest_edge_weight_int, num_edges
@@ -75,7 +76,7 @@ def _find_minimum_edges_kernel(
                 cheapest_edge_idx[to_comp] = tid
 
 
-@cupyx.jit.rawkernel()
+@jit.rawkernel() if jit else lambda f: f
 def _union_components_kernel(
     cheapest_edge_idx, edges_from, edges_to, edges_dx, edges_dy,
     parent, rank, mst_from, mst_to, mst_dx, mst_dy, mst_count, num_nodes

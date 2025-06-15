@@ -4,6 +4,7 @@ CPU implementation of image assembly functions.
 This module provides CPU-based functions for assembling microscopy images
 using NumPy. It handles subpixel positioning and blending of image tiles.
 """
+from __future__ import annotations 
 
 import logging
 from typing import TYPE_CHECKING
@@ -297,26 +298,26 @@ def assemble_stack_cpu(
 
 def to_numpy(tensor):
     """Convert CuPy, PyTorch, JAX, or TensorFlow tensor to numpy"""
-    
+
     # Already numpy
     if hasattr(tensor, 'dtype') and tensor.__class__.__module__ == 'numpy':
         return tensor
-    
+
     # CuPy
     if hasattr(tensor, 'get'):  # CuPy arrays have .get() method
         return tensor.get()
-    
+
     # PyTorch
     if hasattr(tensor, 'detach'):  # PyTorch tensors have .detach()
         return tensor.detach().cpu().numpy()
-    
+
 #    # JAX
 #    if hasattr(tensor, 'device'):  # JAX arrays have .device
 #        import jax
 #        return jax.device_get(tensor)
-    
+
     # TensorFlow
     if hasattr(tensor, 'numpy') and hasattr(tensor, 'device'):  # TF tensors
         return tensor.numpy()
-    
+
     raise ValueError(f"Unsupported tensor type: {type(tensor)}")
