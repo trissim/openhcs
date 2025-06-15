@@ -284,19 +284,20 @@ class OpenHCSTUIApp(App):
         self.push_screen(error_dialog)
 
     def _handle_exception(self, error: Exception) -> None:
-        """Override Textual's exception handling to show all errors in dialogs."""
-        # Show the error in our dialog
-        self.show_error(f"Unhandled exception: {str(error)}", error)
+        """Let exceptions bubble up to global handler instead of silencing them."""
+        # Log the error for debugging
+        logger.error(f"Unhandled exception in TUI: {str(error)}", exc_info=True)
 
-        # Don't call super() to prevent Textual's default handling
-        # This keeps the app running instead of crashing
+        # Re-raise the exception to let it crash loudly
+        # This allows the global error handler to catch it
+        raise error
 
     async def _on_exception(self, error: Exception) -> None:
-        """Override async exception handling."""
+        """Let async exceptions bubble up."""
         self._handle_exception(error)
 
     def _on_unhandled_exception(self, error: Exception) -> None:
-        """Override unhandled exception handling."""
+        """Let unhandled exceptions bubble up."""
         self._handle_exception(error)
 
 

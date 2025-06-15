@@ -8,6 +8,7 @@ are retrieved from this step's entry in `context.step_plans`.
 """
 
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDict as TypingOrderedDict
@@ -23,6 +24,26 @@ from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
 from openhcs.core.memory.gpu_cleanup import cleanup_memory_by_type
 
 logger = logging.getLogger(__name__)
+
+# Environment variable to disable universal GPU defragmentation
+DISABLE_GPU_DEFRAG = os.getenv('OPENHCS_DISABLE_GPU_DEFRAG', 'false').lower() == 'true'
+
+def _universal_gpu_defrag_after_function(func_name: str, failed: bool = False) -> None:
+    """Universal GPU memory defragmentation using existing infrastructure."""
+    if DISABLE_GPU_DEFRAG:
+        return
+
+    try:
+        from openhcs.core.memory.gpu_cleanup import cleanup_cupy_gpu
+        cleanup_cupy_gpu()  # Uses existing defrag logic
+
+        status = "FAILED" if failed else "SUCCESS"
+        logger.debug(f"🔧 UNIVERSAL DEFRAG ({status}): {func_name} completed")
+
+    except ImportError:
+        pass  # CuPy not available
+    except Exception as e:
+        logger.warning(f"🔧 UNIVERSAL DEFRAG: Failed for {func_name}: {e}")
 
 def _is_3d(array: Any) -> bool:
     """Check if an array is 3D."""
@@ -75,7 +96,17 @@ def _execute_function_core(
     if 'context' in sig.parameters:
         final_kwargs['context'] = context
 
-    raw_function_output = func_callable(main_data_arg, **final_kwargs)
+    try:
+        raw_function_output = func_callable(main_data_arg, **final_kwargs)
+
+        # 🔧 UNIVERSAL GPU DEFRAG: Clean memory after every function
+        _universal_gpu_defrag_after_function(func_callable.__name__)
+
+    except Exception as e:
+        # 🔧 UNIVERSAL GPU DEFRAG: Clean memory even on failure
+        _universal_gpu_defrag_after_function(func_callable.__name__, failed=True)
+        raise e
+
     main_output_data = raw_function_output
     
     if special_outputs_plan: 
