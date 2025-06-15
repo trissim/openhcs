@@ -14,9 +14,9 @@ OpenHCS implements a sophisticated function pattern system that provides a unifi
 
 **Example**:
 ```python
-from openhcs.processing.function_registry import numpy_func
+from openhcs.core.memory.decorators import numpy
 
-@numpy_func
+@numpy
 def gaussian_blur(image_stack, sigma=1.0):
     """Apply Gaussian blur to entire stack."""
     return scipy.ndimage.gaussian_filter(image_stack, sigma=(0, sigma, sigma))

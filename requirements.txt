@@ -15,3 +15,4 @@ jaxlib
 cupy
 tf-nightly
 pygments>=2.10.0  # For syntax highlighting in TUI error dialogs
+textual>=0.41.0  # Modern TUI framework for new textual_tui

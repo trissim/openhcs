@@ -13,6 +13,7 @@ from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps import FunctionStep as Step
+from openhcs.constants.constants import VariableComponents
 
 # Import processing functions directly
 from openhcs.processing.backends.processors.torch_processor import (
@@ -22,7 +23,9 @@ from openhcs.processing.backends.processors.torch_processor import (
 from openhcs.processing.backends.pos_gen.ashlar_processor_cupy import gpu_ashlar_align_cupy
 from openhcs.processing.backends.pos_gen.mist_processor_cupy import mist_compute_tile_positions
 from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
+from openhcs.processing.backends.assemblers.assemble_stack_numpy import assemble_stack_numpy
 from openhcs.processing.backends.enhance.basic_processor_cupy import basic_flatfield_correction_cupy
+from openhcs.processing.backends.enhance.basic_processor_numpy import basic_flatfield_correction_numpy
 from openhcs.processing.backends.enhance.n2v2_processor_torch import n2v2_denoise_torch
 from openhcs.processing.backends.enhance.self_supervised_3d_deconvolution import self_supervised_3d_deconvolution
 
@@ -53,11 +56,11 @@ def get_pipeline(input_dir):
     return Pipeline(
         steps=[
             Step(func=create_composite,
-                 variable_components=['channel']
+                 variable_components=[VariableComponents.CHANNEL]
             ),
             Step(name="Z-Stack Flattening",
                  func=(create_projection, {'method': 'max_projection'}),
-                 variable_components=['z_index'],
+                 variable_components=[VariableComponents.Z_INDEX],
             ),
             Step(name="Image Enhancement Processing",
                  func=[
@@ -82,10 +85,11 @@ def get_pipeline(input_dir):
             ),
             #Step(func=n2v2_denoise_torch,
             #),
-            #Step(func=basic_flatfield_correction_cupy,
+            Step(func=basic_flatfield_correction_numpy),
             #),
             #Step(func=self_supervised_3d_deconvolution,
             #),
+            #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             )
         ],
@@ -117,10 +121,23 @@ def test_main_3d(zstack_plate_dir: Union[Path,str]):
 
     # Phase 1: Compilation - compile pipelines for all wells
     print("🔥 Starting compilation phase...")
+
+    # DEBUG: Check step IDs before compilation
+    step_ids_before = [id(step) for step in pipeline.steps]
+    print(f"🔥 Step IDs BEFORE compilation: {step_ids_before}")
+
     compiled_contexts = orchestrator.compile_pipelines(
         pipeline_definition=pipeline.steps,  # Extract steps from Pipeline object
         well_filter=wells
     )
+
+    # DEBUG: Check step IDs after compilation and in contexts
+    step_ids_after = [id(step) for step in pipeline.steps]
+    first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
+    step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
+    print(f"🔥 Step IDs AFTER compilation: {step_ids_after}")
+    print(f"🔥 Step IDs in contexts: {step_ids_in_contexts}")
+
     print("🔥 Compilation completed!")
 
     # Verify compilation results with loud failures

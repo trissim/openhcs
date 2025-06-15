@@ -62,7 +62,7 @@ This guide provides systematic approaches to debugging pipeline compilation issu
 
 **Investigation Steps**:
 1. Check if function has `@numpy`, `@torch`, etc. decorators
-2. Verify decorator is from correct module (`openhcs.processing.function_registry`)
+2. Verify decorator is from correct module (`openhcs.core.memory.decorators`)
 3. Check if function has `input_memory_type` and `output_memory_type` attributes
 
 #### `"Functions in step '{step}' have inconsistent memory types"`
