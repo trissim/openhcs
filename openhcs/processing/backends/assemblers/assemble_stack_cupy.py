@@ -65,35 +65,30 @@ def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", ble
         return mask.astype(cp.float32)
 
     elif blend_method == "rectangular":
-        # Rectangular feathering - blend near edges only
+        # Smooth edge blending with natural falloff
         mask = cp.ones(tile_shape, dtype=cp.float32)
-        blend_pixels = int(blend_radius)
 
-        if blend_pixels > 0:
-            # Create distance-to-edge maps
+        if blend_radius > 0:
+            # Create coordinate grids
             y_coords = cp.arange(height, dtype=cp.float32)
             x_coords = cp.arange(width, dtype=cp.float32)
+            yy, xx = cp.meshgrid(y_coords, x_coords, indexing='ij')
 
-            # Distance from top/bottom edges
-            dist_from_top = y_coords
-            dist_from_bottom = height - 1 - y_coords
-            y_edge_dist = cp.minimum(dist_from_top, dist_from_bottom)
+            # Distance from each edge
+            dist_from_top = yy
+            dist_from_bottom = height - 1 - yy
+            dist_from_left = xx
+            dist_from_right = width - 1 - xx
 
-            # Distance from left/right edges
-            dist_from_left = x_coords
-            dist_from_right = width - 1 - x_coords
-            x_edge_dist = cp.minimum(dist_from_left, dist_from_right)
+            # Create smooth falloff from each edge independently
+            weight_from_top = cp.minimum(dist_from_top / blend_radius, 1.0)
+            weight_from_bottom = cp.minimum(dist_from_bottom / blend_radius, 1.0)
+            weight_from_left = cp.minimum(dist_from_left / blend_radius, 1.0)
+            weight_from_right = cp.minimum(dist_from_right / blend_radius, 1.0)
 
-            # Create 2D distance maps
-            y_dist_2d = y_edge_dist[:, cp.newaxis]  # Shape: (height, 1)
-            x_dist_2d = x_edge_dist[cp.newaxis, :]  # Shape: (1, width)
-
-            # Feathering weights based on distance to nearest edge
-            y_weight = cp.minimum(y_dist_2d / blend_pixels, 1.0)
-            x_weight = cp.minimum(x_dist_2d / blend_pixels, 1.0)
-
-            # Combine weights (minimum ensures feathering at ALL edges)
-            mask = cp.minimum(y_weight, x_weight)
+            # Combine using multiplication for smooth transitions
+            # This creates natural corner rounding instead of rectangular zones
+            mask = weight_from_top * weight_from_bottom * weight_from_left * weight_from_right
 
         return mask.astype(cp.float32)
 
