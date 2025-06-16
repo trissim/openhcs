@@ -16,7 +16,7 @@ import numpy as np
 
 from openhcs.constants.constants import (GPU_MEMORY_TYPES, MEMORY_TYPE_CUPY,
                                             MEMORY_TYPE_JAX, MEMORY_TYPE_NUMPY,
-                                            MEMORY_TYPE_TENSORFLOW,
+                                            MEMORY_TYPE_PYCLESPERANTO, MEMORY_TYPE_TENSORFLOW,
                                             MEMORY_TYPE_TORCH, MemoryType)
 from openhcs.core.memory import MemoryWrapper
 from openhcs.core.utils import optional_import
@@ -105,6 +105,11 @@ def _detect_memory_type(data: Any) -> str:
     if jnp is not None and isinstance(data, jnp.ndarray):
         return MemoryType.JAX.value
 
+    # Check if it's a pyclesperanto array
+    cle = optional_import("pyclesperanto")
+    if cle is not None and hasattr(cle, 'Array') and isinstance(data, cle.Array):
+        return MemoryType.PYCLESPERANTO.value
+
     # Fail loudly if we can't detect the type
     raise ValueError(f"Could not detect memory type of {type(data)}")
 
@@ -176,6 +181,8 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
             converted_wrapper = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
         elif memory_type == MEMORY_TYPE_JAX:
             converted_wrapper = wrapped.to_jax(allow_cpu_roundtrip=False)
+        elif memory_type == MEMORY_TYPE_PYCLESPERANTO:
+            converted_wrapper = wrapped.to_pyclesperanto(allow_cpu_roundtrip=False)
         else:
             raise ValueError(f"Unsupported memory type: {memory_type}")
 
@@ -206,6 +213,27 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
         if jnp is None:
             raise ValueError(f"JAX is required for memory type {memory_type}")
         return jnp.stack(converted_slices)
+    elif memory_type == MemoryType.PYCLESPERANTO.value:
+        cle = optional_import("pyclesperanto")
+        if cle is None:
+            raise ValueError(f"pyclesperanto is required for memory type {memory_type}")
+
+        # pyclesperanto doesn't have a direct stack function, so we need to create and copy
+        if not converted_slices:
+            raise ValueError("Cannot stack empty list of slices")
+
+        # Get shape from first slice
+        first_slice = converted_slices[0]
+        stack_shape = (len(converted_slices), first_slice.shape[0], first_slice.shape[1])
+
+        # Create result array
+        result = cle.create(stack_shape, dtype=first_slice.dtype)
+
+        # Copy each slice into the result
+        for i, slice_data in enumerate(converted_slices):
+            cle.copy_slice(slice_data, result, i)
+
+        return result
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
 
@@ -254,6 +282,8 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
         array_wrapper = wrapped.to_tensorflow(allow_cpu_roundtrip=False)
     elif memory_type == MemoryType.JAX.value:
         array_wrapper = wrapped.to_jax(allow_cpu_roundtrip=False)
+    elif memory_type == MemoryType.PYCLESPERANTO.value:
+        array_wrapper = wrapped.to_pyclesperanto(allow_cpu_roundtrip=False)
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
 
