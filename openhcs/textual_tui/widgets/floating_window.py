@@ -80,7 +80,9 @@ class BaseFloatingWindow(ModalScreen):
         if event.button.id.startswith("reset_"):
             return  # Let the form handle reset buttons
 
-        result = self.handle_button_action(event.button.id, event.button.label)
+        # Convert button label (Content object) to string
+        button_text = str(event.button.label) if event.button.label else ""
+        result = self.handle_button_action(event.button.id, button_text)
 
         # Auto-dismiss unless explicitly prevented
         if result is not False:
