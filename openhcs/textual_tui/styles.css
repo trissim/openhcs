@@ -269,3 +269,13 @@ RadioButton {
     text-align: left;
     content-align: left top;
 }
+
+/* Dialog buttons - left aligned instead of centered */
+.dialog-buttons {
+    text-align: left;
+}
+
+.dialog-buttons Button {
+    width: auto;
+    margin: 0 1 0 0;  /* Right margin for spacing between buttons */
+}

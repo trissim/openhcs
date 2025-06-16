@@ -37,10 +37,11 @@ OpenHCSDirectoryTree {
     width: 100%;
 }
 
-/* Buttons panel takes minimal width */
+/* Buttons panel takes minimal width and left-aligned */
 #buttons_panel {
     width: auto;
     height: auto;
+    text-align: left;
 }
 
 #buttons_panel Button {

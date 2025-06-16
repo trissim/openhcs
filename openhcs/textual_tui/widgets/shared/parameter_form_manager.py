@@ -84,9 +84,10 @@ class ParameterFormManager:
             label.styles.height = "1"
             yield label
 
-            # Input widget (flexible width, left aligned)
+            # Input widget (flexible width, left aligned, with left margin for spacing)
             input_widget.styles.width = "1fr"
             input_widget.styles.text_align = "left"
+            input_widget.styles.margin = (0, 0, 0, 1)  # top, right, bottom, left margin
             yield input_widget
 
             # Reset button (auto width)

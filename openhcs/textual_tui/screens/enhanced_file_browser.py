@@ -366,7 +366,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             return self._handle_save_file()
 
     def _handle_save_file(self):
-        """Handle save file operation."""
+        """Handle save file operation with overwrite confirmation."""
         try:
             # Get filename from input
             filename_input = self.query_one("#filename_input", Input)
@@ -402,6 +402,11 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
             # Construct full save path
             save_path = save_dir / filename
+
+            # Check if file already exists and show confirmation dialog
+            if self._file_exists(save_path):
+                self._show_overwrite_confirmation(save_path)
+                return False  # Don't dismiss yet, wait for confirmation
 
             logger.debug(f"Save file operation: {save_path}")
             return save_path
@@ -461,5 +466,31 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             # No extension, will be added by _ensure_extension
 
         return True
+
+    def _file_exists(self, file_path: Path) -> bool:
+        """Check if file exists using FileManager."""
+        try:
+            return self.file_manager.exists(file_path, self.backend.value)
+        except Exception:
+            return False
+
+    def _show_overwrite_confirmation(self, save_path: Path) -> None:
+        """Show confirmation dialog for overwriting existing file."""
+        from openhcs.textual_tui.widgets.floating_window import ConfirmationWindow
+
+        message = f"File '{save_path.name}' already exists.\nDo you want to overwrite it?"
+        confirmation = ConfirmationWindow(
+            title="Confirm Overwrite",
+            message=message
+        )
+
+        def handle_confirmation(result):
+            """Handle the confirmation dialog result."""
+            if result:  # User clicked Yes
+                logger.debug(f"User confirmed overwrite for: {save_path}")
+                self.dismiss(save_path)  # Dismiss with the save path
+            # If result is False/None (No/Cancel), do nothing - stay in dialog
+
+        self.app.push_screen(confirmation, handle_confirmation)
 
     CSS_PATH = "enhanced_browser.css"
