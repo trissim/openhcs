@@ -81,6 +81,9 @@ class PlateManagerWidget(ButtonListWidget):
         # Reference to pipeline editor (set by MainContent)
         self.pipeline_editor: Optional['PipelineEditorWidget'] = None
 
+        # Worker tracking for cancellation support
+        self.current_run_worker: Optional[Any] = None
+
         logger.debug("PlateManagerWidget initialized")
     
     def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
@@ -106,7 +109,11 @@ class PlateManagerWidget(ButtonListWidget):
         elif button_id == "compile_plate":
             self.action_compile_plate()
         elif button_id == "run_plate":
-            self.action_run_plate()
+            # Check if we should run or stop based on current state
+            if self._is_any_plate_running():
+                self.action_stop_execution()
+            else:
+                self.action_run_plate()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
         """Handle selection changes from ButtonListWidget (checkmarks only)."""
@@ -264,6 +271,9 @@ class PlateManagerWidget(ButtonListWidget):
                         selected_plate = plate
                         break
 
+            # Check if any plates are currently running
+            is_running = self._is_any_plate_running()
+
             # Mathematical constraints (like test_main.py workflow)
             # Init: available for plates that need initialization (not blocked by failures)
             can_init = selected_plate and selected_plate.get('status') in ['?', '-', 'F']
@@ -273,20 +283,58 @@ class PlateManagerWidget(ButtonListWidget):
                           selected_plate.get('path') not in self.plate_compiled_data and
                           self._has_pipelines([selected_plate]))
 
-            # Run button: available if ANY plates are compiled
-            can_run = len(self.plate_compiled_data) > 0
+            # Run/Stop button: available if ANY plates are compiled OR if execution is running
+            can_run_or_stop = len(self.plate_compiled_data) > 0 or is_running
+
+            # Update button labels and states
+            run_button = self.query_one("#run_plate")
+            if is_running:
+                run_button.label = "Stop"
+                run_button.disabled = False  # Always enabled when running
+            else:
+                run_button.label = "Run"
+                run_button.disabled = not (has_selection and can_run_or_stop)
 
             self.query_one("#del_plate").disabled = not has_plates
             self.query_one("#edit_plate").disabled = not has_selection
             self.query_one("#init_plate").disabled = not (has_selection and can_init)
             self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
-            self.query_one("#run_plate").disabled = not (has_selection and can_run)
         except Exception as e:
             # Buttons might not be mounted yet
             logger.warning(f"Failed to update button states: {e}")
-    
 
-    
+    def _is_any_plate_running(self) -> bool:
+        """Check if any plates are currently running."""
+        return any(plate.get('status') == '!' for plate in self.plates)
+
+    def action_stop_execution(self) -> None:
+        """Handle Stop button - cancel running execution."""
+        logger.info("🛑 STOP BUTTON PRESSED")
+
+        if self.current_run_worker and not self.current_run_worker.is_finished:
+            # Cancel the running worker
+            self.current_run_worker.cancel()
+            logger.info("🛑 Cancelled running worker")
+
+            # Update status of running plates to indicate cancellation
+            current_plates = list(self.plates)
+            cancelled_count = 0
+            for plate in current_plates:
+                if plate.get('status') == '!':  # Running
+                    plate['status'] = 'F'  # Mark as failed (cancelled)
+                    cancelled_count += 1
+
+            if cancelled_count > 0:
+                self.plates = current_plates
+                self.app.current_status = f"Cancelled execution of {cancelled_count} running plates"
+            else:
+                self.app.current_status = "No running plates to cancel"
+        else:
+            self.app.current_status = "No active execution to cancel"
+
+        # Clear the worker reference
+        self.current_run_worker = None
+
     def action_add_plate(self) -> None:
         """Handle Add Plate button."""
         self.app.push_screen(self._create_file_browser_screen(), self._on_plate_directory_selected)
@@ -826,15 +874,27 @@ class PlateManagerWidget(ButtonListWidget):
         logger.info(f"Running: {desc}")
         logger.info(f"🔥 Status set to: Running: {desc}")
 
-        # Start background worker
+        # Start background worker and track it for cancellation
         logger.info("🔥 Starting background worker _run_plates_worker")
-        self._run_plates_worker(selected_items)
+        self.current_run_worker = self._run_plates_worker(selected_items)
+
+        # Update button states immediately to show Stop button
+        self._update_button_states()
 
     @work(exclusive=True)
     async def _run_plates_worker(self, selected_items: List[Dict]) -> None:
         """Run plates using orchestrator's execute method."""
+        from textual.worker import get_current_worker
+        import asyncio
 
-        for plate_data in selected_items:
+        worker = get_current_worker()
+
+        try:
+            for plate_data in selected_items:
+                # Check for cancellation before processing each plate
+                if worker.is_cancelled:
+                    logger.info("🛑 Worker cancelled, stopping execution")
+                    break
             plate_path = plate_data['path']
 
             # Get orchestrator
@@ -868,24 +928,42 @@ class PlateManagerWidget(ButtonListWidget):
             logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
             logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
 
-            # Run it
-            actual_plate['status'] = '!'  # Running
-            self.mutate_reactive(PlateManagerWidget.plates)
+                # Run it
+                actual_plate['status'] = '!'  # Running
+                self.mutate_reactive(PlateManagerWidget.plates)
+                # Update button states to show Stop button
+                self._update_button_states()
 
-            try:
-                # Execute like test_main.py (async - run in executor to avoid blocking UI)
-                results = await asyncio.get_event_loop().run_in_executor(
-                    None, orchestrator.execute_compiled_plate, execution_pipeline, compiled_contexts
-                )
+                try:
+                    # Check for cancellation before starting execution
+                    if worker.is_cancelled:
+                        logger.info("🛑 Worker cancelled before execution")
+                        actual_plate['status'] = 'F'  # Cancelled
+                        break
 
-                # Update status based on results
-                if results and all(r.get('status') != 'error' for r in results.values()):
-                    actual_plate['status'] = 'C'  # Success
-                else:
+                    # Execute like test_main.py (async - run in executor to avoid blocking UI)
+                    results = await asyncio.get_event_loop().run_in_executor(
+                        None, orchestrator.execute_compiled_plate, execution_pipeline, compiled_contexts
+                    )
+
+                    # Check for cancellation after execution
+                    if worker.is_cancelled:
+                        logger.info("🛑 Worker cancelled after execution")
+                        actual_plate['status'] = 'F'  # Cancelled
+                        break
+
+                    # Update status based on results
+                    if results and all(r.get('status') != 'error' for r in results.values()):
+                        actual_plate['status'] = 'C'  # Success
+                    else:
+                        actual_plate['status'] = 'F'  # Failed
+
+                except asyncio.CancelledError:
+                    logger.info("🛑 Execution cancelled via CancelledError")
+                    actual_plate['status'] = 'F'  # Cancelled
+                    break
+                except Exception:
                     actual_plate['status'] = 'F'  # Failed
-
-            except Exception:
-                actual_plate['status'] = 'F'  # Failed
 
             finally:
                 # 🔥 COMPREHENSIVE GPU CLEANUP: Clear all GPU memory after plate execution
@@ -902,4 +980,20 @@ class PlateManagerWidget(ButtonListWidget):
                 reset_memory_backend()
                 logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
 
-            self.mutate_reactive(PlateManagerWidget.plates)
+                self.mutate_reactive(PlateManagerWidget.plates)
+
+        except asyncio.CancelledError:
+            logger.info("🛑 Worker cancelled at top level")
+            # Update any running plates to cancelled state
+            current_plates = list(self.plates)
+            for plate in current_plates:
+                if plate.get('status') == '!':  # Running
+                    plate['status'] = 'F'  # Mark as cancelled
+            self.plates = current_plates
+            raise  # Re-raise to properly handle cancellation
+
+        finally:
+            # Clear the worker reference and update button states
+            self.current_run_worker = None
+            self._update_button_states()
+            logger.info("🔥 Worker finished, button states updated")
