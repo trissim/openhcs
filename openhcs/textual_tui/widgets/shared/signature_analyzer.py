@@ -40,10 +40,17 @@ class SignatureAnalyzer:
             sig = inspect.signature(callable_obj)
             type_hints = get_type_hints(callable_obj)
             parameters = {}
-            
-            for param_name, param in sig.parameters.items():
+
+            param_list = list(sig.parameters.items())
+
+            for i, (param_name, param) in enumerate(param_list):
                 # Skip self, cls, kwargs - parent can filter more if needed
                 if param_name in ('self', 'cls', 'kwargs'):
+                    continue
+
+                # Skip the first parameter (after self/cls) - this is always the image/tensor
+                # that gets passed automatically by the processing system
+                if i == 0 or (i == 1 and param_list[0][0] in ('self', 'cls')):
                     continue
                 
                 param_type = type_hints.get(param_name, str)
