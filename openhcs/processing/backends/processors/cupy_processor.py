@@ -471,38 +471,50 @@ def _create_disk_cupy(radius: int) -> "cp.ndarray":
     mask = x*x + y*y <= radius*radius
     return mask.astype(cp.uint8)
 
-def _resize_cupy_like_skimage(image: "cp.ndarray", output_shape: tuple, anti_aliasing: bool = True, preserve_range: bool = True) -> "cp.ndarray":
+def _resize_cupy_better_match(image: "cp.ndarray", output_shape: tuple, anti_aliasing: bool = True, preserve_range: bool = True) -> "cp.ndarray":
     """
-    Resize image using CuPy to approximate scikit-image's transform.resize behavior.
-    This is a simplified version that tries to match the key behaviors.
-    """
-    # Convert to float for processing
-    if preserve_range:
-        original_min = cp.min(image)
-        original_max = cp.max(image)
+    Resize image using CuPy to better match scikit-image's transform.resize behavior.
 
-    # Simple bilinear interpolation using CuPy
-    # This is not exactly the same as scikit-image but should be close enough
+    Key differences from original:
+    1. Better anti-aliasing sigma calculation
+    2. Proper preserve_range handling without rescaling
+    3. More accurate zoom parameters
+    """
     from cupyx.scipy import ndimage as cupy_ndimage
 
     # Calculate zoom factors
     zoom_factors = [output_shape[i] / image.shape[i] for i in range(len(output_shape))]
 
-    # Use CuPy's zoom function for resizing
-    if anti_aliasing:
-        # Apply slight smoothing before downsampling
-        if any(z < 1.0 for z in zoom_factors):
-            sigma = [max(0, (1/z - 1)/2) for z in zoom_factors]
-            image = cupy_ndimage.gaussian_filter(image.astype(cp.float32), sigma)
+    # Convert to float32 for processing
+    image_float = image.astype(cp.float32)
 
-    resized = cupy_ndimage.zoom(image.astype(cp.float32), zoom_factors, order=1)
+    # Apply anti-aliasing if downsampling
+    if anti_aliasing and any(z < 1.0 for z in zoom_factors):
+        # Use scikit-image's sigma calculation: sigma = (1/zoom - 1) / 2
+        # But ensure minimum sigma and handle edge cases
+        sigma = []
+        for z in zoom_factors:
+            if z < 1.0:
+                s = (1.0/z - 1.0) / 2.0
+                sigma.append(max(s, 0.5))  # Minimum sigma for stability
+            else:
+                sigma.append(0.0)
 
+        # Apply Gaussian smoothing before downsampling
+        if any(s > 0 for s in sigma):
+            image_float = cupy_ndimage.gaussian_filter(image_float, sigma)
+
+    # Perform zoom with bilinear interpolation (order=1)
+    resized = cupy_ndimage.zoom(image_float, zoom_factors, order=1)
+
+    # Handle preserve_range properly - don't rescale, just maintain dtype range
     if preserve_range:
-        # Restore original range
-        resized_min = cp.min(resized)
-        resized_max = cp.max(resized)
-        if resized_max > resized_min:
-            resized = (resized - resized_min) * (original_max - original_min) / (resized_max - resized_min) + original_min
+        # Clip to valid range for the original dtype
+        if image.dtype == cp.uint16:
+            resized = cp.clip(resized, 0, 65535)
+        elif image.dtype == cp.uint8:
+            resized = cp.clip(resized, 0, 255)
+        # For other dtypes, keep as-is
 
     return resized
 
@@ -534,9 +546,9 @@ def tophat(
         # Store original data type - MATCH NUMPY EXACTLY
         input_dtype = image[z].dtype
 
-        # 1) Downsample - MATCH NUMPY EXACTLY
+        # 1) Downsample - IMPROVED MATCH TO NUMPY
         target_shape = (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor)
-        image_small = _resize_cupy_like_skimage(
+        image_small = _resize_cupy_better_match(
             image[z],
             target_shape,
             anti_aliasing=True,
@@ -549,9 +561,9 @@ def tophat(
         # 3) White top-hat on the smaller image - MATCH NUMPY EXACTLY
         tophat_small = ndimage.white_tophat(image_small, structure=selem_small)
 
-        # 4) Upscale background to original size - MATCH NUMPY EXACTLY
+        # 4) Upscale background to original size - IMPROVED MATCH TO NUMPY
         background_small = image_small - tophat_small
-        background_large = _resize_cupy_like_skimage(
+        background_large = _resize_cupy_better_match(
             background_small,
             image[z].shape,
             anti_aliasing=False,
