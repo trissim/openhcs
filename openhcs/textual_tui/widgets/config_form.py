@@ -94,16 +94,120 @@ class ConfigFormWidget(ScrollableContainer):
 
     def _reset_field(self, field_name: str) -> None:
         """Reset a field to its default value."""
+        if not self.form_manager:
+            return
+
+        # Handle both top-level and nested parameters
         if field_name in self.param_defaults:
+            # Top-level parameter
             default_value = self.param_defaults[field_name]
-            if self.form_manager:
-                self.form_manager.reset_parameter(field_name, default_value)
-                self._on_field_change(field_name, default_value)
+            self.form_manager.reset_parameter(field_name, default_value)
+            self._on_field_change(field_name, default_value)
+            # Refresh the UI widget to show the reset value
+            self._refresh_field_widget(field_name, default_value)
+        else:
+            # Check if it's a nested parameter (e.g., "path_planning_output_dir_suffix" or "nested_nested_bool")
+            parts = field_name.split('_')
+            if len(parts) >= 2:
+                # Try to find the nested parameter by checking prefixes from longest to shortest
+                # This handles cases like "nested_nested_bool" where "nested" is the parent
+                for i in range(len(parts) - 1, 0, -1):  # Start from longest prefix
+                    potential_nested = '_'.join(parts[:i])
+                    if potential_nested in self.param_defaults:
+                        # Found the nested parent, get the nested field name
+                        nested_field = '_'.join(parts[i:])
+
+                        # Get the nested default value from the default dataclass instance
+                        nested_parent_default = self.param_defaults[potential_nested]
+                        if hasattr(nested_parent_default, nested_field):
+                            nested_default = getattr(nested_parent_default, nested_field)
+
+                            # The form manager's reset_parameter method handles nested parameters automatically
+                            # Just pass the full hierarchical name and it will find the right nested manager
+                            self.form_manager.reset_parameter(field_name, nested_default)
+                            self._on_field_change(field_name, nested_default)
+                            # Refresh the UI widget to show the reset value
+                            self._refresh_field_widget(field_name, nested_default)
+                            return
+
+            # If we get here, the parameter wasn't found
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Could not reset field {field_name}: not found in defaults")
     
     def _sync_field_values(self) -> None:
         """Sync internal field values to reactive property when safe to do so."""
         if hasattr(self, '_internal_field_values'):
             self.field_values = self._internal_field_values.copy()
+
+    def _refresh_field_widget(self, field_name: str, value: Any) -> None:
+        """Refresh a specific field widget to show the new value."""
+        try:
+            widget_id = f"config_{field_name}"
+
+            # Try to find the widget
+            try:
+                widget = self.query_one(f"#{widget_id}")
+            except Exception:
+                # Widget not found with exact ID, try searching more broadly
+                widgets = self.query(f"[id$='{field_name}']")  # Find widgets ending with field_name
+                if widgets:
+                    widget = widgets[0]
+                else:
+                    return  # Widget not found
+
+            # Update widget based on type
+            from textual.widgets import Input, Checkbox, RadioSet, Collapsible
+            from .shared.enum_radio_set import EnumRadioSet
+
+            if isinstance(widget, Input):
+                # Input widget (int, float, str) - set value as string
+                display_value = value.value if hasattr(value, 'value') else value
+                widget.value = str(display_value) if display_value is not None else ""
+
+            elif isinstance(widget, Checkbox):
+                # Checkbox widget (bool) - set boolean value
+                widget.value = bool(value)
+
+            elif isinstance(widget, (RadioSet, EnumRadioSet)):
+                # RadioSet/EnumRadioSet widget (Enum, List[Enum]) - find and press the correct radio button
+                # Handle both enum values and string values
+                if hasattr(value, 'value'):
+                    # Enum value - use the .value attribute
+                    target_value = value.value
+                elif isinstance(value, list) and len(value) > 0:
+                    # List[Enum] - get first item's value
+                    first_item = value[0]
+                    target_value = first_item.value if hasattr(first_item, 'value') else str(first_item)
+                else:
+                    # String value or other
+                    target_value = str(value)
+
+                # Find and press the correct radio button
+                target_id = f"enum_{target_value}"
+                for radio in widget.query("RadioButton"):
+                    if radio.id == target_id:
+                        radio.value = True
+                        break
+                    else:
+                        # Unpress other radio buttons
+                        radio.value = False
+
+            elif isinstance(widget, Collapsible):
+                # Collapsible widget (nested dataclass) - cannot be reset directly
+                # The nested parameters are handled by their own reset buttons
+                pass
+
+            elif hasattr(widget, 'value'):
+                # Generic widget with value attribute - fallback
+                display_value = value.value if hasattr(value, 'value') else value
+                widget.value = str(display_value) if display_value is not None else ""
+
+        except Exception as e:
+            # Widget not found or update failed - this is expected for some field types
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Could not refresh widget for field {field_name}: {e}")
 
     def get_config_values(self) -> Dict[str, Any]:
         """Get current config values from form manager."""

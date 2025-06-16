@@ -82,8 +82,9 @@ def _supports_dlpack(obj: Any) -> bool:
         2. Tensor must be on GPU (CPU tensors might succeed even without proper DLPack support)
         3. tf.experimental.dlpack module must exist
     """
-    # Check for PyTorch or CuPy DLPack support
-    if hasattr(obj, "toDlpack") or hasattr(obj, "to_dlpack"):
+    # Check for PyTorch, CuPy, or JAX DLPack support
+    # PyTorch: __dlpack__ method, CuPy: toDlpack method, JAX: __dlpack__ method
+    if hasattr(obj, "toDlpack") or hasattr(obj, "to_dlpack") or hasattr(obj, "__dlpack__"):
         # Special handling for TensorFlow to enforce Clause 88
         if 'tensorflow' in str(type(obj)):
             try:
@@ -184,7 +185,7 @@ def _get_device_id(data: Any, memory_type: str) -> Optional[int]:
 
     if memory_type == MemoryType.JAX.value:
         try:
-            device_str = str(data.device()).lower()
+            device_str = str(data.device).lower()
             if "gpu" in device_str:
                 # Extract device ID from string like "gpu:0"
                 return int(device_str.split(":")[-1])

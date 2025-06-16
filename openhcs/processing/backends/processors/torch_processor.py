@@ -306,12 +306,12 @@ def stack_percentile_normalize(
 
     # Avoid division by zero
     if p_high == p_low:
-        return torch.ones_like(stack, dtype=torch.float32) * target_min
+        return torch.ones_like(stack) * target_min
 
-    # Clip and normalize to target range
-    clipped = torch.clamp(stack.float(), p_low, p_high)
+    # Clip and normalize to target range (match NumPy implementation exactly)
+    clipped = torch.clamp(stack, p_low, p_high)
     normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-    normalized = torch.clamp(normalized, 0, 65535).to(torch.uint16)
+    normalized = normalized.to(torch.uint16)
 
     return normalized
 

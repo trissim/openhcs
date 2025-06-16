@@ -541,24 +541,45 @@ class FileManager:
             ) from e
 
 
-    def move(self, source_path: Union[str, Path], dest_path: Union[str, Path], backend: str) -> bool:
+    def move(self, source_path: Union[str, Path], dest_path: Union[str, Path], backend: str,
+             replace_symlinks: bool = False) -> bool:
         """
         Move a file, directory, or symlink from source_path to dest_path.
 
-        - Will NOT overwrite.
+        - Will NOT overwrite by default.
         - Preserves symbolic identity (moves links as links).
         - Uses backend-native move if available.
+        - Can optionally replace existing symlinks when replace_symlinks=True.
+
+        Args:
+            source_path: Source file or directory path
+            dest_path: Destination file or directory path
+            backend: Backend to use for the operation
+            replace_symlinks: If True, allows overwriting existing symlinks at destination.
+                            If False (default), raises FileExistsError if destination exists.
 
         Raises:
-            FileExistsError: If destination exists
+            FileExistsError: If destination exists and replace_symlinks=False, or if
+                           destination exists and is not a symlink when replace_symlinks=True
             FileNotFoundError: If source is missing
             StorageResolutionError: On backend failure
         """
         backend_instance = self._get_backend(backend)
 
         try:
+            # Handle destination existence based on replace_symlinks setting
             if backend_instance.exists(dest_path):
-                raise FileExistsError(f"Destination already exists: {dest_path}")
+                if replace_symlinks:
+                    # Check if destination is a symlink
+                    if backend_instance.is_symlink(dest_path):
+                        logger.debug("Destination is a symlink, removing before move: %s", dest_path)
+                        backend_instance.delete(dest_path)
+                    else:
+                        # Destination exists but is not a symlink
+                        raise FileExistsError(f"Destination already exists and is not a symlink: {dest_path}")
+                else:
+                    # replace_symlinks=False, don't allow any overwriting
+                    raise FileExistsError(f"Destination already exists: {dest_path}")
 
             dest_parent = Path(dest_path).parent
             self.ensure_directory(dest_parent, backend)

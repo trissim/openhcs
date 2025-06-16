@@ -141,7 +141,7 @@ def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "c
 
 @cupy_func
 def percentile_normalize(
-    cls, image: "cp.ndarray",
+    image: "cp.ndarray",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -164,8 +164,8 @@ def percentile_normalize(
     """
     _validate_3d_array(image)
 
-    # Process each Z-slice independently
-    result = cp.zeros_like(image, dtype=cp.float32)
+    # Process each Z-slice independently (memory-efficient)
+    result = cp.zeros_like(image, dtype=cp.uint16)  # Use final dtype directly
 
     for z in range(image.shape[0]):
         # Get percentile values for this slice
@@ -174,20 +174,25 @@ def percentile_normalize(
 
         # Avoid division by zero
         if p_high == p_low:
-            result[z] = cp.ones_like(image[z]) * target_min
+            result[z] = target_min  # Direct assignment, no temporary arrays
             continue
 
-        # Clip and normalize to target range
-        clipped = cp.clip(image[z], p_low, p_high)
-        normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-        result[z] = normalized
+        # Clip and normalize to target range (in-place operations)
+        # Use the original image slice directly to avoid copies
+        slice_data = image[z].astype(cp.float32)  # Only convert one slice at a time
+        cp.clip(slice_data, p_low, p_high, out=slice_data)  # In-place clipping
+        slice_data -= p_low  # In-place subtraction
+        slice_data *= (target_max - target_min) / (p_high - p_low)  # In-place scaling
+        slice_data += target_min  # In-place addition
 
-    # Convert to uint16
-    return result.astype(cp.uint16)
+        # Convert and store result
+        result[z] = slice_data.astype(cp.uint16)
+
+    return result
 
 @cupy_func
 def stack_percentile_normalize(
-    cls, stack: "cp.ndarray",
+    stack: "cp.ndarray",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -219,7 +224,7 @@ def stack_percentile_normalize(
     if p_high == p_low:
         return cp.ones_like(stack) * target_min
 
-    # Clip and normalize to target range
+    # Clip and normalize to target range (match NumPy implementation exactly)
     clipped = cp.clip(stack, p_low, p_high)
     normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
     normalized = normalized.astype(cp.uint16)
@@ -228,7 +233,7 @@ def stack_percentile_normalize(
 
 @cupy_func
 def create_composite(
-    cls, images: List["cp.ndarray"], weights: Optional[List[float]] = None
+    images: List["cp.ndarray"], weights: Optional[List[float]] = None
 ) -> "cp.ndarray":
     """
     Create a composite image from multiple 3D arrays.
@@ -279,14 +284,15 @@ def create_composite(
     composite = cp.zeros(shape, dtype=cp.float32)
     total_weight = 0.0
 
-    # Add each image with its weight
+    # Add each image with its weight (memory-efficient)
     for i, image in enumerate(images):
         weight = weights[i]
         if weight <= 0.0:
             continue
 
-        # Add to composite
-        composite += image.astype(cp.float32) * weight
+        # Add to composite without creating large temporary arrays
+        # Process in-place to reduce memory usage
+        composite += image * weight  # CuPy handles mixed-type operations efficiently
         total_weight += weight
 
     # Normalize by total weight
@@ -326,12 +332,13 @@ def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
                 f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
             )
 
-        # Apply 2D mask to each Z-slice
+        # Apply 2D mask to each Z-slice (memory-efficient)
         result = cp.zeros_like(image)
         for z in range(image.shape[0]):
-            result[z] = image[z].astype(cp.float32) * mask.astype(cp.float32)
+            # Use in-place operations to reduce memory usage
+            result[z] = image[z] * mask  # CuPy handles mixed-type operations
 
-        return result.astype(image.dtype)
+        return result
 
     # Handle 3D mask
     if isinstance(mask, cp.ndarray) and mask.ndim == 3:
@@ -340,9 +347,8 @@ def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
                 f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
             )
 
-        # Apply 3D mask directly
-        masked = image.astype(cp.float32) * mask.astype(cp.float32)
-        return masked.astype(image.dtype)
+        # Apply 3D mask directly (memory-efficient)
+        return image * mask  # CuPy handles mixed-type operations efficiently
 
     # If we get here, the mask is neither 2D nor 3D CuPy array
     raise TypeError(f"mask must be a 2D or 3D CuPy array, got {type(mask)}")
@@ -401,7 +407,7 @@ def mean_projection(stack: "cp.ndarray") -> "cp.ndarray":
 
 @cupy_func
 def stack_equalize_histogram(
-    cls, stack: "cp.ndarray",
+    stack: "cp.ndarray",
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
@@ -423,11 +429,9 @@ def stack_equalize_histogram(
     """
     _validate_3d_array(stack)
 
-    # Flatten the entire stack to compute the global histogram
-    flat_stack = stack.flatten()
-
-    # Calculate the histogram and cumulative distribution function (CDF)
-    hist = cp.histogram(flat_stack, bins=bins, range=(range_min, range_max))[0]
+    # Memory-efficient histogram equalization without creating large temporary arrays
+    # Calculate histogram directly from the stack without flattening
+    hist = cp.histogram(stack, bins=bins, range=(range_min, range_max))[0]
     cdf = hist.cumsum()
 
     # Normalize the CDF to the range [0, 65535]
@@ -435,26 +439,29 @@ def stack_equalize_histogram(
     if cdf[-1] > 0:
         cdf = 65535 * cdf / cdf[-1]
 
-    # Implement linear interpolation directly in CuPy
-    # Calculate bin indices for each value in flat_stack
+    # Process the stack in-place to avoid creating large temporary arrays
     bin_width = (range_max - range_min) / bins
-    indices = cp.clip(
-        cp.floor((flat_stack - range_min) / bin_width).astype(cp.int32),
-        0, bins - 1
-    )
 
-    # Look up CDF values using the indices
-    equalized_flat = cdf[indices]
+    # Create output array
+    equalized_stack = cp.zeros_like(stack, dtype=cp.uint16)
 
-    # Reshape back to original shape
-    equalized_stack = equalized_flat.reshape(stack.shape)
+    # Process each Z-slice to reduce memory usage
+    for z in range(stack.shape[0]):
+        # Calculate bin indices for this slice only
+        slice_data = stack[z]
+        indices = cp.clip(
+            cp.floor((slice_data - range_min) / bin_width).astype(cp.int32),
+            0, bins - 1
+        )
 
-    # Convert to uint16
-    return equalized_stack.astype(cp.uint16)
+        # Look up CDF values and store directly in output
+        equalized_stack[z] = cdf[indices].astype(cp.uint16)
+
+    return equalized_stack
 
 @cupy_func
 def create_projection(
-    cls, stack: "cp.ndarray", method: str = "max_projection"
+    stack: "cp.ndarray", method: str = "max_projection"
 ) -> "cp.ndarray":
     """
     Create a projection from a stack using the specified method.
@@ -479,7 +486,7 @@ def create_projection(
 
 @cupy_func
 def tophat(
-    cls, image: "cp.ndarray",
+    image: "cp.ndarray",
     selem_radius: int = 50,
     downsample_factor: int = 4
 ) -> "cp.ndarray":

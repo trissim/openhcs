@@ -203,6 +203,78 @@ class FunctionPaneWidget(Container):
         # Update local kwargs and notify parent
         self._handle_parameter_change(param_name, default_value)
 
+        # Refresh the UI widget to show the reset value
+        self._refresh_field_widget(param_name, default_value)
+
+    def _refresh_field_widget(self, param_name: str, value: Any) -> None:
+        """Refresh a specific field widget to show the new value."""
+        try:
+            widget_id = f"func_{self.index}_{param_name}"
+
+            # Try to find the widget
+            try:
+                widget = self.query_one(f"#{widget_id}")
+            except Exception:
+                # Widget not found with exact ID, try searching more broadly
+                widgets = self.query(f"[id$='{param_name}']")  # Find widgets ending with param_name
+                if widgets:
+                    widget = widgets[0]
+                else:
+                    return  # Widget not found
+
+            # Update widget based on type
+            from textual.widgets import Input, Checkbox, RadioSet, Collapsible
+            from .shared.enum_radio_set import EnumRadioSet
+
+            if isinstance(widget, Input):
+                # Input widget (int, float, str) - set value as string
+                display_value = value.value if hasattr(value, 'value') else value
+                widget.value = str(display_value) if display_value is not None else ""
+
+            elif isinstance(widget, Checkbox):
+                # Checkbox widget (bool) - set boolean value
+                widget.value = bool(value)
+
+            elif isinstance(widget, (RadioSet, EnumRadioSet)):
+                # RadioSet/EnumRadioSet widget (Enum, List[Enum]) - find and press the correct radio button
+                # Handle both enum values and string values
+                if hasattr(value, 'value'):
+                    # Enum value - use the .value attribute
+                    target_value = value.value
+                elif isinstance(value, list) and len(value) > 0:
+                    # List[Enum] - get first item's value
+                    first_item = value[0]
+                    target_value = first_item.value if hasattr(first_item, 'value') else str(first_item)
+                else:
+                    # String value or other
+                    target_value = str(value)
+
+                # Find and press the correct radio button
+                target_id = f"enum_{target_value}"
+                for radio in widget.query("RadioButton"):
+                    if radio.id == target_id:
+                        radio.value = True
+                        break
+                    else:
+                        # Unpress other radio buttons
+                        radio.value = False
+
+            elif isinstance(widget, Collapsible):
+                # Collapsible widget (nested dataclass) - cannot be reset directly
+                # The nested parameters are handled by their own reset buttons
+                pass
+
+            elif hasattr(widget, 'value'):
+                # Generic widget with value attribute - fallback
+                display_value = value.value if hasattr(value, 'value') else value
+                widget.value = str(display_value) if display_value is not None else ""
+
+        except Exception as e:
+            # Widget not found or update failed - this is expected for some field types
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Could not refresh widget for field {param_name}: {e}")
+
     def _reset_all_parameters(self) -> None:
         """Reset all parameters to their default values."""
         if not self.form_manager:
@@ -214,6 +286,10 @@ class FunctionPaneWidget(Container):
         # Update internal kwargs and notify parent
         self._internal_kwargs = self.form_manager.get_current_values()
         self.post_message(self.ParameterChanged(self.index, 'all', self._internal_kwargs))
+
+        # Refresh all UI widgets to show the reset values
+        for param_name, default_value in self.param_defaults.items():
+            self._refresh_field_widget(param_name, default_value)
 
     # Custom messages for parent communication
     class ParameterChanged(Message):

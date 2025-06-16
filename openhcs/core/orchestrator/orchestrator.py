@@ -16,7 +16,7 @@ import logging
 import threading
 import concurrent.futures
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Set
+from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS # DEFAULT_NUM_WORKERS removed
 from openhcs.constants import Microscope
@@ -340,10 +340,12 @@ class PipelineOrchestrator:
 
     def execute_compiled_plate(
         self,
-        pipeline_definition: List[AbstractStep], 
+        pipeline_definition: List[AbstractStep],
         compiled_contexts: Dict[str, ProcessingContext],
         max_workers: Optional[int] = None, # Changed from DEFAULT_NUM_WORKERS
-        visualizer: Optional[NapariStreamVisualizer] = None
+        visualizer: Optional[NapariStreamVisualizer] = None,
+        executor_callback: Optional[Callable[[Any], None]] = None,
+        cancellation_flag: Optional[Any] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Execute-all phase: Runs the stateless pipeline against compiled contexts.
@@ -355,6 +357,8 @@ class PipelineOrchestrator:
             max_workers: Maximum number of worker threads for parallel execution.
             visualizer: Optional instance of NapariStreamVisualizer (must be
                         initialized with orchestrator's filemanager by the caller).
+            executor_callback: Optional callback to receive the ThreadPoolExecutor reference
+                              for cancellation purposes. Called with executor when parallel execution starts.
 
         Returns:
             A dictionary mapping well IDs to their execution status (success/error and details).
@@ -384,6 +388,10 @@ class PipelineOrchestrator:
 
         if actual_max_workers > 1 and len(compiled_contexts) > 1:
             with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+                # Provide executor reference to caller for cancellation
+                if executor_callback:
+                    executor_callback(executor)
+
                 future_to_well_id = {
                     executor.submit(self._execute_single_well, pipeline_definition, context, visualizer): well_id
                     for well_id, context in compiled_contexts.items()
@@ -445,7 +453,7 @@ class PipelineOrchestrator:
                     logger.debug(f"🔥 MEMORY BACKEND CLEANUP: Reset memory backend after well {well_id}")
                 except Exception as cleanup_error:
                     logger.warning(f"Failed to reset memory backend after well {well_id}: {cleanup_error}")
-        
+
         logger.info(f"Plate execution finished. Results: {execution_results}")
         return execution_results
 

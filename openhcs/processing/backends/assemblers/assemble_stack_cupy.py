@@ -69,26 +69,23 @@ def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", ble
         mask = cp.ones(tile_shape, dtype=cp.float32)
 
         if blend_radius > 0:
-            # Create coordinate grids
+            # Memory-efficient blend mask creation without large coordinate grids
+            # Create 1D coordinate arrays instead of 2D meshgrids
             y_coords = cp.arange(height, dtype=cp.float32)
             x_coords = cp.arange(width, dtype=cp.float32)
-            yy, xx = cp.meshgrid(y_coords, x_coords, indexing='ij')
 
-            # Distance from each edge
-            dist_from_top = yy
-            dist_from_bottom = height - 1 - yy
-            dist_from_left = xx
-            dist_from_right = width - 1 - xx
+            # Calculate 1D weight arrays for each edge
+            weight_from_top_1d = cp.minimum(y_coords / blend_radius, 1.0)
+            weight_from_bottom_1d = cp.minimum((height - 1 - y_coords) / blend_radius, 1.0)
+            weight_from_left_1d = cp.minimum(x_coords / blend_radius, 1.0)
+            weight_from_right_1d = cp.minimum((width - 1 - x_coords) / blend_radius, 1.0)
 
-            # Create smooth falloff from each edge independently
-            weight_from_top = cp.minimum(dist_from_top / blend_radius, 1.0)
-            weight_from_bottom = cp.minimum(dist_from_bottom / blend_radius, 1.0)
-            weight_from_left = cp.minimum(dist_from_left / blend_radius, 1.0)
-            weight_from_right = cp.minimum(dist_from_right / blend_radius, 1.0)
+            # Combine Y weights (top and bottom)
+            y_weights = cp.minimum(weight_from_top_1d, weight_from_bottom_1d)
+            x_weights = cp.minimum(weight_from_left_1d, weight_from_right_1d)
 
-            # Combine using multiplication for smooth transitions
-            # This creates natural corner rounding instead of rectangular zones
-            mask = weight_from_top * weight_from_bottom * weight_from_left * weight_from_right
+            # Create 2D mask using broadcasting (memory-efficient)
+            mask = y_weights[:, cp.newaxis] * x_weights[cp.newaxis, :]
 
         return mask.astype(cp.float32)
 
@@ -98,22 +95,22 @@ def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", ble
         blend_pixels = int(blend_radius)
 
         if blend_pixels > 0:
-            # Create coordinate grids
+            # Memory-efficient linear edge blending
             y_coords = cp.arange(height, dtype=cp.float32)
             x_coords = cp.arange(width, dtype=cp.float32)
 
-            # Linear weights from edges
+            # Calculate 1D weights from edges
             y_weight_top = cp.minimum(y_coords / blend_pixels, 1.0)
             y_weight_bottom = cp.minimum((height - 1 - y_coords) / blend_pixels, 1.0)
             x_weight_left = cp.minimum(x_coords / blend_pixels, 1.0)
             x_weight_right = cp.minimum((width - 1 - x_coords) / blend_pixels, 1.0)
 
-            # Create 2D weight maps
-            y_weight = cp.minimum(y_weight_top[:, cp.newaxis], y_weight_bottom[:, cp.newaxis])
-            x_weight = cp.minimum(x_weight_left[cp.newaxis, :], x_weight_right[cp.newaxis, :])
+            # Combine weights using minimum (memory-efficient)
+            y_weight = cp.minimum(y_weight_top, y_weight_bottom)
+            x_weight = cp.minimum(x_weight_left, x_weight_right)
 
-            # Combine weights multiplicatively for smoother transitions
-            mask = y_weight * x_weight
+            # Create 2D mask using broadcasting (memory-efficient)
+            mask = y_weight[:, cp.newaxis] * x_weight[cp.newaxis, :]
 
         return mask.astype(cp.float32)
 
@@ -195,8 +192,8 @@ def assemble_stack_cupy(
     num_tiles, tile_h, tile_w = image_tiles.shape
     first_tile_shape = (tile_h, tile_w) # Used for blend mask, assumes all tiles same H, W
 
-    # Convert tiles to float32 for accumulation
-    image_tiles_float = image_tiles.astype(cp.float32)
+    # Note: Convert tiles to float32 one at a time to save memory
+    # (removed bulk conversion to avoid doubling memory usage)
 
     # --- 2. Compute canvas bounds ---
     # positions_xy are for top-left corners.
@@ -240,7 +237,8 @@ def assemble_stack_cupy(
 
     # --- 4. Place tiles with subpixel shifts ---
     for i in range(num_tiles):
-        tile_float = image_tiles_float[i]
+        # Convert tile to float32 one at a time to save memory
+        tile_float = image_tiles[i].astype(cp.float32)
         # Shape validation for individual tiles is implicitly handled by the 3D array input check,
         # assuming all slices (tiles) in the 3D array have consistent H, W.
 

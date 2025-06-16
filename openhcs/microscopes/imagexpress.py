@@ -166,21 +166,9 @@ class ImageXpressHandler(MicroscopeHandler):
 
                 try:
                     # Pass the backend parameter as required by Clause 306 (Backend Positional Parameters)
-                    # Check if destination already exists
-                    if fm.exists(new_path, Backend.DISK.value):
-                        # If it's a symlink, delete it and then move
-                        if fm.is_symlink(new_path, Backend.DISK.value):
-                            logger.debug("Destination is a symlink, removing before move: %s", new_path)
-                            fm.delete(new_path, Backend.DISK.value)
-                            fm.move(img_file, new_path, Backend.DISK.value)
-                            logger.debug("Moved %s to %s", img_file, new_path)
-                        else:
-                            # If it's a regular file, raise an error
-                            raise FileExistsError(f"Destination already exists and is not a symlink: {new_path}")
-                    else:
-                        # Destination doesn't exist, perform normal move
-                        fm.move(img_file, new_path, Backend.DISK.value)
-                        logger.debug("Moved %s to %s", img_file, new_path)
+                    # Use replace_symlinks=True to allow overwriting existing symlinks
+                    fm.move(img_file, new_path, Backend.DISK.value, replace_symlinks=True)
+                    logger.debug("Moved %s to %s", img_file, new_path)
                 except FileExistsError as e:
                     # Propagate FileExistsError with clear message
                     logger.error("Cannot move %s to %s: %s", img_file, new_path, e)
@@ -259,7 +247,8 @@ class ImageXpressHandler(MicroscopeHandler):
 
                     try:
                         # Pass the backend parameter as required by Clause 306
-                        fm.move(img_file, new_path, Backend.DISK.value)
+                        # Use replace_symlinks=True to allow overwriting existing symlinks
+                        fm.move(img_file, new_path, Backend.DISK.value, replace_symlinks=True)
                         logger.debug("Rebuilt filename with complete metadata: %s -> %s", img_file_name, new_name)
                     except FileExistsError as e:
                         logger.error("Cannot rename %s to %s: %s", img_file, new_path, e)

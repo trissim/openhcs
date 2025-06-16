@@ -316,7 +316,7 @@ class MemoryWrapper:
         result_gpu_id = _get_device_id(jax_data, MemoryType.JAX.value)
 
         # Check if this is a GPU array and ensure we have a GPU ID
-        device_str = str(jax_data.device()).lower()
+        device_str = str(jax_data.device).lower()
         is_gpu_array = "gpu" in device_str
 
         if is_gpu_array and result_gpu_id is None:

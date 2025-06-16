@@ -206,7 +206,7 @@ def stack_percentile_normalize(stack: np.ndarray,
 
 @numpy_func
 def create_composite(
-    cls, images: List[np.ndarray], weights: Optional[List[float]] = None
+    images: List[np.ndarray], weights: Optional[List[float]] = None
 ) -> np.ndarray:
     """
     Create a composite image from multiple 3D arrays.
@@ -377,7 +377,7 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
 
 @numpy_func
 def stack_equalize_histogram(
-    cls, stack: np.ndarray,
+    stack: np.ndarray,
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
@@ -442,7 +442,7 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
 
 @numpy_func
 def tophat(
-    cls, image: np.ndarray,
+    image: np.ndarray,
     selem_radius: int = 50,
     downsample_factor: int = 4
 ) -> np.ndarray:

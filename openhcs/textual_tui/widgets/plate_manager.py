@@ -6,7 +6,9 @@ Matches the functionality from the current prompt-toolkit TUI.
 """
 
 import asyncio
+import ctypes
 import logging
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
@@ -83,6 +85,8 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Worker tracking for cancellation support
         self.current_run_worker: Optional[Any] = None
+        self.current_execution_task: Optional[Any] = None  # Store the asyncio task running orchestrator
+        self.current_executor: Optional[Any] = None  # Store the ThreadPoolExecutor for direct shutdown
 
         logger.debug("PlateManagerWidget initialized")
     
@@ -307,33 +311,134 @@ class PlateManagerWidget(ButtonListWidget):
         """Check if any plates are currently running."""
         return any(plate.get('status') == '!' for plate in self.plates)
 
+    def _kill_executor_and_threads(self) -> None:
+        """Kill the ThreadPoolExecutor and all its threads to stop execution immediately."""
+        # Step 1: Find all ThreadPoolExecutor threads BEFORE shutting down executor
+        executor_threads = [t for t in threading.enumerate() if 'ThreadPoolExecutor' in t.name]
+        logger.info(f"🛑 Found {len(executor_threads)} ThreadPoolExecutor threads to kill")
+
+        # Step 2: Shutdown the executor to prevent new threads from spawning
+        if self.current_executor:
+            try:
+                logger.info("🛑 Shutting down ThreadPoolExecutor...")
+                self.current_executor.shutdown(wait=False, cancel_futures=True)
+                logger.info("🛑 ThreadPoolExecutor shutdown complete")
+                self.current_executor = None
+            except Exception as e:
+                logger.warning(f"🛑 Error shutting down executor: {e}")
+
+        # Step 3: Kill all the existing threads
+        for thread in executor_threads:
+            if thread.is_alive():
+                try:
+                    logger.info(f"🛑 Killing thread {thread.name} ({thread.ident})")
+                    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_long(thread.ident),
+                        ctypes.py_object(SystemExit)
+                    )
+                    if res == 1:
+                        logger.info(f"🛑 Thread {thread.name} killed successfully")
+                    else:
+                        logger.warning(f"🛑 Failed to kill thread {thread.name}, result: {res}")
+                except Exception as e:
+                    logger.warning(f"🛑 Error killing thread {thread.name}: {e}")
+
+        logger.info("🛑 Executor and threads termination complete")
+
+    def _kill_executor_and_threads(self) -> None:
+        """Kill the ThreadPoolExecutor and all its threads to stop execution immediately."""
+        # Step 1: Find all ThreadPoolExecutor threads BEFORE shutting down executor
+        executor_threads = [t for t in threading.enumerate() if 'ThreadPoolExecutor' in t.name]
+        logger.info(f"🛑 Found {len(executor_threads)} ThreadPoolExecutor threads to kill")
+
+        # Step 2: Shutdown the executor to prevent new threads from spawning
+        if self.current_executor:
+            try:
+                logger.info("🛑 Shutting down ThreadPoolExecutor...")
+                self.current_executor.shutdown(wait=False, cancel_futures=True)
+                logger.info("🛑 ThreadPoolExecutor shutdown complete")
+                self.current_executor = None
+            except Exception as e:
+                logger.warning(f"🛑 Error shutting down executor: {e}")
+
+        # Step 3: Kill all the existing threads
+        for thread in executor_threads:
+            if thread.is_alive():
+                try:
+                    logger.info(f"🛑 Killing thread {thread.name} ({thread.ident})")
+                    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_long(thread.ident),
+                        ctypes.py_object(SystemExit)
+                    )
+                    if res == 1:
+                        logger.info(f"🛑 Thread {thread.name} killed successfully")
+                    else:
+                        logger.warning(f"🛑 Failed to kill thread {thread.name}, result: {res}")
+                except Exception as e:
+                    logger.warning(f"🛑 Error killing thread {thread.name}: {e}")
+
+        logger.info("🛑 Executor and threads termination complete")
+
+
+
+
+
+
+
     def action_stop_execution(self) -> None:
-        """Handle Stop button - cancel running execution."""
+        """Handle Stop button - aggressively cancel execution and cleanup."""
         logger.info("🛑 STOP BUTTON PRESSED")
 
+        # 1. Cancel the worker
         if self.current_run_worker and not self.current_run_worker.is_finished:
-            # Cancel the running worker
             self.current_run_worker.cancel()
-            logger.info("🛑 Cancelled running worker")
-
-            # Update status of running plates to indicate cancellation
-            current_plates = list(self.plates)
-            cancelled_count = 0
-            for plate in current_plates:
-                if plate.get('status') == '!':  # Running
-                    plate['status'] = 'F'  # Mark as failed (cancelled)
-                    cancelled_count += 1
-
-            if cancelled_count > 0:
-                self.plates = current_plates
-                self.app.current_status = f"Cancelled execution of {cancelled_count} running plates"
-            else:
-                self.app.current_status = "No running plates to cancel"
+            logger.info("🛑 Sent cancellation signal to worker")
+            self.app.current_status = "Cancelling execution..."
         else:
             self.app.current_status = "No active execution to cancel"
 
-        # Clear the worker reference
-        self.current_run_worker = None
+        # 2. Kill executor AND all its threads
+        self._kill_executor_and_threads()
+
+        # 4. Cancel the orchestrator execution task
+        if self.current_execution_task and not self.current_execution_task.done():
+            logger.info("🛑 Cancelling orchestrator execution task...")
+            self.current_execution_task.cancel()
+            self.current_execution_task = None
+
+        # 5. Skip cleanup for now to test if that's causing the freeze
+        logger.info("🛑 Skipping cleanup to test freeze issue")
+
+        # Worker's finally block will still handle UI state cleanup
+
+    @work(exclusive=False)
+    async def _run_emergency_cleanup(self) -> None:
+        """Run emergency cleanup asynchronously to avoid blocking UI."""
+        try:
+            logger.info("🛑 Running emergency cleanup in background...")
+
+            # Run cleanup in executor to avoid blocking UI
+            await asyncio.get_event_loop().run_in_executor(None, self._do_emergency_cleanup)
+
+            logger.info("🛑 Emergency cleanup completed")
+        except Exception as e:
+            logger.warning(f"🛑 Error during emergency cleanup: {e}")
+
+    def _do_emergency_cleanup(self) -> None:
+        """Synchronous cleanup operations."""
+        try:
+            from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+            cleanup_all_gpu_frameworks()
+            logger.info("🛑 GPU cleanup completed")
+        except Exception as e:
+            logger.warning(f"🛑 Error during GPU cleanup: {e}")
+
+        try:
+            from openhcs.io.base import reset_memory_backend
+            reset_memory_backend()
+            logger.info("🛑 Memory backend reset completed")
+        except Exception as e:
+            logger.warning(f"🛑 Error during memory backend reset: {e}")
 
     def action_add_plate(self) -> None:
         """Handle Add Plate button."""
@@ -929,7 +1034,7 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
                 logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
 
-                # Run it
+                # Run it - async workers run on main thread, can call UI directly
                 actual_plate['status'] = '!'  # Running
                 self.mutate_reactive(PlateManagerWidget.plates)
                 # Update button states to show Stop button
@@ -943,9 +1048,20 @@ class PlateManagerWidget(ButtonListWidget):
                         break
 
                     # Execute like test_main.py (async - run in executor to avoid blocking UI)
-                    results = await asyncio.get_event_loop().run_in_executor(
-                        None, orchestrator.execute_compiled_plate, execution_pipeline, compiled_contexts
-                    )
+                    # Set up executor callback to capture ThreadPoolExecutor reference
+                    def store_executor(executor):
+                        self.current_executor = executor
+                        logger.info(f"🔗 Captured ThreadPoolExecutor reference: {executor}")
+
+                    def orchestrator_wrapper():
+                        return orchestrator.execute_compiled_plate(
+                            execution_pipeline,
+                            compiled_contexts,
+                            executor_callback=store_executor
+                        )
+
+                    self.current_execution_task = asyncio.get_event_loop().run_in_executor(None, orchestrator_wrapper)
+                    results = await self.current_execution_task
 
                     # Check for cancellation after execution
                     if worker.is_cancelled:
@@ -954,16 +1070,29 @@ class PlateManagerWidget(ButtonListWidget):
                         break
 
                     # Update status based on results
-                    if results and all(r.get('status') != 'error' for r in results.values()):
-                        actual_plate['status'] = 'C'  # Success
+                    if results:
+                        # Check for cancellation
+                        cancelled_wells = [r for r in results.values() if r.get('status') == 'cancelled']
+                        error_wells = [r for r in results.values() if r.get('status') == 'error']
+
+                        if cancelled_wells:
+                            actual_plate['status'] = 'F'  # Cancelled (treated as failed)
+                            logger.info(f"Plate {plate_path} cancelled with {len(cancelled_wells)} cancelled wells")
+                        elif error_wells:
+                            actual_plate['status'] = 'F'  # Failed
+                            logger.info(f"Plate {plate_path} failed with {len(error_wells)} error wells")
+                        else:
+                            actual_plate['status'] = 'C'  # Success
+                            logger.info(f"Plate {plate_path} completed successfully")
                     else:
-                        actual_plate['status'] = 'F'  # Failed
+                        actual_plate['status'] = 'F'  # Failed (no results)
 
                 except asyncio.CancelledError:
                     logger.info("🛑 Execution cancelled via CancelledError")
                     actual_plate['status'] = 'F'  # Cancelled
                     break
-                except Exception:
+                except Exception as e:
+                    logger.error(f"🔥 Execution failed for plate {plate_path}: {e}", exc_info=True)
                     actual_plate['status'] = 'F'  # Failed
 
                 finally:
@@ -981,20 +1110,45 @@ class PlateManagerWidget(ButtonListWidget):
                     reset_memory_backend()
                     logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
 
+                    # Async workers run on main thread, can call UI directly
                     self.mutate_reactive(PlateManagerWidget.plates)
 
         except asyncio.CancelledError:
             logger.info("🛑 Worker cancelled at top level")
-            # Update any running plates to cancelled state
-            current_plates = list(self.plates)
-            for plate in current_plates:
-                if plate.get('status') == '!':  # Running
-                    plate['status'] = 'F'  # Mark as cancelled
-            self.plates = current_plates
+            # Don't update plate statuses here - finally block handles all cleanup
             raise  # Re-raise to properly handle cancellation
 
         finally:
-            # Clear the worker reference and update button states
+            # SINGLE SOURCE OF TRUTH: Worker owns all cleanup
+            # Async workers run on main thread, can call UI directly
+            logger.info("🔥 Worker cleanup: Starting comprehensive cleanup")
+
+            # 1. Update any remaining running plates to cancelled state
+            current_plates = list(self.plates)
+            cancelled_count = 0
+            for plate in current_plates:
+                if plate.get('status') == '!':  # Running
+                    plate['status'] = 'F'  # Mark as cancelled
+                    cancelled_count += 1
+
+            if cancelled_count > 0:
+                self.plates = current_plates
+                logger.info(f"🔥 Worker cleanup: Marked {cancelled_count} plates as cancelled")
+
+            # 2. Clear the worker, task, and executor references
             self.current_run_worker = None
+            self.current_execution_task = None
+            self.current_executor = None
+            logger.info("🔥 Worker cleanup: Cleared worker, task, and executor references")
+
+            # 3. Update button states to restore UI
             self._update_button_states()
-            logger.info("🔥 Worker finished, button states updated")
+            logger.info("🔥 Worker cleanup: Updated button states")
+
+            # 4. Update app status
+            if cancelled_count > 0:
+                self.app.current_status = f"Cancelled execution of {cancelled_count} plates"
+            else:
+                self.app.current_status = "Execution completed"
+
+            logger.info("🔥 Worker cleanup: Complete")

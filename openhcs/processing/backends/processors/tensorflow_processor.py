@@ -159,7 +159,7 @@ def _gaussian_blur(image: "tf.Tensor", sigma: float) -> "tf.Tensor":
 
 @tensorflow_func
 def sharpen(
-    cls, image: "tf.Tensor", radius: float = 1.0, amount: float = 1.0
+    image: "tf.Tensor", radius: float = 1.0, amount: float = 1.0
 ) -> "tf.Tensor":
     """
     Sharpen a 3D image using unsharp masking.
@@ -216,7 +216,7 @@ def sharpen(
 
 @tensorflow_func
 def percentile_normalize(
-    cls, image: "tf.Tensor",
+    image: "tf.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -278,7 +278,7 @@ def percentile_normalize(
 
 @tensorflow_func
 def stack_percentile_normalize(
-    cls, stack: "tf.Tensor",
+    stack: "tf.Tensor",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -302,34 +302,41 @@ def stack_percentile_normalize(
     """
     _validate_3d_array(stack)
 
-    # Calculate global percentiles across the entire stack
-    flat_stack = tf.reshape(stack, [-1])
-    sorted_stack = tf.sort(flat_stack)
+    # Calculate global percentiles across the entire stack using TensorFlow Probability
+    # This is memory-efficient and doesn't require sorting the entire array
+    try:
+        import tensorflow_probability as tfp
+        p_low = tf.cast(tfp.stats.percentile(stack, low_percentile), tf.float32)
+        p_high = tf.cast(tfp.stats.percentile(stack, high_percentile), tf.float32)
+    except ImportError:
+        # Fallback to manual calculation if TensorFlow Probability is not available
+        # This is less memory-efficient but works
+        flat_stack = tf.reshape(stack, [-1])
+        sorted_stack = tf.sort(flat_stack)
 
-    # Calculate indices for percentiles
-    stack_size = tf.cast(tf.size(flat_stack), tf.float32)
-    low_idx = tf.cast(tf.math.floor(stack_size * low_percentile / 100.0), tf.int32)
-    high_idx = tf.cast(tf.math.floor(stack_size * high_percentile / 100.0), tf.int32)
+        # Calculate indices for percentiles
+        stack_size = tf.cast(tf.size(flat_stack), tf.float32)
+        low_idx = tf.cast(tf.math.floor(stack_size * low_percentile / 100.0), tf.int32)
+        high_idx = tf.cast(tf.math.floor(stack_size * high_percentile / 100.0), tf.int32)
 
-    # Get percentile values
-    p_low = sorted_stack[low_idx]
-    p_high = sorted_stack[high_idx]
+        # Get percentile values and cast to float32 for consistency
+        p_low = tf.cast(sorted_stack[low_idx], tf.float32)
+        p_high = tf.cast(sorted_stack[high_idx], tf.float32)
 
     # Avoid division by zero
     if p_high == p_low:
-        return tf.ones_like(stack, dtype=tf.float32) * target_min
+        return tf.ones_like(stack) * target_min
 
-    # Clip and normalize to target range
-    clipped = tf.clip_by_value(tf.cast(stack, tf.float32), p_low, p_high)
-    scale = (target_max - target_min) / (p_high - p_low)
-    normalized = (clipped - p_low) * scale + target_min
-    normalized = tf.cast(tf.clip_by_value(normalized, 0, 65535), tf.uint16)
+    # Clip and normalize to target range (match NumPy implementation exactly)
+    clipped = tf.clip_by_value(stack, p_low, p_high)
+    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = tf.cast(normalized, tf.uint16)
 
     return normalized
 
 @tensorflow_func
 def create_composite(
-    cls, images: List["tf.Tensor"], weights: Optional[List[float]] = None
+    images: List["tf.Tensor"], weights: Optional[List[float]] = None
 ) -> "tf.Tensor":
     """
     Create a composite image from multiple 3D arrays.
@@ -450,7 +457,7 @@ def apply_mask(image: "tf.Tensor", mask: "tf.Tensor") -> "tf.Tensor":
 
 @tensorflow_func
 def create_weight_mask(
-    cls, shape: Tuple[int, int], margin_ratio: float = 0.1
+    shape: Tuple[int, int], margin_ratio: float = 0.1
 ) -> "tf.Tensor":
     """
     Create a weight mask for blending images.
@@ -502,7 +509,7 @@ def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
 
 @tensorflow_func
 def stack_equalize_histogram(
-    cls, stack: "tf.Tensor",
+    stack: "tf.Tensor",
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
@@ -566,7 +573,7 @@ def stack_equalize_histogram(
 
 @tensorflow_func
 def create_projection(
-    cls, stack: "tf.Tensor", method: str = "max_projection"
+    stack: "tf.Tensor", method: str = "max_projection"
 ) -> "tf.Tensor":
     """
     Create a projection from a stack using the specified method.
@@ -592,7 +599,7 @@ def create_projection(
 
 @tensorflow_func
 def tophat(
-    cls, image: "tf.Tensor",
+    image: "tf.Tensor",
     selem_radius: int = 50,
     downsample_factor: int = 4
 ) -> "tf.Tensor":

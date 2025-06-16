@@ -205,7 +205,8 @@ class MicroscopeHandler(ABC):
                 # Rename the file using move operation
                 # Clause 245: Workspace operations are disk-only by design
                 # This call is structurally hardcoded to use the "disk" backend
-                filemanager.move(original_path, new_path, Backend.DISK.value)
+                # Use replace_symlinks=True to allow overwriting existing symlinks
+                filemanager.move(original_path, new_path, Backend.DISK.value, replace_symlinks=True)
                 logger.debug("Renamed %s to %s", original_path, new_path)
             except (OSError, FileNotFoundError) as e:
                 logger.error("Filesystem error renaming %s to %s: %s", original_path, new_path, e)

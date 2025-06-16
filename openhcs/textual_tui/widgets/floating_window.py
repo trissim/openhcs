@@ -76,6 +76,10 @@ class BaseFloatingWindow(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses with automatic dialog dismissal."""
+        # Ignore form reset buttons - only handle dialog's main buttons
+        if event.button.id.startswith("reset_"):
+            return  # Let the form handle reset buttons
+
         result = self.handle_button_action(event.button.id, event.button.label)
 
         # Auto-dismiss unless explicitly prevented

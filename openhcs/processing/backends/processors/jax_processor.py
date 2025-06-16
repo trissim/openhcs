@@ -156,8 +156,7 @@ def _gaussian_blur(image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
     return result[0, :, :, 0]
 
 @jax_func
-def sharpen(
-    cls, image: "jnp.ndarray", radius: float = 1.0, amount: float = 1.0
+def sharpen(image: "jnp.ndarray", radius: float = 1.0, amount: float = 1.0
 ) -> "jnp.ndarray":
     """
     Sharpen a 3D image using unsharp masking.
@@ -214,7 +213,7 @@ def sharpen(
 
 @jax_func
 def percentile_normalize(
-    cls, image: "jnp.ndarray",
+    image: "jnp.ndarray",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -289,7 +288,7 @@ def percentile_normalize(
 
 @jax_func
 def stack_percentile_normalize(
-    cls, stack: "jnp.ndarray",
+    stack: "jnp.ndarray",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
     target_min: float = 0.0,
@@ -318,38 +317,19 @@ def stack_percentile_normalize(
     p_high = jnp.percentile(stack, high_percentile)
 
     # Avoid division by zero
-    equal_percentiles = jnp.isclose(p_high, p_low)
+    if p_high == p_low:
+        return jnp.ones_like(stack) * target_min
 
-    # Function to normalize when percentiles are different
-    def normalize_stack_fn(args):
-        p_low, p_high, stack_data = args
-        # Clip and normalize to target range
-        clipped = jnp.clip(stack_data.astype(jnp.float32), p_low, p_high)
-        scale = (target_max - target_min) / (p_high - p_low)
-        normalized = (clipped - p_low) * scale + target_min
-        return normalized
-
-    # Function for the case where percentiles are equal
-    def return_constant_stack(args):
-        _, _, stack_data = args
-        return jnp.ones_like(stack_data, dtype=jnp.float32) * target_min
-
-    # Handle the case where percentiles are equal
-    normalized = jax.lax.cond(
-        equal_percentiles,
-        return_constant_stack,
-        normalize_stack_fn,
-        (p_low, p_high, stack)
-    )
-
-    # Convert to uint16
-    normalized = jnp.clip(normalized, 0, 65535).astype(jnp.uint16)
+    # Clip and normalize to target range (match NumPy implementation exactly)
+    clipped = jnp.clip(stack, p_low, p_high)
+    normalized = (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
+    normalized = normalized.astype(jnp.uint16)
 
     return normalized
 
 @jax_func
 def create_composite(
-    cls, images: List["jnp.ndarray"], weights: Optional[List[float]] = None
+    images: List["jnp.ndarray"], weights: Optional[List[float]] = None
 ) -> "jnp.ndarray":
     """
     Create a composite image from multiple 3D arrays.
@@ -470,7 +450,7 @@ def apply_mask(image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":
 
 @jax_func
 def create_weight_mask(
-    cls, shape: Tuple[int, int], margin_ratio: float = 0.1
+    shape: Tuple[int, int], margin_ratio: float = 0.1
 ) -> "jnp.ndarray":
     """
     Create a weight mask for blending images.
@@ -522,7 +502,7 @@ def mean_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
 
 @jax_func
 def stack_equalize_histogram(
-    cls, stack: "jnp.ndarray",
+    stack: "jnp.ndarray",
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
@@ -581,7 +561,7 @@ def stack_equalize_histogram(
 
 @jax_func
 def create_projection(
-    cls, stack: "jnp.ndarray", method: str = "max_projection"
+    stack: "jnp.ndarray", method: str = "max_projection"
 ) -> "jnp.ndarray":
     """
     Create a projection from a stack using the specified method.
@@ -607,7 +587,7 @@ def create_projection(
 
 @jax_func
 def tophat(
-    cls, image: "jnp.ndarray",
+    image: "jnp.ndarray",
     selem_radius: int = 50,
     downsample_factor: int = 4
 ) -> "jnp.ndarray":

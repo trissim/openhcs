@@ -296,7 +296,7 @@ def _cupy_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Option
                 current_device = None
                 try:
                     # Extract device ID from JAX array
-                    device_str = str(result.device())
+                    device_str = str(result.device)
                     if "gpu:" in device_str:
                         current_device = int(device_str.split("gpu:")[-1].split(")")[0])
                 except Exception:
@@ -561,13 +561,23 @@ def _torch_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optio
         ImportError: If JAX is not installed
     """
     jax = _ensure_module("jax")
+    torch = _ensure_module("torch")
 
-    # Only attempt direct conversion if tensor is on CUDA
+    # If tensor is on CPU, move it to GPU first (similar to _numpy_to_jax behavior)
+    if not data.is_cuda:
+        if device_id is not None:
+            # Move CPU tensor to specified GPU device
+            data = data.to(f"cuda:{device_id}")
+        else:
+            # Move to default GPU device
+            data = data.cuda()
+
+    # Now attempt direct conversion with tensor on CUDA
     if data.is_cuda:
         # Try using DLPack for direct GPU-to-GPU transfer
         if _supports_dlpack(data):
             try:
-                dlpack = data.to_dlpack()
+                dlpack = torch.to_dlpack(data)
                 result = jax.dlpack.from_dlpack(dlpack)
 
                 # Move to specified device if needed
@@ -575,8 +585,8 @@ def _torch_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optio
                     current_device = None
                     try:
                         # Extract device ID from JAX array
-                        device_str = str(result.device())
-                        if "gpu:" in device_str:
+                        device_str = str(result.device)
+                        if "gpu:" in device_str or "cuda:" in device_str:
                             current_device = int(device_str.split("gpu:")[-1].split(")")[0])
                     except Exception:
                         pass
@@ -595,13 +605,12 @@ def _torch_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optio
                     reason=str(e)
                 ) from e
 
-    # If we get here, either the tensor is not on CUDA or there was a DLPack issue
-    # No CPU roundtrip allowed, so fail loudly
+    # If we get here, there was a DLPack issue (tensor should be on CUDA at this point)
     raise MemoryConversionError(
         source_type=MemoryType.TORCH.value,
         target_type=MemoryType.JAX.value,
         method="GPU-native",
-        reason="PyTorch tensor is not on CUDA"
+        reason="DLPack conversion failed after moving tensor to CUDA"
     )
 
 
@@ -674,7 +683,8 @@ def _jax_to_cupy(
     cupy = _ensure_module("cupy")
 
     # Check if JAX array is on GPU
-    is_on_gpu = str(data.device()).startswith("gpu")
+    device_str = str(data.device).lower()
+    is_on_gpu = device_str.startswith("gpu") or device_str.startswith("cuda")
 
     if is_on_gpu:
         # Try using DLPack for direct GPU-to-GPU transfer
@@ -737,7 +747,8 @@ def _jax_to_torch(
     torch = _ensure_module("torch")
 
     # Check if JAX array is on GPU
-    is_on_gpu = str(data.device()).startswith("gpu")
+    device_str = str(data.device).lower()
+    is_on_gpu = device_str.startswith("gpu") or device_str.startswith("cuda")
 
     if is_on_gpu:
         # Try using DLPack for direct GPU-to-GPU transfer
@@ -798,7 +809,8 @@ def _jax_to_tensorflow(
     tf = _ensure_module("tensorflow")
 
     # Check if JAX array is on GPU
-    is_on_gpu = str(data.device()).startswith("gpu")
+    device_str = str(data.device).lower()
+    is_on_gpu = device_str.startswith("gpu") or device_str.startswith("cuda")
 
     if is_on_gpu:
         # Try using DLPack for direct GPU-to-GPU transfer
@@ -1035,7 +1047,7 @@ def _tensorflow_to_jax(
                 current_device = None
                 try:
                     # Extract device ID from JAX array
-                    device_str = str(result.device())
+                    device_str = str(result.device)
                     if "gpu:" in device_str:
                         current_device = int(device_str.rsplit('gpu:', maxsplit=1)[-1].split(")")[0])
                 except (ValueError, IndexError):
