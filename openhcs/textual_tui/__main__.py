@@ -78,18 +78,19 @@ async def main():
     logger = _setup_logging(args.debug)
     
     try:
-        # Load global configuration
-        global_config = get_default_global_config()
+        # Load global configuration with cache support
+        from openhcs.textual_tui.services.global_config_cache import load_cached_global_config
+        global_config = await load_cached_global_config()
         logger.info("Global configuration loaded")
-        
+
         # Setup GPU registry
         setup_global_gpu_registry(global_config=global_config)
         logger.info("GPU registry setup completed")
-        
+
         # Create and run the Textual app
         app = OpenHCSTUIApp(global_config=global_config)
         logger.info("Starting OpenHCS Textual TUI application...")
-        
+
         await app.run_async()
         
     except KeyboardInterrupt:

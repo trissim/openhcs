@@ -20,9 +20,9 @@ class FunctionPaneWidget(Container):
     """
 
     # Reactive properties for automatic UI updates
-    function_callable = reactive(None)
-    kwargs = reactive(dict)
-    show_parameters = reactive(True)
+    function_callable = reactive(None, recompose=False)
+    kwargs = reactive(dict, recompose=False)  # Prevent recomposition during parameter changes
+    show_parameters = reactive(True, recompose=False)
 
     def __init__(self, func_item: Tuple[Callable, dict], index: int):
         super().__init__()

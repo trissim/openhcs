@@ -14,7 +14,7 @@ from .shared.signature_analyzer import SignatureAnalyzer
 class ConfigFormWidget(ScrollableContainer):
     """Reactive form widget for config editing."""
     
-    field_values = reactive(dict)  # Automatic UI updates
+    field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
     
     def __init__(self, field_specs: List[FieldSpec], **kwargs):
         super().__init__(**kwargs)

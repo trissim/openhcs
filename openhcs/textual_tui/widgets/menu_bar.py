@@ -76,6 +76,9 @@ class MenuBar(Widget):
                 # Propagate config changes to all existing orchestrators
                 self._propagate_global_config_to_orchestrators(result)
 
+                # Save config to cache for future sessions
+                self._save_config_to_cache(result)
+
                 logger.info("Configuration updated and applied to all plates")
             else:
                 logger.info("Configuration cancelled")
@@ -119,6 +122,23 @@ class MenuBar(Widget):
             logger.error(f"Failed to propagate global config to orchestrators: {e}")
             # Don't fail the config update if propagation fails
             pass
+
+    def _save_config_to_cache(self, config: GlobalPipelineConfig) -> None:
+        """Save config to cache asynchronously."""
+        async def _async_save():
+            from openhcs.textual_tui.services.global_config_cache import save_global_config_to_cache
+            try:
+                success = await save_global_config_to_cache(config)
+                if success:
+                    logger.info("Global config saved to cache for future sessions")
+                else:
+                    logger.warning("Failed to save global config to cache")
+            except Exception as e:
+                logger.error(f"Error saving global config to cache: {e}")
+
+        # Schedule the async save operation
+        import asyncio
+        asyncio.create_task(_async_save())
     
     def action_show_help(self) -> None:
         """Show help dialog."""
