@@ -484,12 +484,13 @@ def max_projection(stack: "tf.Tensor") -> "tf.Tensor":
         stack: 3D TensorFlow tensor of shape (Z, Y, X)
 
     Returns:
-        2D TensorFlow tensor of shape (Y, X)
+        3D TensorFlow tensor of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
     # Create max projection
-    return tf.reduce_max(stack, axis=0)
+    projection_2d = tf.reduce_max(stack, axis=0)
+    return tf.expand_dims(projection_2d, axis=0)
 
 @tensorflow_func
 def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
@@ -500,12 +501,13 @@ def mean_projection(stack: "tf.Tensor") -> "tf.Tensor":
         stack: 3D TensorFlow tensor of shape (Z, Y, X)
 
     Returns:
-        2D TensorFlow tensor of shape (Y, X)
+        3D TensorFlow tensor of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
     # Create mean projection
-    return tf.cast(tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype)
+    projection_2d = tf.cast(tf.reduce_mean(tf.cast(stack, tf.float32), axis=0), stack.dtype)
+    return tf.expand_dims(projection_2d, axis=0)
 
 @tensorflow_func
 def stack_equalize_histogram(
@@ -583,7 +585,7 @@ def create_projection(
         method: Projection method (max_projection, mean_projection)
 
     Returns:
-        2D TensorFlow tensor of shape (Y, X)
+        3D TensorFlow tensor of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
@@ -593,9 +595,8 @@ def create_projection(
     if method == "mean_projection":
         return mean_projection(stack)
 
-    # Default case for unknown methods
-    logger.warning("Unknown projection method: %s, using max_projection", method)
-    return max_projection(stack)
+    # FAIL FAST: No fallback projection methods
+    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
 @tensorflow_func
 def tophat(

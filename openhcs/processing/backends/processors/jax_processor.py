@@ -129,7 +129,7 @@ def _gaussian_blur(image: "jnp.ndarray", sigma: float) -> "jnp.ndarray":
     kernel_size = max(3, int(2 * 4 * sigma + 1))
 
     # Create Gaussian kernel
-    kernel = cls._gaussian_kernel(sigma, kernel_size)
+    kernel = _gaussian_kernel(sigma, kernel_size)
 
     # Pad the image for convolution
     pad_size = kernel_size // 2
@@ -477,12 +477,13 @@ def max_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
         stack: 3D JAX array of shape (Z, Y, X)
 
     Returns:
-        2D JAX array of shape (Y, X)
+        3D JAX array of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
     # Create max projection
-    return jnp.max(stack, axis=0)
+    projection_2d = jnp.max(stack, axis=0)
+    return jnp.expand_dims(projection_2d, axis=0)
 
 @jax_func
 def mean_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
@@ -493,12 +494,13 @@ def mean_projection(stack: "jnp.ndarray") -> "jnp.ndarray":
         stack: 3D JAX array of shape (Z, Y, X)
 
     Returns:
-        2D JAX array of shape (Y, X)
+        3D JAX array of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
     # Create mean projection
-    return jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
+    projection_2d = jnp.mean(stack.astype(jnp.float32), axis=0).astype(stack.dtype)
+    return jnp.expand_dims(projection_2d, axis=0)
 
 @jax_func
 def stack_equalize_histogram(
@@ -571,7 +573,7 @@ def create_projection(
         method: Projection method (max_projection, mean_projection)
 
     Returns:
-        2D JAX array of shape (Y, X)
+        3D JAX array of shape (1, Y, X)
     """
     _validate_3d_array(stack)
 
@@ -581,9 +583,8 @@ def create_projection(
     if method == "mean_projection":
         return mean_projection(stack)
 
-    # Default case for unknown methods
-    logger.warning("Unknown projection method: %s, using max_projection", method)
-    return max_projection(stack)
+    # FAIL FAST: No fallback projection methods
+    raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
 @jax_func
 def tophat(
