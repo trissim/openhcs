@@ -11,11 +11,12 @@ from typing import Any
 from openhcs.constants.constants import MemoryType
 
 from .conversion_functions import (_cupy_to_jax, _cupy_to_numpy,
-                                   _cupy_to_tensorflow, _cupy_to_torch,
+                                   _cupy_to_pyclesperanto, _cupy_to_tensorflow, _cupy_to_torch,
                                    _jax_to_cupy, _jax_to_numpy,
                                    _jax_to_tensorflow, _jax_to_torch,
                                    _numpy_to_cupy, _numpy_to_jax,
-                                   _numpy_to_tensorflow, _numpy_to_torch,
+                                   _numpy_to_pyclesperanto, _numpy_to_tensorflow, _numpy_to_torch,
+                                   _pyclesperanto_to_cupy, _pyclesperanto_to_numpy, _pyclesperanto_to_pyclesperanto,
                                    _tensorflow_to_cupy, _tensorflow_to_jax,
                                    _tensorflow_to_numpy, _tensorflow_to_torch,
                                    _torch_to_cupy, _torch_to_jax,
@@ -94,6 +95,8 @@ def convert_memory(
             return _numpy_to_tensorflow(data, gpu_id)
         elif target_type == MemoryType.JAX.value:
             return _numpy_to_jax(data, gpu_id)
+        elif target_type == MemoryType.PYCLESPERANTO.value:
+            return _numpy_to_pyclesperanto(data, gpu_id)
 
     # CuPy to X conversions
     elif source_type == MemoryType.CUPY.value:
@@ -105,6 +108,8 @@ def convert_memory(
             return _cupy_to_tensorflow(data, allow_cpu_roundtrip, gpu_id)
         elif target_type == MemoryType.JAX.value:
             return _cupy_to_jax(data, allow_cpu_roundtrip, gpu_id)
+        elif target_type == MemoryType.PYCLESPERANTO.value:
+            return _cupy_to_pyclesperanto(data, allow_cpu_roundtrip, gpu_id)
 
     # PyTorch to X conversions
     elif source_type == MemoryType.TORCH.value:
@@ -138,6 +143,15 @@ def convert_memory(
             return _jax_to_torch(data, allow_cpu_roundtrip, gpu_id)
         elif target_type == MemoryType.TENSORFLOW.value:
             return _jax_to_tensorflow(data, allow_cpu_roundtrip, gpu_id)
+
+    # pyclesperanto to X conversions
+    elif source_type == MemoryType.PYCLESPERANTO.value:
+        if target_type == MemoryType.NUMPY.value:
+            return _pyclesperanto_to_numpy(data)
+        elif target_type == MemoryType.CUPY.value:
+            return _pyclesperanto_to_cupy(data, allow_cpu_roundtrip, gpu_id)
+        elif target_type == MemoryType.PYCLESPERANTO.value:
+            return _pyclesperanto_to_pyclesperanto(data)
 
     # If we get here, the conversion is not supported
     raise ValueError(

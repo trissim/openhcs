@@ -81,13 +81,15 @@ class MemoryType(Enum):
     TORCH = "torch"
     TENSORFLOW = "tensorflow"
     JAX = "jax"
+    PYCLESPERANTO = "pyclesperanto"
 
 CPU_MEMORY_TYPES: Set[MemoryType] = {MemoryType.NUMPY}
 GPU_MEMORY_TYPES: Set[MemoryType] = {
     MemoryType.CUPY,
     MemoryType.TORCH,
     MemoryType.TENSORFLOW,
-    MemoryType.JAX
+    MemoryType.JAX,
+    MemoryType.PYCLESPERANTO
 }
 SUPPORTED_MEMORY_TYPES: Set[MemoryType] = CPU_MEMORY_TYPES | GPU_MEMORY_TYPES
 
@@ -100,6 +102,7 @@ MEMORY_TYPE_CUPY = MemoryType.CUPY.value
 MEMORY_TYPE_TORCH = MemoryType.TORCH.value
 MEMORY_TYPE_TENSORFLOW = MemoryType.TENSORFLOW.value
 MEMORY_TYPE_JAX = MemoryType.JAX.value
+MEMORY_TYPE_PYCLESPERANTO = MemoryType.PYCLESPERANTO.value
 
 DEFAULT_NUM_WORKERS = 1
 # Consolidated definition for number of workers

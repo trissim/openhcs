@@ -74,6 +74,37 @@ def _numpy_to_torch(data: Any, gpu_id: int) -> Any:
     return torch.tensor(data, device=f"cuda:{gpu_id}")
 
 
+def _numpy_to_pyclesperanto(data: Any, gpu_id: int) -> Any:
+    """
+    Convert numpy array to pyclesperanto array.
+
+    Args:
+        data: The numpy array to convert
+        gpu_id: The target GPU device ID
+
+    Returns:
+        The converted pyclesperanto array
+
+    Raises:
+        ImportError: If pyclesperanto is not installed
+        ValueError: If gpu_id is negative
+    """
+    cle = _ensure_module("pyclesperanto")
+
+    # Validate gpu_id
+    if gpu_id < 0:
+        raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
+
+    # Select the appropriate device
+    devices = cle.list_available_devices()
+    if gpu_id >= len(devices):
+        raise ValueError(f"GPU ID {gpu_id} not available. Available devices: {len(devices)}")
+
+    # Select device and push data
+    cle.select_device(gpu_id)
+    return cle.push(data)
+
+
 def _numpy_to_tensorflow(data: Any, gpu_id: int) -> Any:
     """
     Convert numpy array to tensorflow tensor.
@@ -100,6 +131,31 @@ def _numpy_to_tensorflow(data: Any, gpu_id: int) -> Any:
     # Always use the specified GPU device
     with tf.device(f"/device:GPU:{gpu_id}"):
         return tf.convert_to_tensor(data)
+
+
+# pyclesperanto conversion functions
+
+def _pyclesperanto_to_numpy(data: Any) -> Any:
+    """
+    Convert pyclesperanto array to numpy array.
+
+    Args:
+        data: The pyclesperanto array to convert
+
+    Returns:
+        The converted numpy array
+    """
+    cle = _ensure_module("pyclesperanto")
+    return cle.pull(data)
+
+
+def _pyclesperanto_to_pyclesperanto(data: Any) -> Any:
+    """Convert pyclesperanto array to pyclesperanto array (identity operation)."""
+    cle = _ensure_module("pyclesperanto")
+    # Create a copy on the same device
+    result = cle.create_like(data)
+    cle.copy(data, result)
+    return result
 
 
 # CuPy conversion functions
@@ -256,6 +312,114 @@ def _cupy_to_tensorflow(data: Any, allow_cpu_roundtrip: bool = False, device_id:
             return tf.convert_to_tensor(data.get())
 
     return tf.convert_to_tensor(data.get())
+
+
+def _cupy_to_pyclesperanto(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert cupy array to pyclesperanto array, staying on GPU.
+
+    Args:
+        data: The cupy array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted pyclesperanto array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If pyclesperanto is not installed
+    """
+    cle = _ensure_module("pyclesperanto")
+
+    # Try direct GPU conversion first
+    try:
+        # Get current CuPy device
+        current_device = data.device.id
+
+        # Select appropriate pyclesperanto device
+        if device_id is not None:
+            target_device = device_id
+        else:
+            target_device = current_device
+
+        devices = cle.list_available_devices()
+        if target_device >= len(devices):
+            if not allow_cpu_roundtrip:
+                raise MemoryConversionError(
+                    source_type=MemoryType.CUPY.value,
+                    target_type=MemoryType.PYCLESPERANTO.value,
+                    method="device_selection",
+                    reason=f"GPU ID {target_device} not available in pyclesperanto"
+                )
+        else:
+            cle.select_device(target_device)
+
+        # Convert via numpy (pyclesperanto doesn't have direct CuPy interop)
+        numpy_data = data.get()  # CuPy to NumPy
+        return cle.push(numpy_data)  # NumPy to pyclesperanto
+
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.CUPY.value,
+                target_type=MemoryType.PYCLESPERANTO.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+        # Fallback: CPU roundtrip
+        numpy_data = data.get()
+        cle.select_device(device_id if device_id is not None else 0)
+        return cle.push(numpy_data)
+
+
+def _pyclesperanto_to_cupy(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert pyclesperanto array to cupy array, staying on GPU.
+
+    Args:
+        data: The pyclesperanto array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted cupy array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If cupy is not installed
+    """
+    cupy = _ensure_module("cupy")
+    cle = _ensure_module("pyclesperanto")
+
+    try:
+        # Convert via numpy (pyclesperanto doesn't have direct CuPy interop)
+        numpy_data = cle.pull(data)  # pyclesperanto to NumPy
+
+        # Convert to CuPy on specified device
+        if device_id is not None:
+            with cupy.cuda.Device(device_id):
+                return cupy.array(numpy_data)
+        else:
+            return cupy.array(numpy_data)
+
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.PYCLESPERANTO.value,
+                target_type=MemoryType.CUPY.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+        # Fallback: CPU roundtrip (same as above)
+        numpy_data = cle.pull(data)
+        if device_id is not None:
+            with cupy.cuda.Device(device_id):
+                return cupy.array(numpy_data)
+        else:
+            return cupy.array(numpy_data)
 
 
 def _cupy_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:

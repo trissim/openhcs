@@ -41,7 +41,7 @@ _registry_lock = threading.Lock()
 FUNC_REGISTRY: Dict[str, List[Callable]] = {}
 
 # Valid memory types
-VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax"}
+VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax", "pyclesperanto"}
 
 # Flag to track if the registry has been initialized
 _registry_initialized = False

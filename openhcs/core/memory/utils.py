@@ -195,6 +195,24 @@ def _get_device_id(data: Any, memory_type: str) -> Optional[int]:
             logger.warning(f"Failed to get device ID for JAX array: {str(e)}")
             return None
 
+    if memory_type == MemoryType.PYCLESPERANTO.value:
+        try:
+            cle = _ensure_module("pyclesperanto")
+            current_device = cle.get_device()
+            # pyclesperanto device is an object, try to extract ID
+            if hasattr(current_device, 'id'):
+                return current_device.id
+            # Fallback: try to get device index from device list
+            devices = cle.list_available_devices()
+            for i, device in enumerate(devices):
+                if str(device) == str(current_device):
+                    return i
+            # Default to 0 if we can't determine
+            return 0
+        except Exception as e:
+            logger.warning(f"Failed to get device ID for pyclesperanto array: {str(e)}")
+            return 0
+
     return None
 
 
@@ -219,6 +237,21 @@ def _set_device(memory_type: str, device_id: int) -> None:
                 target_type=memory_type,
                 method="device_selection",
                 reason=f"Failed to set CuPy device to {device_id}: {str(e)}"
+            ) from e
+
+    if memory_type == MemoryType.PYCLESPERANTO.value:
+        try:
+            cle = _ensure_module("pyclesperanto")
+            devices = cle.list_available_devices()
+            if device_id >= len(devices):
+                raise ValueError(f"Device ID {device_id} not available. Available devices: {len(devices)}")
+            cle.select_device(device_id)
+        except Exception as e:
+            raise MemoryConversionError(
+                source_type=memory_type,
+                target_type=memory_type,
+                method="device_selection",
+                reason=f"Failed to set pyclesperanto device to {device_id}: {str(e)}"
             ) from e
 
     # JAX doesn't have a global device setting mechanism
@@ -297,6 +330,27 @@ def _move_to_device(data: Any, memory_type: str, device_id: int) -> Any:
                 target_type=memory_type,
                 method="device_movement",
                 reason=f"Failed to move JAX array to device {device_id}: {str(e)}"
+            ) from e
+
+    if memory_type == MemoryType.PYCLESPERANTO.value:
+        try:
+            cle = _ensure_module("pyclesperanto")
+            # Get current device of the array
+            current_device_id = _get_device_id(data, memory_type)
+
+            if current_device_id != device_id:
+                # Select target device and copy data
+                cle.select_device(device_id)
+                result = cle.create_like(data)
+                cle.copy(data, result)
+                return result
+            return data
+        except Exception as e:
+            raise MemoryConversionError(
+                source_type=memory_type,
+                target_type=memory_type,
+                method="device_movement",
+                reason=f"Failed to move pyclesperanto array to device {device_id}: {str(e)}"
             ) from e
 
     return data

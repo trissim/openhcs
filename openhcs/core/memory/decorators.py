@@ -250,3 +250,34 @@ def jax(
         return decorator
 
     return decorator(func)
+
+
+def pyclesperanto(
+    func: Optional[F] = None,
+    *,
+    input_type: str = "pyclesperanto",
+    output_type: str = "pyclesperanto"
+) -> Any:
+    """
+    Decorator that declares a function as operating on pyclesperanto GPU arrays.
+
+    This is a convenience wrapper around memory_types with pyclesperanto defaults.
+
+    Args:
+        func: The function to decorate (optional)
+        input_type: The memory type for the function's input (default: "pyclesperanto")
+        output_type: The memory type for the function's output (default: "pyclesperanto")
+
+    Returns:
+        The decorated function with memory type attributes set
+
+    Raises:
+        ValueError: If input_type or output_type is not a supported memory type
+    """
+    decorator = memory_types(input_type=input_type, output_type=output_type)
+
+    # Handle both @pyclesperanto and @pyclesperanto(input_type=..., output_type=...) forms
+    if func is None:
+        return decorator
+
+    return decorator(func)

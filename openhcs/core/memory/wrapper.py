@@ -329,6 +329,53 @@ class MemoryWrapper:
 
         return MemoryWrapper(jax_data, MemoryType.JAX.value, result_gpu_id)
 
+    def to_pyclesperanto(self, allow_cpu_roundtrip: bool = False) -> "MemoryWrapper":
+        """
+        Convert to pyclesperanto array and return a new MemoryWrapper.
+
+        Preserves the GPU device ID if possible.
+
+        Args:
+            allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+
+        Returns:
+            A new MemoryWrapper with pyclesperanto array data
+
+        Raises:
+            ValueError: If conversion to pyclesperanto is not supported for this memory type
+            ImportError: If pyclesperanto is not installed
+            MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        """
+        if self._memory_type == MemoryType.PYCLESPERANTO.value:
+            # Already pyclesperanto, return a copy
+            cle = _ensure_module("pyclesperanto")
+            result = cle.create_like(self._data)
+            cle.copy(self._data, result)
+            return MemoryWrapper(result, MemoryType.PYCLESPERANTO.value, self._gpu_id)
+
+        # Convert to pyclesperanto, preserving GPU ID if possible
+        pyclesperanto_data = convert_memory(
+            self._data,
+            self._memory_type,
+            MemoryType.PYCLESPERANTO.value,
+            gpu_id=self._gpu_id,
+            allow_cpu_roundtrip=allow_cpu_roundtrip
+        )
+
+        # Get the GPU ID from the result (may have changed during conversion)
+        result_gpu_id = _get_device_id(pyclesperanto_data, MemoryType.PYCLESPERANTO.value)
+
+        # Ensure we have a GPU ID for GPU memory
+        if result_gpu_id is None:
+            raise MemoryConversionError(
+                source_type=self._memory_type,
+                target_type=MemoryType.PYCLESPERANTO.value,
+                method="device_detection",
+                reason="Failed to detect GPU ID for pyclesperanto array after conversion"
+            )
+
+        return MemoryWrapper(pyclesperanto_data, MemoryType.PYCLESPERANTO.value, result_gpu_id)
+
     def __repr__(self) -> str:
         """
         Get a string representation of the MemoryWrapper.
@@ -352,6 +399,8 @@ class MemoryWrapper:
         if self._memory_type == MemoryType.TORCH.value:
             return tuple(self._data.shape)
         if self._memory_type == MemoryType.TENSORFLOW.value:
+            return tuple(self._data.shape)
+        if self._memory_type == MemoryType.PYCLESPERANTO.value:
             return tuple(self._data.shape)
 
         # This should never happen if validate_memory_type is called in __init__
