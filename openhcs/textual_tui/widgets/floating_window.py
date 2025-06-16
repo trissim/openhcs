@@ -110,9 +110,11 @@ class SimpleTextWindow(BaseFloatingWindow):
         yield Static(self.content_text)
 
     def compose_buttons(self) -> ComposeResult:
-        for i, text in enumerate(self.button_texts):
-            button_id = f"btn_{i}_{text.lower().replace(' ', '_')}"
-            yield Button(text, id=button_id, compact=True)
+        from textual.containers import Horizontal
+        with Horizontal():
+            for i, text in enumerate(self.button_texts):
+                button_id = f"btn_{i}_{text.lower().replace(' ', '_')}"
+                yield Button(text, id=button_id, compact=True)
 
 
 class ConfirmationWindow(SimpleTextWindow):
