@@ -15,8 +15,8 @@ class TestHorizontalButtonsApp(App):
     
     def compose(self) -> ComposeResult:
         """Compose the test app."""
-        yield Static("Horizontal Confirmation Buttons Test", id="title")
-        yield Static("Click the button below to see horizontal Yes/No buttons", id="instruction")
+        yield Static("Centered Horizontal Confirmation Buttons Test", id="title")
+        yield Static("Click the button below to see centered horizontal Yes/No buttons", id="instruction")
         
         yield Button("Show Confirmation Dialog", id="show_dialog_btn")
         yield Button("Exit", id="exit_btn")
@@ -37,8 +37,8 @@ class TestHorizontalButtonsApp(App):
                 self.notify("You clicked No!")
         
         confirmation = ConfirmationWindow(
-            title="Test Horizontal Buttons",
-            message="The Yes and No buttons should be side-by-side.\nDo you see them horizontally aligned?"
+            title="Test Centered Horizontal Buttons",
+            message="The Yes and No buttons should be side-by-side and centered.\nDo you see them horizontally aligned and centered in the dialog?"
         )
         self.push_screen(confirmation, handle_confirmation)
 
@@ -50,9 +50,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    print("Testing horizontal confirmation button layout...")
+    print("Testing centered horizontal confirmation button layout...")
     print("Expected behavior:")
     print("- Confirmation dialog should show Yes and No buttons side-by-side")
+    print("- Buttons should be centered within the dialog")
     print("- Buttons should be in a horizontal row, not stacked vertically")
     print("- Layout should be compact and visually appealing")
     print()
