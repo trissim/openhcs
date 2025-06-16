@@ -237,6 +237,7 @@ FunctionPaneWidget Horizontal Horizontal {
 /* Spacing between action buttons */
 FunctionPaneWidget Horizontal Horizontal Button {
     margin: 0 1;  /* Same spacing as main top buttons */
+    width: auto;  /* Size buttons to content, not equal width */
 }
 
 /* Make Select dropdowns show full list */
