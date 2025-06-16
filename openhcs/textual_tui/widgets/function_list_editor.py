@@ -203,10 +203,10 @@ class FunctionListEditorWidget(Container):
                 # Centered main button group
                 with Horizontal() as main_button_group:
                     main_button_group.styles.width = "auto"
-                    yield Button("Add Function", id="add_function_btn", compact=True)
-                    yield Button("Load .func", id="load_func_btn", compact=True)
-                    yield Button("Save .func As", id="save_func_as_btn", compact=True)
-                    yield Button("Edit in Vim", id="edit_vim_btn", compact=True)
+                    yield Button("Add", id="add_function_btn", compact=True)
+                    yield Button("Load", id="load_func_btn", compact=True)
+                    yield Button("Save As", id="save_func_as_btn", compact=True)
+                    yield Button("Edit", id="edit_vim_btn", compact=True)
 
                     # Channel management button
                     channel_text = self._get_channel_button_text()
@@ -466,8 +466,8 @@ class FunctionListEditorWidget(Container):
     def _get_channel_button_text(self) -> str:
         """Get text for the channel button."""
         if self.is_dict_mode and self.selected_channel is not None:
-            return f"Channel: {self.selected_channel}"
-        return "Channel: None"
+            return f"Ch: {self.selected_channel}"
+        return "Ch: None"
 
     def _show_channel_selection_dialog(self) -> None:
         """Show the channel selection dialog."""

@@ -90,7 +90,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
     def get_content_info(self) -> dict:
         """Provide content information for dynamic sizing."""
         if self.mode == BrowserMode.LOAD:
-            button_texts = ['🏠 Home', '⬆️ Up', 'Add Current', 'Remove Selected', 'Select All', 'Cancel']
+            button_texts = ['🏠 Home', '⬆️ Up', 'Add', 'Remove', 'Select', 'Cancel']
         else:  # SAVE mode
             button_texts = ['🏠 Home', '⬆️ Up', 'Save', 'Cancel']
 
@@ -129,14 +129,14 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
                 # Mode-specific buttons
                 if self.mode == BrowserMode.LOAD:
-                    yield Button("Add Current", id="add_current", compact=True)
-                    yield Button("Remove Selected", id="remove_selected", compact=True)
-                    yield Button("Select All", id="select_all", compact=True)
+                    yield Button("Add", id="add_current", compact=True)
+                    yield Button("Remove", id="remove_selected", compact=True)
+                    yield Button("Select", id="select_all", compact=True)
                 else:  # SAVE mode
                     yield Button("Save", id="save_file", compact=True)
 
                 yield Checkbox(
-                    label="Show Hidden Files",
+                    label="Hidden",
                     value=self.show_hidden_files,
                     id="show_hidden_checkbox",
                     compact=True
@@ -170,13 +170,13 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         elif button_text == '⬆️ Up':
             self._handle_go_up()
             return False  # Don't dismiss dialog
-        elif button_text == 'Add Current':
+        elif button_text == 'Add':
             self._handle_add_current()
             return False  # Don't dismiss dialog
-        elif button_text == 'Remove Selected':
+        elif button_text == 'Remove':
             self._handle_remove_selected()
             return False  # Don't dismiss dialog
-        elif button_text == 'Select All':
+        elif button_text == 'Select':
             return self._handle_select_all()
         elif button_text == 'Save':
             return self._handle_save_file()
