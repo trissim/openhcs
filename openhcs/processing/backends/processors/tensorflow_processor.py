@@ -402,8 +402,24 @@ def create_composite(
         composite /= total_weight
 
     # Convert back to original dtype (usually uint16)
-    if dtype == tf.uint16:
-        composite = tf.cast(tf.clip_by_value(composite, 0, 65535), tf.uint16)
+    if dtype in [tf.uint8, tf.uint16, tf.uint32, tf.int8, tf.int16, tf.int32, tf.int64]:
+        # Get the maximum value for the specific integer dtype
+        if dtype == tf.uint8:
+            max_val = 255
+        elif dtype == tf.uint16:
+            max_val = 65535
+        elif dtype == tf.uint32:
+            max_val = 4294967295
+        elif dtype == tf.int8:
+            max_val = 127
+        elif dtype == tf.int16:
+            max_val = 32767
+        elif dtype == tf.int32:
+            max_val = 2147483647
+        elif dtype == tf.int64:
+            max_val = 9223372036854775807
+
+        composite = tf.cast(tf.clip_by_value(composite, 0, max_val), dtype)
     else:
         composite = tf.cast(composite, dtype)
 

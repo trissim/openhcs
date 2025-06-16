@@ -396,7 +396,26 @@ def create_composite(
 
     # Convert back to original dtype (usually uint16)
     if jnp.issubdtype(dtype, jnp.integer):
-        composite = jnp.clip(composite, 0, 65535).astype(jnp.uint16)
+        # Get the maximum value for the specific integer dtype
+        if dtype == jnp.uint8:
+            max_val = 255
+        elif dtype == jnp.uint16:
+            max_val = 65535
+        elif dtype == jnp.uint32:
+            max_val = 4294967295
+        elif dtype == jnp.int8:
+            max_val = 127
+        elif dtype == jnp.int16:
+            max_val = 32767
+        elif dtype == jnp.int32:
+            max_val = 2147483647
+        elif dtype == jnp.int64:
+            max_val = 9223372036854775807
+        else:
+            # Fallback for other integer types
+            max_val = jnp.iinfo(dtype).max
+
+        composite = jnp.clip(composite, 0, max_val).astype(dtype)
     else:
         composite = composite.astype(dtype)
 
