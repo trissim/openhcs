@@ -895,38 +895,39 @@ class PlateManagerWidget(ButtonListWidget):
                 if worker.is_cancelled:
                     logger.info("🛑 Worker cancelled, stopping execution")
                     break
-            plate_path = plate_data['path']
 
-            # Get orchestrator
-            orchestrator = self.orchestrators.get(plate_path)
-            if not orchestrator:
-                continue
+                plate_path = plate_data['path']
 
-            # Find actual plate for status updates
-            actual_plate = None
-            for plate in self.plates:
-                if plate['path'] == plate_path:
-                    actual_plate = plate
-                    break
-            if not actual_plate:
-                continue
+                # Get orchestrator
+                orchestrator = self.orchestrators.get(plate_path)
+                if not orchestrator:
+                    continue
 
-            # Get compiled data from simple state
-            logger.info(f"🔥 Checking compiled data for {plate_path}")
-            logger.info(f"🔥 Available compiled plates: {list(self.plate_compiled_data.keys())}")
+                # Find actual plate for status updates
+                actual_plate = None
+                for plate in self.plates:
+                    if plate['path'] == plate_path:
+                        actual_plate = plate
+                        break
+                if not actual_plate:
+                    continue
 
-            if plate_path not in self.plate_compiled_data:
-                logger.warning(f"🔥 No compiled data found for {plate_path}")
-                continue  # Skip - no compiled data
+                # Get compiled data from simple state
+                logger.info(f"🔥 Checking compiled data for {plate_path}")
+                logger.info(f"🔥 Available compiled plates: {list(self.plate_compiled_data.keys())}")
 
-            execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
-            step_ids_in_pipeline = [id(step) for step in execution_pipeline]
-            # Get step IDs from contexts (ProcessingContext objects)
-            first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
-            step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
-            logger.info(f"🔥 Retrieved compiled data for {plate_path}: pipeline={type(execution_pipeline)}, contexts={type(compiled_contexts)}")
-            logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
-            logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
+                if plate_path not in self.plate_compiled_data:
+                    logger.warning(f"🔥 No compiled data found for {plate_path}")
+                    continue  # Skip - no compiled data
+
+                execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
+                step_ids_in_pipeline = [id(step) for step in execution_pipeline]
+                # Get step IDs from contexts (ProcessingContext objects)
+                first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
+                step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
+                logger.info(f"🔥 Retrieved compiled data for {plate_path}: pipeline={type(execution_pipeline)}, contexts={type(compiled_contexts)}")
+                logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
+                logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
 
                 # Run it
                 actual_plate['status'] = '!'  # Running
@@ -965,22 +966,22 @@ class PlateManagerWidget(ButtonListWidget):
                 except Exception:
                     actual_plate['status'] = 'F'  # Failed
 
-            finally:
-                # 🔥 COMPREHENSIVE GPU CLEANUP: Clear all GPU memory after plate execution
-                try:
-                    from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-                    cleanup_all_gpu_frameworks()
-                    logger.info(f"🔥 COMPREHENSIVE GPU CLEANUP: Cleared all GPU frameworks after plate execution: {plate_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to perform comprehensive GPU cleanup: {cleanup_error}")
+                finally:
+                    # 🔥 COMPREHENSIVE GPU CLEANUP: Clear all GPU memory after plate execution
+                    try:
+                        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+                        cleanup_all_gpu_frameworks()
+                        logger.info(f"🔥 COMPREHENSIVE GPU CLEANUP: Cleared all GPU frameworks after plate execution: {plate_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to perform comprehensive GPU cleanup: {cleanup_error}")
 
-                # Reset memory backend after each plate execution to prevent key collisions
-                # TEMPORARILY DISABLED FOR TESTING - checking if reset timing is causing pattern detection issues
-                from openhcs.io.base import reset_memory_backend
-                reset_memory_backend()
-                logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
+                    # Reset memory backend after each plate execution to prevent key collisions
+                    # TEMPORARILY DISABLED FOR TESTING - checking if reset timing is causing pattern detection issues
+                    from openhcs.io.base import reset_memory_backend
+                    reset_memory_backend()
+                    logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
 
-                self.mutate_reactive(PlateManagerWidget.plates)
+                    self.mutate_reactive(PlateManagerWidget.plates)
 
         except asyncio.CancelledError:
             logger.info("🛑 Worker cancelled at top level")
