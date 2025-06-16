@@ -465,6 +465,9 @@ def create_projection(
     # FAIL FAST: No fallback projection methods
     raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
+# Use custom CuPy implementations (cuCIM causes Jitify hanging issues)
+CUCIM_AVAILABLE = False
+
 def _create_disk_cupy(radius: int) -> "cp.ndarray":
     """Create a disk structuring element using CuPy - MATCH NUMPY EXACTLY"""
     y, x = cp.ogrid[-radius:radius+1, -radius:radius+1]
@@ -527,7 +530,7 @@ def tophat(
     """
     Apply white top-hat filter to a 3D image for background removal.
 
-    This applies the filter to each Z-slice independently - MATCH NUMPY EXACTLY.
+    This applies the filter to each Z-slice independently - IMPROVED MATCH TO NUMPY.
 
     Args:
         image: 3D CuPy array of shape (Z, Y, X)
@@ -539,7 +542,7 @@ def tophat(
     """
     _validate_3d_array(image)
 
-    # Process each Z-slice independently - MATCH NUMPY EXACTLY
+    # Process each Z-slice independently - IMPROVED MATCH TO NUMPY
     result = cp.zeros_like(image)
 
     for z in range(image.shape[0]):
