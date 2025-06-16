@@ -260,10 +260,10 @@ SelectOverlay {
 /* RadioSet and RadioButton alignment - always left aligned */
 RadioSet {
     text-align: left;
-    content-align: left left;
+    content-align: left top;
 }
 
 RadioButton {
     text-align: left;
-    content-align: left left;
+    content-align: left top;
 }
