@@ -27,7 +27,7 @@ def is_gpu_memory_type(memory_type: str) -> bool:
         return memory_type in VALID_GPU_MEMORY_TYPES
     except ImportError:
         # Fallback if constants not available
-        gpu_types = {"torch", "cupy", "tensorflow", "jax"}
+        gpu_types = {"torch", "cupy", "tensorflow", "jax", "pyclesperanto"}
         return memory_type.lower() in gpu_types
 
 
@@ -149,30 +149,69 @@ def cleanup_tensorflow_gpu(device_id: Optional[int] = None) -> None:
 def cleanup_jax_gpu(device_id: Optional[int] = None) -> None:
     """
     Clean up JAX GPU memory.
-    
+
     Args:
         device_id: Optional GPU device ID. If None, cleans all devices.
     """
     try:
         import jax
-        
+
         # JAX doesn't have explicit memory cleanup like PyTorch/CuPy
         # but we can trigger garbage collection and clear compilation cache
         import gc
         gc.collect()
-        
+
         # Clear JAX compilation cache which can hold GPU memory
         jax.clear_caches()
-        
+
         if device_id is not None:
             logger.debug(f"🔥 GPU CLEANUP: Cleared JAX caches and triggered GC for device {device_id}")
         else:
             logger.debug("🔥 GPU CLEANUP: Cleared JAX caches and triggered GC for all devices")
-            
+
     except ImportError:
         logger.debug("JAX not available, skipping JAX GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup JAX GPU memory: {e}")
+
+
+def cleanup_pyclesperanto_gpu(device_id: Optional[int] = None) -> None:
+    """
+    Clean up pyclesperanto GPU memory.
+
+    Args:
+        device_id: Optional GPU device ID. If None, cleans current device.
+    """
+    try:
+        import pyclesperanto as cle
+        import gc
+
+        # pyclesperanto doesn't have explicit memory cleanup like PyTorch/CuPy
+        # but we can trigger garbage collection and clear any cached data
+
+        if device_id is not None:
+            # Select the specific device
+            devices = cle.list_available_devices()
+            if device_id < len(devices):
+                cle.select_device(device_id)
+                logger.debug(f"🔥 GPU CLEANUP: Selected pyclesperanto device {device_id}")
+            else:
+                logger.warning(f"🔥 GPU CLEANUP: Device {device_id} not available in pyclesperanto")
+
+        # Trigger garbage collection to clean up any unreferenced GPU arrays
+        collected = gc.collect()
+
+        # pyclesperanto uses OpenCL which manages memory automatically
+        # but we can help by ensuring Python objects are cleaned up
+        if device_id is not None:
+            logger.debug(f"🔥 GPU CLEANUP: Triggered GC for pyclesperanto device {device_id}, collected {collected} objects")
+        else:
+            logger.debug(f"🔥 GPU CLEANUP: Triggered GC for pyclesperanto current device, collected {collected} objects")
+
+    except ImportError:
+        logger.debug("pyclesperanto not available, skipping pyclesperanto GPU cleanup")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup pyclesperanto GPU memory: {e}")
 
 
 def cleanup_gpu_memory_by_framework(memory_type: str, device_id: Optional[int] = None) -> None:
@@ -192,6 +231,8 @@ def cleanup_gpu_memory_by_framework(memory_type: str, device_id: Optional[int] =
         cleanup_tensorflow_gpu(device_id)
     elif memory_type == "jax":
         cleanup_jax_gpu(device_id)
+    elif memory_type == "pyclesperanto":
+        cleanup_pyclesperanto_gpu(device_id)
     elif memory_type == "numpy":
         # CPU memory type - no GPU cleanup needed
         logger.debug(f"No GPU cleanup needed for CPU memory type: {memory_type}")
@@ -206,6 +247,8 @@ def cleanup_gpu_memory_by_framework(memory_type: str, device_id: Optional[int] =
             cleanup_tensorflow_gpu(device_id)
         elif "jax" in memory_type_lower:
             cleanup_jax_gpu(device_id)
+        elif "pyclesperanto" in memory_type_lower or "clesperanto" in memory_type_lower:
+            cleanup_pyclesperanto_gpu(device_id)
         else:
             logger.debug(f"Unknown memory type for GPU cleanup: {memory_type}")
 
@@ -231,6 +274,7 @@ def cleanup_all_gpu_frameworks(device_id: Optional[int] = None) -> None:
     cleanup_cupy_gpu(device_id)
     cleanup_tensorflow_gpu(device_id)
     cleanup_jax_gpu(device_id)
+    cleanup_pyclesperanto_gpu(device_id)
 
     # Also trigger Python garbage collection
     import gc
@@ -245,6 +289,7 @@ MEMORY_TYPE_CLEANUP_REGISTRY = {
     "cupy": cleanup_cupy_gpu,
     "tensorflow": cleanup_tensorflow_gpu,
     "jax": cleanup_jax_gpu,
+    "pyclesperanto": cleanup_pyclesperanto_gpu,
     "numpy": cleanup_numpy_noop,
 }
 
