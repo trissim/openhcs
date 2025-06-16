@@ -72,19 +72,20 @@ def percentile_normalize(
         # Extract Z-slice (stays on GPU)
         gpu_slice = cle.copy_slice(image, z)
 
-        # Calculate percentiles (need to pull slice to CPU for percentile calculation)
-        # This is a limitation - pyclesperanto doesn't have percentile functions yet
+        # Calculate percentiles - LIMITATION: pyclesperanto doesn't have percentile functions
+        # We need to pull to CPU for this calculation only
         slice_np = cle.pull(gpu_slice)
+        import numpy as np
         p_low, p_high = np.percentile(slice_np, (low_percentile, high_percentile))
 
         # Avoid division by zero
         if p_high == p_low:
-            # Fill slice with target_min
+            # Fill slice with target_min (stays on GPU)
             cle.set(gpu_slice, target_min)
             cle.copy_slice(gpu_slice, result, z)
             continue
 
-        # Clip and normalize using pyclesperanto operations (all on GPU)
+        # All operations stay on GPU from here
         # Clip to [p_low, p_high]
         gpu_clipped = cle.clip(gpu_slice, min_intensity=p_low, max_intensity=p_high)
 
@@ -135,8 +136,10 @@ def stack_percentile_normalize(
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
 
     # Calculate global percentiles from entire stack
-    # Need to pull to CPU for percentile calculation (limitation of pyclesperanto)
+    # LIMITATION: pyclesperanto doesn't have percentile functions
+    # We need to pull to CPU for this calculation only
     image_np = cle.pull(image)
+    import numpy as np
     p_low, p_high = np.percentile(image_np, (low_percentile, high_percentile))
 
     # Avoid division by zero
@@ -164,105 +167,132 @@ def stack_percentile_normalize(
 
 @pyclesperanto_func
 def sharpen(
-    image: np.ndarray,
+    image: "cle.Array",
     radius: float = 1.0,
     amount: float = 1.0
-) -> np.ndarray:
+) -> "cle.Array":
     """
     Apply unsharp mask sharpening to a 3D image - GPU accelerated.
 
     Args:
-        image: 3D numpy array of shape (Z, Y, X)
+        image: 3D pyclesperanto Array of shape (Z, Y, X)
         radius: Gaussian blur radius for unsharp mask
         amount: Sharpening strength
 
     Returns:
-        Sharpened 3D numpy array of shape (Z, Y, X)
+        Sharpened 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(image)
 
-    # Process each Z-slice independently
-    result = np.zeros_like(image)
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
+
+    # Create result array on GPU
+    result = cle.create_like(image)
 
     for z in range(image.shape[0]):
-        # Push slice to GPU
-        gpu_slice = cle.push(image[z].astype(np.float32))
-        
+        # Extract Z-slice (stays on GPU)
+        gpu_slice = cle.copy_slice(image, z)
+
         # Apply Gaussian blur
         gpu_blurred = cle.gaussian_blur(gpu_slice, sigma_x=radius, sigma_y=radius)
-        
+
         # Unsharp mask: original + amount * (original - blurred)
         gpu_diff = cle.subtract_images(gpu_slice, gpu_blurred)
         gpu_scaled_diff = cle.multiply_image_and_scalar(gpu_diff, scalar=amount)
         gpu_sharpened = cle.add_images(gpu_slice, gpu_scaled_diff)
-        
-        # Clip to valid range and pull back
+
+        # Clip to valid range
         gpu_clipped = cle.clip(gpu_sharpened, min_intensity=0, max_intensity=65535)
-        result[z] = cle.pull(gpu_clipped).astype(image.dtype)
+
+        # Copy result slice back to result (stays on GPU)
+        cle.copy_slice(gpu_clipped, result, z)
 
     return result
 
 @pyclesperanto_func
-def max_projection(stack: np.ndarray) -> np.ndarray:
+def max_projection(stack: "cle.Array") -> "cle.Array":
     """
     Create a maximum intensity projection from a Z-stack - GPU accelerated.
 
     Args:
-        stack: 3D numpy array of shape (Z, Y, X)
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
 
     Returns:
-        3D numpy array of shape (1, Y, X)
+        3D pyclesperanto Array of shape (1, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(stack)
 
-    # Push to GPU and create max projection
-    gpu_stack = cle.push(stack)
-    gpu_projection = cle.maximum_z_projection(gpu_stack)
-    
-    # Pull back and reshape to (1, Y, X)
-    projection_2d = cle.pull(gpu_projection)
-    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
+
+    # Create max projection (stays on GPU)
+    gpu_projection_2d = cle.maximum_z_projection(stack)
+
+    # Reshape to (1, Y, X) by creating a new 3D array
+    result_shape = (1, gpu_projection_2d.shape[0], gpu_projection_2d.shape[1])
+    result = cle.create(result_shape, dtype=gpu_projection_2d.dtype)
+    cle.copy_slice(gpu_projection_2d, result, 0)
+
+    return result
 
 @pyclesperanto_func
-def mean_projection(stack: np.ndarray) -> np.ndarray:
+def mean_projection(stack: "cle.Array") -> "cle.Array":
     """
     Create a mean intensity projection from a Z-stack - GPU accelerated.
 
     Args:
-        stack: 3D numpy array of shape (Z, Y, X)
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
 
     Returns:
-        3D numpy array of shape (1, Y, X)
+        3D pyclesperanto Array of shape (1, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(stack)
 
-    # Push to GPU and create mean projection
-    gpu_stack = cle.push(stack)
-    gpu_projection = cle.mean_z_projection(gpu_stack)
-    
-    # Pull back and reshape to (1, Y, X)
-    projection_2d = cle.pull(gpu_projection)
-    return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
+
+    # Create mean projection (stays on GPU)
+    gpu_projection_2d = cle.mean_z_projection(stack)
+
+    # Reshape to (1, Y, X) by creating a new 3D array
+    result_shape = (1, gpu_projection_2d.shape[0], gpu_projection_2d.shape[1])
+    result = cle.create(result_shape, dtype=gpu_projection_2d.dtype)
+    cle.copy_slice(gpu_projection_2d, result, 0)
+
+    return result
 
 @pyclesperanto_func
 def create_projection(
-    stack: np.ndarray, method: str = "max_projection"
-) -> np.ndarray:
+    stack: "cle.Array", method: str = "max_projection"
+) -> "cle.Array":
     """
     Create a projection from a stack using the specified method - GPU accelerated.
 
     Args:
-        stack: 3D numpy array of shape (Z, Y, X)
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
         method: Projection method (max_projection, mean_projection)
 
     Returns:
-        3D numpy array of shape (1, Y, X)
+        3D pyclesperanto Array of shape (1, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(stack)
+
+    # Validate 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
 
     if method == "max_projection":
         return max_projection(stack)
@@ -275,40 +305,40 @@ def create_projection(
 
 @pyclesperanto_func
 def tophat(
-    image: np.ndarray,
+    image: "cle.Array",
     selem_radius: int = 50,
     downsample_factor: int = 4,
     downsample_interpolate: bool = True,
     upsample_interpolate: bool = False
-) -> np.ndarray:
+) -> "cle.Array":
     """
     Apply white top-hat filter to a 3D image for background removal - GPU accelerated.
 
     Args:
-        image: 3D numpy array of shape (Z, Y, X)
+        image: 3D pyclesperanto Array of shape (Z, Y, X)
         selem_radius: Radius of the structuring element
         downsample_factor: Factor by which to downsample for processing
         downsample_interpolate: Whether to use interpolation when downsampling
         upsample_interpolate: Whether to use interpolation when upsampling
 
     Returns:
-        Filtered 3D numpy array of shape (Z, Y, X)
+        Filtered 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(image)
 
     # Import pyclesperanto
     import pyclesperanto as cle
 
-    # Process each Z-slice independently
-    result = np.zeros_like(image)
+    # Validate 3D array (check shape directly on GPU array)
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
+
+    # Create result array on GPU
+    result = cle.create_like(image)
 
     for z in range(image.shape[0]):
-        # Store original data type
-        input_dtype = image[z].dtype
-
-        # Push slice to GPU
-        gpu_slice = cle.push(image[z].astype(np.float32))
+        # Extract Z-slice (stays on GPU)
+        gpu_slice = cle.copy_slice(image, z)
 
         # 1) Downsample
         scale_factor = 1.0 / downsample_factor
@@ -341,90 +371,98 @@ def tophat(
 
         # 5) Subtract background and clip negative values
         gpu_subtracted = cle.subtract_images(gpu_slice, gpu_background_large)
-        gpu_result = cle.maximum_image_and_scalar(gpu_subtracted, scalar=0)
+        gpu_result_slice = cle.maximum_image_and_scalar(gpu_subtracted, scalar=0)
 
-        # 6) Pull back and convert to original data type
-        slice_result = cle.pull(gpu_result)
-        result[z] = slice_result.astype(input_dtype)
+        # 6) Copy result slice back to result (stays on GPU)
+        cle.copy_slice(gpu_result_slice, result, z)
 
     return result
 
 @pyclesperanto_func
-def apply_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
     """
     Apply a mask to a 3D image - GPU accelerated.
 
     Args:
-        image: 3D numpy array of shape (Z, Y, X)
-        mask: 3D numpy array of shape (Z, Y, X) or 2D numpy array of shape (Y, X)
+        image: 3D pyclesperanto Array of shape (Z, Y, X)
+        mask: 3D pyclesperanto Array of shape (Z, Y, X) or 2D pyclesperanto Array of shape (Y, X)
 
     Returns:
-        Masked 3D numpy array of shape (Z, Y, X)
+        Masked 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(image)
+
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D image
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected 3D image array, got {len(image.shape)}D array")
 
     # Handle 2D mask (apply to each Z-slice)
-    if mask.ndim == 2:
+    if len(mask.shape) == 2:
         if mask.shape != image.shape[1:]:
             raise ValueError(
                 f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
             )
 
-        # Push mask to GPU once
-        gpu_mask = cle.push(mask.astype(np.float32))
-        result = np.zeros_like(image)
+        # Create result array on GPU
+        result = cle.create_like(image)
 
         for z in range(image.shape[0]):
-            gpu_slice = cle.push(image[z].astype(np.float32))
-            gpu_masked = cle.multiply_images(gpu_slice, gpu_mask)
-            result[z] = cle.pull(gpu_masked).astype(image.dtype)
+            # Extract Z-slice (stays on GPU)
+            gpu_slice = cle.copy_slice(image, z)
+            # Apply mask (both stay on GPU)
+            gpu_masked = cle.multiply_images(gpu_slice, mask)
+            # Copy result back (stays on GPU)
+            cle.copy_slice(gpu_masked, result, z)
 
         return result
 
     # Handle 3D mask
-    if mask.ndim == 3:
+    elif len(mask.shape) == 3:
         if mask.shape != image.shape:
             raise ValueError(
                 f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
             )
 
-        # Push both to GPU and apply mask
-        gpu_image = cle.push(image.astype(np.float32))
-        gpu_mask = cle.push(mask.astype(np.float32))
-        gpu_masked = cle.multiply_images(gpu_image, gpu_mask)
-
-        return cle.pull(gpu_masked).astype(image.dtype)
+        # Apply mask directly (both stay on GPU)
+        return cle.multiply_images(image, mask)
 
     # If we get here, the mask is neither 2D nor 3D
-    raise TypeError(f"mask must be a 2D or 3D numpy array, got {type(mask)}")
+    else:
+        raise TypeError(f"mask must be a 2D or 3D pyclesperanto Array, got shape {mask.shape}")
 
 @pyclesperanto_func
 def create_composite(
-    images: List[np.ndarray], weights: Optional[List[float]] = None
-) -> np.ndarray:
+    images: List["cle.Array"], weights: Optional[List[float]] = None
+) -> "cle.Array":
     """
     Create a composite image from multiple 3D arrays - GPU accelerated.
 
     Args:
-        images: List of 3D numpy arrays, each of shape (Z, Y, X)
+        images: List of 3D pyclesperanto Arrays, each of shape (Z, Y, X)
         weights: List of weights for each image. If None, equal weights are used.
 
     Returns:
-        Composite 3D numpy array of shape (Z, Y, X)
+        Composite 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
 
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
     # Validate inputs
     if not isinstance(images, list):
-        raise TypeError("images must be a list of numpy arrays")
+        raise TypeError("images must be a list of pyclesperanto Arrays")
 
     if not images:
         raise ValueError("images list cannot be empty")
 
     # Validate all images are 3D with the same shape
     for i, img in enumerate(images):
-        _validate_3d_array(img)
+        if len(img.shape) != 3:
+            raise ValueError(f"Expected 3D array, got {len(img.shape)}D array for images[{i}]")
         if img.shape != images[0].shape:
             raise ValueError(f"All images must have the same shape. "
                             f"images[0] has shape {images[0].shape}, "
@@ -441,70 +479,68 @@ def create_composite(
         weights = weights + [0.0] * (len(images) - len(weights))
     weights = weights[:len(images)]
 
-    # Push first image to GPU and initialize composite
+    # Initialize composite with first image (stays on GPU)
     first_image = images[0]
-    gpu_composite = cle.push(first_image.astype(np.float32))
-    gpu_composite = cle.multiply_image_and_scalar(gpu_composite, scalar=weights[0])
+    gpu_composite = cle.multiply_image_and_scalar(first_image, scalar=weights[0])
 
     total_weight = weights[0] if weights[0] > 0.0 else 0.0
 
-    # Add remaining images with their weights
+    # Add remaining images with their weights (all stay on GPU)
     for i in range(1, len(images)):
         weight = weights[i]
         if weight <= 0.0:
             continue
 
-        gpu_image = cle.push(images[i].astype(np.float32))
-        gpu_weighted = cle.multiply_image_and_scalar(gpu_image, scalar=weight)
+        gpu_weighted = cle.multiply_image_and_scalar(images[i], scalar=weight)
         gpu_composite = cle.add_images(gpu_composite, gpu_weighted)
         total_weight += weight
 
-    # Normalize by total weight
+    # Normalize by total weight (stays on GPU)
     if total_weight > 0:
         gpu_composite = cle.multiply_image_and_scalar(gpu_composite, scalar=1.0/total_weight)
 
-    # Pull back and convert to original dtype
-    result = cle.pull(gpu_composite)
+    # Clip to valid range (stays on GPU)
+    # Assume uint16 range for now - pyclesperanto doesn't have dtype introspection
+    gpu_clipped = cle.clip(gpu_composite, min_intensity=0, max_intensity=65535)
 
-    # Clip to valid range for integer types
-    if np.issubdtype(first_image.dtype, np.integer):
-        max_val = np.iinfo(first_image.dtype).max
-        result = np.clip(result, 0, max_val)
-
-    return result.astype(first_image.dtype)
+    return gpu_clipped
 
 @pyclesperanto_func
 def stack_equalize_histogram(
-    stack: np.ndarray,
+    stack: "cle.Array",
     bins: int = 65536,
     range_min: float = 0.0,
     range_max: float = 65535.0
-) -> np.ndarray:
+) -> "cle.Array":
     """
     Apply histogram equalization to an entire stack - GPU accelerated.
 
     Args:
-        stack: 3D numpy array of shape (Z, Y, X)
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
         bins: Number of bins for histogram computation
         range_min: Minimum value for histogram range
         range_max: Maximum value for histogram range
 
     Returns:
-        Equalized 3D numpy array of shape (Z, Y, X)
+        Equalized 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-    _validate_3d_array(stack)
 
-    # Push stack to GPU
-    gpu_stack = cle.push(stack.astype(np.float32))
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
 
     # pyclesperanto has CLAHE (Contrast Limited Adaptive Histogram Equalization)
     # which is more advanced than basic histogram equalization
-    gpu_equalized = cle.clahe(gpu_stack, block_size_x=64, block_size_y=64, clip_limit=3.0)
+    gpu_equalized = cle.clahe(stack, block_size_x=64, block_size_y=64, clip_limit=3.0)
 
-    # Pull back and convert to uint16
-    result = cle.pull(gpu_equalized)
-    return np.clip(result, range_min, range_max).astype(np.uint16)
+    # Clip to valid range (stays on GPU)
+    gpu_clipped = cle.clip(gpu_equalized, min_intensity=range_min, max_intensity=range_max)
+
+    return gpu_clipped
 
 def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> np.ndarray:
     """
