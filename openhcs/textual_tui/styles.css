@@ -51,6 +51,8 @@ MenuBar Static {
 /* Spacing between main top buttons */
 #function_list_header Horizontal Button {
     margin: 0 1;  /* Same spacing as function pane buttons */
+    width: auto !important;  /* Size to content */
+    min-width: 0 !important;  /* Override default 16 column min-width */
 }
 
 /* Flex spacers for both main and function pane buttons */
