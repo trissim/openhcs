@@ -79,11 +79,27 @@ class FunctionPaneWidget(Container):
             # Centered action button group
             with Horizontal() as action_group:
                 action_group.styles.width = "auto"
-                yield Button("↑", id=f"move_up_{self.index}", compact=True)
-                yield Button("↓", id=f"move_down_{self.index}", compact=True)
-                yield Button("Add", id=f"add_func_{self.index}", compact=True)
-                yield Button("Delete", id=f"remove_func_{self.index}", compact=True)
-                yield Button("Reset All Parameters", id=f"reset_all_{self.index}", compact=True)
+
+                # Create buttons with explicit width: auto styling
+                up_btn = Button("↑", id=f"move_up_{self.index}", compact=True)
+                up_btn.styles.width = "auto"
+                yield up_btn
+
+                down_btn = Button("↓", id=f"move_down_{self.index}", compact=True)
+                down_btn.styles.width = "auto"
+                yield down_btn
+
+                add_btn = Button("Add", id=f"add_func_{self.index}", compact=True)
+                add_btn.styles.width = "auto"
+                yield add_btn
+
+                delete_btn = Button("Delete", id=f"remove_func_{self.index}", compact=True)
+                delete_btn.styles.width = "auto"
+                yield delete_btn
+
+                reset_btn = Button("Reset All Parameters", id=f"reset_all_{self.index}", compact=True)
+                reset_btn.styles.width = "auto"
+                yield reset_btn
 
             # Empty space (flex-grows)  
             yield Static("")

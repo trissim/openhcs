@@ -104,6 +104,14 @@ StatusBar #log_display {
     min-width: 0;
 }
 
+/* Exception: Function pane buttons should size to content */
+#plate_manager_container FunctionPaneWidget Button,
+#pipeline_editor_container FunctionPaneWidget Button,
+FunctionPaneWidget Button {
+    width: auto !important;
+    margin: 0 1;
+}
+
 /* App fills terminal height properly */
 OpenHCSTUIApp {
     height: 100vh;
