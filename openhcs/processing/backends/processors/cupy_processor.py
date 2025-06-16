@@ -525,7 +525,9 @@ def _resize_cupy_better_match(image: "cp.ndarray", output_shape: tuple, anti_ali
 def tophat(
     image: "cp.ndarray",
     selem_radius: int = 50,
-    downsample_factor: int = 4
+    downsample_factor: int = 4,
+    downsample_anti_aliasing: bool = True,
+    upsample_anti_aliasing: bool = False
 ) -> "cp.ndarray":
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -536,6 +538,8 @@ def tophat(
         image: 3D CuPy array of shape (Z, Y, X)
         selem_radius: Radius of the structuring element disk
         downsample_factor: Factor by which to downsample the image for processing
+        downsample_anti_aliasing: Whether to use anti-aliasing when downsampling
+        upsample_anti_aliasing: Whether to use anti-aliasing when upsampling
 
     Returns:
         Filtered 3D CuPy array of shape (Z, Y, X)
@@ -554,7 +558,7 @@ def tophat(
         image_small = _resize_cupy_better_match(
             image[z],
             target_shape,
-            anti_aliasing=True,
+            anti_aliasing=downsample_anti_aliasing,
             preserve_range=True
         )
 
@@ -569,7 +573,7 @@ def tophat(
         background_large = _resize_cupy_better_match(
             background_small,
             image[z].shape,
-            anti_aliasing=False,
+            anti_aliasing=upsample_anti_aliasing,
             preserve_range=True
         )
 

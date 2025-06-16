@@ -444,7 +444,9 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
 def tophat(
     image: np.ndarray,
     selem_radius: int = 50,
-    downsample_factor: int = 4
+    downsample_factor: int = 4,
+    downsample_anti_aliasing: bool = True,
+    upsample_order: int = 0
 ) -> np.ndarray:
     """
     Apply white top-hat filter to a 3D image for background removal.
@@ -455,6 +457,8 @@ def tophat(
         image: 3D NumPy array of shape (Z, Y, X)
         selem_radius: Radius of the structuring element disk
         downsample_factor: Factor by which to downsample the image for processing
+        downsample_anti_aliasing: Whether to use anti-aliasing when downsampling
+        upsample_order: Interpolation order for upsampling (0=nearest, 1=linear, etc.)
 
     Returns:
         Filtered 3D NumPy array of shape (Z, Y, X)
@@ -472,7 +476,7 @@ def tophat(
         image_small = trans.resize(
             image[z],
             (image[z].shape[0]//downsample_factor, image[z].shape[1]//downsample_factor),
-            anti_aliasing=True,
+            anti_aliasing=downsample_anti_aliasing,
             preserve_range=True
         )
 
@@ -487,7 +491,7 @@ def tophat(
         background_large = trans.resize(
             background_small,
             image[z].shape,
-            anti_aliasing=False,
+            order=upsample_order,
             preserve_range=True
         )
 

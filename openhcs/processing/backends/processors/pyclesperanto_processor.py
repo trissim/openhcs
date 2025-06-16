@@ -277,7 +277,9 @@ def create_projection(
 def tophat(
     image: np.ndarray,
     selem_radius: int = 50,
-    downsample_factor: int = 4
+    downsample_factor: int = 4,
+    downsample_interpolate: bool = True,
+    upsample_interpolate: bool = False
 ) -> np.ndarray:
     """
     Apply white top-hat filter to a 3D image for background removal - GPU accelerated.
@@ -286,6 +288,8 @@ def tophat(
         image: 3D numpy array of shape (Z, Y, X)
         selem_radius: Radius of the structuring element
         downsample_factor: Factor by which to downsample for processing
+        downsample_interpolate: Whether to use interpolation when downsampling
+        upsample_interpolate: Whether to use interpolation when upsampling
 
     Returns:
         Filtered 3D numpy array of shape (Z, Y, X)
@@ -293,19 +297,55 @@ def tophat(
     _check_pyclesperanto_available()
     _validate_3d_array(image)
 
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
     # Process each Z-slice independently
     result = np.zeros_like(image)
 
     for z in range(image.shape[0]):
+        # Store original data type
+        input_dtype = image[z].dtype
+
         # Push slice to GPU
-        gpu_slice = cle.push(image[z])
+        gpu_slice = cle.push(image[z].astype(np.float32))
 
-        # Apply top-hat filter directly using pyclesperanto
-        # Note: pyclesperanto's top_hat uses sphere structuring element
-        gpu_tophat = cle.top_hat_sphere(gpu_slice, radius_x=selem_radius, radius_y=selem_radius)
+        # 1) Downsample
+        scale_factor = 1.0 / downsample_factor
+        gpu_small = cle.scale(
+            gpu_slice,
+            factor_x=scale_factor,
+            factor_y=scale_factor,
+            resize=True,
+            interpolate=downsample_interpolate
+        )
 
-        # Pull back result
-        result[z] = cle.pull(gpu_tophat).astype(image.dtype)
+        # 2) Apply top-hat filter using sphere structuring element
+        gpu_tophat_small = cle.top_hat_sphere(
+            gpu_small,
+            radius_x=selem_radius // downsample_factor,
+            radius_y=selem_radius // downsample_factor
+        )
+
+        # 3) Calculate background on small image
+        gpu_background_small = cle.subtract_images(gpu_small, gpu_tophat_small)
+
+        # 4) Upscale background to original size
+        gpu_background_large = cle.scale(
+            gpu_background_small,
+            factor_x=downsample_factor,
+            factor_y=downsample_factor,
+            resize=True,
+            interpolate=upsample_interpolate
+        )
+
+        # 5) Subtract background and clip negative values
+        gpu_subtracted = cle.subtract_images(gpu_slice, gpu_background_large)
+        gpu_result = cle.maximum_image_and_scalar(gpu_subtracted, scalar=0)
+
+        # 6) Pull back and convert to original data type
+        slice_result = cle.pull(gpu_result)
+        result[z] = slice_result.astype(input_dtype)
 
     return result
 
