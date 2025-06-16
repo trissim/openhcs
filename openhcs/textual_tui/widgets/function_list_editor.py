@@ -28,10 +28,10 @@ class FunctionListEditorWidget(Container):
         pass
 
     # Reactive properties for automatic UI updates
-    functions = reactive(list)  # This will hold List[(callable, kwargs_dict)] - removed recompose=True to prevent focus loss
-    pattern_data = reactive(list, recompose=False)  # The actual pattern (List or Dict) - removed recompose=True to prevent focus loss
-    is_dict_mode = reactive(False, recompose=False)  # Whether we're in channel-specific mode - removed recompose=True to prevent focus loss
-    selected_channel = reactive(None, recompose=False)  # Currently selected channel (for dict mode) - removed recompose=True to prevent focus loss
+    functions = reactive(list, recompose=True)  # Structural changes (add/remove) should trigger recomposition
+    pattern_data = reactive(list, recompose=False)  # The actual pattern (List or Dict)
+    is_dict_mode = reactive(False, recompose=False)  # Whether we're in channel-specific mode
+    selected_channel = reactive(None, recompose=False)  # Currently selected channel (for dict mode)
     available_channels = reactive(list)  # Available channels from orchestrator
 
     def __init__(self, initial_functions: Union[List, Dict, callable, None] = None):
@@ -54,10 +54,8 @@ class FunctionListEditorWidget(Container):
 
     def watch_functions(self, new_functions: List) -> None:
         """Watch for changes to functions and update pattern data."""
-        # DISABLED: This was causing recomposition on every parameter change
-        # Only update pattern data for structural changes, not parameter changes
-        # self._update_pattern_data()
-        pass
+        # Update pattern data when functions change (structural changes only)
+        self._update_pattern_data()
 
     def _initialize_pattern_data(self, initial_functions: Union[List, Dict, callable, None]) -> None:
         """Initialize pattern data and determine mode."""
@@ -108,13 +106,7 @@ class FunctionListEditorWidget(Container):
         self.post_message(self.FunctionPatternChanged())
         logger.debug("Posted FunctionPatternChanged message to parent.")
 
-    def _trigger_recomposition(self) -> None:
-        """Manually trigger recomposition when needed (e.g., adding/removing functions)."""
-        # Force recomposition by mutating reactive properties
-        self.mutate_reactive(FunctionListEditorWidget.functions)
-        self.mutate_reactive(FunctionListEditorWidget.pattern_data)
-        self.mutate_reactive(FunctionListEditorWidget.is_dict_mode)
-        self.mutate_reactive(FunctionListEditorWidget.selected_channel)
+
 
     def _update_pattern_data(self) -> None:
         """Update pattern_data based on current functions and mode."""
@@ -144,8 +136,7 @@ class FunctionListEditorWidget(Container):
         else:
             self.functions = []
 
-        # Trigger recomposition for channel switch
-        self._trigger_recomposition()
+        # Channel switch will automatically trigger recomposition via reactive system
 
     def _add_channel_to_pattern(self, channel: Any) -> None:
         """Add a new channel (converts to dict mode if needed)."""
@@ -298,12 +289,11 @@ class FunctionListEditorWidget(Container):
 
                 new_kwargs[event.param_name] = converted_value
 
-                # Update functions list - watcher is disabled so no recomposition
-                new_functions = self.functions.copy()
-                new_functions[event.index] = (func, new_kwargs)
-                self.functions = new_functions
+                # Update functions list WITHOUT triggering recomposition (to prevent focus loss)
+                # We modify the underlying list directly instead of assigning a new list
+                self.functions[event.index] = (func, new_kwargs)
 
-                # Manually update pattern data since watcher is disabled
+                # Manually update pattern data
                 self._update_pattern_data()
 
                 # Notify parent
@@ -320,7 +310,6 @@ class FunctionListEditorWidget(Container):
         if hasattr(event, 'index') and 0 <= event.index < len(self.functions):
             new_functions = self.functions[:event.index] + self.functions[event.index+1:]
             self.functions = new_functions
-            self._trigger_recomposition()  # Trigger recomposition for structural changes
             self._commit_and_notify()
             logger.debug(f"Removed function at index {event.index}")
         else:
@@ -344,7 +333,6 @@ class FunctionListEditorWidget(Container):
         new_functions = self.functions.copy()
         new_functions[index], new_functions[new_index] = new_functions[new_index], new_functions[index]
         self.functions = new_functions
-        self._trigger_recomposition()  # Trigger recomposition for structural changes
         self._commit_and_notify()
         logger.debug(f"Moved function from index {index} to {new_index}")
 
@@ -355,7 +343,6 @@ class FunctionListEditorWidget(Container):
         def handle_function_selection(selected_function: Optional[Callable]) -> None:
             if selected_function:
                 self.functions = self.functions + [(selected_function, {})]
-                self._trigger_recomposition()  # Trigger recomposition for structural changes
                 self._commit_and_notify()
                 logger.debug(f"Added function: {selected_function.__name__}")
 
@@ -374,7 +361,6 @@ class FunctionListEditorWidget(Container):
                     new_functions = self.functions.copy()
                     new_functions[index] = (selected_function, {})
                     self.functions = new_functions
-                    self._trigger_recomposition()  # Trigger recomposition for structural changes
                     self._commit_and_notify()
                     logger.debug(f"Changed function at index {index} to: {selected_function.__name__}")
 
@@ -444,7 +430,6 @@ class FunctionListEditorWidget(Container):
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
             self._initialize_pattern_data(pattern)
-            self._trigger_recomposition()  # Trigger recomposition for loaded pattern
             self._commit_and_notify()
         except Exception as e:
             logger.error(f"Failed to load pattern: {e}")
@@ -548,7 +533,6 @@ class FunctionListEditorWidget(Container):
                     if self.selected_channel:
                         self.functions = new_pattern.get(self.selected_channel, [])
 
-        self._trigger_recomposition()  # Trigger recomposition for channel changes
         self._commit_and_notify()
         logger.debug(f"Updated channels: {new_channels}")
 
