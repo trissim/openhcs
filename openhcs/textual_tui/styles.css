@@ -109,6 +109,7 @@ StatusBar #log_display {
 #pipeline_editor_container FunctionPaneWidget Button,
 FunctionPaneWidget Button {
     width: auto !important;
+    min-width: auto !important;  /* Override default 16 column min-width */
     margin: 0 1;
 }
 
