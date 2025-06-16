@@ -97,7 +97,7 @@ class FunctionPaneWidget(Container):
                 delete_btn.styles.width = "auto"
                 yield delete_btn
 
-                reset_btn = Button("Reset All Parameters", id=f"reset_all_{self.index}", compact=True)
+                reset_btn = Button("Reset", id=f"reset_all_{self.index}", compact=True)
                 reset_btn.styles.width = "auto"
                 yield reset_btn
 
