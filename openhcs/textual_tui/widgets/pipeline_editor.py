@@ -80,8 +80,7 @@ class PipelineEditorWidget(ButtonListWidget):
     def format_item_for_display(self, step: FunctionStep) -> Tuple[str, str]:
         """Format step for display in the list."""
         step_name = getattr(step, 'name', 'Unknown Step')
-        step_type = 'function'  # All steps are FunctionStep objects
-        display_text = f"📋 {step_name} ({step_type})"
+        display_text = f"📋 {step_name}"
         return display_text, step_name
 
     def _handle_button_press(self, button_id: str) -> None:
