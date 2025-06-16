@@ -77,9 +77,9 @@ class ParameterFormManager:
         with Horizontal() as row:
             row.styles.height = "auto"
 
-            # Parameter label (fixed width)
+            # Parameter label (auto width - sizes to content)
             label = Static(f"{param_name}:", classes="param-label")
-            label.styles.width = "20"
+            label.styles.width = "auto"
             label.styles.text_align = "left"
             label.styles.height = "1"
             yield label
