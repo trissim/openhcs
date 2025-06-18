@@ -302,19 +302,42 @@ class PipelineOrchestrator:
     ) -> Dict[str, Any]:
         """Executes the pipeline for a single well using its frozen context."""
         well_id = frozen_context.well_id
-        logger.info(f"Executing pipeline for well {well_id}")
+        logger.info(f"🔥 SINGLE_WELL: Starting execution for well {well_id}")
+
+        # NUCLEAR VALIDATION
         if not frozen_context.is_frozen():
-            logger.error(f"Attempted to execute with a non-frozen context for well {well_id}.")
-            raise RuntimeError(f"Context for well {well_id} is not frozen before execution.")
+            error_msg = f"🔥 SINGLE_WELL ERROR: Context for well {well_id} is not frozen before execution"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        if not pipeline_definition:
+            error_msg = f"🔥 SINGLE_WELL ERROR: Empty pipeline_definition for well {well_id}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
         try:
-            for step in pipeline_definition:
-                # Generate step_id from object reference (elegant stateless approach)
-                step_id = get_step_id(step)
-                step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+            logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
 
-                logger.info(f"Executing step {step_id} ({step_name}) for well {well_id}")
-                step.process(frozen_context)
+            for step_index, step in enumerate(pipeline_definition):
+                try:
+                    # Generate step_id from object reference (elegant stateless approach)
+                    step_id = get_step_id(step)
+                    step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+
+                    logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_id} ({step_name}) for well {well_id}")
+
+                    if not hasattr(step, 'process'):
+                        error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_id} missing process method for well {well_id}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
+
+                    step.process(frozen_context)
+                    logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
+
+                except Exception as step_error:
+                    error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} ({step_id}) failed for well {well_id}: {step_error}"
+                    logger.error(error_msg, exc_info=True)
+                    raise RuntimeError(error_msg) from step_error
 
                 if visualizer:
                     step_plan = frozen_context.step_plans[step_id]
@@ -332,20 +355,23 @@ class PipelineOrchestrator:
                         else:
                             logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
             
-            logger.info(f"Pipeline execution completed successfully for well {well_id}")
+            logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
             return {"status": "success", "well_id": well_id}
         except Exception as e:
-            logger.error(f"Error during pipeline execution for well {well_id}: {e}", exc_info=True)
+            error_msg = f"🔥 SINGLE_WELL ERROR: Pipeline execution failed for well {well_id}: {e}"
+            logger.error(error_msg, exc_info=True)
             return {"status": "error", "well_id": well_id, "error_message": str(e), "details": repr(e)}
+        except BaseException as critical_e:
+            error_msg = f"🔥 SINGLE_WELL CRITICAL ERROR: Critical failure for well {well_id}: {critical_e}"
+            logger.error(error_msg, exc_info=True)
+            return {"status": "error", "well_id": well_id, "error_message": str(critical_e), "details": repr(critical_e)}
 
     def execute_compiled_plate(
         self,
         pipeline_definition: List[AbstractStep],
         compiled_contexts: Dict[str, ProcessingContext],
-        max_workers: Optional[int] = None, # Changed from DEFAULT_NUM_WORKERS
-        visualizer: Optional[NapariStreamVisualizer] = None,
-        executor_callback: Optional[Callable[[Any], None]] = None,
-        cancellation_flag: Optional[Any] = None
+        max_workers: Optional[int] = None,
+        visualizer: Optional[NapariStreamVisualizer] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Execute-all phase: Runs the stateless pipeline against compiled contexts.
@@ -357,8 +383,6 @@ class PipelineOrchestrator:
             max_workers: Maximum number of worker threads for parallel execution.
             visualizer: Optional instance of NapariStreamVisualizer (must be
                         initialized with orchestrator's filemanager by the caller).
-            executor_callback: Optional callback to receive the ThreadPoolExecutor reference
-                              for cancellation purposes. Called with executor when parallel execution starts.
 
         Returns:
             A dictionary mapping well IDs to their execution status (success/error and details).
@@ -386,75 +410,81 @@ class PipelineOrchestrator:
 
         execution_results: Dict[str, Dict[str, Any]] = {}
 
-        if actual_max_workers > 1 and len(compiled_contexts) > 1:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
-                # Provide executor reference to caller for cancellation
-                if executor_callback:
-                    executor_callback(executor)
+        # Always use ThreadPoolExecutor for consistent thread management and cancellation
+        logger.info(f"🔥 ORCHESTRATOR: Creating ThreadPoolExecutor with {actual_max_workers} workers")
 
-                future_to_well_id = {
-                    executor.submit(self._execute_single_well, pipeline_definition, context, visualizer): well_id
-                    for well_id, context in compiled_contexts.items()
-                }
+        # DEATH DETECTION: Mark ThreadPoolExecutor creation
+        logger.info("🔥 DEATH_MARKER: BEFORE_THREADPOOL_CREATION")
+
+        try:
+            logger.info("🔥 DEATH_MARKER: ENTERING_THREADPOOL_CONTEXT")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+                logger.info("🔥 DEATH_MARKER: THREADPOOL_CREATED_SUCCESSFULLY")
+                logger.info(f"🔥 ORCHESTRATOR: ThreadPoolExecutor created, submitting {len(compiled_contexts)} tasks")
+
+                # NUCLEAR ERROR TRACING: Create snapshot of compiled_contexts to prevent iteration issues
+                contexts_snapshot = dict(compiled_contexts.items())
+                logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
+
+                logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
+                future_to_well_id = {}
+                for well_id, context in contexts_snapshot.items():
+                    try:
+                        logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
+                        logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
+                        future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
+                        future_to_well_id[future] = well_id
+                        logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
+                        logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
+                    except Exception as submit_error:
+                        error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for well {well_id}: {submit_error}"
+                        logger.error(error_msg, exc_info=True)
+                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(submit_error), "details": repr(submit_error)}
+
+                logger.info("🔥 DEATH_MARKER: TASK_SUBMISSION_LOOP_COMPLETED")
+
+                logger.info(f"🔥 ORCHESTRATOR: All {len(future_to_well_id)} tasks submitted, waiting for completion")
+                logger.info("🔥 DEATH_MARKER: BEFORE_COMPLETION_LOOP")
+
+                completed_count = 0
+                logger.info("🔥 DEATH_MARKER: ENTERING_AS_COMPLETED_LOOP")
                 for future in concurrent.futures.as_completed(future_to_well_id):
                     well_id = future_to_well_id[future]
+                    completed_count += 1
+                    logger.info(f"🔥 DEATH_MARKER: PROCESSING_COMPLETED_TASK_{completed_count}_WELL_{well_id}")
+                    logger.info(f"🔥 ORCHESTRATOR: Task {completed_count}/{len(future_to_well_id)} completed for well {well_id}")
+
                     try:
+                        logger.info(f"🔥 DEATH_MARKER: CALLING_FUTURE_RESULT_FOR_WELL_{well_id}")
                         result = future.result()
+                        logger.info(f"🔥 DEATH_MARKER: FUTURE_RESULT_SUCCESS_FOR_WELL_{well_id}")
+                        logger.info(f"🔥 ORCHESTRATOR: Well {well_id} result: {result}")
                         execution_results[well_id] = result
+                        logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_WELL_{well_id}")
                     except Exception as exc:
-                        logger.error(f"Well {well_id} generated an exception during parallel execution: {exc}", exc_info=True)
+                        error_msg = f"Well {well_id} generated an exception during execution: {exc}"
+                        logger.error(f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True)
                         execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": repr(exc)}
+                        logger.info(f"🔥 DEATH_MARKER: ERROR_STORED_FOR_WELL_{well_id}")
 
-                    # 🔥 GPU CLEANUP: Clear GPU memory after each well completion (parallel execution)
-                    try:
-                        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-                        cleanup_all_gpu_frameworks()
-                        logger.debug(f"🔥 GPU CLEANUP: Cleared all GPU frameworks after well {well_id} (parallel)")
-                    except Exception as cleanup_error:
-                        logger.warning(f"Failed to cleanup GPU memory after well {well_id} (parallel): {cleanup_error}")
-        else:
-            logger.info("Executing wells sequentially.")
-            for well_id, context in compiled_contexts.items():
-                # 🔍 VRAM TRACKING: Log memory before well execution
-                try:
-                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-                    log_gpu_memory_usage(f"before well {well_id}")
-                except Exception:
-                    pass
+                logger.info("🔥 DEATH_MARKER: COMPLETION_LOOP_FINISHED")
 
-                execution_results[well_id] = self._execute_single_well(pipeline_definition, context, visualizer)
+                logger.info(f"🔥 ORCHESTRATOR: All tasks completed, {len(execution_results)} results collected")
 
-                # 🔍 VRAM TRACKING: Log memory after well execution (before cleanup)
-                try:
-                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-                    log_gpu_memory_usage(f"after well {well_id} (before cleanup)")
-                except Exception:
-                    pass
+        except Exception as executor_error:
+            error_msg = f"🔥 ORCHESTRATOR CRITICAL: ThreadPoolExecutor failed: {executor_error}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg) from executor_error
 
-                # 🔥 GPU CLEANUP: Clear GPU memory after each well to prevent accumulation
-                try:
-                    from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-                    cleanup_all_gpu_frameworks()
-                    logger.debug(f"🔥 GPU CLEANUP: Cleared all GPU frameworks after well {well_id}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup GPU memory after well {well_id}: {cleanup_error}")
+        # 🔥 GPU CLEANUP: Clear GPU memory after plate execution
+        try:
+            from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+            cleanup_all_gpu_frameworks()
+            logger.debug("🔥 GPU CLEANUP: Cleared all GPU frameworks after plate execution")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup GPU memory after plate execution: {cleanup_error}")
 
-                # 🔍 VRAM TRACKING: Log memory after cleanup
-                try:
-                    from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-                    log_gpu_memory_usage(f"after well {well_id} (after cleanup)")
-                except Exception:
-                    pass
-
-                # 🔥 MEMORY BACKEND CLEANUP: Clear memory backend after each well to prevent accumulation
-                try:
-                    from openhcs.io.base import reset_memory_backend
-                    reset_memory_backend()
-                    logger.debug(f"🔥 MEMORY BACKEND CLEANUP: Reset memory backend after well {well_id}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to reset memory backend after well {well_id}: {cleanup_error}")
-
-        logger.info(f"Plate execution finished. Results: {execution_results}")
+        logger.info(f"🔥 ORCHESTRATOR: Plate execution finished. Results: {execution_results}")
         return execution_results
 
     def get_wells(self, well_filter: Optional[List[str]] = None) -> List[str]:

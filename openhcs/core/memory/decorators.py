@@ -6,18 +6,116 @@ of pure functions, enforcing Clause 106-A (Declared Memory Types) and supporting
 memory-type-aware dispatching and orchestration.
 
 These decorators annotate functions with input_memory_type and output_memory_type
-attributes without performing any runtime logic or type checking. They are used
-by FuncStep and dispatchers to derive memory type compatibility.
+attributes and provide automatic thread-local CUDA stream management for GPU
+frameworks to enable true parallelization across multiple threads.
 """
 
+import functools
 import logging
+import threading
 from typing import Any, Callable, Optional, TypeVar
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES
+from openhcs.core.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
 F = TypeVar('F', bound=Callable[..., Any])
+
+# GPU frameworks imported lazily to prevent thread explosion
+# These will be imported only when actually needed by functions
+_gpu_frameworks_cache = {}
+
+def _get_cupy():
+    """Lazy import CuPy only when needed."""
+    if 'cupy' not in _gpu_frameworks_cache:
+        _gpu_frameworks_cache['cupy'] = optional_import("cupy")
+        if _gpu_frameworks_cache['cupy'] is not None:
+            logger.debug(f"🔧 Lazy imported CuPy in thread {threading.current_thread().name}")
+    return _gpu_frameworks_cache['cupy']
+
+def _get_torch():
+    """Lazy import PyTorch only when needed."""
+    if 'torch' not in _gpu_frameworks_cache:
+        _gpu_frameworks_cache['torch'] = optional_import("torch")
+        if _gpu_frameworks_cache['torch'] is not None:
+            logger.debug(f"🔧 Lazy imported PyTorch in thread {threading.current_thread().name}")
+    return _gpu_frameworks_cache['torch']
+
+def _get_tensorflow():
+    """Lazy import TensorFlow only when needed."""
+    if 'tensorflow' not in _gpu_frameworks_cache:
+        _gpu_frameworks_cache['tensorflow'] = optional_import("tensorflow")
+        if _gpu_frameworks_cache['tensorflow'] is not None:
+            logger.debug(f"🔧 Lazy imported TensorFlow in thread {threading.current_thread().name}")
+    return _gpu_frameworks_cache['tensorflow']
+
+def _get_jax():
+    """Lazy import JAX only when needed."""
+    if 'jax' not in _gpu_frameworks_cache:
+        _gpu_frameworks_cache['jax'] = optional_import("jax")
+        if _gpu_frameworks_cache['jax'] is not None:
+            logger.debug(f"🔧 Lazy imported JAX in thread {threading.current_thread().name}")
+    return _gpu_frameworks_cache['jax']
+
+# Thread-local storage for GPU streams and contexts
+_thread_gpu_contexts = threading.local()
+
+class ThreadGPUContext:
+    """Unified thread-local GPU context manager to prevent stream leaks."""
+
+    def __init__(self):
+        self._cupy_stream = None
+        self._torch_stream = None
+        self._thread_name = threading.current_thread().name
+
+    def get_cupy_stream(self):
+        """Get or create the single CuPy stream for this thread."""
+        if self._cupy_stream is None:
+            cp = _get_cupy()
+            if cp is not None and hasattr(cp, 'cuda'):
+                self._cupy_stream = cp.cuda.Stream()
+                logger.debug(f"🔧 Created CuPy stream for thread {self._thread_name}")
+        return self._cupy_stream
+
+    def get_torch_stream(self):
+        """Get or create the single PyTorch stream for this thread."""
+        if self._torch_stream is None:
+            torch = _get_torch()
+            if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
+                self._torch_stream = torch.cuda.Stream()
+                logger.debug(f"🔧 Created PyTorch stream for thread {self._thread_name}")
+        return self._torch_stream
+
+    def cleanup(self):
+        """Clean up streams when thread exits."""
+        if self._cupy_stream is not None:
+            logger.debug(f"🔧 Cleaning up CuPy stream for thread {self._thread_name}")
+            self._cupy_stream = None
+
+        if self._torch_stream is not None:
+            logger.debug(f"🔧 Cleaning up PyTorch stream for thread {self._thread_name}")
+            self._torch_stream = None
+
+def get_thread_gpu_context() -> ThreadGPUContext:
+    """Get the unified GPU context for the current thread."""
+    if not hasattr(_thread_gpu_contexts, 'gpu_context'):
+        _thread_gpu_contexts.gpu_context = ThreadGPUContext()
+
+        # Register cleanup for when thread exits
+        import weakref
+        def cleanup_on_thread_exit():
+            if hasattr(_thread_gpu_contexts, 'gpu_context'):
+                _thread_gpu_contexts.gpu_context.cleanup()
+
+        # Use weakref to avoid circular references
+        current_thread = threading.current_thread()
+        if hasattr(current_thread, '_cleanup_funcs'):
+            current_thread._cleanup_funcs.append(cleanup_on_thread_exit)
+        else:
+            current_thread._cleanup_funcs = [cleanup_on_thread_exit]
+
+    return _thread_gpu_contexts.gpu_context
 
 
 def memory_types(*, input_type: str, output_type: str) -> Callable[[F], F]:
@@ -137,7 +235,9 @@ def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str
     """
     Decorator that declares a function as operating on cupy arrays.
 
-    This is a convenience wrapper around memory_types with cupy defaults.
+    This decorator provides automatic thread-local CUDA stream management for
+    true parallelization across multiple threads. Each thread gets its own
+    persistent CUDA stream that is reused for all CuPy operations.
 
     Args:
         func: The function to decorate (optional)
@@ -145,12 +245,41 @@ def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str
         output_type: The memory type for the function's output (default: "cupy")
 
     Returns:
-        The decorated function with memory type attributes set
+        The decorated function with memory type attributes and stream management
 
     Raises:
         ValueError: If input_type or output_type is not a supported memory type
     """
-    decorator = memory_types(input_type=input_type, output_type=output_type)
+    def decorator(func: F) -> F:
+        # Set memory type attributes
+        memory_decorator = memory_types(input_type=input_type, output_type=output_type)
+        func = memory_decorator(func)
+
+        # Add CUDA stream wrapper if CuPy is available (lazy import)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            cp = _get_cupy()
+            if cp is not None and hasattr(cp, 'cuda'):
+                # Get unified thread context and CuPy stream
+                gpu_context = get_thread_gpu_context()
+                cupy_stream = gpu_context.get_cupy_stream()
+
+                if cupy_stream is not None:
+                    # Execute function in stream context
+                    with cupy_stream:
+                        return func(*args, **kwargs)
+                else:
+                    # No CUDA available, execute without stream
+                    return func(*args, **kwargs)
+            else:
+                # CuPy not available, execute without stream
+                return func(*args, **kwargs)
+
+        # Preserve memory type attributes
+        wrapper.input_memory_type = func.input_memory_type
+        wrapper.output_memory_type = func.output_memory_type
+
+        return wrapper
 
     # Handle both @cupy and @cupy(input_type=..., output_type=...) forms
     if func is None:
@@ -168,7 +297,9 @@ def torch(
     """
     Decorator that declares a function as operating on torch tensors.
 
-    This is a convenience wrapper around memory_types with torch defaults.
+    This decorator provides automatic thread-local CUDA stream management for
+    true parallelization across multiple threads. Each thread gets its own
+    persistent CUDA stream that is reused for all PyTorch operations.
 
     Args:
         func: The function to decorate (optional)
@@ -176,12 +307,41 @@ def torch(
         output_type: The memory type for the function's output (default: "torch")
 
     Returns:
-        The decorated function with memory type attributes set
+        The decorated function with memory type attributes and stream management
 
     Raises:
         ValueError: If input_type or output_type is not a supported memory type
     """
-    decorator = memory_types(input_type=input_type, output_type=output_type)
+    def decorator(func: F) -> F:
+        # Set memory type attributes
+        memory_decorator = memory_types(input_type=input_type, output_type=output_type)
+        func = memory_decorator(func)
+
+        # Add CUDA stream wrapper if PyTorch is available and CUDA is available (lazy import)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            torch = _get_torch()
+            if torch is not None and hasattr(torch, 'cuda') and torch.cuda.is_available():
+                # Get unified thread context and PyTorch stream
+                gpu_context = get_thread_gpu_context()
+                torch_stream = gpu_context.get_torch_stream()
+
+                if torch_stream is not None:
+                    # Execute function in stream context
+                    with torch.cuda.stream(torch_stream):
+                        return func(*args, **kwargs)
+                else:
+                    # No CUDA available, execute without stream
+                    return func(*args, **kwargs)
+            else:
+                # PyTorch not available or CUDA not available, execute without stream
+                return func(*args, **kwargs)
+
+        # Preserve memory type attributes
+        wrapper.input_memory_type = func.input_memory_type
+        wrapper.output_memory_type = func.output_memory_type
+
+        return wrapper
 
     # Handle both @torch and @torch(input_type=..., output_type=...) forms
     if func is None:
@@ -199,7 +359,9 @@ def tensorflow(
     """
     Decorator that declares a function as operating on tensorflow tensors.
 
-    This is a convenience wrapper around memory_types with tensorflow defaults.
+    This decorator provides automatic thread-local GPU device context management
+    for parallelization across multiple threads. TensorFlow manages CUDA streams
+    internally, so we use device contexts for thread isolation.
 
     Args:
         func: The function to decorate (optional)
@@ -207,12 +369,34 @@ def tensorflow(
         output_type: The memory type for the function's output (default: "tensorflow")
 
     Returns:
-        The decorated function with memory type attributes set
+        The decorated function with memory type attributes and device management
 
     Raises:
         ValueError: If input_type or output_type is not a supported memory type
     """
-    decorator = memory_types(input_type=input_type, output_type=output_type)
+    def decorator(func: F) -> F:
+        # Set memory type attributes
+        memory_decorator = memory_types(input_type=input_type, output_type=output_type)
+        func = memory_decorator(func)
+
+        # Add device context wrapper if TensorFlow is available and GPU is available (lazy import)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            tf = _get_tensorflow()
+            if tf is not None and tf.config.list_physical_devices('GPU'):
+                # Use GPU device context for thread isolation
+                # TensorFlow manages internal CUDA streams automatically
+                with tf.device('/GPU:0'):
+                    return func(*args, **kwargs)
+            else:
+                # TensorFlow not available or GPU not available, execute without device context
+                return func(*args, **kwargs)
+
+        # Preserve memory type attributes
+        wrapper.input_memory_type = func.input_memory_type
+        wrapper.output_memory_type = func.output_memory_type
+
+        return wrapper
 
     # Handle both @tensorflow and @tensorflow(input_type=..., output_type=...) forms
     if func is None:
@@ -230,7 +414,9 @@ def jax(
     """
     Decorator that declares a function as operating on JAX arrays.
 
-    This is a convenience wrapper around memory_types with jax defaults.
+    This decorator provides automatic thread-local GPU device placement for
+    parallelization across multiple threads. JAX/XLA manages CUDA streams
+    internally, so we use device placement for thread isolation.
 
     Args:
         func: The function to decorate (optional)
@@ -238,12 +424,41 @@ def jax(
         output_type: The memory type for the function's output (default: "jax")
 
     Returns:
-        The decorated function with memory type attributes set
+        The decorated function with memory type attributes and device management
 
     Raises:
         ValueError: If input_type or output_type is not a supported memory type
     """
-    decorator = memory_types(input_type=input_type, output_type=output_type)
+    def decorator(func: F) -> F:
+        # Set memory type attributes
+        memory_decorator = memory_types(input_type=input_type, output_type=output_type)
+        func = memory_decorator(func)
+
+        # Add device placement wrapper if JAX is available and GPU is available (lazy import)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            jax_module = _get_jax()
+            if jax_module is not None:
+                devices = jax_module.devices()
+                gpu_devices = [d for d in devices if d.platform == 'gpu']
+
+                if gpu_devices:
+                    # Use GPU device placement for thread isolation
+                    # JAX/XLA manages internal CUDA streams automatically
+                    with jax_module.default_device(gpu_devices[0]):
+                        return func(*args, **kwargs)
+                else:
+                    # No GPU devices available, execute without device placement
+                    return func(*args, **kwargs)
+            else:
+                # JAX not available, execute without device placement
+                return func(*args, **kwargs)
+
+        # Preserve memory type attributes
+        wrapper.input_memory_type = func.input_memory_type
+        wrapper.output_memory_type = func.output_memory_type
+
+        return wrapper
 
     # Handle both @jax and @jax(input_type=..., output_type=...) forms
     if func is None:

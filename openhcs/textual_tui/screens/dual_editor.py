@@ -167,7 +167,7 @@ class DualEditorScreen(ModalScreen):
             self.editing_step = FunctionStep(
                 func=[],  # Start with empty function list
                 name="New Step",
-                variable_components=[],
+                # Let variable_components use FunctionStep's default [VariableComponents.SITE]
                 group_by=""
             )
 

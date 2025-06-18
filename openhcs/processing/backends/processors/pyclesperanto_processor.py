@@ -8,7 +8,6 @@ with OpenHCS patterns.
 
 import logging
 from typing import List, Optional, Union
-import numpy as np
 
 # Import OpenHCS decorator
 from openhcs.core.memory.decorators import pyclesperanto as pyclesperanto_func
@@ -35,78 +34,21 @@ def _validate_3d_array(array) -> None:
     if array.ndim != 3:
         raise ValueError(f"Expected 3D array, got {array.ndim}D array")
 
-@pyclesperanto_func
-def percentile_normalize(
-    image: "cle.Array",
-    low_percentile: float = 1.0,
-    high_percentile: float = 99.0,
-    target_min: int = 0,
-    target_max: int = 65535
-) -> "cle.Array":
-    """
-    Normalize image intensities using percentile clipping - GPU accelerated.
-
-    Args:
-        image: 3D pyclesperanto Array of shape (Z, Y, X)
-        low_percentile: Lower percentile for clipping
-        high_percentile: Higher percentile for clipping
-        target_min: Minimum value in output range
-        target_max: Maximum value in output range
-
-    Returns:
-        Normalized 3D pyclesperanto Array of shape (Z, Y, X) with dtype uint16
-    """
-    _check_pyclesperanto_available()
-
-    # Import pyclesperanto
+def _gpu_minmax_normalize_range(image: "cle.Array", low_percentile: float, high_percentile: float) -> tuple:
+    """Calculate normalization range using min/max instead of percentiles - pure GPU."""
     import pyclesperanto as cle
 
-    # Validate 3D array (check shape directly on GPU array)
-    if len(image.shape) != 3:
-        raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
+    # Use min/max instead of percentiles to stay purely on GPU
+    # This is similar to how CLAHE works internally
+    min_val = cle.minimum_of_all_pixels(image)
+    max_val = cle.maximum_of_all_pixels(image)
 
-    # Create result array on GPU
-    result = cle.create_like(image)
-
-    for z in range(image.shape[0]):
-        # Extract Z-slice (stays on GPU)
-        gpu_slice = cle.copy_slice(image, z)
-
-        # Calculate percentiles - LIMITATION: pyclesperanto doesn't have percentile functions
-        # We need to pull to CPU for this calculation only
-        slice_np = cle.pull(gpu_slice)
-        import numpy as np
-        p_low, p_high = np.percentile(slice_np, (low_percentile, high_percentile))
-
-        # Avoid division by zero
-        if p_high == p_low:
-            # Fill slice with target_min (stays on GPU)
-            cle.set(gpu_slice, target_min)
-            cle.copy_slice(gpu_slice, result, z)
-            continue
-
-        # All operations stay on GPU from here
-        # Clip to [p_low, p_high]
-        gpu_clipped = cle.clip(gpu_slice, min_intensity=p_low, max_intensity=p_high)
-
-        # Normalize: (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-        # Step 1: subtract p_low
-        gpu_shifted = cle.subtract_image_from_scalar(gpu_clipped, scalar=p_low)
-
-        # Step 2: scale by (target_max - target_min) / (p_high - p_low)
-        scale_factor = (target_max - target_min) / (p_high - p_low)
-        gpu_scaled = cle.multiply_image_and_scalar(gpu_shifted, scalar=scale_factor)
-
-        # Step 3: add target_min
-        gpu_normalized = cle.add_image_and_scalar(gpu_scaled, scalar=target_min)
-
-        # Copy normalized slice back to result (stays on GPU)
-        cle.copy_slice(gpu_normalized, result, z)
-
-    return result
+    # For compatibility, we could apply a small margin based on percentile values
+    # but for pure GPU operation, we use full min/max range
+    return float(min_val), float(max_val)
 
 @pyclesperanto_func
-def stack_percentile_normalize(
+def per_slice_minmax_normalize(
     image: "cle.Array",
     low_percentile: float = 1.0,
     high_percentile: float = 99.0,
@@ -114,12 +56,17 @@ def stack_percentile_normalize(
     target_max: int = 65535
 ) -> "cle.Array":
     """
-    Normalize image intensities using global stack percentiles - GPU accelerated.
+    Normalize image intensities using per-slice min/max values - GPU accelerated.
+
+    PER-SLICE OPERATION: Uses min/max values independently for each Z-slice,
+    then normalizes each slice to its own min/max range. Each slice gets
+    its own normalization parameters. Pure GPU implementation using min/max
+    instead of percentiles (pyclesperanto limitation).
 
     Args:
         image: 3D pyclesperanto Array of shape (Z, Y, X)
-        low_percentile: Lower percentile for clipping
-        high_percentile: Higher percentile for clipping
+        low_percentile: Ignored - kept for API compatibility
+        high_percentile: Ignored - kept for API compatibility
         target_min: Minimum value in output range
         target_max: Maximum value in output range
 
@@ -135,12 +82,79 @@ def stack_percentile_normalize(
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
 
-    # Calculate global percentiles from entire stack
-    # LIMITATION: pyclesperanto doesn't have percentile functions
-    # We need to pull to CPU for this calculation only
-    image_np = cle.pull(image)
-    import numpy as np
-    p_low, p_high = np.percentile(image_np, (low_percentile, high_percentile))
+    # Build result by concatenating pairs of slices
+    result_slices = []
+
+    for z in range(image.shape[0]):
+        # Work directly with slice views - no copying needed
+        gpu_slice = image[z]  # Direct slice access
+
+        # Calculate min/max range for normalization (pure GPU)
+        p_low, p_high = _gpu_minmax_normalize_range(gpu_slice, low_percentile, high_percentile)
+
+        # Avoid division by zero
+        if p_high == p_low:
+            # Fill slice with target_min
+            gpu_result_slice = cle.create_like(gpu_slice)
+            cle.set(gpu_result_slice, target_min)
+            result_slices.append(gpu_result_slice)
+            continue
+
+        # All normalization operations stay on GPU using pure pyclesperanto
+        gpu_clipped = cle.clip(gpu_slice, min_intensity=p_low, max_intensity=p_high)
+        gpu_shifted = cle.subtract_image_from_scalar(gpu_clipped, scalar=p_low)
+
+        scale_factor = (target_max - target_min) / (p_high - p_low)
+        gpu_normalized = cle.add_image_and_scalar(
+            cle.multiply_image_and_scalar(gpu_shifted, scalar=scale_factor),
+            scalar=target_min
+        )
+
+        result_slices.append(gpu_normalized)
+
+    # Concatenate slices back into 3D array using pairwise concatenation
+    result = result_slices[0]
+    for i in range(1, len(result_slices)):
+        result = cle.concatenate_along_z(result, result_slices[i])
+
+    return result
+
+@pyclesperanto_func
+def stack_minmax_normalize(
+    image: "cle.Array",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: int = 0,
+    target_max: int = 65535
+) -> "cle.Array":
+    """
+    Normalize image intensities using global stack min/max values - GPU accelerated.
+
+    STACK-WIDE OPERATION: Uses global min/max values from the entire 3D stack
+    for normalization. All slices use the same global normalization parameters.
+    Pure GPU implementation using min/max instead of percentiles (pyclesperanto limitation).
+
+    Args:
+        image: 3D pyclesperanto Array of shape (Z, Y, X)
+        low_percentile: Ignored - kept for API compatibility
+        high_percentile: Ignored - kept for API compatibility
+        target_min: Minimum value in output range
+        target_max: Maximum value in output range
+
+    Returns:
+        Normalized 3D pyclesperanto Array of shape (Z, Y, X) with dtype uint16
+    """
+    _check_pyclesperanto_available()
+
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(image.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
+
+    # Calculate global min/max range from entire stack (pure GPU)
+    p_low, p_high = _gpu_minmax_normalize_range(image, low_percentile, high_percentile)
 
     # Avoid division by zero
     if p_high == p_low:
@@ -148,20 +162,15 @@ def stack_percentile_normalize(
         cle.set(result, target_min)
         return result
 
-    # All operations stay on GPU from here
-    # Clip to [p_low, p_high]
+    # All normalization operations stay on GPU using pure pyclesperanto
     gpu_clipped = cle.clip(image, min_intensity=p_low, max_intensity=p_high)
-
-    # Normalize: (clipped - p_low) * (target_max - target_min) / (p_high - p_low) + target_min
-    # Step 1: subtract p_low
     gpu_shifted = cle.subtract_image_from_scalar(gpu_clipped, scalar=p_low)
 
-    # Step 2: scale by (target_max - target_min) / (p_high - p_low)
     scale_factor = (target_max - target_min) / (p_high - p_low)
-    gpu_scaled = cle.multiply_image_and_scalar(gpu_shifted, scalar=scale_factor)
-
-    # Step 3: add target_min
-    gpu_normalized = cle.add_image_and_scalar(gpu_scaled, scalar=target_min)
+    gpu_normalized = cle.add_image_and_scalar(
+        cle.multiply_image_and_scalar(gpu_shifted, scalar=scale_factor),
+        scalar=target_min
+    )
 
     return gpu_normalized
 
@@ -174,9 +183,13 @@ def sharpen(
     """
     Apply unsharp mask sharpening to a 3D image - GPU accelerated.
 
+    PER-SLICE OPERATION: Applies 2D Gaussian blur (sigma_z=0) and unsharp masking
+    to each Z-slice independently. Each slice is sharpened using only its own
+    2D neighborhood, not considering adjacent Z-slices.
+
     Args:
         image: 3D pyclesperanto Array of shape (Z, Y, X)
-        radius: Gaussian blur radius for unsharp mask
+        radius: Gaussian blur radius for unsharp mask (applied in X,Y only)
         amount: Sharpening strength
 
     Returns:
@@ -191,33 +204,27 @@ def sharpen(
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
 
-    # Create result array on GPU
-    result = cle.create_like(image)
+    # Apply 3D Gaussian blur (pyclesperanto handles Z-dimension efficiently)
+    gpu_blurred = cle.gaussian_blur(image, sigma_x=radius, sigma_y=radius, sigma_z=0)
 
-    for z in range(image.shape[0]):
-        # Extract Z-slice (stays on GPU)
-        gpu_slice = cle.copy_slice(image, z)
+    # Unsharp mask: original + amount * (original - blurred)
+    # Use add_images_weighted for efficiency: result = 1*original + amount*(original - blurred)
+    gpu_diff = cle.subtract_images(image, gpu_blurred)
+    gpu_sharpened = cle.add_images_weighted(image, gpu_diff, factor1=1.0, factor2=amount)
 
-        # Apply Gaussian blur
-        gpu_blurred = cle.gaussian_blur(gpu_slice, sigma_x=radius, sigma_y=radius)
+    # Clip to valid range
+    gpu_clipped = cle.clip(gpu_sharpened, min_intensity=0, max_intensity=65535)
 
-        # Unsharp mask: original + amount * (original - blurred)
-        gpu_diff = cle.subtract_images(gpu_slice, gpu_blurred)
-        gpu_scaled_diff = cle.multiply_image_and_scalar(gpu_diff, scalar=amount)
-        gpu_sharpened = cle.add_images(gpu_slice, gpu_scaled_diff)
-
-        # Clip to valid range
-        gpu_clipped = cle.clip(gpu_sharpened, min_intensity=0, max_intensity=65535)
-
-        # Copy result slice back to result (stays on GPU)
-        cle.copy_slice(gpu_clipped, result, z)
-
-    return result
+    return gpu_clipped
 
 @pyclesperanto_func
 def max_projection(stack: "cle.Array") -> "cle.Array":
     """
     Create a maximum intensity projection from a Z-stack - GPU accelerated.
+
+    TRUE 3D OPERATION: Collapses the Z-dimension by taking the maximum value
+    across all Z-slices for each (Y,X) position. Uses pyclesperanto's
+    maximum_z_projection function.
 
     Args:
         stack: 3D pyclesperanto Array of shape (Z, Y, X)
@@ -240,7 +247,7 @@ def max_projection(stack: "cle.Array") -> "cle.Array":
     # Reshape to (1, Y, X) by creating a new 3D array
     result_shape = (1, gpu_projection_2d.shape[0], gpu_projection_2d.shape[1])
     result = cle.create(result_shape, dtype=gpu_projection_2d.dtype)
-    cle.copy_slice(gpu_projection_2d, result, 0)
+    result[0] = gpu_projection_2d  # Direct assignment
 
     return result
 
@@ -248,6 +255,10 @@ def max_projection(stack: "cle.Array") -> "cle.Array":
 def mean_projection(stack: "cle.Array") -> "cle.Array":
     """
     Create a mean intensity projection from a Z-stack - GPU accelerated.
+
+    TRUE 3D OPERATION: Collapses the Z-dimension by taking the mean value
+    across all Z-slices for each (Y,X) position. Uses pyclesperanto's
+    mean_z_projection function.
 
     Args:
         stack: 3D pyclesperanto Array of shape (Z, Y, X)
@@ -270,7 +281,7 @@ def mean_projection(stack: "cle.Array") -> "cle.Array":
     # Reshape to (1, Y, X) by creating a new 3D array
     result_shape = (1, gpu_projection_2d.shape[0], gpu_projection_2d.shape[1])
     result = cle.create(result_shape, dtype=gpu_projection_2d.dtype)
-    cle.copy_slice(gpu_projection_2d, result, 0)
+    result[0] = gpu_projection_2d  # Direct assignment
 
     return result
 
@@ -280,6 +291,9 @@ def create_projection(
 ) -> "cle.Array":
     """
     Create a projection from a stack using the specified method - GPU accelerated.
+
+    TRUE 3D OPERATION: Dispatcher function that calls the appropriate projection
+    method. All projection methods collapse the Z-dimension.
 
     Args:
         stack: 3D pyclesperanto Array of shape (Z, Y, X)
@@ -314,9 +328,16 @@ def tophat(
     """
     Apply white top-hat filter to a 3D image for background removal - GPU accelerated.
 
+    PER-SLICE OPERATION: Applies 2D top-hat morphological filtering to each Z-slice
+    independently using a sequential loop. Each slice is processed with its own
+    2D structuring element, not considering adjacent Z-slices.
+
+    Implementation: Downsamples entire stack, applies 2D top-hat per slice,
+    calculates background, upsamples background, then subtracts from original.
+
     Args:
         image: 3D pyclesperanto Array of shape (Z, Y, X)
-        selem_radius: Radius of the structuring element
+        selem_radius: Radius of the 2D structuring element (applied per slice)
         downsample_factor: Factor by which to downsample for processing
         downsample_interpolate: Whether to use interpolation when downsampling
         upsample_interpolate: Whether to use interpolation when upsampling
@@ -329,59 +350,60 @@ def tophat(
     # Import pyclesperanto
     import pyclesperanto as cle
 
-    # Validate 3D array (check shape directly on GPU array)
+    # Validate 3D array
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
 
-    # Create result array on GPU
-    result = cle.create_like(image)
+    # 1) Downsample entire stack at once (more efficient)
+    scale_factor = 1.0 / downsample_factor
+    gpu_small = cle.scale(
+        image,
+        factor_x=scale_factor,
+        factor_y=scale_factor,
+        factor_z=1.0,  # Don't scale Z dimension
+        resize=True,
+        interpolate=downsample_interpolate
+    )
 
-    for z in range(image.shape[0]):
-        # Extract Z-slice (stays on GPU)
-        gpu_slice = cle.copy_slice(image, z)
-
-        # 1) Downsample
-        scale_factor = 1.0 / downsample_factor
-        gpu_small = cle.scale(
+    # 2) Apply top-hat filter using sphere structuring element to entire stack
+    # Process slice by slice using direct array access
+    result_small = cle.create_like(gpu_small)
+    for z in range(gpu_small.shape[0]):
+        gpu_slice = gpu_small[z]  # Direct slice access
+        gpu_tophat_slice = cle.top_hat_sphere(
             gpu_slice,
-            factor_x=scale_factor,
-            factor_y=scale_factor,
-            resize=True,
-            interpolate=downsample_interpolate
-        )
-
-        # 2) Apply top-hat filter using sphere structuring element
-        gpu_tophat_small = cle.top_hat_sphere(
-            gpu_small,
             radius_x=selem_radius // downsample_factor,
             radius_y=selem_radius // downsample_factor
         )
+        result_small[z] = gpu_tophat_slice  # Direct assignment
 
-        # 3) Calculate background on small image
-        gpu_background_small = cle.subtract_images(gpu_small, gpu_tophat_small)
+    # 3) Calculate background on small image
+    gpu_background_small = cle.subtract_images(gpu_small, result_small)
 
-        # 4) Upscale background to original size
-        gpu_background_large = cle.scale(
-            gpu_background_small,
-            factor_x=downsample_factor,
-            factor_y=downsample_factor,
-            resize=True,
-            interpolate=upsample_interpolate
-        )
+    # 4) Upscale background to original size
+    gpu_background_large = cle.scale(
+        gpu_background_small,
+        factor_x=downsample_factor,
+        factor_y=downsample_factor,
+        factor_z=1.0,  # Don't scale Z dimension
+        resize=True,
+        interpolate=upsample_interpolate
+    )
 
-        # 5) Subtract background and clip negative values
-        gpu_subtracted = cle.subtract_images(gpu_slice, gpu_background_large)
-        gpu_result_slice = cle.maximum_image_and_scalar(gpu_subtracted, scalar=0)
+    # 5) Subtract background and clip negative values (entire stack at once)
+    gpu_subtracted = cle.subtract_images(image, gpu_background_large)
+    gpu_result = cle.maximum_image_and_scalar(gpu_subtracted, scalar=0)
 
-        # 6) Copy result slice back to result (stays on GPU)
-        cle.copy_slice(gpu_result_slice, result, z)
-
-    return result
+    return gpu_result
 
 @pyclesperanto_func
 def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
     """
     Apply a mask to a 3D image - GPU accelerated.
+
+    HYBRID OPERATION:
+    - If 3D mask: TRUE 3D OPERATION (direct element-wise multiplication)
+    - If 2D mask: PER-SLICE OPERATION (applies same 2D mask to each Z-slice via sequential loop)
 
     Args:
         image: 3D pyclesperanto Array of shape (Z, Y, X)
@@ -410,12 +432,12 @@ def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
         result = cle.create_like(image)
 
         for z in range(image.shape[0]):
-            # Extract Z-slice (stays on GPU)
-            gpu_slice = cle.copy_slice(image, z)
+            # Work directly with slice views
+            gpu_slice = image[z]  # Direct slice access
             # Apply mask (both stay on GPU)
             gpu_masked = cle.multiply_images(gpu_slice, mask)
-            # Copy result back (stays on GPU)
-            cle.copy_slice(gpu_masked, result, z)
+            # Assign result directly
+            result[z] = gpu_masked
 
         return result
 
@@ -439,6 +461,10 @@ def create_composite(
 ) -> "cle.Array":
     """
     Create a composite image from multiple 3D arrays - GPU accelerated.
+
+    TRUE 3D OPERATION: Performs element-wise weighted addition across entire
+    3D volumes. All mathematical operations are applied to the full 3D arrays
+    simultaneously using efficient pyclesperanto functions.
 
     Args:
         images: List of 3D pyclesperanto Arrays, each of shape (Z, Y, X)
@@ -479,47 +505,59 @@ def create_composite(
         weights = weights + [0.0] * (len(images) - len(weights))
     weights = weights[:len(images)]
 
-    # Initialize composite with first image (stays on GPU)
-    first_image = images[0]
-    gpu_composite = cle.multiply_image_and_scalar(first_image, scalar=weights[0])
+    # Filter out zero-weight images
+    valid_pairs = [(img, w) for img, w in zip(images, weights) if w > 0.0]
+    if not valid_pairs:
+        # All weights are zero, return zeros
+        return cle.create_like(images[0])
 
-    total_weight = weights[0] if weights[0] > 0.0 else 0.0
+    # Start with first valid image
+    first_img, first_weight = valid_pairs[0]
+    if len(valid_pairs) == 1:
+        # Only one image with non-zero weight
+        gpu_result = cle.multiply_image_and_scalar(first_img, scalar=first_weight)
+    else:
+        # Use add_images_weighted for pairs, then accumulate
+        gpu_composite = cle.multiply_image_and_scalar(first_img, scalar=first_weight)
+        total_weight = first_weight
 
-    # Add remaining images with their weights (all stay on GPU)
-    for i in range(1, len(images)):
-        weight = weights[i]
-        if weight <= 0.0:
-            continue
+        for img, weight in valid_pairs[1:]:
+            # Add this weighted image to the composite
+            gpu_composite = cle.add_images_weighted(
+                gpu_composite, img,
+                factor1=1.0, factor2=weight
+            )
+            total_weight += weight
 
-        gpu_weighted = cle.multiply_image_and_scalar(images[i], scalar=weight)
-        gpu_composite = cle.add_images(gpu_composite, gpu_weighted)
-        total_weight += weight
+        # Normalize by total weight
+        gpu_result = cle.multiply_image_and_scalar(gpu_composite, scalar=1.0/total_weight)
 
-    # Normalize by total weight (stays on GPU)
-    if total_weight > 0:
-        gpu_composite = cle.multiply_image_and_scalar(gpu_composite, scalar=1.0/total_weight)
-
-    # Clip to valid range (stays on GPU)
-    # Assume uint16 range for now - pyclesperanto doesn't have dtype introspection
-    gpu_clipped = cle.clip(gpu_composite, min_intensity=0, max_intensity=65535)
+    # Clip to valid range
+    gpu_clipped = cle.clip(gpu_result, min_intensity=0, max_intensity=65535)
 
     return gpu_clipped
 
 @pyclesperanto_func
-def stack_equalize_histogram(
+def equalize_histogram_3d(
     stack: "cle.Array",
-    bins: int = 65536,
+    tile_size: int = 8,
+    clip_limit: float = 0.01,
     range_min: float = 0.0,
     range_max: float = 65535.0
 ) -> "cle.Array":
     """
-    Apply histogram equalization to an entire stack - GPU accelerated.
+    Apply 3D CLAHE histogram equalization to a volume - GPU accelerated.
+
+    TRUE 3D OPERATION: Uses 3D CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    with 3D tiles (cubes) that consider voxel neighborhoods in X, Y, and Z dimensions.
+    Appropriate for Z-stacks where adjacent slices are spatially continuous.
 
     Args:
         stack: 3D pyclesperanto Array of shape (Z, Y, X)
-        bins: Number of bins for histogram computation
-        range_min: Minimum value for histogram range
-        range_max: Maximum value for histogram range
+        tile_size: Size of 3D tiles (cubes) for adaptive equalization
+        clip_limit: Clipping limit for histogram equalization (0.0-1.0)
+        range_min: Minimum value for output range
+        range_max: Maximum value for output range
 
     Returns:
         Equalized 3D pyclesperanto Array of shape (Z, Y, X)
@@ -533,51 +571,193 @@ def stack_equalize_histogram(
     if len(stack.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
 
-    # pyclesperanto has CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    # which is more advanced than basic histogram equalization
-    gpu_equalized = cle.clahe(stack, block_size_x=64, block_size_y=64, clip_limit=3.0)
+    # Use 3D CLAHE with 3D tiles (cubes)
+    gpu_equalized = cle.clahe(stack, tile_size=tile_size, clip_limit=clip_limit)
 
-    # Clip to valid range (stays on GPU)
+    # Clip to valid range using pure pyclesperanto
     gpu_clipped = cle.clip(gpu_equalized, min_intensity=range_min, max_intensity=range_max)
 
     return gpu_clipped
 
-def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> np.ndarray:
+@pyclesperanto_func
+def equalize_histogram_per_slice(
+    stack: "cle.Array",
+    tile_size: int = 8,
+    clip_limit: float = 0.01,
+    range_min: float = 0.0,
+    range_max: float = 65535.0
+) -> "cle.Array":
     """
-    Create a linear weight mask for blending images.
+    Apply 2D CLAHE histogram equalization to each slice independently - GPU accelerated.
 
-    This is a CPU-only helper function since it's typically called once.
+    PER-SLICE OPERATION: Applies 2D CLAHE to each Z-slice independently using 2D tiles.
+    Each slice gets its own adaptive histogram equalization. Appropriate for stacks
+    of different images (different X,Y content) or when slices should be treated independently.
+
+    Args:
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
+        tile_size: Size of 2D tiles (squares) for adaptive equalization per slice
+        clip_limit: Clipping limit for histogram equalization (0.0-1.0)
+        range_min: Minimum value for output range
+        range_max: Maximum value for output range
+
+    Returns:
+        Equalized 3D pyclesperanto Array of shape (Z, Y, X)
     """
-    # Calculate margin size
+    _check_pyclesperanto_available()
+
+    # Import pyclesperanto
+    import pyclesperanto as cle
+
+    # Validate 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
+
+    # Create result array
+    result = cle.create_like(stack)
+
+    # Apply 2D CLAHE to each slice independently
+    for z in range(stack.shape[0]):
+        # Work directly with slice views
+        gpu_slice = stack[z]  # Direct slice access
+
+        # Apply 2D CLAHE to this slice only
+        gpu_equalized_slice = cle.clahe(gpu_slice, tile_size=tile_size, clip_limit=clip_limit)
+
+        # Clip to valid range
+        gpu_clipped_slice = cle.clip(gpu_equalized_slice, min_intensity=range_min, max_intensity=range_max)
+
+        # Assign result directly
+        result[z] = gpu_clipped_slice
+
+    return result
+
+@pyclesperanto_func
+def stack_equalize_histogram(
+    stack: "cle.Array",
+    bins: int = 65536,
+    range_min: float = 0.0,
+    range_max: float = 65535.0
+) -> "cle.Array":
+    """
+    Apply histogram equalization to a stack - GPU accelerated.
+
+    COMPATIBILITY FUNCTION: Alias for equalize_histogram_3d to maintain API compatibility
+    with numpy processor. Uses 3D CLAHE for true 3D histogram equalization.
+
+    Args:
+        stack: 3D pyclesperanto Array of shape (Z, Y, X)
+        bins: Number of bins for histogram computation (unused - CLAHE parameter)
+        range_min: Minimum value for histogram range
+        range_max: Maximum value for histogram range
+
+    Returns:
+        Equalized 3D pyclesperanto Array of shape (Z, Y, X)
+    """
+    # Delegate to the 3D version with default parameters
+    return equalize_histogram_3d(stack, range_min=range_min, range_max=range_max)
+
+# API compatibility aliases - these maintain the original function names
+# but delegate to the more accurately named implementations
+
+@pyclesperanto_func
+def percentile_normalize(
+    image: "cle.Array",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: int = 0,
+    target_max: int = 65535
+) -> "cle.Array":
+    """
+    COMPATIBILITY ALIAS: Delegates to per_slice_minmax_normalize.
+
+    Note: Uses min/max normalization instead of true percentiles due to
+    pyclesperanto limitations. Kept for API compatibility with other processors.
+    """
+    return per_slice_minmax_normalize(image, low_percentile, high_percentile, target_min, target_max)
+
+@pyclesperanto_func
+def stack_percentile_normalize(
+    image: "cle.Array",
+    low_percentile: float = 1.0,
+    high_percentile: float = 99.0,
+    target_min: int = 0,
+    target_max: int = 65535
+) -> "cle.Array":
+    """
+    COMPATIBILITY ALIAS: Delegates to stack_minmax_normalize.
+
+    Note: Uses min/max normalization instead of true percentiles due to
+    pyclesperanto limitations. Kept for API compatibility with other processors.
+    """
+    return stack_minmax_normalize(image, low_percentile, high_percentile, target_min, target_max)
+
+@pyclesperanto_func
+def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "cle.Array":
+    """
+    Create a linear weight mask for blending images - GPU accelerated.
+
+    Pure pyclesperanto implementation using GPU operations only.
+    """
+    import pyclesperanto as cle
+
+    # Create coordinate arrays for X and Y positions
+    y_coords = cle.create((height, width), dtype=float)
+    x_coords = cle.create((height, width), dtype=float)
+
+    # Fill coordinate arrays
+    cle.set_ramp_y(y_coords)
+    cle.set_ramp_x(x_coords)
+
+    # Calculate margin sizes
     margin_h = int(height * margin_ratio)
     margin_w = int(width * margin_ratio)
 
-    # Create weight mask
-    mask = np.ones((height, width), dtype=np.float32)
+    # Create weight mask starting with ones
+    mask = cle.create((height, width), dtype=float)
+    cle.set(mask, 1.0)
 
-    # Apply linear fade at edges
-    for i in range(margin_h):
-        weight = i / margin_h
-        mask[i, :] *= weight
-        mask[-(i+1), :] *= weight
+    # Apply fade from top edge: weight = min(1.0, y / margin_h)
+    if margin_h > 0:
+        top_weight = cle.multiply_image_and_scalar(y_coords, scalar=1.0/margin_h)
+        top_weight = cle.minimum_image_and_scalar(top_weight, scalar=1.0)
+        mask = cle.multiply_images(mask, top_weight)
 
-    for j in range(margin_w):
-        weight = j / margin_w
-        mask[:, j] *= weight
-        mask[:, -(j+1)] *= weight
+    # Apply fade from bottom edge: weight = min(1.0, (height - 1 - y) / margin_h)
+    if margin_h > 0:
+        bottom_coords = cle.subtract_image_from_scalar(y_coords, scalar=height - 1)
+        bottom_coords = cle.absolute(bottom_coords)
+        bottom_weight = cle.multiply_image_and_scalar(bottom_coords, scalar=1.0/margin_h)
+        bottom_weight = cle.minimum_image_and_scalar(bottom_weight, scalar=1.0)
+        mask = cle.multiply_images(mask, bottom_weight)
+
+    # Apply fade from left edge: weight = min(1.0, x / margin_w)
+    if margin_w > 0:
+        left_weight = cle.multiply_image_and_scalar(x_coords, scalar=1.0/margin_w)
+        left_weight = cle.minimum_image_and_scalar(left_weight, scalar=1.0)
+        mask = cle.multiply_images(mask, left_weight)
+
+    # Apply fade from right edge: weight = min(1.0, (width - 1 - x) / margin_w)
+    if margin_w > 0:
+        right_coords = cle.subtract_image_from_scalar(x_coords, scalar=width - 1)
+        right_coords = cle.absolute(right_coords)
+        right_weight = cle.multiply_image_and_scalar(right_coords, scalar=1.0/margin_w)
+        right_weight = cle.minimum_image_and_scalar(right_weight, scalar=1.0)
+        mask = cle.multiply_images(mask, right_weight)
 
     return mask
 
-def create_weight_mask(shape: tuple, margin_ratio: float = 0.1) -> np.ndarray:
+@pyclesperanto_func
+def create_weight_mask(shape: tuple, margin_ratio: float = 0.1) -> "cle.Array":
     """
-    Create a weight mask for blending images.
+    Create a weight mask for blending images - GPU accelerated.
 
     Args:
         shape: Shape of the mask (height, width)
         margin_ratio: Ratio of image size to use as margin
 
     Returns:
-        2D numpy weight mask of shape (Y, X)
+        2D pyclesperanto Array of shape (Y, X)
     """
     if not isinstance(shape, tuple) or len(shape) != 2:
         raise TypeError("shape must be a tuple of (height, width)")

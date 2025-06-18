@@ -6,9 +6,11 @@ Shows live log messages from OpenHCS operations.
 """
 
 import logging
+import os
 from datetime import datetime
 from collections import deque
 from typing import Optional
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.reactive import reactive
@@ -64,6 +66,12 @@ class StatusBar(Widget):
         self.max_history = max_history
         self.log_history = deque(maxlen=max_history)  # Keep recent log messages
         self.log_handler: Optional[TUILogHandler] = None
+
+        # Log file monitoring for subprocess logs
+        self.log_file_path: Optional[str] = None
+        self.log_file_position: int = 0
+        self.log_monitor_timer = None
+
         logger.debug("StatusBar initialized with real-time logging")
     
     def compose(self) -> ComposeResult:
@@ -88,10 +96,12 @@ class StatusBar(Widget):
     def on_mount(self) -> None:
         """Set up log handler when widget is mounted."""
         self.setup_log_handler()
+        self.start_log_file_monitoring()
 
     def on_unmount(self) -> None:
         """Clean up log handler when widget is unmounted."""
         self.cleanup_log_handler()
+        self.stop_log_file_monitoring()
 
     def setup_log_handler(self) -> None:
         """Set up the custom log handler to capture OpenHCS logs."""
@@ -148,3 +158,92 @@ class StatusBar(Widget):
     def clear_status(self) -> None:
         """Legacy method - now shows ready message."""
         self.current_log_message = "Ready"
+
+    def start_log_file_monitoring(self) -> None:
+        """Start monitoring the log file for subprocess updates."""
+        # Get current log file path from the logging system
+        self.log_file_path = self.get_current_log_file_path()
+        if self.log_file_path and Path(self.log_file_path).exists():
+            # Start from end of file to only show new logs
+            self.log_file_position = Path(self.log_file_path).stat().st_size
+            # Monitor every 0.1 seconds for very responsive updates
+            self.log_monitor_timer = self.set_interval(0.1, self.check_log_file_updates)
+            logger.debug(f"Started log file monitoring: {self.log_file_path}")
+
+    def stop_log_file_monitoring(self) -> None:
+        """Stop monitoring the log file."""
+        if self.log_monitor_timer:
+            self.log_monitor_timer.stop()
+            self.log_monitor_timer = None
+        logger.debug("Stopped log file monitoring")
+
+    def get_current_log_file_path(self) -> Optional[str]:
+        """Get the current log file path from the logging system."""
+        try:
+            # Get the root logger and find the FileHandler
+            root_logger = logging.getLogger()
+            for handler in root_logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    return handler.baseFilename
+
+            # Fallback: try to get from openhcs logger
+            openhcs_logger = logging.getLogger("openhcs")
+            for handler in openhcs_logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    return handler.baseFilename
+
+            return None
+        except Exception as e:
+            logger.debug(f"Could not determine log file path: {e}")
+            return None
+
+    def check_log_file_updates(self) -> None:
+        """Check for new log entries and update status bar."""
+        if not self.log_file_path or not Path(self.log_file_path).exists():
+            return
+
+        try:
+            current_size = Path(self.log_file_path).stat().st_size
+            if current_size > self.log_file_position:
+                # Read new content
+                with open(self.log_file_path, 'r') as f:
+                    f.seek(self.log_file_position)
+                    new_lines = f.readlines()
+                    self.log_file_position = f.tell()
+
+                # Process new log lines
+                for line in new_lines:
+                    line = line.strip()
+                    if line and self.is_subprocess_log(line):
+                        # Extract the message part for display
+                        message = self.extract_log_message(line)
+                        if message:
+                            self.add_log_message(message, "INFO")
+
+        except Exception as e:
+            logger.debug(f"Error reading log file: {e}")
+
+    def is_subprocess_log(self, line: str) -> bool:
+        """Accept ANY log line - show all subprocess output."""
+        return True  # Show everything
+
+    def extract_log_message(self, line: str) -> Optional[str]:
+        """Extract the message part from any log line, removing timestamp."""
+        try:
+            # Remove timestamp: "2025-06-18 01:00:50,281 - logger - level - message"
+            # Find first " - " and take everything after it
+            if " - " in line:
+                parts = line.split(" - ", 1)
+                if len(parts) > 1:
+                    clean_line = parts[1].strip()
+                else:
+                    clean_line = line.strip()
+            else:
+                clean_line = line.strip()
+            
+            # Allow more characters (200 instead of 100)
+            if len(clean_line) > 200:
+                return clean_line[:197] + "..."
+            return clean_line
+        except Exception:
+            return line.strip() if line else None

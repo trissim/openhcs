@@ -2,11 +2,30 @@
 
 /* General dialog styling */
 .dialog {
-    background: $surface;
+    background: $background;
     border: tall $primary;
     padding: 1 2;
     width: auto;
     height: auto;
+}
+
+/* Nested dataclass sections - same background as dialog */
+Collapsible {
+    background: $background;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* Collapsible title bar - same background */
+Collapsible > .collapsible--title {
+    background: $background;
+}
+
+/* Collapsible content area - same background */
+Collapsible > .collapsible--contents {
+    background: $background;
+    padding: 0;
 }
 
 /* SelectionList styling - remove circles, keep highlighting */

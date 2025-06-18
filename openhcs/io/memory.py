@@ -24,8 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryStorageBackend(StorageBackend):
-    def __init__(self):
-        self._memory_store = {}  # Dict[str, Any]
+    def __init__(self, shared_dict: Optional[Dict[str, Any]] = None):
+        """
+        Initializes the memory storage.
+
+        Args:
+            shared_dict: If provided, uses this dictionary as the storage backend.
+                         This is useful for sharing memory between processes with a
+                         multiprocessing.Manager.dict. If None, a new local
+                         dictionary is created.
+        """
+        self._memory_store = shared_dict if shared_dict is not None else {}
         self._prefixes = set()  # Declared directory-like namespaces
 
     def _normalize(self, path: Union[str, Path]) -> str:
@@ -108,7 +117,7 @@ class MemoryStorageBackend(StorageBackend):
         result = []
         dir_prefix = dir_key + "/" if not dir_key.endswith("/") else dir_key
 
-        for path, value in self._memory_store.items():
+        for path, value in list(self._memory_store.items()):
             # Skip if not under this directory
             if not path.startswith(dir_prefix):
                 continue
@@ -143,7 +152,7 @@ class MemoryStorageBackend(StorageBackend):
         result = set()
         dir_prefix = dir_key + "/" if not dir_key.endswith("/") else dir_key
 
-        for stored_path in self._memory_store.keys():
+        for stored_path in list(self._memory_store.keys()):
             if stored_path.startswith(dir_prefix):
                 rel_path = stored_path[len(dir_prefix):]
                 # Only direct children (no subdirectories)
@@ -180,7 +189,7 @@ class MemoryStorageBackend(StorageBackend):
         if self._memory_store[key] is None:
             # Check if directory has any children
             dir_prefix = key + "/" if not key.endswith("/") else key
-            for stored_path in self._memory_store.keys():
+            for stored_path in list(self._memory_store.keys()):
                 if stored_path.startswith(dir_prefix):
                     raise IsADirectoryError(f"Cannot delete non-empty directory: {path}")
 
@@ -526,7 +535,7 @@ class MemoryStorageBackend(StorageBackend):
             files_to_delete = []
             gpu_objects_found = 0
 
-            for key, value in self._memory_store.items():
+            for key, value in list(self._memory_store.items()):
                 # Delete files (non-None values) and symlinks, but keep directories (None values)
                 if value is not None:
                     files_to_delete.append(key)

@@ -61,7 +61,7 @@ class BaseFloatingWindow(ModalScreen):
 
     def compose(self) -> ComposeResult:
         """Compose the complete floating window structure."""
-        with Container(id="dialog_container") as container:
+        with Container(id="dialog_container", classes="dialog") as container:
             container.styles.border = ("solid", "white")
             # Title (if provided)
             if self.window_title:

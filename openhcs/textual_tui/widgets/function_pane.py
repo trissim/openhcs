@@ -10,6 +10,7 @@ from textual.reactive import reactive
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
 from .shared.parameter_form_manager import ParameterFormManager
 from .shared.signature_analyzer import SignatureAnalyzer
+from .shared.clickable_help_label import ClickableFunctionTitle
 
 
 class FunctionPaneWidget(Container):
@@ -42,7 +43,7 @@ class FunctionPaneWidget(Container):
             parameters = {name: self.kwargs.get(name, info.default_value) for name, info in param_info.items()}
             parameter_types = {name: info.param_type for name, info in param_info.items()}
 
-            self.form_manager = ParameterFormManager(parameters, parameter_types, f"func_{index}")
+            self.form_manager = ParameterFormManager(parameters, parameter_types, f"func_{index}", param_info)
             self.param_defaults = {name: info.default_value for name, info in param_info.items()}
         else:
             self.form_manager = None
@@ -50,14 +51,11 @@ class FunctionPaneWidget(Container):
 
     def compose(self) -> ComposeResult:
         """Compose the function pane with parameter editing."""
-        func_name = getattr(self.func, '__name__', 'Unknown Function')
-        module_name = getattr(self.func, '__module__', '').split('.')[-1] if self.func else ''
-
-        # Function header with module name
-        title = f"{self.index + 1}: {func_name}"
-        if module_name:
-            title += f" ({module_name})"
-        yield Static(f"[bold]{title}[/bold]")
+        # Function header with clickable help
+        if self.func:
+            yield ClickableFunctionTitle(self.func, self.index)
+        else:
+            yield Static(f"[bold]{self.index + 1}: Unknown Function[/bold]")
 
        # # Control buttons row with Reset All Parameters on the right
        # with Horizontal() as button_row:
@@ -186,6 +184,11 @@ class FunctionPaneWidget(Container):
         # Post message to parent widget
         self.post_message(self.RemoveFunction(self.index))
 
+    def _add_function(self) -> None:
+        """Add a new function after this one."""
+        # Post message to parent widget to add function at index + 1
+        self.post_message(self.AddFunction(self.index + 1))
+
     def _move_function(self, direction: int) -> None:
         """Move function up or down."""
         # Post message to parent widget
@@ -311,6 +314,12 @@ class FunctionPaneWidget(Container):
         def __init__(self, index: int):
             super().__init__()
             self.index = index
+
+    class AddFunction(Message):
+        """Message sent when a new function should be added at specified position."""
+        def __init__(self, insert_index: int):
+            super().__init__()
+            self.insert_index = insert_index
 
     class MoveFunction(Message):
         """Message sent when function should be moved up or down."""

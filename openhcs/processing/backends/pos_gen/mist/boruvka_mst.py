@@ -129,25 +129,17 @@ def build_mst_gpu_boruvka(
 
         # Kernel 3: Union components and update MST
         print(f"🔥 Iteration {iteration}: Launching union components kernel...")
-        edges_added = launch_union_components_kernel(
+        launch_union_components_kernel(
             cheapest_edge_idx, edges_from, edges_to, edges_dx, edges_dy,
             parent, rank, mst_edges_from, mst_edges_to, mst_edges_dx, mst_edges_dy,
             mst_count, num_nodes
         )
 
-        print(f"🔥 Iteration {iteration}: Added {edges_added} edges, MST total: {int(mst_count[0])}")
+        print(f"🔥 Iteration {iteration}: Kernel launched (pure GPU)")
 
-        # Check termination condition (minimal CPU-GPU sync)
-        if edges_added == 0:
-            print(f"🔥 Iteration {iteration}: No edges added, terminating")
-            break
-
-        # Early termination check
-        component_count = gpu_component_count(parent)
-        print(f"🔥 Iteration {iteration}: {component_count} components remaining")
-        if component_count <= 1:
-            print(f"🔥 Iteration {iteration}: Single component reached, terminating")
-            break
+        # Pure GPU termination check - no CPU sync
+        # Use fixed iteration count instead of dynamic checking
+        # This eliminates CPU-GPU synchronization bottleneck
 
     # Convert result to expected format
     final_mst_count = int(mst_count[0])

@@ -217,12 +217,12 @@ def _global_optimization_gpu_only(
                 left_region = current_tile[:, -overlap_w:]  # Right edge of left tile
                 right_region = right_tile[:, :overlap_w]   # Left edge of right tile
 
-                # Debug: Check overlap region extraction
+                # Debug: Check overlap region extraction (avoid GPU sync on .shape)
                 if conn_idx < debug_connection_limit:
                     print(f"🔥 HORIZONTAL OVERLAP {conn_idx}: tiles {tile_idx}->{right_idx}")
                     print(f"   overlap_w={int(overlap_w)}, W={W}")
-                    print(f"   left_region.shape={left_region.shape} (from tile[:, -{int(overlap_w)}:])")
-                    print(f"   right_region.shape={right_region.shape} (from tile[:, :{int(overlap_w)}])")
+                    # Avoid .shape access which can cause GPU sync issues
+                    print(f"   Processing overlap regions (shapes not shown to avoid GPU sync)")
 
                 if use_nist_robustness:
                     dy, dx, quality = phase_correlation_nist_gpu(

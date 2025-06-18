@@ -28,22 +28,24 @@ logger = logging.getLogger(__name__)
 # Environment variable to disable universal GPU defragmentation
 DISABLE_GPU_DEFRAG = os.getenv('OPENHCS_DISABLE_GPU_DEFRAG', 'false').lower() == 'true'
 
-def _universal_gpu_defrag_after_function(func_name: str, failed: bool = False) -> None:
-    """Universal GPU memory defragmentation using existing infrastructure."""
+def _targeted_gpu_cleanup_after_function(func_name: str, input_memory_type: str, device_id: Optional[int] = None, failed: bool = False) -> None:
+    """Targeted GPU memory cleanup for specific frameworks used by the function."""
     if DISABLE_GPU_DEFRAG:
         return
 
     try:
-        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-        cleanup_all_gpu_frameworks()  # Clean ALL frameworks, not just CuPy
-
+        from openhcs.core.memory.gpu_cleanup import cleanup_gpu_memory_by_framework
+        
+        # Clean up the input memory type framework (what the function received)
+        cleanup_gpu_memory_by_framework(input_memory_type, device_id)
+        
         status = "FAILED" if failed else "SUCCESS"
-        logger.debug(f"🔧 UNIVERSAL DEFRAG ({status}): {func_name} completed")
+        logger.debug(f"🔧 TARGETED CLEANUP ({status}): {func_name} completed, cleaned frameworks: {input_memory_type}")
 
     except ImportError:
         pass  # GPU frameworks not available
     except Exception as e:
-        logger.warning(f"🔧 UNIVERSAL DEFRAG: Failed for {func_name}: {e}")
+        logger.warning(f"🔧 TARGETED CLEANUP: Failed for {func_name}: {e}")
 
 def _is_3d(array: Any) -> bool:
     """Check if an array is 3D."""
@@ -56,7 +58,9 @@ def _execute_function_core(
     context: 'ProcessingContext',
     special_inputs_plan: Dict[str, str],  # {'arg_name_for_func': 'special_path_value'}
     special_outputs_plan: TypingOrderedDict[str, str], # {'output_key': 'special_path_value'}, order matters
-    well_id: str  # Add well_id parameter
+    well_id: str, # Add well_id parameter
+    input_memory_type: str,
+    device_id: int
 ) -> Any: # Returns the main processed data stack
     """
     Executes a single callable, handling its special I/O.
@@ -96,15 +100,27 @@ def _execute_function_core(
     if 'context' in sig.parameters:
         final_kwargs['context'] = context
 
+    # 🔍 DEBUG: Log input dimensions
+    input_shape = getattr(main_data_arg, 'shape', 'no shape attr')
+    input_type = type(main_data_arg).__name__
+    logger.info(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
+
     try:
         raw_function_output = func_callable(main_data_arg, **final_kwargs)
 
-        # 🔧 UNIVERSAL GPU DEFRAG: Clean memory after every function
-        _universal_gpu_defrag_after_function(func_callable.__name__)
+        # 🔍 DEBUG: Log output dimensions
+        output_shape = getattr(raw_function_output, 'shape', 'no shape attr')
+        output_type = type(raw_function_output).__name__
+        logger.info(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
+
+        # 🔧 TARGETED GPU CLEANUP: Clean memory for specific framework after function
+        step_id = next(iter(context.step_plans.keys()))
+        _targeted_gpu_cleanup_after_function(func_callable.__name__, input_memory_type, device_id)
 
     except Exception as e:
-        # 🔧 UNIVERSAL GPU DEFRAG: Clean memory even on failure
-        _universal_gpu_defrag_after_function(func_callable.__name__, failed=True)
+        # 🔧 TARGETED GPU CLEANUP: Clean memory even on failure
+        step_id = next(iter(context.step_plans.keys()))
+        _targeted_gpu_cleanup_after_function(func_callable.__name__, input_memory_type, device_id, failed=True)
         raise e
 
     main_output_data = raw_function_output
@@ -156,7 +172,9 @@ def _execute_chain_core(
     context: 'ProcessingContext',
     step_special_inputs_plan: Dict[str, str],
     step_special_outputs_plan: TypingOrderedDict[str, str],
-    well_id: str  # Add well_id parameter
+    well_id: str,  # Add well_id parameter
+    device_id: int,
+    input_memory_type: str,
 ) -> Any:
     current_stack = initial_data_stack
     for i, func_item in enumerate(func_chain):
@@ -180,7 +198,9 @@ def _execute_chain_core(
             context=context,
             special_inputs_plan=step_special_inputs_plan,
             special_outputs_plan=outputs_plan_for_this_call,
-            well_id=well_id
+            well_id=well_id,
+            device_id=device_id,
+            input_memory_type=input_memory_type,
         )
     return current_stack
 
@@ -240,34 +260,57 @@ def _process_single_pattern_group(
             logger.warning(f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}")
             return
 
+        # 🔍 DEBUG: Log stacking operation
+        logger.info(f"🔍 STACKING: {len(raw_slices)} slices → memory_type: {input_memory_type_from_plan}")
+        if raw_slices:
+            slice_shapes = [getattr(s, 'shape', 'no shape') for s in raw_slices[:3]]  # First 3 shapes
+            logger.info(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
+
         main_data_stack = stack_slices(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
         )
+
+        # 🔍 DEBUG: Log stacked result
+        stack_shape = getattr(main_data_stack, 'shape', 'no shape')
+        stack_type = type(main_data_stack).__name__
+        logger.info(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
         
         final_base_kwargs = base_func_args.copy()
         
         if isinstance(executable_func_or_chain, list):
             processed_stack = _execute_chain_core(
                 main_data_stack, executable_func_or_chain, context,
-                special_inputs_map, special_outputs_map, well_id
+                special_inputs_map, special_outputs_map, well_id,
+                device_id, input_memory_type_from_plan
             )
         elif callable(executable_func_or_chain):
             processed_stack = _execute_function_core(
                 executable_func_or_chain, main_data_stack, final_base_kwargs, context,
-                special_inputs_map, special_outputs_map, well_id
+                special_inputs_map, special_outputs_map, well_id, input_memory_type_from_plan, device_id
             )
         else:
             raise TypeError(f"Invalid executable_func_or_chain: {type(executable_func_or_chain)}")
 
-        # 🔥 DEBUG: Check what shape the function actually returned
+        # 🔍 DEBUG: Check what shape the function actually returned
         input_shape = getattr(main_data_stack, 'shape', 'unknown')
         output_shape = getattr(processed_stack, 'shape', 'unknown')
+        processed_type = type(processed_stack).__name__
+        logger.info(f"🔍 PROCESSING RESULT: input: {input_shape} → output: {output_shape}, type: {processed_type}")
+
         if not _is_3d(processed_stack):
              raise ValueError(f"Main processing must result in a 3D array, got {getattr(processed_stack, 'shape', 'unknown')}")
+
+        # 🔍 DEBUG: Log unstacking operation
+        logger.info(f"🔍 UNSTACKING: shape: {output_shape} → memory_type: {output_memory_type_from_plan}")
 
         output_slices = unstack_slices(
             array=processed_stack, memory_type=output_memory_type_from_plan, gpu_id=device_id, validate_slices=True
         )
+
+        # 🔍 DEBUG: Log unstacked result
+        if output_slices:
+            unstacked_shapes = [getattr(s, 'shape', 'no shape') for s in output_slices[:3]]  # First 3 shapes
+            logger.info(f"🔍 UNSTACKED RESULT: {len(output_slices)} slices, sample shapes: {unstacked_shapes}")
 
         # Handle cases where function returns fewer images than inputs (e.g., z-stack flattening, channel compositing)
         # In such cases, we save only the returned images using the first N input filenames
@@ -361,7 +404,8 @@ class FunctionStep(AbstractStep):
         self,
         func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
         *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
-        group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False
+        group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False,
+        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None
     ):
         actual_func_for_name = func
         if isinstance(func, tuple): actual_func_for_name = func[0]
@@ -373,7 +417,7 @@ class FunctionStep(AbstractStep):
         super().__init__(
             name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
             variable_components=variable_components, group_by=group_by,
-            force_disk_output=force_disk_output
+            force_disk_output=force_disk_output, input_dir=input_dir, output_dir=output_dir
         )
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 

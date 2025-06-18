@@ -6,7 +6,7 @@ DualEditorScreen {
 }
 
 #dual_editor_dialog {
-    background: $surface 90%;
+    background: $background;
     padding: 2;
     height: 90vh;
     max-width: 80;

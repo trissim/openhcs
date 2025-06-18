@@ -8,6 +8,7 @@ Replicates the existing pattern from the prompt-toolkit TUI.
 import argparse
 import asyncio
 import logging
+import multiprocessing
 import sys
 from pathlib import Path
 
@@ -74,6 +75,18 @@ def _setup_logging(debug: bool = False):
 
 async def main():
     """Main entry point for OpenHCS Textual TUI."""
+    # Set multiprocessing start method FIRST, before any other initialization
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+        print("Set multiprocessing start method to 'spawn' for CUDA compatibility")
+    except RuntimeError:
+        # Already set, check if it's spawn
+        current_method = multiprocessing.get_start_method()
+        if current_method != 'spawn':
+            print(f"Warning: Multiprocessing start method is '{current_method}', not 'spawn'. CUDA may not work in worker processes.")
+        else:
+            print("Multiprocessing start method already set to 'spawn'")
+
     args = _parse_command_line_arguments()
     logger = _setup_logging(args.debug)
     

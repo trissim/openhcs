@@ -186,14 +186,11 @@ def launch_union_components_kernel(
     mst_dy: "cp.ndarray",  # type: ignore
     mst_count: "cp.ndarray",  # type: ignore
     num_nodes: int
-) -> int:
+) -> None:
     """
-    Launch the union components kernel and return number of edges added.
+    Launch the union components kernel - pure GPU, no CPU sync.
     """
-    # Store initial MST count
-    initial_count = int(mst_count[0])
-
-    # Launch kernel
+    # Launch kernel without CPU synchronization
     threads_per_block = 256
     blocks_per_grid = (num_nodes + threads_per_block - 1) // threads_per_block
 
@@ -203,15 +200,12 @@ def launch_union_components_kernel(
          parent, rank, mst_from, mst_to, mst_dx, mst_dy, mst_count, num_nodes)
     )
 
-    # Return number of edges added
-    final_count = int(mst_count[0])
-    return final_count - initial_count
 
-
-def gpu_component_count(parent: "cp.ndarray") -> int:  # type: ignore
+def gpu_component_count(parent: "cp.ndarray") -> "cp.ndarray":  # type: ignore
     """
-    Count number of distinct components in flattened union-find.
+    Count number of distinct components in flattened union-find - pure GPU.
+    Returns GPU array, no CPU sync.
     """
     # After flattening, roots are nodes where parent[i] == i
     roots = (parent == cp.arange(len(parent)))
-    return int(cp.sum(roots))
+    return cp.sum(roots)  # Return GPU array, not CPU int

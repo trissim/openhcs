@@ -9,14 +9,16 @@ from textual.app import ComposeResult
 
 from .typed_widget_factory import TypedWidgetFactory
 from .signature_analyzer import SignatureAnalyzer
+from .clickable_help_label import ClickableParameterLabel, HelpIndicator
 
 class ParameterFormManager:
     """Mathematical: (parameters, types, field_id) → parameter form"""
-    
-    def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type], field_id: str):
+
+    def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type], field_id: str, parameter_info: Dict = None):
         self.parameters = parameters.copy()  # Current values
         self.parameter_types = parameter_types  # Types (immutable)
         self.field_id = field_id
+        self.parameter_info = parameter_info or {}  # Store parameter info for help
     
     def build_form(self) -> ComposeResult:
         """Build parameter form - pure function with recursive dataclass support."""
@@ -73,12 +75,27 @@ class ParameterFormManager:
         widget_id = f"{self.field_id}_{param_name}"
         input_widget = TypedWidgetFactory.create_widget(param_type, widget_value, widget_id)
 
+        # Get parameter info for help functionality
+        param_info = self._get_parameter_info(param_name)
+        param_description = param_info.description if param_info else None
+
         # 3-column layout: label + input + reset
         with Horizontal() as row:
             row.styles.height = "auto"
 
-            # Parameter label (auto width - sizes to content)
-            label = Static(f"{param_name}:", classes="param-label")
+            # Parameter label with help (auto width - sizes to content)
+            if param_description:
+                # Clickable label with help
+                label = ClickableParameterLabel(
+                    param_name,
+                    param_description,
+                    param_type,
+                    classes="param-label clickable"
+                )
+            else:
+                # Regular label
+                label = Static(f"{param_name}:", classes="param-label")
+
             label.styles.width = "auto"
             label.styles.text_align = "left"
             label.styles.height = "1"
@@ -240,6 +257,10 @@ class ParameterFormManager:
     def get_current_values(self) -> Dict[str, Any]:
         """Get current parameter values."""
         return self.parameters.copy()
+
+    def _get_parameter_info(self, param_name: str):
+        """Get parameter info for help functionality."""
+        return self.parameter_info.get(param_name)
 
     def _create_nested_managers_for_testing(self):
         """Create nested managers without building widgets (for testing)."""

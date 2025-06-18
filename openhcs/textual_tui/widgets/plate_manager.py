@@ -6,9 +6,13 @@ Matches the functionality from the current prompt-toolkit TUI.
 """
 
 import asyncio
-import ctypes
 import logging
-import threading
+import subprocess
+import sys
+import tempfile
+import pickle
+import json
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
@@ -22,36 +26,57 @@ from textual import work, on
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
+from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
+from openhcs.io.base import storage_registry
+from openhcs.io.memory import MemoryStorageBackend
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
 logger = logging.getLogger(__name__)
 
+# Note: Using subprocess approach instead of multiprocessing to avoid TUI FD conflicts
+
+def get_current_log_file_path() -> str:
+    """Get the current log file path from the logging system."""
+    try:
+        # Get the root logger and find the FileHandler
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                return handler.baseFilename
+
+        # Fallback: try to get from openhcs logger
+        openhcs_logger = logging.getLogger("openhcs")
+        for handler in openhcs_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                return handler.baseFilename
+
+        # Last resort: create a default path
+        from pathlib import Path
+        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return str(log_dir / f"openhcs_subprocess_{int(time.time())}.log")
+
+    except Exception as e:
+        logger.warning(f"Could not determine log file path: {e}")
+        return "/tmp/openhcs_subprocess.log"
+
+
+
+
+
+# REMOVED: LogFileWatcher class - using StatusBar's timer-based monitoring instead
 
 class PlateManagerWidget(ButtonListWidget):
     """
     Plate management widget using Textual reactive state.
-    
-    Features:
-    - Complete button set: Add, Del, Edit, Init, Compile, Run
-    - Reactive state management for automatic UI updates
-    - Scrollable content area
-    - Integration with FileManager backend
     """
     
-    # Textual reactive state (automatic UI updates!)
     plates = reactive([])
     selected_plate = reactive("")
-    orchestrators = reactive({})  # {plate_path: PipelineOrchestrator}
-    plate_configs = reactive({})  # {plate_path: GlobalPipelineConfig}
+    orchestrators = reactive({})
+    plate_configs = reactive({})
     
     def __init__(self, filemanager: FileManager, global_config: GlobalPipelineConfig):
-        """
-        Initialize the plate manager widget.
-
-        Args:
-            filemanager: FileManager instance for file operations
-            global_config: Global configuration
-        """
-        # Define button configuration
         button_configs = [
             ButtonConfig("Add", "add_plate"),
             ButtonConfig("Del", "del_plate", disabled=True),
@@ -59,8 +84,8 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
+            ButtonConfig("Debug", "save_debug_pickle", disabled=True),
         ]
-
         super().__init__(
             button_configs=button_configs,
             list_id="plate_content",
@@ -69,31 +94,35 @@ class PlateManagerWidget(ButtonListWidget):
             on_selection_changed=self._handle_selection_change,
             on_item_moved=self._handle_item_moved
         )
-
         self.filemanager = filemanager
-        # Note: We don't store global_config as it can become stale
-        # Always use self.app.global_config to get the current config
-
-        # Simple state management - no reactive property issues
-        self.plate_compiled_data = {}  # {plate_path: (execution_pipeline, compiled_contexts)}
-
-        # Callback for plate selection (set by MainContent)
+        self.global_config = global_config
+        self.plate_compiled_data = {}
         self.on_plate_selected: Optional[Callable[[str], None]] = None
-
-        # Reference to pipeline editor (set by MainContent)
         self.pipeline_editor: Optional['PipelineEditorWidget'] = None
 
-        # Worker tracking for cancellation support
-        self.current_run_worker: Optional[Any] = None
-        self.current_execution_task: Optional[Any] = None  # Store the asyncio task running orchestrator
-        self.current_executor: Optional[Any] = None  # Store the ThreadPoolExecutor for direct shutdown
-
+        # --- Subprocess Architecture ---
+        self.current_process: Optional[subprocess.Popen] = None
+        self.status_file_path: Optional[str] = None
+        self.result_file_path: Optional[str] = None
+        self.data_file_path: Optional[str] = None
+        self.log_file_path: Optional[str] = None
+        self.log_file_position: int = 0  # Track position in log file for incremental reading
+        # File watcher for real-time log monitoring
+        self.file_observer: Optional[Observer] = None
+        self.file_watcher: Optional[LogFileWatcher] = None
+        # Keep timer for process status checking (reduced frequency)
+        self.monitoring_timer = self.set_interval(10.0, self._check_process_status, pause=True)  # Check process every 10 seconds
+        # ---
+        
         logger.debug("PlateManagerWidget initialized")
-    
+
+    def on_unmount(self) -> None:
+        logger.info("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
+        self.action_stop_execution()
+        # DISABLED: self._stop_file_watcher()
+
     def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
-        """Format plate for display in the list."""
-        # Status symbols: ? = added, - = initialized, o = compiled, ! = running, X = error
-        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "!": "🔄", "X": "❌"}
+        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "!": "🔄", "X": "❌", "F": "🔥", "C": "🏁"}
         status_icon = status_symbols.get(plate.get("status", "?"), "❓")
         plate_name = plate.get('name', 'Unknown')
         plate_path = plate.get('path', '')
@@ -101,139 +130,175 @@ class PlateManagerWidget(ButtonListWidget):
         return display_text, plate_path
 
     def _handle_button_press(self, button_id: str) -> None:
-        """Handle button presses from ButtonListWidget."""
-        if button_id == "add_plate":
-            self.action_add_plate()
-        elif button_id == "del_plate":
-            self.action_delete_plate()
-        elif button_id == "edit_plate":
-            self.action_edit_plate()
-        elif button_id == "init_plate":
-            self.action_init_plate()
-        elif button_id == "compile_plate":
-            self.action_compile_plate()
+        action_map = {
+            "add_plate": self.action_add_plate,
+            "del_plate": self.action_delete_plate,
+            "edit_plate": self.action_edit_plate,
+            "init_plate": self.action_init_plate,
+            "compile_plate": self.action_compile_plate,
+            "save_debug_pickle": self.action_save_debug_pickle,
+        }
+        if button_id in action_map:
+            action_map[button_id]()
         elif button_id == "run_plate":
-            # Check if we should run or stop based on current state
             if self._is_any_plate_running():
                 self.action_stop_execution()
             else:
                 self.action_run_plate()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
-        """Handle selection changes from ButtonListWidget (checkmarks only)."""
-        # This handles multi-selection (checkmarks) for operations like Init/Compile/Run
-        # Pipeline editor responds to blue highlight via watch_highlighted_item()
         logger.debug(f"Checkmarks changed: {len(selected_values)} items selected")
 
     def _handle_item_moved(self, from_index: int, to_index: int) -> None:
-        """Handle item movement from ButtonListWidget."""
         current_plates = list(self.plates)
-
-        # Move the plate
         plate = current_plates.pop(from_index)
         current_plates.insert(to_index, plate)
-
-        # Update plates list
         self.plates = current_plates
-
         plate_name = plate['name']
         direction = "up" if to_index < from_index else "down"
         self.app.current_status = f"Moved plate '{plate_name}' {direction}"
 
-
-
-
-
     def on_mount(self) -> None:
-        """Called when the widget is mounted - ensure display is up to date."""
-        # Schedule multiple update attempts to ensure it works
         self.call_later(self._delayed_update_display)
         self.set_timer(0.1, self._delayed_update_display)
         self.call_later(self._update_button_states)
     
-
-    
     def watch_plates(self, plates: List[Dict]) -> None:
-        """Automatically update UI when plates reactive property changes."""
         try:
-            logger.info(f"watch_plates called with {len(plates)} plates")
-            for plate in plates:
-                logger.info(f"  - {plate['name']}: status={plate.get('status', '?')}")
-
-            # Update ButtonListWidget items - this will trigger the parent's watch_items
-            # Force a new list to ensure reactive update is triggered
             self.items = list(plates)
-            # Also explicitly trigger the reactive update for items
             self.mutate_reactive(ButtonListWidget.items)
-
-
         except Exception as e:
-            # Show global error for any unexpected exceptions
             self.app.show_error(f"Error in watch_plates: {str(e)}", e)
-
-        # Update button states
         self._update_button_states()
-
     
     def watch_highlighted_item(self, plate_path: str) -> None:
-        """Automatically update pipeline editor when highlighted_item changes (blue highlight)."""
-        # Update selected_plate for pipeline editor
         self.selected_plate = plate_path
         logger.debug(f"Highlighted plate: {plate_path}")
 
     def watch_selected_plate(self, plate_path: str) -> None:
-        """Automatically update UI when selected_plate changes."""
         self._update_button_states()
-
-        # Notify parent about selection
         if self.on_plate_selected and plate_path:
             self.on_plate_selected(plate_path)
-
         logger.debug(f"Selected plate: {plate_path}")
 
-
-
-
-
     def get_selection_state(self) -> tuple[List[Dict], str]:
-        """Get current selection state - supports both single and multi-selection."""
         try:
-            # Get the SelectionList widget to check for multi-selection (checkmarks)
             selection_list = self.query_one(f"#{self.list_id}")
             multi_selected_values = selection_list.selected
-
             if multi_selected_values:
-                # Multi-selection mode (checkmarks) - return all checked items
-                selected_items = []
-                for plate in self.plates:
-                    if plate.get('path') in multi_selected_values:
-                        selected_items.append(plate)
+                selected_items = [p for p in self.plates if p.get('path') in multi_selected_values]
                 return selected_items, "checkbox"
-
             elif self.selected_plate:
-                # Single selection mode (blue highlight) - return highlighted item
-                selected_items = []
-                for plate in self.plates:
-                    if plate.get('path') == self.selected_plate:
-                        selected_items.append(plate)
-                        break
+                selected_items = [p for p in self.plates if p.get('path') == self.selected_plate]
                 return selected_items, "cursor"
-
             else:
                 return [], "empty"
-
         except Exception as e:
             logger.warning(f"Failed to get selection state: {e}")
-            # Fallback to single selection mode
             if self.selected_plate:
-                selected_items = []
-                for plate in self.plates:
-                    if plate.get('path') == self.selected_plate:
-                        selected_items.append(plate)
-                        break
+                selected_items = [p for p in self.plates if p.get('path') == self.selected_plate]
                 return selected_items, "cursor"
-            else:
-                return [], "empty"
+            return [], "empty"
+
+    def get_operation_description(self, selected_items: List[Dict], selection_mode: str, operation: str) -> str:
+        count = len(selected_items)
+        if count == 0: return f"No items for {operation}"
+        if count == 1: return f"{operation.title()} item: {selected_items[0].get('name', 'Unknown')}"
+        return f"{operation.title()} {count} items"
+
+    def _delayed_update_display(self) -> None:
+        try:
+            self.mutate_reactive(PlateManagerWidget.items)
+        except Exception as e:
+            logger.warning(f"Delayed update failed: {e}")
+            self.set_timer(0.1, self._delayed_update_display)
+
+    def _update_button_states(self) -> None:
+        try:
+            # Check if widget is mounted and buttons exist
+            if not self.is_mounted:
+                return
+
+            has_selection = bool(self.selected_plate)
+            is_running = self._is_any_plate_running()
+
+            can_run = has_selection and any(p['path'] in self.plate_compiled_data for p in self.plates if p.get('path') == self.selected_plate)
+
+            # Try to get run button - if it doesn't exist, widget is not fully mounted
+            try:
+                run_button = self.query_one("#run_plate")
+                if is_running:
+                    run_button.label = "Stop"
+                    run_button.variant = "error"
+                    run_button.disabled = False
+                else:
+                    run_button.label = "Run"
+                    run_button.variant = "success"
+                    run_button.disabled = not can_run
+            except:
+                # Buttons not mounted yet, skip update
+                return
+
+            self.query_one("#add_plate").disabled = is_running
+            self.query_one("#del_plate").disabled = not self.plates or is_running
+            self.query_one("#edit_plate").disabled = not has_selection or is_running
+            self.query_one("#init_plate").disabled = not has_selection or is_running
+            self.query_one("#compile_plate").disabled = not has_selection or is_running
+
+            # Debug button is enabled when debug data is available
+            has_debug_data = hasattr(self, '_last_subprocess_data')
+            self.query_one("#save_debug_pickle").disabled = not has_debug_data
+
+        except Exception as e:
+            # Only log if it's not a mounting/unmounting issue
+            if self.is_mounted:
+                logger.debug(f"Button state update skipped (widget not ready): {e}")
+            # Don't log errors during unmounting
+
+    def _is_any_plate_running(self) -> bool:
+        return self.current_process is not None and self.current_process.poll() is None
+
+    def _has_pipelines(self, plates: List[Dict]) -> bool:
+        """Check if all plates have pipeline definitions."""
+        if not self.pipeline_editor:
+            return False
+
+        for plate in plates:
+            pipeline = self.pipeline_editor.get_pipeline_for_plate(plate['path'])
+            if not pipeline:
+                return False
+        return True
+
+    def get_plate_status(self, plate_path: str) -> str:
+        """Get status for specific plate."""
+        for plate in self.plates:
+            if plate.get('path') == plate_path:
+                return plate.get('status', '?')
+        return '?'  # Default to added status
+
+    def _notify_pipeline_editor_status_change(self, plate_path: str, new_status: str) -> None:
+        """Notify pipeline editor when plate status changes (enables Add button immediately)."""
+        if self.pipeline_editor and self.pipeline_editor.current_plate == plate_path:
+            # Update pipeline editor's status and trigger button state update
+            self.pipeline_editor.current_plate_status = new_status
+
+    def _get_current_pipeline_definition(self, plate_path: str = None) -> List:
+        """Get current pipeline definition from PipelineEditor (now returns FunctionStep objects directly)."""
+        if not self.pipeline_editor:
+            logger.warning("No pipeline editor reference - using empty pipeline")
+            return []
+
+        # Get pipeline for specific plate or current plate
+        target_plate = plate_path or self.pipeline_editor.current_plate
+        if not target_plate:
+            logger.warning("No plate specified - using empty pipeline")
+            return []
+
+        # Get pipeline from editor (now returns List[FunctionStep] directly)
+        pipeline_steps = self.pipeline_editor.get_pipeline_for_plate(target_plate)
+
+        # No conversion needed - pipeline_steps are already FunctionStep objects with memory type decorators
+        return pipeline_steps
 
     def get_operation_description(self, selected_items: List[Dict], selection_mode: str, operation: str) -> str:
         """Generate human-readable description of what will be operated on."""
@@ -251,173 +316,503 @@ class PlateManagerWidget(ButtonListWidget):
         else:
             return f"{operation.title()} {count} items"
 
-    def _delayed_update_display(self) -> None:
-        """Update the plate display - called when widget is mounted or as fallback."""
+    def _reset_execution_state(self, status_message: str):
+        logger.info(f"🧹 Resetting execution state. Reason: {status_message}")
+        
+        if self.current_process:
+            if self.current_process.poll() is None:  # Still running
+                logger.warning("Forcefully terminating subprocess during reset.")
+                self.current_process.terminate()
+                try:
+                    self.current_process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    self.current_process.kill()  # Force kill if terminate fails
+            self.current_process = None
+
+        # DISABLED: Stop file watcher before cleanup
+        # self._stop_file_watcher()
+
+        # Clear file references and cleanup temp files (don't delete log file)
+        for file_path in [self.status_file_path, self.result_file_path, self.data_file_path]:
+            if file_path:
+                try:
+                    Path(file_path).unlink(missing_ok=True)
+                except Exception as e:
+                    logger.debug(f"Could not cleanup temp file {file_path}: {e}")
+
+        self.status_file_path = None
+        self.result_file_path = None
+        self.data_file_path = None
+        self.log_file_path = None
+        self.log_file_position = 0
+        
+        if self.monitoring_timer:
+            self.monitoring_timer.pause()
+        
+        current_plates = list(self.plates)
+        for plate in current_plates:
+            if plate.get('status') == '!':
+                plate['status'] = 'F'
+        self.plates = current_plates
+
+        self._update_button_states()
+        self.app.current_status = status_message
+        logger.info("🧹 Execution state reset and UI updated.")
+
+    def action_run_plate(self) -> None:
+        selected_items, _ = self.get_selection_state()
+        if not selected_items:
+            self.app.show_error("No plates selected to run.")
+            return
+
+        ready_items = [item for item in selected_items if item.get('path') in self.plate_compiled_data]
+        if not ready_items:
+            self.app.show_error("Selected plates are not compiled. Please compile first.")
+            return
+
         try:
-            # Trigger the ButtonListWidget's watch_items method
-            self.mutate_reactive(PlateManagerWidget.items)
+            # Use subprocess approach like integration tests
+            logger.info("🔥 Using subprocess approach for clean isolation")
+
+            plate_paths_to_run = [item['path'] for item in ready_items]
+
+            # Pass definition pipeline steps - subprocess will make fresh copy and compile
+            pipeline_data = {}
+            for plate_path in plate_paths_to_run:
+                definition_pipeline = self._get_current_pipeline_definition(plate_path)
+                pipeline_data[plate_path] = definition_pipeline
+
+            logger.info(f"🔥 Starting subprocess for {len(plate_paths_to_run)} plates")
+
+            # Create temporary files for communication
+            status_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+            result_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+            data_file = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pkl')
+
+            # Close files so subprocess can write to them
+            status_file.close()
+            result_file.close()
+
+            # Store file paths for monitoring and cleanup
+            self.status_file_path = status_file.name
+            self.result_file_path = result_file.name
+            self.data_file_path = data_file.name
+
+            # Get current log file path
+            log_file_path = get_current_log_file_path()
+
+            # Pickle data for subprocess
+            subprocess_data = {
+                'plate_paths': plate_paths_to_run,
+                'pipeline_data': pipeline_data,
+                'global_config_dict': self.global_config.__dict__
+            }
+
+            with open(data_file.name, 'wb') as f:
+                pickle.dump(subprocess_data, f)
+            data_file.close()
+
+            logger.info(f"🔥 Created data file: {data_file.name}")
+            logger.info(f"🔥 Status file: {status_file.name}")
+            logger.info(f"🔥 Result file: {result_file.name}")
+            logger.info(f"🔥 Log file: {log_file_path}")
+
+            # DEBUGGING: Store subprocess data for manual debugging
+            self._last_subprocess_data = subprocess_data
+            self._last_data_file_path = data_file.name
+            self._last_status_file_path = status_file.name
+            self._last_result_file_path = result_file.name
+            self._last_log_file_path = log_file_path
+
+            # Create subprocess (like integration tests)
+            subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
+
+            # Store log file path for monitoring (subprocess logger writes to this)
+            self.log_file_path = log_file_path
+            self.log_file_position = self._get_current_log_position()  # Start from current end
+
+            logger.info(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {status_file.name} {result_file.name} {log_file_path}")
+            logger.info(f"🔥 Subprocess logger will write to: {self.log_file_path}")
+            logger.info(f"🔥 Subprocess stdout will be silenced (logger handles output)")
+
+            # SILENT SUBPROCESS: Let subprocess logger handle output to avoid duplication
+            self.current_process = subprocess.Popen([
+                sys.executable, str(subprocess_script),
+                data_file.name, status_file.name, result_file.name, log_file_path
+            ],
+            stdout=subprocess.DEVNULL,  # Silence stdout to avoid duplication with logger
+            stderr=subprocess.DEVNULL,  # Silence stderr to avoid duplication with logger
+            text=True,  # Text mode for easier handling
+            )
+
+            logger.info(f"🔥 Subprocess started with PID: {self.current_process.pid}")
+
+            # NUCLEAR FIX: Don't start any output monitoring that could interfere
+            # Let the subprocess run completely independently
+
+            # Update UI to show running state
+            for plate in ready_items:
+                plate['status'] = '!'
+            self.plates = list(self.plates)
+
+            self.app.current_status = f"Running {len(ready_items)} plate(s) in subprocess..."
+            self._update_button_states()
+            
+            # DISABLED: Start log file watcher for real-time monitoring
+            # self._start_log_file_watcher()
+            
+            if self.monitoring_timer:
+                self.monitoring_timer.resume()
+
         except Exception as e:
-            logger.warning(f"Delayed update failed (widget may not be ready): {e}")
-            # Try again in a moment using proper Textual API
-            self.set_timer(0.1, self._delayed_update_display)
+            logger.critical(f"Failed to start subprocess: {e}", exc_info=True)
+            self.app.show_error("Failed to start subprocess", str(e))
+            self._reset_execution_state("Subprocess failed to start")
 
-    def _update_button_states(self) -> None:
-        """Update button enabled/disabled states based on mathematical constraints."""
+    def _get_current_log_position(self) -> int:
+        """Get current position in log file."""
+        if not self.log_file_path or not Path(self.log_file_path).exists():
+            return 0
         try:
-            has_plates = len(self.plates) > 0
-            has_selection = bool(self.selected_plate)
+            return Path(self.log_file_path).stat().st_size
+        except Exception:
+            return 0
 
-            # Get selected plate for constraint checking
-            selected_plate = None
-            if self.selected_plate:
-                for plate in self.plates:
-                    if plate.get('path') == self.selected_plate:
-                        selected_plate = plate
-                        break
+    def _start_log_file_watcher(self) -> None:
+        """Start file system watcher for log file changes."""
+        if not self.log_file_path:
+            return
+            
+        try:
+            self._stop_file_watcher()  # Stop any existing watcher
+            
+            log_path = Path(self.log_file_path)
+            watch_directory = str(log_path.parent)
+            
+            self.file_watcher = LogFileWatcher(self, self.log_file_path)
+            self.file_observer = Observer()
+            self.file_observer.daemon = True  # Make daemon thread to prevent hanging
+            self.file_observer.schedule(self.file_watcher, watch_directory, recursive=False)
+            self.file_observer.start()
+            
+            logger.info(f"🔥 Started log file watcher for: {self.log_file_path}")
+            
+        except Exception as e:
+            logger.error(f"🔥 Failed to start log file watcher: {e}")
+            
+    def _stop_file_watcher(self) -> None:
+        """Stop file system watcher without blocking."""
+        if not self.file_observer:
+            return
+            
+        try:
+            # Just stop and abandon - don't wait for anything
+            self.file_observer.stop()
+        except Exception:
+            pass  # Ignore errors
+        finally:
+            # Always clear references immediately
+            self.file_observer = None
+            self.file_watcher = None
 
-            # Check if any plates are currently running
-            is_running = self._is_any_plate_running()
+    def _check_process_status(self) -> None:
+        """Check if subprocess is still running (called by timer)."""
+        if not self._is_any_plate_running():
+            logger.info("🔥 MONITOR: Subprocess finished - investigating...")
+            if self.monitoring_timer:
+                self.monitoring_timer.pause()
 
-            # Mathematical constraints (like test_main.py workflow)
-            # Init: available for plates that need initialization (not blocked by failures)
-            can_init = selected_plate and selected_plate.get('status') in ['?', '-', 'F']
+            # Get subprocess exit code and detailed info
+            if self.current_process:
+                exit_code = self.current_process.poll()
+                logger.info(f"🔥 MONITOR: Subprocess exit code: {exit_code}")
 
-            # Compile: available for plates that are not compiled and have pipelines
-            can_compile = (selected_plate and
-                          selected_plate.get('path') not in self.plate_compiled_data and
-                          self._has_pipelines([selected_plate]))
+                # Classify the exit
+                if exit_code == 0:
+                    logger.info("🔥 MONITOR: Subprocess completed successfully")
+                elif exit_code is None:
+                    logger.error("🔥 MONITOR: Subprocess still running but poll() returned None - this is weird!")
+                elif exit_code < 0:
+                    logger.error(f"🔥 MONITOR: Subprocess killed by signal {-exit_code}")
+                else:
+                    logger.error(f"🔥 MONITOR: Subprocess failed with exit code {exit_code}")
 
-            # Run/Stop button: available if ANY plates are compiled OR if execution is running
-            can_run_or_stop = len(self.plate_compiled_data) > 0 or is_running
+                # Read any remaining log entries
+                self._read_log_file_incremental()
 
-            # Update button labels and states
-            run_button = self.query_one("#run_plate")
-            if is_running:
-                run_button.label = "Stop"
-                run_button.disabled = False  # Always enabled when running
+            # Check results from files before cleaning up
+            if self.status_file_path:
+                # Debug: Check if temp files exist and have content
+                logger.info(f"🔥 MONITOR: Checking temp files:")
+                logger.info(f"🔥 MONITOR: Status file exists: {Path(self.status_file_path).exists()}")
+                logger.info(f"🔥 MONITOR: Result file exists: {Path(self.result_file_path).exists()}")
+                logger.info(f"🔥 MONITOR: Data file exists: {Path(self.data_file_path).exists()}")
+                logger.info(f"🔥 MONITOR: Log file exists: {Path(self.log_file_path).exists() if self.log_file_path else False}")
+
+                if Path(self.status_file_path).exists():
+                    try:
+                        with open(self.status_file_path, 'r') as f:
+                            content = f.read()
+                        logger.info(f"🔥 MONITOR: Status file content: '{content}'")
+                        if not content.strip():
+                            logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
+                    except Exception as e:
+                        logger.error(f"🔥 MONITOR: Could not read status file: {e}")
+
+                self._process_execution_results()
+
+            if self.current_process:
+                # FIXED: Don't wait with timeout - process is already finished!
+                # The poll() check above already confirmed it's done
+                try:
+                    self.current_process.wait()  # NO TIMEOUT! Just clean up the zombie process
+                except Exception as e:
+                    logger.warning(f"🔥 MONITOR: Error during process cleanup: {e}")
+
+            self._reset_execution_state("Execution finished.")
+
+    def _read_log_file_incremental(self) -> None:
+        """Read new content from the log file since last read."""
+        if not self.log_file_path or not Path(self.log_file_path).exists():
+            self.app.current_status = "🔥 LOG READER: No log file"
+            return
+            
+        try:
+            with open(self.log_file_path, 'r') as f:
+                # Seek to where we left off
+                f.seek(self.log_file_position)
+                new_content = f.read()
+                # Update position for next read
+                self.log_file_position = f.tell()
+                
+            if new_content and new_content.strip():
+                # Get the last non-empty line from new content
+                lines = new_content.strip().split('\n')
+                non_empty_lines = [line.strip() for line in lines if line.strip()]
+                
+                if non_empty_lines:
+                    # Show the last line, truncated if too long
+                    last_line = non_empty_lines[-1]
+                    if len(last_line) > 100:
+                        last_line = last_line[:97] + "..."
+                    
+                    self.app.current_status = last_line
+                else:
+                    self.app.current_status = "🔥 LOG READER: No lines found"
             else:
-                run_button.label = "Run"
-                run_button.disabled = not (has_selection and can_run_or_stop)
-
-            self.query_one("#del_plate").disabled = not has_plates
-            self.query_one("#edit_plate").disabled = not has_selection
-            self.query_one("#init_plate").disabled = not (has_selection and can_init)
-            self.query_one("#compile_plate").disabled = not (has_selection and can_compile)
+                self.app.current_status = "🔥 LOG READER: No new content"
+                    
         except Exception as e:
-            # Buttons might not be mounted yet
-            logger.warning(f"Failed to update button states: {e}")
+            self.app.current_status = f"🔥 LOG READER ERROR: {e}"
 
-    def _is_any_plate_running(self) -> bool:
-        """Check if any plates are currently running."""
-        return any(plate.get('status') == '!' for plate in self.plates)
+    def _process_execution_results(self) -> None:
+        """Process results from the subprocess files."""
+        if not self.status_file_path:
+            return
 
-    def _aggressive_stop_execution(self) -> None:
-        """Aggressively stop all execution processes and cleanup resources."""
-        logger.info("🛑 AGGRESSIVE STOP: Starting comprehensive termination")
-
-        # Step 1: Cancel the async worker first (most important)
-        if self.current_run_worker and not self.current_run_worker.is_finished:
-            try:
-                logger.info("🛑 Cancelling async worker...")
-                self.current_run_worker.cancel()
-                logger.info("🛑 Async worker cancelled")
-            except Exception as e:
-                logger.warning(f"🛑 Error cancelling worker: {e}")
-
-        # Step 2: Cancel the orchestrator execution task
-        if self.current_execution_task and not self.current_execution_task.done():
-            try:
-                logger.info("🛑 Cancelling orchestrator execution task...")
-                self.current_execution_task.cancel()
-                logger.info("🛑 Orchestrator task cancelled")
-            except Exception as e:
-                logger.warning(f"🛑 Error cancelling orchestrator task: {e}")
-
-        # Step 3: Shutdown ThreadPoolExecutor (if exists)
-        if self.current_executor:
-            try:
-                logger.info("🛑 Shutting down ThreadPoolExecutor...")
-                self.current_executor.shutdown(wait=False, cancel_futures=True)
-                logger.info("🛑 ThreadPoolExecutor shutdown complete")
-            except Exception as e:
-                logger.warning(f"🛑 Error shutting down executor: {e}")
-
-        # Step 4: Force GPU cleanup to free any stuck GPU operations
         try:
-            logger.info("🛑 Performing emergency GPU cleanup...")
-            from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-            cleanup_all_gpu_frameworks()
-            logger.info("🛑 Emergency GPU cleanup complete")
+            # Collect all status updates from file
+            status_updates = {}
+            result_updates = {}
+
+            # Read status file (one JSON object per line)
+            if Path(self.status_file_path).exists():
+                try:
+                    with open(self.status_file_path, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                data = json.loads(line)
+                                plate_path = data['plate_path']
+                                status = data['status']
+                                status_updates[plate_path] = status
+                except Exception as e:
+                    logger.debug(f"Could not read status file: {e}")
+
+            # Read result file (one JSON object per line)
+            if Path(self.result_file_path).exists():
+                try:
+                    with open(self.result_file_path, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                data = json.loads(line)
+                                plate_path = data['plate_path']
+                                result = data['result']
+                                result_updates[plate_path] = result
+                except Exception as e:
+                    logger.debug(f"Could not read result file: {e}")
+
+            # Update plate statuses based on results
+            current_plates = list(self.plates)
+            for plate in current_plates:
+                plate_path = plate['path']
+
+                if plate_path in status_updates:
+                    status = status_updates[plate_path]
+                    if status == "COMPLETED":
+                        plate['status'] = 'C'  # Completed
+                        logger.info(f"🔥 Plate {plate['name']} completed successfully")
+                    elif status.startswith("ERROR:"):
+                        plate['status'] = 'F'  # Failed
+                        plate['error'] = status[6:]  # Remove "ERROR:" prefix
+                        logger.error(f"🔥 Plate {plate['name']} failed: {plate['error']}")
+
+                        # Log full error details if available
+                        if plate_path in result_updates:
+                            logger.error(f"🔥 Full error for {plate['name']}:\n{result_updates[plate_path]}")
+
+                    # Log results if available
+                    if plate_path in result_updates and status == "COMPLETED":
+                        logger.info(f"🔥 Results for {plate['name']}: {result_updates[plate_path]}")
+
+            # Update the plates list
+            self.plates = current_plates
+
         except Exception as e:
-            logger.warning(f"🛑 Error during GPU cleanup: {e}")
-
-        # Step 5: Clear all references
-        self.current_run_worker = None
-        self.current_execution_task = None
-        self.current_executor = None
-
-        logger.info("🛑 AGGRESSIVE STOP: Complete")
-
-
-
-
-
-
+            logger.error(f"Error processing execution results: {e}", exc_info=True)
 
     def action_stop_execution(self) -> None:
-        """Handle Stop button - aggressively cancel execution and cleanup."""
-        logger.info("🛑 STOP BUTTON PRESSED - IMMEDIATE TERMINATION")
+        logger.info("🛑 Stop button pressed. Terminating subprocess.")
+        self.app.current_status = "Terminating execution..."
 
-        # Set status immediately
-        self.app.current_status = "Emergency stop - terminating execution..."
+        if self.current_process and self.current_process.poll() is None:  # Still running
+            logger.info("🛑 Killing subprocess immediately...")
+            self.current_process.kill()  # Just kill it, no waiting
 
-        # Use aggressive stop method
-        self._aggressive_stop_execution()
-
-        # Force UI update immediately
+        self._reset_execution_state("Execution terminated by user.")
         self._update_button_states()
 
-        # Set final status
-        self.app.current_status = "Execution terminated by user"
-
-        logger.info("🛑 STOP BUTTON COMPLETE - UI should be responsive")
-
-    @work(exclusive=False)
-    async def _run_emergency_cleanup(self) -> None:
-        """Run emergency cleanup asynchronously to avoid blocking UI."""
-        try:
-            logger.info("🛑 Running emergency cleanup in background...")
-
-            # Run cleanup in executor to avoid blocking UI
-            await asyncio.get_event_loop().run_in_executor(None, self._do_emergency_cleanup)
-
-            logger.info("🛑 Emergency cleanup completed")
-        except Exception as e:
-            logger.warning(f"🛑 Error during emergency cleanup: {e}")
-
-    def _do_emergency_cleanup(self) -> None:
-        """Synchronous cleanup operations."""
-        try:
-            from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-            cleanup_all_gpu_frameworks()
-            logger.info("🛑 GPU cleanup completed")
-        except Exception as e:
-            logger.warning(f"🛑 Error during GPU cleanup: {e}")
-
-        try:
-            from openhcs.io.base import reset_memory_backend
-            reset_memory_backend()
-            logger.info("🛑 Memory backend reset completed")
-        except Exception as e:
-            logger.warning(f"🛑 Error during memory backend reset: {e}")
+    # REMOVED: _start_subprocess_output_monitoring
+    # This was interfering with subprocess execution by trying to read stdout
+    # Now subprocess runs completely independently
 
     def action_add_plate(self) -> None:
         """Handle Add Plate button."""
-        self.app.push_screen(self._create_file_browser_screen(), self._on_plate_directory_selected)
+        self.app.push_screen(self._create_file_browser_screen(), self._add_plate_callback)
 
-    def _create_file_browser_screen(self) -> Any:
+    def action_save_debug_pickle(self) -> None:
+        """Save the last subprocess pickle file for manual debugging."""
+        if not hasattr(self, '_last_subprocess_data'):
+            self.app.show_error("No Debug Data", "No subprocess data available. Run execution first.")
+            return
+
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.constants.constants import Backend
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+        import pickle
+        from datetime import datetime
+
+        # Generate default filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"debug_subprocess_data_{timestamp}.pkl"
+
+        def handle_save_result(selected_path):
+            """Handle the file save result."""
+            if selected_path is None:
+                self.app.current_status = "Debug pickle save cancelled"
+                return
+
+            try:
+                # Save the subprocess data to the selected file
+                with open(selected_path, 'wb') as f:
+                    pickle.dump(self._last_subprocess_data, f)
+
+                # Also create companion files with the paths for easy manual testing
+                base_path = selected_path.with_suffix('')
+
+                # Save executable shell script
+                shell_script = base_path.with_suffix('.sh')
+                subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
+
+                with open(shell_script, 'w') as f:
+                    f.write(f"#!/bin/bash\n")
+                    f.write(f"# OpenHCS Subprocess Debug Script\n")
+                    f.write(f"# Generated: {datetime.now()}\n")
+                    f.write(f"# Plates: {self._last_subprocess_data['plate_paths']}\n\n")
+
+                    f.write(f"echo \"🔥 Starting OpenHCS subprocess debugging...\"\n")
+                    f.write(f"echo \"🔥 Pickle file: {selected_path.name}\"\n")
+                    f.write(f"echo \"🔥 Press Ctrl+C to stop\"\n")
+                    f.write(f"echo \"\"\n\n")
+
+                    # Change to the directory containing the pickle file
+                    f.write(f"cd \"{selected_path.parent}\"\n\n")
+
+                    # Run the subprocess with the exact filenames
+                    f.write(f"python \"{subprocess_script}\" \\\n")
+                    f.write(f"    \"{selected_path.name}\" \\\n")
+                    f.write(f"    \"debug_status.json\" \\\n")
+                    f.write(f"    \"debug_result.json\" \\\n")
+                    f.write(f"    \"debug.log\"\n\n")
+
+                    f.write(f"echo \"\"\n")
+                    f.write(f"echo \"🔥 Subprocess finished. Check the files:\"\n")
+                    f.write(f"echo \"  - debug_status.json (progress/death markers)\"\n")
+                    f.write(f"echo \"  - debug_result.json (final results)\"\n")
+                    f.write(f"echo \"  - debug.log (detailed logs)\"\n")
+
+                # Make shell script executable
+                import stat
+                shell_script.chmod(shell_script.stat().st_mode | stat.S_IEXEC)
+
+                # Save command file for reference
+                command_file = base_path.with_suffix('.cmd')
+                command = f"python {subprocess_script} {selected_path.name} debug_status.json debug_result.json debug.log"
+
+                with open(command_file, 'w') as f:
+                    f.write(f"# Manual subprocess debugging command\n")
+                    f.write(f"# Run this command to execute the subprocess manually:\n\n")
+                    f.write(f"cd \"{selected_path.parent}\"\n")
+                    f.write(f"{command}\n\n")
+                    f.write(f"# Original files from TUI execution:\n")
+                    f.write(f"# Data file: {self._last_data_file_path}\n")
+                    f.write(f"# Status file: {self._last_status_file_path}\n")
+                    f.write(f"# Result file: {self._last_result_file_path}\n")
+                    f.write(f"# Log file: {self._last_log_file_path}\n")
+
+                # Save info file
+                info_file = base_path.with_suffix('.info')
+                with open(info_file, 'w') as f:
+                    f.write(f"Debug Subprocess Data\n")
+                    f.write(f"====================\n\n")
+                    f.write(f"Generated: {datetime.now()}\n")
+                    f.write(f"Plates: {len(self._last_subprocess_data['plate_paths'])}\n")
+                    f.write(f"Plate paths: {self._last_subprocess_data['plate_paths']}\n\n")
+                    f.write(f"Pipeline data keys: {list(self._last_subprocess_data['pipeline_data'].keys())}\n\n")
+                    f.write(f"Global config: {self._last_subprocess_data['global_config_dict']}\n\n")
+                    f.write(f"To debug manually:\n")
+                    f.write(f"1. Run: ./{shell_script.name} (executable shell script)\n")
+                    f.write(f"2. Or run: {command}\n")
+                    f.write(f"3. Check debug_status.json for progress/death markers\n")
+                    f.write(f"4. Check debug_result.json for results\n")
+                    f.write(f"5. Check debug.log for detailed logs\n")
+
+                self.app.current_status = f"Debug files saved: {selected_path.name}, {shell_script.name} (executable), {command_file.name}, {info_file.name}"
+                logger.info(f"Debug subprocess data saved to {selected_path}")
+
+            except Exception as e:
+                error_msg = f"Failed to save debug pickle: {e}"
+                logger.error(error_msg, exc_info=True)
+                self.app.show_error("Save Failed", error_msg)
+
+        # Create file browser for saving
+        browser = EnhancedFileBrowserScreen(
+            file_manager=self.filemanager,
+            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            backend=Backend.DISK,
+            title="Save Debug Subprocess Data",
+            mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
+            filter_extensions=['.pkl'],
+            default_filename=default_filename
+        )
+
+        self.app.push_screen(browser, handle_save_result)
+
+    def _create_file_browser_screen(self):
         """Create enhanced file browser screen for plate selection with path caching."""
-        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
         from pathlib import Path
@@ -431,11 +826,15 @@ class PlateManagerWidget(ButtonListWidget):
             file_manager=self.filemanager,
             initial_path=initial_path,
             backend=Backend.DISK,
-            title="Select Plate Directory"
+            title="Select Plate Directory",
+            mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.DIRECTORIES_ONLY
         )
 
-    def _on_plate_directory_selected(self, selected_paths: Any) -> None:
+    def _add_plate_callback(self, selected_paths) -> None:
         """Handle directory selection from file browser."""
+        from pathlib import Path
+
         if selected_paths is None:
             self.app.current_status = "Plate selection cancelled"
             return
@@ -454,55 +853,21 @@ class PlateManagerWidget(ButtonListWidget):
             elif not isinstance(selected_path, Path):
                 selected_path = Path(str(selected_path))
 
-
             # Check if plate already exists
             if any(plate['path'] == str(selected_path) for plate in current_plates):
                 continue
 
-            # Create orchestrator for the plate
+            # Add the plate to the list
+            plate_name = selected_path.name
             plate_path = str(selected_path)
-            plate_config = self.plate_configs.get(plate_path, self.app.global_config)
+            plate_entry = {
+                'name': plate_name,
+                'path': plate_path,
+                'status': '?'  # Added but not initialized
+            }
 
-            try:
-                # Import orchestrator
-                from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-
-                # Create orchestrator (construction only, no initialization)
-                orchestrator = PipelineOrchestrator(
-                    plate_path=plate_path,
-                    global_config=plate_config,
-                    storage_registry=self.filemanager.registry
-                )
-
-                # Store orchestrator
-                current_orchestrators = dict(self.orchestrators)
-                current_orchestrators[plate_path] = orchestrator
-                self.orchestrators = current_orchestrators
-
-                # Add the plate to the list
-                plate_name = selected_path.name
-                plate_entry = {
-                    'name': plate_name,
-                    'path': plate_path,
-                    'status': '?'  # Added but not initialized
-                }
-
-                current_plates.append(plate_entry)
-                added_plates.append(plate_name)
-
-            except Exception as e:
-                logger.error(f"Failed to create orchestrator for {selected_path}: {e}")
-                # Still add the plate but with error status
-                plate_name = selected_path.name
-                plate_entry = {
-                    'name': plate_name,
-                    'path': str(selected_path),
-                    'status': 'X',  # Error status
-                    'error': str(e)
-                }
-                current_plates.append(plate_entry)
-                added_plates.append(f"{plate_name} (ERROR)")
-                logger.warning(f"Added plate without orchestrator: {plate_name}")
+            current_plates.append(plate_entry)
+            added_plates.append(plate_name)
 
         # Cache the parent directory for next time (save user navigation time)
         if selected_paths:
@@ -517,97 +882,37 @@ class PlateManagerWidget(ButtonListWidget):
 
         if added_plates:
             if len(added_plates) == 1:
-                logger.info(f"Added plate: {added_plates[0]}")
+                self.app.current_status = f"Added plate: {added_plates[0]}"
             else:
-                logger.info(f"Added {len(added_plates)} plates: {', '.join(added_plates)}")
+                self.app.current_status = f"Added {len(added_plates)} plates: {', '.join(added_plates)}"
         else:
-            logger.info("No new plates added (duplicates skipped)")
-    
+            self.app.current_status = "No new plates added (duplicates skipped)"
+
     def action_delete_plate(self) -> None:
-        """Handle Delete Plate button - delete selected plates with orchestrator cleanup."""
-
-        # Get current selection state
-        selected_items, selection_mode = self.get_selection_state()
-
-        if selection_mode == "empty":
-            logger.warning("No plates available for deletion")
+        selected_items, _ = self.get_selection_state()
+        if not selected_items:
+            self.app.show_error("No plate selected to delete.")
             return
+        
+        paths_to_delete = {p['path'] for p in selected_items}
+        self.plates = [p for p in self.plates if p['path'] not in paths_to_delete]
+        
+        if self.selected_plate in paths_to_delete:
+            self.selected_plate = ""
+        
+        self.app.current_status = f"Deleted {len(paths_to_delete)} plate(s)"
 
-        # Generate description and perform deletion
-        desc = self.get_operation_description(selected_items, selection_mode, "delete")
-
-        # Clean up orchestrators and remove items
-        current_plates = list(self.plates)
-        current_orchestrators = dict(self.orchestrators)
-        current_configs = dict(self.plate_configs)
-
-        for item in selected_items:
-            plate_path = item['path']
-
-            # Remove orchestrator if it exists
-            if plate_path in current_orchestrators:
-                del current_orchestrators[plate_path]
-
-            # Remove plate-specific config if it exists
-            if plate_path in current_configs:
-                del current_configs[plate_path]
-
-            # Remove from plates list
-            current_plates = [p for p in current_plates if p['path'] != plate_path]
-
-        # Update reactive properties
-        self.plates = current_plates
-        self.orchestrators = current_orchestrators
-        self.plate_configs = current_configs
-
-        self.app.current_status = f"Deleted {len(selected_items)} plates"
-    
     def action_edit_plate(self) -> None:
-        """Handle Edit Plate button - edit configuration for selected plate."""
+        if self.selected_plate:
+            self.app.current_status = f"Editing plate: {self.selected_plate}"
+            # Launch dual editor for plate editing
+            from openhcs.textual_tui.screens.dual_editor import DualEditorScreen
 
-        # Get current selection state
-        selected_items, selection_mode = self.get_selection_state()
+            editor = DualEditorScreen(plate_path=self.selected_plate)
+            self.app.push_screen(editor)
 
-        if selection_mode == "empty":
-            self.app.current_status = "No plates available for editing"
-            return
-
-        if selection_mode != "cursor" or len(selected_items) != 1:
-            self.app.current_status = "Please select exactly one plate to edit"
-            return
-
-        plate_data = selected_items[0]
-        plate_path = plate_data['path']
-
-        # Get current config for this plate (or global default)
-        current_config = self.plate_configs.get(plate_path, self.app.global_config)
-
-        # Launch configuration form
-        def handle_result(result_config: Any) -> None:
-            if result_config:
-                # Save plate-specific config
-                current_configs = dict(self.plate_configs)
-                current_configs[plate_path] = result_config
-                self.plate_configs = current_configs
-
-                self.app.current_status = f"Updated configuration for {plate_data['name']}"
-            else:
-                self.app.current_status = "Configuration edit cancelled"
-
-        # Create and show config form
-        from openhcs.textual_tui.screens.config_form import ConfigFormScreen
-
-        config_form = ConfigFormScreen(
-            plate_path=plate_path,
-            current_config=current_config,
-            title="Plate Configuration"
-        )
-
-        self.app.push_screen(config_form, handle_result)
-    
     def action_init_plate(self) -> None:
         """Handle Init Plate button - initialize selected plates."""
-
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
 
@@ -627,8 +932,6 @@ class PlateManagerWidget(ButtonListWidget):
 
     def _start_async_init(self, selected_items: List[Dict], selection_mode: str) -> None:
         """Start async initialization of selected plates."""
-        from textual import work
-
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "initialize")
         logger.info(f"Initializing: {desc}")
@@ -653,27 +956,20 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(f"Plate not found in plates list: {plate_path}")
                 continue
 
-            # Get orchestrator
-            orchestrator = self.orchestrators.get(plate_path)
-            if not orchestrator:
-                logger.error(f"No orchestrator found for {plate_path}")
+            try:
+                # Create and initialize orchestrator
+                orchestrator = PipelineOrchestrator(
+                    plate_path=plate_path,
+                    global_config=self.global_config,
+                    storage_registry=self.filemanager.registry
+                ).initialize()
+
+                actual_plate['status'] = '-'  # Initialized
+                logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
+            except Exception as e:
+                logger.error(f"Initialization failed for {plate_path}: {e}")
                 actual_plate['status'] = 'X'
-                actual_plate['error'] = "No orchestrator found"
-                # Force UI update immediately for error state
-                self.mutate_reactive(PlateManagerWidget.plates)
-                continue
-
-            # Check if already initialized
-            if orchestrator.is_initialized():
-                actual_plate['status'] = '-'
-                # Force UI update immediately
-                self.mutate_reactive(PlateManagerWidget.plates)
-                continue
-
-            # Initialize orchestrator (heavy operation - run in executor to avoid blocking UI)
-            await asyncio.get_event_loop().run_in_executor(None, orchestrator.initialize)
-            actual_plate['status'] = '-'  # Initialized
-            logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
+                actual_plate['error'] = str(e)
 
             # Force UI update immediately after each plate
             self.mutate_reactive(PlateManagerWidget.plates)
@@ -697,11 +993,8 @@ class PlateManagerWidget(ButtonListWidget):
         else:
             logger.warning(f"Initialized {success_count} plates, {error_count} errors")
 
-
-    
     def action_compile_plate(self) -> None:
         """Handle Compile Plate button - compile pipelines for selected plates."""
-
         # Get current selection state
         selected_items, selection_mode = self.get_selection_state()
 
@@ -733,8 +1026,6 @@ class PlateManagerWidget(ButtonListWidget):
 
     def _start_async_compile(self, selected_items: List[Dict], selection_mode: str) -> None:
         """Start async compilation of selected plates."""
-        from textual import work
-
         # Generate operation description
         desc = self.get_operation_description(selected_items, selection_mode, "compile")
         logger.info(f"Compiling: {desc}")
@@ -745,6 +1036,8 @@ class PlateManagerWidget(ButtonListWidget):
     @work(exclusive=True)
     async def _compile_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate compilation."""
+        import asyncio
+
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
@@ -759,16 +1052,6 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(f"Plate not found in plates list: {plate_path}")
                 continue
 
-            # Get orchestrator
-            orchestrator = self.orchestrators.get(plate_path)
-            if not orchestrator:
-                logger.error(f"No orchestrator found for {plate_path}")
-                actual_plate['status'] = 'X'
-                actual_plate['error'] = "No orchestrator found"
-                # Force UI update immediately for error state
-                self.mutate_reactive(PlateManagerWidget.plates)
-                continue
-
             # Get definition pipeline and make fresh copy
             definition_pipeline = self._get_current_pipeline_definition(plate_path)
             if not definition_pipeline:
@@ -776,6 +1059,13 @@ class PlateManagerWidget(ButtonListWidget):
                 definition_pipeline = []
 
             try:
+                # Create orchestrator for compilation
+                orchestrator = PipelineOrchestrator(
+                    plate_path=plate_path,
+                    global_config=self.global_config,
+                    storage_registry=self.filemanager.registry
+                ).initialize()
+
                 # Make fresh copy for compilation
                 import copy
                 from openhcs.constants.constants import VariableComponents
@@ -784,9 +1074,13 @@ class PlateManagerWidget(ButtonListWidget):
                 # Fix step IDs after deep copy to match new object IDs
                 for step in execution_pipeline:
                     step.step_id = str(id(step))
-                    # Debug: Check for None variable_components
+                    # Ensure variable_components is never None - use FunctionStep default
                     if step.variable_components is None:
-                        logger.warning(f"🔥 Step '{step.name}' has None variable_components, setting default")
+                        logger.warning(f"🔥 Step '{step.name}' has None variable_components, setting FunctionStep default")
+                        step.variable_components = [VariableComponents.SITE]
+                    # Also ensure it's not an empty list
+                    elif not step.variable_components:
+                        logger.warning(f"🔥 Step '{step.name}' has empty variable_components, setting FunctionStep default")
                         step.variable_components = [VariableComponents.SITE]
 
                 # Get wells and compile (async - run in executor to avoid blocking UI)
@@ -835,301 +1129,9 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Update status
         success_count = len([p for p in selected_items if p.get('status') == 'o'])
-        error_count = len([p for p in selected_items if p.get('status') == 'X'])
+        error_count = len([p for p in selected_items if p.get('status') == 'F'])
 
         if error_count == 0:
             logger.info(f"Successfully compiled {success_count} plates")
         else:
             logger.warning(f"Compiled {success_count} plates, {error_count} errors")
-
-
-
-    def get_plate_status(self, plate_path: str) -> str:
-        """Get status for specific plate."""
-        for plate in self.plates:
-            if plate.get('path') == plate_path:
-                return plate.get('status', '?')
-        return '?'  # Default to added status
-
-    def _has_pipelines(self, plates: List[Dict]) -> bool:
-        """Check if all plates have pipeline definitions."""
-        if not self.pipeline_editor:
-            return False
-
-        for plate in plates:
-            pipeline = self.pipeline_editor.get_pipeline_for_plate(plate['path'])
-            if not pipeline:
-                return False
-        return True
-
-    def _notify_pipeline_editor_status_change(self, plate_path: str, new_status: str) -> None:
-        """Notify pipeline editor when plate status changes (enables Add button immediately)."""
-        if self.pipeline_editor and self.pipeline_editor.current_plate == plate_path:
-            # Update pipeline editor's status and trigger button state update
-            self.pipeline_editor.current_plate_status = new_status
-
-
-
-    def _get_current_pipeline_definition(self, plate_path: str = None) -> List:
-        """Get current pipeline definition from PipelineEditor (now returns FunctionStep objects directly)."""
-        if not self.pipeline_editor:
-            logger.warning("No pipeline editor reference - using empty pipeline")
-            return []
-
-        # Get pipeline for specific plate or current plate
-        target_plate = plate_path or self.pipeline_editor.current_plate
-        if not target_plate:
-            logger.warning("No plate specified - using empty pipeline")
-            return []
-
-        # Get pipeline from editor (now returns List[FunctionStep] directly)
-        pipeline_steps = self.pipeline_editor.get_pipeline_for_plate(target_plate)
-
-        # No conversion needed - pipeline_steps are already FunctionStep objects with memory type decorators
-        return pipeline_steps
-    
-    def action_run_plate(self) -> None:
-        """Handle Run Plate button - execute compiled plates (like test_main.py)."""
-        logger.info("🔥 RUN BUTTON PRESSED")
-
-        # Get current selection state
-        selected_items, selection_mode = self.get_selection_state()
-        logger.info(f"🔥 Selection mode: {selection_mode}, items: {len(selected_items)}")
-
-        if selection_mode == "empty":
-            # No selection - run ALL ready plates (like test_main.py batch execution)
-            ready_plates = [p for p in self.plates
-                           if p.get('status') in ['o', 'C', 'F'] and p.get('compiled_contexts') and p.get('compiled_pipeline_definition')]
-            logger.info(f"🔥 No selection - found {len(ready_plates)} ready plates out of {len(self.plates)} total")
-            for plate in self.plates:
-                logger.info(f"🔥 Plate {plate.get('name')}: status={plate.get('status')}, "
-                           f"has_contexts={bool(plate.get('compiled_contexts'))}, "
-                           f"has_compiled_pipeline={bool(plate.get('compiled_pipeline_definition'))}")
-
-            if ready_plates:
-                logger.info(f"Running all {len(ready_plates)} ready plates")
-                logger.info(f"🔥 Starting async run for {len(ready_plates)} plates")
-                self._start_async_run(ready_plates, "all_ready")
-            else:
-                logger.warning("No plates ready for execution")
-                logger.warning("🔥 No plates ready for execution")
-            return
-
-        # Selection exists - filter to only compiled plates
-        ready_items = [item for item in selected_items if item.get('path') in self.plate_compiled_data]
-
-        logger.info(f"🔥 Selection exists - {len(ready_items)} ready out of {len(selected_items)} selected")
-        for item in selected_items:
-            has_compiled_data = item.get('path') in self.plate_compiled_data
-            logger.info(f"🔥 Selected {item.get('name')}: status={item.get('status')}, "
-                       f"has_compiled_data={has_compiled_data}")
-
-        if not ready_items:
-            logger.warning("No selected plates are ready for execution")
-            logger.warning("🔥 No selected plates ready for execution")
-            return
-
-        # Run only the ready selected plates
-        skipped_count = len(selected_items) - len(ready_items)
-        if skipped_count > 0:
-            logger.info(f"Running {len(ready_items)} ready plates (skipped {skipped_count} unready)")
-        else:
-            logger.info(f"Running {len(ready_items)} selected plates")
-
-        logger.info(f"🔥 Starting async run for {len(ready_items)} selected plates")
-        self._start_async_run(ready_items, selection_mode)
-
-    def _start_async_run(self, selected_items: List[Dict], selection_mode: str) -> None:
-        """Start async execution of selected plates."""
-        from textual import work
-
-        logger.info(f"🔥 _start_async_run called with {len(selected_items)} items, mode: {selection_mode}")
-
-        # Generate operation description
-        desc = self.get_operation_description(selected_items, selection_mode, "run")
-        logger.info(f"Running: {desc}")
-        logger.info(f"🔥 Status set to: Running: {desc}")
-
-        # Start background worker and track it for cancellation
-        logger.info("🔥 Starting background worker _run_plates_worker")
-        self.current_run_worker = self._run_plates_worker(selected_items)
-
-        # Update button states immediately to show Stop button
-        self._update_button_states()
-
-    @work(exclusive=True)
-    async def _run_plates_worker(self, selected_items: List[Dict]) -> None:
-        """Run plates using orchestrator's execute method."""
-        from textual.worker import get_current_worker
-        import asyncio
-
-        worker = get_current_worker()
-
-        try:
-            for plate_data in selected_items:
-                # Check for cancellation before processing each plate
-                if worker.is_cancelled:
-                    logger.info("🛑 Worker cancelled, stopping execution")
-                    break
-
-                plate_path = plate_data['path']
-
-                # Get orchestrator
-                orchestrator = self.orchestrators.get(plate_path)
-                if not orchestrator:
-                    continue
-
-                # Find actual plate for status updates
-                actual_plate = None
-                for plate in self.plates:
-                    if plate['path'] == plate_path:
-                        actual_plate = plate
-                        break
-                if not actual_plate:
-                    continue
-
-                # Get compiled data from simple state
-                logger.info(f"🔥 Checking compiled data for {plate_path}")
-                logger.info(f"🔥 Available compiled plates: {list(self.plate_compiled_data.keys())}")
-
-                if plate_path not in self.plate_compiled_data:
-                    logger.warning(f"🔥 No compiled data found for {plate_path}")
-                    continue  # Skip - no compiled data
-
-                execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
-                step_ids_in_pipeline = [id(step) for step in execution_pipeline]
-                # Get step IDs from contexts (ProcessingContext objects)
-                first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
-                step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
-                logger.info(f"🔥 Retrieved compiled data for {plate_path}: pipeline={type(execution_pipeline)}, contexts={type(compiled_contexts)}")
-                logger.info(f"🔥 Step IDs in retrieved pipeline: {step_ids_in_pipeline}")
-                logger.info(f"🔥 Step IDs in retrieved contexts: {step_ids_in_contexts}")
-
-                # Run it - async workers run on main thread, can call UI directly
-                actual_plate['status'] = '!'  # Running
-                self.mutate_reactive(PlateManagerWidget.plates)
-                # Update button states to show Stop button
-                self._update_button_states()
-
-                try:
-                    # Check for cancellation before starting execution
-                    if worker.is_cancelled:
-                        logger.info("🛑 Worker cancelled before execution")
-                        actual_plate['status'] = 'F'  # Cancelled
-                        break
-
-                    # Execute like test_main.py (async - run in executor to avoid blocking UI)
-                    # Set up executor callback to capture ThreadPoolExecutor reference
-                    def store_executor(executor):
-                        self.current_executor = executor
-                        logger.info(f"🔗 Captured ThreadPoolExecutor reference: {executor}")
-
-                    def orchestrator_wrapper():
-                        return orchestrator.execute_compiled_plate(
-                            execution_pipeline,
-                            compiled_contexts,
-                            executor_callback=store_executor
-                        )
-
-                    self.current_execution_task = asyncio.get_event_loop().run_in_executor(None, orchestrator_wrapper)
-                    results = await self.current_execution_task
-
-                    # Check for cancellation after execution
-                    if worker.is_cancelled:
-                        logger.info("🛑 Worker cancelled after execution")
-                        actual_plate['status'] = 'F'  # Cancelled
-                        break
-
-                    # Update status based on results
-                    if results:
-                        # Check for cancellation
-                        cancelled_wells = [r for r in results.values() if r.get('status') == 'cancelled']
-                        error_wells = [r for r in results.values() if r.get('status') == 'error']
-
-                        if cancelled_wells:
-                            actual_plate['status'] = 'F'  # Cancelled (treated as failed)
-                            logger.info(f"Plate {plate_path} cancelled with {len(cancelled_wells)} cancelled wells")
-                        elif error_wells:
-                            actual_plate['status'] = 'F'  # Failed
-                            logger.info(f"Plate {plate_path} failed with {len(error_wells)} error wells")
-                        else:
-                            actual_plate['status'] = 'C'  # Success
-                            logger.info(f"Plate {plate_path} completed successfully")
-                    else:
-                        actual_plate['status'] = 'F'  # Failed (no results)
-
-                except asyncio.CancelledError:
-                    logger.info("🛑 Execution cancelled via CancelledError")
-                    actual_plate['status'] = 'F'  # Cancelled
-                    break
-                except Exception as e:
-                    logger.error(f"🔥 Execution failed for plate {plate_path}: {e}", exc_info=True)
-                    actual_plate['status'] = 'F'  # Failed
-
-                finally:
-                    # 🔥 COMPREHENSIVE GPU CLEANUP: Clear all GPU memory after plate execution
-                    try:
-                        from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
-                        cleanup_all_gpu_frameworks()
-                        logger.info(f"🔥 COMPREHENSIVE GPU CLEANUP: Cleared all GPU frameworks after plate execution: {plate_path}")
-                    except Exception as cleanup_error:
-                        logger.warning(f"Failed to perform comprehensive GPU cleanup: {cleanup_error}")
-
-                    # Reset memory backend after each plate execution to prevent key collisions
-                    # TEMPORARILY DISABLED FOR TESTING - checking if reset timing is causing pattern detection issues
-                    from openhcs.io.base import reset_memory_backend
-                    reset_memory_backend()
-                    logger.info(f"🔥 Memory backend reset DISABLED for testing: {plate_path}")
-
-                    # Async workers run on main thread, can call UI directly
-                    self.mutate_reactive(PlateManagerWidget.plates)
-
-        except asyncio.CancelledError:
-            logger.info("🛑 Worker cancelled at top level")
-            # Don't update plate statuses here - finally block handles all cleanup
-            raise  # Re-raise to properly handle cancellation
-
-        finally:
-            # SINGLE SOURCE OF TRUTH: Worker owns all cleanup
-            # Async workers run on main thread, can call UI directly
-            logger.info("🔥 Worker cleanup: Starting comprehensive cleanup")
-
-            try:
-                # 1. Update any remaining running plates to cancelled state
-                current_plates = list(self.plates)
-                cancelled_count = 0
-                for plate in current_plates:
-                    if plate.get('status') == '!':  # Running
-                        plate['status'] = 'F'  # Mark as cancelled
-                        cancelled_count += 1
-
-                if cancelled_count > 0:
-                    self.plates = current_plates
-                    logger.info(f"🔥 Worker cleanup: Marked {cancelled_count} plates as cancelled")
-
-                # 2. Clear the worker, task, and executor references
-                self.current_run_worker = None
-                self.current_execution_task = None
-                self.current_executor = None
-                logger.info("🔥 Worker cleanup: Cleared worker, task, and executor references")
-
-                # 3. Update button states to restore UI
-                self._update_button_states()
-                logger.info("🔥 Worker cleanup: Updated button states")
-
-                # 4. Update app status
-                if cancelled_count > 0:
-                    self.app.current_status = f"Cancelled execution of {cancelled_count} plates"
-                else:
-                    self.app.current_status = "Execution completed"
-
-                logger.info("🔥 Worker cleanup: Complete")
-
-            except Exception as cleanup_error:
-                logger.error(f"🔥 Worker cleanup failed: {cleanup_error}")
-                # Force UI state reset even if cleanup fails
-                self.current_run_worker = None
-                self.current_execution_task = None
-                self.current_executor = None
-                self._update_button_states()
-                self.app.current_status = "Execution stopped (cleanup error)"

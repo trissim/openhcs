@@ -315,6 +315,14 @@ class FunctionListEditorWidget(Container):
         else:
             logger.warning(f"Invalid index for remove function: {getattr(event, 'index', 'N/A')}")
 
+    def on_function_pane_widget_add_function(self, event: Message) -> None:
+        """Handle add function message from FunctionPaneWidget."""
+        if hasattr(event, 'insert_index'):
+            insert_index = min(event.insert_index, len(self.functions))  # Clamp to valid range
+            self._add_function_at_index(insert_index)
+        else:
+            logger.warning(f"Invalid add function event: missing insert_index")
+
     def on_function_pane_widget_move_function(self, event: Message) -> None:
         """Handle move function message from FunctionPaneWidget."""
         if not (hasattr(event, 'index') and hasattr(event, 'direction')):
@@ -337,14 +345,21 @@ class FunctionListEditorWidget(Container):
         logger.debug(f"Moved function from index {index} to {new_index}")
 
     def _add_function(self) -> None:
-        """Add a new function to the list."""
+        """Add a new function to the end of the list."""
+        self._add_function_at_index(len(self.functions))
+
+    def _add_function_at_index(self, insert_index: int) -> None:
+        """Add a new function at the specified index."""
         from openhcs.textual_tui.screens.function_selector import FunctionSelectorScreen
 
         def handle_function_selection(selected_function: Optional[Callable]) -> None:
             if selected_function:
-                self.functions = self.functions + [(selected_function, {})]
+                # Insert function at the specified index
+                new_functions = self.functions.copy()
+                new_functions.insert(insert_index, (selected_function, {}))
+                self.functions = new_functions
                 self._commit_and_notify()
-                logger.debug(f"Added function: {selected_function.__name__}")
+                logger.debug(f"Added function: {selected_function.__name__} at index {insert_index}")
 
         self.app.push_screen(FunctionSelectorScreen(), handle_function_selection)
 

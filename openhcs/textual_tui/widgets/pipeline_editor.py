@@ -378,12 +378,16 @@ class PipelineEditorWidget(ButtonListWidget):
         elif not isinstance(var_components, list):
             var_components = []
 
-        return FunctionStep(
-            func=func,
-            name=step_dict.get("name", "Unknown Step"),
-            variable_components=var_components,
-            group_by=step_dict.get("group_by", "")
-        )
+        # Only pass variable_components if it's not empty, let FunctionStep use its default otherwise
+        step_kwargs = {
+            "func": func,
+            "name": step_dict.get("name", "Unknown Step"),
+            "group_by": step_dict.get("group_by", "")
+        }
+        if var_components:  # Only add if not empty
+            step_kwargs["variable_components"] = var_components
+
+        return FunctionStep(**step_kwargs)
 
     def _function_step_to_dict(self, step: FunctionStep) -> Dict:
         """Convert FunctionStep object to dict with complete data preservation."""

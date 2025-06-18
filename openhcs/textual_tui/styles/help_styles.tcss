@@ -1,0 +1,86 @@
+/* Help system styling for OpenHCS TUI */
+
+/* Clickable help elements */
+.clickable-help {
+    text-style: underline;
+    color: $primary;
+}
+
+.clickable-help:hover {
+    background: $surface;
+    text-style: bold underline;
+}
+
+.help-indicator {
+    color: $text-muted;
+    text-style: italic;
+}
+
+.help-indicator:hover {
+    color: $primary;
+    text-style: bold;
+}
+
+/* Parameter labels with help */
+.param-label.clickable {
+    text-style: underline;
+    color: $primary;
+}
+
+.param-label.clickable:hover {
+    background: $surface;
+    text-style: bold underline;
+}
+
+/* Help dialog content styling */
+.help-summary {
+    margin: 1 0;
+    padding: 1;
+    background: $surface;
+    border: solid $primary;
+}
+
+.help-description {
+    margin: 1 0;
+    padding: 1;
+}
+
+.help-section-header {
+    margin: 1 0 0 0;
+    text-style: bold;
+    color: $accent;
+}
+
+.help-parameter {
+    margin: 0 0 0 2;
+    color: $text;
+}
+
+.help-returns {
+    margin: 0 0 0 2;
+    color: $text;
+}
+
+.help-examples {
+    margin: 1 0;
+    padding: 1;
+    background: $surface;
+    border: solid $accent;
+}
+
+/* Parameter help dialog styling */
+.param-header {
+    margin: 0 0 1 0;
+    text-style: bold;
+    color: $primary;
+}
+
+.param-description {
+    margin: 1 0;
+}
+
+.param-no-desc {
+    margin: 1 0;
+    color: $text-muted;
+    text-style: italic;
+}

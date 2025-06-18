@@ -62,7 +62,7 @@ class VisualProgrammingDialogService:
         empty_step = FunctionStep(
             func=None,  # Required positional parameter
             name="New Step",
-            variable_components=[],
+            # Let variable_components use FunctionStep's default [VariableComponents.SITE]
             group_by=""
         )
 
