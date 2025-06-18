@@ -274,13 +274,8 @@ class PipelinePathPlanner:
                     # For first step (i == 0) OR steps following chainbreakers, create output directory with suffix
                     # For other subsequent steps (i > 0), work in place (use same directory as input)
                     if i == 0 or prev_is_chain_breaker:
-                        # Use same directory as input with appropriate suffix based on step name
-                        step_name_lower = step_name.lower()
-                        current_suffix = path_config.output_dir_suffix # Default
-                        if "position" in step_name_lower:
-                            current_suffix = path_config.positions_dir_suffix
-                        elif "stitch" in step_name_lower:
-                            current_suffix = path_config.stitched_dir_suffix
+                        # Use same directory as input with default suffix
+                        current_suffix = path_config.output_dir_suffix
 
                         # For first step, use workspace directory name instead of input directory name
                         if hasattr(context, 'workspace_path') and context.workspace_path:
@@ -301,12 +296,7 @@ class PipelinePathPlanner:
                         step_output_dir = step_input_dir
             else:
                 # Last step: Always create output directory with suffix (final results)
-                step_name_lower = step_name.lower()
-                current_suffix = path_config.output_dir_suffix # Default
-                if "position" in step_name_lower:
-                    current_suffix = path_config.positions_dir_suffix
-                elif "stitch" in step_name_lower:
-                    current_suffix = path_config.stitched_dir_suffix
+                current_suffix = path_config.output_dir_suffix
 
                 # For last step, use workspace directory name instead of input directory name
                 if hasattr(context, 'workspace_path') and context.workspace_path:

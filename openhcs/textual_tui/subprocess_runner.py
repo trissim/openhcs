@@ -205,6 +205,40 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
 
         log_thread_count("after GPU registry setup")
         logger.info("🔥 SUBPROCESS: GPU registry initialized!")
+
+        # PROCESS-LEVEL CUDA STREAM SETUP for true parallelism
+        logger.info("🔥 SUBPROCESS: Setting up process-specific CUDA streams...")
+        try:
+            import os
+            process_id = os.getpid()
+
+            # Set unique CUDA stream for this process based on PID
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    # Create process-specific stream
+                    torch.cuda.set_device(0)  # Use GPU 0
+                    process_stream = torch.cuda.Stream()
+                    torch.cuda.set_stream(process_stream)
+                    logger.info(f"🔥 SUBPROCESS: Created PyTorch CUDA stream for process {process_id}")
+            except ImportError:
+                logger.debug("PyTorch not available for stream setup")
+
+            try:
+                import cupy as cp
+                if cp.cuda.is_available():
+                    # Create process-specific stream
+                    cp.cuda.Device(0).use()  # Use GPU 0
+                    process_stream = cp.cuda.Stream()
+                    cp.cuda.Stream.null = process_stream  # Set as default stream
+                    logger.info(f"🔥 SUBPROCESS: Created CuPy CUDA stream for process {process_id}")
+            except ImportError:
+                logger.debug("CuPy not available for stream setup")
+
+        except Exception as stream_error:
+            logger.warning(f"🔥 SUBPROCESS: Could not set up process streams: {stream_error}")
+            # Continue anyway - not critical
+
         write_heartbeat(status_file)
         
         # Step 2: Create orchestrator and initialize (like test_main.py)

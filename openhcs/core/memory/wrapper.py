@@ -129,9 +129,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails
         """
         if self._memory_type == MemoryType.NUMPY.value:
-            # Already numpy, return a copy
-            # Use 0 as a placeholder for gpu_id since it's ignored for numpy
-            return MemoryWrapper(self._data.copy(), MemoryType.NUMPY.value, 0)
+            # Already numpy, return self (zero-copy)
+            return self
 
         # Convert to numpy (always goes to CPU)
         # Always allow CPU roundtrip for to_numpy since it's explicitly going to CPU
@@ -163,8 +162,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails and CPU fallback is not authorized
         """
         if self._memory_type == MemoryType.CUPY.value:
-            # Already cupy, return a copy
-            return MemoryWrapper(self._data.copy(), MemoryType.CUPY.value, self._gpu_id)
+            # Already cupy, return self (zero-copy)
+            return self
 
         # Convert to cupy, preserving GPU ID if possible
         cupy_data = convert_memory(
@@ -207,8 +206,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails and CPU fallback is not authorized
         """
         if self._memory_type == MemoryType.TORCH.value:
-            # Already torch, return a copy
-            return MemoryWrapper(self._data.clone(), MemoryType.TORCH.value, self._gpu_id)
+            # Already torch, return self (zero-copy)
+            return self
 
         # Convert to torch, preserving GPU ID if possible
         torch_data = convert_memory(
@@ -251,9 +250,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails and CPU fallback is not authorized
         """
         if self._memory_type == MemoryType.TENSORFLOW.value:
-            # Already tensorflow, return a copy
-            tf = _ensure_module("tensorflow")
-            return MemoryWrapper(tf.identity(self._data), MemoryType.TENSORFLOW.value, self._gpu_id)
+            # Already tensorflow, return self (zero-copy)
+            return self
 
         # Convert to tensorflow, preserving GPU ID if possible
         tf_data = convert_memory(
@@ -299,9 +297,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails and CPU fallback is not authorized
         """
         if self._memory_type == MemoryType.JAX.value:
-            # Already JAX, return a copy
-            jax = _ensure_module("jax")
-            return MemoryWrapper(jax.numpy.array(self._data), MemoryType.JAX.value, self._gpu_id)
+            # Already JAX, return self (zero-copy)
+            return self
 
         # Convert to JAX, preserving GPU ID if possible
         jax_data = convert_memory(
@@ -347,11 +344,8 @@ class MemoryWrapper:
             MemoryConversionError: If conversion fails and CPU fallback is not authorized
         """
         if self._memory_type == MemoryType.PYCLESPERANTO.value:
-            # Already pyclesperanto, return a copy
-            cle = _ensure_module("pyclesperanto")
-            result = cle.create_like(self._data)
-            cle.copy(self._data, result)
-            return MemoryWrapper(result, MemoryType.PYCLESPERANTO.value, self._gpu_id)
+            # Already pyclesperanto, return self (zero-copy)
+            return self
 
         # Convert to pyclesperanto, preserving GPU ID if possible
         pyclesperanto_data = convert_memory(

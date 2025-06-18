@@ -49,7 +49,7 @@ MenuBar {
 Button {
     height: 1;
     min-height: 1;
-    padding: 0 1;
+    padding: 0;
 }
 
 /* MenuBar buttons - content-based width */
@@ -121,7 +121,7 @@ StatusBar #log_display {
 #plate_manager_container Button,
 #pipeline_editor_container Button {
     width: 1fr;
-    margin: 0;
+    margin: 0 1;
     min-width: 0;
 }
 

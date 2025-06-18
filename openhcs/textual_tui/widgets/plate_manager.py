@@ -84,7 +84,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
-            ButtonConfig("Debug", "save_debug_pickle", disabled=True),
+            # ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Hidden for now
         ]
         super().__init__(
             button_configs=button_configs,
@@ -229,11 +229,9 @@ class PlateManagerWidget(ButtonListWidget):
                 run_button = self.query_one("#run_plate")
                 if is_running:
                     run_button.label = "Stop"
-                    run_button.variant = "error"
                     run_button.disabled = False
                 else:
                     run_button.label = "Run"
-                    run_button.variant = "success"
                     run_button.disabled = not can_run
             except:
                 # Buttons not mounted yet, skip update
@@ -245,9 +243,9 @@ class PlateManagerWidget(ButtonListWidget):
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
 
-            # Debug button is enabled when debug data is available
-            has_debug_data = hasattr(self, '_last_subprocess_data')
-            self.query_one("#save_debug_pickle").disabled = not has_debug_data
+            # Debug button is hidden for now
+            # has_debug_data = hasattr(self, '_last_subprocess_data')
+            # self.query_one("#save_debug_pickle").disabled = not has_debug_data
 
         except Exception as e:
             # Only log if it's not a mounting/unmounting issue
@@ -896,10 +894,15 @@ class PlateManagerWidget(ButtonListWidget):
         
         paths_to_delete = {p['path'] for p in selected_items}
         self.plates = [p for p in self.plates if p['path'] not in paths_to_delete]
-        
+
+        # Clean up orchestrators for deleted plates
+        for path in paths_to_delete:
+            if path in self.orchestrators:
+                del self.orchestrators[path]
+
         if self.selected_plate in paths_to_delete:
             self.selected_plate = ""
-        
+
         self.app.current_status = f"Deleted {len(paths_to_delete)} plate(s)"
 
     def action_edit_plate(self) -> None:
@@ -963,6 +966,9 @@ class PlateManagerWidget(ButtonListWidget):
                     global_config=self.global_config,
                     storage_registry=self.filemanager.registry
                 ).initialize()
+
+                # Store orchestrator for later use (channel selection, etc.)
+                self.orchestrators[plate_path] = orchestrator
 
                 actual_plate['status'] = '-'  # Initialized
                 logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
@@ -1059,12 +1065,18 @@ class PlateManagerWidget(ButtonListWidget):
                 definition_pipeline = []
 
             try:
-                # Create orchestrator for compilation
-                orchestrator = PipelineOrchestrator(
-                    plate_path=plate_path,
-                    global_config=self.global_config,
-                    storage_registry=self.filemanager.registry
-                ).initialize()
+                # Get or create orchestrator for compilation
+                if plate_path in self.orchestrators:
+                    orchestrator = self.orchestrators[plate_path]
+                    if not orchestrator.is_initialized():
+                        orchestrator.initialize()
+                else:
+                    orchestrator = PipelineOrchestrator(
+                        plate_path=plate_path,
+                        global_config=self.global_config,
+                        storage_registry=self.filemanager.registry
+                    ).initialize()
+                    self.orchestrators[plate_path] = orchestrator
 
                 # Make fresh copy for compilation
                 import copy

@@ -444,7 +444,6 @@ def n2v2_denoise_torch(
     learning_rate: float = 1e-4,
     save_model_path: Optional[str] = None,
     verbose: bool = False,
-    denoise: bool = False,
     **kwargs
 ) -> torch.Tensor:
     """

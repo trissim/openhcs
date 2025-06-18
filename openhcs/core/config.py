@@ -37,12 +37,6 @@ class PathPlanningConfig:
     output_dir_suffix: str = "_outputs"
     """Default suffix for general step output directories."""
 
-    positions_dir_suffix: str = "_positions"
-    """Suffix for directories containing position generation results."""
-
-    stitched_dir_suffix: str = "_stitched"
-    """Suffix for directories containing stitched image results."""
-
     global_output_folder: Optional[str] = None
     """
     Optional global output folder where all plate workspaces and outputs will be created.
