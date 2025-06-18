@@ -613,6 +613,47 @@ def main():
 
     data_file, status_file, result_file, log_file = sys.argv[1:5]
 
+    # PROCESS GROUP CLEANUP: Create new process group to manage all child processes
+    try:
+        import os
+        import signal
+        
+        # Create new process group with this process as leader
+        os.setpgrp()  # Create new process group
+        process_group_id = os.getpgrp()
+        
+        print(f"🔥 SUBPROCESS: Created process group {process_group_id}")
+        
+        # Track all child processes for cleanup
+        child_processes = set()
+        
+        def kill_all_children():
+            """Kill all child processes and the entire process group."""
+            try:
+                print(f"🔥 SUBPROCESS: Killing process group {process_group_id}")
+                # Kill entire process group (negative PID kills process group)
+                os.killpg(process_group_id, signal.SIGTERM)
+                
+                # Give processes time to exit gracefully
+                import time
+                time.sleep(2)
+                
+                # Force kill if still alive
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Already dead
+                    
+                print(f"🔥 SUBPROCESS: Process group {process_group_id} terminated")
+            except Exception as e:
+                print(f"🔥 SUBPROCESS: Error killing process group: {e}")
+        
+        # Register cleanup function
+        atexit.register(kill_all_children)
+        
+    except Exception as e:
+        print(f"🔥 SUBPROCESS: Warning - Could not set up process group cleanup: {e}")
+
     # Set up logging first
     logger = setup_subprocess_logging(log_file)
     logger.info("🔥 SUBPROCESS: Starting OpenHCS subprocess runner")

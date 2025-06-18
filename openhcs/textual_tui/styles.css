@@ -5,8 +5,7 @@
     background: $background;
     border: tall $primary;
     padding: 1 2;
-    width: auto;
-    height: auto;
+    /* Removed width/height auto - let #dialog_container handle sizing */
 }
 
 /* Nested dataclass sections - same background as dialog */

@@ -217,12 +217,10 @@ def dxf_mask_pipeline(
     image_stack, # Expected to be a torch.Tensor if torch_func is used
     dxf_polygons: List[List[Tuple[float, float]]],
     apply_mask: bool = False,
+    masking_mode: str = "zero_out",
+    smoothing_sigma_z: float = 0.0,
     **kwargs
 ) -> Union["torch.Tensor", "cp.ndarray", "jnp.ndarray", "tf.Tensor"]: # type: ignore
-
-
-    masking_mode = kwargs.get("masking_mode", "zero_out")
-    smoothing_sigma_z = float(kwargs.get("smoothing_sigma_z", 0.0))
 
     # Assuming image_stack is (Z, H, W) or (Z, C, H, W)
     # If (Z,C,H,W), C is usually 1 for grayscale, or we take the first channel.

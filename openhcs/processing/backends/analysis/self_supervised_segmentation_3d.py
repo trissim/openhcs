@@ -167,6 +167,20 @@ def _kmeans_torch(X: torch.Tensor, K: int, n_iters: int = 20) -> Tuple[torch.Ten
 def self_supervised_segmentation_3d(
     image_volume: torch.Tensor,
     apply_segmentation: bool = True,
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    patch_size: Optional[Tuple[int, int, int]] = None,
+    n_epochs: int = 500,
+    embedding_dim: int = 128,
+    temperature: float = 0.1,
+    batch_size: int = 4,
+    learning_rate: float = 1e-4,
+    reconstruction_weight: float = 1.0,
+    contrastive_weight: float = 1.0,
+    cluster_k: int = 2,
+    mask_fraction: float = 0.01,
+    sigma_noise: float = 0.2,
+    lambda_bound: float = 0.1,
     **kwargs
 ) -> torch.Tensor:
 
@@ -189,8 +203,8 @@ def self_supervised_segmentation_3d(
     else:
         raise ValueError(f"image_volume must be 3D, 4D or 5D. Got {image_volume.ndim}D")
 
-    min_val_norm = float(kwargs.get("min_val", 0.0))
-    max_val_norm = float(kwargs.get("max_val", 1.0))
+    min_val_norm = float(min_val)
+    max_val_norm = float(max_val)
 
     img_min_orig, img_max_orig = torch.min(img_vol_proc), torch.max(img_vol_proc)
     if img_max_orig > img_min_orig:
@@ -199,24 +213,15 @@ def self_supervised_segmentation_3d(
     else:
         img_vol_norm = torch.full_like(img_vol_proc, min_val_norm)
 
-    patch_size_dhw_default = (max(16, Z_orig // 8), max(16, H_orig // 8), max(16, W_orig // 8)) # Ensure min size
-    patch_size_dhw = tuple(kwargs.get("patch_size", patch_size_dhw_default))
+    # Use provided patch_size or compute default
+    if patch_size is None:
+        patch_size_dhw = (max(16, Z_orig // 8), max(16, H_orig // 8), max(16, W_orig // 8))  # Ensure min size
+    else:
+        patch_size_dhw = patch_size
+
     patch_size_dhw = (min(patch_size_dhw[0], Z_orig), min(patch_size_dhw[1], H_orig), min(patch_size_dhw[2], W_orig))
     if any(p <= 0 for p in patch_size_dhw):
         raise ValueError(f"Patch dimensions must be positive. Got {patch_size_dhw} for volume {Z_orig,H_orig,W_orig}")
-
-
-    n_epochs = int(kwargs.get("n_epochs", 500)) # Reduced default
-    embedding_dim = int(kwargs.get("embedding_dim", 128))
-    temperature = float(kwargs.get("temperature", 0.1))
-    batch_size = int(kwargs.get("batch_size", 4))
-    learning_rate = float(kwargs.get("learning_rate", 1e-4))
-    reconstruction_weight = float(kwargs.get("reconstruction_weight", 1.0))
-    contrastive_weight = float(kwargs.get("contrastive_weight", 1.0))
-    cluster_k = int(kwargs.get("cluster_k", 2))
-    mask_fraction = float(kwargs.get("mask_fraction", 0.01))
-    sigma_noise = float(kwargs.get("sigma_noise", 0.2))
-    lambda_bound = float(kwargs.get("lambda_bound", 0.1))
 
     encoder = Encoder3D(in_channels=1, embedding_dim=embedding_dim).to(device)
     decoder = Decoder3D(embedding_dim=embedding_dim, patch_size_dhw=patch_size_dhw).to(device)

@@ -20,6 +20,11 @@ class PathCacheKey(Enum):
     PLATE_IMPORT = "plate_import"
     CONFIG_EXPORT = "config_export"
     GENERAL = "general"
+    # Specific dialog types for better caching granularity
+    FUNCTION_PATTERNS = "function_patterns"  # .func files
+    PIPELINE_FILES = "pipeline_files"        # .pipeline files
+    STEP_SETTINGS = "step_settings"          # .step files
+    DEBUG_FILES = "debug_files"              # .pkl debug files
 
 
 class PathCache:

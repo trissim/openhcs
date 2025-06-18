@@ -405,12 +405,13 @@ class FunctionListEditorWidget(Container):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.FUNCTION_PATTERNS),
             backend=Backend.DISK,
             title="Load Function Pattern (.func)",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.func']
+            filter_extensions=['.func'],
+            cache_key=PathCacheKey.FUNCTION_PATTERNS
         )
         self.app.push_screen(browser, handle_result)
 
@@ -428,13 +429,14 @@ class FunctionListEditorWidget(Container):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.FUNCTION_PATTERNS),
             backend=Backend.DISK,
             title="Save Function Pattern (.func)",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.func'],
-            default_filename="pattern.func"
+            default_filename="pattern.func",
+            cache_key=PathCacheKey.FUNCTION_PATTERNS
         )
         self.app.push_screen(browser, handle_result)
 

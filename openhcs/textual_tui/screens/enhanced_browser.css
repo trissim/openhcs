@@ -5,17 +5,20 @@ EnhancedFileBrowserScreen {
     background: $background 60%;
 }
 
-#floating_window {
+EnhancedFileBrowserScreen #dialog_container {
     background: $surface;
-    padding: 2;
+    padding: 0;
     height: 90vh;
 }
 
-/* Path display takes minimal space */
+/* Path display integrated into tree border */
 #path_display {
     color: $text-muted;
     text-style: italic;
     height: auto;
+    margin-top: 0;
+    margin-bottom: 0;
+    visibility: hidden;
 }
 
 /* Tree panel expands to fill all available space */
@@ -29,6 +32,9 @@ OpenHCSDirectoryTree {
     height: 100%;
     width: 100%;
     border: solid $primary;
+    border-title-align: left;
+    border-title-style: italic;
+    border-title-color: $text-muted;
 }
 
 /* Bottom area only takes space needed for its content */
@@ -62,7 +68,10 @@ OpenHCSDirectoryTree {
     height: auto;
     max-height: 8;
     border: solid $primary;
-    padding: 1;
+    border-title-align: left;
+    border-title-style: italic;
+    border-title-color: $text-muted;
+    padding: 0 1;
 }
 
 /* Selected list with fixed height and scrolling */
@@ -81,17 +90,19 @@ OpenHCSDirectoryTree {
     width: 100%;
 }
 
-.dialog-title {
+/* Override floating window title for compact display */
+EnhancedFileBrowserScreen .dialog-title {
     text-style: bold;
     text-align: center;
-    margin-bottom: 1;
+    margin-bottom: 0;
+    padding: 0;
 }
 
 /* Filename area for save mode - horizontal layout */
 #filename_area {
     height: auto;
     width: 100%;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .filename-label {

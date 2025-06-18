@@ -41,7 +41,8 @@ logger = logging.getLogger(__name__) # Ensure logger is consistently named if us
 _registry_lock = threading.Lock()
 
 # GPU registry singleton
-# Structure: {gpu_id: {"max_pipelines": int, "active": int}}
+# Structure: {gpu_id: {"max_pipelines": int}}
+# Simplified: removed unused "active" count since no runtime coordination exists
 GPU_REGISTRY: Dict[int, Dict[str, int]] = {}
 
 # Flag to track if the registry has been initialized
@@ -103,7 +104,7 @@ def initialize_gpu_registry(configured_num_workers: int) -> None:
         # Initialize registry
         GPU_REGISTRY.clear()
         for gpu_id in available_gpus:
-            GPU_REGISTRY[gpu_id] = {"max_pipelines": max_pipelines_per_gpu, "active": 0}
+            GPU_REGISTRY[gpu_id] = {"max_pipelines": max_pipelines_per_gpu}
 
         logger.info(
             "GPU registry initialized with %s GPUs. Maximum %s pipelines per GPU.",
@@ -156,84 +157,9 @@ def _detect_available_gpus() -> List[int]:
     return sorted(list(available_gpus))
 
 
-def acquire_gpu_slot() -> Optional[int]:
-    """
-    Acquire a GPU slot for a pipeline thread.
-
-    This function finds the first available GPU with free slots,
-    increments its active count, and returns the GPU ID.
-
-    Thread-safe: Uses a lock to ensure consistent access to the global registry.
-
-    Returns:
-        GPU ID if a slot is available, None otherwise
-
-    Raises:
-        RuntimeError: If the GPU registry is not initialized
-    """
-    # No global statement needed - we're only reading and modifying contents
-
-    with _registry_lock:
-        # Check if registry is initialized
-        if not _registry_initialized:
-            raise RuntimeError(
-                "Clause 295 Violation: GPU registry not initialized. "
-                "Must call initialize_gpu_registry() first."
-            )
-
-        # Find the first GPU with available slots
-        for gpu_id, info in GPU_REGISTRY.items():
-            if info["active"] < info["max_pipelines"]:
-                # Increment active count
-                info["active"] += 1
-                logger.debug(
-                    "Acquired GPU %s. Active pipelines: %s/%s",
-                    gpu_id, info["active"], info["max_pipelines"]
-                )
-                return gpu_id
-
-        # No slots available
-        logger.warning("No GPU slots available. All GPUs are at maximum capacity.")
-        return None
-
-
-def release_gpu_slot(gpu_id: int) -> None:
-    """
-    Release a GPU slot after a pipeline thread completes.
-
-    Thread-safe: Uses a lock to ensure consistent access to the global registry.
-
-    Args:
-        gpu_id: The GPU ID to release
-
-    Raises:
-        ValueError: If the GPU ID is invalid or has no active pipelines
-        RuntimeError: If the GPU registry is not initialized
-    """
-    # No global statement needed - we're only reading and modifying contents
-
-    with _registry_lock:
-        # Check if registry is initialized
-        if not _registry_initialized:
-            raise RuntimeError(
-                "Clause 295 Violation: GPU registry not initialized. "
-                "Must call initialize_gpu_registry() first."
-            )
-
-        # Check if GPU ID is valid
-        if gpu_id not in GPU_REGISTRY:
-            raise ValueError(f"Invalid GPU ID: {gpu_id}")
-
-        # Check if GPU has active pipelines
-        if GPU_REGISTRY[gpu_id]["active"] <= 0:
-            raise ValueError(f"GPU {gpu_id} has no active pipelines to release")
-
-        # Decrement active count
-        GPU_REGISTRY[gpu_id]["active"] -= 1
-        logger.debug(
-            "Released GPU %s. Active pipelines: %s/%s",
-            gpu_id, GPU_REGISTRY[gpu_id]["active"], GPU_REGISTRY[gpu_id]["max_pipelines"]
-        )
+# NOTE: acquire_gpu_slot() and release_gpu_slot() functions removed
+# These were orphaned code that was never actually called in the execution path.
+# GPU assignment happens at compilation time via GPUMemoryTypeValidator, not at runtime.
 
 
 def get_gpu_registry_status() -> Dict[int, Dict[str, int]]:

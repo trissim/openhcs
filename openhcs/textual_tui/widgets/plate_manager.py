@@ -222,6 +222,10 @@ class PlateManagerWidget(ButtonListWidget):
             has_selection = bool(self.selected_plate)
             is_running = self._is_any_plate_running()
 
+            # Check if there are any selected items (for delete button)
+            selected_items, _ = self.get_selection_state()
+            has_selected_items = bool(selected_items)
+
             can_run = has_selection and any(p['path'] in self.plate_compiled_data for p in self.plates if p.get('path') == self.selected_plate)
 
             # Try to get run button - if it doesn't exist, widget is not fully mounted
@@ -238,7 +242,7 @@ class PlateManagerWidget(ButtonListWidget):
                 return
 
             self.query_one("#add_plate").disabled = is_running
-            self.query_one("#del_plate").disabled = not self.plates or is_running
+            self.query_one("#del_plate").disabled = not self.plates or not has_selected_items or is_running
             self.query_one("#edit_plate").disabled = not has_selection or is_running
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
@@ -675,8 +679,35 @@ class PlateManagerWidget(ButtonListWidget):
         self.app.current_status = "Terminating execution..."
 
         if self.current_process and self.current_process.poll() is None:  # Still running
-            logger.info("🛑 Killing subprocess immediately...")
-            self.current_process.kill()  # Just kill it, no waiting
+            try:
+                import os
+                import signal
+                
+                # Kill the entire process group, not just the parent process
+                # The subprocess creates its own process group, so we need to kill that group
+                logger.info(f"🛑 Killing process group for PID {self.current_process.pid}...")
+                
+                # Get the process group ID (should be same as PID since subprocess calls os.setpgrp())
+                process_group_id = self.current_process.pid
+                
+                # Kill entire process group (negative PID kills process group)
+                os.killpg(process_group_id, signal.SIGTERM)
+                
+                # Give processes time to exit gracefully
+                import time
+                time.sleep(1)
+                
+                # Force kill if still alive
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                    logger.info(f"🛑 Force killed process group {process_group_id}")
+                except ProcessLookupError:
+                    logger.info(f"🛑 Process group {process_group_id} already terminated")
+                    
+            except Exception as e:
+                logger.warning(f"🛑 Error killing process group: {e}, falling back to single process kill")
+                # Fallback to killing just the main process
+                self.current_process.kill()
 
         self._reset_execution_state("Execution terminated by user.")
         self._update_button_states()
@@ -797,13 +828,14 @@ class PlateManagerWidget(ButtonListWidget):
         # Create file browser for saving
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.DEBUG_FILES),
             backend=Backend.DISK,
             title="Save Debug Subprocess Data",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pkl'],
-            default_filename=default_filename
+            default_filename=default_filename,
+            cache_key=PathCacheKey.DEBUG_FILES
         )
 
         self.app.push_screen(browser, handle_save_result)
@@ -826,14 +858,17 @@ class PlateManagerWidget(ButtonListWidget):
             backend=Backend.DISK,
             title="Select Plate Directory",
             mode=BrowserMode.LOAD,
-            selection_mode=SelectionMode.DIRECTORIES_ONLY
+            selection_mode=SelectionMode.DIRECTORIES_ONLY,
+            cache_key=PathCacheKey.PLATE_IMPORT
         )
 
     def _add_plate_callback(self, selected_paths) -> None:
         """Handle directory selection from file browser."""
         from pathlib import Path
 
-        if selected_paths is None:
+        logger.debug(f"_add_plate_callback called with: {selected_paths} (type: {type(selected_paths)})")
+
+        if selected_paths is None or selected_paths is False:
             self.app.current_status = "Plate selection cancelled"
             return
 
@@ -1122,7 +1157,7 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.info(f"🔥 Successfully compiled {plate_path}")
 
             except Exception as e:
-                logger.error(f"🔥 Compilation failed for {plate_path}: {e}")
+                logger.error(f"🔥 COMPILATION ERROR: Pipeline compilation failed for {plate_path}: {e}", exc_info=True)
                 actual_plate['status'] = 'F'  # Failed
                 actual_plate['error'] = str(e)
                 # Don't store anything in plate_compiled_data on failure

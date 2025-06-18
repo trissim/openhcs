@@ -12,6 +12,13 @@ from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
 class ConfigDialogScreen(BaseFloatingWindow):
     """Configuration dialog with form generation from dataclass using global floating window system."""
 
+    DEFAULT_CSS = """
+    ConfigDialogScreen #dialog_container {
+        width: 80;
+        height: 30;
+    }
+    """
+
     def __init__(self, config_class: Type, current_config: Any, **kwargs):
         self.config_class = config_class
         self.current_config = current_config
@@ -24,11 +31,35 @@ class ConfigDialogScreen(BaseFloatingWindow):
 
         super().__init__(title="Configuration", **kwargs)
 
+    def calculate_content_height(self) -> int:
+        """Calculate dialog height based on number of fields."""
+        # Base height for title, buttons, padding
+        base_height = 8
+
+        # Height per field (label + input + spacing)
+        field_height = 2
+
+        # Count total fields (including nested)
+        total_fields = len(self.field_specs)
+
+        # Add extra height for nested dataclasses
+        for spec in self.field_specs:
+            if hasattr(spec.actual_type, '__dataclass_fields__'):
+                # Nested dataclass adds extra height for collapsible
+                total_fields += len(spec.actual_type.__dataclass_fields__) + 1
+
+        calculated = base_height + (total_fields * field_height)
+
+        # Clamp between reasonable bounds
+        return min(max(calculated, 15), 40)
+
 
 
     def compose_content(self) -> ComposeResult:
         """Compose the config dialog content."""
-        yield self.config_form
+        from textual.containers import Container
+        with Container(classes="dialog-content"):
+            yield self.config_form
 
     def compose_buttons(self) -> ComposeResult:
         """Provide Save/Cancel buttons."""
@@ -40,7 +71,7 @@ class ConfigDialogScreen(BaseFloatingWindow):
         if button_text == 'Save':
             return self._handle_save()
         elif button_text == 'Cancel':
-            return None  # Dismiss with None
+            return False  # Dismiss with False (cancelled)
         return None
 
     def _handle_save(self):

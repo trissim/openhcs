@@ -19,6 +19,7 @@ from openhcs.constants.constants import Backend
 from openhcs.io.filemanager import FileManager
 from openhcs.textual_tui.adapters.universal_directorytree import OpenHCSDirectoryTree
 from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
+from openhcs.textual_tui.utils.path_cache import PathCacheKey
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         selection_mode: SelectionMode = SelectionMode.DIRECTORIES_ONLY,
         filter_extensions: Optional[List[str]] = None,
         default_filename: str = "",
+        cache_key: Optional[PathCacheKey] = None,
         **kwargs
     ):
         self.file_manager = file_manager
@@ -65,6 +67,7 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         self.selection_mode = selection_mode
         self.filter_extensions = filter_extensions
         self.default_filename = default_filename
+        self.cache_key = cache_key
         self.selected_path: Optional[Path] = None
         self.selected_paths: Set[Path] = set()  # For multi-selection
 
@@ -146,7 +149,6 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             # Selection panel on right (remaining width)
             with Vertical(id="selection_panel"):
                 if self.mode == BrowserMode.LOAD:
-                    yield Static("Selected:", classes="dialog-title")
                     with ScrollableContainer(id="selected_list"):
                         yield Static("(none)", id="selected_display")
                 else:  # SAVE mode
@@ -166,26 +168,37 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
         """Handle button actions - Navigation/Add/Remove/Select/Save/Cancel logic."""
         if button_text == '🏠 Home':
             self._handle_go_home()
-            return False  # Don't dismiss dialog
+            return None  # Don't dismiss dialog
         elif button_text == '⬆️ Up':
             self._handle_go_up()
-            return False  # Don't dismiss dialog
+            return None  # Don't dismiss dialog
         elif button_text == 'Add':
             self._handle_add_current()
-            return False  # Don't dismiss dialog
+            return None  # Don't dismiss dialog
         elif button_text == 'Remove':
             self._handle_remove_selected()
-            return False  # Don't dismiss dialog
+            return None  # Don't dismiss dialog
         elif button_text == 'Select':
             return self._handle_select_all()
         elif button_text == 'Save':
             return self._handle_save_file()
         elif button_text == 'Cancel':
-            return None  # Dismiss with None
-        return False  # Don't dismiss by default
+            return False  # Dismiss with False result
+        return None  # Don't dismiss by default
     
     def on_mount(self) -> None:
         """Called when the screen is mounted."""
+        # Set initial border title
+        self.directory_tree.border_title = f"Path: {self.initial_path}"
+
+        # Set initial border title for selected panel
+        if self.mode == BrowserMode.LOAD:
+            try:
+                selection_panel = self.query_one("#selection_panel", Vertical)
+                selection_panel.border_title = "Selected:"
+            except Exception:
+                pass  # Widget might not be mounted yet
+
         # Focus the directory tree for keyboard navigation
         self.directory_tree.focus()
     
@@ -329,6 +342,9 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
 
     def _handle_select_all(self):
         """Return all selected directories or files based on mode."""
+        logger.debug(f"_handle_select_all called: mode={self.mode}, selection_mode={self.selection_mode}")
+        logger.debug(f"selected_path={self.selected_path}, selected_paths={self.selected_paths}")
+
         if self.mode == BrowserMode.LOAD:
             # For FILES_ONLY mode, return single Path object (not list)
             if self.selection_mode == SelectionMode.FILES_ONLY:
@@ -346,7 +362,9 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             # For other modes (DIRECTORIES_ONLY, FILES_AND_DIRECTORIES), return list
             if self.selected_paths:
                 # Return list of selected paths
-                return list(self.selected_paths)
+                result = list(self.selected_paths)
+                logger.debug(f"Returning selected_paths: {result}")
+                return result
             else:
                 # No selection, return current path if it's a directory
                 if self.selected_path:
@@ -354,13 +372,20 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
                         # Use FileManager to check if it's a directory (respects backend abstraction)
                         is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
                         if is_dir:
-                            return [self.selected_path]
+                            result = [self.selected_path]
+                            logger.debug(f"Returning current selected_path as directory: {result}")
+                            return result
                         elif self.selection_mode == SelectionMode.FILES_AND_DIRECTORIES:
-                            return [self.selected_path]
-                    except Exception:
+                            result = [self.selected_path]
+                            logger.debug(f"Returning current selected_path (FILES_AND_DIRECTORIES): {result}")
+                            return result
+                    except Exception as e:
+                        logger.warning(f"Error checking if path is directory: {e}")
                         # If we can't determine type, fall back to initial path
                         pass
-                return [self.initial_path]
+                result = [self.initial_path]
+                logger.debug(f"Returning fallback initial_path: {result}")
+                return result
         else:
             # Save mode - should use _handle_save_file instead
             return self._handle_save_file()
@@ -430,10 +455,10 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             pass
     
     def _update_path_display(self, path: Path) -> None:
-        """Update the path display."""
+        """Update the path display in the tree border title."""
         try:
-            path_widget = self.query_one("#path_display", Static)
-            path_widget.update(f"Path: {path}")
+            # Set the border title on the directory tree
+            self.directory_tree.border_title = f"Path: {path}"
         except Exception:
             # Widget might not be mounted yet
             pass
@@ -488,9 +513,41 @@ class EnhancedFileBrowserScreen(BaseFloatingWindow):
             """Handle the confirmation dialog result."""
             if result:  # User clicked Yes
                 logger.debug(f"User confirmed overwrite for: {save_path}")
-                self.dismiss(save_path)  # Dismiss with the save path
+                self.dismiss(save_path)  # Dismiss with the save path (will auto-cache)
             # If result is False/None (No/Cancel), do nothing - stay in dialog
 
         self.app.push_screen(confirmation, handle_confirmation)
+
+    def dismiss(self, result=None):
+        """Override dismiss to cache successful path selections."""
+        # Cache the path if we have a successful result and a cache key
+        if result is not None and self.cache_key is not None:
+            from openhcs.textual_tui.utils.path_cache import get_path_cache
+
+            try:
+                path_cache = get_path_cache()
+
+                # Determine which path to cache based on the result
+                cache_path = None
+
+                if isinstance(result, Path):
+                    # Single path result - cache its parent directory
+                    cache_path = result.parent if result.is_file() else result
+                elif isinstance(result, list) and result:
+                    # List of paths - cache the parent of the first path
+                    first_path = result[0]
+                    if isinstance(first_path, Path):
+                        cache_path = first_path.parent if first_path.is_file() else first_path
+
+                # Cache the path if we determined one
+                if cache_path and cache_path.exists():
+                    path_cache.set_cached_path(self.cache_key, cache_path)
+                    logger.debug(f"Cached path for {self.cache_key.value}: {cache_path}")
+
+            except Exception as e:
+                logger.warning(f"Failed to cache path: {e}")
+
+        # Call parent dismiss
+        super().dismiss(result)
 
     CSS_PATH = "enhanced_browser.css"

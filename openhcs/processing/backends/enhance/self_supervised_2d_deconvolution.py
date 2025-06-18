@@ -109,6 +109,19 @@ def _extract_random_patches_2d_torch(
 def self_supervised_2d_deconvolution(
     image: torch.Tensor,  # Expected (H, W) or (1, H, W)
     apply_deconvolution: bool = True,
+    n_epochs: int = 10,  # Reduced for testing
+    patch_size_hw: Tuple[int, int] = (128, 128),  # Paper: 128x128 for 2D
+    mask_fraction: float = 0.005,  # Paper: 0.5%
+    sigma_noise: float = 0.2,
+    lambda_rec: float = 1.0,
+    lambda_inv_d: float = 2.0,  # Paper: deconvolved invariance for 2D
+    lambda_bound_d: float = 0.1,  # Paper: boundary loss for 2D
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    learning_rate: float = 4e-4,  # Paper: Adam 4e-4
+    blur_mode: str = "gaussian",  # 'fft', 'gaussian', 'learned'
+    blur_sigma_spatial: float = 1.5,
+    blur_kernel_size: int = 5,
     **kwargs
 ) -> torch.Tensor:
     """
@@ -123,20 +136,6 @@ def self_supervised_2d_deconvolution(
     if not isinstance(image, torch.Tensor):
         raise TypeError(f"Input image must be a PyTorch Tensor. Got {type(image)}")
 
-    # --- Default KWARGS optimized for 2D per paper ---
-    n_epochs = int(kwargs.get("n_epochs", 10))  # Reduced for testing
-    patch_size_hw = tuple(kwargs.get("patch_size", (128, 128)))  # Paper: 128x128 for 2D
-    mask_fraction = float(kwargs.get("mask_fraction", 0.005))  # Paper: 0.5%
-    sigma_noise = float(kwargs.get("sigma_noise", 0.2))
-    lambda_rec = float(kwargs.get("lambda_rec", 1.0))
-    lambda_inv_d = float(kwargs.get("lambda_inv_d", 2.0))  # Paper: deconvolved invariance for 2D
-    lambda_bound_d = float(kwargs.get("lambda_bound_d", 0.1))  # Paper: boundary loss for 2D
-    min_val = float(kwargs.get("min_val", 0.0))
-    max_val = float(kwargs.get("max_val", 1.0))
-    learning_rate = float(kwargs.get("learning_rate", 4e-4))  # Paper: Adam 4e-4
-    blur_mode = str(kwargs.get("blur_mode", "gaussian"))  # 'fft', 'gaussian', 'learned'
-    blur_sigma_spatial = float(kwargs.get("blur_sigma_spatial", 1.5))
-    blur_kernel_size = int(kwargs.get("blur_kernel_size", 5))
 
     if not apply_deconvolution:
         return image

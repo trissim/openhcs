@@ -97,11 +97,25 @@ class MenuBar(Widget):
         )
 
     def _propagate_global_config_to_orchestrators(self, new_config: GlobalPipelineConfig) -> None:
-        """Propagate global config changes to all existing orchestrators."""
+        """Propagate global config changes to all existing orchestrators and plate manager."""
         try:
             # Find the plate manager widget
             main_content = self.app.query_one("MainContent")
             plate_manager = main_content.query_one("PlateManagerWidget")
+
+            # CRITICAL: Update plate manager's global config reference
+            # This ensures future orchestrators and subprocesses use the latest config
+            plate_manager.global_config = new_config
+            logger.info("Updated plate manager global config reference")
+
+            # Also update pipeline editor if it exists (though it should use app.global_config)
+            try:
+                pipeline_editor = main_content.query_one("PipelineEditorWidget")
+                # Pipeline editor is designed to use self.app.global_config, but let's be safe
+                logger.info("Pipeline editor will automatically use updated app.global_config")
+            except Exception:
+                # Pipeline editor might not exist or be mounted
+                pass
 
             # Update all orchestrators that don't have plate-specific configs
             updated_count = 0

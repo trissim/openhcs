@@ -134,11 +134,9 @@ class GPUMemoryTypeValidator:
                 "🔥 COMPILATION FAILED: No GPUs available in registry but pipeline contains GPU-decorated functions (@torch, @cupy, etc.)!"
             )
 
-        # Find the least loaded GPU
-        least_loaded_gpu = min(
-            gpu_registry.items(),
-            key=lambda x: x[1]['active'] / x[1]['max_pipelines']
-        )[0]
+        # Assign the first available GPU (since actual load tracking was orphaned)
+        # GPU assignment happens at compilation time, not runtime
+        least_loaded_gpu = list(gpu_registry.keys())[0]
 
         # Assign the same GPU ID to all steps in the pipeline
         # This ensures GPU affinity throughout the pipeline

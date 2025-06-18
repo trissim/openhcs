@@ -1,6 +1,6 @@
-from __future__ import annotations 
+from __future__ import annotations
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Tuple
 
 # Import torch decorator and optional_import utility
 from openhcs.utils.import_utils import optional_import, create_placeholder_class
@@ -123,28 +123,28 @@ def _extract_random_patches_torch(
 def self_supervised_3d_deconvolution(
     image_volume: torch.Tensor, # Expected (1, Z, H, W) or (Z,H,W)
     apply_deconvolution: bool = True,
+    n_epochs: int = 10,  # Reduced default for quick test (was 100)
+    patch_size: Tuple[int, int, int] = (16, 32, 32),  # Reduced for small test images (paper: 64x64x64)
+    mask_fraction: float = 0.005,  # Paper: 0.5%
+    sigma_noise: float = 0.2,
+    lambda_rec: float = 1.0,
+    lambda_inv: float = 2.0,  # Paper: reconvolved invariance for 3D
+    lambda_bound: float = 0.0,  # Paper: λbound = 0 for 3D
+    min_val: float = 0.0,
+    max_val: float = 1.0,
+    learning_rate: float = 4e-4,
+    blur_mode: str = "gaussian",  # 'fft', 'gaussian', 'learned'
+    blur_sigma_spatial: float = 1.5,
+    blur_sigma_depth: float = 1.5,
+    blur_kernel_size: int = 5,  # For gaussian/learned conv blur
     **kwargs
 ) -> torch.Tensor:
 
     if not isinstance(image_volume, torch.Tensor):
         raise TypeError(f"Input image_volume must be a PyTorch Tensor. Got {type(image_volume)}")
 
-    # --- Default KWARGS optimized for 3D per paper ---
-    n_epochs = int(kwargs.get("n_epochs", 10)) # Reduced default for quick test (was 100)
-    patch_size_dhw = tuple(kwargs.get("patch_size", (16, 32, 32))) # Reduced for small test images (paper: 64x64x64)
-    mask_fraction = float(kwargs.get("mask_fraction", 0.005)) # Paper: 0.5%
-    sigma_noise = float(kwargs.get("sigma_noise", 0.2))
-    lambda_rec = float(kwargs.get("lambda_rec", 1.0))
-    lambda_inv = float(kwargs.get("lambda_inv", 2.0)) # Paper: reconvolved invariance for 3D
-    lambda_bound = float(kwargs.get("lambda_bound", 0.0)) # Paper: λbound = 0 for 3D
-    min_val = float(kwargs.get("min_val", 0.0))
-    max_val = float(kwargs.get("max_val", 1.0))
-    learning_rate = float(kwargs.get("learning_rate", 4e-4))
-    blur_mode = str(kwargs.get("blur_mode", "gaussian")) # 'fft', 'gaussian', 'learned'
-    # PyTorch specific blur params (can be generalized if other backends are fully implemented)
-    blur_sigma_spatial = float(kwargs.get("blur_sigma_spatial", 1.5))
-    blur_sigma_depth = float(kwargs.get("blur_sigma_depth", 1.5))
-    blur_kernel_size = int(kwargs.get("blur_kernel_size", 5)) # For gaussian/learned conv blur
+    # --- Parameters already extracted from function signature ---
+    patch_size_dhw = tuple(patch_size)  # Convert to tuple for consistency
 
     if not apply_deconvolution:
         return image_volume

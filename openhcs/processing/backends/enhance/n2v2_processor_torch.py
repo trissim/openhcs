@@ -341,7 +341,7 @@ def generate_blindspot_mask(shape: Tuple[int, ...], prob: float, device: torch.d
     Generate a random binary mask for blind-spot training.
 
     Args:
-        shape: Shape of the mask (Z, Y, X)
+        shape: Shape of the mask - can be (Y, X) for single mask or (batch_size, Y, X) for batch
         prob: Probability of masking a pixel
         device: Device to create the mask on
 
@@ -357,7 +357,7 @@ def extract_random_patches_2d(
     num_patches: int
 ) -> torch.Tensor:
     """
-    Extract random 2D patches from the input image stack.
+    Extract random 2D patches from the input image stack using vectorized GPU operations.
 
     Args:
         image: Input image tensor of shape (Z, Y, X)
@@ -374,23 +374,34 @@ def extract_random_patches_2d(
     if patch_size > min(y, x):
         raise ValueError(f"Patch size {patch_size} is larger than the smallest spatial dimension of the image {min(y, x)}")
 
-    patches = []
-    for _ in range(num_patches):
-        # Random slice selection and 2D patch extraction - FORCE GPU
-        z_idx = torch.randint(0, z, (1,), device=device).item()  # Force GPU device
-        y_start = torch.randint(0, y - patch_size + 1, (1,), device=device).item()
-        x_start = torch.randint(0, x - patch_size + 1, (1,), device=device).item()
+    # OPTIMIZED: Generate all random indices at once (NO CPU SYNC)
+    # Generate random indices for all patches in a single GPU operation
+    z_indices = torch.randint(0, z, (num_patches,), device=device)
+    y_starts = torch.randint(0, y - patch_size + 1, (num_patches,), device=device)
+    x_starts = torch.randint(0, x - patch_size + 1, (num_patches,), device=device)
 
-        # Extract 2D patch from random slice
-        patch_2d = image[z_idx, y_start:y_start + patch_size, x_start:x_start + patch_size]
-        patches.append(patch_2d)
+    # Pre-allocate output tensor on GPU
+    patches = torch.zeros((num_patches, patch_size, patch_size), device=device, dtype=image.dtype)
 
-    return torch.stack(patches)
+    # Extract patches using advanced indexing (still requires loop but no CPU sync)
+    for i in range(num_patches):
+        # Use tensor indexing (no .item() calls - stays on GPU)
+        z_idx = z_indices[i]
+        y_start = y_starts[i]
+        x_start = x_starts[i]
+
+        # Extract 2D patch from selected slice
+        patches[i] = image[z_idx, y_start:y_start + patch_size, x_start:x_start + patch_size]
+
+    return patches
 
 
 def apply_n2v2_masking(patches: "torch.Tensor", mask: "torch.Tensor") -> "torch.Tensor":
     """
-    Apply N2V2 masking strategy using median of neighborhood.
+    Apply N2V2 masking strategy using median of neighborhood (Höck et al., 2022).
+
+    N2V2 paper specifies: "median replacement" to fix checkerboard artifacts.
+    This replaces masked pixels with the median of their 3x3 neighborhood.
 
     Args:
         patches: Input patches of shape (batch_size, patch_size, patch_size)
@@ -399,31 +410,48 @@ def apply_n2v2_masking(patches: "torch.Tensor", mask: "torch.Tensor") -> "torch.
     Returns:
         Masked patches where masked pixels are replaced with local median
     """
-    masked_patches = patches.clone()
-    batch_size, patch_size, _ = patches.shape
+    # Validate input dimensions
+    if patches.ndim != 3:
+        raise RuntimeError(f"🔥 N2V2 MASKING ERROR: patches must be 3D (batch, H, W), got {patches.ndim}D shape={patches.shape}")
+    if mask.ndim != 3:
+        raise RuntimeError(f"🔥 N2V2 MASKING ERROR: mask must be 3D (batch, H, W), got {mask.ndim}D shape={mask.shape}")
 
-    # For each patch in the batch
+    batch_size, patch_size, _ = patches.shape
+    device = patches.device
+
+    # N2V2 PAPER IMPLEMENTATION: Median replacement for masked pixels
+    # Use a simpler, more robust approach that avoids unfold padding issues
+
+    masked_patches = patches.clone()
+
+    # Process each batch item individually to avoid dimension issues
     for b in range(batch_size):
+        # Get current patch and mask
+        current_patch = patches[b]  # Shape: (patch_size, patch_size)
+        current_mask = mask[b]     # Shape: (patch_size, patch_size)
+
         # Find masked pixel locations
-        mask_indices = torch.where(mask[b])
+        mask_indices = torch.where(current_mask)
 
         # For each masked pixel, replace with median of 3x3 neighborhood
         for i, j in zip(mask_indices[0], mask_indices[1]):
-            # Define 3x3 neighborhood bounds
+            # Define 3x3 neighborhood bounds with boundary handling
             y_min = max(0, i - 1)
             y_max = min(patch_size, i + 2)
             x_min = max(0, j - 1)
             x_max = min(patch_size, j + 2)
 
             # Extract neighborhood (excluding the center pixel)
-            neighborhood = patches[b, y_min:y_max, x_min:x_max].flatten()
+            neighborhood = current_patch[y_min:y_max, x_min:x_max].flatten()
 
-            # Remove the center pixel from neighborhood
-            center_idx = (i - y_min) * (x_max - x_min) + (j - x_min)
-            if center_idx < len(neighborhood):
-                neighborhood = torch.cat([neighborhood[:center_idx], neighborhood[center_idx+1:]])
+            # Remove the center pixel from neighborhood if it exists
+            center_y, center_x = i - y_min, j - x_min
+            if 0 <= center_y < (y_max - y_min) and 0 <= center_x < (x_max - x_min):
+                center_idx = center_y * (x_max - x_min) + center_x
+                if center_idx < len(neighborhood):
+                    neighborhood = torch.cat([neighborhood[:center_idx], neighborhood[center_idx+1:]])
 
-            # Replace with median
+            # Replace with median (N2V2 paper specification)
             if len(neighborhood) > 0:
                 masked_patches[b, i, j] = torch.median(neighborhood)
 
@@ -483,6 +511,9 @@ def n2v2_denoise_torch(
     if device.type != "cuda":
         raise RuntimeError(f"@torch_func requires CUDA tensor, got device: {device}")
 
+    # OPTIMIZED: Cache shape information early to avoid repeated queries
+    z_size, y_size, x_size = int(image.shape[0]), int(image.shape[1]), int(image.shape[2])
+
     # Set random seed for reproducibility
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed(random_seed)
@@ -512,18 +543,16 @@ def n2v2_denoise_torch(
 
         model.train()
         for epoch in range(max_epochs):
-            epoch_loss = 0.0
-            num_batches = max(1, min(100, int(math.prod(image.shape) / (patch_size**2 * batch_size))))
+            # OPTIMIZED: Accumulate losses as tensors to avoid CPU sync
+            epoch_losses = []
+            num_batches = max(1, min(100, int((z_size * y_size * x_size) / (patch_size**2 * batch_size))))
 
             for _ in range(num_batches):
                 # Extract random 2D patches
                 patches = extract_random_patches_2d(image, patch_size, batch_size)
 
-                # Generate blind-spot masks for 2D patches
-                masks = torch.stack([
-                    generate_blindspot_mask((patch_size, patch_size), blindspot_prob, device)
-                    for _ in range(batch_size)
-                ])
+                # OPTIMIZED: Generate all masks at once instead of list comprehension
+                masks = generate_blindspot_mask((batch_size, patch_size, patch_size), blindspot_prob, device)
 
                 # Apply N2V2 masking (replace with median, not zero)
                 masked_input = apply_n2v2_masking(patches, masks)
@@ -544,10 +573,13 @@ def n2v2_denoise_torch(
                 masked_loss.backward()
                 optimizer.step()
 
-                epoch_loss += masked_loss.item()
+                # OPTIMIZED: Store loss tensor instead of calling .item()
+                epoch_losses.append(masked_loss.detach())
 
+            # OPTIMIZED: Single CPU sync per epoch for logging
             if verbose and (epoch % 2 == 0 or epoch == max_epochs - 1):
-                logger.info(f"Epoch {epoch+1}/{max_epochs}, Loss: {epoch_loss/num_batches:.6f}")
+                avg_loss = torch.stack(epoch_losses).mean().item()  # Single .item() call
+                logger.info(f"Epoch {epoch+1}/{max_epochs}, Loss: {avg_loss:.6f}")
 
         # Save trained model if path is provided
         if save_model_path is not None:
@@ -558,14 +590,15 @@ def n2v2_denoise_torch(
     # Inference: Process each 2D slice individually using the learned 2D model
     model.eval()
     with torch.no_grad():
-        z, y, x = image.shape
+        # OPTIMIZED: Cache shape values to avoid repeated queries
+        z_size, y_size, x_size = int(image.shape[0]), int(image.shape[1]), int(image.shape[2])
         denoised = torch.zeros_like(image)
 
         # Process each 2D slice separately
-        for slice_idx in range(z):
+        for slice_idx in range(z_size):
             slice_2d = image[slice_idx]  # Shape: (y, x)
 
-            if max(y, x) <= 256:  # Small enough to process at once
+            if max(y_size, x_size) <= 256:  # Small enough to process at once
                 # Add batch and channel dimensions: (1, 1, y, x) for 2D model
                 slice_input = slice_2d.unsqueeze(0).unsqueeze(0)
                 prediction = model(slice_input)
@@ -576,14 +609,19 @@ def n2v2_denoise_torch(
                 slice_denoised = torch.zeros_like(slice_2d)
                 count = torch.zeros_like(slice_2d)
 
-                # Pad 2D slice
-                padded_2d = F.pad(slice_2d, [patch_size//2] * 4, mode='reflect')
+                # Pad 2D slice - ensure slice_2d is 2D before padding
+                if slice_2d.ndim != 2:
+                    raise RuntimeError(f"🔥 N2V2 INFERENCE ERROR: slice_2d must be 2D, got {slice_2d.ndim}D shape={slice_2d.shape}")
 
-                for y_start in range(0, y, stride):
-                    for x_start in range(0, x, stride):
+                # Pad with reflection for edge handling: [left, right, top, bottom]
+                pad_size = patch_size // 2
+                padded_2d = F.pad(slice_2d, [pad_size, pad_size, pad_size, pad_size], mode='reflect')
+
+                for y_start in range(0, y_size, stride):
+                    for x_start in range(0, x_size, stride):
                         # Extract 2D patch
-                        y_end = min(y_start + patch_size, y)
-                        x_end = min(x_start + patch_size, x)
+                        y_end = min(y_start + patch_size, y_size)
+                        x_end = min(x_start + patch_size, x_size)
 
                         # Get 2D patch and add dimensions for 2D model: (1, 1, patch_size, patch_size)
                         patch_2d = padded_2d[

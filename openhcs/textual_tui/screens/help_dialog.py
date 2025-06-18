@@ -8,6 +8,13 @@ from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
 class HelpDialogScreen(BaseFloatingWindow):
     """Help dialog using the global floating window system."""
 
+    DEFAULT_CSS = """
+    HelpDialogScreen #dialog_container {
+        width: 80;
+        height: 35;
+    }
+    """
+
     def __init__(self, **kwargs):
         super().__init__(title="OpenHCS Help", **kwargs)
 
@@ -40,5 +47,5 @@ publication."""
 
     def handle_button_action(self, button_id: str, button_text: str):
         """Handle button actions - Close button dismisses dialog."""
-        return None  # Dismiss with None result
+        return False  # Dismiss with False result
     

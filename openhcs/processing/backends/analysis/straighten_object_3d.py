@@ -1,7 +1,7 @@
-from __future__ import annotations 
+from __future__ import annotations
 
 import logging
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from openhcs.core.utils import optional_import
 from openhcs.core.memory.decorators import torch as torch_func
@@ -33,6 +33,12 @@ def _moving_average_1d_torch(data: torch.Tensor, window_size: int) -> torch.Tens
 @torch_func
 def straighten_object_3d(
     image_volume: torch.Tensor, # Expected (Z, H, W) or (1, Z, H, W)
+    min_voxel_threshold: float,  # Required parameter
+    patch_radius: Optional[int] = None,
+    sampling_spacing: float = 1.0,
+    max_components: int = 1,
+    return_grid: bool = False,
+    spline_smoothness: Optional[float] = None,
     **kwargs
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     """
@@ -56,24 +62,26 @@ def straighten_object_3d(
 
     Z_orig, H_orig, W_orig = img_vol_proc.shape
 
-    # --- Parse Kwargs & Compute Defaults ---
-    min_voxel_threshold = float(kwargs["min_voxel_threshold"]) # Required
+    # --- Parse Parameters & Compute Defaults ---
+    min_voxel_threshold = float(min_voxel_threshold)  # Already validated as required
 
-    patch_radius_val = kwargs.get("patch_radius")
+    patch_radius_val = patch_radius
     if patch_radius_val is None:
         patch_radius_val = min(H_orig, W_orig) // 10
     patch_radius_val = int(patch_radius_val)
-    if patch_radius_val <=0: patch_radius_val = 1 # Ensure positive patch radius
+    if patch_radius_val <= 0:
+        patch_radius_val = 1  # Ensure positive patch radius
 
-    sampling_spacing_val = float(kwargs.get("sampling_spacing", 1.0))
-    if sampling_spacing_val <= 0: sampling_spacing_val = 1.0
+    sampling_spacing_val = float(sampling_spacing)
+    if sampling_spacing_val <= 0:
+        sampling_spacing_val = 1.0
 
-    max_components_val = int(kwargs.get("max_components", 1))
+    max_components_val = int(max_components)
     if max_components_val != 1:
         # Full 3D CC on GPU without SciPy/etc. is complex for this scope.
         raise NotImplementedError("max_components > 1 is not implemented due to GPU CC complexity constraints.")
 
-    return_grid_val = bool(kwargs.get("return_grid", False))
+    return_grid_val = bool(return_grid)
 
     # spline_smoothness default depends on curve length, calculated later
 
@@ -131,7 +139,7 @@ def straighten_object_3d(
             segment_lengths_est = torch.norm(sorted_coords_on_axis[1:] - sorted_coords_on_axis[:-1], dim=1)
             curve_length_est = torch.sum(segment_lengths_est)
 
-            spline_smoothness_val = float(kwargs.get("spline_smoothness", 0.01 * curve_length_est.item()))
+            spline_smoothness_val = float(spline_smoothness if spline_smoothness is not None else 0.01 * curve_length_est.item())
 
             # Moving Average for smoothing (applied to each coordinate)
             # Window size needs to be related to spline_smoothness and number of points

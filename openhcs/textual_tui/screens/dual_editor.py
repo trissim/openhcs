@@ -116,8 +116,8 @@ class TabbedContentWithButtons(TabbedContent):
         self, event: Tabs.TabActivated
     ) -> None:
         """Override to prevent button tabs from being activated as content tabs."""
-        # Check if the activated tab is a ButtonTab
-        if hasattr(event, 'tab') and isinstance(event.tab, ButtonTab):
+        # Check if the activated tab is a button tab by ID (more reliable than isinstance)
+        if hasattr(event, 'tab') and event.tab.id and event.tab.id.startswith('button-'):
             # Don't activate button tabs as content tabs
             event.stop()
             return

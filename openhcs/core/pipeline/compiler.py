@@ -292,6 +292,60 @@ class PipelineCompiler:
                 plan["visualize"] = True
                 logger.info(f"Global visualizer override: Step '{plan['step_name']}' marked for visualization.")
 
+    @staticmethod
+    def update_step_ids_for_multiprocessing(
+        context: ProcessingContext,
+        steps_definition: List[AbstractStep]
+    ) -> None:
+        """
+        Updates step IDs in a frozen context after multiprocessing pickle/unpickle.
+        
+        When contexts are pickled/unpickled for multiprocessing, step objects get
+        new memory addresses, changing their IDs. This method remaps the step_plans
+        from old IDs to new IDs while preserving all plan data.
+        
+        SPECIAL PRIVILEGE: This method can modify frozen contexts since it's part
+        of the compilation process and maintains data integrity.
+        
+        Args:
+            context: Frozen ProcessingContext with old step IDs
+            steps_definition: Step objects with new IDs after pickle/unpickle
+        """
+        if not context.is_frozen():
+            logger.warning("update_step_ids_for_multiprocessing called on unfrozen context - skipping")
+            return
+            
+        # Create mapping from old step positions to new step IDs
+        if len(steps_definition) != len(context.step_plans):
+            raise RuntimeError(
+                f"Step count mismatch: {len(steps_definition)} steps vs {len(context.step_plans)} plans. "
+                f"Cannot safely remap step IDs."
+            )
+        
+        # Get old step IDs in order (assuming same order as steps_definition)
+        old_step_ids = list(context.step_plans.keys())
+        
+        # Generate new step IDs using get_step_id (handles stripped step objects)
+        from openhcs.core.steps.abstract import get_step_id
+        new_step_ids = [get_step_id(step) for step in steps_definition]
+        
+        logger.debug(f"Remapping step IDs for multiprocessing:")
+        for old_id, new_id in zip(old_step_ids, new_step_ids):
+            logger.debug(f"  {old_id} → {new_id}")
+        
+        # Create new step_plans dict with updated IDs
+        new_step_plans = {}
+        for old_id, new_id in zip(old_step_ids, new_step_ids):
+            new_step_plans[new_id] = context.step_plans[old_id].copy()
+        
+        # SPECIAL PRIVILEGE: Temporarily unfreeze to update step_plans, then refreeze
+        object.__setattr__(context, '_is_frozen', False)
+        try:
+            context.step_plans = new_step_plans
+            logger.info(f"Updated {len(new_step_plans)} step plans for multiprocessing compatibility")
+        finally:
+            object.__setattr__(context, '_is_frozen', True)
+
 # The monolithic compile() method is removed.
 # Orchestrator will call the static methods above in sequence.
 # _strip_step_attributes is also removed as StepAttributeStripper is called by Orchestrator.

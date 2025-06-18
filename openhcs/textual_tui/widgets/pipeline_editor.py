@@ -467,12 +467,13 @@ class PipelineEditorWidget(ButtonListWidget):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.PIPELINE_FILES),
             backend=Backend.DISK,
             title="Load Pipeline (.pipeline)",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.pipeline']
+            filter_extensions=['.pipeline'],
+            cache_key=PathCacheKey.PIPELINE_FILES
         )
 
         self.app.push_screen(browser, handle_result)
@@ -523,13 +524,14 @@ class PipelineEditorWidget(ButtonListWidget):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.PIPELINE_FILES),
             backend=Backend.DISK,
             title="Save Pipeline (.pipeline)",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pipeline'],
-            default_filename=default_filename
+            default_filename=default_filename,
+            cache_key=PathCacheKey.PIPELINE_FILES
         )
 
         self.app.push_screen(browser, handle_result)

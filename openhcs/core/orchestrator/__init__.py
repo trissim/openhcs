@@ -24,8 +24,8 @@ from openhcs.core.orchestrator.orchestrator import \
     PipelineOrchestrator
 # Import GPU scheduler functions
 from openhcs.core.orchestrator.gpu_scheduler import (
-    acquire_gpu_slot, get_gpu_registry_status, initialize_gpu_registry,
-    is_gpu_registry_initialized, release_gpu_slot)
+    get_gpu_registry_status, initialize_gpu_registry,
+    is_gpu_registry_initialized)
 
 # Define public API
 __all__ = [
@@ -38,7 +38,5 @@ __all__ = [
     # GPU scheduler functions
     'initialize_gpu_registry',
     'is_gpu_registry_initialized',
-    'acquire_gpu_slot',
-    'release_gpu_slot',
     'get_gpu_registry_status',
 ]

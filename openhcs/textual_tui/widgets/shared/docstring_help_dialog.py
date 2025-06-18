@@ -58,7 +58,7 @@ class DocstringHelpDialog(BaseFloatingWindow):
 
     def handle_button_action(self, button_id: str, button_text: str):
         """Handle button actions - Close button dismisses dialog."""
-        return None  # Dismiss with None result
+        return False  # Dismiss with False result
 
 
 class ParameterHelpDialog(BaseFloatingWindow):
@@ -90,7 +90,7 @@ class ParameterHelpDialog(BaseFloatingWindow):
 
     def handle_button_action(self, button_id: str, button_text: str):
         """Handle button actions - Close button dismisses dialog."""
-        return None  # Dismiss with None result
+        return False  # Dismiss with False result
 
 
 class HelpableWidget:

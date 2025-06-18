@@ -189,12 +189,13 @@ class StepParameterEditorWidget(ScrollableContainer):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.STEP_SETTINGS),
             backend=Backend.DISK,
             title="Load Step Settings (.step)",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.step']
+            filter_extensions=['.step'],
+            cache_key=PathCacheKey.STEP_SETTINGS
         )
         self.app.push_screen(browser, handle_result)
 
@@ -212,13 +213,14 @@ class StepParameterEditorWidget(ScrollableContainer):
 
         browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.FILE_SELECTION),
+            initial_path=get_cached_browser_path(PathCacheKey.STEP_SETTINGS),
             backend=Backend.DISK,
             title="Save Step Settings (.step)",
             mode=BrowserMode.SAVE,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.step'],
-            default_filename="step_settings.step"
+            default_filename="step_settings.step",
+            cache_key=PathCacheKey.STEP_SETTINGS
         )
         self.app.push_screen(browser, handle_result)
 

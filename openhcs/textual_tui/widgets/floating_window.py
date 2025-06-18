@@ -1,8 +1,9 @@
 """
-Simple floating window system for OpenHCS Textual TUI.
+Floating window widgets for OpenHCS TUI.
 
-Provides content-aware floating dialogs using standard Textual patterns.
+Provides base classes for modal dialogs and floating windows.
 """
+
 from typing import List, Optional, Any
 from textual.screen import ModalScreen
 from textual.app import ComposeResult
@@ -21,28 +22,66 @@ class BaseFloatingWindow(ModalScreen):
     }
 
     #dialog_container {
-        width: auto;
-        height: auto;
-        max-width: 80;
-        max-height: 80%;
+        width: 80;
+        height: 25;
         background: $surface;
-        padding: 1;
+        padding: 0;
+        border: thick $background 80%;
     }
 
     .dialog-title {
         text-style: bold;
         text-align: center;
-        margin-bottom: 1;
+        margin-bottom: 0;
+        padding: 1 2;
     }
 
     .dialog-buttons {
         height: auto;
         align: center middle;
-        margin-top: 1;
+        margin-top: 0;
+        padding: 1 2;
     }
 
     .dialog-buttons Button {
         margin: 0 1;
+    }
+
+    .dialog-content {
+        padding: 1 2;
+        text-align: center;
+    }
+
+    .button-row {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+    }
+
+    /* Compact confirmation dialogs */
+    ConfirmationWindow #dialog_container {
+        max-width: 50;
+        height: auto;
+        padding: 0;
+    }
+
+    ConfirmationWindow .dialog-title {
+        padding: 1 2 0 2;
+        margin-bottom: 0;
+    }
+
+    ConfirmationWindow .dialog-content {
+        padding: 1 2;
+        margin: 0;
+    }
+
+    ConfirmationWindow .dialog-buttons {
+        padding: 0 2 1 2;
+        margin: 0;
+    }
+
+    ConfirmationWindow .button-row {
+        content-align: center middle;
     }
     """
 
@@ -84,8 +123,8 @@ class BaseFloatingWindow(ModalScreen):
         button_text = str(event.button.label) if event.button.label else ""
         result = self.handle_button_action(event.button.id, button_text)
 
-        # Auto-dismiss unless explicitly prevented
-        if result is not False:
+        # Auto-dismiss unless explicitly prevented (None means don't dismiss)
+        if result is not None:
             self.dismiss(result)
 
     def handle_button_action(self, button_id: str, button_text: str) -> Any:
@@ -93,7 +132,7 @@ class BaseFloatingWindow(ModalScreen):
         Override this method to handle button actions.
 
         Returns:
-            Value to return when dialog is dismissed, or False to prevent dismissal
+            Value to return when dialog is dismissed, or None to prevent dismissal
         """
         return True  # Default: dismiss with True
 
@@ -107,11 +146,12 @@ class SimpleTextWindow(BaseFloatingWindow):
         super().__init__(title=title, **kwargs)
 
     def compose_content(self) -> ComposeResult:
-        yield Static(self.content_text)
+        with Container(classes="dialog-content"):
+            yield Static(self.content_text)
 
     def compose_buttons(self) -> ComposeResult:
         from textual.containers import Horizontal
-        with Horizontal():
+        with Horizontal(classes="button-row"):
             for i, text in enumerate(self.button_texts):
                 button_id = f"btn_{i}_{text.lower().replace(' ', '_')}"
                 yield Button(text, id=button_id, compact=True)
@@ -124,4 +164,9 @@ class ConfirmationWindow(SimpleTextWindow):
         super().__init__(title=title, content=message, buttons=['Yes', 'No'], **kwargs)
 
     def handle_button_action(self, button_id: str, button_text: str) -> Any:
-        return button_text.lower() == 'yes'
+        # Return True for Yes, False for No
+        if button_text.lower() == 'yes':
+            return True
+        elif button_text.lower() == 'no':
+            return False
+        return False

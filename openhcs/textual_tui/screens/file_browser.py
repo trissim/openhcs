@@ -105,7 +105,7 @@ class FileBrowserScreen(BaseFloatingWindow):
         self._update_path_display()
 
     DEFAULT_CSS = """
-    #path_display {
+    FileBrowserScreen #path_display {
         margin-bottom: 1;
         text-style: italic;
     }

@@ -13,8 +13,8 @@ Doctrinal Clauses:
 """
 
 import logging
-import threading
 import concurrent.futures
+import multiprocessing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, Set
 
@@ -36,6 +36,28 @@ from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 logger = logging.getLogger(__name__)
 
 
+def _ensure_step_ids_for_multiprocessing(
+    frozen_context: ProcessingContext,
+    pipeline_definition: List[AbstractStep],
+    well_id: str
+) -> None:
+    """
+    Helper function to update step IDs after multiprocessing pickle/unpickle.
+    
+    When contexts are pickled/unpickled for multiprocessing, step objects get
+    new memory addresses, changing their IDs. This remaps the step_plans.
+    """
+    from openhcs.core.pipeline.compiler import PipelineCompiler
+    try:
+        logger.debug(f"🔥 MULTIPROCESSING: Updating step IDs for well {well_id}")
+        PipelineCompiler.update_step_ids_for_multiprocessing(frozen_context, pipeline_definition)
+        logger.debug(f"🔥 MULTIPROCESSING: Step IDs updated successfully for well {well_id}")
+    except Exception as remap_error:
+        error_msg = f"🔥 MULTIPROCESSING ERROR: Failed to remap step IDs for well {well_id}: {remap_error}"
+        logger.error(error_msg, exc_info=True)
+        raise RuntimeError(error_msg) from remap_error
+
+
 class PipelineOrchestrator:
     """
     Unified orchestrator for a two-phase pipeline execution model.
@@ -54,7 +76,7 @@ class PipelineOrchestrator:
         global_config: Optional[GlobalPipelineConfig] = None,
         storage_registry: Optional[Any] = None, # Optional StorageRegistry instance
     ):
-        self._lock = threading.RLock()
+        # Lock removed - was orphaned code never used
         
         if global_config is None:
             self.global_config = get_default_global_config()
@@ -225,7 +247,7 @@ class PipelineOrchestrator:
             well_id=well_id,
             filemanager=self.filemanager
         )
-        context.orchestrator = self
+        # Orchestrator reference removed - was orphaned and unpickleable
         context.microscope_handler = self.microscope_handler
         context.input_dir = self.input_dir
         context.workspace_path = self.workspace_path
@@ -314,6 +336,9 @@ class PipelineOrchestrator:
             error_msg = f"🔥 SINGLE_WELL ERROR: Empty pipeline_definition for well {well_id}"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
+
+        # MULTIPROCESSING FIX: Update step IDs after pickle/unpickle
+        _ensure_step_ids_for_multiprocessing(frozen_context, pipeline_definition, well_id)
 
         try:
             logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
@@ -410,17 +435,30 @@ class PipelineOrchestrator:
 
         execution_results: Dict[str, Dict[str, Any]] = {}
 
-        # Always use ThreadPoolExecutor for consistent thread management and cancellation
-        logger.info(f"🔥 ORCHESTRATOR: Creating ThreadPoolExecutor with {actual_max_workers} workers")
+        # CUDA COMPATIBILITY: Set spawn method for multiprocessing to support CUDA
+        try:
+            # Check if spawn method is available and set it if not already set
+            current_method = multiprocessing.get_start_method(allow_none=True)
+            if current_method != 'spawn':
+                logger.info(f"🔥 CUDA: Setting multiprocessing start method from '{current_method}' to 'spawn' for CUDA compatibility")
+                multiprocessing.set_start_method('spawn', force=True)
+            else:
+                logger.debug("🔥 CUDA: Multiprocessing start method already set to 'spawn'")
+        except RuntimeError as e:
+            # Start method may already be set, which is fine
+            logger.debug(f"🔥 CUDA: Start method already configured: {e}")
 
-        # DEATH DETECTION: Mark ThreadPoolExecutor creation
-        logger.info("🔥 DEATH_MARKER: BEFORE_THREADPOOL_CREATION")
+        # Always use ProcessPoolExecutor for true parallelism
+        logger.info(f"🔥 ORCHESTRATOR: Creating ProcessPoolExecutor with {actual_max_workers} workers")
+
+        # DEATH DETECTION: Mark ProcessPoolExecutor creation
+        logger.info("🔥 DEATH_MARKER: BEFORE_PROCESSPOOL_CREATION")
 
         try:
-            logger.info("🔥 DEATH_MARKER: ENTERING_THREADPOOL_CONTEXT")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
-                logger.info("🔥 DEATH_MARKER: THREADPOOL_CREATED_SUCCESSFULLY")
-                logger.info(f"🔥 ORCHESTRATOR: ThreadPoolExecutor created, submitting {len(compiled_contexts)} tasks")
+            logger.info("🔥 DEATH_MARKER: ENTERING_PROCESSPOOL_CONTEXT")
+            with concurrent.futures.ProcessPoolExecutor(max_workers=actual_max_workers) as executor:
+                logger.info("🔥 DEATH_MARKER: PROCESSPOOL_CREATED_SUCCESSFULLY")
+                logger.info(f"🔥 ORCHESTRATOR: ProcessPoolExecutor created, submitting {len(compiled_contexts)} tasks")
 
                 # NUCLEAR ERROR TRACING: Create snapshot of compiled_contexts to prevent iteration issues
                 contexts_snapshot = dict(compiled_contexts.items())
@@ -472,7 +510,7 @@ class PipelineOrchestrator:
                 logger.info(f"🔥 ORCHESTRATOR: All tasks completed, {len(execution_results)} results collected")
 
         except Exception as executor_error:
-            error_msg = f"🔥 ORCHESTRATOR CRITICAL: ThreadPoolExecutor failed: {executor_error}"
+            error_msg = f"🔥 ORCHESTRATOR CRITICAL: ProcessPoolExecutor failed: {executor_error}"
             logger.error(error_msg, exc_info=True)
             raise RuntimeError(error_msg) from executor_error
 

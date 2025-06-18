@@ -28,6 +28,14 @@ def optional_import(module_name):
     except ImportError:
         return None
 
+# Optional dependencies at module level (not instance level to avoid pickle issues)
+torch = optional_import("torch")
+jax = optional_import("jax")
+jnp = optional_import("jax.numpy")
+cupy = optional_import("cupy")
+tf = optional_import("tensorflow")
+tifffile = optional_import("tifffile")
+
 class FileFormatRegistry:
     def __init__(self):
         self._writers: Dict[str, Callable[[Path, Any], None]] = {}
@@ -54,14 +62,6 @@ class DiskStorageBackend(StorageBackend):
         self._register_formats()
 
     def _register_formats(self):
-        # Optional dependencies
-        torch = optional_import("torch")
-        jax = optional_import("jax")
-        jnp = optional_import("jax.numpy")
-        cupy = optional_import("cupy")
-        tf = optional_import("tensorflow")
-        tifffile = optional_import("tifffile")
-
         formats = []
 
         # NumPy
@@ -81,45 +81,76 @@ class DiskStorageBackend(StorageBackend):
         if jax and jnp:
             formats.append((
                 FileFormat.JAX.value,
-                lambda p, d: np.save(p, jax.device_get(d)),
-                lambda p: jnp.array(np.load(p))
+                self._jax_writer,
+                self._jax_reader
             ))
 
         # CuPy
         if cupy:
             formats.append((
                 FileFormat.CUPY.value,
-                lambda p, d: cupy.save(p, d),
-                lambda p: cupy.load(p)
+                self._cupy_writer,
+                self._cupy_reader
             ))
 
         # TensorFlow
         if tf:
             formats.append((
                 FileFormat.TENSORFLOW.value,
-                lambda p, d: tf.io.write_file(p.as_posix(), tf.io.serialize_tensor(d)),
-                lambda p: tf.io.parse_tensor(tf.io.read_file(p.as_posix()), out_type=tf.dtypes.float32)
+                self._tensorflow_writer,
+                self._tensorflow_reader
             ))
 
         # TIFF
         if tifffile:
             formats.append((
                 FileFormat.TIFF.value,
-                lambda p, d: tifffile.imwrite(p, d),
-                lambda p: tifffile.imread(p)
+                self._tiff_writer,
+                self._tiff_reader
             ))
 
         # Plain Text
         formats.append((
             FileFormat.TEXT.value,
-            lambda p, d: p.write_text(str(d)),
-            lambda p: p.read_text()
+            self._text_writer,
+            self._text_reader
         ))
 
         # Register everything
         for extensions, writer, reader in formats:
             for ext in extensions:
              self.format_registry.register(ext.lower(), writer, reader)
+
+    # Format-specific writer/reader functions (pickleable)
+    def _jax_writer(self, path, data):
+        np.save(path, jax.device_get(data))
+
+    def _jax_reader(self, path):
+        return jnp.array(np.load(path))
+
+    def _cupy_writer(self, path, data):
+        cupy.save(path, data)
+
+    def _cupy_reader(self, path):
+        return cupy.load(path)
+
+    def _tensorflow_writer(self, path, data):
+        tf.io.write_file(path.as_posix(), tf.io.serialize_tensor(data))
+
+    def _tensorflow_reader(self, path):
+        return tf.io.parse_tensor(tf.io.read_file(path.as_posix()), out_type=tf.dtypes.float32)
+
+    def _tiff_writer(self, path, data):
+        tifffile.imwrite(path, data)
+
+    def _tiff_reader(self, path):
+        return tifffile.imread(path)
+
+    def _text_writer(self, path, data):
+        path.write_text(str(data))
+
+    def _text_reader(self, path):
+        return path.read_text()
 
 
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
