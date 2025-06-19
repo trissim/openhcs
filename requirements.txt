@@ -17,3 +17,4 @@ zarr>=2.10.0 # For ZarrStorageAdapter
 pygments>=2.10.0  # For syntax highlighting in TUI error dialogs
 textual>=0.41.0  # Modern TUI framework for new textual_tui
 textual-universal-directorytree
+watchdog>=2.0.0  # For file system monitoring in subprocess output

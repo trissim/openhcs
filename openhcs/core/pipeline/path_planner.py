@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 METADATA_RESOLVERS: Dict[str, Dict[str, Any]] = {
     "grid_dimensions": {
         "resolver": lambda context: context.microscope_handler.get_grid_dimensions(context.input_dir),
-        "description": "Grid dimensions (num_cols, num_rows) for position generation functions"
+        "description": "Grid dimensions (num_rows, num_cols) for position generation functions"
     },
     # Future extensions can be added here:
     # "pixel_size": {

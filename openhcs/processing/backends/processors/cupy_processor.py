@@ -465,9 +465,6 @@ def create_projection(
     # FAIL FAST: No fallback projection methods
     raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
-# Use custom CuPy implementations (cuCIM causes Jitify hanging issues)
-CUCIM_AVAILABLE = False
-
 def _create_disk_cupy(radius: int) -> "cp.ndarray":
     """Create a disk structuring element using CuPy - MATCH NUMPY EXACTLY"""
     y, x = cp.ogrid[-radius:radius+1, -radius:radius+1]
@@ -584,3 +581,561 @@ def tophat(
         result[z] = slice_result.astype(input_dtype)
 
     return result
+
+#@cupy_func
+#def clahe_2d(
+#    image: "cp.ndarray",
+#    clip_limit: float = 2.0,
+#    tile_grid_size: tuple = None,
+#    nbins: int = None,
+#    adaptive_bins: bool = True,
+#    adaptive_tiles: bool = True
+#) -> "cp.ndarray":
+#    """
+#    Fixed version of 2D CLAHE with proper bilinear interpolation.
+#    """
+#    _validate_3d_array(image)
+#    
+#    result = cp.zeros_like(image)
+#    
+#    for z in range(image.shape[0]):
+#        slice_2d = image[z]
+#        height, width = slice_2d.shape
+#        
+#        # Adaptive parameters (same as before)
+#        if nbins is None:
+#            if adaptive_bins:
+#                data_range = cp.max(slice_2d) - cp.min(slice_2d)
+#                adaptive_nbins = min(512, max(64, int(cp.sqrt(data_range))))
+#            else:
+#                adaptive_nbins = 256
+#        else:
+#            adaptive_nbins = nbins
+#            
+#        if tile_grid_size is None:
+#            if adaptive_tiles:
+#                target_tile_size = 80
+#                adaptive_tile_rows = max(2, min(16, height // target_tile_size))
+#                adaptive_tile_cols = max(2, min(16, width // target_tile_size))
+#                adaptive_tile_grid = (adaptive_tile_rows, adaptive_tile_cols)
+#            else:
+#                adaptive_tile_grid = (8, 8)
+#        else:
+#            adaptive_tile_grid = tile_grid_size
+#            
+#        result[z] = _clahe_2d(
+#            slice_2d, clip_limit, adaptive_tile_grid, adaptive_nbins
+#        )
+#    
+#    return result
+#
+#def _clahe_2d(
+#    image: "cp.ndarray",
+#    clip_limit: float,
+#    tile_grid_size: tuple,
+#    nbins: int
+#) -> "cp.ndarray":
+#    """
+#    Fixed CLAHE implementation with proper pixel-level bilinear interpolation.
+#    """
+#    if image.ndim != 2:
+#        raise ValueError("Input must be 2D array")
+#    
+#    height, width = image.shape
+#    tile_rows, tile_cols = tile_grid_size
+#    
+#    # Calculate tile dimensions
+#    tile_height = height // tile_rows
+#    tile_width = width // tile_cols
+#    
+#    # Ensure image dimensions are divisible by tile dimensions
+#    crop_height = tile_height * tile_rows
+#    crop_width = tile_width * tile_cols
+#    image_crop = image[:crop_height, :crop_width]
+#    
+#    # Calculate actual clip limit based on tile size
+#    actual_clip_limit = max(1, int(clip_limit * tile_height * tile_width / nbins))
+#    
+#    # Determine value range for histogram binning
+#    min_val = cp.min(image)
+#    max_val = cp.max(image)
+#    value_range = (float(min_val), float(max_val))
+#    
+#    # Calculate transformation functions (CDFs) for each tile center
+#    tile_cdfs = cp.zeros((tile_rows, tile_cols, nbins), dtype=cp.float32)
+#    bin_edges = cp.linspace(min_val, max_val, nbins + 1)
+#    
+#    for row in range(tile_rows):
+#        for col in range(tile_cols):
+#            # Extract tile
+#            y_start = row * tile_height
+#            y_end = (row + 1) * tile_height
+#            x_start = col * tile_width  
+#            x_end = (col + 1) * tile_width
+#            
+#            tile = image_crop[y_start:y_end, x_start:x_end]
+#            
+#            # Compute histogram
+#            if max_val > min_val:
+#                hist, _ = cp.histogram(tile, bins=nbins, range=value_range)
+#            else:
+#                hist = cp.zeros(nbins, dtype=cp.int32)
+#                hist[nbins // 2] = tile.size
+#            
+#            # Clip and redistribute histogram
+#            hist = _clip_histogram(hist, actual_clip_limit)
+#            
+#            # Calculate CDF (this becomes the transformation function)
+#            cdf = cp.cumsum(hist).astype(cp.float32)
+#            if cdf[-1] > 0:
+#                # Normalize CDF to output range
+#                cdf = (cdf / cdf[-1]) * (max_val - min_val) + min_val
+#            else:
+#                cdf = cp.full_like(cdf, min_val)
+#            
+#            tile_cdfs[row, col, :] = cdf
+#    
+#    # Apply pixel-level bilinear interpolation
+#    result = _apply_pixel_level_interpolation(
+#        image_crop, tile_cdfs, tile_rows, tile_cols, 
+#        tile_height, tile_width, bin_edges, min_val, max_val
+#    )
+#    
+#    # Handle original image size if needed
+#    if result.shape != image.shape:
+#        full_result = cp.zeros_like(image, dtype=result.dtype)
+#        full_result[:crop_height, :crop_width] = result
+#        # Fill remaining areas
+#        if crop_height < height:
+#            full_result[crop_height:, :crop_width] = result[-1:, :]
+#        if crop_width < width:
+#            full_result[:crop_height, crop_width:] = result[:, -1:]
+#        if crop_height < height and crop_width < width:
+#            full_result[crop_height:, crop_width:] = result[-1, -1]
+#        result = full_result
+#    
+#    return result.astype(image.dtype)
+#
+#
+#@cupy_func
+#def clahe_3d(
+#    stack: "cp.ndarray",
+#    clip_limit: float = 2.0,
+#    tile_grid_size_3d: tuple = None,
+#    nbins: int = None,
+#    adaptive_bins: bool = True,
+#    adaptive_tiles: bool = True
+#) -> "cp.ndarray":
+#    """
+#    Fixed version of true 3D CLAHE with proper trilinear interpolation.
+#    """
+#    _validate_3d_array(stack)
+#    
+#    depth, height, width = stack.shape
+#    
+#    # Adaptive parameters (same as before)
+#    if nbins is None:
+#        if adaptive_bins:
+#            data_range = cp.max(stack) - cp.min(stack)
+#            adaptive_nbins = min(512, max(128, int(cp.cbrt(data_range * 64))))
+#        else:
+#            adaptive_nbins = 256
+#    else:
+#        adaptive_nbins = nbins
+#        
+#    if tile_grid_size_3d is None:
+#        if adaptive_tiles:
+#            target_tile_size = 48
+#            adaptive_z_tiles = max(1, min(depth // 4, depth // target_tile_size))
+#            adaptive_y_tiles = max(2, min(8, height // target_tile_size))
+#            adaptive_x_tiles = max(2, min(8, width // target_tile_size))
+#            adaptive_tile_grid_3d = (adaptive_z_tiles, adaptive_y_tiles, adaptive_x_tiles)
+#        else:
+#            adaptive_tile_grid_3d = (max(1, depth // 8), 4, 4)
+#    else:
+#        adaptive_tile_grid_3d = tile_grid_size_3d
+#    
+#    return _clahe_3d(stack, clip_limit, adaptive_tile_grid_3d, adaptive_nbins)
+#
+#@cupy_func
+#def _clahe_3d(
+#    stack: "cp.ndarray",
+#    clip_limit: float,
+#    tile_grid_size_3d: tuple,
+#    nbins: int
+#) -> "cp.ndarray":
+#    """
+#    Fixed 3D CLAHE implementation with proper voxel-level trilinear interpolation.
+#    """
+#    depth, height, width = stack.shape
+#    tile_z, tile_y, tile_x = tile_grid_size_3d
+#    
+#    # Calculate 3D tile dimensions
+#    tile_depth = max(1, depth // tile_z)
+#    tile_height = max(4, height // tile_y)
+#    tile_width = max(4, width // tile_x)
+#    
+#    # Recalculate actual number of tiles
+#    actual_tile_z = depth // tile_depth
+#    actual_tile_y = height // tile_y
+#    actual_tile_x = width // tile_x
+#    
+#    # Calculate crop dimensions
+#    crop_depth = tile_depth * actual_tile_z
+#    crop_height = tile_height * actual_tile_y
+#    crop_width = tile_width * actual_tile_x
+#    stack_crop = stack[:crop_depth, :crop_height, :crop_width]
+#    
+#    # Adaptive clip limit based on 3D tile volume
+#    voxels_per_tile = tile_depth * tile_height * tile_width
+#    actual_clip_limit = max(1, int(clip_limit * voxels_per_tile / nbins))
+#    
+#    # Determine value range for histogram binning
+#    min_val = cp.min(stack)
+#    max_val = cp.max(stack)
+#    value_range = (float(min_val), float(max_val))
+#    
+#    # Calculate transformation functions (CDFs) for each 3D tile center
+#    tile_cdfs = cp.zeros((actual_tile_z, actual_tile_y, actual_tile_x, nbins), dtype=cp.float32)
+#    bin_edges = cp.linspace(min_val, max_val, nbins + 1)
+#    
+#    for z_idx in range(actual_tile_z):
+#        for y_idx in range(actual_tile_y):
+#            for x_idx in range(actual_tile_x):
+#                # Extract 3D tile
+#                z_start = z_idx * tile_depth
+#                z_end = (z_idx + 1) * tile_depth
+#                y_start = y_idx * tile_height
+#                y_end = (y_idx + 1) * tile_height
+#                x_start = x_idx * tile_width
+#                x_end = (x_idx + 1) * tile_width
+#                
+#                tile_3d = stack_crop[z_start:z_end, y_start:y_end, x_start:x_end]
+#                
+#                # Compute 3D histogram
+#                if max_val > min_val:
+#                    hist, _ = cp.histogram(tile_3d.flatten(), bins=nbins, range=value_range)
+#                else:
+#                    hist = cp.zeros(nbins, dtype=cp.int32)
+#                    hist[nbins // 2] = tile_3d.size
+#                
+#                # Clip and redistribute histogram
+#                hist = _clip_histogram(hist, actual_clip_limit)
+#                
+#                # Calculate CDF (transformation function)
+#                cdf = cp.cumsum(hist).astype(cp.float32)
+#                if cdf[-1] > 0:
+#                    # Normalize CDF to output range
+#                    cdf = (cdf / cdf[-1]) * (max_val - min_val) + min_val
+#                else:
+#                    cdf = cp.full_like(cdf, min_val)
+#                
+#                tile_cdfs[z_idx, y_idx, x_idx, :] = cdf
+#    
+#    # Apply voxel-level trilinear interpolation
+#    result = _apply_voxel_level_trilinear_interpolation(
+#        stack_crop, tile_cdfs,
+#        actual_tile_z, actual_tile_y, actual_tile_x,
+#        tile_depth, tile_height, tile_width,
+#        bin_edges, min_val, max_val
+#    )
+#    
+#    # Handle original stack size if needed
+#    if result.shape != stack.shape:
+#        full_result = cp.zeros_like(stack, dtype=result.dtype)
+#        full_result[:crop_depth, :crop_height, :crop_width] = result
+#        
+#        # Fill remaining regions by replicating edge values
+#        if crop_depth < depth:
+#            full_result[crop_depth:, :crop_height, :crop_width] = result[-1:, :, :]
+#        if crop_height < height:
+#            full_result[:crop_depth, crop_height:, :crop_width] = result[:, -1:, :]
+#        if crop_width < width:
+#            full_result[:crop_depth, :crop_height, crop_width:] = result[:, :, -1:]
+#            
+#        # Handle corner cases
+#        if crop_depth < depth and crop_height < height:
+#            full_result[crop_depth:, crop_height:, :crop_width] = result[-1, -1:, :]
+#        if crop_depth < depth and crop_width < width:
+#            full_result[crop_depth:, :crop_height, crop_width:] = result[-1:, :, -1:]
+#        if crop_height < height and crop_width < width:
+#            full_result[:crop_depth, crop_height:, crop_width:] = result[:, -1:, -1:]
+#        if crop_depth < depth and crop_height < height and crop_width < width:
+#            full_result[crop_depth:, crop_height:, crop_width:] = result[-1, -1, -1]
+#            
+#        result = full_result
+#    
+#    return result.astype(stack.dtype)
+#
+#
+#def _apply_pixel_level_interpolation(
+#    image: "cp.ndarray",
+#    tile_cdfs: "cp.ndarray",
+#    tile_rows: int,
+#    tile_cols: int,
+#    tile_height: int,
+#    tile_width: int,
+#    bin_edges: "cp.ndarray",
+#    min_val: float,
+#    max_val: float
+#) -> "cp.ndarray":
+#    """
+#    Apply proper pixel-level bilinear interpolation for CLAHE.
+#    
+#    Each pixel gets its value by interpolating between the transformation
+#    functions (CDFs) of surrounding tile centers.
+#    """
+#    height, width = image.shape
+#    result = cp.zeros_like(image, dtype=cp.float32)
+#    
+#    # Calculate tile center positions
+#    tile_center_y = cp.arange(tile_rows) * tile_height + tile_height // 2
+#    tile_center_x = cp.arange(tile_cols) * tile_width + tile_width // 2
+#    
+#    # Process each pixel
+#    for y in range(height):
+#        for x in range(width):
+#            pixel_val = image[y, x]
+#            
+#            # Find which bin this pixel value belongs to
+#            if max_val > min_val:
+#                bin_idx = cp.searchsorted(bin_edges[1:], pixel_val)
+#                bin_idx = min(bin_idx, len(bin_edges) - 2)
+#            else:
+#                bin_idx = len(bin_edges) // 2
+#            
+#            # Find surrounding tile centers
+#            # Find the tile centers that surround this pixel
+#            tile_y_low = cp.searchsorted(tile_center_y, y) - 1
+#            tile_x_low = cp.searchsorted(tile_center_x, x) - 1
+#            
+#            tile_y_low = max(0, min(tile_y_low, tile_rows - 2))
+#            tile_x_low = max(0, min(tile_x_low, tile_cols - 2))
+#            
+#            tile_y_high = tile_y_low + 1
+#            tile_x_high = tile_x_low + 1
+#            
+#            # Get the 4 surrounding transformation values
+#            val_tl = tile_cdfs[tile_y_low, tile_x_low, bin_idx]    # top-left
+#            val_tr = tile_cdfs[tile_y_low, tile_x_high, bin_idx]   # top-right
+#            val_bl = tile_cdfs[tile_y_high, tile_x_low, bin_idx]   # bottom-left
+#            val_br = tile_cdfs[tile_y_high, tile_x_high, bin_idx]  # bottom-right
+#            
+#            # Calculate interpolation weights based on position
+#            center_y_low = tile_center_y[tile_y_low]
+#            center_y_high = tile_center_y[tile_y_high]
+#            center_x_low = tile_center_x[tile_x_low]
+#            center_x_high = tile_center_x[tile_x_high]
+#            
+#            # Bilinear interpolation weights
+#            if center_y_high != center_y_low:
+#                wy = (y - center_y_low) / (center_y_high - center_y_low)
+#            else:
+#                wy = 0.0
+#                
+#            if center_x_high != center_x_low:
+#                wx = (x - center_x_low) / (center_x_high - center_x_low)
+#            else:
+#                wx = 0.0
+#            
+#            # Clamp weights to [0, 1]
+#            wy = max(0.0, min(1.0, wy))
+#            wx = max(0.0, min(1.0, wx))
+#            
+#            # Bilinear interpolation
+#            val_top = (1 - wx) * val_tl + wx * val_tr
+#            val_bottom = (1 - wx) * val_bl + wx * val_br
+#            interpolated_val = (1 - wy) * val_top + wy * val_bottom
+#            
+#            result[y, x] = interpolated_val
+#    
+#    return result
+#
+#def _apply_voxel_level_trilinear_interpolation(
+#    stack: "cp.ndarray",
+#    tile_cdfs: "cp.ndarray",
+#    tile_z: int,
+#    tile_y: int,
+#    tile_x: int,
+#    tile_depth: int,
+#    tile_height: int,
+#    tile_width: int,
+#    bin_edges: "cp.ndarray",
+#    min_val: float,
+#    max_val: float
+#) -> "cp.ndarray":
+#    """
+#    Apply proper voxel-level trilinear interpolation for 3D CLAHE.
+#    
+#    Each voxel gets its value by trilinearly interpolating between the 
+#    transformation functions (CDFs) of the 8 surrounding 3D tile centers.
+#    """
+#    depth, height, width = stack.shape
+#    result = cp.zeros_like(stack, dtype=cp.float32)
+#    
+#    # Calculate 3D tile center positions
+#    tile_center_z = cp.arange(tile_z) * tile_depth + tile_depth // 2
+#    tile_center_y = cp.arange(tile_y) * tile_height + tile_height // 2
+#    tile_center_x = cp.arange(tile_x) * tile_width + tile_width // 2
+#    
+#    # Process each voxel
+#    for z in range(depth):
+#        for y in range(height):
+#            for x in range(width):
+#                voxel_val = stack[z, y, x]
+#                
+#                # Find which bin this voxel value belongs to
+#                if max_val > min_val:
+#                    bin_idx = cp.searchsorted(bin_edges[1:], voxel_val)
+#                    bin_idx = min(bin_idx, len(bin_edges) - 2)
+#                else:
+#                    bin_idx = len(bin_edges) // 2
+#                
+#                # Find surrounding tile centers in 3D
+#                tile_z_low = cp.searchsorted(tile_center_z, z) - 1
+#                tile_y_low = cp.searchsorted(tile_center_y, y) - 1
+#                tile_x_low = cp.searchsorted(tile_center_x, x) - 1
+#                
+#                # Clamp to valid range
+#                tile_z_low = max(0, min(tile_z_low, tile_z - 2)) if tile_z > 1 else 0
+#                tile_y_low = max(0, min(tile_y_low, tile_y - 2))
+#                tile_x_low = max(0, min(tile_x_low, tile_x - 2))
+#                
+#                tile_z_high = min(tile_z_low + 1, tile_z - 1)
+#                tile_y_high = tile_y_low + 1
+#                tile_x_high = tile_x_low + 1
+#                
+#                # Get the 8 surrounding transformation values for trilinear interpolation
+#                # Front face (z_low)
+#                val_000 = tile_cdfs[tile_z_low, tile_y_low, tile_x_low, bin_idx]     # front-bottom-left
+#                val_001 = tile_cdfs[tile_z_low, tile_y_low, tile_x_high, bin_idx]    # front-bottom-right
+#                val_010 = tile_cdfs[tile_z_low, tile_y_high, tile_x_low, bin_idx]    # front-top-left
+#                val_011 = tile_cdfs[tile_z_low, tile_y_high, tile_x_high, bin_idx]   # front-top-right
+#                
+#                # Back face (z_high)
+#                val_100 = tile_cdfs[tile_z_high, tile_y_low, tile_x_low, bin_idx]    # back-bottom-left
+#                val_101 = tile_cdfs[tile_z_high, tile_y_low, tile_x_high, bin_idx]   # back-bottom-right
+#                val_110 = tile_cdfs[tile_z_high, tile_y_high, tile_x_low, bin_idx]   # back-top-left
+#                val_111 = tile_cdfs[tile_z_high, tile_y_high, tile_x_high, bin_idx]  # back-top-right
+#                
+#                # Calculate interpolation weights based on position
+#                center_z_low = tile_center_z[tile_z_low]
+#                center_z_high = tile_center_z[tile_z_high]
+#                center_y_low = tile_center_y[tile_y_low]
+#                center_y_high = tile_center_y[tile_y_high]
+#                center_x_low = tile_center_x[tile_x_low]
+#                center_x_high = tile_center_x[tile_x_high]
+#                
+#                # Trilinear interpolation weights
+#                if center_z_high != center_z_low:
+#                    wz = (z - center_z_low) / (center_z_high - center_z_low)
+#                else:
+#                    wz = 0.0
+#                    
+#                if center_y_high != center_y_low:
+#                    wy = (y - center_y_low) / (center_y_high - center_y_low)
+#                else:
+#                    wy = 0.0
+#                    
+#                if center_x_high != center_x_low:
+#                    wx = (x - center_x_low) / (center_x_high - center_x_low)
+#                else:
+#                    wx = 0.0
+#                
+#                # Clamp weights to [0, 1]
+#                wz = max(0.0, min(1.0, wz))
+#                wy = max(0.0, min(1.0, wy))
+#                wx = max(0.0, min(1.0, wx))
+#                
+#                # Trilinear interpolation
+#                # Interpolate along x-axis for each face
+#                val_00 = (1 - wx) * val_000 + wx * val_001  # front-bottom
+#                val_01 = (1 - wx) * val_010 + wx * val_011  # front-top
+#                val_10 = (1 - wx) * val_100 + wx * val_101  # back-bottom
+#                val_11 = (1 - wx) * val_110 + wx * val_111  # back-top
+#                
+#                # Interpolate along y-axis for each face
+#                val_0 = (1 - wy) * val_00 + wy * val_01  # front face
+#                val_1 = (1 - wy) * val_10 + wy * val_11  # back face
+#                
+#                # Final interpolation along z-axis
+#                interpolated_val = (1 - wz) * val_0 + wz * val_1
+#                
+#                result[z, y, x] = interpolated_val
+#    
+#    return result
+#
+#def _clip_histogram(hist: "cp.ndarray", clip_limit: int) -> "cp.ndarray":
+#    """
+#    Simplified histogram clipping with uniform redistribution.
+#    
+#    Args:
+#        hist: Input histogram array
+#        clip_limit: Maximum allowed value for any histogram bin
+#        
+#    Returns:
+#        Clipped and redistributed histogram
+#    """
+#    if clip_limit <= 0:
+#        return hist
+#    
+#    # Find excess above clip limit
+#    excess = cp.maximum(hist - clip_limit, 0)
+#    total_excess = cp.sum(excess)
+#    
+#    # Clip the histogram
+#    clipped_hist = cp.minimum(hist, clip_limit)
+#    
+#    # Redistribute excess uniformly
+#    if total_excess > 0:
+#        nbins = len(hist)
+#        redistribution = total_excess // nbins
+#        remainder = total_excess % nbins
+#        
+#        # Add uniform redistribution to all bins
+#        clipped_hist = clipped_hist + redistribution
+#        
+#        # Distribute remainder to first bins
+#        if remainder > 0:
+#            clipped_hist[:remainder] += 1
+#            
+#        # Final clipping in case redistribution caused overflow
+#        clipped_hist = cp.minimum(clipped_hist, clip_limit)
+#    
+#    return clipped_hist
+#
+#def _apply_clahe_mapping(
+#    tile: "cp.ndarray",
+#    tile_mappings: "cp.ndarray", 
+#    row: int,
+#    col: int,
+#    tile_rows: int,
+#    tile_cols: int,
+#    nbins: int,
+#    max_val: float
+#) -> "cp.ndarray":
+#    """
+#    Apply CLAHE mapping with bilinear interpolation between neighboring tiles.
+#    """
+#    # Convert pixel values to bin indices
+#    if max_val > 0:
+#        bin_indices = ((tile.astype(cp.float32) / max_val) * (nbins - 1)).astype(cp.int32)
+#        bin_indices = cp.clip(bin_indices, 0, nbins - 1)
+#    else:
+#        bin_indices = cp.zeros_like(tile, dtype=cp.int32)
+#    
+#    # For interior tiles, use bilinear interpolation
+#    if 0 < row < tile_rows - 1 and 0 < col < tile_cols - 1:
+#        # Get the four surrounding tile mappings
+#        tl = tile_mappings[row, col, bin_indices]       # top-left
+#        tr = tile_mappings[row, col + 1, bin_indices]   # top-right  
+#        bl = tile_mappings[row + 1, col, bin_indices]   # bottom-left
+#        br = tile_mappings[row + 1, col + 1, bin_indices] # bottom-right
+#        
+#        # Simple bilinear interpolation
+#        result = 0.25 * (tl + tr + bl + br)
+#    else:
+#        # For edge/corner tiles, just use the tile's own mapping
+#        result = tile_mappings[row, col, bin_indices]
+#    
+#    return result

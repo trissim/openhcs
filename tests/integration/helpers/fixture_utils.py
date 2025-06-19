@@ -55,7 +55,7 @@ MICROSCOPE_CONFIGS = {
 # Test parameters
 syn_data_params = {
     "grid_size": (4, 4),
-    "tile_size": (128, 128),  # Increased from 64x64 to 128x128 for patch size compatibility
+    "tile_size": (512, 512),  # Increased from 64x64 to 128x128 for patch size compatibility
     "overlap_percent": 10,
     "wavelengths": 2,
     "cell_size_range": (3, 6),

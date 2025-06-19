@@ -48,14 +48,16 @@ The pipeline compiler operates in four sequential phases, each building upon the
 
 ### Phase 3: Memory Contract Validation (`FuncStepContractValidator`)
 
-**Purpose**: Ensures memory type compatibility across the pipeline
+**Purpose**: Ensures memory type compatibility across the pipeline AND stores function patterns
 
-- **Input**: `step_plans` + function decorators
-- **Output**: Memory type validation and injection into step_plans
+- **Input**: `step_plans` + function decorators + modified function patterns from path planner
+- **Output**: Memory type validation, function pattern storage, and injection into step_plans
+- **Key Responsibility**: **Stores the function pattern (potentially modified by path planner) in `step_plans['func']`**
 - **Validation**:
   - All functions must have explicit memory type declarations
   - Functions in the same step must have consistent memory types
   - Memory types must be valid (numpy, cupy, torch, tensorflow, jax)
+- **Storage**: Returns `{'input_memory_type': ..., 'output_memory_type': ..., 'func': func_pattern}`
 
 ### Phase 4: GPU Resource Assignment (`GPUMemoryTypeValidator`)
 
@@ -206,9 +208,12 @@ PipelinePathPlanner.prepare_pipeline_paths(context, steps)
 # Phase 2: Materialization planning  
 MaterializationFlagPlanner.prepare_pipeline_flags(context, steps)
 
-# Phase 3: Memory contract validation
-memory_types = FuncStepContractValidator.validate_pipeline(steps)
-# Inject memory types into context.step_plans
+# Phase 3: Memory contract validation + function pattern storage
+memory_types = FuncStepContractValidator.validate_pipeline(steps, context)
+# memory_types includes: input_memory_type, output_memory_type, AND func
+# Inject memory types AND function patterns into context.step_plans
+for step_id, types_and_func in memory_types.items():
+    context.step_plans[step_id].update(types_and_func)  # Includes 'func' key!
 
 # Phase 4: GPU resource assignment
 GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
@@ -233,20 +238,23 @@ Each step gets a comprehensive execution plan:
 context.step_plans[step_id] = {
     # Basic metadata
     "step_name": "Z-Stack Flattening",
-    "step_type": "FunctionStep", 
+    "step_type": "FunctionStep",
     "well_id": "A01",
-    
+
     # I/O configuration
     "input_dir": "/path/to/input",
     "output_dir": "/path/to/output",
     "read_backend": "disk",
     "write_backend": "memory",
-    
+
     # Memory configuration
     "input_memory_type": "numpy",
     "output_memory_type": "torch",
     "gpu_id": 0,
-    
+
+    # Function pattern (CRITICAL: stored by FuncStepContractValidator)
+    "func": function_pattern,  # The actual function pattern (potentially modified by path planner)
+
     # Special I/O
     "special_inputs": {
         "positions": {"path": "/vfs/positions.pkl", "backend": "memory"}
@@ -254,7 +262,7 @@ context.step_plans[step_id] = {
     "special_outputs": {
         "metadata": {"path": "/vfs/metadata.pkl", "backend": "memory"}
     },
-    
+
     # Flags
     "requires_disk_input": True,
     "requires_disk_output": False,

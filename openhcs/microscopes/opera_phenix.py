@@ -571,7 +571,7 @@ class OperaPhenixMetadataHandler(MetadataHandler):
             plate_path: Path to the plate folder
 
         Returns:
-            Tuple of (grid_size_x, grid_size_y)
+            Tuple of (grid_rows, grid_cols) - UPDATED: Now returns (rows, cols) for MIST compatibility
 
         Raises:
             FileNotFoundError: If no Index.xml file is found
@@ -601,8 +601,9 @@ class OperaPhenixMetadataHandler(MetadataHandler):
                 "Grid dimensions must be positive integers."
             )
 
-        logger.info("Grid size from Index.xml: %dx%d", grid_size[0], grid_size[1])
-        return grid_size
+        logger.info("Grid size from Index.xml: %dx%d (cols x rows)", grid_size[0], grid_size[1])
+        # FIXED: Return (rows, cols) for MIST compatibility instead of (cols, rows)
+        return (grid_size[1], grid_size[0])
 
     def get_pixel_size(self, plate_path: Union[str, Path]):
         """

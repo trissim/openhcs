@@ -152,10 +152,7 @@ def _pyclesperanto_to_numpy(data: Any) -> Any:
 def _pyclesperanto_to_pyclesperanto(data: Any) -> Any:
     """Convert pyclesperanto array to pyclesperanto array (identity operation)."""
     cle = _ensure_module("pyclesperanto")
-    # Create a copy on the same device
-    result = cle.create_like(data)
-    cle.copy(data, result)
-    return result
+    return data
 
 
 # CuPy conversion functions

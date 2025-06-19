@@ -270,7 +270,16 @@ def _process_single_pattern_group(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
         )
 
-        # 🔍 DEBUG: Log stacked result
+        # � CPU CLEANUP: Clear source arrays after GPU conversion to prevent memory doubling
+        from openhcs.constants.constants import MemoryType, Backend
+        if (input_memory_type_from_plan != MemoryType.NUMPY.value and
+            read_backend == Backend.DISK.value):
+            del raw_slices
+            import gc
+            gc.collect()
+            logger.debug(f"🔥 CPU CLEANUP: Cleared source arrays after conversion from disk to {input_memory_type_from_plan}")
+
+        # �🔍 DEBUG: Log stacked result
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
         stack_type = type(main_data_stack).__name__
         logger.info(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
@@ -391,7 +400,10 @@ def _process_single_pattern_group(
 
         logger.debug(f"Finished pattern group {pattern_repr} in {(time.time() - start_time):.2f}s.")
     except Exception as e:
+        import traceback
+        full_traceback = traceback.format_exc()
         logger.error(f"Error processing pattern group {pattern_repr}: {e}", exc_info=True)
+        logger.error(f"Full traceback for pattern group {pattern_repr}:\n{full_traceback}")
         raise ValueError(f"Failed to process pattern group {pattern_repr}: {e}") from e
 
 class FunctionStep(AbstractStep):
@@ -583,7 +595,10 @@ class FunctionStep(AbstractStep):
                 pass
 
         except Exception as e:
+            import traceback
+            full_traceback = traceback.format_exc()
             logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)
+            logger.error(f"Full traceback for FunctionStep {step_id} ({step_name}):\n{full_traceback}")
 
             # 🔥 ERROR GPU CLEANUP: Clean up even on error to prevent memory leaks
             try:

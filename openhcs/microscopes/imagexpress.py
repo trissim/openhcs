@@ -464,7 +464,7 @@ class ImageXpressMetadataHandler(MetadataHandler):
             context: Optional ProcessingContext (not used)
 
         Returns:
-            (grid_size_x, grid_size_y)
+            (grid_rows, grid_cols) - UPDATED: Now returns (rows, cols) for MIST compatibility
 
         Raises:
             MetadataNotFoundError: If no HTD file is found
@@ -503,10 +503,11 @@ class ImageXpressMetadataHandler(MetadataHandler):
                 rows_match = re.search(r'SiteRows=(\d+)', htd_content)
 
             if cols_match and rows_match:
-                grid_size_x = int(cols_match.group(1))
-                grid_size_y = int(rows_match.group(1))
-                logger.info("Using grid dimensions from HTD file: %dx%d", grid_size_x, grid_size_y)
-                return grid_size_x, grid_size_y
+                grid_size_x = int(cols_match.group(1))  # cols from metadata
+                grid_size_y = int(rows_match.group(1))  # rows from metadata
+                logger.info("Using grid dimensions from HTD file: %dx%d (cols x rows)", grid_size_x, grid_size_y)
+                # FIXED: Return (rows, cols) for MIST compatibility instead of (cols, rows)
+                return grid_size_y, grid_size_x
 
             # 🔒 Clause 65 — No Fallback Logic
             # Fail loudly if grid dimensions cannot be determined

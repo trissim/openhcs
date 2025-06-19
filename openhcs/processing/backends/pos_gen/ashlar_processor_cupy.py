@@ -130,22 +130,18 @@ def phase_correlation_gpu_ashlar(
     return float(dy), float(dx)
 
 
-@chain_breaker
 @special_inputs("grid_dimensions")
 @special_outputs("positions")
+@chain_breaker
 @cupy_func
 def gpu_ashlar_align_cupy(
     tiles: "cp.ndarray",  # type: ignore
     grid_dimensions: Tuple[int, int],
-    *,
     overlap_ratio: float = 0.1,
-    patch_size: int = 128,
-    search_radius: int = 20,
     normalize: bool = True,
     method: str = "phase_correlation",
     return_affine: bool = False,
     verbose: bool = False,
-    context: Optional['ProcessingContext'] = None,
     # All configurable parameters (no magic numbers)
     max_global_iterations: int = 5,
     convergence_threshold: float = 0.1,
@@ -169,13 +165,10 @@ def gpu_ashlar_align_cupy(
         tiles: 3D tensor (Z, Y, X) of tiles
         grid_dimensions: (num_cols, num_rows)
         overlap_ratio: Expected overlap ratio
-        patch_size: Patch size (unused in this implementation)
-        search_radius: Search radius (unused in this implementation)
         normalize: Normalize tiles
         method: Must be "phase_correlation"
         return_affine: Return affine transformation matrices
         verbose: Print progress
-        context: Processing context (unused)
         max_global_iterations: Maximum global optimization iterations
         convergence_threshold: Convergence threshold for position changes
         global_optimization_damping: Damping factor for global optimization

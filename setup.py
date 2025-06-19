@@ -26,6 +26,7 @@ setup(
         "pygments>=2.10.0",
         "textual>=3.0.0",
         "textual-universal-directorytree",
+        "watchdog>=2.0.0",
         "napari",
         "setuptools"
     ],

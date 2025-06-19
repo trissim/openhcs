@@ -148,7 +148,8 @@ class OperaPhenixXmlParser:
         to determine the grid dimensions.
 
         Returns:
-            Tuple of (grid_size_x, grid_size_y)
+            Tuple of (grid_size_x, grid_size_y) - NOTE: Still returns (cols, rows) format
+            The calling handler will swap this to (rows, cols) for MIST compatibility
 
         Raises:
             OperaPhenixXmlParseError: If XML is not parsed

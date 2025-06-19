@@ -84,7 +84,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
-            # ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Hidden for now
+            ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Enabled for debugging
         ]
         super().__init__(
             button_configs=button_configs,
@@ -247,9 +247,9 @@ class PlateManagerWidget(ButtonListWidget):
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
 
-            # Debug button is hidden for now
-            # has_debug_data = hasattr(self, '_last_subprocess_data')
-            # self.query_one("#save_debug_pickle").disabled = not has_debug_data
+            # Debug button - enabled when subprocess data is available
+            has_debug_data = hasattr(self, '_last_subprocess_data')
+            self.query_one("#save_debug_pickle").disabled = not has_debug_data
 
         except Exception as e:
             # Only log if it's not a mounting/unmounting issue

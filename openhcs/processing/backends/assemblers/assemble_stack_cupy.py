@@ -7,7 +7,7 @@ using CuPy. It handles subpixel positioning and blending of image tiles.
 from __future__ import annotations 
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Tuple, Union, List, Tuple, Union
 
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.pipeline.function_contracts import special_inputs
@@ -130,7 +130,7 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "cp.n
 @cupy_func
 def assemble_stack_cupy(
     image_tiles: "cp.ndarray",  # type: ignore
-    positions: "cp.ndarray",  # type: ignore # Renamed from positions_xy
+    positions: Union[List[Tuple[float, float]], "cp.ndarray"],  # type: ignore
     blend_radius: float = 10.0,
     blend_method: str = "rectangular"
 ) -> "cp.ndarray":  # type: ignore
@@ -141,7 +141,7 @@ def assemble_stack_cupy(
 
     Args:
         image_tiles: 3D array of tiles (N, H, W)
-        positions: 2D array of tile positions (N, 2) as [x, y] coordinates
+        positions: List of (x, y) tuples or 2D array of tile positions (N, 2) as [x, y] coordinates
         blend_radius: Blending parameter in pixels (default: 10.0)
         blend_method: Blending method (default: "rectangular")
             - "none": No blending, uniform weights
@@ -161,10 +161,17 @@ def assemble_stack_cupy(
         logger.warning("image_tiles array is empty (0 tiles). Returning an empty array.")
         return cp.array([[[]]], dtype=cp.uint16) # Shape (1,0,0) to indicate empty 3D
 
-    # Convert positions to cupy for GPU-native operations (positions come in as numpy from special input)
-    if not hasattr(positions, 'ndim') or positions.ndim != 2 or positions.shape[1] != 2:
-        raise TypeError("positions must be an array of shape [N, 2].")
-    positions = cp.asarray(positions)  # Convert to cupy for GPU operations
+    # Convert positions to CuPy array for GPU-native operations
+    if isinstance(positions, list):
+        # Convert list of tuples to CuPy array
+        if not positions or not isinstance(positions[0], tuple) or len(positions[0]) != 2:
+            raise TypeError("positions must be a list of (x, y) tuples.")
+        positions = cp.array(positions, dtype=cp.float32)
+    else:
+        # Handle array input (backward compatibility)
+        if not hasattr(positions, 'ndim') or positions.ndim != 2 or positions.shape[1] != 2:
+            raise TypeError("positions must be an array of shape [N, 2] or list of (x, y) tuples.")
+        positions = cp.asarray(positions)  # Convert to cupy for GPU operations
 
     # Debug: Print positions information
     print(f"Assembly: Received {positions.shape[0]} positions for {image_tiles.shape[0]} tiles")

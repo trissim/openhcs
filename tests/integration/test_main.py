@@ -1,5 +1,5 @@
 """
-Integration tests for the pipeline cccccccccccc and TUI components.
+Integration tests for the pipeline and TUI components.
 """
 import pytest
 import sys
@@ -23,7 +23,7 @@ from openhcs.processing.backends.processors.torch_processor import (
 from openhcs.processing.backends.pos_gen.ashlar_processor_cupy import gpu_ashlar_align_cupy
 from openhcs.processing.backends.pos_gen.mist_processor_cupy import mist_compute_tile_positions
 from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
-from openhcs.processing.backends.assemblers.assemble_stack_numpy import assemble_stack_numpy
+from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
 from openhcs.processing.backends.enhance.basic_processor_cupy import basic_flatfield_correction_cupy
 from openhcs.processing.backends.enhance.basic_processor_numpy import basic_flatfield_correction_numpy
 from openhcs.processing.backends.enhance.n2v2_processor_torch import n2v2_denoise_torch
@@ -85,12 +85,13 @@ def get_pipeline(input_dir):
             ),
             #Step(func=n2v2_denoise_torch,
             #),
-            Step(func=basic_flatfield_correction_numpy),
+            #Step(func=basic_flatfield_correction_numpy),
             #),
             #Step(func=self_supervised_3d_deconvolution,
             #),
             #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
-            Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
+            #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
+            Step(func=(assemble_stack_cpu, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             )
         ],
         name = "Mega Flex Pipeline",

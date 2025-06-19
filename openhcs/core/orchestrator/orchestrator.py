@@ -360,8 +360,11 @@ class PipelineOrchestrator:
                     logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
 
                 except Exception as step_error:
+                    import traceback
+                    full_traceback = traceback.format_exc()
                     error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} ({step_id}) failed for well {well_id}: {step_error}"
                     logger.error(error_msg, exc_info=True)
+                    logger.error(f"🔥 SINGLE_WELL TRACEBACK for well {well_id}, step {step_index+1} ({step_id}):\n{full_traceback}")
                     raise RuntimeError(error_msg) from step_error
 
                 if visualizer:
@@ -383,13 +386,19 @@ class PipelineOrchestrator:
             logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
             return {"status": "success", "well_id": well_id}
         except Exception as e:
+            import traceback
+            full_traceback = traceback.format_exc()
             error_msg = f"🔥 SINGLE_WELL ERROR: Pipeline execution failed for well {well_id}: {e}"
             logger.error(error_msg, exc_info=True)
-            return {"status": "error", "well_id": well_id, "error_message": str(e), "details": repr(e)}
+            logger.error(f"🔥 SINGLE_WELL FULL TRACEBACK for well {well_id}:\n{full_traceback}")
+            return {"status": "error", "well_id": well_id, "error_message": str(e), "details": full_traceback}
         except BaseException as critical_e:
+            import traceback
+            full_traceback = traceback.format_exc()
             error_msg = f"🔥 SINGLE_WELL CRITICAL ERROR: Critical failure for well {well_id}: {critical_e}"
             logger.error(error_msg, exc_info=True)
-            return {"status": "error", "well_id": well_id, "error_message": str(critical_e), "details": repr(critical_e)}
+            logger.error(f"🔥 SINGLE_WELL CRITICAL TRACEBACK for well {well_id}:\n{full_traceback}")
+            return {"status": "error", "well_id": well_id, "error_message": str(critical_e), "details": full_traceback}
 
     def execute_compiled_plate(
         self,
@@ -500,9 +509,12 @@ class PipelineOrchestrator:
                         execution_results[well_id] = result
                         logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_WELL_{well_id}")
                     except Exception as exc:
+                        import traceback
+                        full_traceback = traceback.format_exc()
                         error_msg = f"Well {well_id} generated an exception during execution: {exc}"
                         logger.error(f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True)
-                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": repr(exc)}
+                        logger.error(f"🔥 ORCHESTRATOR FULL TRACEBACK for well {well_id}:\n{full_traceback}")
+                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": full_traceback}
                         logger.info(f"🔥 DEATH_MARKER: ERROR_STORED_FOR_WELL_{well_id}")
 
                 logger.info("🔥 DEATH_MARKER: COMPLETION_LOOP_FINISHED")

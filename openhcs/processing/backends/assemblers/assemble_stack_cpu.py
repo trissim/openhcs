@@ -7,7 +7,7 @@ using NumPy. It handles subpixel positioning and blending of image tiles.
 from __future__ import annotations 
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Tuple, Union
 
 from openhcs.core.memory.decorators import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import special_inputs
@@ -119,7 +119,7 @@ def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "np.n
 @numpy_func
 def assemble_stack_cpu(
     image_tiles: "np.ndarray",  # type: ignore
-    positions: "np.ndarray",  # type: ignore # Renamed from positions_xy
+    positions: Union[List[Tuple[float, float]], "np.ndarray"],  # type: ignore
     blend_radius: float = 10.0,
     blend_method: str = "rectangular"
 ) -> "np.ndarray":  # type: ignore
@@ -130,7 +130,7 @@ def assemble_stack_cpu(
 
     Args:
         image_tiles: 3D array of tiles (N, H, W)
-        positions: 2D array of tile positions (N, 2) as [x, y] coordinates
+        positions: List of (x, y) tuples or 2D array of tile positions (N, 2) as [x, y] coordinates
         blend_radius: Blending parameter in pixels (default: 10.0)
         blend_method: Blending method (default: "rectangular")
             - "none": No blending, uniform weights
@@ -142,19 +142,27 @@ def assemble_stack_cpu(
         3D array (1, H_canvas, W_canvas) with assembled image
     """
     # --- 1. Validate and standardize inputs ---
-    if not isinstance(positions, np.ndarray):
-        positions = to_numpy(positions)
-
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
         raise TypeError("image_tiles must be a 3D NumPy ndarray of shape (N, H, W).")
     if image_tiles.shape[0] == 0:
         logger.warning("image_tiles array is empty (0 tiles). Returning an empty array.")
         return np.array([[[]]], dtype=np.uint16) # Shape (1,0,0) to indicate empty 3D
 
-    if not isinstance(positions, np.ndarray) or positions.ndim != 2 or positions.shape[1] != 2:
-        raise TypeError("positions must be a NumPy ndarray of shape [N, 2].") # Updated error message
+    # Convert positions to NumPy array for CPU processing
+    if isinstance(positions, list):
+        # Convert list of tuples to NumPy array
+        if not positions or not isinstance(positions[0], tuple) or len(positions[0]) != 2:
+            raise TypeError("positions must be a list of (x, y) tuples.")
+        positions = np.array(positions, dtype=np.float32)
+    else:
+        # Handle array input (backward compatibility)
+        if not isinstance(positions, np.ndarray):
+            positions = to_numpy(positions)
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise TypeError("positions must be an array of shape [N, 2] or list of (x, y) tuples.")
+
     if image_tiles.shape[0] != positions.shape[0]:
-        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).") # Updated error message
+        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).")
 
     num_tiles, tile_h, tile_w = image_tiles.shape
     first_tile_shape = (tile_h, tile_w) # Used for blend mask, assumes all tiles same H, W
