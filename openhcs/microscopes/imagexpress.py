@@ -581,3 +581,87 @@ class ImageXpressMetadataHandler(MetadataHandler):
             # 🔒 Clause 65 — No Fallback Logic
             # Fail loudly on any error
             raise ValueError(f"Error getting pixel size from {plate_path}: {e}")
+
+    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get channel key→name mapping from ImageXpress HTD file.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping channel IDs to channel names from metadata
+            Example: {"1": "TL-20", "2": "DAPI", "3": "FITC", "4": "CY5"}
+        """
+        try:
+            # Find and parse HTD file
+            htd_file = self.find_metadata_file(plate_path)
+
+            # Read HTD file content
+            encodings_to_try = ['utf-8', 'windows-1252', 'latin-1', 'cp1252', 'iso-8859-1']
+            htd_content = None
+
+            for encoding in encodings_to_try:
+                try:
+                    with open(htd_file, 'r', encoding=encoding) as f:
+                        htd_content = f.read()
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if htd_content is None:
+                logger.debug("Could not read HTD file with any supported encoding")
+                return None
+
+            # Extract channel information from WaveName entries
+            channel_mapping = {}
+
+            # ImageXpress stores channel names as WaveName1, WaveName2, etc.
+            wave_pattern = re.compile(r'"WaveName(\d+)", "([^"]*)"')
+            matches = wave_pattern.findall(htd_content)
+
+            for wave_num, wave_name in matches:
+                if wave_name:  # Only add non-empty wave names
+                    channel_mapping[wave_num] = wave_name
+
+            return channel_mapping if channel_mapping else None
+
+        except Exception as e:
+            logger.debug(f"Could not extract channel names from ImageXpress metadata: {e}")
+            return None
+
+    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get well key→name mapping from ImageXpress metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - ImageXpress doesn't provide rich well names in metadata
+        """
+        return None
+
+    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get site key→name mapping from ImageXpress metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - ImageXpress doesn't provide rich site names in metadata
+        """
+        return None
+
+    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get z_index key→name mapping from ImageXpress metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - ImageXpress doesn't provide rich z_index names in metadata
+        """
+        return None

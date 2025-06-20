@@ -30,6 +30,7 @@ from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
 from openhcs.io.base import storage_registry
 from openhcs.io.memory import MemoryStorageBackend
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.constants.constants import GroupBy
 
 logger = logging.getLogger(__name__)
 
@@ -994,23 +995,18 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(f"Plate not found in plates list: {plate_path}")
                 continue
 
-            try:
-                # Create and initialize orchestrator
-                orchestrator = PipelineOrchestrator(
-                    plate_path=plate_path,
-                    global_config=self.global_config,
-                    storage_registry=self.filemanager.registry
-                ).initialize()
+            # Create and initialize orchestrator - let it fail loud
+            orchestrator = PipelineOrchestrator(
+                plate_path=plate_path,
+                global_config=self.global_config,
+                storage_registry=self.filemanager.registry
+            ).initialize()
 
-                # Store orchestrator for later use (channel selection, etc.)
-                self.orchestrators[plate_path] = orchestrator
+            # Store orchestrator for later use (channel selection, etc.)
+            self.orchestrators[plate_path] = orchestrator
 
-                actual_plate['status'] = '-'  # Initialized
-                logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
-            except Exception as e:
-                logger.error(f"Initialization failed for {plate_path}: {e}")
-                actual_plate['status'] = 'X'
-                actual_plate['error'] = str(e)
+            actual_plate['status'] = '-'  # Initialized
+            logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
 
             # Force UI update immediately after each plate
             self.mutate_reactive(PlateManagerWidget.plates)
@@ -1136,7 +1132,7 @@ class PlateManagerWidget(ButtonListWidget):
                 pipeline_obj = Pipeline(steps=execution_pipeline)
 
                 # Run heavy operations in executor to avoid blocking UI
-                wells = await asyncio.get_event_loop().run_in_executor(None, orchestrator.get_wells)
+                wells = await asyncio.get_event_loop().run_in_executor(None, lambda: orchestrator.get_component_keys(GroupBy.WELL))
                 compiled_contexts = await asyncio.get_event_loop().run_in_executor(
                     None, orchestrator.compile_pipelines, pipeline_obj.steps, wells
                 )

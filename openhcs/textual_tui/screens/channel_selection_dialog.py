@@ -73,27 +73,79 @@ class ChannelSelectionDialog(ModalScreen):
     """
     
     def __init__(
-        self, 
-        available_channels: List[int], 
-        selected_channels: List[int],
-        callback: Callable[[Optional[List[int]]], None]
+        self,
+        available_channels: List[str],
+        selected_channels: List[str],
+        callback: Callable[[Optional[List[str]]], None],
+        component_type: str = "channel",  # New parameter for dynamic component type
+        orchestrator=None  # Add orchestrator for metadata access
     ):
         super().__init__()
         self.available_channels = available_channels.copy()
         self.selected_channels = selected_channels.copy()
         self.callback = callback
-        
+        self.component_type = component_type  # Store for dynamic labels
+        self.orchestrator = orchestrator  # Store for metadata access
+
         # Calculate initial lists
         self.current_available = [ch for ch in self.available_channels if ch not in self.selected_channels]
         self.current_selected = self.selected_channels.copy()
-        
-        logger.debug(f"Channel dialog: available={self.current_available}, selected={self.current_selected}")
+
+        logger.debug(f"{component_type.title()} dialog: available={self.current_available}, selected={self.current_selected}")
+
+    def _format_component_display(self, component_key: str) -> str:
+        """
+        Format component key for display with metadata if available.
+
+        Args:
+            component_key: Component key (e.g., "1", "2", "A01")
+
+        Returns:
+            Formatted display string (e.g., "Channel 1 | HOECHST 33342" or "Channel 1")
+        """
+        base_text = f"{self.component_type.title()} {component_key}"
+
+        # Try to get metadata name if orchestrator is available
+        if self.orchestrator:
+            try:
+                # Convert component_type string back to GroupBy enum
+                from openhcs.constants.constants import GroupBy
+                group_by = GroupBy(self.component_type)
+                metadata_name = self.orchestrator.get_component_metadata(group_by, component_key)
+
+                if metadata_name:
+                    return f"{base_text} | {metadata_name}"
+            except (ValueError, AttributeError) as e:
+                logger.debug(f"Could not get metadata for {self.component_type} {component_key}: {e}")
+
+        return base_text
+
+    def _extract_channel_from_display(self, display_text: str) -> Optional[str]:
+        """Extract the channel key from formatted display text.
+
+        Display text format: "Channel 1 | HOECHST 33342" or "Channel 1"
+        Returns: "1"
+        """
+        try:
+            # Split by the first space to get "Channel" and "1 | ..." or "1"
+            parts = display_text.split(' ', 2)
+            if len(parts) >= 2:
+                # Get the part after "Channel" which is "1" or "1 | metadata"
+                key_part = parts[1]
+                # Split by " | " to separate key from metadata
+                key = key_part.split(' | ')[0]
+                return key
+        except Exception as e:
+            logger.debug(f"Could not extract channel from display text '{display_text}': {e}")
+        return None
 
     def compose(self) -> ComposeResult:
         """Compose the simple dual-list dialog."""
         with Container(id="channel_dialog") as container:
             container.styles.border = ("solid", "white")
-            yield Static("Select Channels", id="dialog_title")
+            # Dynamic title based on component type
+            title = f"Select {self.component_type.title()}s"
+            yield Static(title, id="dialog_title")
             
             # Button row
             with Horizontal(id="button_row"):
@@ -127,14 +179,22 @@ class ChannelSelectionDialog(ModalScreen):
         available_list = self.query_one("#available_list", ListView)
         available_list.clear()
         for channel in sorted(self.current_available):
-            available_list.append(ListItem(Label(f"Channel {channel}")))
-        
+            # Use enhanced formatting with metadata
+            label_text = self._format_component_display(channel)
+            available_list.append(ListItem(Label(label_text)))
+
         # Update selected list
         selected_list = self.query_one("#selected_list", ListView)
         selected_list.clear()
         for channel in sorted(self.current_selected):
-            selected_list.append(ListItem(Label(f"Channel {channel}")))
-        
+            # Use enhanced formatting with metadata
+            label_text = self._format_component_display(channel)
+            selected_list.append(ListItem(Label(label_text)))
+
+        # Clear selections to prevent stale index issues
+        available_list.index = None
+        selected_list.index = None
+
         logger.debug(f"Updated lists: available={self.current_available}, selected={self.current_selected}")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -155,36 +215,54 @@ class ChannelSelectionDialog(ModalScreen):
     def _move_right(self) -> None:
         """Move highlighted available channels to selected."""
         available_list = self.query_one("#available_list", ListView)
-        if available_list.index is not None and 0 <= available_list.index < len(self.current_available):
-            channel = self.current_available[available_list.index]
-            self.current_available.remove(channel)
-            self.current_selected.append(channel)
-            self._update_lists()
-            logger.debug(f"Moved channel {channel} to selected")
+        if available_list.index is not None and 0 <= available_list.index < len(available_list.children):
+            # Get the actual selected item from the ListView, not from our sorted list
+            selected_item = available_list.children[available_list.index]
+            if hasattr(selected_item, 'children') and selected_item.children:
+                label = selected_item.children[0]  # Get the Label widget
+                if hasattr(label, 'renderable'):
+                    # Extract the channel key from the formatted display text
+                    display_text = str(label.renderable)
+                    channel = self._extract_channel_from_display(display_text)
+
+                    if channel and channel in self.current_available:
+                        self.current_available.remove(channel)
+                        self.current_selected.append(channel)
+                        self._update_lists()
+                        logger.debug(f"Moved {self.component_type} {channel} to selected")
 
     def _move_left(self) -> None:
         """Move highlighted selected channels to available."""
         selected_list = self.query_one("#selected_list", ListView)
-        if selected_list.index is not None and 0 <= selected_list.index < len(self.current_selected):
-            channel = self.current_selected[selected_list.index]
-            self.current_selected.remove(channel)
-            self.current_available.append(channel)
-            self._update_lists()
-            logger.debug(f"Moved channel {channel} to available")
+        if selected_list.index is not None and 0 <= selected_list.index < len(selected_list.children):
+            # Get the actual selected item from the ListView, not from our sorted list
+            selected_item = selected_list.children[selected_list.index]
+            if hasattr(selected_item, 'children') and selected_item.children:
+                label = selected_item.children[0]  # Get the Label widget
+                if hasattr(label, 'renderable'):
+                    # Extract the channel key from the formatted display text
+                    display_text = str(label.renderable)
+                    channel = self._extract_channel_from_display(display_text)
+
+                    if channel and channel in self.current_selected:
+                        self.current_selected.remove(channel)
+                        self.current_available.append(channel)
+                        self._update_lists()
+                        logger.debug(f"Moved {self.component_type} {channel} to available")
 
     def _select_all(self) -> None:
         """Select all available channels."""
         self.current_selected = self.available_channels.copy()
         self.current_available = []
         self._update_lists()
-        logger.debug("Selected all channels")
+        logger.debug(f"Selected all {self.component_type}s")
 
     def _select_none(self) -> None:
         """Deselect all channels."""
         self.current_available = self.available_channels.copy()
         self.current_selected = []
         self._update_lists()
-        logger.debug("Deselected all channels")
+        logger.debug(f"Deselected all {self.component_type}s")
 
     def _handle_ok(self) -> None:
         """Handle OK button - return selected channels."""

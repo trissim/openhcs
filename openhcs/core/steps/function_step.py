@@ -105,6 +105,16 @@ def _execute_function_core(
     input_type = type(main_data_arg).__name__
     logger.info(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
 
+    # 🔄 MEMORY CONVERSION LOGGING: Log function call details
+    from openhcs.core.memory.stack_utils import _detect_memory_type
+    try:
+        detected_memory_type = _detect_memory_type(main_data_arg)
+        logger.info(f"🔄 FUNCTION_CALL: {func_callable.__name__} - detected_memory_type: {detected_memory_type}, expected_input_type: {input_memory_type}")
+        if detected_memory_type != input_memory_type:
+            logger.error(f"🔄 MEMORY_MISMATCH: Function {func_callable.__name__} expected {input_memory_type} but received {detected_memory_type}")
+    except Exception as detect_error:
+        logger.warning(f"🔄 FUNCTION_CALL: Could not detect memory type for {func_callable.__name__}: {detect_error}")
+
     try:
         raw_function_output = func_callable(main_data_arg, **final_kwargs)
 
@@ -252,7 +262,14 @@ def _process_single_pattern_group(
             full_file_path = step_input_dir / file_path_suffix
             try:
                 image = context.filemanager.load(str(full_file_path), read_backend)
-                if image is not None: raw_slices.append(image)
+                if image is not None:
+                    raw_slices.append(image)
+                    # 🔄 MEMORY CONVERSION LOGGING: Log loaded image type
+                    try:
+                        loaded_type = _detect_memory_type(image)
+                        logger.info(f"🔄 LOADED_IMAGE: {file_path_suffix} - type: {loaded_type}, backend: {read_backend}")
+                    except Exception as detect_error:
+                        logger.warning(f"🔄 LOADED_IMAGE: Could not detect type for {file_path_suffix}: {detect_error}")
             except Exception as e:
                 logger.error(f"Error loading image {full_file_path}: {e}", exc_info=True)
         
@@ -265,6 +282,16 @@ def _process_single_pattern_group(
         if raw_slices:
             slice_shapes = [getattr(s, 'shape', 'no shape') for s in raw_slices[:3]]  # First 3 shapes
             logger.info(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
+
+        # 🔄 MEMORY CONVERSION LOGGING: Log pre-stacking slice types
+        from openhcs.core.memory.stack_utils import _detect_memory_type
+        if raw_slices:
+            for i, slice_data in enumerate(raw_slices[:3]):  # Log first 3 slices
+                try:
+                    slice_type = _detect_memory_type(slice_data)
+                    logger.info(f"🔄 PRE_STACK: slice[{i}] - type: {slice_type}, target: {input_memory_type_from_plan}")
+                except Exception as e:
+                    logger.warning(f"🔄 PRE_STACK: Could not detect type for slice[{i}]: {e}")
 
         main_data_stack = stack_slices(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
@@ -311,6 +338,13 @@ def _process_single_pattern_group(
 
         # 🔍 DEBUG: Log unstacking operation
         logger.info(f"🔍 UNSTACKING: shape: {output_shape} → memory_type: {output_memory_type_from_plan}")
+
+        # 🔄 MEMORY CONVERSION LOGGING: Log pre-unstacking array type
+        try:
+            processed_type = _detect_memory_type(processed_stack)
+            logger.info(f"🔄 PRE_UNSTACK: processed_stack - type: {processed_type}, target: {output_memory_type_from_plan}")
+        except Exception as e:
+            logger.warning(f"🔄 PRE_UNSTACK: Could not detect type for processed_stack: {e}")
 
         output_slices = unstack_slices(
             array=processed_stack, memory_type=output_memory_type_from_plan, gpu_id=device_id, validate_slices=True

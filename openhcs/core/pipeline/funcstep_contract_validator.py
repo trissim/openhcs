@@ -66,9 +66,9 @@ class FuncStepContractValidator:
     """
 
     @staticmethod
-    def validate_pipeline(steps: List[Any], pipeline_context: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, str]]:
+    def validate_pipeline(steps: List[Any], pipeline_context: Optional[Dict[str, Any]] = None, orchestrator=None) -> Dict[str, Dict[str, str]]:
         """
-        Validate memory type contracts for all FunctionStep instances in a pipeline.
+        Validate memory type contracts and function patterns for all FunctionStep instances in a pipeline.
 
         This validator must run after the materialization and path planners to ensure
         proper plan integration. It verifies that these planners have run by checking
@@ -78,12 +78,13 @@ class FuncStepContractValidator:
         Args:
             steps: The steps in the pipeline
             pipeline_context: Optional context object with planner execution flags
+            orchestrator: Optional orchestrator for dict pattern key validation
 
         Returns:
             Dictionary mapping step UIDs to memory type dictionaries
 
         Raises:
-            ValueError: If any FunctionStep violates memory type contracts
+            ValueError: If any FunctionStep violates memory type contracts or dict pattern validation
             AssertionError: If required planners have not run before this validator
         """
         # Validate steps
@@ -136,7 +137,7 @@ class FuncStepContractValidator:
                         f"Missing attribute: {e}. Materialization and path planners must run first."
                     ) from e
 
-                memory_types = FuncStepContractValidator.validate_funcstep(step)
+                memory_types = FuncStepContractValidator.validate_funcstep(step, orchestrator)
                 step_memory_types[step.step_id] = memory_types
 
 
@@ -144,20 +145,21 @@ class FuncStepContractValidator:
         return step_memory_types
 
     @staticmethod
-    def validate_funcstep(step: FunctionStep) -> Dict[str, str]:
+    def validate_funcstep(step: FunctionStep, orchestrator=None) -> Dict[str, str]:
         """
-        Validate memory type contracts and func_pattern structure for a FunctionStep instance.
+        Validate memory type contracts, func_pattern structure, and dict pattern keys for a FunctionStep instance.
         If special I/O or chainbreaker decorators are used, the func_pattern must be simple.
 
         Args:
             step: The FunctionStep to validate
+            orchestrator: Optional orchestrator for dict pattern key validation
 
         Returns:
             Dictionary of validated memory types
 
         Raises:
-            ValueError: If the FunctionStep violates memory type contracts or structural rules
-                        related to special I/O/chainbreaker decorators.
+            ValueError: If the FunctionStep violates memory type contracts, structural rules,
+                        or dict pattern key validation.
         """
         # Extract the function pattern and name from the step
         func_pattern = step.func # Renamed for clarity in this context
@@ -203,7 +205,13 @@ class FuncStepContractValidator:
             if not is_structurally_simple:
                 raise ValueError(complex_pattern_error(step_name))
 
-        # 3. Proceed with existing memory type validation using the original func_pattern
+        # 3. Validate dict pattern keys if orchestrator is available
+        if orchestrator is not None and isinstance(func_pattern, dict) and step.group_by is not None:
+            FuncStepContractValidator._validate_dict_pattern_keys(
+                func_pattern, step.group_by, step_name, orchestrator
+            )
+
+        # 4. Proceed with existing memory type validation using the original func_pattern
         input_type, output_type = FuncStepContractValidator.validate_function_pattern(
             func_pattern, step_name)
 
@@ -314,6 +322,72 @@ class FuncStepContractValidator:
         # Raise error if any required args are missing
         if missing_args:
             raise ValueError(missing_required_args_error(func.__name__, step_name, missing_args))
+
+    @staticmethod
+    def _validate_dict_pattern_keys(
+        func_pattern: dict,
+        group_by,
+        step_name: str,
+        orchestrator
+    ) -> None:
+        """
+        Validate that dict function pattern keys match available component keys.
+
+        This validation ensures compile-time guarantee that dict patterns will work
+        at runtime by checking that all dict keys exist in the actual component data.
+
+        Args:
+            func_pattern: Dict function pattern to validate
+            group_by: GroupBy enum specifying component type
+            step_name: Name of the step containing the function
+            orchestrator: Orchestrator for component key access
+
+        Raises:
+            ValueError: If dict pattern keys don't match available component keys
+        """
+        # Get available component keys from orchestrator
+        try:
+            available_keys = orchestrator.get_component_keys(group_by)
+            available_keys_set = set(str(key) for key in available_keys)
+        except Exception as e:
+            raise ValueError(f"Failed to get component keys for {group_by.value}: {e}")
+
+        # Check each dict key against available keys
+        pattern_keys = list(func_pattern.keys())
+        pattern_keys_set = set(str(key) for key in pattern_keys)
+
+        # Try direct string match first
+        missing_keys = pattern_keys_set - available_keys_set
+
+        if missing_keys:
+            # Try integer conversion for missing keys
+            still_missing = set()
+            for key in missing_keys:
+                try:
+                    # Try converting pattern key to int and check if int version exists in available keys
+                    key_as_int = int(key)
+                    if str(key_as_int) not in available_keys_set:
+                        still_missing.add(key)
+                except (ValueError, TypeError):
+                    # Try converting available keys to int and check if string key matches
+                    found_as_int = False
+                    for avail_key in available_keys_set:
+                        try:
+                            if int(avail_key) == int(key):
+                                found_as_int = True
+                                break
+                        except (ValueError, TypeError):
+                            continue
+                    if not found_as_int:
+                        still_missing.add(key)
+
+            if still_missing:
+                raise ValueError(
+                    f"Function pattern keys not found in available {group_by.value} components for step '{step_name}'. "
+                    f"Missing keys: {sorted(still_missing)}. "
+                    f"Available keys: {sorted(available_keys)}. "
+                    f"Function pattern keys must match component values from the plate data."
+                )
 
     @staticmethod
     def validate_pattern_structure(

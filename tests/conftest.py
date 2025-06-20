@@ -21,11 +21,12 @@ from unittest.mock import MagicMock, Mock, AsyncMock
 # Add the parent directory to sys.path to allow importing from openhcs
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Configure test logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure test logging only if no handlers exist (respect main app logging)
+if not logging.getLogger().hasHandlers():
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
 # Import test framework
 try:

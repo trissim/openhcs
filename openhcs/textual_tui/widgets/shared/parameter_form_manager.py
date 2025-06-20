@@ -1,8 +1,9 @@
 # File: openhcs/textual_tui/widgets/shared/parameter_form_manager.py
 
 import dataclasses
+import ast
 from enum import Enum
-from typing import Any, Dict, get_origin, get_args
+from typing import Any, Dict, get_origin, get_args, Union
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Collapsible
 from textual.app import ComposeResult
@@ -246,6 +247,28 @@ class ParameterFormManager:
 
     def _get_enum_from_list(self, param_type):
         """Extract enum type from List[Enum] type."""
+        return self._get_enum_from_list_static(param_type)
+
+    @staticmethod
+    def _is_list_of_enums_static(param_type) -> bool:
+        """Static version of _is_list_of_enums for use in convert_string_to_type."""
+        try:
+            # Check if it's a generic type (like List[Something])
+            origin = get_origin(param_type)
+            if origin is list:
+                # Get the type arguments (e.g., VariableComponents from List[VariableComponents])
+                args = get_args(param_type)
+                if args and len(args) > 0:
+                    inner_type = args[0]
+                    # Check if the inner type is an enum
+                    return hasattr(inner_type, '__bases__') and Enum in inner_type.__bases__
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _get_enum_from_list_static(param_type):
+        """Static version of _get_enum_from_list for use in convert_string_to_type."""
         try:
             args = get_args(param_type)
             if args and len(args) > 0:
@@ -261,6 +284,88 @@ class ParameterFormManager:
     def _get_parameter_info(self, param_name: str):
         """Get parameter info for help functionality."""
         return self.parameter_info.get(param_name)
+
+    @staticmethod
+    def convert_string_to_type(string_value: str, param_type: type, strict: bool = False) -> Any:
+        """
+        Convert string input to expected type using existing type conversion logic.
+
+        Args:
+            string_value: The string value from user input
+            param_type: The expected type from function signature
+            strict: If True, raise errors on conversion failure. If False, return None.
+
+        Returns:
+            Converted value of the expected type
+
+        Raises:
+            ValueError: If strict=True and conversion fails with specific error message
+        """
+        # Handle empty/None values - let compiler validate if required
+        if string_value == "" or string_value is None:
+            return None
+
+        try:
+            # Handle Union types (like Optional[List[float]] which is Union[List[float], None])
+            origin = get_origin(param_type)
+            if origin is Union:
+                # Try each type in the Union until one works
+                union_args = get_args(param_type)
+                last_error = None
+
+                for union_type in union_args:
+                    # Skip NoneType - we handle None separately
+                    if union_type is type(None):
+                        continue
+
+                    try:
+                        # Recursively try to convert to this union member type
+                        return ParameterFormManager.convert_string_to_type(string_value, union_type, strict=True)
+                    except (ValueError, TypeError, SyntaxError) as e:
+                        last_error = e
+                        continue
+
+                # If no union type worked, raise the last error
+                if last_error:
+                    raise last_error
+                else:
+                    raise ValueError(f"No valid conversion found for Union type {param_type}")
+
+            # Use existing type conversion logic from update_parameter
+            elif hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
+                return param_type(string_value)  # Convert string → enum
+            elif ParameterFormManager._is_list_of_enums_static(param_type):
+                # Handle List[Enum] types (like List[VariableComponents])
+                enum_type = ParameterFormManager._get_enum_from_list_static(param_type)
+                if enum_type:
+                    # Convert string value to enum, then wrap in list
+                    enum_value = enum_type(string_value)
+                    return [enum_value]
+            elif param_type == float:
+                return float(string_value)
+            elif param_type == int:
+                return int(string_value)
+            elif param_type == bool:
+                # Convert string → bool
+                return string_value.lower() in ('true', '1', 'yes', 'on')
+            elif param_type in (list, tuple, dict):
+                # Use ast.literal_eval for complex types like [1,2,3], (1,2), {"a":1}
+                return ast.literal_eval(string_value)
+            elif get_origin(param_type) in (list, tuple, dict):
+                # Handle generic types like List[float], Tuple[int, int], Dict[str, int]
+                # Use ast.literal_eval since List("[1]") doesn't work, but ast.literal_eval("[1]") does
+                return ast.literal_eval(string_value)
+            else:
+                # For everything else, try calling the type directly
+                return param_type(string_value)
+
+        except (ValueError, TypeError, SyntaxError) as e:
+            if strict:
+                # Provide specific error message for user
+                raise ValueError(f"Cannot convert '{string_value}' to {param_type.__name__}: {e}")
+            else:
+                # Silent failure - return None (existing behavior)
+                return None
 
     def _create_nested_managers_for_testing(self):
         """Create nested managers without building widgets (for testing)."""

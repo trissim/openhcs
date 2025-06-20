@@ -18,7 +18,7 @@ import multiprocessing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, Set
 
-from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS # DEFAULT_NUM_WORKERS removed
+from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy
 from openhcs.constants import Microscope
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
 from openhcs.core.context.processing_context import ProcessingContext
@@ -123,6 +123,12 @@ class PipelineOrchestrator:
         self.default_pipeline_definition: Optional[List[AbstractStep]] = None
         self._initialized: bool = False
 
+        # Component keys cache for fast access
+        self._component_keys_cache: Dict[GroupBy, List[str]] = {}
+
+        # Metadata cache for component key→name mappings
+        self._metadata_cache: Dict[GroupBy, Dict[str, Optional[str]]] = {}
+
     def initialize_workspace(self, workspace_path: Optional[Union[str, Path]] = None):
         """Initializes workspace path and mirrors plate directory if needed."""
         if workspace_path:
@@ -226,8 +232,15 @@ class PipelineOrchestrator:
         self.input_dir = Path(actual_image_dir)
         logger.info(f"Set input directory to: {self.input_dir}")
 
+        # Mark as initialized BEFORE caching to avoid chicken-and-egg problem
         self._initialized = True
-        logger.info("PipelineOrchestrator fully initialized.")
+
+        # Auto-cache component keys and metadata for instant access
+        logger.info("Caching component keys and metadata...")
+        self.cache_component_keys()
+        self.cache_metadata()
+
+        logger.info("PipelineOrchestrator fully initialized with cached component keys and metadata.")
         return self
 
     def is_initialized(self) -> bool:
@@ -286,7 +299,7 @@ class PipelineOrchestrator:
             raise ValueError("A valid pipeline definition (List[AbstractStep]) must be provided.")
 
         compiled_contexts: Dict[str, ProcessingContext] = {}
-        wells_to_process = self.get_wells(well_filter)
+        wells_to_process = self.get_component_keys(GroupBy.WELL, well_filter)
 
         if not wells_to_process:
             logger.warning("No wells found to process based on filter.")
@@ -300,7 +313,7 @@ class PipelineOrchestrator:
             
             PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
             PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition)
-            PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition)
+            PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
             PipelineCompiler.assign_gpu_resources_for_context(context)
 
             if enable_visualizer_override:
@@ -537,75 +550,190 @@ class PipelineOrchestrator:
         logger.info(f"🔥 ORCHESTRATOR: Plate execution finished. Results: {execution_results}")
         return execution_results
 
-    def get_wells(self, well_filter: Optional[List[str]] = None) -> List[str]:
-        """
-        Get the wells to process based on the filter.
-        """
-        if not self.is_initialized() or self.input_dir is None or self.microscope_handler is None:
-            raise RuntimeError("Orchestrator must be initialized with input_dir and microscope_handler to get wells.")
 
-        all_wells_set: Set[str] = set()
+
+    def get_component_keys(self, group_by: GroupBy, component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
+        """
+        Generic method to get component keys for any group_by type.
+
+        This method works with any GroupBy enum value (CHANNEL, SITE, Z_INDEX, WELL)
+        and returns the discovered component values as strings to match the pattern
+        detection system format.
+
+        Reads from pre-computed cache for instant access. Cache must be populated
+        by calling cache_component_keys() during initialization.
+
+        Args:
+            group_by: GroupBy enum specifying which component to extract
+            component_filter: Optional list of component values to filter by
+
+        Returns:
+            List of component values as strings, sorted
+
+        Raises:
+            RuntimeError: If orchestrator is not initialized or cache is empty
+        """
+        if not self.is_initialized():
+            raise RuntimeError("Orchestrator must be initialized before getting component keys.")
+
+        # Read from cache - should be pre-populated during initialization
+        if group_by not in self._component_keys_cache:
+            raise RuntimeError(f"Component keys cache is empty for {group_by.value}. "
+                             f"Ensure cache_component_keys() was called during initialization.")
+
+        # Get cached result
+        all_components = self._component_keys_cache[group_by]
+
+        if not all_components:
+            component_name = group_by.value
+            logger.warning(f"No {component_name} values found in input directory: {self.input_dir}")
+            return []
+
+        if component_filter:
+            str_component_filter = {str(c) for c in component_filter}
+            selected_components = [comp for comp in all_components if comp in str_component_filter]
+            if not selected_components:
+                component_name = group_by.value
+                logger.warning(f"No {component_name} values from {all_components} match the filter: {component_filter}")
+            return selected_components
+        else:
+            return all_components
+
+    def cache_component_keys(self, components: Optional[List[GroupBy]] = None) -> None:
+        """
+        Pre-compute and cache component keys for fast access using single-pass parsing.
+
+        This method performs expensive file listing and parsing operations once,
+        extracting all component types in a single pass for maximum efficiency.
+
+        Args:
+            components: Optional list of GroupBy components to cache.
+                       If None, caches all components in the GroupBy enum.
+        """
+        if not self.is_initialized():
+            raise RuntimeError("Orchestrator must be initialized before caching component keys.")
+
+        if components is None:
+            components = list(GroupBy)  # Cache all enum values
+
+        logger.info(f"Caching component keys for: {[comp.value for comp in components]}")
+
+        # Initialize component sets for all requested components
+        component_sets: Dict[GroupBy, Set[Union[str, int]]] = {}
+        for group_by in components:
+            if group_by != GroupBy.NONE:  # Skip the empty enum
+                component_sets[group_by] = set()
+
+        # Single pass through all filenames - extract all components at once
         try:
             filenames = self.filemanager.list_files(str(self.input_dir), Backend.DISK.value, extensions=DEFAULT_IMAGE_EXTENSIONS)
+            logger.debug(f"Parsing {len(filenames)} filenames in single pass...")
+
             for filename in filenames:
                 parsed_info = self.microscope_handler.parser.parse_filename(str(filename))
-                if parsed_info and 'well' in parsed_info:
-                    all_wells_set.add(parsed_info['well'])
+                if parsed_info:
+                    # Extract all requested components from this filename
+                    for group_by in component_sets:
+                        component_name = group_by.value
+                        if component_name in parsed_info and parsed_info[component_name] is not None:
+                            component_sets[group_by].add(parsed_info[component_name])
                 else:
-                    logger.warning(f"Could not parse well information from filename: {filename}")
+                    logger.warning(f"Could not parse filename: {filename}")
+
         except Exception as e:
-            logger.error(f"Error listing files or parsing well names from {self.input_dir}: {e}", exc_info=True)
-            return []
+            logger.error(f"Error listing files or parsing filenames from {self.input_dir}: {e}", exc_info=True)
+            # Initialize empty sets for failed parsing
+            for group_by in component_sets:
+                component_sets[group_by] = set()
 
-        all_wells = sorted(list(all_wells_set))
+        # Convert sets to sorted lists and store in cache
+        for group_by, component_set in component_sets.items():
+            sorted_components = [str(comp) for comp in sorted(list(component_set))]
+            self._component_keys_cache[group_by] = sorted_components
+            logger.debug(f"Cached {len(sorted_components)} {group_by.value} keys")
 
-        if not all_wells:
-            logger.warning(f"No wells found in input directory: {self.input_dir} with extensions {DEFAULT_IMAGE_EXTENSIONS}")
-            return []
+            if not sorted_components:
+                logger.warning(f"No {group_by.value} values found in input directory: {self.input_dir}")
 
-        if well_filter:
-            str_well_filter = {str(w) for w in well_filter}
-            selected_wells = [well for well in all_wells if well in str_well_filter]
-            if not selected_wells:
-                logger.warning(f"No wells from {all_wells} match the filter: {well_filter}")
-            return selected_wells
-        else:
-            return all_wells
+        logger.info(f"Component key caching complete. Cached {len(component_sets)} component types in single pass.")
 
-    def get_channels(self, channel_filter: Optional[List[Union[str, int]]] = None) -> List[int]:
+    def clear_component_cache(self, components: Optional[List[GroupBy]] = None) -> None:
         """
-        Get the channels to process based on the filter.
+        Clear cached component keys to force recomputation.
+
+        Use this when the input directory contents have changed and you need
+        to refresh the component key cache.
+
+        Args:
+            components: Optional list of GroupBy components to clear from cache.
+                       If None, clears entire cache.
+        """
+        if components is None:
+            self._component_keys_cache.clear()
+            logger.info("Cleared entire component keys cache")
+        else:
+            for group_by in components:
+                if group_by in self._component_keys_cache:
+                    del self._component_keys_cache[group_by]
+                    logger.debug(f"Cleared cache for {group_by.value}")
+            logger.info(f"Cleared cache for {len(components)} component types")
+
+    def cache_metadata(self) -> None:
+        """
+        Cache all metadata from metadata handler for fast access.
+
+        This method calls the metadata handler's parse_metadata() method once
+        and stores the results for instant access to component key→name mappings.
+        Call this after orchestrator initialization to enable metadata-based
+        component names.
         """
         if not self.is_initialized() or self.input_dir is None or self.microscope_handler is None:
-            raise RuntimeError("Orchestrator must be initialized with input_dir and microscope_handler to get channels.")
+            raise RuntimeError("Orchestrator must be initialized before caching metadata.")
 
-        all_channels_set: Set[int] = set()
         try:
-            filenames = self.filemanager.list_files(str(self.input_dir), Backend.DISK.value, extensions=DEFAULT_IMAGE_EXTENSIONS)
-            for filename in filenames:
-                parsed_info = self.microscope_handler.parser.parse_filename(str(filename))
-                if parsed_info and 'channel' in parsed_info and parsed_info['channel'] is not None:
-                    all_channels_set.add(int(parsed_info['channel']))
-                else:
-                    logger.warning(f"Could not parse channel information from filename: {filename}")
+            # Parse all metadata once using enum→method mapping
+            metadata = self.microscope_handler.metadata_handler.parse_metadata(self.input_dir)
+
+            # Convert string keys back to GroupBy enums and store
+            for component_name, mapping in metadata.items():
+                try:
+                    group_by = GroupBy(component_name)  # Convert string to enum
+                    self._metadata_cache[group_by] = mapping
+                    logger.debug(f"Cached metadata for {group_by.value}: {len(mapping)} entries")
+                except ValueError:
+                    logger.warning(f"Unknown component type in metadata: {component_name}")
+
+            logger.info(f"Metadata caching complete. Cached {len(self._metadata_cache)} component types.")
+
         except Exception as e:
-            logger.error(f"Error listing files or parsing channel names from {self.input_dir}: {e}", exc_info=True)
-            return []
+            logger.warning(f"Could not cache metadata: {e}")
+            # Don't fail - metadata is optional enhancement
 
-        all_channels = sorted(list(all_channels_set))
+    def get_component_metadata(self, group_by: GroupBy, key: str) -> Optional[str]:
+        """
+        Get metadata display name for a specific component key.
 
-        if not all_channels:
-            logger.warning(f"No channels found in input directory: {self.input_dir} with extensions {DEFAULT_IMAGE_EXTENSIONS}")
-            return []
+        Args:
+            group_by: GroupBy enum specifying component type
+            key: Component key (e.g., "1", "2", "A01")
 
-        if channel_filter:
-            int_channel_filter = {int(c) for c in channel_filter}
-            selected_channels = [channel for channel in all_channels if channel in int_channel_filter]
-            if not selected_channels:
-                logger.warning(f"No channels from {all_channels} match the filter: {channel_filter}")
-            return selected_channels
-        else:
-            return all_channels
+        Returns:
+            Display name from metadata, or None if not available
+            Example: get_component_metadata(GroupBy.CHANNEL, "1") → "HOECHST 33342"
+        """
+        if group_by in self._metadata_cache:
+            return self._metadata_cache[group_by].get(key)
+        return None
+
+    def clear_metadata_cache(self) -> None:
+        """
+        Clear cached metadata to force recomputation.
+
+        Use this when the input directory contents have changed and you need
+        to refresh the metadata cache.
+        """
+        self._metadata_cache.clear()
+        logger.info("Cleared metadata cache")
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """

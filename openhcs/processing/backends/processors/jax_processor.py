@@ -329,97 +329,53 @@ def stack_percentile_normalize(
 
 @jax_func
 def create_composite(
-    images: List["jnp.ndarray"], weights: Optional[List[float]] = None
+    stack: "jnp.ndarray", weights: Optional[List[float]] = None
 ) -> "jnp.ndarray":
     """
-    Create a composite image from multiple 3D arrays.
+    Create a composite image from a 3D stack where each slice is a channel.
 
     Args:
-        images: List of 3D JAX arrays, each of shape (Z, Y, X)
-        weights: List of weights for each image. If None, equal weights are used.
+        stack: 3D JAX array of shape (N, Y, X) where N is number of channel slices
+        weights: List of weights for each slice. If None, equal weights are used.
 
     Returns:
-        Composite 3D JAX array of shape (Z, Y, X)
+        Composite 3D JAX array of shape (1, Y, X)
     """
-    # Ensure images is a list
-    if not isinstance(images, list):
-        raise TypeError("images must be a list of JAX arrays")
+    # Validate input is 3D array
+    _validate_3d_array(stack)
 
-    # Check for empty list early
-    if not images:
-        raise ValueError("images list cannot be empty")
-
-    # Validate all images are 3D JAX arrays with the same shape
-    for i, img in enumerate(images):
-        _validate_3d_array(img, f"images[{i}]")
-        if img.shape != images[0].shape:
-            raise ValueError(
-                f"All images must have the same shape. "
-                f"images[0] has shape {images[0].shape}, "
-                f"images[{i}] has shape {img.shape}"
-            )
+    n_slices, height, width = stack.shape
 
     # Default weights if none provided
     if weights is None:
-        # Equal weights for all images
-        weights = [1.0 / len(images)] * len(images)
-    elif not isinstance(weights, list):
-        raise TypeError("weights must be a list of values")
-
-    # Make sure weights list is at least as long as images list
-    if len(weights) < len(images):
-        weights = weights + [0.0] * (len(images) - len(weights))
-    # Truncate weights if longer than images
-    weights = weights[:len(images)]
-
-    first_image = images[0]
-    shape = first_image.shape
-    dtype = first_image.dtype
-
-    # Create empty composite
-    composite = jnp.zeros(shape, dtype=jnp.float32)
-    total_weight = 0.0
-
-    # Add each image with its weight
-    for i, image in enumerate(images):
-        weight = weights[i]
-        if weight <= 0.0:
-            continue
-
-        # Add to composite
-        composite += image.astype(jnp.float32) * weight
-        total_weight += weight
-
-    # Normalize by total weight
-    if total_weight > 0:
-        composite /= total_weight
-
-    # Convert back to original dtype (usually uint16)
-    if jnp.issubdtype(dtype, jnp.integer):
-        # Get the maximum value for the specific integer dtype
-        if dtype == jnp.uint8:
-            max_val = 255
-        elif dtype == jnp.uint16:
-            max_val = 65535
-        elif dtype == jnp.uint32:
-            max_val = 4294967295
-        elif dtype == jnp.int8:
-            max_val = 127
-        elif dtype == jnp.int16:
-            max_val = 32767
-        elif dtype == jnp.int32:
-            max_val = 2147483647
-        elif dtype == jnp.int64:
-            max_val = 9223372036854775807
-        else:
-            # Fallback for other integer types
-            max_val = jnp.iinfo(dtype).max
-
-        composite = jnp.clip(composite, 0, max_val).astype(dtype)
+        # Equal weights for all slices
+        weights = [1.0 / n_slices] * n_slices
+    elif isinstance(weights, (list, tuple)):
+        # Convert tuple to list if needed
+        weights = list(weights)
+        if len(weights) != n_slices:
+            raise ValueError(f"Number of weights ({len(weights)}) must match number of slices ({n_slices})")
     else:
-        composite = composite.astype(dtype)
+        raise TypeError(f"weights must be a list of values or None, got {type(weights)}: {weights}")
 
-    return composite
+    # Normalize weights to sum to 1
+    weight_sum = sum(weights)
+    if weight_sum == 0:
+        raise ValueError("Sum of weights cannot be zero")
+    normalized_weights = [w / weight_sum for w in weights]
+
+    # Convert weights to JAX array for efficient computation
+    weights_array = jnp.array(normalized_weights, dtype=stack.dtype)
+
+    # Reshape weights for broadcasting: (N, 1, 1) to multiply with (N, Y, X)
+    weights_array = weights_array.reshape(n_slices, 1, 1)
+
+    # Create composite by weighted sum along the first axis
+    # Multiply each slice by its weight and sum
+    weighted_stack = stack * weights_array
+    composite_slice = jnp.sum(weighted_stack, axis=0, keepdims=True)  # Keep as (1, Y, X)
+
+    return composite_slice
 
 @jax_func
 def apply_mask(image: "jnp.ndarray", mask: "jnp.ndarray") -> "jnp.ndarray":

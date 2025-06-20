@@ -194,11 +194,16 @@ class PipelineCompiler:
     @staticmethod
     def validate_memory_contracts_for_context(
         context: ProcessingContext,
-        steps_definition: List[AbstractStep]
+        steps_definition: List[AbstractStep],
+        orchestrator=None
     ) -> None:
         """
-        Validates FunctionStep memory contracts and adds memory type info to context.step_plans.
-        (Unchanged from previous version, but relies on step_plans having hints if available)
+        Validates FunctionStep memory contracts, dict patterns, and adds memory type info to context.step_plans.
+
+        Args:
+            context: ProcessingContext to validate
+            steps_definition: List of AbstractStep objects
+            orchestrator: Optional orchestrator for dict pattern key validation
         """
         if context.is_frozen():
             raise AttributeError("Cannot validate memory contracts in a frozen ProcessingContext.")
@@ -206,7 +211,8 @@ class PipelineCompiler:
         # FuncStepContractValidator might need access to input/output_memory_type_hint from plan
         step_memory_types = FuncStepContractValidator.validate_pipeline(
             steps=steps_definition,
-            pipeline_context=context # Pass context so validator can access step plans for memory type overrides
+            pipeline_context=context, # Pass context so validator can access step plans for memory type overrides
+            orchestrator=orchestrator # Pass orchestrator for dict pattern key validation
         )
 
         for step_id, memory_types in step_memory_types.items():
@@ -232,6 +238,7 @@ class PipelineCompiler:
                     if write_backend == 'disk':
                         logger.debug(f"Step {step.name} has disk output, overriding output_memory_type to numpy")
                         step_plan['output_memory_type'] = 'numpy'
+
 
 
     @staticmethod

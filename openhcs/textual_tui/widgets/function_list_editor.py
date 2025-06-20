@@ -12,6 +12,7 @@ from textual.message import Message # Added Message
 from openhcs.textual_tui.services.function_registry_service import FunctionRegistryService
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
 from openhcs.textual_tui.widgets.function_pane import FunctionPaneWidget
+from openhcs.constants.constants import GroupBy, VariableComponents
 
 logger = logging.getLogger(__name__)
 
@@ -30,26 +31,46 @@ class FunctionListEditorWidget(Container):
     # Reactive properties for automatic UI updates
     functions = reactive(list, recompose=True)  # Structural changes (add/remove) should trigger recomposition
     pattern_data = reactive(list, recompose=False)  # The actual pattern (List or Dict)
-    is_dict_mode = reactive(False, recompose=False)  # Whether we're in channel-specific mode
-    selected_channel = reactive(None, recompose=False)  # Currently selected channel (for dict mode)
+    is_dict_mode = reactive(False, recompose=True)  # Whether we're in channel-specific mode - affects UI layout
+    selected_channel = reactive(None, recompose=True)  # Currently selected channel - affects button text
     available_channels = reactive(list)  # Available channels from orchestrator
 
-    def __init__(self, initial_functions: Union[List, Dict, callable, None] = None):
+    # Step configuration reactive properties for dynamic component selection
+    current_group_by = reactive(None, recompose=True)  # Current GroupBy setting from step editor
+    current_variable_components = reactive(list, recompose=True)  # Current VariableComponents list from step editor
+
+    def __init__(self, initial_functions: Union[List, Dict, callable, None] = None, step_identifier: str = None):
         super().__init__()
 
         # Initialize services (reuse existing business logic)
         self.registry_service = FunctionRegistryService()
         self.data_manager = PatternDataManager() # Not heavily used yet, but available
 
+        # Step identifier for cache isolation (optional, defaults to widget instance id)
+        self.step_identifier = step_identifier or f"widget_{id(self)}"
+
+        # Component selection cache per GroupBy (instance-specific, not shared between steps)
+        self.component_selections: Dict[GroupBy, List[str]] = {}
+
         # Initialize pattern data and mode
         self._initialize_pattern_data(initial_functions)
 
-        logger.debug(f"FunctionListEditorWidget initialized with {len(self.functions)} functions, dict_mode={self.is_dict_mode}")
+        logger.debug(f"FunctionListEditorWidget initialized for step '{self.step_identifier}' with {len(self.functions)} functions, dict_mode={self.is_dict_mode}")
 
     @property
     def current_pattern(self) -> Union[List, Dict]:
         """Get the current pattern data (for parent widgets to access)."""
         self._update_pattern_data()  # Ensure it's up to date
+
+        # Migration fix: Convert any integer keys to string keys for compatibility
+        # with pattern detection system which always uses string component values
+        if isinstance(self.pattern_data, dict):
+            migrated_pattern = {}
+            for key, value in self.pattern_data.items():
+                str_key = str(key)
+                migrated_pattern[str_key] = value
+            return migrated_pattern
+
         return self.pattern_data
 
     def watch_functions(self, new_functions: List) -> None:
@@ -72,13 +93,20 @@ class FunctionListEditorWidget(Container):
             self.is_dict_mode = False
             self.functions = self._normalize_function_list(initial_functions)
         elif isinstance(initial_functions, dict):
-            self.pattern_data = initial_functions
+            # Convert any integer keys to string keys for consistency
+            normalized_dict = {}
+            for key, value in initial_functions.items():
+                str_key = str(key)  # Ensure all keys are strings
+                normalized_dict[str_key] = value
+                logger.debug(f"Converted channel key {key} ({type(key)}) to '{str_key}' (str)")
+
+            self.pattern_data = normalized_dict
             self.is_dict_mode = True
             # Set first channel as selected, or empty if no channels
-            if initial_functions:
-                first_channel = next(iter(initial_functions))
+            if normalized_dict:
+                first_channel = next(iter(normalized_dict))
                 self.selected_channel = first_channel
-                self.functions = self._normalize_function_list(initial_functions.get(first_channel, []))
+                self.functions = self._normalize_function_list(normalized_dict.get(first_channel, []))
             else:
                 self.selected_channel = None
                 self.functions = []
@@ -106,7 +134,18 @@ class FunctionListEditorWidget(Container):
         self.post_message(self.FunctionPatternChanged())
         logger.debug("Posted FunctionPatternChanged message to parent.")
 
+    def watch_current_group_by(self, old_group_by: Optional[GroupBy], new_group_by: Optional[GroupBy]) -> None:
+        """Handle group_by changes by saving/loading component selections."""
+        if old_group_by is not None and old_group_by != GroupBy.NONE:
+            # Save current selection for old group_by
+            if self.is_dict_mode and isinstance(self.pattern_data, dict):
+                current_selection = list(self.pattern_data.keys())
+                self.component_selections[old_group_by] = current_selection
+                logger.debug(f"Step '{self.step_identifier}': Saved selection for {old_group_by.value}: {current_selection}")
 
+        # Note: We don't automatically load selection for new_group_by here
+        # because the dialog will handle loading from cache when opened
+        logger.debug(f"Group by changed from {old_group_by} to {new_group_by}")
 
     def _update_pattern_data(self) -> None:
         """Update pattern_data based on current functions and mode."""
@@ -114,7 +153,8 @@ class FunctionListEditorWidget(Container):
             # Save current functions to the selected channel
             if not isinstance(self.pattern_data, dict):
                 self.pattern_data = {}
-            self.pattern_data[self.selected_channel] = self.functions
+            logger.debug(f"Saving {len(self.functions)} functions to channel {self.selected_channel}")
+            self.pattern_data[self.selected_channel] = self.functions.copy()  # Make a copy to avoid reference issues
         else:
             # List mode - pattern_data is just the functions list
             self.pattern_data = self.functions
@@ -127,14 +167,27 @@ class FunctionListEditorWidget(Container):
             return
 
         # Save current functions first
+        old_channel = self.selected_channel
+        logger.debug(f"Switching from channel {old_channel} to {channel}")
+        logger.debug(f"Current functions before save: {len(self.functions)} functions")
+
         self._update_pattern_data()
+
+        # Verify the save worked
+        if old_channel and isinstance(self.pattern_data, dict):
+            saved_functions = self.pattern_data.get(old_channel, [])
+            logger.debug(f"Saved {len(saved_functions)} functions to channel {old_channel}")
 
         # Switch to new channel
         self.selected_channel = channel
         if isinstance(self.pattern_data, dict):
             self.functions = self.pattern_data.get(channel, [])
+            logger.debug(f"Loaded {len(self.functions)} functions for channel {channel}")
         else:
             self.functions = []
+
+        # Update button text to show new channel
+        self._refresh_component_button()
 
         # Channel switch will automatically trigger recomposition via reactive system
 
@@ -199,9 +252,11 @@ class FunctionListEditorWidget(Container):
                     yield Button("Save As", id="save_func_as_btn", compact=True)
                     yield Button("Edit", id="edit_vim_btn", compact=True)
 
-                    # Channel management button
-                    channel_text = self._get_channel_button_text()
-                    yield Button(channel_text, id="channel_btn", compact=True)
+                    # Component selection button (dynamic based on group_by setting)
+                    component_text = self._get_component_button_text()
+                    component_button = Button(component_text, id="component_btn", compact=True)
+                    component_button.disabled = self._is_component_button_disabled()
+                    yield component_button
 
                     # Channel navigation buttons (only in dict mode with multiple channels)
                     if self.is_dict_mode and isinstance(self.pattern_data, dict) and len(self.pattern_data) > 1:
@@ -239,8 +294,8 @@ class FunctionListEditorWidget(Container):
             self._save_func_as()
         elif event.button.id == "edit_vim_btn":
             self._edit_in_vim()
-        elif event.button.id == "channel_btn":
-            self._show_channel_selection_dialog()
+        elif event.button.id == "component_btn":
+            self._show_component_selection_dialog()
         elif event.button.id == "prev_channel_btn":
             self._navigate_channel(-1)
         elif event.button.id == "next_channel_btn":
@@ -465,93 +520,173 @@ class FunctionListEditorWidget(Container):
         # TODO: Implement Vim editing functionality
         logger.debug("Edit in Vim button pressed - not implemented yet")
 
-    def _get_channel_button_text(self) -> str:
-        """Get text for the channel button."""
-        if self.is_dict_mode and self.selected_channel is not None:
-            return f"Ch: {self.selected_channel}"
-        return "Ch: None"
+    def _get_component_button_text(self) -> str:
+        """Get text for the component selection button based on current group_by setting."""
+        if self.current_group_by is None or self.current_group_by == GroupBy.NONE:
+            return "Component: None"
 
-    def _show_channel_selection_dialog(self) -> None:
-        """Show the channel selection dialog."""
+        # Use group_by.value.title() for dynamic component type display
+        component_type = self.current_group_by.value.title()
+
+        if self.is_dict_mode and self.selected_channel is not None:
+            # Try to get metadata name for the selected component
+            display_name = self._get_component_display_name(self.selected_channel)
+            return f"{component_type}: {display_name}"
+        return f"{component_type}: None"
+
+    def _get_component_display_name(self, component_key: str) -> str:
+        """Get display name for component key, using metadata if available."""
+        # Try to get metadata name from orchestrator
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator and self.current_group_by:
+            try:
+                metadata_name = orchestrator.get_component_metadata(self.current_group_by, component_key)
+                if metadata_name:
+                    return metadata_name
+            except Exception as e:
+                logger.debug(f"Could not get metadata for {self.current_group_by.value} {component_key}: {e}")
+
+        # Fallback to component key
+        return component_key
+
+    def _refresh_component_button(self) -> None:
+        """Refresh the component button text and state."""
         try:
-            # Get available channels from orchestrator
+            component_button = self.query_one("#component_btn", Button)
+            component_button.label = self._get_component_button_text()
+            component_button.disabled = self._is_component_button_disabled()
+        except Exception as e:
+            logger.debug(f"Could not refresh component button: {e}")
+
+    def _is_component_button_disabled(self) -> bool:
+        """Check if component selection button should be disabled."""
+        return (
+            self.current_group_by is None or
+            self.current_group_by == GroupBy.NONE or
+            (self.current_variable_components and
+             self.current_group_by.value in [vc.value for vc in self.current_variable_components])
+        )
+
+    def _show_component_selection_dialog(self) -> None:
+        """Show the component selection dialog for the current group_by setting."""
+        try:
+            # Check if component selection is disabled
+            if self._is_component_button_disabled():
+                logger.debug("Component selection is disabled")
+                return
+
+            # Get available components from orchestrator using current group_by
             orchestrator = self._get_current_orchestrator()
             if orchestrator is None:
-                logger.warning("No orchestrator available for channel selection")
+                logger.warning("No orchestrator available for component selection")
                 return
 
-            available_channels = orchestrator.get_channels()
-            if not available_channels:
-                logger.warning("No channels found in current plate")
+            available_components = orchestrator.get_component_keys(self.current_group_by)
+            if not available_components:
+                component_type = self.current_group_by.value
+                logger.warning(f"No {component_type} values found in current plate")
                 return
 
-            # Get currently selected channels
-            if self.is_dict_mode and isinstance(self.pattern_data, dict):
-                selected_channels = list(self.pattern_data.keys())
+            # Get currently selected components from cache or current pattern
+            if self.current_group_by in self.component_selections:
+                # Use cached selection for this group_by
+                selected_components = self.component_selections[self.current_group_by]
+                logger.debug(f"Step '{self.step_identifier}': Using cached selection for {self.current_group_by.value}: {selected_components}")
+            elif self.is_dict_mode and isinstance(self.pattern_data, dict):
+                # Fallback to current pattern keys
+                selected_components = list(self.pattern_data.keys())
             else:
-                selected_channels = []
+                selected_components = []
 
-            # Show dialog
+            # Show dialog with dynamic component type
             from openhcs.textual_tui.screens.channel_selection_dialog import ChannelSelectionDialog
 
-            def handle_selection(result_channels):
-                if result_channels is not None:
-                    self._update_channels(result_channels)
+            def handle_selection(result_components):
+                if result_components is not None:
+                    self._update_components(result_components)
 
+            # Use ChannelSelectionDialog with dynamic component type and orchestrator
             dialog = ChannelSelectionDialog(
-                available_channels=available_channels,
-                selected_channels=selected_channels,
-                callback=handle_selection
+                available_channels=available_components,
+                selected_channels=selected_components,
+                callback=handle_selection,
+                component_type=self.current_group_by.value,  # Pass component type for dynamic labels
+                orchestrator=orchestrator  # Pass orchestrator for metadata access
             )
             self.app.push_screen(dialog)
 
         except Exception as e:
-            logger.error(f"Failed to show channel selection dialog: {e}")
+            component_type = self.current_group_by.value if self.current_group_by else "component"
+            logger.error(f"Failed to show {component_type} selection dialog: {e}")
 
-    def _update_channels(self, new_channels: List[int]) -> None:
-        """Update the pattern based on new channel selection."""
-        if not new_channels:
-            # No channels selected - revert to list mode
+    def _update_components(self, new_components: List[str]) -> None:
+        """
+        Update the pattern based on new component selection.
+
+        Uses string component keys directly to match the pattern detection system.
+        Pattern detection always returns string component values (e.g., '1', '2', '3') when
+        grouping by any component, so function patterns use string keys for consistency.
+        """
+        if not new_components:
+            # No components selected - revert to list mode
             if self.is_dict_mode:
                 # Save current functions to list mode
                 self.pattern_data = self.functions
                 self.is_dict_mode = False
                 self.selected_channel = None
-                logger.debug("Reverted to list mode (no channels selected)")
+                logger.debug("Reverted to list mode (no components selected)")
         else:
-            # Channels selected - ensure dict mode
+            # Use component strings directly - no conversion needed
+            component_keys = new_components
+
+            # Components selected - ensure dict mode
             if not self.is_dict_mode:
                 # Convert to dict mode
                 current_functions = self.functions
-                self.pattern_data = {new_channels[0]: current_functions}
+                self.pattern_data = {component_keys[0]: current_functions}
                 self.is_dict_mode = True
-                self.selected_channel = new_channels[0]
+                self.selected_channel = component_keys[0]
 
-                # Add other channels with empty functions
-                for channel in new_channels[1:]:
-                    self.pattern_data[channel] = []
+                # Add other components with empty functions
+                for component_key in component_keys[1:]:
+                    self.pattern_data[component_key] = []
             else:
-                # Already in dict mode - update channels
+                # Already in dict mode - update components
                 old_pattern = self.pattern_data.copy() if isinstance(self.pattern_data, dict) else {}
                 new_pattern = {}
 
-                # Keep existing functions for channels that remain
-                for channel in new_channels:
-                    if channel in old_pattern:
-                        new_pattern[channel] = old_pattern[channel]
+                # Keep existing functions for components that remain
+                for component_key in component_keys:
+                    # Check both string and integer keys for backward compatibility
+                    if component_key in old_pattern:
+                        new_pattern[component_key] = old_pattern[component_key]
                     else:
-                        new_pattern[channel] = []
+                        # Try integer key for backward compatibility
+                        try:
+                            component_int = int(component_key)
+                            if component_int in old_pattern:
+                                new_pattern[component_key] = old_pattern[component_int]
+                            else:
+                                new_pattern[component_key] = []
+                        except ValueError:
+                            new_pattern[component_key] = []
 
                 self.pattern_data = new_pattern
 
-                # Update selected channel if needed
-                if self.selected_channel not in new_channels:
-                    self.selected_channel = new_channels[0] if new_channels else None
+                # Update selected component if needed
+                if self.selected_channel not in component_keys:
+                    self.selected_channel = component_keys[0] if component_keys else None
                     if self.selected_channel:
                         self.functions = new_pattern.get(self.selected_channel, [])
 
+        # Save selection to cache for current group_by
+        if self.current_group_by is not None and self.current_group_by != GroupBy.NONE:
+            self.component_selections[self.current_group_by] = new_components
+            logger.debug(f"Step '{self.step_identifier}': Cached selection for {self.current_group_by.value}: {new_components}")
+
         self._commit_and_notify()
-        logger.debug(f"Updated channels: {new_channels}")
+        self._refresh_component_button()
+        logger.debug(f"Updated components: {new_components}")
 
     def _navigate_channel(self, direction: int) -> None:
         """Navigate to next/previous channel (with looping)."""

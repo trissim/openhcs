@@ -1,8 +1,5 @@
 """
-CPU implementation of image assembly functions.
-
-This module provides CPU-based functions for assembling microscopy images
-using NumPy. It handles subpixel positioning and blending of image tiles.
+CPU implementation of image assembly functions with fixed blending.
 """
 from __future__ import annotations 
 
@@ -23,309 +20,331 @@ from scipy.ndimage import shift as subpixel_shift  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-def _create_blend_mask(tile_shape: tuple, blend_method: str = "rectangular", blend_radius: float = 10.0) -> "np.ndarray":  # type: ignore
+
+def _get_all_overlapping_pairs(positions: "np.ndarray", tile_shape: tuple) -> list:
     """
-    Creates a 2D blending mask for tile assembly.
+    Find ALL overlapping tile pairs with edge directions.
+    [Keep this exactly as it was - it works fine]
+    """
+    height, width = tile_shape
+    N = positions.shape[0]
 
-    Args:
-        tile_shape: (height, width) of the tile
-        blend_method: Blending method - "none", "gaussian", "rectangular", "linear_edge"
-        blend_radius: Blending parameter (pixels for feathering)
+    if N <= 1:
+        return []
 
-    Returns:
-        2D mask array with blending weights
+    # Vectorized computation of ALL pairwise overlaps
+    pos_i = positions[:, np.newaxis, :]
+    pos_j = positions[np.newaxis, :, :]
+
+    xi, yi = pos_i[:, :, 0], pos_i[:, :, 1]
+    xj, yj = pos_j[:, :, 0], pos_j[:, :, 1]
+
+    left_i, right_i = xi, xi + width
+    top_i, bottom_i = yi, yi + height
+    left_j, right_j = xj, xj + width
+    top_j, bottom_j = yj, yj + height
+
+    x_overlap = np.maximum(0, np.minimum(right_i, right_j) - np.maximum(left_i, left_j))
+    y_overlap = np.maximum(0, np.minimum(bottom_i, bottom_j) - np.maximum(top_i, top_j))
+
+    valid_overlap = (x_overlap > 0) & (y_overlap > 0) & (np.arange(N)[:, None] != np.arange(N)[None, :])
+
+    edge_pairs = []
+    overlapping_pairs = np.where(valid_overlap)
+
+    for idx in range(len(overlapping_pairs[0])):
+        i, j = overlapping_pairs[0][idx], overlapping_pairs[1][idx]
+
+        x_overlap_val = float(x_overlap[i, j])
+        y_overlap_val = float(y_overlap[i, j])
+
+        xi_val, yi_val = positions[i, 0], positions[i, 1]
+        xj_val, yj_val = positions[j, 0], positions[j, 1]
+
+        if x_overlap_val > 0:
+            if xj_val < xi_val:
+                edge_pairs.append((i, j, 'left', x_overlap_val))
+            elif xj_val > xi_val:
+                edge_pairs.append((i, j, 'right', x_overlap_val))
+
+        if y_overlap_val > 0:
+            if yj_val < yi_val:
+                edge_pairs.append((i, j, 'top', y_overlap_val))
+            elif yj_val > yi_val:
+                edge_pairs.append((i, j, 'bottom', y_overlap_val))
+
+    return edge_pairs
+
+
+def _create_fixed_blend_mask(
+    tile_shape: tuple,
+    edge_overlaps: dict,
+    margin_ratio: float = 0.1
+) -> "np.ndarray":
+    """
+    Create blend mask with FIXED margin ratio using WORKING logic from old version.
+    CRITICAL: Uses endpoint=False like the old working version.
     """
     height, width = tile_shape
 
-    if blend_method == "none" or blend_radius <= 0:
-        # No blending - uniform weights
-        return np.ones(tile_shape, dtype=np.float32)
+    # Create 1D weights
+    y_weight = np.ones(height, dtype=np.float32)
+    x_weight = np.ones(width, dtype=np.float32)
 
-    elif blend_method == "gaussian":
-        # Original circular Gaussian mask (for compatibility)
-        coords_y = np.arange(height) - (height - 1) / 2.0
-        coords_x = np.arange(width) - (width - 1) / 2.0
-        yy, xx = np.meshgrid(coords_y, coords_x, indexing='ij')
-        mask = np.exp(-(xx**2 + yy**2) / (2 * blend_radius**2))
-        mask = mask / np.max(mask)  # Center will be 1.0
-        return mask.astype(np.float32)
+    # Fixed margins (same as old working version)
+    margin_pixels_y = int(height * margin_ratio)
+    margin_pixels_x = int(width * margin_ratio)
 
-    elif blend_method == "rectangular":
-        # Smooth edge blending with natural falloff
-        mask = np.ones(tile_shape, dtype=np.float32)
+    # Apply gradients ONLY where there are overlaps (same as old working version)
+    # CRITICAL: endpoint=False (this is what made the old version work!)
+    if 'top' in edge_overlaps and margin_pixels_y > 0:
+        y_weight[:margin_pixels_y] = np.linspace(0, 1, margin_pixels_y, endpoint=False)
 
-        if blend_radius > 0:
-            # Create coordinate grids
-            y_coords = np.arange(height, dtype=np.float32)
-            x_coords = np.arange(width, dtype=np.float32)
-            yy, xx = np.meshgrid(y_coords, x_coords, indexing='ij')
+    if 'bottom' in edge_overlaps and margin_pixels_y > 0:
+        y_weight[-margin_pixels_y:] = np.linspace(1, 0, margin_pixels_y, endpoint=False)
 
-            # Distance from each edge
-            dist_from_top = yy
-            dist_from_bottom = height - 1 - yy
-            dist_from_left = xx
-            dist_from_right = width - 1 - xx
+    if 'left' in edge_overlaps and margin_pixels_x > 0:
+        x_weight[:margin_pixels_x] = np.linspace(0, 1, margin_pixels_x, endpoint=False)
 
-            # Create smooth falloff from each edge independently
-            weight_from_top = np.minimum(dist_from_top / blend_radius, 1.0)
-            weight_from_bottom = np.minimum(dist_from_bottom / blend_radius, 1.0)
-            weight_from_left = np.minimum(dist_from_left / blend_radius, 1.0)
-            weight_from_right = np.minimum(dist_from_right / blend_radius, 1.0)
+    if 'right' in edge_overlaps and margin_pixels_x > 0:
+        x_weight[-margin_pixels_x:] = np.linspace(1, 0, margin_pixels_x, endpoint=False)
 
-            # Combine using multiplication for smooth transitions
-            # This creates natural corner rounding instead of rectangular zones
-            mask = weight_from_top * weight_from_bottom * weight_from_left * weight_from_right
-
-        return mask.astype(np.float32)
-
-    elif blend_method == "linear_edge":
-        # Linear falloff from edges (softer than rectangular)
-        mask = np.ones(tile_shape, dtype=np.float32)
-        blend_pixels = int(blend_radius)
-
-        if blend_pixels > 0:
-            # Create coordinate grids
-            y_coords = np.arange(height, dtype=np.float32)
-            x_coords = np.arange(width, dtype=np.float32)
-
-            # Linear weights from edges
-            y_weight_top = np.minimum(y_coords / blend_pixels, 1.0)
-            y_weight_bottom = np.minimum((height - 1 - y_coords) / blend_pixels, 1.0)
-            x_weight_left = np.minimum(x_coords / blend_pixels, 1.0)
-            x_weight_right = np.minimum((width - 1 - x_coords) / blend_pixels, 1.0)
-
-            # Create 2D weight maps
-            y_weight = np.minimum(y_weight_top[:, np.newaxis], y_weight_bottom[:, np.newaxis])
-            x_weight = np.minimum(x_weight_left[np.newaxis, :], x_weight_right[np.newaxis, :])
-
-            # Combine weights multiplicatively for smoother transitions
-            mask = y_weight * x_weight
-
-        return mask.astype(np.float32)
-
-    else:
-        raise ValueError(f"Unknown blend_method: {blend_method}. Supported: 'none', 'gaussian', 'rectangular', 'linear_edge'")
+    # Use outer product (same as old working version)
+    mask = np.outer(y_weight, x_weight)
+    return mask.astype(np.float32)
 
 
-def _create_gaussian_blend_mask(tile_shape: tuple, blend_radius: float) -> "np.ndarray":  # type: ignore
+def _create_dynamic_blend_mask(
+    tile_shape: tuple,
+    edge_overlaps: dict,
+    overlap_fraction: float = 1.0
+) -> "np.ndarray":
     """
-    Legacy function for backward compatibility.
-    Use _create_blend_mask with blend_method="gaussian" instead.
+    Create blend mask based on actual overlap amounts using WORKING logic from old version.
+    CRITICAL: Uses endpoint=False and same logic as old working version.
     """
-    return _create_blend_mask(tile_shape, "gaussian", blend_radius)
+    height, width = tile_shape
+
+    # Create 1D weights
+    y_weight = np.ones(height, dtype=np.float32)
+    x_weight = np.ones(width, dtype=np.float32)
+
+    # Process each edge based on actual overlap (same as old working version)
+    # CRITICAL: endpoint=False (this is what made the old version work!)
+    if 'top' in edge_overlaps:
+        overlap_pixels = int(edge_overlaps['top'] * overlap_fraction)
+        if overlap_pixels > 0:
+            y_weight[:overlap_pixels] = np.linspace(0, 1, overlap_pixels, endpoint=False)
+
+    if 'bottom' in edge_overlaps:
+        overlap_pixels = int(edge_overlaps['bottom'] * overlap_fraction)
+        if overlap_pixels > 0:
+            y_weight[-overlap_pixels:] = np.linspace(1, 0, overlap_pixels, endpoint=False)
+
+    if 'left' in edge_overlaps:
+        overlap_pixels = int(edge_overlaps['left'] * overlap_fraction)
+        if overlap_pixels > 0:
+            x_weight[:overlap_pixels] = np.linspace(0, 1, overlap_pixels, endpoint=False)
+
+    if 'right' in edge_overlaps:
+        overlap_pixels = int(edge_overlaps['right'] * overlap_fraction)
+        if overlap_pixels > 0:
+            x_weight[-overlap_pixels:] = np.linspace(1, 0, overlap_pixels, endpoint=False)
+
+    # Use outer product (same as old working version)
+    mask = np.outer(y_weight, x_weight)
+    return mask.astype(np.float32)
 
 
-@special_inputs("positions") # The input name is "positions"
+@special_inputs("positions")
 @numpy_func
 def assemble_stack_cpu(
-    image_tiles: "np.ndarray",  # type: ignore
-    positions: Union[List[Tuple[float, float]], "np.ndarray"],  # type: ignore
-    blend_radius: float = 10.0,
-    blend_method: str = "rectangular"
-) -> "np.ndarray":  # type: ignore
+    image_tiles: "np.ndarray",
+    positions: Union[List[Tuple[float, float]], "np.ndarray"],
+    blend_method: str = "fixed",
+    fixed_margin_ratio: float = 0.1,
+    overlap_blend_fraction: float = 1.0
+) -> "np.ndarray":
     """
-    Assembles a 3D stack of 2D image tiles (N, H, W) into a composited 2D image,
-    returned as a 3D array (1, H_canvas, W_canvas), using subpixel XY positions
-    and configurable blending.
-
+    Assembles tiles with simple, working blending approach.
+    
     Args:
         image_tiles: 3D array of tiles (N, H, W)
-        positions: List of (x, y) tuples or 2D array of tile positions (N, 2) as [x, y] coordinates
-        blend_radius: Blending parameter in pixels (default: 10.0)
-        blend_method: Blending method (default: "rectangular")
-            - "none": No blending, uniform weights
-            - "gaussian": Circular Gaussian mask (original behavior)
-            - "rectangular": Rectangular feathering from edges
-            - "linear_edge": Linear falloff from edges
-
-    Returns:
-        3D array (1, H_canvas, W_canvas) with assembled image
+        positions: List of (x, y) tuples or 2D array [N, 2]
+        blend_method: "none", "fixed", or "dynamic"
+        fixed_margin_ratio: Ratio for fixed blending (e.g., 0.1 = 10%)
+        overlap_blend_fraction: For dynamic mode, fraction of overlap to blend
+        use_endpoint: Whether to include endpoint in gradients
     """
-    # --- 1. Validate and standardize inputs ---
+    # --- 1. Validate inputs ---
     if not isinstance(image_tiles, np.ndarray) or image_tiles.ndim != 3:
         raise TypeError("image_tiles must be a 3D NumPy ndarray of shape (N, H, W).")
+    
     if image_tiles.shape[0] == 0:
-        logger.warning("image_tiles array is empty (0 tiles). Returning an empty array.")
-        return np.array([[[]]], dtype=np.uint16) # Shape (1,0,0) to indicate empty 3D
+        logger.warning("image_tiles array is empty (0 tiles).")
+        return np.array([[[]]], dtype=np.uint16)
 
-    # Convert positions to NumPy array for CPU processing
+    # Convert positions to numpy
     if isinstance(positions, list):
-        # Convert list of tuples to NumPy array
         if not positions or not isinstance(positions[0], tuple) or len(positions[0]) != 2:
             raise TypeError("positions must be a list of (x, y) tuples.")
         positions = np.array(positions, dtype=np.float32)
     else:
-        # Handle array input (backward compatibility)
         if not isinstance(positions, np.ndarray):
             positions = to_numpy(positions)
         if positions.ndim != 2 or positions.shape[1] != 2:
-            raise TypeError("positions must be an array of shape [N, 2] or list of (x, y) tuples.")
+            raise TypeError("positions must be an array of shape [N, 2].")
 
     if image_tiles.shape[0] != positions.shape[0]:
-        raise ValueError(f"Mismatch between number of image_tiles ({image_tiles.shape[0]}) and positions ({positions.shape[0]}).")
+        raise ValueError(f"Mismatch: {image_tiles.shape[0]} tiles vs {positions.shape[0]} positions.")
 
     num_tiles, tile_h, tile_w = image_tiles.shape
-    first_tile_shape = (tile_h, tile_w) # Used for blend mask, assumes all tiles same H, W
+    tile_shape = (tile_h, tile_w)
 
-    # Convert tiles to float32 for accumulation
+    # Convert to float32
     image_tiles_float = image_tiles.astype(np.float32)
 
     # --- 2. Compute canvas bounds ---
-    # positions_xy are for top-left corners.
-    # Add tile dimensions to get bottom-right corners for each tile.
-    # positions_xy[:, 0] is X (width dimension), positions_xy[:, 1] is Y (height dimension)
+    min_x = np.floor(np.min(positions[:, 0])).astype(int)
+    min_y = np.floor(np.min(positions[:, 1])).astype(int)
+    max_x = np.ceil(np.max(positions[:, 0]) + tile_w).astype(int)
+    max_y = np.ceil(np.max(positions[:, 1]) + tile_h).astype(int)
 
-    # Min/max X coordinates of tile top-left corners
-    min_x_pos = np.min(positions[:, 0])
-    max_x_pos = np.max(positions[:, 0])
-
-    # Min/max Y coordinates of tile top-left corners
-    min_y_pos = np.min(positions[:, 1])
-    max_y_pos = np.max(positions[:, 1])
-
-    # Canvas dimensions need to encompass all tiles
-    # Canvas origin will be (min_x_pos_rounded_down, min_y_pos_rounded_down)
-    # Max extent is max_pos + tile_dim
-    canvas_min_x = np.floor(min_x_pos).astype(int)
-    canvas_min_y = np.floor(min_y_pos).astype(int)
-
-    canvas_max_x = np.ceil(max_x_pos + tile_w).astype(int)
-    canvas_max_y = np.ceil(max_y_pos + tile_h).astype(int)
-
-    canvas_width = canvas_max_x - canvas_min_x
-    canvas_height = canvas_max_y - canvas_min_y
+    canvas_width = max_x - min_x
+    canvas_height = max_y - min_y
 
     if canvas_width <= 0 or canvas_height <= 0:
-        logger.warning(f"Calculated canvas dimensions are non-positive ({canvas_height}x{canvas_width}). Check positions and tile sizes.")
+        logger.warning(f"Invalid canvas size: {canvas_height}x{canvas_width}")
         return np.array([], dtype=np.uint16)
 
     composite_accum = np.zeros((canvas_height, canvas_width), dtype=np.float32)
     weight_accum = np.zeros((canvas_height, canvas_width), dtype=np.float32)
 
-    # --- 3. Generate blending mask ---
-    # Assuming all tiles have the same shape as the first tile for the blend mask
-    blend_mask = _create_blend_mask(first_tile_shape, blend_method, blend_radius)
+    # --- 3. Create blend masks ---
+    if blend_method == "none":
+        blend_masks = [np.ones(tile_shape, dtype=np.float32) for _ in range(num_tiles)]
+        
+    else:
+        # Find overlaps
+        edge_pairs = _get_all_overlapping_pairs(positions, tile_shape)
+        tile_overlaps = [{} for _ in range(num_tiles)]
+        
+        # Build overlap info per tile
+        for tile_i, tile_j, edge_direction, pixel_overlap in edge_pairs:
+            if edge_direction not in tile_overlaps[tile_i]:
+                tile_overlaps[tile_i][edge_direction] = pixel_overlap
+            else:
+                # Keep maximum overlap
+                tile_overlaps[tile_i][edge_direction] = max(
+                    tile_overlaps[tile_i][edge_direction], pixel_overlap
+                )
+        
+        # Create masks using WORKING logic from old version
+        blend_masks = []
+        for i in range(num_tiles):
+            if blend_method == "fixed":
+                mask = _create_fixed_blend_mask(
+                    tile_shape,
+                    tile_overlaps[i],
+                    margin_ratio=fixed_margin_ratio
+                )
+            elif blend_method == "dynamic":
+                mask = _create_dynamic_blend_mask(
+                    tile_shape,
+                    tile_overlaps[i],
+                    overlap_fraction=overlap_blend_fraction
+                )
+            else:
+                raise ValueError(f"Unknown blend_method: {blend_method}")
 
-    # --- 4. Place tiles with subpixel shifts ---
+            blend_masks.append(mask)
+
+    # --- 4. Place tiles ---
     for i in range(num_tiles):
-        tile_float = image_tiles_float[i]
-        # Shape validation for individual tiles is implicitly handled by the 3D array input check,
-        # assuming all slices (tiles) in the 3D array have consistent H, W.
+        tile = image_tiles_float[i]
+        pos_x, pos_y = positions[i]
 
-        pos_x, pos_y = positions[i] # Original subpixel top-left of this tile
+        # Canvas position
+        target_x = pos_x - min_x
+        target_y = pos_y - min_y
 
-        # Calculate integer and fractional parts of the shift
-        # The shift for subpixel_shift is (shift_y, shift_x)
-        # We want to place the tile's origin (0,0) at (pos_x, pos_y) relative to global origin.
-        # The canvas origin is (canvas_min_x, canvas_min_y).
-        # So, target top-left on canvas is (pos_x - canvas_min_x, pos_y - canvas_min_y)
+        # Integer and fractional parts
+        x_int = int(np.floor(target_x))
+        y_int = int(np.floor(target_y))
+        x_frac = target_x - x_int
+        y_frac = target_y - y_int
 
-        target_canvas_x_float = pos_x - canvas_min_x
-        target_canvas_y_float = pos_y - canvas_min_y
+        # Subpixel shift
+        shift_x = -x_frac
+        shift_y = -y_frac
+        
+        shifted_tile = subpixel_shift(
+            tile, 
+            shift=(shift_y, shift_x), 
+            order=1, 
+            mode='constant', 
+            cval=0.0
+        )
 
-        # The subpixel_shift function shifts the *content* of the array.
-        # If we want the tile's (0,0) to land on a subpixel grid,
-        # the shift should be the negative of the fractional part of the target coordinate.
-        # E.g., if target is 10.3, we place at 10, and shift content by -0.3.
+        # Apply blend mask
+        blended_tile = shifted_tile * blend_masks[i]
 
-        # Integer part for slicing
-        canvas_x_start_int = np.floor(target_canvas_x_float).astype(int)
-        canvas_y_start_int = np.floor(target_canvas_y_float).astype(int)
+        # Canvas bounds
+        y_start = y_int
+        y_end = y_start + tile_h
+        x_start = x_int
+        x_end = x_start + tile_w
 
-        # Fractional part for subpixel shift (scipy.ndimage.shift convention: positive shifts move data "down/right")
-        # We want to shift the tile's origin. If target is 10.3, we want pixel 0 to effectively start at 10.3.
-        # If we place the tile starting at integer coord 10, its content needs to be shifted by +0.3.
-        # However, scipy.ndimage.shift shifts data: a positive shift moves data to higher indices.
-        # If tile's (0,0) should be at (10.3, 20.7)
-        # Place tile at canvas_int_coords = (floor(10.3), floor(20.7)) = (10, 20)
-        # The content of the tile needs to be shifted by (10.3-10, 20.7-20) = (0.3, 0.7)
-        # But subpixel_shift shifts data values, not coordinates.
-        # A shift of (dy, dx) means output[iy,ix] = input[iy-dy, ix-dx]
-        # So, if we want output at (canvas_y_start_int + y_tile, canvas_x_start_int + x_tile)
-        # to correspond to input at (y_tile - (target_canvas_y_float - canvas_y_start_int), x_tile - (target_canvas_x_float - canvas_x_start_int))
-        # The shift values are -(target_canvas_y_float - canvas_y_start_int) and -(target_canvas_x_float - canvas_x_start_int)
+        # Tile bounds (for edge cases)
+        tile_y_start = 0
+        tile_y_end = tile_h
+        tile_x_start = 0
+        tile_x_end = tile_w
 
-        shift_y_subpixel = -(target_canvas_y_float - canvas_y_start_int)
-        shift_x_subpixel = -(target_canvas_x_float - canvas_x_start_int)
+        # Clip to canvas
+        if y_start < 0:
+            tile_y_start = -y_start
+            y_start = 0
+        if x_start < 0:
+            tile_x_start = -x_start
+            x_start = 0
+        if y_end > canvas_height:
+            tile_y_end -= (y_end - canvas_height)
+            y_end = canvas_height
+        if x_end > canvas_width:
+            tile_x_end -= (x_end - canvas_width)
+            x_end = canvas_width
 
-        shifted_tile = subpixel_shift(tile_float, shift=(shift_y_subpixel, shift_x_subpixel), order=1, mode='constant', cval=0.0)
-
-        # Apply blending mask
-        blended_tile = shifted_tile * blend_mask
-
-        # Define where this tile (and its mask) go on the canvas
-        y_start_on_canvas = canvas_y_start_int
-        y_end_on_canvas = y_start_on_canvas + tile_h
-        x_start_on_canvas = canvas_x_start_int
-        x_end_on_canvas = x_start_on_canvas + tile_w
-
-        # Define what part of the tile to take (in case it goes off-canvas)
-        tile_y_start_src = 0
-        tile_y_end_src = tile_h
-        tile_x_start_src = 0
-        tile_x_end_src = tile_w
-
-        # Adjust for tile parts that are off the canvas (negative start)
-        if y_start_on_canvas < 0:
-            tile_y_start_src = -y_start_on_canvas
-            y_start_on_canvas = 0
-        if x_start_on_canvas < 0:
-            tile_x_start_src = -x_start_on_canvas
-            x_start_on_canvas = 0
-
-        # Adjust for tile parts that are off the canvas (positive end)
-        if y_end_on_canvas > canvas_height:
-            tile_y_end_src -= (y_end_on_canvas - canvas_height)
-            y_end_on_canvas = canvas_height
-        if x_end_on_canvas > canvas_width:
-            tile_x_end_src -= (x_end_on_canvas - canvas_width)
-            x_end_on_canvas = canvas_width
-
-        # If the tile is entirely off-canvas after adjustments, skip
-        if tile_y_start_src >= tile_y_end_src or tile_x_start_src >= tile_x_end_src:
-            continue
-        if y_start_on_canvas >= y_end_on_canvas or x_start_on_canvas >= x_end_on_canvas:
+        # Skip if out of bounds
+        if (tile_y_start >= tile_y_end or tile_x_start >= tile_x_end or
+            y_start >= y_end or x_start >= x_end):
             continue
 
-        # Add to accumulators
-        composite_accum[y_start_on_canvas:y_end_on_canvas, x_start_on_canvas:x_end_on_canvas] += \
-            blended_tile[tile_y_start_src:tile_y_end_src, tile_x_start_src:tile_x_end_src]
+        # Accumulate
+        composite_accum[y_start:y_end, x_start:x_end] += \
+            blended_tile[tile_y_start:tile_y_end, tile_x_start:tile_x_end]
+        
+        weight_accum[y_start:y_end, x_start:x_end] += \
+            blend_masks[i][tile_y_start:tile_y_end, tile_x_start:tile_x_end]
 
-        weight_accum[y_start_on_canvas:y_end_on_canvas, x_start_on_canvas:x_end_on_canvas] += \
-            blend_mask[tile_y_start_src:tile_y_end_src, tile_x_start_src:tile_x_end_src]
+    # --- 5. Normalize ---
+    epsilon = 1e-7
+    stitched = composite_accum / (weight_accum + epsilon)
+    
+    # Convert to uint16
+    stitched_uint16 = np.clip(stitched, 0, 65535).astype(np.uint16)
+    
+    return stitched_uint16.reshape(1, canvas_height, canvas_width)
 
-    # --- 5. Normalize + cast ---
-    epsilon = 1e-7 # To avoid division by zero
-    stitched_image_float = composite_accum / (weight_accum + epsilon)
-
-    # Clip to 0-65535 and cast to uint16
-    stitched_image_uint16 = np.clip(stitched_image_float, 0, 65535).astype(np.uint16)
-
-    # Return as a 3D array with a single Z-slice
-    return stitched_image_uint16.reshape(1, canvas_height, canvas_width)
 
 def to_numpy(tensor):
-    """Convert CuPy, PyTorch, JAX, or TensorFlow tensor to numpy"""
-
-    # Already numpy
+    """Convert various tensor types to numpy"""
     if hasattr(tensor, 'dtype') and tensor.__class__.__module__ == 'numpy':
         return tensor
-
-    # CuPy
-    if hasattr(tensor, 'get'):  # CuPy arrays have .get() method
+    if hasattr(tensor, 'get'):  # CuPy
         return tensor.get()
-
-    # PyTorch
-    if hasattr(tensor, 'detach'):  # PyTorch tensors have .detach()
+    if hasattr(tensor, 'detach'):  # PyTorch
         return tensor.detach().cpu().numpy()
-
-#    # JAX
-#    if hasattr(tensor, 'device'):  # JAX arrays have .device
-#        import jax
-#        return jax.device_get(tensor)
-
-    # TensorFlow
-    if hasattr(tensor, 'numpy') and hasattr(tensor, 'device'):  # TF tensors
+    if hasattr(tensor, 'numpy') and hasattr(tensor, 'device'):  # TF
         return tensor.numpy()
-
     raise ValueError(f"Unsupported tensor type: {type(tensor)}")

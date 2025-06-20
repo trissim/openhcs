@@ -23,6 +23,9 @@ from openhcs.core.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
+# 🔍 MEMORY CONVERSION LOGGING: Test log to verify logger is working
+logger.info("🔄 STACK_UTILS: Module loaded - memory conversion logging enabled")
+
 
 def _is_2d(data: Any) -> bool:
     """
@@ -155,20 +158,43 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
     if not slices:
         raise ValueError("Cannot stack empty list of slices")
 
+    # 🔍 MEMORY CONVERSION LOGGING: Log stacking operation start
+    logger.info(f"🔄 STACK_SLICES: Starting stack operation - {len(slices)} slices → target_memory_type: {memory_type}, gpu_id: {gpu_id}")
+
     # Verify all slices are 2D
     for i, slice_data in enumerate(slices):
         if not _is_2d(slice_data):
             raise ValueError(f"Slice at index {i} is not a 2D array. All slices must be 2D.")
+
+    # 🔍 MEMORY CONVERSION LOGGING: Log input slice types
+    input_types = []
+    for i, slice_data in enumerate(slices):
+        detected_type = _detect_memory_type(slice_data)
+        input_types.append(detected_type)
+        if i < 3:  # Log first 3 slices for brevity
+            logger.info(f"🔄 STACK_SLICES: Input slice[{i}] - type: {detected_type}, shape: {getattr(slice_data, 'shape', 'unknown')}")
+
+    unique_input_types = set(input_types)
+    logger.info(f"🔄 STACK_SLICES: Input types summary - unique_types: {unique_input_types}, total_slices: {len(slices)}")
 
     # Check GPU requirements
     _enforce_gpu_device_requirements(memory_type, gpu_id)
 
     # Convert each slice to the target memory type
     converted_slices = []
+    conversion_count = 0
     for i, slice_data in enumerate(slices):
         # Convert to target memory type using MemoryWrapper (Clause 290)
         # This improves traceability, error validation, and GPU discipline
-        wrapped = MemoryWrapper(slice_data, memory_type=_detect_memory_type(slice_data), gpu_id=gpu_id)
+        source_type = _detect_memory_type(slice_data)
+        wrapped = MemoryWrapper(slice_data, memory_type=source_type, gpu_id=gpu_id)
+
+        # 🔍 MEMORY CONVERSION LOGGING: Log conversion attempt
+        if source_type != memory_type:
+            logger.info(f"🔄 STACK_SLICES: Converting slice[{i}] - {source_type} → {memory_type}")
+            conversion_count += 1
+        else:
+            logger.debug(f"🔄 STACK_SLICES: No conversion needed for slice[{i}] - already {memory_type}")
 
         # Use the appropriate conversion method based on the target memory type
         if memory_type == MEMORY_TYPE_NUMPY:
@@ -186,33 +212,44 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
         else:
             raise ValueError(f"Unsupported memory type: {memory_type}")
 
+        # 🔍 MEMORY CONVERSION LOGGING: Log successful conversion
+        converted_type = _detect_memory_type(converted_wrapper.data)
+        if source_type != memory_type:
+            logger.info(f"🔄 STACK_SLICES: Conversion complete slice[{i}] - {source_type} → {converted_type} ✓")
+
         # Extract the raw data from the MemoryWrapper for stacking
         converted_slices.append(converted_wrapper.data)
 
+    # 🔍 MEMORY CONVERSION LOGGING: Log conversion summary
+    logger.info(f"🔄 STACK_SLICES: Conversion summary - {conversion_count}/{len(slices)} slices converted to {memory_type}")
+
     # Stack the converted slices using the appropriate function
+    # 🔍 MEMORY CONVERSION LOGGING: Log stacking operation
+    logger.info(f"🔄 STACK_SLICES: Stacking {len(converted_slices)} converted slices using {memory_type} backend")
+
     if memory_type == MemoryType.NUMPY.value:
-        return np.stack(converted_slices)
+        result = np.stack(converted_slices)
     elif memory_type == MemoryType.CUPY.value:
         cp = optional_import("cupy")
         if cp is None:
             raise ValueError(f"CuPy is required for memory type {memory_type}")
-        return cp.stack(converted_slices)
+        result = cp.stack(converted_slices)
     elif memory_type == MemoryType.TORCH.value:
         torch = optional_import("torch")
         if torch is None:
             raise ValueError(f"PyTorch is required for memory type {memory_type}")
-        return torch.stack(converted_slices)
+        result = torch.stack(converted_slices)
     elif memory_type == MemoryType.TENSORFLOW.value:
         tf = optional_import("tensorflow")
         if tf is None:
             raise ValueError(f"TensorFlow is required for memory type {memory_type}")
-        return tf.stack(converted_slices)
+        result = tf.stack(converted_slices)
     elif memory_type == MemoryType.JAX.value:
         jax = optional_import("jax")
         jnp = optional_import("jax.numpy") if jax is not None else None
         if jnp is None:
             raise ValueError(f"JAX is required for memory type {memory_type}")
-        return jnp.stack(converted_slices)
+        result = jnp.stack(converted_slices)
     elif memory_type == MemoryType.PYCLESPERANTO.value:
         cle = optional_import("pyclesperanto")
         if cle is None:
@@ -232,10 +269,15 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
         # Copy each slice into the result
         for i, slice_data in enumerate(converted_slices):
             cle.copy_slice(slice_data, result, i)
-
-        return result
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
+
+    # 🔍 MEMORY CONVERSION LOGGING: Log final result
+    result_type = _detect_memory_type(result)
+    result_shape = getattr(result, 'shape', 'unknown')
+    logger.info(f"🔄 STACK_SLICES: Complete - result_type: {result_type}, result_shape: {result_shape}")
+
+    return result
 
 
 def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: bool = True) -> List[Any]:
@@ -260,6 +302,11 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
         ValueError: If memory_type is not supported
         MemoryConversionError: If conversion fails
     """
+    # 🔍 MEMORY CONVERSION LOGGING: Log unstacking operation start
+    input_type = _detect_memory_type(array)
+    input_shape = getattr(array, 'shape', 'unknown')
+    logger.info(f"🔄 UNSTACK_SLICES: Starting unstack operation - input_type: {input_type}, input_shape: {input_shape} → target_memory_type: {memory_type}, gpu_id: {gpu_id}")
+
     # Verify the array is 3D - fail loudly if not
     if not _is_3d(array):
         raise ValueError(f"Array must be 3D, got shape {getattr(array, 'shape', 'unknown')}")
@@ -269,7 +316,14 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
 
     # Convert to target memory type using MemoryWrapper (Clause 290)
     # This improves traceability, error validation, and GPU discipline
-    wrapped = MemoryWrapper(array, memory_type=_detect_memory_type(array), gpu_id=gpu_id)
+    source_type = _detect_memory_type(array)
+    wrapped = MemoryWrapper(array, memory_type=source_type, gpu_id=gpu_id)
+
+    # 🔍 MEMORY CONVERSION LOGGING: Log conversion attempt
+    if source_type != memory_type:
+        logger.info(f"🔄 UNSTACK_SLICES: Converting array - {source_type} → {memory_type}")
+    else:
+        logger.debug(f"🔄 UNSTACK_SLICES: No conversion needed - already {memory_type}")
 
     # Use the appropriate conversion method based on the target memory type
     if memory_type == MemoryType.NUMPY.value:
@@ -287,16 +341,32 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
 
+    # 🔍 MEMORY CONVERSION LOGGING: Log successful conversion
+    converted_type = _detect_memory_type(array_wrapper.data)
+    if source_type != memory_type:
+        logger.info(f"🔄 UNSTACK_SLICES: Conversion complete - {source_type} → {converted_type} ✓")
+
     # Extract the raw data from the MemoryWrapper
     array = array_wrapper.data
 
     # Extract slices along axis 0 (already in the target memory type)
     slices = [array[i] for i in range(array.shape[0])]
 
+    # 🔍 MEMORY CONVERSION LOGGING: Log slice extraction
+    logger.info(f"🔄 UNSTACK_SLICES: Extracted {len(slices)} slices from 3D array")
+
     # Validate that all extracted slices are 2D if requested
     if validate_slices:
         for i, slice_data in enumerate(slices):
             if not _is_2d(slice_data):
                 raise ValueError(f"Extracted slice at index {i} is not 2D. This indicates a malformed 3D array.")
+
+    # 🔍 MEMORY CONVERSION LOGGING: Log final result
+    if slices:
+        first_slice_type = _detect_memory_type(slices[0])
+        first_slice_shape = getattr(slices[0], 'shape', 'unknown')
+        logger.info(f"🔄 UNSTACK_SLICES: Complete - output_slices: {len(slices)}, slice_type: {first_slice_type}, slice_shape: {first_slice_shape}")
+    else:
+        logger.warning(f"🔄 UNSTACK_SLICES: Complete - no slices extracted (empty array)")
 
     return slices

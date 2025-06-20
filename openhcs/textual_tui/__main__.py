@@ -52,18 +52,21 @@ def _setup_logging(debug: bool = False):
     import time
     log_file = log_dir / f"openhcs_unified_{time.strftime('%Y%m%d_%H%M%S')}.log"
 
-    # Only setup logging if not already configured
-    if not logging.getLogger().hasHandlers():
-        # Setup file-only logging (no console output for TUI)
-        handlers = [
-            logging.FileHandler(log_file)
-        ]
+    # Setup unified logging for entire OpenHCS system
+    root_logger = logging.getLogger()
 
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=handlers
-        )
+    # Clear any existing handlers to ensure clean state
+    root_logger.handlers.clear()
+
+    # Setup file-only logging (no console output for TUI)
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(log_level)
+
+    # Prevent other modules from adding console handlers
+    logging.basicConfig = lambda *args, **kwargs: None
 
     # Set OpenHCS logger level for all components
     logging.getLogger("openhcs").setLevel(log_level)

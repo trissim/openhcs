@@ -166,9 +166,8 @@ class DualEditorScreen(ModalScreen):
             # Create new step with empty function list (user adds functions manually)
             self.editing_step = FunctionStep(
                 func=[],  # Start with empty function list
-                name="New Step",
-                # Let variable_components use FunctionStep's default [VariableComponents.SITE]
-                group_by=""
+                name="New Step"
+                # Let variable_components and group_by use FunctionStep's defaults
             )
 
         # Store original for change detection
@@ -202,9 +201,15 @@ class DualEditorScreen(ModalScreen):
                     yield self.step_editor
 
                 with TabPane("Function Pattern", id="func_tab"):
-                    # Create function editor with validated function data
+                    # Create function editor with validated function data and step identifier
                     func_data = self._validate_function_data(self.editing_step.func)
-                    self.func_editor = FunctionListEditorWidget(func_data)
+                    step_id = getattr(self.editing_step, 'name', 'unknown_step')
+                    self.func_editor = FunctionListEditorWidget(func_data, step_identifier=step_id)
+
+                    # Initialize step configuration settings in function editor
+                    self.func_editor.current_group_by = self.editing_step.group_by
+                    self.func_editor.current_variable_components = self.editing_step.variable_components or []
+
                     yield self.func_editor
 
     def on_mount(self) -> None:
@@ -246,6 +251,11 @@ class DualEditorScreen(ModalScreen):
     ) -> None:
         """Handle parameter changes from the step editor widget."""
         logger.debug("Received StepParameterChanged from child StepParameterEditorWidget")
+
+        # Sync step configuration settings to function editor for dynamic component selection
+        self.func_editor.current_group_by = self.editing_step.group_by
+        self.func_editor.current_variable_components = self.editing_step.variable_components or []
+
         self._update_change_tracking()
         self._update_status("Modified step parameters (via message)")
 
@@ -328,7 +338,13 @@ class DualEditorScreen(ModalScreen):
 
 
     def _handle_save(self) -> None:
-        """Handle save button with validation."""
+        """Handle save button with validation and type conversion."""
+        # Sync current UI values to editing_step before validation
+        self._sync_ui_to_editing_step()
+
+        # Debug logging to see what's happening with step name
+        logger.debug(f"Step name validation - editing_step.name: '{self.editing_step.name}', type: {type(self.editing_step.name)}")
+
         # Validate step data
         if not self.editing_step.name or not self.editing_step.name.strip():
             self._update_status("Error: Step name cannot be empty")
@@ -338,9 +354,101 @@ class DualEditorScreen(ModalScreen):
             self._update_status("Error: Function pattern cannot be empty")
             return
 
+        # Validate and convert function parameter types
+        validation_errors = self._validate_and_convert_function_parameters()
+        if validation_errors:
+            # Show error dialog with specific validation errors
+            from openhcs.textual_tui.app import ErrorDialog
+            error_message = "Parameter validation failed. Please fix the following issues:"
+            error_details = "\n".join(f"• {error}" for error in validation_errors)
+            error_dialog = ErrorDialog(error_message, error_details)
+            self.app.push_screen(error_dialog)
+            self._update_status("Error: Invalid parameter values")
+            return
+
         # Save successful
         self._update_status("Saved successfully")
         self.dismiss(self.editing_step)
+
+    def _validate_and_convert_function_parameters(self) -> List[str]:
+        """
+        Validate and convert all function parameters using type hints.
+
+        Returns:
+            List of error messages. Empty list if all parameters are valid.
+        """
+        errors = []
+
+        try:
+            # Get current function pattern from the editor
+            current_pattern = self.func_editor.current_pattern
+
+            # Handle different pattern types (list or dict)
+            functions_to_validate = []
+            if isinstance(current_pattern, list):
+                functions_to_validate = current_pattern
+            elif isinstance(current_pattern, dict):
+                # Flatten all functions from all channels
+                for channel_functions in current_pattern.values():
+                    if isinstance(channel_functions, list):
+                        functions_to_validate.extend(channel_functions)
+
+            # Validate each function
+            for func_index, func_item in enumerate(functions_to_validate):
+                if isinstance(func_item, tuple) and len(func_item) == 2:
+                    func, kwargs = func_item
+
+                    # Get expected parameter types from function signature
+                    from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+                    from openhcs.textual_tui.widgets.shared.parameter_form_manager import ParameterFormManager
+
+                    param_info = SignatureAnalyzer.analyze(func)
+
+                    # Validate each parameter
+                    for param_name, info in param_info.items():
+                        if param_name in kwargs:
+                            current_value = kwargs[param_name]
+                            expected_type = info.param_type
+
+                            # Skip if value is already the correct type (not a string)
+                            if not isinstance(current_value, str):
+                                continue
+
+                            # Try to convert using the enhanced type converter
+                            try:
+                                converted_value = ParameterFormManager.convert_string_to_type(
+                                    current_value, expected_type, strict=True
+                                )
+                                # Update the kwargs with the converted value
+                                kwargs[param_name] = converted_value
+
+                            except ValueError as e:
+                                # Collect the error message
+                                func_name = getattr(func, '__name__', str(func))
+                                errors.append(f"Function '{func_name}', parameter '{param_name}': {str(e)}")
+
+        except Exception as e:
+            # Catch any unexpected errors during validation
+            errors.append(f"Validation error: {str(e)}")
+
+        return errors
+
+    def _sync_ui_to_editing_step(self) -> None:
+        """Sync current UI values to the editing_step object before validation."""
+        try:
+            # Sync step editor values (name, group_by, variable_components)
+            if self.step_editor:
+                # The step editor should have already updated editing_step via messages,
+                # but let's make sure by getting current values
+                pass  # StepParameterEditorWidget updates editing_step directly
+
+            # Sync function editor values (func pattern)
+            if self.func_editor:
+                self.editing_step.func = self.func_editor.current_pattern
+
+        except Exception as e:
+            # Log but don't fail - validation will catch issues
+            logger.debug(f"Error syncing UI to editing_step: {e}")
 
     def _handle_cancel(self) -> None:
         """Handle cancel button with change confirmation."""

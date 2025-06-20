@@ -91,7 +91,7 @@ def get_pipeline(input_dir):
             #),
             #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
-            Step(func=(assemble_stack_cpu, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
+            Step(func=(assemble_stack_cpu, {'blend_method': 'custom_per_tile'}),
             )
         ],
         name = "Mega Flex Pipeline",
@@ -115,7 +115,8 @@ def test_main_3d(zstack_plate_dir: Union[Path,str]):
     print("🔥 Orchestrator initialized!")
 
     # Get pipeline and wells
-    wells = orchestrator.get_wells()
+    from openhcs.constants.constants import GroupBy
+    wells = orchestrator.get_component_keys(GroupBy.WELL)
     pipeline = get_pipeline(orchestrator.workspace_path)
     print(f"🔥 Found {len(wells)} wells: {wells}")
     print(f"🔥 Pipeline has {len(pipeline.steps)} steps")
@@ -185,7 +186,7 @@ def test_main_2d(flat_plate_dir: Union[Path,str]):
 
         # Get pipeline and wells
         pipeline = get_pipeline(orchestrator.workspace_path)
-        wells = orchestrator.get_wells()
+        wells = orchestrator.get_component_keys(GroupBy.WELL)
 
         # Phase 1: Compilation - explicitly compile pipelines
         compiled_contexts = orchestrator.compile_pipelines(

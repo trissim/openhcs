@@ -130,3 +130,90 @@ class MetadataHandler(ABC):
             ValueError: If pixel size cannot be determined
         """
         pass
+
+    @abstractmethod
+    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get channel key→name mapping from metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping channel keys to display names, or None if not available
+            Example: {"1": "HOECHST 33342", "2": "Calcein", "3": "Alexa 647"}
+        """
+        pass
+
+    @abstractmethod
+    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get well key→name mapping from metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping well keys to display names, or None if not available
+            Example: {"A01": "Control", "A02": "Treatment"} or None
+        """
+        pass
+
+    @abstractmethod
+    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get site key→name mapping from metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping site keys to display names, or None if not available
+            Example: {"1": "Center", "2": "Edge"} or None
+        """
+        pass
+
+    @abstractmethod
+    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get z_index key→name mapping from metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping z_index keys to display names, or None if not available
+            Example: {"1": "Bottom", "2": "Middle", "3": "Top"} or None
+        """
+        pass
+
+    def parse_metadata(self, plate_path: Union[str, Path]) -> Dict[str, Dict[str, Optional[str]]]:
+        """
+        Parse all metadata using enum→method mapping.
+
+        This method iterates through GroupBy components and calls the corresponding
+        abstract methods to collect all available metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping component names to their key→name mappings
+            Example: {"channel": {"1": "HOECHST 33342", "2": "Calcein"}}
+        """
+        # Import here to avoid circular imports
+        from openhcs.constants.constants import GroupBy
+
+        method_map = {
+            GroupBy.CHANNEL: self.get_channel_values,
+            GroupBy.WELL: self.get_well_values,
+            GroupBy.SITE: self.get_site_values,
+            GroupBy.Z_INDEX: self.get_z_index_values
+        }
+
+        result = {}
+        for group_by, method in method_map.items():
+            values = method(plate_path)
+            if values:
+                result[group_by.value] = values
+        return result

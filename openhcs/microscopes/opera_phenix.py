@@ -646,6 +646,87 @@ class OperaPhenixMetadataHandler(MetadataHandler):
         logger.info("Pixel size from Index.xml: %.4f μm", pixel_size)
         return pixel_size
 
+    def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get channel key→name mapping from Opera Phenix Index.xml.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            Dict mapping channel IDs to channel names from metadata
+            Example: {"1": "HOECHST 33342", "2": "Calcein", "3": "Alexa 647"}
+        """
+        try:
+            # Ensure plate_path is a Path object
+            if isinstance(plate_path, str):
+                plate_path = Path(plate_path)
+
+            # Find and parse Index.xml
+            index_xml = self.find_metadata_file(plate_path)
+            xml_parser = self.create_xml_parser(index_xml)
+
+            # Extract channel information
+            channel_mapping = {}
+
+            # Look for channel entries in the XML
+            # Opera Phenix stores channel info in multiple places, try the most common
+            root = xml_parser.root
+            namespace = xml_parser.namespace
+
+            # Find channel entries with ChannelName elements
+            channel_entries = root.findall(f".//{namespace}Entry[@ChannelID]")
+            for entry in channel_entries:
+                channel_id = entry.get('ChannelID')
+                channel_name_elem = entry.find(f"{namespace}ChannelName")
+
+                if channel_id and channel_name_elem is not None:
+                    channel_name = channel_name_elem.text
+                    if channel_name:
+                        channel_mapping[channel_id] = channel_name
+
+            return channel_mapping if channel_mapping else None
+
+        except Exception as e:
+            logger.debug(f"Could not extract channel names from Opera Phenix metadata: {e}")
+            return None
+
+    def get_well_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get well key→name mapping from Opera Phenix metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - Opera Phenix doesn't provide rich well names in metadata
+        """
+        return None
+
+    def get_site_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get site key→name mapping from Opera Phenix metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - Opera Phenix doesn't provide rich site names in metadata
+        """
+        return None
+
+    def get_z_index_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
+        """
+        Get z_index key→name mapping from Opera Phenix metadata.
+
+        Args:
+            plate_path: Path to the plate folder (str or Path)
+
+        Returns:
+            None - Opera Phenix doesn't provide rich z_index names in metadata
+        """
+        return None
+
     def create_xml_parser(self, xml_path: Union[str, Path]):
         """
         Create an OperaPhenixXmlParser for the given XML file.

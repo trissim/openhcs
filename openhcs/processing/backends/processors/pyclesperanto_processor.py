@@ -34,7 +34,7 @@ def _validate_3d_array(array) -> None:
     if array.ndim != 3:
         raise ValueError(f"Expected 3D array, got {array.ndim}D array")
 
-def _gpu_minmax_normalize_range(image: "cle.Array", low_percentile: float, high_percentile: float) -> tuple:
+def _gpu_minmax_normalize_range(image: "cle.Array" ) -> tuple:
     """Calculate normalization range using min/max instead of percentiles - pure GPU."""
     import pyclesperanto as cle
 
@@ -73,11 +73,6 @@ def per_slice_minmax_normalize(
     Returns:
         Normalized 3D pyclesperanto Array of shape (Z, Y, X) with dtype uint16
     """
-    _check_pyclesperanto_available()
-
-    # Import pyclesperanto
-    import pyclesperanto as cle
-
     # Validate 3D array
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
@@ -122,8 +117,6 @@ def per_slice_minmax_normalize(
 @pyclesperanto_func
 def stack_minmax_normalize(
     image: "cle.Array",
-    low_percentile: float = 1.0,
-    high_percentile: float = 99.0,
     target_min: int = 0,
     target_max: int = 65535
 ) -> "cle.Array":
@@ -145,9 +138,6 @@ def stack_minmax_normalize(
         Normalized 3D pyclesperanto Array of shape (Z, Y, X) with dtype uint16
     """
     _check_pyclesperanto_available()
-
-    # Import pyclesperanto
-    import pyclesperanto as cle
 
     # Validate 3D array
     if len(image.shape) != 3:
@@ -197,9 +187,6 @@ def sharpen(
     """
     _check_pyclesperanto_available()
 
-    # Import pyclesperanto
-    import pyclesperanto as cle
-
     # Validate 3D array
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
@@ -234,9 +221,6 @@ def max_projection(stack: "cle.Array") -> "cle.Array":
     """
     _check_pyclesperanto_available()
 
-    # Import pyclesperanto
-    import pyclesperanto as cle
-
     # Validate 3D array
     if len(stack.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
@@ -267,9 +251,6 @@ def mean_projection(stack: "cle.Array") -> "cle.Array":
         3D pyclesperanto Array of shape (1, Y, X)
     """
     _check_pyclesperanto_available()
-
-    # Import pyclesperanto
-    import pyclesperanto as cle
 
     # Validate 3D array
     if len(stack.shape) != 3:
@@ -347,9 +328,6 @@ def tophat(
     """
     _check_pyclesperanto_available()
 
-    # Import pyclesperanto
-    import pyclesperanto as cle
-
     # Validate 3D array
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D array, got {len(image.shape)}D array")
@@ -414,9 +392,6 @@ def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
     """
     _check_pyclesperanto_available()
 
-    # Import pyclesperanto
-    import pyclesperanto as cle
-
     # Validate 3D image
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D image array, got {len(image.shape)}D array")
@@ -457,85 +432,71 @@ def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
 
 @pyclesperanto_func
 def create_composite(
-    images: List["cle.Array"], weights: Optional[List[float]] = None
+    stack: "cle.Array", weights: Optional[List[float]] = None
 ) -> "cle.Array":
     """
-    Create a composite image from multiple 3D arrays - GPU accelerated.
+    Create a composite image from a 3D stack where each slice is a channel - GPU accelerated.
 
-    TRUE 3D OPERATION: Performs element-wise weighted addition across entire
-    3D volumes. All mathematical operations are applied to the full 3D arrays
-    simultaneously using efficient pyclesperanto functions.
+    TRUE 3D OPERATION: Performs element-wise weighted addition across slices
+    to create a composite. All mathematical operations are applied using
+    efficient pyclesperanto functions.
 
     Args:
-        images: List of 3D pyclesperanto Arrays, each of shape (Z, Y, X)
-        weights: List of weights for each image. If None, equal weights are used.
+        stack: 3D pyclesperanto Array of shape (N, Y, X) where N is number of channel slices
+        weights: List of weights for each slice. If None, equal weights are used.
 
     Returns:
-        Composite 3D pyclesperanto Array of shape (Z, Y, X)
+        Composite 3D pyclesperanto Array of shape (1, Y, X)
     """
     _check_pyclesperanto_available()
 
-    # Import pyclesperanto
-    import pyclesperanto as cle
+    # Validate input is 3D array
+    if len(stack.shape) != 3:
+        raise ValueError(f"Expected 3D array, got {len(stack.shape)}D array")
 
-    # Validate inputs
-    if not isinstance(images, list):
-        raise TypeError("images must be a list of pyclesperanto Arrays")
-
-    if not images:
-        raise ValueError("images list cannot be empty")
-
-    # Validate all images are 3D with the same shape
-    for i, img in enumerate(images):
-        if len(img.shape) != 3:
-            raise ValueError(f"Expected 3D array, got {len(img.shape)}D array for images[{i}]")
-        if img.shape != images[0].shape:
-            raise ValueError(f"All images must have the same shape. "
-                            f"images[0] has shape {images[0].shape}, "
-                            f"images[{i}] has shape {img.shape}")
+    n_slices, height, width = stack.shape
 
     # Default weights if none provided
     if weights is None:
-        weights = [1.0 / len(images)] * len(images)
-    elif not isinstance(weights, list):
-        raise TypeError("weights must be a list of values")
-
-    # Ensure weights list matches images list
-    if len(weights) < len(images):
-        weights = weights + [0.0] * (len(images) - len(weights))
-    weights = weights[:len(images)]
-
-    # Filter out zero-weight images
-    valid_pairs = [(img, w) for img, w in zip(images, weights) if w > 0.0]
-    if not valid_pairs:
-        # All weights are zero, return zeros
-        return cle.create_like(images[0])
-
-    # Start with first valid image
-    first_img, first_weight = valid_pairs[0]
-    if len(valid_pairs) == 1:
-        # Only one image with non-zero weight
-        gpu_result = cle.multiply_image_and_scalar(first_img, scalar=first_weight)
+        weights = [1.0 / n_slices] * n_slices
+    elif isinstance(weights, (list, tuple)):
+        # Convert tuple to list if needed
+        weights = list(weights)
+        if len(weights) != n_slices:
+            raise ValueError(f"Number of weights ({len(weights)}) must match number of slices ({n_slices})")
     else:
-        # Use add_images_weighted for pairs, then accumulate
-        gpu_composite = cle.multiply_image_and_scalar(first_img, scalar=first_weight)
-        total_weight = first_weight
+        raise TypeError(f"weights must be a list of values or None, got {type(weights)}: {weights}")
 
-        for img, weight in valid_pairs[1:]:
-            # Add this weighted image to the composite
-            gpu_composite = cle.add_images_weighted(
-                gpu_composite, img,
-                factor1=1.0, factor2=weight
-            )
-            total_weight += weight
+    # Normalize weights to sum to 1
+    weight_sum = sum(weights)
+    if weight_sum == 0:
+        raise ValueError("Sum of weights cannot be zero")
+    normalized_weights = [w / weight_sum for w in weights]
 
-        # Normalize by total weight
-        gpu_result = cle.multiply_image_and_scalar(gpu_composite, scalar=1.0/total_weight)
+    # Create result array with shape (1, Y, X)
+    result = cle.create((1, height, width), dtype=stack.dtype)
 
-    # Clip to valid range
-    gpu_clipped = cle.clip(gpu_result, min_intensity=0, max_intensity=65535)
+    # Initialize with zeros
+    cle.set(result, 0.0)
 
-    return gpu_clipped
+    # Add each weighted slice
+    for i, weight in enumerate(normalized_weights):
+        if weight > 0.0:
+            # Get slice i from the stack
+            slice_i = stack[i]  # This gives us a 2D slice
+
+            # Multiply slice by its weight
+            weighted_slice = cle.multiply_image_and_scalar(slice_i, scalar=weight)
+
+            # Add to result (need to handle 2D slice + 3D result)
+            # Extract the single slice from result for addition
+            result_slice = result[0]
+            result_slice = cle.add_images(result_slice, weighted_slice)
+
+            # Put it back (this might need adjustment based on pyclesperanto API)
+            result[0] = result_slice
+
+    return result
 
 @pyclesperanto_func
 def equalize_histogram_3d(
@@ -563,9 +524,6 @@ def equalize_histogram_3d(
         Equalized 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-
-    # Import pyclesperanto
-    import pyclesperanto as cle
 
     # Validate 3D array
     if len(stack.shape) != 3:
@@ -605,9 +563,6 @@ def equalize_histogram_per_slice(
         Equalized 3D pyclesperanto Array of shape (Z, Y, X)
     """
     _check_pyclesperanto_available()
-
-    # Import pyclesperanto
-    import pyclesperanto as cle
 
     # Validate 3D array
     if len(stack.shape) != 3:
@@ -690,17 +645,14 @@ def stack_percentile_normalize(
     Note: Uses min/max normalization instead of true percentiles due to
     pyclesperanto limitations. Kept for API compatibility with other processors.
     """
-    return stack_minmax_normalize(image, low_percentile, high_percentile, target_min, target_max)
+    return stack_minmax_normalize(image, target_min, target_max)
 
-@pyclesperanto_func
 def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1) -> "cle.Array":
     """
     Create a linear weight mask for blending images - GPU accelerated.
 
     Pure pyclesperanto implementation using GPU operations only.
     """
-    import pyclesperanto as cle
-
     # Create coordinate arrays for X and Y positions
     y_coords = cle.create((height, width), dtype=float)
     x_coords = cle.create((height, width), dtype=float)
@@ -747,7 +699,6 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
 
     return mask
 
-@pyclesperanto_func
 def create_weight_mask(shape: tuple, margin_ratio: float = 0.1) -> "cle.Array":
     """
     Create a weight mask for blending images - GPU accelerated.
@@ -764,3 +715,4 @@ def create_weight_mask(shape: tuple, margin_ratio: float = 0.1) -> "cle.Array":
 
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
+
