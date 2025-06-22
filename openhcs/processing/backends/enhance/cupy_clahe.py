@@ -28,7 +28,6 @@ def clahe_2d(
     """
     Optimized 2D CLAHE with vectorized bilinear interpolation.
     """
-    _validate_3d_array(image)
     
     result = cp.zeros_like(image)
     
@@ -315,7 +314,6 @@ def clahe_3d(
         adaptive_tiles: Whether to adapt tile size based on volume dimensions
         memory_efficient: Use chunked processing for large volumes
     """
-    _validate_3d_array(stack)
     
     depth, height, width = stack.shape
     

@@ -93,9 +93,10 @@ def _validate_3d_array(array: Any, name: str = "input") -> None:
 @cupy_func
 def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "cp.ndarray":
     """
-    Sharpen a 3D image using unsharp masking.
+    Sharpen a 3D image using unsharp masking - GPU PARALLELIZED.
 
-    This applies sharpening to each Z-slice independently.
+    This applies sharpening to each Z-slice independently using vectorized operations
+    for maximum GPU utilization. Normalization and rescaling are fully parallelized.
 
     Args:
         image: 3D CuPy array of shape (Z, Y, X)
@@ -110,34 +111,40 @@ def sharpen(image: "cp.ndarray", radius: float = 1.0, amount: float = 1.0) -> "c
     # Store original dtype
     dtype = image.dtype
 
-    # Process each Z-slice independently
-    result = cp.zeros_like(image, dtype=cp.float32)
+    # Convert to float32 for processing
+    image_float = image.astype(cp.float32)
 
-    for z in range(image.shape[0]):
-        # Convert to float for processing
-        slice_float = image[z].astype(cp.float32) / cp.max(image[z])
+    # Vectorized per-slice normalization - GPU PARALLELIZED
+    # Get max value per slice: shape (Z, 1, 1) for broadcasting
+    max_per_slice = cp.max(image_float, axis=(1, 2), keepdims=True)
+    image_norm = image_float / max_per_slice
 
-        # Create blurred version for unsharp mask
-        # Use CuPy's ndimage.gaussian_filter instead of scikit-image's filters.gaussian
-        blurred = ndimage.gaussian_filter(slice_float, sigma=radius)
+    # Apply 3D Gaussian blur with sigma_z=0 for slice-wise processing - GPU PARALLELIZED
+    # This processes all slices simultaneously while keeping Z-slices independent
+    blurred = ndimage.gaussian_filter(image_norm, sigma=(0, radius, radius))
 
-        # Apply unsharp mask: original + amount * (original - blurred)
-        sharpened = slice_float + amount * (slice_float - blurred)
+    # Apply unsharp mask: original + amount * (original - blurred) - GPU PARALLELIZED
+    sharpened = image_norm + amount * (image_norm - blurred)
 
-        # Clip to valid range
-        sharpened = cp.clip(sharpened, 0, 1.0)
+    # Clip to valid range - GPU PARALLELIZED
+    sharpened = cp.clip(sharpened, 0, 1.0)
 
-        # Scale back to original range
-        # CuPy doesn't have exposure.rescale_intensity, so implement manually
-        min_val = cp.min(sharpened)
-        max_val = cp.max(sharpened)
-        if max_val > min_val:
-            sharpened = (sharpened - min_val) * 65535 / (max_val - min_val)
+    # Vectorized rescaling back to original range - GPU PARALLELIZED
+    min_per_slice = cp.min(sharpened, axis=(1, 2), keepdims=True)
+    max_per_slice = cp.max(sharpened, axis=(1, 2), keepdims=True)
 
-        result[z] = sharpened
+    # Avoid division by zero using broadcasting
+    range_per_slice = max_per_slice - min_per_slice
+    # Only rescale slices where max > min
+    valid_range = range_per_slice > 0
+    sharpened_rescaled = cp.where(
+        valid_range,
+        (sharpened - min_per_slice) * 65535 / range_per_slice,
+        sharpened * 65535
+    )
 
     # Convert back to original dtype
-    return result.astype(dtype)
+    return sharpened_rescaled.astype(dtype)
 
 @cupy_func
 def percentile_normalize(
@@ -150,7 +157,9 @@ def percentile_normalize(
     """
     Normalize a 3D image using percentile-based contrast stretching.
 
-    This applies normalization to each Z-slice independently.
+    This applies normalization to each Z-slice independently using slice-by-slice
+    processing for algorithmic reasons (each slice needs different percentile values).
+    Each slice operation is GPU parallelized across Y,X dimensions.
 
     Args:
         image: 3D CuPy array of shape (Z, Y, X)
@@ -165,6 +174,8 @@ def percentile_normalize(
     _validate_3d_array(image)
 
     # Process each Z-slice independently - MATCH NUMPY EXACTLY
+    # NOTE: For loop is ALGORITHMICALLY NECESSARY here because each slice needs
+    # different percentile values. Cannot be vectorized without changing the algorithm.
     result = cp.zeros_like(image, dtype=cp.float32)  # Use float32 like NumPy
 
     for z in range(image.shape[0]):
@@ -310,10 +321,10 @@ def apply_mask(image: "cp.ndarray", mask: "cp.ndarray") -> "cp.ndarray":
                 f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
             )
 
-        # Apply 2D mask to each Z-slice - MATCH NUMPY EXACTLY
-        result = cp.zeros_like(image)
-        for z in range(image.shape[0]):
-            result[z] = image[z].astype(cp.float32) * mask.astype(cp.float32)
+        # Apply 2D mask to all Z-slices simultaneously using broadcasting - GPU PARALLELIZED
+        # Broadcasting mask from (Y, X) to (1, Y, X) allows vectorized operation across all slices
+        mask_3d = mask[None, :, :]  # Shape: (1, Y, X)
+        result = image.astype(cp.float32) * mask_3d.astype(cp.float32)
 
         return result.astype(image.dtype)
 
@@ -628,7 +639,9 @@ def tophat(
     """
     Apply white top-hat filter to a 3D image for background removal.
 
-    This applies the filter to each Z-slice independently - IMPROVED MATCH TO NUMPY.
+    This applies the filter to each Z-slice independently using slice-by-slice
+    processing for algorithmic reasons (complex multi-step processing with
+    slice-specific intermediate results). Each slice operation is GPU parallelized.
 
     Args:
         image: 3D CuPy array of shape (Z, Y, X)
@@ -643,6 +656,9 @@ def tophat(
     _validate_3d_array(image)
 
     # Process each Z-slice independently - IMPROVED MATCH TO NUMPY
+    # NOTE: For loop is ALGORITHMICALLY NECESSARY here due to complex multi-step
+    # processing (downsample, morphology, upsample, subtract) with slice-specific
+    # intermediate results. Vectorization would require significant algorithm restructuring.
     result = cp.zeros_like(image)
 
     for z in range(image.shape[0]):
@@ -681,560 +697,176 @@ def tophat(
 
     return result
 
-#@cupy_func
-#def clahe_2d(
-#    image: "cp.ndarray",
-#    clip_limit: float = 2.0,
-#    tile_grid_size: tuple = None,
-#    nbins: int = None,
-#    adaptive_bins: bool = True,
-#    adaptive_tiles: bool = True
-#) -> "cp.ndarray":
-#    """
-#    Fixed version of 2D CLAHE with proper bilinear interpolation.
-#    """
-#    _validate_3d_array(image)
-#    
-#    result = cp.zeros_like(image)
-#    
-#    for z in range(image.shape[0]):
-#        slice_2d = image[z]
-#        height, width = slice_2d.shape
-#        
-#        # Adaptive parameters (same as before)
-#        if nbins is None:
-#            if adaptive_bins:
-#                data_range = cp.max(slice_2d) - cp.min(slice_2d)
-#                adaptive_nbins = min(512, max(64, int(cp.sqrt(data_range))))
-#            else:
-#                adaptive_nbins = 256
-#        else:
-#            adaptive_nbins = nbins
-#            
-#        if tile_grid_size is None:
-#            if adaptive_tiles:
-#                target_tile_size = 80
-#                adaptive_tile_rows = max(2, min(16, height // target_tile_size))
-#                adaptive_tile_cols = max(2, min(16, width // target_tile_size))
-#                adaptive_tile_grid = (adaptive_tile_rows, adaptive_tile_cols)
-#            else:
-#                adaptive_tile_grid = (8, 8)
-#        else:
-#            adaptive_tile_grid = tile_grid_size
-#            
-#        result[z] = _clahe_2d(
-#            slice_2d, clip_limit, adaptive_tile_grid, adaptive_nbins
-#        )
-#    
-#    return result
-#
-#def _clahe_2d(
-#    image: "cp.ndarray",
-#    clip_limit: float,
-#    tile_grid_size: tuple,
-#    nbins: int
-#) -> "cp.ndarray":
-#    """
-#    Fixed CLAHE implementation with proper pixel-level bilinear interpolation.
-#    """
-#    if image.ndim != 2:
-#        raise ValueError("Input must be 2D array")
-#    
-#    height, width = image.shape
-#    tile_rows, tile_cols = tile_grid_size
-#    
-#    # Calculate tile dimensions
-#    tile_height = height // tile_rows
-#    tile_width = width // tile_cols
-#    
-#    # Ensure image dimensions are divisible by tile dimensions
-#    crop_height = tile_height * tile_rows
-#    crop_width = tile_width * tile_cols
-#    image_crop = image[:crop_height, :crop_width]
-#    
-#    # Calculate actual clip limit based on tile size
-#    actual_clip_limit = max(1, int(clip_limit * tile_height * tile_width / nbins))
-#    
-#    # Determine value range for histogram binning
-#    min_val = cp.min(image)
-#    max_val = cp.max(image)
-#    value_range = (float(min_val), float(max_val))
-#    
-#    # Calculate transformation functions (CDFs) for each tile center
-#    tile_cdfs = cp.zeros((tile_rows, tile_cols, nbins), dtype=cp.float32)
-#    bin_edges = cp.linspace(min_val, max_val, nbins + 1)
-#    
-#    for row in range(tile_rows):
-#        for col in range(tile_cols):
-#            # Extract tile
-#            y_start = row * tile_height
-#            y_end = (row + 1) * tile_height
-#            x_start = col * tile_width  
-#            x_end = (col + 1) * tile_width
-#            
-#            tile = image_crop[y_start:y_end, x_start:x_end]
-#            
-#            # Compute histogram
-#            if max_val > min_val:
-#                hist, _ = cp.histogram(tile, bins=nbins, range=value_range)
-#            else:
-#                hist = cp.zeros(nbins, dtype=cp.int32)
-#                hist[nbins // 2] = tile.size
-#            
-#            # Clip and redistribute histogram
-#            hist = _clip_histogram(hist, actual_clip_limit)
-#            
-#            # Calculate CDF (this becomes the transformation function)
-#            cdf = cp.cumsum(hist).astype(cp.float32)
-#            if cdf[-1] > 0:
-#                # Normalize CDF to output range
-#                cdf = (cdf / cdf[-1]) * (max_val - min_val) + min_val
-#            else:
-#                cdf = cp.full_like(cdf, min_val)
-#            
-#            tile_cdfs[row, col, :] = cdf
-#    
-#    # Apply pixel-level bilinear interpolation
-#    result = _apply_pixel_level_interpolation(
-#        image_crop, tile_cdfs, tile_rows, tile_cols, 
-#        tile_height, tile_width, bin_edges, min_val, max_val
-#    )
-#    
-#    # Handle original image size if needed
-#    if result.shape != image.shape:
-#        full_result = cp.zeros_like(image, dtype=result.dtype)
-#        full_result[:crop_height, :crop_width] = result
-#        # Fill remaining areas
-#        if crop_height < height:
-#            full_result[crop_height:, :crop_width] = result[-1:, :]
-#        if crop_width < width:
-#            full_result[:crop_height, crop_width:] = result[:, -1:]
-#        if crop_height < height and crop_width < width:
-#            full_result[crop_height:, crop_width:] = result[-1, -1]
-#        result = full_result
-#    
-#    return result.astype(image.dtype)
-#
-#
-#@cupy_func
-#def clahe_3d(
-#    stack: "cp.ndarray",
-#    clip_limit: float = 2.0,
-#    tile_grid_size_3d: tuple = None,
-#    nbins: int = None,
-#    adaptive_bins: bool = True,
-#    adaptive_tiles: bool = True
-#) -> "cp.ndarray":
-#    """
-#    Fixed version of true 3D CLAHE with proper trilinear interpolation.
-#    """
-#    _validate_3d_array(stack)
-#    
-#    depth, height, width = stack.shape
-#    
-#    # Adaptive parameters (same as before)
-#    if nbins is None:
-#        if adaptive_bins:
-#            data_range = cp.max(stack) - cp.min(stack)
-#            adaptive_nbins = min(512, max(128, int(cp.cbrt(data_range * 64))))
-#        else:
-#            adaptive_nbins = 256
-#    else:
-#        adaptive_nbins = nbins
-#        
-#    if tile_grid_size_3d is None:
-#        if adaptive_tiles:
-#            target_tile_size = 48
-#            adaptive_z_tiles = max(1, min(depth // 4, depth // target_tile_size))
-#            adaptive_y_tiles = max(2, min(8, height // target_tile_size))
-#            adaptive_x_tiles = max(2, min(8, width // target_tile_size))
-#            adaptive_tile_grid_3d = (adaptive_z_tiles, adaptive_y_tiles, adaptive_x_tiles)
-#        else:
-#            adaptive_tile_grid_3d = (max(1, depth // 8), 4, 4)
-#    else:
-#        adaptive_tile_grid_3d = tile_grid_size_3d
-#    
-#    return _clahe_3d(stack, clip_limit, adaptive_tile_grid_3d, adaptive_nbins)
-#
-#@cupy_func
-#def _clahe_3d(
-#    stack: "cp.ndarray",
-#    clip_limit: float,
-#    tile_grid_size_3d: tuple,
-#    nbins: int
-#) -> "cp.ndarray":
-#    """
-#    Fixed 3D CLAHE implementation with proper voxel-level trilinear interpolation.
-#    """
-#    depth, height, width = stack.shape
-#    tile_z, tile_y, tile_x = tile_grid_size_3d
-#    
-#    # Calculate 3D tile dimensions
-#    tile_depth = max(1, depth // tile_z)
-#    tile_height = max(4, height // tile_y)
-#    tile_width = max(4, width // tile_x)
-#    
-#    # Recalculate actual number of tiles
-#    actual_tile_z = depth // tile_depth
-#    actual_tile_y = height // tile_y
-#    actual_tile_x = width // tile_x
-#    
-#    # Calculate crop dimensions
-#    crop_depth = tile_depth * actual_tile_z
-#    crop_height = tile_height * actual_tile_y
-#    crop_width = tile_width * actual_tile_x
-#    stack_crop = stack[:crop_depth, :crop_height, :crop_width]
-#    
-#    # Adaptive clip limit based on 3D tile volume
-#    voxels_per_tile = tile_depth * tile_height * tile_width
-#    actual_clip_limit = max(1, int(clip_limit * voxels_per_tile / nbins))
-#    
-#    # Determine value range for histogram binning
-#    min_val = cp.min(stack)
-#    max_val = cp.max(stack)
-#    value_range = (float(min_val), float(max_val))
-#    
-#    # Calculate transformation functions (CDFs) for each 3D tile center
-#    tile_cdfs = cp.zeros((actual_tile_z, actual_tile_y, actual_tile_x, nbins), dtype=cp.float32)
-#    bin_edges = cp.linspace(min_val, max_val, nbins + 1)
-#    
-#    for z_idx in range(actual_tile_z):
-#        for y_idx in range(actual_tile_y):
-#            for x_idx in range(actual_tile_x):
-#                # Extract 3D tile
-#                z_start = z_idx * tile_depth
-#                z_end = (z_idx + 1) * tile_depth
-#                y_start = y_idx * tile_height
-#                y_end = (y_idx + 1) * tile_height
-#                x_start = x_idx * tile_width
-#                x_end = (x_idx + 1) * tile_width
-#                
-#                tile_3d = stack_crop[z_start:z_end, y_start:y_end, x_start:x_end]
-#                
-#                # Compute 3D histogram
-#                if max_val > min_val:
-#                    hist, _ = cp.histogram(tile_3d.flatten(), bins=nbins, range=value_range)
-#                else:
-#                    hist = cp.zeros(nbins, dtype=cp.int32)
-#                    hist[nbins // 2] = tile_3d.size
-#                
-#                # Clip and redistribute histogram
-#                hist = _clip_histogram(hist, actual_clip_limit)
-#                
-#                # Calculate CDF (transformation function)
-#                cdf = cp.cumsum(hist).astype(cp.float32)
-#                if cdf[-1] > 0:
-#                    # Normalize CDF to output range
-#                    cdf = (cdf / cdf[-1]) * (max_val - min_val) + min_val
-#                else:
-#                    cdf = cp.full_like(cdf, min_val)
-#                
-#                tile_cdfs[z_idx, y_idx, x_idx, :] = cdf
-#    
-#    # Apply voxel-level trilinear interpolation
-#    result = _apply_voxel_level_trilinear_interpolation(
-#        stack_crop, tile_cdfs,
-#        actual_tile_z, actual_tile_y, actual_tile_x,
-#        tile_depth, tile_height, tile_width,
-#        bin_edges, min_val, max_val
-#    )
-#    
-#    # Handle original stack size if needed
-#    if result.shape != stack.shape:
-#        full_result = cp.zeros_like(stack, dtype=result.dtype)
-#        full_result[:crop_depth, :crop_height, :crop_width] = result
-#        
-#        # Fill remaining regions by replicating edge values
-#        if crop_depth < depth:
-#            full_result[crop_depth:, :crop_height, :crop_width] = result[-1:, :, :]
-#        if crop_height < height:
-#            full_result[:crop_depth, crop_height:, :crop_width] = result[:, -1:, :]
-#        if crop_width < width:
-#            full_result[:crop_depth, :crop_height, crop_width:] = result[:, :, -1:]
-#            
-#        # Handle corner cases
-#        if crop_depth < depth and crop_height < height:
-#            full_result[crop_depth:, crop_height:, :crop_width] = result[-1, -1:, :]
-#        if crop_depth < depth and crop_width < width:
-#            full_result[crop_depth:, :crop_height, crop_width:] = result[-1:, :, -1:]
-#        if crop_height < height and crop_width < width:
-#            full_result[:crop_depth, crop_height:, crop_width:] = result[:, -1:, -1:]
-#        if crop_depth < depth and crop_height < height and crop_width < width:
-#            full_result[crop_depth:, crop_height:, crop_width:] = result[-1, -1, -1]
-#            
-#        result = full_result
-#    
-#    return result.astype(stack.dtype)
-#
-#
-#def _apply_pixel_level_interpolation(
-#    image: "cp.ndarray",
-#    tile_cdfs: "cp.ndarray",
-#    tile_rows: int,
-#    tile_cols: int,
-#    tile_height: int,
-#    tile_width: int,
-#    bin_edges: "cp.ndarray",
-#    min_val: float,
-#    max_val: float
-#) -> "cp.ndarray":
-#    """
-#    Apply proper pixel-level bilinear interpolation for CLAHE.
-#    
-#    Each pixel gets its value by interpolating between the transformation
-#    functions (CDFs) of surrounding tile centers.
-#    """
-#    height, width = image.shape
-#    result = cp.zeros_like(image, dtype=cp.float32)
-#    
-#    # Calculate tile center positions
-#    tile_center_y = cp.arange(tile_rows) * tile_height + tile_height // 2
-#    tile_center_x = cp.arange(tile_cols) * tile_width + tile_width // 2
-#    
-#    # Process each pixel
-#    for y in range(height):
-#        for x in range(width):
-#            pixel_val = image[y, x]
-#            
-#            # Find which bin this pixel value belongs to
-#            if max_val > min_val:
-#                bin_idx = cp.searchsorted(bin_edges[1:], pixel_val)
-#                bin_idx = min(bin_idx, len(bin_edges) - 2)
-#            else:
-#                bin_idx = len(bin_edges) // 2
-#            
-#            # Find surrounding tile centers
-#            # Find the tile centers that surround this pixel
-#            tile_y_low = cp.searchsorted(tile_center_y, y) - 1
-#            tile_x_low = cp.searchsorted(tile_center_x, x) - 1
-#            
-#            tile_y_low = max(0, min(tile_y_low, tile_rows - 2))
-#            tile_x_low = max(0, min(tile_x_low, tile_cols - 2))
-#            
-#            tile_y_high = tile_y_low + 1
-#            tile_x_high = tile_x_low + 1
-#            
-#            # Get the 4 surrounding transformation values
-#            val_tl = tile_cdfs[tile_y_low, tile_x_low, bin_idx]    # top-left
-#            val_tr = tile_cdfs[tile_y_low, tile_x_high, bin_idx]   # top-right
-#            val_bl = tile_cdfs[tile_y_high, tile_x_low, bin_idx]   # bottom-left
-#            val_br = tile_cdfs[tile_y_high, tile_x_high, bin_idx]  # bottom-right
-#            
-#            # Calculate interpolation weights based on position
-#            center_y_low = tile_center_y[tile_y_low]
-#            center_y_high = tile_center_y[tile_y_high]
-#            center_x_low = tile_center_x[tile_x_low]
-#            center_x_high = tile_center_x[tile_x_high]
-#            
-#            # Bilinear interpolation weights
-#            if center_y_high != center_y_low:
-#                wy = (y - center_y_low) / (center_y_high - center_y_low)
-#            else:
-#                wy = 0.0
-#                
-#            if center_x_high != center_x_low:
-#                wx = (x - center_x_low) / (center_x_high - center_x_low)
-#            else:
-#                wx = 0.0
-#            
-#            # Clamp weights to [0, 1]
-#            wy = max(0.0, min(1.0, wy))
-#            wx = max(0.0, min(1.0, wx))
-#            
-#            # Bilinear interpolation
-#            val_top = (1 - wx) * val_tl + wx * val_tr
-#            val_bottom = (1 - wx) * val_bl + wx * val_br
-#            interpolated_val = (1 - wy) * val_top + wy * val_bottom
-#            
-#            result[y, x] = interpolated_val
-#    
-#    return result
-#
-#def _apply_voxel_level_trilinear_interpolation(
-#    stack: "cp.ndarray",
-#    tile_cdfs: "cp.ndarray",
-#    tile_z: int,
-#    tile_y: int,
-#    tile_x: int,
-#    tile_depth: int,
-#    tile_height: int,
-#    tile_width: int,
-#    bin_edges: "cp.ndarray",
-#    min_val: float,
-#    max_val: float
-#) -> "cp.ndarray":
-#    """
-#    Apply proper voxel-level trilinear interpolation for 3D CLAHE.
-#    
-#    Each voxel gets its value by trilinearly interpolating between the 
-#    transformation functions (CDFs) of the 8 surrounding 3D tile centers.
-#    """
-#    depth, height, width = stack.shape
-#    result = cp.zeros_like(stack, dtype=cp.float32)
-#    
-#    # Calculate 3D tile center positions
-#    tile_center_z = cp.arange(tile_z) * tile_depth + tile_depth // 2
-#    tile_center_y = cp.arange(tile_y) * tile_height + tile_height // 2
-#    tile_center_x = cp.arange(tile_x) * tile_width + tile_width // 2
-#    
-#    # Process each voxel
-#    for z in range(depth):
-#        for y in range(height):
-#            for x in range(width):
-#                voxel_val = stack[z, y, x]
-#                
-#                # Find which bin this voxel value belongs to
-#                if max_val > min_val:
-#                    bin_idx = cp.searchsorted(bin_edges[1:], voxel_val)
-#                    bin_idx = min(bin_idx, len(bin_edges) - 2)
-#                else:
-#                    bin_idx = len(bin_edges) // 2
-#                
-#                # Find surrounding tile centers in 3D
-#                tile_z_low = cp.searchsorted(tile_center_z, z) - 1
-#                tile_y_low = cp.searchsorted(tile_center_y, y) - 1
-#                tile_x_low = cp.searchsorted(tile_center_x, x) - 1
-#                
-#                # Clamp to valid range
-#                tile_z_low = max(0, min(tile_z_low, tile_z - 2)) if tile_z > 1 else 0
-#                tile_y_low = max(0, min(tile_y_low, tile_y - 2))
-#                tile_x_low = max(0, min(tile_x_low, tile_x - 2))
-#                
-#                tile_z_high = min(tile_z_low + 1, tile_z - 1)
-#                tile_y_high = tile_y_low + 1
-#                tile_x_high = tile_x_low + 1
-#                
-#                # Get the 8 surrounding transformation values for trilinear interpolation
-#                # Front face (z_low)
-#                val_000 = tile_cdfs[tile_z_low, tile_y_low, tile_x_low, bin_idx]     # front-bottom-left
-#                val_001 = tile_cdfs[tile_z_low, tile_y_low, tile_x_high, bin_idx]    # front-bottom-right
-#                val_010 = tile_cdfs[tile_z_low, tile_y_high, tile_x_low, bin_idx]    # front-top-left
-#                val_011 = tile_cdfs[tile_z_low, tile_y_high, tile_x_high, bin_idx]   # front-top-right
-#                
-#                # Back face (z_high)
-#                val_100 = tile_cdfs[tile_z_high, tile_y_low, tile_x_low, bin_idx]    # back-bottom-left
-#                val_101 = tile_cdfs[tile_z_high, tile_y_low, tile_x_high, bin_idx]   # back-bottom-right
-#                val_110 = tile_cdfs[tile_z_high, tile_y_high, tile_x_low, bin_idx]   # back-top-left
-#                val_111 = tile_cdfs[tile_z_high, tile_y_high, tile_x_high, bin_idx]  # back-top-right
-#                
-#                # Calculate interpolation weights based on position
-#                center_z_low = tile_center_z[tile_z_low]
-#                center_z_high = tile_center_z[tile_z_high]
-#                center_y_low = tile_center_y[tile_y_low]
-#                center_y_high = tile_center_y[tile_y_high]
-#                center_x_low = tile_center_x[tile_x_low]
-#                center_x_high = tile_center_x[tile_x_high]
-#                
-#                # Trilinear interpolation weights
-#                if center_z_high != center_z_low:
-#                    wz = (z - center_z_low) / (center_z_high - center_z_low)
-#                else:
-#                    wz = 0.0
-#                    
-#                if center_y_high != center_y_low:
-#                    wy = (y - center_y_low) / (center_y_high - center_y_low)
-#                else:
-#                    wy = 0.0
-#                    
-#                if center_x_high != center_x_low:
-#                    wx = (x - center_x_low) / (center_x_high - center_x_low)
-#                else:
-#                    wx = 0.0
-#                
-#                # Clamp weights to [0, 1]
-#                wz = max(0.0, min(1.0, wz))
-#                wy = max(0.0, min(1.0, wy))
-#                wx = max(0.0, min(1.0, wx))
-#                
-#                # Trilinear interpolation
-#                # Interpolate along x-axis for each face
-#                val_00 = (1 - wx) * val_000 + wx * val_001  # front-bottom
-#                val_01 = (1 - wx) * val_010 + wx * val_011  # front-top
-#                val_10 = (1 - wx) * val_100 + wx * val_101  # back-bottom
-#                val_11 = (1 - wx) * val_110 + wx * val_111  # back-top
-#                
-#                # Interpolate along y-axis for each face
-#                val_0 = (1 - wy) * val_00 + wy * val_01  # front face
-#                val_1 = (1 - wy) * val_10 + wy * val_11  # back face
-#                
-#                # Final interpolation along z-axis
-#                interpolated_val = (1 - wz) * val_0 + wz * val_1
-#                
-#                result[z, y, x] = interpolated_val
-#    
-#    return result
-#
-#def _clip_histogram(hist: "cp.ndarray", clip_limit: int) -> "cp.ndarray":
-#    """
-#    Simplified histogram clipping with uniform redistribution.
-#    
-#    Args:
-#        hist: Input histogram array
-#        clip_limit: Maximum allowed value for any histogram bin
-#        
-#    Returns:
-#        Clipped and redistributed histogram
-#    """
-#    if clip_limit <= 0:
-#        return hist
-#    
-#    # Find excess above clip limit
-#    excess = cp.maximum(hist - clip_limit, 0)
-#    total_excess = cp.sum(excess)
-#    
-#    # Clip the histogram
-#    clipped_hist = cp.minimum(hist, clip_limit)
-#    
-#    # Redistribute excess uniformly
-#    if total_excess > 0:
-#        nbins = len(hist)
-#        redistribution = total_excess // nbins
-#        remainder = total_excess % nbins
-#        
-#        # Add uniform redistribution to all bins
-#        clipped_hist = clipped_hist + redistribution
-#        
-#        # Distribute remainder to first bins
-#        if remainder > 0:
-#            clipped_hist[:remainder] += 1
-#            
-#        # Final clipping in case redistribution caused overflow
-#        clipped_hist = cp.minimum(clipped_hist, clip_limit)
-#    
-#    return clipped_hist
-#
-#def _apply_clahe_mapping(
-#    tile: "cp.ndarray",
-#    tile_mappings: "cp.ndarray", 
-#    row: int,
-#    col: int,
-#    tile_rows: int,
-#    tile_cols: int,
-#    nbins: int,
-#    max_val: float
-#) -> "cp.ndarray":
-#    """
-#    Apply CLAHE mapping with bilinear interpolation between neighboring tiles.
-#    """
-#    # Convert pixel values to bin indices
-#    if max_val > 0:
-#        bin_indices = ((tile.astype(cp.float32) / max_val) * (nbins - 1)).astype(cp.int32)
-#        bin_indices = cp.clip(bin_indices, 0, nbins - 1)
-#    else:
-#        bin_indices = cp.zeros_like(tile, dtype=cp.int32)
-#    
-#    # For interior tiles, use bilinear interpolation
-#    if 0 < row < tile_rows - 1 and 0 < col < tile_cols - 1:
-#        # Get the four surrounding tile mappings
-#        tl = tile_mappings[row, col, bin_indices]       # top-left
-#        tr = tile_mappings[row, col + 1, bin_indices]   # top-right  
-#        bl = tile_mappings[row + 1, col, bin_indices]   # bottom-left
-#        br = tile_mappings[row + 1, col + 1, bin_indices] # bottom-right
-#        
-#        # Simple bilinear interpolation
-#        result = 0.25 * (tl + tr + bl + br)
-#    else:
-#        # For edge/corner tiles, just use the tile's own mapping
-#        result = tile_mappings[row, col, bin_indices]
-#    
-#    return result
+# Define ElementwiseKernel for true parallel 2D Sobel processing
+_sobel_2d_parallel = cp.ElementwiseKernel(
+    'raw T input, int32 Y, int32 X, int32 mode, T cval',
+    'T output',
+    '''
+    // Calculate which slice, row, col this thread handles
+    int z = i / (Y * X);
+    int y = (i % (Y * X)) / X;
+    int x = i % X;
+
+    // Calculate base index for this slice
+    int slice_base = z * Y * X;
+
+    // Helper function to get pixel with configurable boundary handling
+    auto get_pixel = [&](int py, int px) -> T {
+        if (mode == 0) {  // constant
+            if (py < 0 || py >= Y || px < 0 || px >= X) return cval;
+        } else if (mode == 1) {  // reflect
+            py = py < 0 ? -py : (py >= Y ? 2*Y - py - 2 : py);
+            px = px < 0 ? -px : (px >= X ? 2*X - px - 2 : px);
+        } else if (mode == 2) {  // nearest
+            py = py < 0 ? 0 : (py >= Y ? Y-1 : py);
+            px = px < 0 ? 0 : (px >= X ? X-1 : px);
+        } else if (mode == 3) {  // wrap
+            py = py < 0 ? py + Y : (py >= Y ? py - Y : py);
+            px = px < 0 ? px + X : (px >= X ? px - X : px);
+        }
+        return input[slice_base + py * X + px];
+    };
+
+    // Sobel X kernel: [[-1,0,1],[-2,0,2],[-1,0,1]] (within slice only)
+    T gx = -get_pixel(y-1, x-1) + get_pixel(y-1, x+1) +
+           -2*get_pixel(y, x-1) + 2*get_pixel(y, x+1) +
+           -get_pixel(y+1, x-1) + get_pixel(y+1, x+1);
+
+    // Sobel Y kernel: [[-1,-2,-1],[0,0,0],[1,2,1]] (within slice only)
+    T gy = -get_pixel(y-1, x-1) - 2*get_pixel(y-1, x) - get_pixel(y-1, x+1) +
+            get_pixel(y+1, x-1) + 2*get_pixel(y+1, x) + get_pixel(y+1, x+1);
+
+    // Calculate magnitude
+    output = sqrt(gx*gx + gy*gy);
+    ''',
+    'sobel_2d_parallel'
+)
+
+@cupy_func
+def sobel_2d_vectorized(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+    """
+    Apply 2D Sobel edge detection to all slices simultaneously - TRUE GPU PARALLELIZED.
+
+    Each slice is treated as an independent 2D grayscale image. All pixels across
+    all slices are processed in parallel on the GPU with slice independence guaranteed.
+    Uses ElementwiseKernel for maximum performance and true parallelization.
+
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        mode: Boundary handling mode ('constant', 'reflect', 'nearest', 'wrap')
+        cval: Constant value for 'constant' mode
+
+    Returns:
+        Edge magnitude as 3D CuPy array of shape (Z, Y, X)
+    """
+    _validate_3d_array(image)
+
+    # Map mode string to integer
+    mode_map = {'constant': 0, 'reflect': 1, 'nearest': 2, 'wrap': 3}
+    if mode not in mode_map:
+        raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(mode_map.keys())}")
+
+    mode_int = mode_map[mode]
+    Z, Y, X = image.shape
+    input_float = image.astype(cp.float32)
+    output = cp.zeros_like(input_float)
+
+    # Launch parallel kernel - each thread processes one pixel
+    _sobel_2d_parallel(input_float, Y, X, mode_int, cp.float32(cval), output)
+
+    return output.astype(image.dtype)
+
+@cupy_func
+def sobel_3d_voxel(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+    """
+    Apply true 3D voxel Sobel edge detection including Z-axis gradients - GPU PARALLELIZED.
+
+    This computes gradients in all three spatial dimensions (X, Y, Z) for true
+    volumetric edge detection. Useful for 3D structure analysis where Z-dimension
+    has spatial meaning (not just independent slices).
+
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        mode: Boundary handling mode ('constant', 'reflect', 'nearest', 'wrap', 'mirror')
+        cval: Constant value for 'constant' mode
+
+    Returns:
+        3D edge magnitude as 3D CuPy array of shape (Z, Y, X)
+    """
+    _validate_3d_array(image)
+
+    # Convert to float32 for processing
+    image_float = image.astype(cp.float32)
+
+    # Apply Sobel filters in all three directions - GPU PARALLELIZED
+    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode, cval=cval)  # X-direction gradients
+    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode, cval=cval)  # Y-direction gradients
+    sobel_z = ndimage.sobel(image_float, axis=0, mode=mode, cval=cval)  # Z-direction gradients
+
+    # Calculate 3D magnitude - GPU PARALLELIZED
+    magnitude = cp.sqrt(sobel_x**2 + sobel_y**2 + sobel_z**2)
+
+    return magnitude.astype(image.dtype)
+
+@cupy_func
+def sobel_components(image: "cp.ndarray", include_z: bool = False, mode: str = "reflect", cval: float = 0.0) -> tuple:
+    """
+    Return individual Sobel gradient components - GPU PARALLELIZED.
+
+    This provides access to directional gradients for advanced analysis.
+    Useful when you need to analyze edge orientation or directional information.
+
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        include_z: Whether to include Z-direction gradients (3D analysis)
+        mode: Boundary handling mode ('constant', 'reflect', 'nearest', 'wrap', 'mirror')
+        cval: Constant value for 'constant' mode
+
+    Returns:
+        Tuple of gradient components:
+        - If include_z=False: (sobel_x, sobel_y) - 2D gradients per slice
+        - If include_z=True: (sobel_x, sobel_y, sobel_z) - 3D gradients
+    """
+    _validate_3d_array(image)
+
+    # Convert to float32 for processing
+    image_float = image.astype(cp.float32)
+
+    # Apply Sobel filters - GPU PARALLELIZED
+    sobel_x = ndimage.sobel(image_float, axis=2, mode=mode, cval=cval).astype(image.dtype)  # X-direction
+    sobel_y = ndimage.sobel(image_float, axis=1, mode=mode, cval=cval).astype(image.dtype)  # Y-direction
+
+    if include_z:
+        sobel_z = ndimage.sobel(image_float, axis=0, mode=mode, cval=cval).astype(image.dtype)  # Z-direction
+        return sobel_x, sobel_y, sobel_z
+    else:
+        return sobel_x, sobel_y
+
+@cupy_func
+def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+    """
+    Compute edge magnitude using specified method - GPU PARALLELIZED.
+
+    This dispatcher function provides a unified interface for different Sobel
+    approaches, following the pattern of create_projection.
+
+    Args:
+        image: 3D CuPy array of shape (Z, Y, X)
+        method: Edge detection method
+            - "2d": 2D Sobel applied to each slice independently (slice-wise)
+            - "3d": True 3D voxel Sobel including Z-axis gradients (volumetric)
+        mode: Boundary handling mode ('constant', 'reflect', 'nearest', 'wrap', 'mirror')
+        cval: Constant value for 'constant' mode
+
+    Returns:
+        Edge magnitude as 3D CuPy array of shape (Z, Y, X)
+    """
+    _validate_3d_array(image)
+
+    if method == "2d":
+        return sobel_2d_vectorized(image, mode=mode, cval=cval)
+    elif method == "3d":
+        return sobel_3d_voxel(image, mode=mode, cval=cval)
+    else:
+        # FAIL FAST: No fallback edge detection methods
+        raise ValueError(f"Unknown edge detection method: {method}. Valid methods: 2d, 3d")
