@@ -1,0 +1,751 @@
+"""
+Enhanced file browser using textual-universal-directorytree with OpenHCS FileManager.
+
+This provides a more robust file browser experience using the mature
+textual-universal-directorytree widget adapted for OpenHCS backends.
+"""
+
+import logging
+from pathlib import Path
+from typing import Optional, Set, List, Dict, Callable
+from enum import Enum
+
+from textual import on
+from textual.app import ComposeResult
+from textual.containers import Container, Horizontal, Vertical, ScrollableContainer, VerticalScroll
+from textual.widgets import Button, DirectoryTree, Static, Checkbox, Input
+
+from openhcs.constants.constants import Backend
+from openhcs.io.filemanager import FileManager
+from openhcs.textual_tui.adapters.universal_directorytree import OpenHCSDirectoryTree
+from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
+from openhcs.textual_tui.utils.path_cache import PathCacheKey
+from openhcs.textual_tui.services.file_browser_service import SelectionMode
+
+logger = logging.getLogger(__name__)
+
+
+class BrowserMode(Enum):
+    """Browser operation mode."""
+    LOAD = "load"
+    SAVE = "save"
+
+
+class FileBrowserWindow(BaseOpenHCSWindow):
+    """
+    Enhanced file browser window using OpenHCS DirectoryTree adapter with textual-window system.
+
+    This provides a more robust file browsing experience using the mature
+    textual-universal-directorytree widget adapted to work with OpenHCS's
+    FileManager backend system.
+    """
+
+    DEFAULT_CSS = """
+    FileBrowserWindow {
+        width: 80; height: 30;
+        min-width: 60; min-height: 25;
+    }
+    FileBrowserWindow #content_pane {
+        padding: 0;  /* Remove padding for compact layout */
+    }
+
+    /* Bottom area should have minimal height */
+    FileBrowserWindow #bottom_area {
+        height: auto;
+        max-height: 10;  /* Slightly more space for horizontal buttons + selection area */
+    }
+
+    /* Buttons panel - single horizontal row */
+    FileBrowserWindow #buttons_panel {
+        height: 1;      /* Exactly 1 row */
+        width: 100%;
+    }
+
+    /* Buttons should be very compact */
+    FileBrowserWindow #buttons_panel Button {
+        width: auto;    /* Auto-size buttons to content */
+        min-width: 4;   /* Very small minimum width */
+        margin: 0;      /* No margins for ultra-compact fit */
+        padding: 0;     /* No padding for maximum compactness */
+    }
+
+    /* Checkbox should also be very compact */
+    FileBrowserWindow #buttons_panel Checkbox {
+        width: auto;    /* Auto-size checkbox */
+        margin: 0;      /* No margins */
+        padding: 0;     /* No padding */
+    }
+
+    /* Selection panel - starts at 2 rows (label + 1 for content), expands as needed */
+    FileBrowserWindow #selection_panel {
+        width: 100%;  /* Full width */
+        height: 2;    /* Start at 2 rows (1 for label + 1 for content) */
+        max-height: 5; /* Maximum 5 rows (1 for label + 4 for list) */
+    }
+
+    /* Selections label - compact and left-aligned */
+    FileBrowserWindow #selections_label {
+        height: 1;    /* Exactly 1 row for label */
+        text-align: left;
+        padding: 0;
+        margin: 0;
+    }
+
+    /* Selection list should start at 1 row and expand when needed */
+    FileBrowserWindow #selected_list {
+        height: 1;    /* Start at exactly 1 row */
+        max-height: 4; /* Maximum 4 rows for the list itself */
+        text-align: left; /* Ensure container is left-aligned */
+        content-align: left top; /* Force content alignment to left */
+        align: left top; /* Additional alignment property */
+    }
+
+    /* Selected display text should be left-aligned */
+    FileBrowserWindow #selected_display {
+        text-align: left;
+        content-align: left top; /* Force content alignment to left */
+        align: left top; /* Additional alignment property */
+        padding: 0;
+        margin: 0;
+        width: 100%; /* Ensure full width */
+    }
+
+    /* Path display and filename area should be minimal */
+    FileBrowserWindow #path_display,
+    FileBrowserWindow #filename_area {
+        height: auto;
+    }
+    """
+
+    def __init__(
+        self,
+        file_manager: FileManager,
+        initial_path: Path,
+        backend: Backend = Backend.DISK,
+        title: str = "Select Directory",
+        mode: BrowserMode = BrowserMode.LOAD,
+        selection_mode: SelectionMode = SelectionMode.DIRECTORIES_ONLY,
+        filter_extensions: Optional[List[str]] = None,
+        default_filename: str = "",
+        cache_key: Optional[PathCacheKey] = None,
+        on_result_callback: Optional[Callable] = None,
+        caller_id: str = "unknown",
+        **kwargs
+    ):
+        # Create unique window ID based on caller to avoid conflicts
+        unique_window_id = f"file_browser_{caller_id}"
+
+        # Use unique window ID - textual-window expects consistent IDs per caller
+        super().__init__(
+            window_id=unique_window_id,
+            title=title,
+            mode="temporary",
+            **kwargs
+        )
+
+        self.file_manager = file_manager
+        self.initial_path = initial_path
+        self.backend = backend
+        self.browser_title = title
+        self.mode = mode
+        self.selection_mode = selection_mode
+        self.filter_extensions = filter_extensions
+        self.default_filename = default_filename
+        self.cache_key = cache_key
+        self.on_result_callback = on_result_callback
+        self.selected_path: Optional[Path] = None
+        self.selected_paths: Set[Path] = set()  # For multi-selection
+
+        # Path caching for performance
+        self.path_cache: Dict[str, List[Path]] = {}
+
+        # Hidden files toggle
+        self.show_hidden_files = False
+
+        # Create OpenHCS DirectoryTree
+        self.directory_tree = OpenHCSDirectoryTree(
+            filemanager=file_manager,
+            backend=backend,
+            path=initial_path,
+            show_hidden=self.show_hidden_files,
+            filter_extensions=self.filter_extensions,
+            id='tree_panel'
+        )
+
+        logger.debug(f"FileBrowserWindow created for {backend.value} at {initial_path}")
+    
+
+
+    def compose(self) -> ComposeResult:
+        """Compose the enhanced file browser content."""
+        with Vertical():
+            # Path display (fixed height at top)
+            yield Static(f"Path: {self.initial_path}", id="path_display")
+
+            # Directory tree - scrollable area (this should expand to fill remaining space)
+            with ScrollableContainer(id="tree_area"):
+                yield self.directory_tree
+
+            # Filename input for save mode - horizontal layout (fixed height)
+            if self.mode == BrowserMode.SAVE:
+                with Horizontal(id="filename_area"):
+                    yield Static("Filename:", classes="filename-label")
+                    yield Input(
+                        placeholder="Enter filename...",
+                        value=self.default_filename,
+                        id="filename_input",
+                        compact=True
+                    )
+
+            # Bottom area: buttons on top, selection area below (fixed height at bottom)
+            with Vertical(id="bottom_area"):
+                # All buttons in single horizontal row with compact spacing
+                with Horizontal(id="buttons_panel"):
+                    yield Button("🏠 Home", id="go_home", compact=True)
+                    yield Button("⬆️ Up", id="go_up", compact=True)
+
+                    # Mode-specific buttons
+                    if self.mode == BrowserMode.LOAD:
+                        yield Button("Add", id="add_current", compact=True)
+                        yield Button("Remove", id="remove_selected", compact=True)
+                        yield Button("Select", id="select_all", compact=True)
+                    else:  # SAVE mode
+                        yield Button("Save", id="save_file", compact=True)
+
+                    yield Checkbox(
+                        label="Hidden",
+                        value=self.show_hidden_files,
+                        id="show_hidden_checkbox",
+                        compact=True
+                    )
+                    yield Button("Cancel", id="cancel", compact=True)
+
+                # Selection panel below buttons (full width)
+                with Vertical(id="selection_panel"):
+                    if self.mode == BrowserMode.LOAD:
+                        # Add "Selections:" label
+                        yield Static("Selections:", id="selections_label")
+                        with ScrollableContainer(id="selected_list"):
+                            yield Static("(none)", id="selected_display")
+                    else:  # SAVE mode
+                        yield Static("Save Info:", classes="dialog-title")
+                        with ScrollableContainer(id="save_info"):
+                            info_text = "Select directory and enter filename"
+                            if self.filter_extensions:
+                                info_text += f"\nAllowed extensions: {', '.join(self.filter_extensions)}"
+                            yield Static(info_text, id="save_info_display")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        button_id = event.button.id
+        logger.info(f"🔍 BUTTON PRESSED: {button_id}")
+
+        if button_id == "go_home":
+            self._handle_go_home()
+        elif button_id == "go_up":
+            self._handle_go_up()
+        elif button_id == "add_current":
+            logger.info("🔍 ADD BUTTON: Calling _handle_add_current")
+            self._handle_add_current()
+        elif button_id == "remove_selected":
+            self._handle_remove_selected()
+        elif button_id == "select_all":
+            result = self._handle_select_all()
+            self._finish_with_result(result)
+        elif button_id == "save_file":
+            result = self._handle_save_file()
+            if result is not False:  # False means don't dismiss
+                self._finish_with_result(result)
+        elif button_id == "cancel":
+            self._finish_with_result(None)
+
+    def _finish_with_result(self, result):
+        """Finish the dialog with a result."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Log result for debugging (only when result exists)
+        if result is not None:
+            logger.debug(f"File browser returning: {result}")
+
+        # Cache the path if successful
+        if result is not None and self.cache_key is not None:
+            self._cache_successful_path(result)
+
+        # Call the callback if provided
+        if self.on_result_callback:
+            self.on_result_callback(result)
+        else:
+            logger.debug("No callback provided to file browser")
+
+        # Close the window
+        self.close_window()
+
+    def _cache_successful_path(self, result):
+        """Cache the successful path selection."""
+        from openhcs.textual_tui.utils.path_cache import get_path_cache
+
+        try:
+            path_cache = get_path_cache()
+            cache_path = None
+
+            if isinstance(result, Path):
+                # Single path result - cache its parent directory
+                cache_path = result.parent if result.is_file() else result
+            elif isinstance(result, list) and result:
+                # List of paths - cache the parent of the first path
+                first_path = result[0]
+                if isinstance(first_path, Path):
+                    cache_path = first_path.parent if first_path.is_file() else first_path
+
+            # Cache the path if we determined one
+            if cache_path and cache_path.exists():
+                path_cache.set_cached_path(self.cache_key, cache_path)
+                logger.debug(f"Cached path for {self.cache_key.value}: {cache_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to cache path: {e}")
+
+    def on_mount(self) -> None:
+        """Called when the screen is mounted."""
+        # Set initial border title
+        self.directory_tree.border_title = f"Path: {self.initial_path}"
+
+        # Set initial border title for selected panel
+        if self.mode == BrowserMode.LOAD:
+            try:
+                selection_panel = self.query_one("#selection_panel", Vertical)
+                selection_panel.border_title = "Selected:"
+            except Exception:
+                pass  # Widget might not be mounted yet
+
+        # Focus the directory tree for keyboard navigation
+        self.directory_tree.focus()
+    
+    @on(DirectoryTree.DirectorySelected)
+    def on_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        """Handle directory selection from tree."""
+        logger.info(f"🔍 DIRECTORY SELECTED: {event.path}")
+
+        # Update path display
+        path_widget = self.query_one("#path_display", Static)
+        path_widget.update(f"Path: {event.path}")
+
+        # Store selected path - ensure it's always a Path object
+        if hasattr(event.path, '_path'):
+            # OpenHCSPathAdapter
+            self.selected_path = Path(event.path._path)
+        elif isinstance(event.path, Path):
+            self.selected_path = event.path
+        else:
+            # Convert string or other types to Path
+            self.selected_path = Path(str(event.path))
+
+        logger.info(f"🔍 STORED selected_path: {self.selected_path} (type: {type(self.selected_path)})")
+    
+    @on(DirectoryTree.FileSelected)
+    def on_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        """Handle file selection from tree."""
+        logger.debug(f"File selected event: {event.path} (selection_mode: {self.selection_mode})")
+
+        if self.selection_mode in [SelectionMode.FILES_ONLY, SelectionMode.BOTH]:
+            # Store selected file path
+            if hasattr(event.path, '_path'):
+                # OpenHCSPathAdapter
+                self.selected_path = Path(event.path._path)
+            elif isinstance(event.path, Path):
+                self.selected_path = event.path
+            else:
+                # Convert string or other types to Path
+                self.selected_path = Path(str(event.path))
+
+            # For save mode, populate filename input with selected file name
+            if self.mode == BrowserMode.SAVE:
+                try:
+                    filename_input = self.query_one("#filename_input", Input)
+                    filename_input.value = self.selected_path.name
+                except Exception:
+                    pass  # Input might not be mounted yet
+
+            logger.info(f"✅ FILE STORED: {self.selected_path} (type: {type(self.selected_path)})")
+        else:
+            logger.info(f"❌ FILE IGNORED: selection_mode {self.selection_mode} only allows directories")
+    
+    # Button handling now done through handle_button_action method
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Handle checkbox changes."""
+        if event.checkbox.id == "show_hidden_checkbox":
+            self.show_hidden_files = event.value
+            # Use call_after_refresh to ensure proper async context
+            self.call_after_refresh(self._refresh_directory_tree)
+            logger.debug(f"Hidden files toggle: {self.show_hidden_files}")
+
+    def _refresh_directory_tree(self) -> None:
+        """Refresh directory tree with current settings."""
+        # Clear path cache when settings change
+        self.path_cache.clear()
+
+        # Update tree settings and reload instead of recreating
+        self.directory_tree.show_hidden = self.show_hidden_files
+        self.directory_tree.filter_extensions = self.filter_extensions
+
+        try:
+            # Reload the tree to apply new settings
+            self.directory_tree.reload()
+            self.directory_tree.focus()
+        except Exception as e:
+            logger.warning(f"Failed to refresh directory tree: {e}")
+
+    def _get_cached_paths(self, path: Path) -> Optional[List[Path]]:
+        """Get cached directory contents."""
+        cache_key = f"{path}:{self.show_hidden_files}"
+        return self.path_cache.get(cache_key)
+
+    def _cache_paths(self, path: Path, paths: List[Path]) -> None:
+        """Cache directory contents."""
+        cache_key = f"{path}:{self.show_hidden_files}"
+        self.path_cache[cache_key] = paths
+
+        # Limit cache size to prevent memory issues
+        if len(self.path_cache) > 100:
+            # Remove oldest entries (simple FIFO)
+            oldest_key = next(iter(self.path_cache))
+            del self.path_cache[oldest_key]
+
+    def _handle_go_home(self) -> None:
+        """Navigate to home directory."""
+        home_path = Path.home()
+        self._navigate_to_path(home_path)
+        logger.debug(f"Navigated to home: {home_path}")
+
+    def _handle_go_up(self) -> None:
+        """Navigate to parent directory."""
+        current_path = self.selected_path or self.initial_path
+        parent_path = current_path.parent
+
+        # Don't go above root
+        if parent_path != current_path:
+            self._navigate_to_path(parent_path)
+            logger.debug(f"Navigated up from {current_path} to {parent_path}")
+        else:
+            logger.debug(f"Already at root directory: {current_path}")
+
+    def _navigate_to_path(self, new_path: Path) -> None:
+        """Navigate to a new path and refresh the tree."""
+        self.selected_path = new_path
+        self._update_path_display(new_path)
+
+        # Update tree path and reload
+        try:
+            self.directory_tree.path = new_path
+            self.directory_tree.reload()
+            self.directory_tree.focus()
+        except Exception as e:
+            logger.warning(f"Failed to navigate to {new_path}: {e}")
+
+    def _handle_add_current(self) -> None:
+        """Add current path to selection if compatible with selection mode."""
+        logger.info(f"🔍 ADD BUTTON: selected_path={self.selected_path}, selection_mode={self.selection_mode}")
+
+        if not self.selected_path:
+            logger.warning("❌ ADD FAILED: No path selected")
+            return
+
+        try:
+            is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+            item_type = "directory" if is_dir else "file"
+            logger.info(f"🔍 ADD CHECK: {item_type} '{self.selected_path.name}' in {self.selection_mode} mode")
+
+            # Check if this type is allowed
+            if self.selection_mode == SelectionMode.DIRECTORIES_ONLY and not is_dir:
+                logger.info(f"❌ SKIPPED: Cannot add {item_type} in DIRECTORIES_ONLY mode")
+                return
+            if self.selection_mode == SelectionMode.FILES_ONLY and is_dir:
+                logger.info(f"❌ SKIPPED: Cannot add {item_type} in FILES_ONLY mode")
+                return
+
+            # Add if not already present
+            if self.selected_path not in self.selected_paths:
+                self.selected_paths.add(self.selected_path)
+                self._update_selected_display()
+                logger.info(f"✅ ADDED: {item_type} '{self.selected_path.name}' (Total: {len(self.selected_paths)})")
+            else:
+                logger.info(f"⚠️ ALREADY ADDED: {item_type} '{self.selected_path.name}'")
+
+        except Exception as e:
+            logger.error(f"❌ ERROR adding path: {e}")
+
+    def _handle_remove_selected(self) -> None:
+        """Remove current directory from selection."""
+        if self.selected_path and self.selected_path in self.selected_paths:
+            self.selected_paths.remove(self.selected_path)
+            self._update_selected_display()
+            logger.debug(f"Removed {self.selected_path} from selection")
+
+    def _handle_select_all(self):
+        """Return selected paths from selections area, or fallback to current tree selection."""
+        if self.mode == BrowserMode.SAVE:
+            return self._handle_save_file()
+
+        # Return selected paths if any exist in selections area
+        if self.selected_paths:
+            return list(self.selected_paths)
+
+        # Fallback to current tree selection if selections area is empty
+        if self.selected_path:
+            try:
+                is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+
+                # Check compatibility with selection mode
+                if self.selection_mode == SelectionMode.DIRECTORIES_ONLY and is_dir:
+                    return [self.selected_path]
+                elif self.selection_mode == SelectionMode.FILES_ONLY and not is_dir:
+                    return [self.selected_path]
+                elif self.selection_mode == SelectionMode.BOTH:
+                    return [self.selected_path]
+
+            except Exception:
+                pass
+
+        # No valid selection
+        return None
+
+    def _handle_save_file(self):
+        """Handle save file operation with overwrite confirmation."""
+        try:
+            # Get filename from input
+            filename_input = self.query_one("#filename_input", Input)
+            filename = filename_input.value.strip()
+
+            if not filename:
+                logger.warning("No filename provided for save operation")
+                return False  # Don't dismiss, show error
+
+            # Validate filename
+            if not self._validate_filename(filename):
+                logger.warning(f"Invalid filename: {filename}")
+                return False  # Don't dismiss, show error
+
+            # Ensure proper extension
+            if self.filter_extensions:
+                filename = self._ensure_extension(filename, self.filter_extensions[0])
+
+            # Get current directory (use selected_path if it's a directory, otherwise its parent)
+            if self.selected_path:
+                try:
+                    # Use FileManager to check if it's a directory (respects backend abstraction)
+                    is_dir = self.file_manager.is_dir(self.selected_path, self.backend.value)
+                    if is_dir:
+                        save_dir = self.selected_path
+                    else:
+                        save_dir = self.selected_path.parent
+                except Exception:
+                    # If we can't determine type, use parent directory
+                    save_dir = self.selected_path.parent
+            else:
+                save_dir = self.initial_path
+
+            # Construct full save path
+            save_path = save_dir / filename
+
+            # Check if file already exists and show confirmation dialog
+            if self._file_exists(save_path):
+                self._show_overwrite_confirmation(save_path)
+                return False  # Don't dismiss yet, wait for confirmation
+
+            logger.debug(f"Save file operation: {save_path}")
+            return save_path
+
+        except Exception as e:
+            logger.error(f"Error in save file operation: {e}")
+            return False  # Don't dismiss, show error
+
+    def _update_selected_display(self) -> None:
+        """Update the selected directories display and adjust height."""
+        try:
+            display_widget = self.query_one("#selected_display", Static)
+            selection_panel = self.query_one("#selection_panel", Vertical)
+            selected_list = self.query_one("#selected_list", ScrollableContainer)
+
+            # Force left alignment programmatically
+            display_widget.styles.text_align = "left"
+            display_widget.styles.content_align = ("left", "top")
+            selected_list.styles.text_align = "left"
+            selected_list.styles.content_align = ("left", "top")
+
+            if self.selected_paths:
+                # Show files and directories with appropriate icons
+                paths_list = []
+                for path in sorted(self.selected_paths):
+                    try:
+                        is_dir = self.file_manager.is_dir(path, self.backend.value)
+                        icon = "📁" if is_dir else "📄"
+                        paths_list.append(f"{icon} {path.name}")
+                    except Exception:
+                        # Fallback if we can't determine type
+                        paths_list.append(f"📄 {path.name}")
+
+                paths_text = "\n".join(paths_list)
+                display_widget.update(paths_text)
+
+                # Dynamically adjust height based on number of items (1-4 rows for list + 1 for label)
+                num_items = len(self.selected_paths)
+                list_height = min(max(num_items, 1), 4)  # Clamp between 1 and 4 for the list
+                panel_height = list_height + 1  # Add 1 for the "Selections:" label
+
+                # Update the height of the selection components
+                selection_panel.styles.height = panel_height
+                selected_list.styles.height = list_height
+            else:
+                display_widget.update("(none)")
+                # Reset to minimum height when no items (1 for list + 1 for label)
+                selection_panel.styles.height = 2  # 1 for label + 1 for "(none)"
+                selected_list.styles.height = 1
+
+        except Exception:
+            # Widget might not be mounted yet
+            pass
+    
+    def _update_path_display(self, path: Path) -> None:
+        """Update the path display in the tree border title."""
+        try:
+            # Set the border title on the directory tree
+            self.directory_tree.border_title = f"Path: {path}"
+        except Exception:
+            # Widget might not be mounted yet
+            pass
+
+    def _ensure_extension(self, filename: str, extension: str) -> str:
+        """Ensure filename has the correct extension."""
+        if not extension.startswith('.'):
+            extension = f'.{extension}'
+        path = Path(filename)
+        if path.suffix.lower() != extension.lower():
+            return str(path.with_suffix(extension))
+        return filename
+
+    def _validate_filename(self, filename: str) -> bool:
+        """Validate filename for save operations."""
+        if not filename.strip():
+            return False
+
+        # Check for invalid characters (basic validation)
+        invalid_chars = '<>:"/\\|?*'
+        if any(char in filename for char in invalid_chars):
+            return False
+
+        # Check extension if filter is specified
+        if self.filter_extensions:
+            path = Path(filename)
+            if path.suffix:
+                # Has extension, check if it's allowed
+                return any(path.suffix.lower() == ext.lower() for ext in self.filter_extensions)
+            # No extension, will be added by _ensure_extension
+
+        return True
+
+    def _file_exists(self, file_path: Path) -> bool:
+        """Check if file exists using FileManager."""
+        try:
+            return self.file_manager.exists(file_path, self.backend.value)
+        except Exception:
+            return False
+
+    def _show_overwrite_confirmation(self, save_path: Path) -> None:
+        """Show confirmation dialog for overwriting existing file."""
+        from openhcs.textual_tui.widgets.floating_window import ConfirmationWindow
+
+        message = f"File '{save_path.name}' already exists.\nDo you want to overwrite it?"
+        confirmation = ConfirmationWindow(
+            title="Confirm Overwrite",
+            message=message
+        )
+
+        def handle_confirmation(result):
+            """Handle the confirmation dialog result."""
+            if result:  # User clicked Yes
+                logger.debug(f"User confirmed overwrite for: {save_path}")
+                self._finish_with_result(save_path)  # Finish with the save path (will auto-cache)
+            # If result is False/None (No/Cancel), do nothing - stay in dialog
+
+        self.app.push_screen(confirmation, handle_confirmation)
+
+
+async def open_file_browser_window(
+    app,
+    file_manager: FileManager,
+    initial_path: Path,
+    backend: Backend = Backend.DISK,
+    title: str = "Select Directory",
+    mode: BrowserMode = BrowserMode.LOAD,
+    selection_mode: SelectionMode = SelectionMode.DIRECTORIES_ONLY,
+    filter_extensions: Optional[List[str]] = None,
+    default_filename: str = "",
+    cache_key: Optional[PathCacheKey] = None,
+    on_result_callback: Optional[Callable] = None,
+    caller_id: str = "unknown",
+) -> FileBrowserWindow:
+    """
+    Convenience function to open a file browser window.
+
+    This replaces the old push_screen pattern with proper textual-window mounting.
+
+    Args:
+        app: The Textual app instance
+        file_manager: FileManager instance
+        initial_path: Starting directory path
+        backend: Storage backend to use
+        title: Window title
+        mode: LOAD or SAVE mode
+        selection_mode: What can be selected (files/dirs/both)
+        filter_extensions: File extensions to filter (e.g., ['.pipeline'])
+        default_filename: Default filename for save mode
+        cache_key: Path cache key for remembering location
+        on_result_callback: Callback function for when selection is made
+        caller_id: Unique identifier for the calling window/widget (e.g., "plate_manager")
+
+    Returns:
+        The created FileBrowserWindow instance
+    """
+    from textual.css.query import NoMatches
+
+    # Follow ConfigWindow pattern exactly - check if file browser already exists for this caller
+    unique_window_id = f"file_browser_{caller_id}"
+    try:
+        window = app.query_one(f"#{unique_window_id}")
+        # Window exists, update its parameters and open it
+        window.file_manager = file_manager
+        window.initial_path = initial_path
+        window.backend = backend
+        window.mode = mode
+        window.selection_mode = selection_mode
+        window.filter_extensions = filter_extensions
+        window.default_filename = default_filename
+        window.cache_key = cache_key
+        window.on_result_callback = on_result_callback
+        window.title = title
+        # Refresh the window content with new parameters
+        window._navigate_to_path(initial_path)
+        window.open_state = True
+    except NoMatches:
+        # Expected case: window doesn't exist yet, create new one
+        window = FileBrowserWindow(
+            file_manager=file_manager,
+            initial_path=initial_path,
+            backend=backend,
+            title=title,
+            mode=mode,
+            selection_mode=selection_mode,
+            filter_extensions=filter_extensions,
+            default_filename=default_filename,
+            cache_key=cache_key,
+            on_result_callback=on_result_callback,
+            caller_id=caller_id,
+        )
+        await app.mount(window)  # Properly await mounting like ConfigWindow
+        window.open_state = True
+
+    return window
+
+

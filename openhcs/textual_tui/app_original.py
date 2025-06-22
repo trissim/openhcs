@@ -28,13 +28,7 @@ from openhcs.io.filemanager import FileManager
 from .widgets.main_content import MainContent
 from .widgets.menu_bar import MenuBar
 from .widgets.status_bar import StatusBar
-
 from .widgets.floating_window import BaseFloatingWindow
-
-# Textual-window imports
-from textual_window import Window, WindowSwitcher
-from openhcs.textual_tui.widgets.custom_window_bar import CustomWindowBar
-from openhcs.textual_tui.windows import HelpWindow, ConfigWindow, DualEditorWindow, PipelinePlateWindow
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +92,6 @@ class OpenHCSTUIApp(App):
     with proper reactive state management and clean architectural boundaries.
     """
     CSS_PATH = "styles.css"
-
-    # Blocking window for pseudo-modal behavior
-    blocking_window = None
 #    CSS = """
 #    /* General dialog styling */
 #    .dialog {
@@ -222,9 +213,6 @@ class OpenHCSTUIApp(App):
         ("q", "quit", "Quit"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Previous"),
-        ("f1", "toggle_window_switcher", "Switch Windows"),
-        ("ctrl+comma", "show_global_config", "Config"),
-        ("f2", "show_help", "Help"),
     ]
     
     # App-level reactive state
@@ -250,37 +238,20 @@ class OpenHCSTUIApp(App):
     
     def compose(self) -> ComposeResult:
         """Compose the main application layout."""
-        # Add textual-window components
-        yield WindowSwitcher()  # Invisible Alt-Tab overlay
-
-        # Custom WindowBar with no left button
-        yield CustomWindowBar(dock="bottom", start_open=True)
-
-        # Status bar for status messages
-        yield StatusBar()
-
-        # Main content fills the rest
+        yield MenuBar(global_config=self.global_config)
         yield MainContent(
             filemanager=self.filemanager,
             global_config=self.global_config
         )
+        yield StatusBar()
     
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         """Called when the app is mounted."""
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
 
         # Status bar will automatically show this log message
         # No need to manually update it anymore
-
-        # Add our start menu button to the WindowBar using the same pattern as window buttons
-        logger.info("🚀 APP MOUNT: About to add start menu button")
-        try:
-            await self._add_start_menu_button()
-            logger.info("🚀 APP MOUNT: Start menu button added")
-        except Exception as e:
-            logger.error(f"🚀 APP MOUNT: Start menu button failed: {e}")
-            # Continue without start menu button for now
 
     def watch_current_status(self, status: str) -> None:
         """Watch for status changes and log them (status bar will show automatically)."""
@@ -291,79 +262,6 @@ class OpenHCSTUIApp(App):
         """Handle quit action."""
         logger.info("OpenHCS TUI shutting down")
         self.exit()
-
-    def action_toggle_window_switcher(self):
-        """Toggle the window switcher."""
-        switcher = self.query_one(WindowSwitcher)
-        switcher.action_toggle()  # Correct textual-window API method
-
-    async def _add_start_menu_button(self):
-        """Add our start menu button to the WindowBar at the leftmost position."""
-        try:
-            logger.info("🚀 START MENU: Creating start menu button")
-            from openhcs.textual_tui.widgets.start_menu_button import StartMenuButton
-
-            # Get the CustomWindowBar
-            logger.info("🚀 START MENU: Getting CustomWindowBar")
-            window_bar = self.query_one(CustomWindowBar)
-            logger.info(f"🚀 START MENU: Found window bar: {window_bar}")
-
-            # Check if right button exists (no left button in CustomWindowBar)
-            logger.info("🚀 START MENU: Looking for right button")
-            right_button = window_bar.query_one("#windowbar_button_right")
-            logger.info(f"🚀 START MENU: Found right button: {right_button}")
-
-            # Add our start menu button at the very beginning (leftmost position)
-            # Mount before the right button to be at the far left
-            logger.info("🚀 START MENU: Creating StartMenuButton")
-            start_button = StartMenuButton(window_bar=window_bar, id="start_menu_button")
-            logger.info(f"🚀 START MENU: Created start button: {start_button}")
-
-            logger.info("🚀 START MENU: Mounting start button")
-            await window_bar.mount(start_button, before=right_button)
-            logger.info("🚀 START MENU: Start menu button mounted successfully")
-
-        except Exception as e:
-            logger.error(f"🚀 START MENU: Failed to add start menu button: {e}")
-            import traceback
-            logger.error(f"🚀 START MENU: Traceback: {traceback.format_exc()}")
-            raise
-
-
-
-    def open_blocking_window(self, window_class, *args, **kwargs):
-        """Open a blocking window that disables main UI interactions."""
-        if self.blocking_window:
-            return  # Only allow one blocking window at a time
-
-        window = window_class(*args, **kwargs)
-        self.blocking_window = window
-        self._disable_main_interactions()
-        self.mount(window)
-        return window
-
-    def _disable_main_interactions(self):
-        """Disable main UI interactions when modal window is open."""
-        # Disable menu bar buttons - if they don't exist, that's a bug
-        menu_bar = self.query_one(MenuBar)
-        menu_bar.query_one("#global_config_btn").disabled = True
-        menu_bar.query_one("#help_btn").disabled = True
-        # Keep quit button enabled for safety
-
-    def _enable_main_interactions(self):
-        """Re-enable main UI interactions when modal window closes."""
-        # Re-enable menu bar buttons - if they don't exist, that's a bug
-        menu_bar = self.query_one(MenuBar)
-        menu_bar.query_one("#global_config_btn").disabled = False
-        menu_bar.query_one("#help_btn").disabled = False
-
-    def on_window_closed(self, event: Window.Closed) -> None:
-        """Handle window closed events from textual-window."""
-        # Check if this is our blocking window
-        # Event has window reference through WindowMessage base
-        if event.control == self.blocking_window:
-            self.blocking_window = None
-            self._enable_main_interactions()
 
     def show_error(self, error_message: str, exception: Exception = None) -> None:
         """Show a global error dialog with optional exception details."""

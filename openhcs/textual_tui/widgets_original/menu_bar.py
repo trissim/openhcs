@@ -66,29 +66,34 @@ class MenuBar(Widget):
             self.action_quit()
     
     def action_show_global_config(self) -> None:
-        """Show global configuration window."""
-        from openhcs.textual_tui.windows import ConfigWindow
+        """Show global configuration dialog."""
+
+        def handle_result(result: Any) -> None:
+            if result:  # User saved config changes
+                # Apply config changes to app
+                self.app.global_config = result
+
+                # Propagate config changes to all existing orchestrators
+                self._propagate_global_config_to_orchestrators(result)
+
+                # Save config to cache for future sessions
+                self._save_config_to_cache(result)
+
+                logger.info("Configuration updated and applied to all plates")
+            else:
+                logger.info("Configuration cancelled")
+
+        # LAZY IMPORT to avoid circular import (evidence: pipeline_editor.py lines 166, 212)
+        from openhcs.textual_tui.screens.config_dialog import ConfigDialogScreen
         from openhcs.core.config import GlobalPipelineConfig
 
-        def handle_config_save(new_config):
-            """Handle configuration save - EXACT copy from original method."""
-            # Apply config changes to app
-            self.app.global_config = new_config
+        # Get current config from app (evidence: app.py line 145)
+        current_config = self.app.global_config
 
-            # Propagate config changes to all existing orchestrators
-            self._propagate_global_config_to_orchestrators(new_config)
-
-            # Save config to cache for future sessions
-            self._save_config_to_cache(new_config)
-
-            logger.info("Configuration updated and applied to all plates")
-
-        # Use blocking window instead of push_screen
-        self.app.open_blocking_window(
-            ConfigWindow,
-            GlobalPipelineConfig,
-            self.app.global_config,  # Use app.global_config like original
-            on_save_callback=handle_config_save
+        # Launch modal
+        self.app.push_screen(
+            ConfigDialogScreen(GlobalPipelineConfig, current_config),
+            handle_result
         )
 
     def _propagate_global_config_to_orchestrators(self, new_config: GlobalPipelineConfig) -> None:
@@ -150,11 +155,13 @@ class MenuBar(Widget):
         asyncio.create_task(_async_save())
     
     def action_show_help(self) -> None:
-        """Show help window."""
-        from openhcs.textual_tui.windows import HelpWindow
+        """Show help dialog."""
 
-        # Use blocking window instead of push_screen
-        self.app.open_blocking_window(HelpWindow)
+        # LAZY IMPORT to avoid circular import
+        from openhcs.textual_tui.screens.help_dialog import HelpDialogScreen
+
+        # Launch modal (no result callback needed)
+        self.app.push_screen(HelpDialogScreen())
     
     def action_quit(self) -> None:
         """Quit the application."""

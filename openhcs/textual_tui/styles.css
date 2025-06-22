@@ -65,10 +65,11 @@ MenuBar Static {
     text-style: bold;
 }
 
-/* Function list header buttons - specific styling for spacing */
-/* Spacing between main top buttons */
+/* Function list header buttons - compact styling */
+/* Compact spacing between main top buttons */
 #function_list_header Horizontal Button {
-    margin: 0 1;  /* Same spacing as function pane buttons */
+    margin: 0;  /* Remove margin for compact layout */
+    padding: 0;  /* Remove padding for ultra-compact buttons */
     width: auto !important;  /* Size to content */
     min-width: 0 !important;  /* Override default 16 column min-width */
 }
@@ -98,16 +99,18 @@ FunctionPaneWidget Horizontal Horizontal {
     min-width: 0;
 }
 
-/* StatusBar */
+/* StatusBar - simplified styling */
 StatusBar {
-    height: 3;
-    border: solid white;
+    height: 1;
+    background: $background;
+    color: $text;
 }
 
-/* StatusBar log display - left aligned and expandable */
+/* StatusBar log display - simple and readable */
 StatusBar #log_display {
     text-align: left;
-    width: 100%;
+    background: $background;
+    color: $text;
 }
 
 /* Button containers - full width */
@@ -116,21 +119,23 @@ StatusBar #log_display {
     width: 100%;
 }
 
-/* Content area buttons - responsive width distribution */
+/* Content area buttons - responsive width distribution with compact padding */
 #plate_manager_container Button,
 #pipeline_editor_container Button {
     width: 1fr;
-    margin: 0 1;
+    margin: 0;  /* Remove horizontal margin for compact layout */
+    padding: 0;  /* Remove padding for ultra-compact buttons */
     min-width: 0;
 }
 
-/* Exception: Function pane buttons should size to content */
+/* Exception: Function pane buttons should size to content with compact padding */
 #plate_manager_container FunctionPaneWidget Button,
 #pipeline_editor_container FunctionPaneWidget Button,
 FunctionPaneWidget Button {
     width: auto !important;
     min-width: 0 !important;  /* Override default 16 column min-width */
-    margin: 0 1;
+    margin: 0;  /* Remove horizontal margin for compact layout */
+    padding: 0;  /* Remove padding for ultra-compact buttons */
 }
 
 /* App fills terminal height properly with slightly darker background */
@@ -306,3 +311,13 @@ RadioButton {
 #buttons_panel .dialog-buttons Button {
     margin: 0 1 0 0;  /* Right margin only for file browser buttons */
 }
+
+/* Start Menu Widget */
+StartMenuWidget {
+    height: auto;
+    width: auto;
+}
+
+/* WindowBar customization removed - show both buttons */
+
+

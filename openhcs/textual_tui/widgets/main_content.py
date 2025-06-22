@@ -11,9 +11,12 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static
 from textual.widget import Widget
+from textual.css.query import NoMatches
+from textual.reactive import reactive
 
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
+from .system_monitor import SystemMonitorTextual
 
 from .plate_manager import PlateManagerWidget
 from .pipeline_editor import PipelineEditorWidget
@@ -45,44 +48,36 @@ class MainContent(Widget):
     
     def compose(self) -> ComposeResult:
         """Compose the main content layout."""
-        with Horizontal():
-            # Left pane: Plate Manager with proper border title
-            plate_container = Container(id="plate_manager_container")
-            plate_container.border_title = "Plate Manager"
-            with plate_container:
-                yield PlateManagerWidget(
-                    filemanager=self.filemanager,
-                    global_config=self.app.global_config  # Always use current config from app
-                )
-
-            # Right pane: Pipeline Editor with proper border title
-            pipeline_container = Container(id="pipeline_editor_container")
-            pipeline_container.border_title = "Pipeline Editor"
-            with pipeline_container:
-                yield PipelineEditorWidget(
-                    filemanager=self.filemanager,
-                    global_config=self.app.global_config  # Always use current config from app
-                )
+        # Use the system monitor as the main background
+        yield SystemMonitorTextual()
     
     def on_mount(self) -> None:
         """Called when the main content is mounted."""
-        
-        # Set up communication between panes
-        plate_manager = self.query_one(PlateManagerWidget)
-        pipeline_editor = self.query_one(PipelineEditorWidget)
+        # Widgets are now in floating windows, no setup needed here
+        pass
 
-        # Set up bidirectional references
-        plate_manager.pipeline_editor = pipeline_editor
-        pipeline_editor.plate_manager = plate_manager
+    def open_pipeline_editor(self):
+        """Open the pipeline editor in shared window."""
+        window = self._get_or_create_shared_window()
+        window.show_pipeline_editor()
+        window.open_state = True
 
-        # Connect plate selection to pipeline editor
-        def on_plate_selected(plate_path: str):
-            """Handle plate selection from PlateManager."""
-            pipeline_editor.current_plate = plate_path
-            # Also send plate status for constraint checking
-            plate_status = plate_manager.get_plate_status(plate_path)
-            pipeline_editor.current_plate_status = plate_status
-            logger.debug(f"Plate selected: {plate_path} (status: {plate_status})")
+    def open_plate_manager(self):
+        """Open the plate manager in shared window."""
+        window = self._get_or_create_shared_window()
+        window.show_plate_manager()
+        window.open_state = True
 
-        # Store the callback for future use
-        plate_manager.on_plate_selected = on_plate_selected
+    def _get_or_create_shared_window(self):
+        """Get existing shared window or create new one."""
+        from openhcs.textual_tui.windows import PipelinePlateWindow
+
+        # Try to find existing window - if it doesn't exist, query_one will raise NoMatches
+        try:
+            window = self.app.query_one(PipelinePlateWindow)
+            return window
+        except NoMatches:
+            # Expected case: window doesn't exist yet, create new one
+            window = PipelinePlateWindow(self.filemanager, self.app.global_config)
+            self.app.mount(window)
+            return window

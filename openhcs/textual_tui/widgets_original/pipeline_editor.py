@@ -83,20 +83,18 @@ class PipelineEditorWidget(ButtonListWidget):
         display_text = f"📋 {step_name}"
         return display_text, step_name
 
-    async def _handle_button_press(self, button_id: str) -> None:
-        """Handle button presses from ButtonListWidget (supports async actions)."""
-        import inspect
-
+    def _handle_button_press(self, button_id: str) -> None:
+        """Handle button presses from ButtonListWidget."""
         if button_id == "add_step":
-            await self.action_add_step()
+            self.action_add_step()
         elif button_id == "del_step":
             self.action_delete_step()
         elif button_id == "edit_step":
-            await self.action_edit_step()
+            self.action_edit_step()
         elif button_id == "load_pipeline":
-            await self.action_load_pipeline()
+            self.action_load_pipeline()
         elif button_id == "save_pipeline":
-            await self.action_save_pipeline()
+            self.action_save_pipeline()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
         """Handle selection changes from ButtonListWidget."""
@@ -265,8 +263,8 @@ class PipelineEditorWidget(ButtonListWidget):
             if plate.get('path') == self.current_plate:
                 plate['status'] = '-'  # Reset to initialized
 
-                # Trigger reactive update by reassigning the plates list (correct pattern)
-                self.plate_manager.plates = list(self.plate_manager.plates)
+                # Trigger reactive update
+                self.plate_manager.mutate_reactive(self.plate_manager.__class__.plates)
 
                 # Update our own status
                 self.current_plate_status = '-'
@@ -309,7 +307,7 @@ class PipelineEditorWidget(ButtonListWidget):
     
 
     
-    async def action_add_step(self) -> None:
+    def action_add_step(self) -> None:
         """Handle Add Step button - now triggers modal."""
 
         def handle_result(result: Optional[FunctionStep]) -> None:
@@ -322,23 +320,10 @@ class PipelineEditorWidget(ButtonListWidget):
                 self.app.current_status = "Add step cancelled"
 
         # LAZY IMPORT to avoid circular import
-        from openhcs.textual_tui.windows.dual_editor_window import DualEditorWindow
-        from textual.css.query import NoMatches
+        from openhcs.textual_tui.screens.dual_editor import DualEditorScreen
 
-        # Use window-based dual editor (follows ConfigWindow pattern)
-        try:
-            window = self.app.query_one(DualEditorWindow)
-            # Window exists, update it for new step and open
-            window.editing_step = window.pattern_manager.create_new_step()
-            window.is_new = True
-            window.on_save_callback = handle_result
-            window.original_step = window.pattern_manager.clone_pattern(window.editing_step)
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = DualEditorWindow(step_data=None, is_new=True, on_save_callback=handle_result)
-            await self.app.mount(window)
-            window.open_state = True
+        # Launch modal
+        self.app.push_screen(DualEditorScreen(is_new=True), handle_result)
     
     def action_delete_step(self) -> None:
         """Handle Delete Step button - delete selected steps."""
@@ -427,7 +412,7 @@ class PipelineEditorWidget(ButtonListWidget):
                 return i
         return None
 
-    async def action_edit_step(self) -> None:
+    def action_edit_step(self) -> None:
         """Handle Edit Step button with proper selection and data preservation."""
 
         if not self.pipeline_steps:
@@ -456,25 +441,12 @@ class PipelineEditorWidget(ButtonListWidget):
         edit_step = step_to_edit
 
         # LAZY IMPORT to avoid circular import
-        from openhcs.textual_tui.windows.dual_editor_window import DualEditorWindow
-        from textual.css.query import NoMatches
+        from openhcs.textual_tui.screens.dual_editor import DualEditorScreen
 
-        # Use window-based dual editor (follows ConfigWindow pattern)
-        try:
-            window = self.app.query_one(DualEditorWindow)
-            # Window exists, update it for editing existing step and open
-            window.editing_step = edit_step
-            window.is_new = False
-            window.on_save_callback = handle_result
-            window.original_step = window.pattern_manager.clone_pattern(window.editing_step)
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = DualEditorWindow(step_data=edit_step, is_new=False, on_save_callback=handle_result)
-            await self.app.mount(window)
-            window.open_state = True
+        # Launch modal
+        self.app.push_screen(DualEditorScreen(edit_step), handle_result)
     
-    async def action_load_pipeline(self) -> None:
+    def action_load_pipeline(self) -> None:
         """Handle Load Pipeline button - load pipeline from file."""
 
         if not self.current_plate:
@@ -483,39 +455,17 @@ class PipelineEditorWidget(ButtonListWidget):
 
         # Launch enhanced file browser for .pipeline files
         def handle_result(result):
-            from pathlib import Path  # Import at the top of the function
-
-            # Handle different result types from file browser
-            paths_to_load = []
-
-            if isinstance(result, Path):
-                # Single Path object
-                paths_to_load = [result]
-            elif isinstance(result, list) and len(result) > 0:
-                # List of paths - support multiple pipeline files
-                for item in result:
-                    if isinstance(item, Path):
-                        paths_to_load.append(item)
-                    else:
-                        paths_to_load.append(Path(item))
-            elif isinstance(result, str):
-                # String path
-                paths_to_load = [Path(result)]
-
-            if paths_to_load:
-                logger.debug(f"Loading {len(paths_to_load)} pipeline files")
-                self._load_multiple_pipeline_files(paths_to_load)
+            if result and isinstance(result, Path):
+                self._load_pipeline_from_file(result)
             else:
                 self.app.current_status = "Load pipeline cancelled"
 
-        # Create file browser window for .pipeline files
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
+        # Create enhanced file browser for .pipeline files
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
-        await open_file_browser_window(
-            app=self.app,
+        browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.PIPELINE_FILES),
             backend=Backend.DISK,
@@ -523,77 +473,29 @@ class PipelineEditorWidget(ButtonListWidget):
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pipeline'],
-            cache_key=PathCacheKey.PIPELINE_FILES,
-            on_result_callback=handle_result,
-            caller_id="pipeline_editor"
+            cache_key=PathCacheKey.PIPELINE_FILES
         )
 
-    def _load_multiple_pipeline_files(self, file_paths: List[Path]) -> None:
-        """Load and concatenate steps from multiple pipeline files."""
-        all_steps = []
-        loaded_files = []
-        failed_files = []
+        self.app.push_screen(browser, handle_result)
 
-        for file_path in file_paths:
-            try:
-                steps = self._load_single_pipeline_file(file_path)
-                if steps:
-                    all_steps.extend(steps)
-                    loaded_files.append(file_path.name)
-                    logger.info(f"✅ Loaded {len(steps)} steps from {file_path.name}")
-                else:
-                    failed_files.append(file_path.name)
-            except Exception as e:
-                logger.error(f"❌ Failed to load {file_path.name}: {e}")
-                failed_files.append(file_path.name)
-
-        if all_steps:
-            # Replace current pipeline with concatenated steps
-            self.pipeline_steps = all_steps
-
-            # Create status message
-            if len(loaded_files) == 1:
-                status = f"Loaded {len(all_steps)} steps from {loaded_files[0]}"
-            else:
-                status = f"Loaded {len(all_steps)} steps from {len(loaded_files)} files: {', '.join(loaded_files)}"
-
-            if failed_files:
-                status += f" (Failed: {', '.join(failed_files)})"
-
-            self.app.current_status = status
-            logger.info(f"🎯 Total pipeline: {len(all_steps)} steps from {len(loaded_files)} files")
-        else:
-            self.app.current_status = f"No valid pipeline steps loaded from {len(file_paths)} files"
-
-    def _load_single_pipeline_file(self, file_path: Path) -> List:
-        """Load pipeline steps from a single .pipeline file."""
+    def _load_pipeline_from_file(self, file_path: Path) -> None:
+        """Load pipeline from .pipeline file."""
         import pickle
         try:
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
 
             if isinstance(pattern, list):
-                return pattern
-            else:
-                logger.error(f"Invalid pipeline format in {file_path.name}: expected list, got {type(pattern)}")
-                return []
-        except Exception as e:
-            logger.error(f"Failed to load pipeline from {file_path.name}: {e}")
-            raise
-
-    def _load_pipeline_from_file(self, file_path: Path) -> None:
-        """Load pipeline from .pipeline file (legacy single-file method)."""
-        try:
-            steps = self._load_single_pipeline_file(file_path)
-            if steps:
-                self.pipeline_steps = steps
-                self.app.current_status = f"Loaded {len(steps)} steps from {file_path.name}"
+                self.pipeline_steps = pattern
+                self.app.current_status = f"Loaded {len(pattern)} steps from {file_path.name}"
             else:
                 self.app.current_status = f"Invalid pipeline format in {file_path.name}"
+                logger.error(f"Invalid pipeline format: expected list, got {type(pattern)}")
         except Exception as e:
+            logger.error(f"Failed to load pipeline: {e}")
             self.app.current_status = f"Failed to load pipeline: {e}"
 
-    async def action_save_pipeline(self) -> None:
+    def action_save_pipeline(self) -> None:
         """Handle Save Pipeline button - save pipeline to file."""
 
         if not self.current_plate:
@@ -611,9 +513,8 @@ class PipelineEditorWidget(ButtonListWidget):
             else:
                 self.app.current_status = "Save pipeline cancelled"
 
-        # Create file browser window for saving .pipeline files
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
+        # Create enhanced file browser for saving .pipeline files
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
@@ -621,8 +522,7 @@ class PipelineEditorWidget(ButtonListWidget):
         plate_name = Path(self.current_plate).name if self.current_plate else "pipeline"
         default_filename = f"{plate_name}.pipeline"
 
-        await open_file_browser_window(
-            app=self.app,
+        browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.PIPELINE_FILES),
             backend=Backend.DISK,
@@ -631,10 +531,10 @@ class PipelineEditorWidget(ButtonListWidget):
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pipeline'],
             default_filename=default_filename,
-            cache_key=PathCacheKey.PIPELINE_FILES,
-            on_result_callback=handle_result,
-            caller_id="pipeline_editor"
+            cache_key=PathCacheKey.PIPELINE_FILES
         )
+
+        self.app.push_screen(browser, handle_result)
 
     def _save_pipeline_to_file(self, file_path: Path) -> None:
         """Save pipeline to .pipeline file."""

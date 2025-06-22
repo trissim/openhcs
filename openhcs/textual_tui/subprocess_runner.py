@@ -22,13 +22,47 @@ from typing import Dict, List, Any
 
 def setup_subprocess_logging(log_file_path: str):
     """Set up logging for the subprocess to write to the same log file as parent."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.FileHandler(log_file_path)]
-    )
+    # Clear any existing handlers to ensure clean state
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+
+    # Setup file handler with same format as main process
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+    # Configure root logger
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
+
+    # Ensure ALL OpenHCS loggers use the same configuration
+    openhcs_logger = logging.getLogger("openhcs")
+    openhcs_logger.setLevel(logging.INFO)
+
+    # Specifically configure MIST logger to ensure it writes to the log file
+    mist_logger = logging.getLogger("openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main")
+    mist_logger.setLevel(logging.INFO)
+
+    # Configure other common OpenHCS loggers
+    for logger_name in [
+        "openhcs.processing.backends.processors.cupy_processor",
+        "openhcs.processing.backends.pos_gen",
+        "openhcs.core.orchestrator",
+        "openhcs.core.pipeline",
+        "openhcs.io"
+    ]:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.INFO)
+
+    # Prevent other modules from adding console handlers
+    logging.basicConfig = lambda *args, **kwargs: None
+
     logger = logging.getLogger(__name__)
-    logger.info("🔥 SUBPROCESS: Logging initialized")
+    logger.info("🔥 SUBPROCESS: Unified logging initialized for all OpenHCS components")
+    logger.info(f"🔥 SUBPROCESS: Log file: {log_file_path}")
+
+    # Test that MIST logger works
+    mist_logger.info("🔥 SUBPROCESS: MIST GPU logger configured and working")
+
     return logger
 
 def write_status(status_file: str, plate_path: str, status: str):

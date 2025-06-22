@@ -1,32 +1,37 @@
-"""Docstring help dialog for displaying function and parameter documentation."""
+"""Help windows for displaying docstring and parameter information."""
 
 from typing import Union, Callable, Optional
 from textual.app import ComposeResult
-from textual.widgets import Static, Button, Markdown
-from textual.containers import Vertical, Horizontal
+from textual.containers import Vertical
+from textual.widgets import Button, Static, Markdown
 
-from openhcs.textual_tui.widgets.floating_window import BaseFloatingWindow
-from .signature_analyzer import DocstringExtractor, DocstringInfo
+from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
+from openhcs.textual_tui.widgets.shared.signature_analyzer import DocstringExtractor
 
 
-class DocstringHelpDialog(BaseFloatingWindow):
-    """Help dialog for displaying docstring information."""
+class DocstringHelpWindow(BaseOpenHCSWindow):
+    """Window for displaying docstring information."""
 
     def __init__(self, target: Union[Callable, type], title: Optional[str] = None, **kwargs):
         self.target = target
         self.docstring_info = DocstringExtractor.extract(target)
         
-        # Generate title
-        if title:
-            dialog_title = title
-        else:
-            target_name = getattr(target, '__name__', 'Unknown')
-            dialog_title = f"Help: {target_name}"
+        # Generate title from target if not provided
+        if title is None:
+            if hasattr(target, '__name__'):
+                title = f"Help: {target.__name__}"
+            else:
+                title = "Help"
         
-        super().__init__(title=dialog_title, **kwargs)
+        super().__init__(
+            window_id="docstring_help",
+            title=title,
+            mode="temporary",
+            **kwargs
+        )
 
-    def compose_content(self) -> ComposeResult:
-        """Compose the help dialog content."""
+    def compose(self) -> ComposeResult:
+        """Compose the help window content."""
         with Vertical():
             # Function/class summary
             if self.docstring_info.summary:
@@ -51,27 +56,34 @@ class DocstringHelpDialog(BaseFloatingWindow):
             if self.docstring_info.examples:
                 yield Static("[bold]Examples:[/bold]", classes="help-section-header")
                 yield Markdown(f"```python\n{self.docstring_info.examples}\n```", classes="help-examples")
+            
+            # Close button
+            yield Button("Close", id="close", compact=True)
 
-    def compose_buttons(self) -> ComposeResult:
-        """Provide Close button."""
-        yield Button("Close", id="close", compact=True)
-
-    def handle_button_action(self, button_id: str, button_text: str):
-        """Handle button actions - Close button dismisses dialog."""
-        return False  # Dismiss with False result
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "close":
+            self.close_window()
 
 
-class ParameterHelpDialog(BaseFloatingWindow):
-    """Help dialog for displaying individual parameter documentation."""
+class ParameterHelpWindow(BaseOpenHCSWindow):
+    """Window for displaying individual parameter documentation."""
 
     def __init__(self, param_name: str, param_description: str, param_type: type = None, **kwargs):
         self.param_name = param_name
         self.param_description = param_description
         self.param_type = param_type
         
-        super().__init__(title=f"Parameter: {param_name}", **kwargs)
+        title = f"Help: {param_name}"
+        
+        super().__init__(
+            window_id="parameter_help",
+            title=title,
+            mode="temporary",
+            **kwargs
+        )
 
-    def compose_content(self) -> ComposeResult:
+    def compose(self) -> ComposeResult:
         """Compose the parameter help content."""
         with Vertical():
             # Parameter name and type
@@ -83,27 +95,26 @@ class ParameterHelpDialog(BaseFloatingWindow):
                 yield Markdown(self.param_description, classes="param-description")
             else:
                 yield Static("[dim]No description available[/dim]", classes="param-no-desc")
+            
+            # Close button
+            yield Button("Close", id="close", compact=True)
 
-    def compose_buttons(self) -> ComposeResult:
-        """Provide Close button."""
-        yield Button("Close", id="close", compact=True)
-
-    def handle_button_action(self, button_id: str, button_text: str):
-        """Handle button actions - Close button dismisses dialog."""
-        return False  # Dismiss with False result
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "close":
+            self.close_window()
 
 
 class HelpableWidget:
     """Mixin class to add help functionality to widgets using windows."""
-
+    
     async def show_function_help(self, target: Union[Callable, type]) -> None:
         """Show help window for a function or class."""
         if not hasattr(self, 'app'):
             return
-
-        from openhcs.textual_tui.windows import DocstringHelpWindow
+        
         from textual.css.query import NoMatches
-
+        
         # Use window-based help (follows ConfigWindow pattern)
         try:
             window = self.app.query_one(DocstringHelpWindow)
@@ -116,15 +127,14 @@ class HelpableWidget:
             window = DocstringHelpWindow(target)
             await self.app.mount(window)
             window.open_state = True
-
+    
     async def show_parameter_help(self, param_name: str, param_description: str, param_type: type = None) -> None:
         """Show help window for a parameter."""
         if not hasattr(self, 'app'):
             return
-
-        from openhcs.textual_tui.windows import ParameterHelpWindow
+        
         from textual.css.query import NoMatches
-
+        
         # Use window-based help (follows ConfigWindow pattern)
         try:
             window = self.app.query_one(ParameterHelpWindow)

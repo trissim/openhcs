@@ -94,47 +94,20 @@ class ParameterHelpDialog(BaseFloatingWindow):
 
 
 class HelpableWidget:
-    """Mixin class to add help functionality to widgets using windows."""
-
-    async def show_function_help(self, target: Union[Callable, type]) -> None:
-        """Show help window for a function or class."""
+    """Mixin class to add help functionality to widgets."""
+    
+    def show_function_help(self, target: Union[Callable, type]) -> None:
+        """Show help dialog for a function or class."""
         if not hasattr(self, 'app'):
             return
-
-        from openhcs.textual_tui.windows import DocstringHelpWindow
-        from textual.css.query import NoMatches
-
-        # Use window-based help (follows ConfigWindow pattern)
-        try:
-            window = self.app.query_one(DocstringHelpWindow)
-            # Window exists, update it and open
-            window.target = target
-            window.docstring_info = DocstringExtractor.extract(target)
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = DocstringHelpWindow(target)
-            await self.app.mount(window)
-            window.open_state = True
-
-    async def show_parameter_help(self, param_name: str, param_description: str, param_type: type = None) -> None:
-        """Show help window for a parameter."""
+            
+        help_dialog = DocstringHelpDialog(target)
+        self.app.push_screen(help_dialog)
+    
+    def show_parameter_help(self, param_name: str, param_description: str, param_type: type = None) -> None:
+        """Show help dialog for a parameter."""
         if not hasattr(self, 'app'):
             return
-
-        from openhcs.textual_tui.windows import ParameterHelpWindow
-        from textual.css.query import NoMatches
-
-        # Use window-based help (follows ConfigWindow pattern)
-        try:
-            window = self.app.query_one(ParameterHelpWindow)
-            # Window exists, update it and open
-            window.param_name = param_name
-            window.param_description = param_description
-            window.param_type = param_type
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = ParameterHelpWindow(param_name, param_description, param_type)
-            await self.app.mount(window)
-            window.open_state = True
+            
+        help_dialog = ParameterHelpDialog(param_name, param_description, param_type)
+        self.app.push_screen(help_dialog)

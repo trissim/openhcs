@@ -275,24 +275,16 @@ class ButtonListWidget(Widget):
         self._update_button_states()
     
     @on(Button.Pressed)
-    async def handle_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses from the top button bar (supports both sync and async callbacks)."""
+    def handle_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses from the top button bar."""
         button_id = event.button.id
 
         # CRITICAL: Stop event propagation
         event.stop()
 
-        # Notify callback if provided (support both sync and async callbacks)
+        # Notify callback if provided
         if self.on_button_pressed_callback:
-            import asyncio
-            import inspect
-
-            if inspect.iscoroutinefunction(self.on_button_pressed_callback):
-                # Async callback - await it
-                await self.on_button_pressed_callback(button_id)
-            else:
-                # Sync callback - call normally
-                self.on_button_pressed_callback(button_id)
+            self.on_button_pressed_callback(button_id)
     
     def get_selection_state(self) -> Tuple[List[Dict], str]:
         """

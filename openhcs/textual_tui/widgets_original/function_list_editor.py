@@ -284,18 +284,18 @@ class FunctionListEditorWidget(Container):
 
 
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "add_function_btn":
-            await self._add_function()
+            self._add_function()
         elif event.button.id == "load_func_btn":
-            await self._load_func()
+            self._load_func()
         elif event.button.id == "save_func_as_btn":
-            await self._save_func_as()
+            self._save_func_as()
         elif event.button.id == "edit_vim_btn":
             self._edit_in_vim()
         elif event.button.id == "component_btn":
-            await self._show_component_selection_dialog()
+            self._show_component_selection_dialog()
         elif event.button.id == "prev_channel_btn":
             self._navigate_channel(-1)
         elif event.button.id == "next_channel_btn":
@@ -355,10 +355,10 @@ class FunctionListEditorWidget(Container):
                 self.post_message(self.FunctionPatternChanged())
                 logger.debug(f"Updated parameter {event.param_name}={converted_value} (type: {type(converted_value)}) for function {event.index}")
 
-    async def on_function_pane_widget_change_function(self, event: Message) -> None:
+    def on_function_pane_widget_change_function(self, event: Message) -> None:
         """Handle change function message from FunctionPaneWidget."""
         if hasattr(event, 'index') and 0 <= event.index < len(self.functions):
-            await self._change_function(event.index)
+            self._change_function(event.index)
 
     def on_function_pane_widget_remove_function(self, event: Message) -> None:
         """Handle remove function message from FunctionPaneWidget."""
@@ -370,11 +370,11 @@ class FunctionListEditorWidget(Container):
         else:
             logger.warning(f"Invalid index for remove function: {getattr(event, 'index', 'N/A')}")
 
-    async def on_function_pane_widget_add_function(self, event: Message) -> None:
+    def on_function_pane_widget_add_function(self, event: Message) -> None:
         """Handle add function message from FunctionPaneWidget."""
         if hasattr(event, 'insert_index'):
             insert_index = min(event.insert_index, len(self.functions))  # Clamp to valid range
-            await self._add_function_at_index(insert_index)
+            self._add_function_at_index(insert_index)
         else:
             logger.warning(f"Invalid add function event: missing insert_index")
 
@@ -399,14 +399,13 @@ class FunctionListEditorWidget(Container):
         self._commit_and_notify()
         logger.debug(f"Moved function from index {index} to {new_index}")
 
-    async def _add_function(self) -> None:
+    def _add_function(self) -> None:
         """Add a new function to the end of the list."""
-        await self._add_function_at_index(len(self.functions))
+        self._add_function_at_index(len(self.functions))
 
-    async def _add_function_at_index(self, insert_index: int) -> None:
+    def _add_function_at_index(self, insert_index: int) -> None:
         """Add a new function at the specified index."""
-        from openhcs.textual_tui.windows import FunctionSelectorWindow
-        from textual.css.query import NoMatches
+        from openhcs.textual_tui.screens.function_selector import FunctionSelectorScreen
 
         def handle_function_selection(selected_function: Optional[Callable]) -> None:
             if selected_function:
@@ -417,22 +416,11 @@ class FunctionListEditorWidget(Container):
                 self._commit_and_notify()
                 logger.debug(f"Added function: {selected_function.__name__} at index {insert_index}")
 
-        # Use window-based function selector (follows ConfigWindow pattern)
-        try:
-            window = self.app.query_one(FunctionSelectorWindow)
-            # Window exists, update it and open
-            window.on_result_callback = handle_function_selection
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = FunctionSelectorWindow(on_result_callback=handle_function_selection)
-            await self.app.mount(window)
-            window.open_state = True
+        self.app.push_screen(FunctionSelectorScreen(), handle_function_selection)
 
-    async def _change_function(self, index: int) -> None:
+    def _change_function(self, index: int) -> None:
         """Change function at specified index."""
-        from openhcs.textual_tui.windows import FunctionSelectorWindow
-        from textual.css.query import NoMatches
+        from openhcs.textual_tui.screens.function_selector import FunctionSelectorScreen
 
         if 0 <= index < len(self.functions):
             current_func, _ = self.functions[index]
@@ -446,18 +434,10 @@ class FunctionListEditorWidget(Container):
                     self._commit_and_notify()
                     logger.debug(f"Changed function at index {index} to: {selected_function.__name__}")
 
-            # Use window-based function selector (follows ConfigWindow pattern)
-            try:
-                window = self.app.query_one(FunctionSelectorWindow)
-                # Window exists, update it and open
-                window.current_function = current_func
-                window.on_result_callback = handle_function_selection
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = FunctionSelectorWindow(current_function=current_func, on_result_callback=handle_function_selection)
-                await self.app.mount(window)
-                window.open_state = True
+            self.app.push_screen(
+                FunctionSelectorScreen(current_function=current_func),
+                handle_function_selection
+            )
 
     def _commit_and_notify(self) -> None:
         """Commit changes and notify parent of function pattern change."""
@@ -466,52 +446,54 @@ class FunctionListEditorWidget(Container):
         # Post message to notify parent (DualEditorScreen) of changes
         self.post_message(self.FunctionPatternChanged())
 
-    async def _load_func(self) -> None:
+    def _load_func(self) -> None:
         """Load function pattern from .func file."""
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         def handle_result(result):
             if result and isinstance(result, Path):
                 self._load_pattern_from_file(result)
 
-        # Use window-based file browser
-        await open_file_browser_window(
-            app=self.app,
+        # Launch enhanced file browser for .func files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
+        browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.FUNCTION_PATTERNS),
             backend=Backend.DISK,
             title="Load Function Pattern (.func)",
             mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.func'],
-            cache_key=PathCacheKey.FUNCTION_PATTERNS,
-            on_result_callback=handle_result
+            cache_key=PathCacheKey.FUNCTION_PATTERNS
         )
+        self.app.push_screen(browser, handle_result)
 
-    async def _save_func_as(self) -> None:
+    def _save_func_as(self) -> None:
         """Save function pattern to .func file."""
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         def handle_result(result):
             if result and isinstance(result, Path):
                 self._save_pattern_to_file(result)
 
-        # Use window-based file browser
-        await open_file_browser_window(
-            app=self.app,
+        # Launch enhanced file browser for saving .func files
+        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+
+        browser = EnhancedFileBrowserScreen(
             file_manager=self.app.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.FUNCTION_PATTERNS),
             backend=Backend.DISK,
             title="Save Function Pattern (.func)",
             mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.func'],
             default_filename="pattern.func",
-            cache_key=PathCacheKey.FUNCTION_PATTERNS,
-            on_result_callback=handle_result
+            cache_key=PathCacheKey.FUNCTION_PATTERNS
         )
+        self.app.push_screen(browser, handle_result)
 
     def _load_pattern_from_file(self, file_path: Path) -> None:
         """Load pattern from .func file."""
@@ -585,7 +567,7 @@ class FunctionListEditorWidget(Container):
              self.current_group_by.value in [vc.value for vc in self.current_variable_components])
         )
 
-    async def _show_component_selection_dialog(self) -> None:
+    def _show_component_selection_dialog(self) -> None:
         """Show the component selection dialog for the current group_by setting."""
         try:
             # Check if component selection is disabled
@@ -616,35 +598,22 @@ class FunctionListEditorWidget(Container):
             else:
                 selected_components = []
 
-            # Show window with dynamic component type
-            from openhcs.textual_tui.windows import GroupBySelectorWindow
-            from textual.css.query import NoMatches
+            # Show dialog with dynamic component type
+            from openhcs.textual_tui.screens.channel_selection_dialog import ChannelSelectionDialog
 
             def handle_selection(result_components):
                 if result_components is not None:
                     self._update_components(result_components)
 
-            # Use window-based group-by selector (follows ConfigWindow pattern)
-            try:
-                window = self.app.query_one(GroupBySelectorWindow)
-                # Window exists, update it and open
-                window.available_channels = available_components
-                window.selected_channels = selected_components
-                window.component_type = self.current_group_by.value
-                window.orchestrator = orchestrator
-                window.on_result_callback = handle_selection
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = GroupBySelectorWindow(
-                    available_channels=available_components,
-                    selected_channels=selected_components,
-                    on_result_callback=handle_selection,
-                    component_type=self.current_group_by.value,
-                    orchestrator=orchestrator
-                )
-                await self.app.mount(window)
-                window.open_state = True
+            # Use ChannelSelectionDialog with dynamic component type and orchestrator
+            dialog = ChannelSelectionDialog(
+                available_channels=available_components,
+                selected_channels=selected_components,
+                callback=handle_selection,
+                component_type=self.current_group_by.value,  # Pass component type for dynamic labels
+                orchestrator=orchestrator  # Pass orchestrator for metadata access
+            )
+            self.app.push_screen(dialog)
 
         except Exception as e:
             component_type = self.current_group_by.value if self.current_group_by else "component"
@@ -743,18 +712,13 @@ class FunctionListEditorWidget(Container):
     def _get_current_orchestrator(self):
         """Get the current orchestrator from the app."""
         try:
-            # Get from app - PlateManagerWidget is now in PipelinePlateWindow
+            # Get from app
             if hasattr(self.app, 'query_one'):
-                from openhcs.textual_tui.windows import PipelinePlateWindow
+                from openhcs.textual_tui.widgets.main_content import MainContent
                 from openhcs.textual_tui.widgets.plate_manager import PlateManagerWidget
 
-                # Try to find the PipelinePlateWindow first
-                try:
-                    pipeline_plate_window = self.app.query_one(PipelinePlateWindow)
-                    plate_manager = pipeline_plate_window.plate_widget
-                except:
-                    # Fallback: try to find PlateManagerWidget directly in the app
-                    plate_manager = self.app.query_one(PlateManagerWidget)
+                main_content = self.app.query_one(MainContent)
+                plate_manager = main_content.query_one(PlateManagerWidget)
 
                 # Use selected_plate (not current_plate!)
                 selected_plate = plate_manager.selected_plate

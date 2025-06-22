@@ -71,8 +71,7 @@ class PlateManagerWidget(ButtonListWidget):
     """
     Plate management widget using Textual reactive state.
     """
-
-    # Semantic reactive property (like PipelineEditor's pipeline_steps)
+    
     plates = reactive([])
     selected_plate = reactive("")
     orchestrators = reactive({})
@@ -118,16 +117,6 @@ class PlateManagerWidget(ButtonListWidget):
         
         logger.debug("PlateManagerWidget initialized")
 
-    @property
-    def plates(self):
-        """Alias for items to maintain backward compatibility."""
-        return self.items
-
-    @plates.setter
-    def plates(self, value):
-        """Alias for items to maintain backward compatibility."""
-        self.items = value
-
     def on_unmount(self) -> None:
         logger.info("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
         self.action_stop_execution()
@@ -141,7 +130,7 @@ class PlateManagerWidget(ButtonListWidget):
         display_text = f"{status_icon} {plate_name} - {plate_path}"
         return display_text, plate_path
 
-    async def _handle_button_press(self, button_id: str) -> None:
+    def _handle_button_press(self, button_id: str) -> None:
         action_map = {
             "add_plate": self.action_add_plate,
             "del_plate": self.action_delete_plate,
@@ -151,12 +140,7 @@ class PlateManagerWidget(ButtonListWidget):
             "save_debug_pickle": self.action_save_debug_pickle,
         }
         if button_id in action_map:
-            import inspect
-            action = action_map[button_id]
-            if inspect.iscoroutinefunction(action):
-                await action()
-            else:
-                action()
+            action_map[button_id]()
         elif button_id == "run_plate":
             if self._is_any_plate_running():
                 self.action_stop_execution()
@@ -181,16 +165,11 @@ class PlateManagerWidget(ButtonListWidget):
         self.call_later(self._update_button_states)
     
     def watch_plates(self, plates: List[Dict]) -> None:
-        """Automatically update UI when plates changes (follows PipelineEditor pattern)."""
-        # DEBUG: Log when plates list changes to track the source of the reset
-        import traceback
-        stack_trace = ''.join(traceback.format_stack()[-3:-1])  # Get last 2 stack frames
-        logger.info(f"🔍 PLATES CHANGED: {len(plates)} plates. Call stack:\n{stack_trace}")
-
-        # Sync with ButtonListWidget's items property to trigger its reactive system
-        self.items = list(plates)
-
-        logger.debug(f"Plates updated: {len(plates)} plates")
+        try:
+            self.items = list(plates)
+            self.mutate_reactive(ButtonListWidget.items)
+        except Exception as e:
+            self.app.show_error(f"Error in watch_plates: {str(e)}", e)
         self._update_button_states()
     
     def watch_highlighted_item(self, plate_path: str) -> None:
@@ -204,11 +183,6 @@ class PlateManagerWidget(ButtonListWidget):
         logger.debug(f"Selected plate: {plate_path}")
 
     def get_selection_state(self) -> tuple[List[Dict], str]:
-        # Check if widget is properly mounted first
-        if not self.is_mounted:
-            logger.debug("get_selection_state called on unmounted widget")
-            return [], "empty"
-
         try:
             selection_list = self.query_one(f"#{self.list_id}")
             multi_selected_values = selection_list.selected
@@ -221,23 +195,7 @@ class PlateManagerWidget(ButtonListWidget):
             else:
                 return [], "empty"
         except Exception as e:
-            # DOM CORRUPTION DETECTED - This is a critical error
-            import traceback
-            stack_trace = ''.join(traceback.format_stack()[-3:-1])
-            logger.error(f"🚨 DOM CORRUPTION: Failed to get selection state: {e}")
-            logger.error(f"🚨 DOM CORRUPTION: Call stack:\n{stack_trace}")
-            logger.error(f"🚨 DOM CORRUPTION: Widget mounted: {self.is_mounted}")
-            logger.error(f"🚨 DOM CORRUPTION: Looking for: #{self.list_id}")
-            logger.error(f"🚨 DOM CORRUPTION: Plates count: {len(self.plates)}")
-
-            # Try to diagnose what widgets actually exist
-            try:
-                all_widgets = list(self.query("*"))
-                widget_ids = [w.id for w in all_widgets if w.id]
-                logger.error(f"🚨 DOM CORRUPTION: Available widget IDs: {widget_ids}")
-            except Exception as diag_e:
-                logger.error(f"🚨 DOM CORRUPTION: Could not diagnose widgets: {diag_e}")
-
+            logger.warning(f"Failed to get selection state: {e}")
             if self.selected_plate:
                 selected_items = [p for p in self.plates if p.get('path') == self.selected_plate]
                 return selected_items, "cursor"
@@ -250,10 +208,11 @@ class PlateManagerWidget(ButtonListWidget):
         return f"{operation.title()} {count} items"
 
     def _delayed_update_display(self) -> None:
-        """Trigger UI update - no longer needed since reactive system handles this automatically."""
-        # The reactive system now handles updates automatically via watch_plates()
-        # This method is kept for compatibility but does nothing
-        pass
+        try:
+            self.mutate_reactive(PlateManagerWidget.items)
+        except Exception as e:
+            logger.warning(f"Delayed update failed: {e}")
+            self.set_timer(0.1, self._delayed_update_display)
 
     def _update_button_states(self) -> None:
         try:
@@ -758,11 +717,11 @@ class PlateManagerWidget(ButtonListWidget):
     # This was interfering with subprocess execution by trying to read stdout
     # Now subprocess runs completely independently
 
-    async def action_add_plate(self) -> None:
+    def action_add_plate(self) -> None:
         """Handle Add Plate button."""
-        await self._open_plate_directory_browser()
+        self.app.push_screen(self._create_file_browser_screen(), self._add_plate_callback)
 
-    async def action_save_debug_pickle(self) -> None:
+    def action_save_debug_pickle(self) -> None:
         """Save the last subprocess pickle file for manual debugging."""
         if not hasattr(self, '_last_subprocess_data'):
             self.app.show_error("No Debug Data", "No subprocess data available. Run execution first.")
@@ -867,12 +826,8 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(error_msg, exc_info=True)
                 self.app.show_error("Save Failed", error_msg)
 
-        # Open textual-window file browser for saving
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
-
-        await open_file_browser_window(
-            app=self.app,
+        # Create file browser for saving
+        browser = EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.DEBUG_FILES),
             backend=Backend.DISK,
@@ -881,15 +836,14 @@ class PlateManagerWidget(ButtonListWidget):
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pkl'],
             default_filename=default_filename,
-            cache_key=PathCacheKey.DEBUG_FILES,
-            on_result_callback=handle_save_result,
-            caller_id="plate_manager"
+            cache_key=PathCacheKey.DEBUG_FILES
         )
 
-    async def _open_plate_directory_browser(self):
-        """Open textual-window file browser for plate directory selection."""
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
+        self.app.push_screen(browser, handle_save_result)
+
+    def _create_file_browser_screen(self):
+        """Create enhanced file browser screen for plate selection with path caching."""
+        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
         from pathlib import Path
@@ -898,18 +852,15 @@ class PlateManagerWidget(ButtonListWidget):
         path_cache = get_path_cache()
         initial_path = path_cache.get_initial_path(PathCacheKey.PLATE_IMPORT, Path.home())
 
-        # Open textual-window file browser for directory selection
-        await open_file_browser_window(
-            app=self.app,
+        # Create enhanced file browser for directory selection
+        return EnhancedFileBrowserScreen(
             file_manager=self.filemanager,
             initial_path=initial_path,
             backend=Backend.DISK,
             title="Select Plate Directory",
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.DIRECTORIES_ONLY,
-            cache_key=PathCacheKey.PLATE_IMPORT,
-            on_result_callback=self._add_plate_callback,
-            caller_id="plate_manager"
+            cache_key=PathCacheKey.PLATE_IMPORT
         )
 
     def _add_plate_callback(self, selected_paths) -> None:
@@ -1030,8 +981,6 @@ class PlateManagerWidget(ButtonListWidget):
     @work(exclusive=True)
     async def _init_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate initialization."""
-        import asyncio
-
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
@@ -1046,35 +995,30 @@ class PlateManagerWidget(ButtonListWidget):
                 logger.error(f"Plate not found in plates list: {plate_path}")
                 continue
 
-            try:
-                # Run heavy initialization in executor to avoid blocking UI
-                def init_orchestrator():
-                    return PipelineOrchestrator(
-                        plate_path=plate_path,
-                        global_config=self.global_config,
-                        storage_registry=self.filemanager.registry
-                    ).initialize()
+            # Create and initialize orchestrator - let it fail loud
+            orchestrator = PipelineOrchestrator(
+                plate_path=plate_path,
+                global_config=self.global_config,
+                storage_registry=self.filemanager.registry
+            ).initialize()
 
-                orchestrator = await asyncio.get_event_loop().run_in_executor(None, init_orchestrator)
+            # Store orchestrator for later use (channel selection, etc.)
+            self.orchestrators[plate_path] = orchestrator
 
-                # Store orchestrator for later use (channel selection, etc.)
-                self.orchestrators[plate_path] = orchestrator
+            actual_plate['status'] = '-'  # Initialized
+            logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
 
-                actual_plate['status'] = '-'  # Initialized
-                logger.info(f"Set plate {actual_plate['name']} status to '-' (initialized)")
-
-            except Exception as e:
-                logger.error(f"Failed to initialize plate {plate_path}: {e}", exc_info=True)
-                actual_plate['status'] = 'F'  # Failed
-                actual_plate['error'] = str(e)
-
-            # Update button states immediately (reactive system handles UI updates automatically)
+            # Force UI update immediately after each plate
+            self.mutate_reactive(PlateManagerWidget.plates)
+            # Update button states immediately
             self._update_button_states()
             # Notify pipeline editor of status change
             self._notify_pipeline_editor_status_change(actual_plate['path'], actual_plate['status'])
-            logger.info(f"Updated plate {actual_plate['name']} status")
+            logger.info(f"Called mutate_reactive for plate {actual_plate['name']}")
 
-        # Final UI update (reactive system handles this automatically when self.plates is modified)
+        # Final UI update
+        self.mutate_reactive(PlateManagerWidget.plates)
+        # Update button states after all plates processed
         self._update_button_states()
 
         # Update status
@@ -1152,22 +1096,18 @@ class PlateManagerWidget(ButtonListWidget):
                 definition_pipeline = []
 
             try:
-                # Get or create orchestrator for compilation (run in executor to avoid blocking)
-                def get_or_create_orchestrator():
-                    if plate_path in self.orchestrators:
-                        orchestrator = self.orchestrators[plate_path]
-                        if not orchestrator.is_initialized():
-                            orchestrator.initialize()
-                        return orchestrator
-                    else:
-                        return PipelineOrchestrator(
-                            plate_path=plate_path,
-                            global_config=self.global_config,
-                            storage_registry=self.filemanager.registry
-                        ).initialize()
-
-                orchestrator = await asyncio.get_event_loop().run_in_executor(None, get_or_create_orchestrator)
-                self.orchestrators[plate_path] = orchestrator
+                # Get or create orchestrator for compilation
+                if plate_path in self.orchestrators:
+                    orchestrator = self.orchestrators[plate_path]
+                    if not orchestrator.is_initialized():
+                        orchestrator.initialize()
+                else:
+                    orchestrator = PipelineOrchestrator(
+                        plate_path=plate_path,
+                        global_config=self.global_config,
+                        storage_registry=self.filemanager.registry
+                    ).initialize()
+                    self.orchestrators[plate_path] = orchestrator
 
                 # Make fresh copy for compilation
                 import copy
@@ -1218,12 +1158,16 @@ class PlateManagerWidget(ButtonListWidget):
                 actual_plate['error'] = str(e)
                 # Don't store anything in plate_compiled_data on failure
 
-            # Update button states immediately (reactive system handles UI updates automatically)
+            # Force UI update immediately after each plate
+            self.mutate_reactive(PlateManagerWidget.plates)
+            # Update button states immediately
             self._update_button_states()
             # Notify pipeline editor of status change
             self._notify_pipeline_editor_status_change(actual_plate['path'], actual_plate['status'])
 
-        # Final UI update (reactive system handles this automatically when self.plates is modified)
+        # Final UI update
+        self.mutate_reactive(PlateManagerWidget.plates)
+        # Update button states after all plates processed
         self._update_button_states()
 
         # Update status

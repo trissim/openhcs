@@ -49,7 +49,7 @@ class TUILogHandler(logging.Handler):
 
 class StatusBar(Widget):
     """
-    Top status bar widget with real-time log streaming.
+    Bottom status bar widget with real-time log streaming.
 
     Layout: |————————————————————————— Live Log Messages |
     Shows live log messages from OpenHCS operations in real-time.

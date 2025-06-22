@@ -26,6 +26,11 @@ setup(
         "pygments>=2.10.0",
         "textual>=3.0.0",
         "textual-universal-directorytree",
+        "textual-window",
+        "plotext>=5.2.0",
+        "psutil>=5.9.0",
+        "GPUtil>=1.4.0",
+        "textual-plotext",
         "watchdog>=2.0.0",
         "napari",
         "setuptools"
