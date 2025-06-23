@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 # Import constants
-from openhcs.constants.constants import Backend, OPENHCS_METADATA_FILENAME
+from openhcs.constants.constants import Backend
 # Import PatternDiscoveryEngine for MicroscopeHandler initialization
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.io.filemanager import FileManager
