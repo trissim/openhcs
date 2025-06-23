@@ -722,18 +722,17 @@ class FunctionStep(AbstractStep):
             from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
             metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
 
+            # Always ensure we can write to the metadata path (delete if exists) - same pattern as images
+            if context.filemanager.exists(str(metadata_path), write_backend):
+                context.filemanager.delete(str(metadata_path), write_backend)
+
             # Ensure output directory exists
             context.filemanager.ensure_directory(str(step_output_dir), write_backend)
 
-            if write_backend == 'disk':
-                # Direct file write for disk backend
-                df.to_csv(str(metadata_path), sep='\t', index=False)
-                logger.debug(f"Created OpenHCS metadata file (disk): {metadata_path}")
-            else:
-                # VFS save for memory backend
-                tsv_content = df.to_csv(sep='\t', index=False)
-                context.filemanager.save(tsv_content, str(metadata_path), write_backend)
-                logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
+            # Use filemanager.save() consistently for all backends - respects the codebase architecture
+            tsv_content = df.to_csv(sep='\t', index=False)
+            context.filemanager.save(tsv_content, str(metadata_path), write_backend)
+            logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
 
         except Exception as e:
             # Graceful degradation - log error but don't fail the step
