@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Type
 
 from openhcs.constants.constants import Backend
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
@@ -32,6 +32,9 @@ class OperaPhenixHandler(MicroscopeHandler):
     post-processing steps required after workspace setup.
     """
 
+    # Class attribute for automatic metadata handler registration (set after class definition)
+    _metadata_handler_class = None
+
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         self.parser = OperaPhenixFilenameParser(filemanager, pattern_format=pattern_format)
         self.metadata_handler = OperaPhenixMetadataHandler(filemanager)
@@ -41,6 +44,16 @@ class OperaPhenixHandler(MicroscopeHandler):
     def common_dirs(self) -> List[str]:
         """Subdirectory names commonly used by Opera Phenix."""
         return ['Images']
+
+    @property
+    def microscope_type(self) -> str:
+        """Microscope type identifier (for interface enforcement only)."""
+        return 'opera_phenix'
+
+    @property
+    def metadata_handler_class(self) -> Type[MetadataHandler]:
+        """Metadata handler class (for interface enforcement only)."""
+        return OperaPhenixMetadataHandler
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager):
         """
@@ -750,3 +763,9 @@ class OperaPhenixMetadataHandler(MetadataHandler):
 
         # Create the parser
         return OperaPhenixXmlParser(xml_path)
+
+
+# Set metadata handler class after class definition for automatic registration
+from openhcs.microscopes.microscope_base import register_metadata_handler
+OperaPhenixHandler._metadata_handler_class = OperaPhenixMetadataHandler
+register_metadata_handler(OperaPhenixHandler, OperaPhenixMetadataHandler)

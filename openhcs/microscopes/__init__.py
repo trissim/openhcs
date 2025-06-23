@@ -6,9 +6,10 @@ concrete implementations of FilenameParser and MetadataHandler interfaces.
 """
 
 # Import base components needed for registration
-from openhcs.microscopes.microscope_base import MICROSCOPE_HANDLERS, create_microscope_handler
+from openhcs.microscopes.microscope_base import MICROSCOPE_HANDLERS, METADATA_HANDLERS, create_microscope_handler
 
 # Import concrete MicroscopeHandler implementations
+# These imports trigger automatic registration via metaclass
 from openhcs.microscopes.imagexpress import ImageXpressHandler
 from openhcs.microscopes.opera_phenix import OperaPhenixHandler
 from openhcs.microscopes.openhcs import OpenHCSMicroscopeHandler
@@ -21,15 +22,7 @@ from openhcs.microscopes.opera_phenix import (OperaPhenixFilenameParser,
                                                  OperaPhenixMetadataHandler)
 from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
-
-# Register microscope handlers
-# Keys should be lowercase and match what _auto_detect_microscope_type returns
-if 'imagexpress' not in MICROSCOPE_HANDLERS:
-    MICROSCOPE_HANDLERS['imagexpress'] = ImageXpressHandler
-if 'opera_phenix' not in MICROSCOPE_HANDLERS:
-    MICROSCOPE_HANDLERS['opera_phenix'] = OperaPhenixHandler
-if 'openhcs' not in MICROSCOPE_HANDLERS:
-    MICROSCOPE_HANDLERS['openhcs'] = OpenHCSMicroscopeHandler
+# Note: No manual registration needed - handlers are automatically registered via metaclass
 
 __all__ = [
     # Factory function

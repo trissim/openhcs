@@ -9,7 +9,7 @@ The metadata for such plates is defined in an 'openhcs_metadata.json' file.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.io.filemanager import FileManager
@@ -305,6 +305,10 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     appropriate FilenameParser based on the metadata.
     """
 
+    # Class attributes for automatic registration
+    _microscope_type = 'openhcsdata'  # Override automatic naming
+    _metadata_handler_class = None  # Set after class definition
+
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         """
         Initialize the OpenHCSMicroscopeHandler.
@@ -399,6 +403,16 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         """
         return []
 
+    @property
+    def microscope_type(self) -> str:
+        """Microscope type identifier (for interface enforcement only)."""
+        return 'openhcsdata'
+
+    @property
+    def metadata_handler_class(self) -> Type[MetadataHandler]:
+        """Metadata handler class (for interface enforcement only)."""
+        return OpenHCSMetadataHandler
+
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """
         OpenHCS format assumes the workspace is already prepared (e.g., flat structure).
@@ -457,3 +471,9 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     # - get_grid_dimensions(self, plate_path: Union[str, Path])
     # - get_pixel_size(self, plate_path: Union[str, Path])
     # These will use our OpenHCSMetadataHandler correctly.
+
+
+# Set metadata handler class after class definition for automatic registration
+from openhcs.microscopes.microscope_base import register_metadata_handler
+OpenHCSMicroscopeHandler._metadata_handler_class = OpenHCSMetadataHandler
+register_metadata_handler(OpenHCSMicroscopeHandler, OpenHCSMetadataHandler)
