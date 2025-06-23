@@ -132,8 +132,10 @@ def ashlar_register_no_preprocessing(img1, img2, upsample=10):
             upsample_factor=upsample,
             normalization=None
         )[0]
-    except Exception:
+    except Exception as e:
         # If phase correlation fails, return large error
+        logger.error(f"Ashlar CPU: PHASE CORRELATION FAILED - Exception: {e}")
+        logger.error(f"  Returning infinite error")
         return np.array([0.0, 0.0]), np.inf
 
     # At this point we may have a shift in the wrong quadrant since the FFT
@@ -153,6 +155,7 @@ def ashlar_register_no_preprocessing(img1, img2, upsample=10):
             correlations.append(0.0)
 
     if not correlations or max(correlations) == 0:
+        logger.warning(f"Ashlar CPU: NO VALID CORRELATIONS - All correlations failed or zero")
         return np.array([0.0, 0.0]), np.inf
 
     idx = np.argmax(correlations)
@@ -163,6 +166,14 @@ def ashlar_register_no_preprocessing(img1, img2, upsample=10):
         error = -np.log(correlation / total_amplitude)
     else:
         error = np.inf
+
+    # Log correlation quality
+    if error > 1.0:  # High error threshold for Ashlar
+        logger.warning(f"Ashlar CPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
+        logger.warning(f"  This indicates poor overlap or image quality between tiles")
+    else:
+        logger.debug(f"Ashlar CPU: Good correlation - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
+
     return shift, error
 
 
@@ -206,9 +217,19 @@ def ashlar_nccw_no_preprocessing(img1, img2):
             error = 0
         else:
             # Instead of raising error, return large but finite error
+            logger.warning(f"Ashlar CPU: NCCW numerical precision issue - diff={diff:.6f}, using error=100.0")
             error = 100.0  # Large error but not infinite
     else:
+        logger.warning(f"Ashlar CPU: NCCW invalid correlation - correlation={correlation:.6f}, total_amplitude={total_amplitude:.6f}")
         error = np.inf
+
+    # Log NCCW results
+    if error > 10.0:  # High NCCW error threshold
+        logger.warning(f"Ashlar CPU: HIGH NCCW ERROR - Error={error:.4f}")
+        logger.warning(f"  This indicates poor image correlation between tiles")
+    else:
+        logger.debug(f"Ashlar CPU: Good NCCW - Error={error:.4f}")
+
     return error
 
 

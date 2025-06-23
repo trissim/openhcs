@@ -120,8 +120,17 @@ def ashlar_register_no_preprocessing_gpu(img1, img2, upsample=10):
         shift = cp.asnumpy(shift)
         error = float(error)
 
+        # Log correlation quality
+        if error > 1.0:  # High error threshold for Ashlar
+            logger.warning(f"Ashlar GPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
+            logger.warning(f"  This indicates poor overlap or image quality between tiles")
+        else:
+            logger.debug(f"Ashlar GPU: Good correlation - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
+
     except Exception as e:
         # Fallback if correlation fails
+        logger.error(f"Ashlar GPU: CORRELATION FAILED - Exception: {e}")
+        logger.error(f"  Returning infinite error")
         shift = cp.array([0.0, 0.0])
         error = cp.inf
 
@@ -160,11 +169,21 @@ def ashlar_nccw_no_preprocessing_gpu(img1, img2):
             error = 0
         else:
             # Instead of raising error, return a large but finite error
+            logger.warning(f"Ashlar GPU: NCCW numerical precision issue - diff={diff:.6f}, using error=100.0")
             error = 100.0  # Large error but not infinite
     else:
+        logger.warning(f"Ashlar GPU: NCCW invalid correlation - correlation={correlation:.6f}, total_amplitude={total_amplitude:.6f}")
         error = cp.inf
 
-    return float(error)
+    # Log NCCW results
+    error_float = float(error)
+    if error_float > 10.0:  # High NCCW error threshold
+        logger.warning(f"Ashlar GPU: HIGH NCCW ERROR - Error={error_float:.4f}")
+        logger.warning(f"  This indicates poor image correlation between tiles")
+    else:
+        logger.debug(f"Ashlar GPU: Good NCCW - Error={error_float:.4f}")
+
+    return error_float
 
 
 def ashlar_crop_gpu(img, offset, shape):
