@@ -134,6 +134,12 @@ class FunctionListEditorWidget(Container):
         self.post_message(self.FunctionPatternChanged())
         logger.debug("Posted FunctionPatternChanged message to parent.")
 
+    def _trigger_recomposition(self) -> None:
+        """Manually trigger recomposition when needed (e.g., loading patterns, adding/removing functions)."""
+        # Force recomposition by mutating the reactive property
+        # This is needed because functions has recompose=False to prevent focus loss during typing
+        self.mutate_reactive(FunctionListEditorWidget.functions)
+
     def watch_current_group_by(self, old_group_by: Optional[GroupBy], new_group_by: Optional[GroupBy]) -> None:
         """Handle group_by changes by saving/loading component selections."""
         if old_group_by is not None and old_group_by != GroupBy.NONE:
@@ -286,20 +292,31 @@ class FunctionListEditorWidget(Container):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
+        logger.info(f"🔍 BUTTON: Button pressed: {event.button.id}")
+
         if event.button.id == "add_function_btn":
+            logger.info(f"🔍 BUTTON: Add function button pressed")
             await self._add_function()
         elif event.button.id == "load_func_btn":
+            logger.info(f"🔍 BUTTON: Load func button pressed - calling _load_func()")
             await self._load_func()
         elif event.button.id == "save_func_as_btn":
+            logger.info(f"🔍 BUTTON: Save func as button pressed")
             await self._save_func_as()
         elif event.button.id == "edit_vim_btn":
+            logger.info(f"🔍 BUTTON: Edit vim button pressed")
             self._edit_in_vim()
         elif event.button.id == "component_btn":
+            logger.info(f"🔍 BUTTON: Component button pressed")
             await self._show_component_selection_dialog()
         elif event.button.id == "prev_channel_btn":
+            logger.info(f"🔍 BUTTON: Previous channel button pressed")
             self._navigate_channel(-1)
         elif event.button.id == "next_channel_btn":
+            logger.info(f"🔍 BUTTON: Next channel button pressed")
             self._navigate_channel(1)
+        else:
+            logger.warning(f"🔍 BUTTON: Unknown button pressed: {event.button.id}")
 
 
 
@@ -468,15 +485,35 @@ class FunctionListEditorWidget(Container):
 
     async def _load_func(self) -> None:
         """Load function pattern from .func file."""
+        logger.info(f"🔍 LOAD FUNC: _load_func() called - starting file browser...")
+
         from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         def handle_result(result):
-            if result and isinstance(result, Path):
-                self._load_pattern_from_file(result)
+            logger.info(f"🔍 LOAD FUNC: File browser callback received result: {result} (type: {type(result)})")
+
+            # Handle both single Path and list of Paths (disable multi-loading, take first only)
+            file_path = None
+            if isinstance(result, Path):
+                file_path = result
+                logger.info(f"🔍 LOAD FUNC: Single Path received: {file_path}")
+            elif isinstance(result, list) and len(result) > 0:
+                file_path = result[0]  # Take only the first file (disable multi-loading)
+                if len(result) > 1:
+                    logger.warning(f"🔍 LOAD FUNC: Multiple files selected, using only first: {file_path}")
+                else:
+                    logger.info(f"🔍 LOAD FUNC: List with single Path received: {file_path}")
+
+            if file_path and isinstance(file_path, Path):
+                logger.info(f"🔍 LOAD FUNC: Valid Path extracted, calling _load_pattern_from_file({file_path})")
+                self._load_pattern_from_file(file_path)
+            else:
+                logger.warning(f"🔍 LOAD FUNC: No valid Path found in result: {result}")
 
         # Use window-based file browser
+        logger.info(f"🔍 LOAD FUNC: Opening file browser window...")
         from openhcs.textual_tui.services.file_browser_service import SelectionMode
         await open_file_browser_window(
             app=self.app,
@@ -490,6 +527,7 @@ class FunctionListEditorWidget(Container):
             cache_key=PathCacheKey.FUNCTION_PATTERNS,
             on_result_callback=handle_result
         )
+        logger.info(f"🔍 LOAD FUNC: File browser window opened, waiting for user selection...")
 
     async def _save_func_as(self) -> None:
         """Save function pattern to .func file."""
@@ -519,36 +557,97 @@ class FunctionListEditorWidget(Container):
 
     def _load_pattern_from_file(self, file_path: Path) -> None:
         """Load pattern from .func file."""
+        logger.info(f"🔍 LOAD FUNC: _load_pattern_from_file called with: {file_path}")
+        logger.info(f"🔍 LOAD FUNC: File exists: {file_path.exists()}")
+        logger.info(f"🔍 LOAD FUNC: File size: {file_path.stat().st_size if file_path.exists() else 'N/A'} bytes")
+
         import pickle
         try:
+            logger.info(f"🔍 LOAD FUNC: Opening file for reading...")
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
-            logger.info(f"Loaded pattern from {file_path}: {pattern}")
-            self._initialize_pattern_data(pattern)
-            # Force UI refresh by triggering reactive system
-            self._refresh_ui_after_load()
+            logger.info(f"🔍 LOAD FUNC: Successfully loaded pattern from pickle: {pattern}")
+            logger.info(f"🔍 LOAD FUNC: Pattern type: {type(pattern)}")
+
+            # Log current state before loading
+            logger.info(f"🔍 LOAD FUNC: BEFORE - functions: {len(self.functions)} items")
+            logger.info(f"🔍 LOAD FUNC: BEFORE - is_dict_mode: {self.is_dict_mode}")
+            logger.info(f"🔍 LOAD FUNC: BEFORE - selected_channel: {self.selected_channel}")
+
+            # Process pattern and create NEW objects (like add button does)
+            # This is crucial - reactive system only triggers on new object assignment
+            if pattern is None:
+                new_pattern_data = []
+                new_is_dict_mode = False
+                new_functions = []
+                new_selected_channel = None
+            elif callable(pattern):
+                new_pattern_data = [(pattern, {})]
+                new_is_dict_mode = False
+                new_functions = [(pattern, {})]
+                new_selected_channel = None
+            elif isinstance(pattern, list):
+                new_pattern_data = pattern
+                new_is_dict_mode = False
+                new_functions = self._normalize_function_list(pattern)
+                new_selected_channel = None
+            elif isinstance(pattern, dict):
+                # Convert any integer keys to string keys for consistency
+                normalized_dict = {}
+                for key, value in pattern.items():
+                    str_key = str(key)
+                    normalized_dict[str_key] = value
+                    logger.debug(f"Converted channel key {key} ({type(key)}) to '{str_key}' (str)")
+
+                new_pattern_data = normalized_dict
+                new_is_dict_mode = True
+                # Set first channel as selected, or None if no channels
+                if normalized_dict:
+                    first_channel = next(iter(normalized_dict))
+                    new_selected_channel = first_channel
+                    new_functions = self._normalize_function_list(normalized_dict.get(first_channel, []))
+                else:
+                    new_selected_channel = None
+                    new_functions = []
+            else:
+                logger.warning(f"Unknown pattern type: {type(pattern)}, using empty list")
+                new_pattern_data = []
+                new_is_dict_mode = False
+                new_functions = []
+                new_selected_channel = None
+
+            # Assign NEW objects to reactive properties (like add button does)
+            logger.info(f"🔍 LOAD FUNC: Assigning new values to reactive properties...")
+            logger.info(f"🔍 LOAD FUNC: new_pattern_data: {new_pattern_data}")
+            logger.info(f"🔍 LOAD FUNC: new_is_dict_mode: {new_is_dict_mode}")
+            logger.info(f"🔍 LOAD FUNC: new_functions: {len(new_functions)} items: {new_functions}")
+            logger.info(f"🔍 LOAD FUNC: new_selected_channel: {new_selected_channel}")
+
+            self.pattern_data = new_pattern_data
+            logger.info(f"🔍 LOAD FUNC: ✅ Assigned pattern_data")
+
+            self.is_dict_mode = new_is_dict_mode
+            logger.info(f"🔍 LOAD FUNC: ✅ Assigned is_dict_mode")
+
+            self.functions = new_functions  # This triggers reactive system!
+            logger.info(f"🔍 LOAD FUNC: ✅ Assigned functions - THIS SHOULD TRIGGER REACTIVE SYSTEM!")
+
+            self.selected_channel = new_selected_channel
+            logger.info(f"🔍 LOAD FUNC: ✅ Assigned selected_channel")
+
+            logger.info(f"🔍 LOAD FUNC: Calling _commit_and_notify...")
             self._commit_and_notify()
-            logger.info(f"Successfully loaded pattern with {len(self.functions)} functions")
+
+            # Final state logging
+            logger.info(f"🔍 LOAD FUNC: FINAL - functions: {len(self.functions)} items")
+            logger.info(f"🔍 LOAD FUNC: FINAL - is_dict_mode: {self.is_dict_mode}")
+            logger.info(f"🔍 LOAD FUNC: FINAL - selected_channel: {self.selected_channel}")
+            logger.info(f"🔍 LOAD FUNC: ✅ Successfully completed loading process!")
+
         except Exception as e:
-            logger.error(f"Failed to load pattern: {e}")
-
-    def _refresh_ui_after_load(self) -> None:
-        """Force UI refresh after loading pattern by triggering reactive system."""
-        # Trigger reactive updates by reassigning reactive properties
-        # This forces recomposition and UI refresh
-        current_functions = self.functions
-        current_dict_mode = self.is_dict_mode
-        current_channel = self.selected_channel
-
-        # Force reactive updates by reassigning
-        self.functions = current_functions
-        self.is_dict_mode = current_dict_mode
-        self.selected_channel = current_channel
-
-        # Refresh component button
-        self._refresh_component_button()
-
-        logger.debug(f"UI refresh triggered: {len(self.functions)} functions, dict_mode={self.is_dict_mode}, channel={self.selected_channel}")
+            logger.error(f"🔍 LOAD FUNC: ❌ ERROR - Failed to load pattern: {e}")
+            import traceback
+            logger.error(f"🔍 LOAD FUNC: ❌ ERROR - Traceback: {traceback.format_exc()}")
 
     def _save_pattern_to_file(self, file_path: Path) -> None:
         """Save pattern to .func file."""
