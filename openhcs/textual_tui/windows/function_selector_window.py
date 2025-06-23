@@ -13,6 +13,13 @@ from openhcs.textual_tui.services.function_registry_service import FunctionRegis
 class FunctionSelectorWindow(BaseOpenHCSWindow):
     """Window for selecting functions from the registry."""
 
+    DEFAULT_CSS = """
+    FunctionSelectorWindow {
+        width: 75; height: 25;
+        min-width: 75; min-height: 25;
+    }
+    """
+
     def __init__(self, current_function: Optional[Callable] = None, on_result_callback: Optional[Callable] = None, **kwargs):
         """Initialize function selector window.
         

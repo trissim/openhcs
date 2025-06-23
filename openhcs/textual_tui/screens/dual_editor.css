@@ -8,8 +8,10 @@ DualEditorScreen {
 #dual_editor_dialog {
     background: $background;
     padding: 2;
-    height: 90vh;
-    max-width: 80;
+    width: 80;
+    height: 20;
+    min-width: 80;
+    min-height: 20;
 }
 
 #dialog_title {

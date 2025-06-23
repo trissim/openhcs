@@ -27,6 +27,33 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
     - None: selected = []
     """
 
+    DEFAULT_CSS = """
+    GroupBySelectorWindow {
+        width: 50; height: 15;
+        min-width: 50; min-height: 15;
+    }
+
+    /* Make buttons more compact like in ButtonList and FileBrowser */
+    GroupBySelectorWindow Button {
+        width: auto;
+        min-width: 4;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Compact list views */
+    GroupBySelectorWindow ListView {
+        height: 1fr;
+    }
+
+    /* Compact static labels */
+    GroupBySelectorWindow Static {
+        height: 1;
+        padding: 0;
+        margin: 0;
+    }
+    """
+
     def __init__(
         self,
         available_channels: List[str],
@@ -107,11 +134,11 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
     def compose(self) -> ComposeResult:
         """Compose the dual-list selector window."""
         with Vertical():
-            # Button row
+            # Button row - ultra compact
             with Horizontal():
-                yield Button("Move →", id="move_right", compact=True)
-                yield Button("← Move", id="move_left", compact=True)
-                yield Button("Select All", id="select_all", compact=True)
+                yield Button("→", id="move_right", compact=True)
+                yield Button("←", id="move_left", compact=True)
+                yield Button("All", id="select_all", compact=True)
                 yield Button("None", id="select_none", compact=True)
             
             # Dual lists

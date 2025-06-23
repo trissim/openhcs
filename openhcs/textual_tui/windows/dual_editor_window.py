@@ -147,7 +147,12 @@ class DualEditorWindow(BaseOpenHCSWindow):
     - Proper error handling and user feedback
     """
 
-    CSS_PATH = "dual_editor.css"
+    DEFAULT_CSS = """
+    DualEditorWindow {
+        width: 80; height: 20;
+        min-width: 80; min-height: 20;
+    }
+    """
 
     # Reactive state for change tracking
     has_changes = reactive(False)
