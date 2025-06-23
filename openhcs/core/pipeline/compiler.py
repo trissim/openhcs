@@ -54,13 +54,19 @@ class PipelineCompiler:
     @staticmethod
     def initialize_step_plans_for_context(
         context: ProcessingContext,
-        steps_definition: List[AbstractStep]
+        steps_definition: List[AbstractStep],
+        metadata_writer: bool = False
         # base_input_dir and well_id parameters removed, will use from context
     ) -> None:
         """
         Initializes step_plans by calling PipelinePathPlanner.prepare_pipeline_paths,
         which handles primary paths, special I/O path planning and linking, and chainbreaker status.
         Then, this method supplements the plans with non-I/O FunctionStep-specific attributes.
+
+        Args:
+            context: ProcessingContext to initialize step plans for
+            steps_definition: List of AbstractStep objects defining the pipeline
+            metadata_writer: If True, this well is responsible for creating OpenHCS metadata files
         """
         if context.is_frozen():
             raise AttributeError("Cannot initialize step plans in a frozen ProcessingContext.")
@@ -98,7 +104,8 @@ class PipelineCompiler:
                      "step_name": step.name,
                      "step_type": step.__class__.__name__,
                      "well_id": context.well_id, # Use context.well_id
-                     "error": "Missing from path planning phase by PipelinePathPlanner"
+                     "error": "Missing from path planning phase by PipelinePathPlanner",
+                     "create_openhcs_metadata": metadata_writer # Set metadata writer responsibility flag
                 }
                 continue
 
@@ -109,6 +116,7 @@ class PipelineCompiler:
             current_plan["step_type"] = step.__class__.__name__
             current_plan["well_id"] = context.well_id # Use context.well_id; PathPlanner should also use context.well_id
             current_plan.setdefault("visualize", False) # Ensure visualize key exists
+            current_plan["create_openhcs_metadata"] = metadata_writer # Set metadata writer responsibility flag
 
             # The special_outputs and special_inputs are now fully handled by PipelinePathPlanner.
             # The block for planning special_outputs (lines 134-148 in original) is removed.

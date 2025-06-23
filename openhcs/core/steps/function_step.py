@@ -623,6 +623,27 @@ class FunctionStep(AbstractStep):
 
             raise
 
+    def _extract_component_metadata(self, context: 'ProcessingContext', group_by: GroupBy) -> Optional[Dict[str, str]]:
+        """
+        Extract component metadata from context cache safely.
+
+        Args:
+            context: ProcessingContext containing metadata_cache
+            group_by: GroupBy enum specifying which component to extract
+
+        Returns:
+            Dictionary mapping component keys to display names, or None if not available
+        """
+        try:
+            if hasattr(context, 'metadata_cache') and context.metadata_cache:
+                return context.metadata_cache.get(group_by, None)
+            else:
+                logger.debug(f"No metadata_cache available in context for {group_by.value}")
+                return None
+        except Exception as e:
+            logger.debug(f"Error extracting {group_by.value} metadata from cache: {e}")
+            return None
+
     def _create_openhcs_metadata_automatically(
         self,
         context: 'ProcessingContext',
@@ -638,6 +659,13 @@ class FunctionStep(AbstractStep):
             context: ProcessingContext containing microscope_handler and other state
             step_plan: Step plan dictionary containing output_dir, write_backend, etc.
         """
+        # Check if this well is responsible for metadata creation
+        if not step_plan.get('create_openhcs_metadata', False):
+            logger.debug(f"Well {step_plan.get('well_id', 'unknown')} skipping metadata creation (not responsible)")
+            return
+
+        logger.debug(f"Well {step_plan.get('well_id', 'unknown')} creating metadata (responsible well)")
+
         try:
             # Extract required information from context and step_plan
             step_output_dir = Path(step_plan['output_dir'])
@@ -681,10 +709,10 @@ class FunctionStep(AbstractStep):
                 "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
                 "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
                 "image_files": image_files,
-                "channels": None,  # Could be extracted from orchestrator metadata cache if needed
-                "wells": None,     # Could be extracted from orchestrator metadata cache if needed
-                "sites": None,     # Could be extracted from orchestrator metadata cache if needed
-                "z_indexes": None  # Could be extracted from orchestrator metadata cache if needed
+                "channels": self._extract_component_metadata(context, GroupBy.CHANNEL),
+                "wells": self._extract_component_metadata(context, GroupBy.WELL),
+                "sites": self._extract_component_metadata(context, GroupBy.SITE),
+                "z_indexes": self._extract_component_metadata(context, GroupBy.Z_INDEX)
             }
 
             # Save metadata file using same backend as step output
