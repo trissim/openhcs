@@ -36,6 +36,9 @@ DEFAULT_VARIABLE_COMPONENTS: VariableComponents = VariableComponents.SITE
 DEFAULT_GROUP_BY: GroupBy = GroupBy.CHANNEL
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
 
+# Microscope-specific constants
+OPENHCS_METADATA_FILENAME = "openhcs_metadata.json"
+
 # Backend-related constants
 class Backend(Enum):
     DISK = "disk"
