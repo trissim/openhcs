@@ -28,8 +28,8 @@ from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.io.exceptions import StorageWriteError
 from openhcs.io.filemanager import FileManager
 from openhcs.io.base import storage_registry
-from openhcs.microscopes.microscope_interfaces import (
-    MicroscopeHandler, create_microscope_handler)
+from openhcs.microscopes import create_microscope_handler
+from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 
 
