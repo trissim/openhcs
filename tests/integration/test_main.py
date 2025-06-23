@@ -185,6 +185,7 @@ def test_main_2d(flat_plate_dir: Union[Path,str]):
         orchestrator.initialize()
 
         # Get pipeline and wells
+        from openhcs.constants.constants import GroupBy
         pipeline = get_pipeline(orchestrator.workspace_path)
         wells = orchestrator.get_component_keys(GroupBy.WELL)
 

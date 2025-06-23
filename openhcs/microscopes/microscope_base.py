@@ -7,9 +7,9 @@ including filename parsing and metadata handling.
 
 import logging
 import os
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 # Import constants
 from openhcs.constants.constants import Backend
@@ -25,12 +25,66 @@ logger = logging.getLogger(__name__)
 # Dictionary to store registered microscope handlers
 MICROSCOPE_HANDLERS = {}
 
+# Dictionary to store registered metadata handlers for auto-detection
+METADATA_HANDLERS = {}
 
-class MicroscopeHandler(ABC):
+
+class MicroscopeHandlerMeta(ABCMeta):
+    """Metaclass for automatic registration of microscope handlers."""
+
+    def __new__(cls, name, bases, attrs):
+        new_class = super().__new__(cls, name, bases, attrs)
+
+        # Only register concrete handler classes (not the abstract base class)
+        if bases and not getattr(new_class, '__abstractmethods__', None):
+            # Use explicit microscope type if provided, otherwise extract from class name
+            microscope_type = getattr(new_class, '_microscope_type', None)
+            if not microscope_type:
+                if name.endswith('Handler'):
+                    microscope_type = name[:-7].lower()  # ImageXpressHandler -> imagexpress
+                else:
+                    microscope_type = name.lower()
+
+            # Auto-register in MICROSCOPE_HANDLERS
+            MICROSCOPE_HANDLERS[microscope_type] = new_class
+
+            # Store the microscope type for later metadata handler registration
+            new_class._microscope_type_key = microscope_type
+
+            # Auto-register metadata handler if the class has one
+            metadata_handler_class = getattr(new_class, '_metadata_handler_class', None)
+            if metadata_handler_class:
+                METADATA_HANDLERS[microscope_type] = metadata_handler_class
+
+            logger.debug(f"Auto-registered {name} as '{microscope_type}'")
+
+        return new_class
+
+
+def register_metadata_handler(handler_class, metadata_handler_class):
+    """
+    Register a metadata handler for a microscope handler class.
+
+    This function is called when _metadata_handler_class is set after class definition.
+    """
+    microscope_type = getattr(handler_class, '_microscope_type_key', None)
+    if microscope_type:
+        METADATA_HANDLERS[microscope_type] = metadata_handler_class
+        logger.debug(f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'")
+    else:
+        logger.warning(f"Could not register metadata handler for {handler_class.__name__} - no microscope type key found")
+
+
+
+
+class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
     """Composed class for handling microscope-specific functionality."""
 
     DEFAULT_MICROSCOPE = 'auto'
     _handlers_cache = None
+
+    # Optional class attribute for explicit metadata handler registration
+    _metadata_handler_class: Optional[Type[MetadataHandler]] = None
 
     def __init__(self, parser: FilenameParser,
                  metadata_handler: MetadataHandler):
@@ -54,6 +108,18 @@ class MicroscopeHandler(ABC):
         Canonical subdirectory names where image data may reside.
         Example: ['Images', 'TimePoint', 'Data']
         """
+        pass
+
+    @property
+    @abstractmethod
+    def microscope_type(self) -> str:
+        """Microscope type identifier (for interface enforcement only)."""
+        pass
+
+    @property
+    @abstractmethod
+    def metadata_handler_class(self) -> Type[MetadataHandler]:
+        """Metadata handler class (for interface enforcement only)."""
         pass
 
     def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3):
@@ -367,9 +433,10 @@ class MicroscopeHandler(ABC):
 
 # Factory function
 def create_microscope_handler(microscope_type: str = 'auto',
-                              plate_folder: [Union[str, Path]] = None,
-                              filemanager: FileManager = None,
-                              pattern_format: Optional[str] = None) -> MicroscopeHandler:
+                              plate_folder: Optional[Union[str, Path]] = None,
+                              filemanager: Optional[FileManager] = None,
+                              pattern_format: Optional[str] = None,
+                              allowed_auto_types: Optional[List[str]] = None) -> MicroscopeHandler:
     """
     Factory function to create a microscope handler.
 
@@ -379,10 +446,12 @@ def create_microscope_handler(microscope_type: str = 'auto',
     declarative configuration.
 
     Args:
-        microscope_type: 'auto', 'imagexpress', 'opera_phenix'.
+        microscope_type: 'auto', 'imagexpress', 'opera_phenix', 'openhcs'.
         plate_folder: Required for 'auto' detection.
         filemanager: FileManager instance. Must be provided.
         pattern_format: Name of the pattern format to use.
+        allowed_auto_types: For 'auto' mode, limit detection to these types.
+                           'openhcs' is always included and tried first.
 
     Returns:
         An initialized MicroscopeHandler instance.
@@ -404,7 +473,7 @@ def create_microscope_handler(microscope_type: str = 'auto',
             raise ValueError("plate_folder is required for auto-detection")
 
         plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
-        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager)
+        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager, allowed_types=allowed_auto_types)
         logger.info("Auto-detected microscope type: %s", microscope_type)
 
     # Get the appropriate handler class from the constant mapping
@@ -423,51 +492,94 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # The filemanager will be passed to methods that need it
     handler = handler_class(filemanager, pattern_format=pattern_format)
 
+    # If the handler is OpenHCSMicroscopeHandler, set its plate_folder attribute.
+    # This is crucial for its dynamic parser loading mechanism.
+    # Use string comparison to avoid circular import
+    if handler.__class__.__name__ == 'OpenHCSMicroscopeHandler':
+        if plate_folder:
+            handler.plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
+            logger.info(f"Set plate_folder for OpenHCSMicroscopeHandler: {handler.plate_folder}")
+        else:
+            # This case should ideally not happen if auto-detection or explicit type setting
+            # implies a plate_folder is known.
+            logger.warning("OpenHCSMicroscopeHandler created without an initial plate_folder. "
+                           "Parser will load upon first relevant method call with a path e.g. post_workspace.")
+
     return handler
 
 
-def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager) -> str:
+def _try_metadata_detection(handler_class, filemanager: FileManager, plate_folder: Path) -> Optional[Path]:
     """
-    Auto-detect microscope type based on files in the plate folder.
+    Try metadata detection with a handler, normalizing return types and exceptions.
 
     Args:
-        plate_folder: Path to the plate folder
+        handler_class: MetadataHandler class to try
         filemanager: FileManager instance
+        plate_folder: Path to plate directory
 
     Returns:
-        Detected microscope type as string
+        Path if metadata found, None if not found (regardless of handler's native behavior)
+    """
+    try:
+        handler = handler_class(filemanager)
+        result = handler.find_metadata_file(plate_folder)
+
+        # Normalize return type: convert any truthy result to Path, falsy to None
+        return Path(result) if result else None
+
+    except (FileNotFoundError, Exception) as e:
+        # Expected exceptions for "not found" - convert to None
+        # Note: Using broad Exception catch for now, can be refined based on actual handler exceptions
+        logger.debug(f"Metadata detection failed for {handler_class.__name__}: {e}")
+        return None
+
+
+def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
+                                allowed_types: Optional[List[str]] = None) -> str:
+    """
+    Auto-detect microscope type using registry iteration.
+
+    Args:
+        plate_folder: Path to plate directory
+        filemanager: FileManager instance
+        allowed_types: Optional list of microscope types to try.
+                      If None, tries all registered types.
+                      'openhcs' is always included and tried first.
+
+    Returns:
+        Detected microscope type string
 
     Raises:
         ValueError: If microscope type cannot be determined
     """
     try:
-        # Check for Opera Phenix (Index.xml)
-        # Clause 245: Workspace operations are disk-only by design
-        # This call is structurally hardcoded to use the "disk" backend
-        if filemanager.find_file_recursive(path=plate_folder, filename="Index.xml",
-                                           backend=Backend.DISK.value):
-            logger.info("Auto-detected Opera Phenix microscope type.")
-            # Use consistent key from MICROSCOPE_HANDLERS (Clause 77: Rot Intolerance)
-            return 'opera_phenix'
+        # Build detection order: openhcsdata first, then filtered/ordered list
+        detection_order = ['openhcsdata']  # Always first, always included (correct registration name)
 
-        # Check for ImageXpress (.htd files)
-        # Clause 245: Workspace operations are disk-only by design
-        # This call is structurally hardcoded to use the "disk" backend
-        if filemanager.list_files(
-            path=plate_folder, extensions={'.htd','.HTD'}, recursive=True,
-            backend=Backend.DISK.value
-        ):
-            logger.info("Auto-detected ImageXpress microscope type.")
-            # Use consistent key from MICROSCOPE_HANDLERS (Clause 77: Rot Intolerance)
-            return 'imagexpress'
+        if allowed_types is None:
+            # Use all registered handlers in registration order
+            detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcsdata'])
+        else:
+            # Use filtered list, but ensure openhcsdata is first
+            filtered_types = [name for name in allowed_types if name != 'openhcsdata' and name in METADATA_HANDLERS]
+            detection_order.extend(filtered_types)
 
-        # No known microscope type detected - fail deterministically (Clause 12: Smell Intolerance)
-        supported_types = list(MICROSCOPE_HANDLERS.keys())
+        # Try detection in order
+        for handler_name in detection_order:
+            handler_class = METADATA_HANDLERS.get(handler_name)
+            if handler_class and _try_metadata_detection(handler_class, filemanager, plate_folder):
+                logger.info(f"Auto-detected {handler_name} microscope type")
+                return handler_name
+
+        # No handler succeeded - provide detailed error message
+        available_types = list(METADATA_HANDLERS.keys())
         msg = (f"Could not auto-detect microscope type in {plate_folder}. "
-               f"Supported types: {supported_types}")
+               f"Tried: {detection_order}. "
+               f"Available types: {available_types}. "
+               f"Ensure metadata files are present for supported formats.")
         logger.error(msg)
         raise ValueError(msg)
 
     except Exception as e:
-        # Wrap exception with clear context (Clause 12: Smell Intolerance)
+        # Wrap exception with clear context
         raise ValueError(f"Error during microscope type auto-detection in {plate_folder}: {e}") from e

@@ -28,8 +28,8 @@ from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.io.exceptions import StorageWriteError
 from openhcs.io.filemanager import FileManager
 from openhcs.io.base import storage_registry
-from openhcs.microscopes.microscope_interfaces import (
-    MicroscopeHandler, create_microscope_handler)
+from openhcs.microscopes import create_microscope_handler
+from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
 
 
@@ -264,6 +264,8 @@ class PipelineOrchestrator:
         context.microscope_handler = self.microscope_handler
         context.input_dir = self.input_dir
         context.workspace_path = self.workspace_path
+        # Pass metadata cache for OpenHCS metadata creation
+        context.metadata_cache = dict(self._metadata_cache)  # Copy to avoid pickling issues
         return context
 
     def compile_pipelines(
@@ -307,11 +309,19 @@ class PipelineOrchestrator:
 
         logger.info(f"Starting compilation for wells: {', '.join(wells_to_process)}")
 
+        # Determine responsible well for metadata creation (lexicographically first)
+        responsible_well = sorted(wells_to_process)[0] if wells_to_process else None
+        logger.debug(f"Designated responsible well for metadata creation: {responsible_well}")
+
         for well_id in wells_to_process:
             logger.debug(f"Compiling for well: {well_id}")
             context = self.create_context(well_id)
-            
-            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
+
+            # Determine if this well is responsible for metadata creation
+            is_responsible = (well_id == responsible_well)
+            logger.debug(f"Well {well_id} metadata responsibility: {is_responsible}")
+
+            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible)
             PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition)
             PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
             PipelineCompiler.assign_gpu_resources_for_context(context)
@@ -694,16 +704,34 @@ class PipelineOrchestrator:
             # Parse all metadata once using enum→method mapping
             metadata = self.microscope_handler.metadata_handler.parse_metadata(self.input_dir)
 
-            # Convert string keys back to GroupBy enums and store
+            # Initialize all GroupBy components with component keys mapped to None
+            for group_by in [GroupBy.CHANNEL, GroupBy.WELL, GroupBy.SITE, GroupBy.Z_INDEX]:
+                # Get all component keys for this GroupBy from filename parsing
+                component_keys = self.get_component_keys(group_by)
+                # Create dict mapping each key to None (no metadata available)
+                self._metadata_cache[group_by] = {key: None for key in component_keys}
+
+            # Update with actual metadata from metadata handler where available
             for component_name, mapping in metadata.items():
                 try:
                     group_by = GroupBy(component_name)  # Convert string to enum
-                    self._metadata_cache[group_by] = mapping
-                    logger.debug(f"Cached metadata for {group_by.value}: {len(mapping)} entries")
+                    # Update the existing dict with real metadata, preserving None for missing keys
+                    if group_by in self._metadata_cache:
+                        self._metadata_cache[group_by].update(mapping)
+                    else:
+                        self._metadata_cache[group_by] = mapping
+                    logger.debug(f"Updated metadata for {group_by.value}: {len(mapping)} entries with real data")
                 except ValueError:
                     logger.warning(f"Unknown component type in metadata: {component_name}")
 
-            logger.info(f"Metadata caching complete. Cached {len(self._metadata_cache)} component types.")
+            # Log what we have for each component
+            for group_by in [GroupBy.CHANNEL, GroupBy.WELL, GroupBy.SITE, GroupBy.Z_INDEX]:
+                mapping = self._metadata_cache[group_by]
+                real_metadata_count = sum(1 for v in mapping.values() if v is not None)
+                total_keys = len(mapping)
+                logger.debug(f"Cached {group_by.value}: {total_keys} keys, {real_metadata_count} with metadata")
+
+            logger.info(f"Metadata caching complete. All {len(self._metadata_cache)} component types populated.")
 
         except Exception as e:
             logger.warning(f"Could not cache metadata: {e}")

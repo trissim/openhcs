@@ -164,8 +164,16 @@ class StartMenuDropdown(ModalScreen[None]):
         from textual.css.query import NoMatches
 
         def handle_config_save(new_config):
+            # Apply config changes to app
             self.app.global_config = new_config
-            logger.info("Configuration updated from start menu")
+
+            # Propagate config changes to all existing orchestrators and plate manager
+            self._propagate_global_config_to_orchestrators(new_config)
+
+            # Save config to cache for future sessions
+            self._save_config_to_cache(new_config)
+
+            logger.info("Configuration updated and applied from start menu")
 
         # Try to find existing config window - if it doesn't exist, create new one
         try:
@@ -201,5 +209,63 @@ class StartMenuDropdown(ModalScreen[None]):
     async def _handle_quit(self) -> None:
         """Handle quit button press."""
         self.app.action_quit()
+
+    def _propagate_global_config_to_orchestrators(self, new_config) -> None:
+        """Propagate global config changes to all existing orchestrators and plate manager."""
+        try:
+            # Find the plate manager widget
+            main_content = self.app.query_one("MainContent")
+            plate_manager = main_content.query_one("PlateManagerWidget")
+
+            # CRITICAL: Update plate manager's global config reference
+            # This ensures future orchestrators and subprocesses use the latest config
+            plate_manager.global_config = new_config
+            logger.info("Updated plate manager global config reference")
+
+            # Also update pipeline editor if it exists (though it should use app.global_config)
+            try:
+                pipeline_editor = main_content.query_one("PipelineEditorWidget")
+                # Pipeline editor is designed to use self.app.global_config, but let's be safe
+                logger.info("Pipeline editor will automatically use updated app.global_config")
+            except Exception:
+                # Pipeline editor might not exist or be mounted
+                pass
+
+            # Update all orchestrators that don't have plate-specific configs
+            updated_count = 0
+            for plate_path, orchestrator in plate_manager.orchestrators.items():
+                # Only update if this plate doesn't have a plate-specific config override
+                if plate_path not in plate_manager.plate_configs:
+                    # Use the async method to apply the new config
+                    import asyncio
+                    asyncio.create_task(orchestrator.apply_new_global_config(new_config))
+                    updated_count += 1
+
+            if updated_count > 0:
+                logger.info(f"Applied global config changes to {updated_count} orchestrators")
+            else:
+                logger.info("No orchestrators updated (all have plate-specific configs)")
+
+        except Exception as e:
+            logger.error(f"Failed to propagate global config to orchestrators: {e}")
+            # Don't fail the config update if propagation fails
+            pass
+
+    def _save_config_to_cache(self, config) -> None:
+        """Save config to cache asynchronously."""
+        async def _async_save():
+            from openhcs.textual_tui.services.global_config_cache import save_global_config_to_cache
+            try:
+                success = await save_global_config_to_cache(config)
+                if success:
+                    logger.info("Global config saved to cache for future sessions")
+                else:
+                    logger.warning("Failed to save global config to cache")
+            except Exception as e:
+                logger.error(f"Error saving global config to cache: {e}")
+
+        # Schedule the async save operation
+        import asyncio
+        asyncio.create_task(_async_save())
 
 

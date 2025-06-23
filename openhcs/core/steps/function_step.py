@@ -105,15 +105,7 @@ def _execute_function_core(
     input_type = type(main_data_arg).__name__
     logger.info(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
 
-    # 🔄 MEMORY CONVERSION LOGGING: Log function call details
-    from openhcs.core.memory.stack_utils import _detect_memory_type
-    try:
-        detected_memory_type = _detect_memory_type(main_data_arg)
-        logger.info(f"🔄 FUNCTION_CALL: {func_callable.__name__} - detected_memory_type: {detected_memory_type}, expected_input_type: {input_memory_type}")
-        if detected_memory_type != input_memory_type:
-            logger.error(f"🔄 MEMORY_MISMATCH: Function {func_callable.__name__} expected {input_memory_type} but received {detected_memory_type}")
-    except Exception as detect_error:
-        logger.warning(f"🔄 FUNCTION_CALL: Could not detect memory type for {func_callable.__name__}: {detect_error}")
+
 
     try:
         raw_function_output = func_callable(main_data_arg, **final_kwargs)
@@ -264,12 +256,6 @@ def _process_single_pattern_group(
                 image = context.filemanager.load(str(full_file_path), read_backend)
                 if image is not None:
                     raw_slices.append(image)
-                    # 🔄 MEMORY CONVERSION LOGGING: Log loaded image type
-                    try:
-                        loaded_type = _detect_memory_type(image)
-                        logger.info(f"🔄 LOADED_IMAGE: {file_path_suffix} - type: {loaded_type}, backend: {read_backend}")
-                    except Exception as detect_error:
-                        logger.warning(f"🔄 LOADED_IMAGE: Could not detect type for {file_path_suffix}: {detect_error}")
             except Exception as e:
                 logger.error(f"Error loading image {full_file_path}: {e}", exc_info=True)
         
@@ -283,15 +269,7 @@ def _process_single_pattern_group(
             slice_shapes = [getattr(s, 'shape', 'no shape') for s in raw_slices[:3]]  # First 3 shapes
             logger.info(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
 
-        # 🔄 MEMORY CONVERSION LOGGING: Log pre-stacking slice types
-        from openhcs.core.memory.stack_utils import _detect_memory_type
-        if raw_slices:
-            for i, slice_data in enumerate(raw_slices[:3]):  # Log first 3 slices
-                try:
-                    slice_type = _detect_memory_type(slice_data)
-                    logger.info(f"🔄 PRE_STACK: slice[{i}] - type: {slice_type}, target: {input_memory_type_from_plan}")
-                except Exception as e:
-                    logger.warning(f"🔄 PRE_STACK: Could not detect type for slice[{i}]: {e}")
+
 
         main_data_stack = stack_slices(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
@@ -339,12 +317,7 @@ def _process_single_pattern_group(
         # 🔍 DEBUG: Log unstacking operation
         logger.info(f"🔍 UNSTACKING: shape: {output_shape} → memory_type: {output_memory_type_from_plan}")
 
-        # 🔄 MEMORY CONVERSION LOGGING: Log pre-unstacking array type
-        try:
-            processed_type = _detect_memory_type(processed_stack)
-            logger.info(f"🔄 PRE_UNSTACK: processed_stack - type: {processed_type}, target: {output_memory_type_from_plan}")
-        except Exception as e:
-            logger.warning(f"🔄 PRE_UNSTACK: Could not detect type for processed_stack: {e}")
+
 
         output_slices = unstack_slices(
             array=processed_stack, memory_type=output_memory_type_from_plan, gpu_id=device_id, validate_slices=True
@@ -463,7 +436,8 @@ class FunctionStep(AbstractStep):
         super().__init__(
             name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
             variable_components=variable_components, group_by=group_by,
-            force_disk_output=force_disk_output, input_dir=input_dir, output_dir=output_dir
+            force_disk_output=force_disk_output,
+            input_dir=input_dir, output_dir=output_dir
         )
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
@@ -604,6 +578,9 @@ class FunctionStep(AbstractStep):
                     )
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
+            # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
+            self._create_openhcs_metadata_automatically(context, step_plan)
+
             # 🔍 VRAM TRACKING: Log memory before final cleanup
             try:
                 from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
@@ -645,3 +622,117 @@ class FunctionStep(AbstractStep):
                 logger.warning(f"Failed to cleanup GPU memory after error: {cleanup_error}")
 
             raise
+
+    def _extract_component_metadata(self, context: 'ProcessingContext', group_by: GroupBy) -> Optional[Dict[str, str]]:
+        """
+        Extract component metadata from context cache safely.
+
+        Args:
+            context: ProcessingContext containing metadata_cache
+            group_by: GroupBy enum specifying which component to extract
+
+        Returns:
+            Dictionary mapping component keys to display names, or None if not available
+        """
+        try:
+            if hasattr(context, 'metadata_cache') and context.metadata_cache:
+                return context.metadata_cache.get(group_by, None)
+            else:
+                logger.debug(f"No metadata_cache available in context for {group_by.value}")
+                return None
+        except Exception as e:
+            logger.debug(f"Error extracting {group_by.value} metadata from cache: {e}")
+            return None
+
+    def _create_openhcs_metadata_automatically(
+        self,
+        context: 'ProcessingContext',
+        step_plan: Dict[str, Any]
+    ) -> None:
+        """
+        Automatically create OpenHCS metadata file after step execution.
+
+        This is a pure function that creates OpenHCS metadata using only context state.
+        Always creates metadata - no flags needed.
+
+        Args:
+            context: ProcessingContext containing microscope_handler and other state
+            step_plan: Step plan dictionary containing output_dir, write_backend, etc.
+        """
+        # Check if this well is responsible for metadata creation
+        if not step_plan.get('create_openhcs_metadata', False):
+            logger.debug(f"Well {step_plan.get('well_id', 'unknown')} skipping metadata creation (not responsible)")
+            return
+
+        logger.debug(f"Well {step_plan.get('well_id', 'unknown')} creating metadata (responsible well)")
+
+        try:
+            # Extract required information from context and step_plan
+            step_output_dir = Path(step_plan['output_dir'])
+            write_backend = step_plan['write_backend']
+
+            # Check if we have microscope handler for metadata extraction
+            if not context.microscope_handler:
+                logger.debug("No microscope_handler in context - skipping OpenHCS metadata creation")
+                return
+
+            # Get source microscope information
+            source_parser_name = context.microscope_handler.parser.__class__.__name__
+
+            # Extract metadata from source microscope handler
+            try:
+                grid_dimensions = context.microscope_handler.metadata_handler.get_grid_dimensions(context.input_dir)
+                pixel_size = context.microscope_handler.metadata_handler.get_pixel_size(context.input_dir)
+            except Exception as e:
+                logger.debug(f"Could not extract grid_dimensions/pixel_size from source: {e}")
+                grid_dimensions = [1, 1]  # Default fallback
+                pixel_size = 1.0  # Default fallback
+
+            # Get list of image files in output directory
+            try:
+                image_files = []
+                if context.filemanager.exists(str(step_output_dir), write_backend):
+                    # List files in output directory
+                    files = context.filemanager.list_files(str(step_output_dir), write_backend)
+                    # Filter for image files (common extensions)
+                    image_extensions = {'.tif', '.tiff', '.png', '.jpg', '.jpeg'}
+                    image_files = [f for f in files if Path(f).suffix.lower() in image_extensions]
+                    logger.debug(f"Found {len(image_files)} image files in {step_output_dir}")
+            except Exception as e:
+                logger.debug(f"Could not list image files in output directory: {e}")
+                image_files = []
+
+            # Create metadata structure
+            metadata = {
+                "microscope_handler_name": "openhcsdata",
+                "source_filename_parser_name": source_parser_name,
+                "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
+                "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
+                "image_files": image_files,
+                "channels": self._extract_component_metadata(context, GroupBy.CHANNEL),
+                "wells": self._extract_component_metadata(context, GroupBy.WELL),
+                "sites": self._extract_component_metadata(context, GroupBy.SITE),
+                "z_indexes": self._extract_component_metadata(context, GroupBy.Z_INDEX)
+            }
+
+            # Save metadata file using same backend as step output
+            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+            metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
+
+            # Always ensure we can write to the metadata path (delete if exists) - same pattern as images
+            if context.filemanager.exists(str(metadata_path), write_backend):
+                context.filemanager.delete(str(metadata_path), write_backend)
+
+            # Ensure output directory exists
+            context.filemanager.ensure_directory(str(step_output_dir), write_backend)
+
+            # Create JSON content (not TSV) - OpenHCS handler expects JSON format
+            import json
+            json_content = json.dumps(metadata, indent=2)
+            context.filemanager.save(json_content, str(metadata_path), write_backend)
+            logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
+
+        except Exception as e:
+            # Graceful degradation - log error but don't fail the step
+            logger.warning(f"Failed to create OpenHCS metadata file: {e}")
+            logger.debug(f"OpenHCS metadata creation error details:", exc_info=True)

@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 import tifffile
 
@@ -30,6 +30,9 @@ class ImageXpressHandler(MicroscopeHandler):
     enforcing semantic alignment between file layout parsing and metadata resolution.
     """
 
+    # Class attribute for automatic metadata handler registration (set after class definition)
+    _metadata_handler_class = None
+
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
         # Initialize parser with filemanager, respecting its interface
         self.parser = ImageXpressFilenameParser(filemanager, pattern_format)
@@ -39,7 +42,17 @@ class ImageXpressHandler(MicroscopeHandler):
     @property
     def common_dirs(self) -> List[str]:
         """Subdirectory names commonly used by ImageXpress"""
-        return 'TimePoint_1'
+        return ['TimePoint_1']
+
+    @property
+    def microscope_type(self) -> str:
+        """Microscope type identifier (for interface enforcement only)."""
+        return 'imagexpress'
+
+    @property
+    def metadata_handler_class(self) -> Type[MetadataHandler]:
+        """Metadata handler class (for interface enforcement only)."""
+        return ImageXpressMetadataHandler
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """
@@ -70,7 +83,7 @@ class ImageXpressHandler(MicroscopeHandler):
         common_dir_found = False
 
         for subdir in subdirs:
-            if self.common_dirs in subdir.name:
+            if any(common_dir in subdir.name for common_dir in self.common_dirs):
                 self._flatten_zsteps(subdir, filemanager)
                 common_dir_found = True
 
@@ -665,3 +678,9 @@ class ImageXpressMetadataHandler(MetadataHandler):
             None - ImageXpress doesn't provide rich z_index names in metadata
         """
         return None
+
+
+# Set metadata handler class after class definition for automatic registration
+from openhcs.microscopes.microscope_base import register_metadata_handler
+ImageXpressHandler._metadata_handler_class = ImageXpressMetadataHandler
+register_metadata_handler(ImageXpressHandler, ImageXpressMetadataHandler)

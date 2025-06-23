@@ -18,6 +18,7 @@ class Microscope(Enum):
     AUTO = "auto"
     IMAGEXPRESS = "ImageXpress"
     OPERAPHENIX = "OperaPhenix"
+    OPENHCS = "openhcs"  # Added for the OpenHCS pre-processed format
 
 class GroupBy(Enum):
     CHANNEL = VariableComponents.CHANNEL.value # Will be "channel"
@@ -34,6 +35,8 @@ DEFAULT_RECURSIVE_PATTERN_SEARCH = False
 DEFAULT_VARIABLE_COMPONENTS: VariableComponents = VariableComponents.SITE
 DEFAULT_GROUP_BY: GroupBy = GroupBy.CHANNEL
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
+
+
 
 # Backend-related constants
 class Backend(Enum):
