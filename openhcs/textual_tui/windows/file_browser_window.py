@@ -76,7 +76,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         padding: 0;     /* No padding */
     }
 
-    /* Selection panel - starts at 2 rows (label + 1 for content), expands as needed */
+    /* Selection panel - starts at 2 rows (label + 1 for content), expands as needed (LOAD mode only) */
     FileBrowserWindow #selection_panel {
         width: 100%;  /* Full width */
         height: 2;    /* Start at 2 rows (1 for label + 1 for content) */
@@ -110,10 +110,31 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         width: 100%; /* Ensure full width */
     }
 
-    /* Path display and filename area should be minimal */
-    FileBrowserWindow #path_display,
+    /* Path display should be minimal */
+    FileBrowserWindow #path_display {
+        height: 1;
+    }
+
+    /* Filename area should have explicit height and styling */
     FileBrowserWindow #filename_area {
-        height: auto;
+        height: 3;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Filename label styling */
+    FileBrowserWindow .filename-label {
+        width: auto;
+        min-width: 10;
+        text-align: left;
+        padding: 0 1 0 0;
+    }
+
+    /* Filename input styling */
+    FileBrowserWindow #filename_input {
+        width: 1fr;
+        height: 1;
     }
     """
 
@@ -188,6 +209,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
             # Filename input for save mode - horizontal layout (fixed height)
             if self.mode == BrowserMode.SAVE:
+                logger.debug(f"🔍 SAVE MODE: Rendering filename input area with default: '{self.default_filename}'")
                 with Horizontal(id="filename_area"):
                     yield Static("Filename:", classes="filename-label")
                     yield Input(
@@ -220,20 +242,13 @@ class FileBrowserWindow(BaseOpenHCSWindow):
                     )
                     yield Button("Cancel", id="cancel", compact=True)
 
-                # Selection panel below buttons (full width)
-                with Vertical(id="selection_panel"):
-                    if self.mode == BrowserMode.LOAD:
+                # Selection panel below buttons (only for LOAD mode)
+                if self.mode == BrowserMode.LOAD:
+                    with Vertical(id="selection_panel"):
                         # Add "Selections:" label
                         yield Static("Selections:", id="selections_label")
                         with ScrollableContainer(id="selected_list"):
                             yield Static("(none)", id="selected_display")
-                    else:  # SAVE mode
-                        yield Static("Save Info:", classes="dialog-title")
-                        with ScrollableContainer(id="save_info"):
-                            info_text = "Select directory and enter filename"
-                            if self.filter_extensions:
-                                info_text += f"\nAllowed extensions: {', '.join(self.filter_extensions)}"
-                            yield Static(info_text, id="save_info_display")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -311,7 +326,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         # Set initial border title
         self.directory_tree.border_title = f"Path: {self.initial_path}"
 
-        # Set initial border title for selected panel
+        # Set initial border title for selected panel (LOAD mode only)
         if self.mode == BrowserMode.LOAD:
             try:
                 selection_panel = self.query_one("#selection_panel", Vertical)
