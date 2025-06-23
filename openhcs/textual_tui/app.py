@@ -26,7 +26,6 @@ from openhcs.io.filemanager import FileManager
 
 # Widget imports (will be created)
 from .widgets.main_content import MainContent
-from .widgets.menu_bar import MenuBar
 from .widgets.status_bar import StatusBar
 
 from .widgets.floating_window import BaseFloatingWindow
@@ -344,18 +343,13 @@ class OpenHCSTUIApp(App):
 
     def _disable_main_interactions(self):
         """Disable main UI interactions when modal window is open."""
-        # Disable menu bar buttons - if they don't exist, that's a bug
-        menu_bar = self.query_one(MenuBar)
-        menu_bar.query_one("#global_config_btn").disabled = True
-        menu_bar.query_one("#help_btn").disabled = True
-        # Keep quit button enabled for safety
+        # Note: MenuBar removed - interactions now handled by start menu
+        pass
 
     def _enable_main_interactions(self):
         """Re-enable main UI interactions when modal window closes."""
-        # Re-enable menu bar buttons - if they don't exist, that's a bug
-        menu_bar = self.query_one(MenuBar)
-        menu_bar.query_one("#global_config_btn").disabled = False
-        menu_bar.query_one("#help_btn").disabled = False
+        # Note: MenuBar removed - interactions now handled by start menu
+        pass
 
     def on_window_closed(self, event: Window.Closed) -> None:
         """Handle window closed events from textual-window."""
