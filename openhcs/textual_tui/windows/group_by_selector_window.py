@@ -29,26 +29,29 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
 
     DEFAULT_CSS = """
     GroupBySelectorWindow {
-        width: 50; height: 18;
-        min-width: 50; min-height: 18;
+        width: 50; height: 20;
+        min-width: 50; min-height: 20;
     }
 
-    /* Center the top button row */
+    /* Fixed height allocations */
     GroupBySelectorWindow #top_buttons {
         align: center middle;
         height: 1;
         width: 100%;
     }
 
-    /* Center the bottom button row */
+    GroupBySelectorWindow #lists_container {
+        height: 1fr;  /* Take remaining space after top/bottom buttons */
+        width: 100%;
+    }
+
     GroupBySelectorWindow #bottom_buttons {
         align: center middle;
         height: 1;
         width: 100%;
-        margin-top: 1;
     }
 
-    /* Make buttons more compact like in ButtonList and FileBrowser */
+    /* Compact buttons */
     GroupBySelectorWindow Button {
         width: auto;
         min-width: 4;
@@ -56,19 +59,13 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
         padding: 0;
     }
 
-    /* Constrain the dual lists container to leave room for bottom buttons */
-    GroupBySelectorWindow #lists_container {
-        height: 1fr;
-        width: 100%;
-    }
-
-    /* Compact list views - constrained height */
+    /* List views fill container */
     GroupBySelectorWindow ListView {
         height: 1fr;
         min-height: 3;
     }
 
-    /* Compact static labels */
+    /* Compact labels */
     GroupBySelectorWindow Static {
         height: 1;
         padding: 0;
