@@ -79,11 +79,15 @@ class StartMenuDropdown(ModalScreen[None]):
     }
     #start_menu_container {
         background: $surface;
-        width: 8; height: 4;
+        width: auto;
+        min-width: 8;
+        height: auto;
         border-left: wide $panel;
         border-right: wide $panel;
         /* Remove problematic borders that get cut off */
         & > ButtonStatic {
+            width: 100%;
+            min-width: 8;
             &:hover { background: $panel-lighten-2; }
             &.pressed { background: $primary; }
         }
@@ -100,6 +104,7 @@ class StartMenuDropdown(ModalScreen[None]):
         with Container(id="start_menu_container"):
             yield ButtonStatic("Main", id="main")
             yield ButtonStatic("Config", id="config")
+            yield ButtonStatic("Monitor", id="toggle_monitor")
             yield ButtonStatic("Help", id="help")
             yield ButtonStatic("Quit", id="quit")
 
@@ -112,7 +117,8 @@ class StartMenuDropdown(ModalScreen[None]):
             y_offset = self.menu_offset.y + 1
         elif self.dock == "bottom":
             # Bar is at bottom, dropdown should appear above
-            y_offset = self.menu_offset.y - 4  # 4 is height of our menu
+            menu_height = len(list(menu.children))
+            y_offset = self.menu_offset.y - menu_height
         else:
             raise ValueError("Dock must be either 'top' or 'bottom'")
 
@@ -133,6 +139,8 @@ class StartMenuDropdown(ModalScreen[None]):
             await self._handle_config()
         elif button_id == "help":
             await self._handle_help()
+        elif button_id == "toggle_monitor":
+            await self._handle_toggle_monitor()
         elif button_id == "quit":
             await self._handle_quit()
 
@@ -205,6 +213,26 @@ class StartMenuDropdown(ModalScreen[None]):
             window = HelpWindow()
             await self.app.mount(window)
             window.open_state = True
+
+    async def _handle_toggle_monitor(self) -> None:
+        """Handle toggle monitor button press."""
+        try:
+            # Find the system monitor widget
+            main_content = self.app.query_one("MainContent")
+            system_monitor = main_content.query_one("SystemMonitorTextual")
+
+            # Toggle monitoring
+            system_monitor.toggle_monitoring()
+
+            # Update button text
+            toggle_btn = self.query_one("#toggle_monitor", ButtonStatic)
+            if system_monitor.is_monitoring:
+                toggle_btn.content = "Monitor"
+            else:
+                toggle_btn.content = "Monitor"
+
+        except Exception as e:
+            logger.error(f"Failed to toggle monitoring: {e}")
 
     async def _handle_quit(self) -> None:
         """Handle quit button press."""

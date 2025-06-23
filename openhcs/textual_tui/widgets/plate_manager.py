@@ -161,7 +161,7 @@ class PlateManagerWidget(ButtonListWidget):
             if self._is_any_plate_running():
                 self.action_stop_execution()
             else:
-                self.action_run_plate()
+                await self.action_run_plate()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
         logger.debug(f"Checkmarks changed: {len(selected_values)} items selected")
@@ -403,7 +403,7 @@ class PlateManagerWidget(ButtonListWidget):
         self.app.current_status = status_message
         logger.info("🧹 Execution state reset and UI updated.")
 
-    def action_run_plate(self) -> None:
+    async def action_run_plate(self) -> None:
         selected_items, _ = self.get_selection_state()
         if not selected_items:
             self.app.show_error("No plates selected to run.")
@@ -452,9 +452,14 @@ class PlateManagerWidget(ButtonListWidget):
                 'global_config_dict': self.global_config.__dict__
             }
 
-            with open(data_file.name, 'wb') as f:
-                pickle.dump(subprocess_data, f)
-            data_file.close()
+            # Wrap pickle operation in executor to avoid blocking UI
+            import asyncio
+            def _write_pickle_data():
+                with open(data_file.name, 'wb') as f:
+                    pickle.dump(subprocess_data, f)
+                data_file.close()
+
+            await asyncio.get_event_loop().run_in_executor(None, _write_pickle_data)
 
             logger.info(f"🔥 Created data file: {data_file.name}")
             logger.info(f"🔥 Status file: {status_file.name}")
@@ -480,14 +485,18 @@ class PlateManagerWidget(ButtonListWidget):
             logger.info(f"🔥 Subprocess stdout will be silenced (logger handles output)")
 
             # SILENT SUBPROCESS: Let subprocess logger handle output to avoid duplication
-            self.current_process = subprocess.Popen([
-                sys.executable, str(subprocess_script),
-                data_file.name, status_file.name, result_file.name, log_file_path
-            ],
-            stdout=subprocess.DEVNULL,  # Silence stdout to avoid duplication with logger
-            stderr=subprocess.DEVNULL,  # Silence stderr to avoid duplication with logger
-            text=True,  # Text mode for easier handling
-            )
+            # Wrap subprocess creation in executor to avoid blocking UI
+            def _create_subprocess():
+                return subprocess.Popen([
+                    sys.executable, str(subprocess_script),
+                    data_file.name, status_file.name, result_file.name, log_file_path
+                ],
+                stdout=subprocess.DEVNULL,  # Silence stdout to avoid duplication with logger
+                stderr=subprocess.DEVNULL,  # Silence stderr to avoid duplication with logger
+                text=True,  # Text mode for easier handling
+                )
+
+            self.current_process = await asyncio.get_event_loop().run_in_executor(None, _create_subprocess)
 
             logger.info(f"🔥 Subprocess started with PID: {self.current_process.pid}")
 

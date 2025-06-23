@@ -64,13 +64,17 @@ class SystemMonitorTextual(Container):
         text-align: center;
         color: $primary;
     }
+
+
     """
 
     update_interval = reactive(1.0)
+    is_monitoring = reactive(True)
 
     def __init__(self):
         super().__init__()
         self.monitor = SystemMonitor()
+        self.update_timer = None
 
     def compose(self) -> ComposeResult:
         """Compose the system monitor layout"""
@@ -92,10 +96,35 @@ class SystemMonitorTextual(Container):
 
     async def on_mount(self) -> None:
         """Start the monitoring when widget is mounted"""
+        self._start_monitoring()
+
+    def _start_monitoring(self) -> None:
+        """Start the monitoring timer"""
+        if self.update_timer:
+            self.update_timer.stop()
         self.update_timer = self.set_interval(
             self.update_interval,
             self.update_display
         )
+        self.is_monitoring = True
+
+    def _stop_monitoring(self) -> None:
+        """Stop the monitoring timer"""
+        if self.update_timer:
+            self.update_timer.stop()
+            self.update_timer = None
+        self.is_monitoring = False
+
+    def toggle_monitoring(self) -> None:
+        """Toggle monitoring on/off - called from menu"""
+        if self.is_monitoring:
+            self._stop_monitoring()
+        else:
+            self._start_monitoring()
+
+    async def manual_refresh(self) -> None:
+        """Manual refresh - called from menu"""
+        await self.update_display()
 
     def _get_ascii_header(self) -> str:
         """Get the OpenHCS ASCII art header"""
@@ -111,8 +140,9 @@ class SystemMonitorTextual(Container):
 
     async def update_display(self) -> None:
         """Update the display with new system stats"""
-        # Update metrics using the SystemMonitor from services
-        self.monitor.update_metrics()
+        # Update metrics using the SystemMonitor from services - wrap in executor to avoid blocking
+        import asyncio
+        await asyncio.get_event_loop().run_in_executor(None, self.monitor.update_metrics)
 
         if PLOTEXT_AVAILABLE:
             self._update_plots()
