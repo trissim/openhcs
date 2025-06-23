@@ -19,6 +19,8 @@ from openhcs.io.filemanager import FileManager
 # Import interfaces from the base interfaces module
 from openhcs.microscopes.microscope_interfaces_base import (FilenameParser,
                                                                MetadataHandler)
+# Import new handler
+from openhcs.microscopes.openhcs import OpenHCSMicroscopeHandler, OpenHCSMetadataHandler
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +425,18 @@ def create_microscope_handler(microscope_type: str = 'auto',
     # The filemanager will be passed to methods that need it
     handler = handler_class(filemanager, pattern_format=pattern_format)
 
+    # If the handler is OpenHCSMicroscopeHandler, set its plate_folder attribute.
+    # This is crucial for its dynamic parser loading mechanism.
+    if isinstance(handler, OpenHCSMicroscopeHandler):
+        if plate_folder:
+            handler.plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
+            logger.info(f"Set plate_folder for OpenHCSMicroscopeHandler: {handler.plate_folder}")
+        else:
+            # This case should ideally not happen if auto-detection or explicit type setting
+            # implies a plate_folder is known.
+            logger.warning("OpenHCSMicroscopeHandler created without an initial plate_folder. "
+                           "Parser will load upon first relevant method call with a path e.g. post_workspace.")
+
     return handler
 
 
@@ -441,6 +455,16 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager) -
         ValueError: If microscope type cannot be determined
     """
     try:
+        # Check for OpenHCS metadata file first
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        # We need to use the specific filename defined in OpenHCSMetadataHandler
+        openhcs_metadata_filepath = plate_folder / OpenHCSMetadataHandler.METADATA_FILENAME
+        if filemanager.exists(str(openhcs_metadata_filepath), backend=Backend.DISK.value) and \
+           filemanager.is_file(str(openhcs_metadata_filepath), backend=Backend.DISK.value):
+            logger.info(f"Auto-detected OpenHCS microscope type based on presence of {OpenHCSMetadataHandler.METADATA_FILENAME}.")
+            return 'openhcs' # Use consistent key
+
         # Check for Opera Phenix (Index.xml)
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
@@ -464,7 +488,9 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager) -
         # No known microscope type detected - fail deterministically (Clause 12: Smell Intolerance)
         supported_types = list(MICROSCOPE_HANDLERS.keys())
         msg = (f"Could not auto-detect microscope type in {plate_folder}. "
-               f"Supported types: {supported_types}")
+               f"Ensure one of the following is present: {OpenHCSMetadataHandler.METADATA_FILENAME} (for OpenHCS), "
+               "Index.xml (for Opera Phenix), or .htd files (for ImageXpress). "
+               f"Supported types registered: {supported_types}")
         logger.error(msg)
         raise ValueError(msg)
 
