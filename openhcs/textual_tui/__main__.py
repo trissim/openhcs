@@ -10,6 +10,8 @@ import asyncio
 import logging
 import multiprocessing
 import sys
+import subprocess
+import tempfile
 from pathlib import Path
 
 from openhcs.core.config import get_default_global_config
@@ -23,21 +25,64 @@ def _parse_command_line_arguments():
     parser = argparse.ArgumentParser(
         description="OpenHCS Textual TUI - Modern Terminal User Interface"
     )
-    
+
     parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug logging"
     )
-    
+
     parser.add_argument(
         "--workspace",
         type=str,
         default=None,
         help="Workspace directory for outputs (optional)"
     )
-    
+
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Serve the TUI via textual-web instead of running locally"
+    )
+
     return parser.parse_args()
+
+
+def _serve_web():
+    """Serve the TUI via textual-serve."""
+    try:
+        # Check if textual-serve is installed
+        import textual_serve
+        print("✅ textual-serve found")
+    except ImportError:
+        print("❌ textual-serve is not installed!")
+        print("📦 Install it with: pip install textual-serve")
+        sys.exit(1)
+
+    try:
+        print("🌐 Starting OpenHCS web server...")
+        print("🔗 Your TUI will be available at: http://localhost:8000")
+        print("📝 Share this URL to give others access to your OpenHCS TUI")
+        print("⚠️  Note: The TUI runs on YOUR machine, others just see it in their browser")
+        print()
+
+        # Use textual-serve to serve the TUI
+        from textual_serve.server import Server
+
+        server = Server(
+            command="python -m openhcs.textual_tui",
+            host="localhost",
+            port=8000,
+            title="OpenHCS - High-Content Screening Platform"
+        )
+
+        server.serve()
+
+    except KeyboardInterrupt:
+        print("\n🛑 Web server stopped by user")
+    except Exception as e:
+        print(f"❌ Error running textual-serve: {e}")
+        sys.exit(1)
 
 
 def _setup_logging(debug: bool = False):
@@ -76,8 +121,22 @@ def _setup_logging(debug: bool = False):
     return logger
 
 
-async def main():
+def main():
     """Main entry point for OpenHCS Textual TUI."""
+    args = _parse_command_line_arguments()
+
+    # If web flag is set, serve via textual-serve instead
+    if args.web:
+        _serve_web()
+        return
+
+    # For TUI mode, run async
+    asyncio.run(main_async(args))
+
+
+async def main_async(args):
+    """Async main function for TUI mode."""
+
     # Set multiprocessing start method FIRST, before any other initialization
     try:
         multiprocessing.set_start_method('spawn', force=True)
@@ -90,7 +149,6 @@ async def main():
         else:
             print("Multiprocessing start method already set to 'spawn'")
 
-    args = _parse_command_line_arguments()
     logger = _setup_logging(args.debug)
     
     try:
@@ -119,4 +177,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

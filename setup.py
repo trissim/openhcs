@@ -25,6 +25,7 @@ setup(
         "zarr>=2.10.0",
         "pygments>=2.10.0",
         "textual>=3.0.0",
+        "textual-serve>=1.0.0",
         "textual-universal-directorytree",
         "textual-window",
         "plotext>=5.2.0",
@@ -38,8 +39,8 @@ setup(
     extras_require={
         "gpu": [
             # PyTorch - compatible with CUDA 12.6 and CuDNN 9.5.x
-            "torch>=2.7.0,<2.8.0",
-            "torchvision>=0.20.0,<0.21.0",
+            "torch>=2.5.0,<2.8.0",
+            "torchvision>=0.20.0,<0.22.0",
 
             # JAX - pinned to 0.4.38 for CuDNN 9.5.x compatibility
             "jax==0.4.38",

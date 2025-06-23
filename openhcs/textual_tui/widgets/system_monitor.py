@@ -132,38 +132,38 @@ class SystemMonitorTextual(Container):
 
             x_range = list(range(len(self.monitor.cpu_history)))
 
-            # Update CPU plot
+            # Update CPU plot with high-definition markers
             cpu_plot = self.query_one("#cpu_plot", PlotextPlot)
             cpu_plot.plt.clear_data()
-            cpu_plot.plt.plot(x_range, list(self.monitor.cpu_history))
+            cpu_plot.plt.plot(x_range, list(self.monitor.cpu_history), marker="hd")
             cpu_plot.plt.title(f"CPU Usage: {current_cpu:.1f}%")
             cpu_plot.plt.ylim(0, 100)
             cpu_plot.refresh()  # Force visual refresh
 
-            # Update RAM plot
+            # Update RAM plot with high-definition markers
             ram_plot = self.query_one("#ram_plot", PlotextPlot)
             ram_plot.plt.clear_data()
-            ram_plot.plt.plot(x_range, list(self.monitor.ram_history))
+            ram_plot.plt.plot(x_range, list(self.monitor.ram_history), marker="hd")
             ram_plot.plt.title(f"RAM Usage: {current_ram:.1f}%")
             ram_plot.plt.ylim(0, 100)
             ram_plot.refresh()  # Force visual refresh
 
-            # Update GPU plot
+            # Update GPU plot with high-definition markers
             gpu_plot = self.query_one("#gpu_plot", PlotextPlot)
             gpu_plot.plt.clear_data()
             if GPU_AVAILABLE and any(self.monitor.gpu_history):
-                gpu_plot.plt.plot(x_range, list(self.monitor.gpu_history))
+                gpu_plot.plt.plot(x_range, list(self.monitor.gpu_history), marker="hd")
                 gpu_plot.plt.title(f"GPU Usage: {current_gpu:.1f}%")
             else:
                 gpu_plot.plt.title("GPU: Not Available")
             gpu_plot.plt.ylim(0, 100)
             gpu_plot.refresh()  # Force visual refresh
 
-            # Update VRAM plot
+            # Update VRAM plot with high-definition markers
             vram_plot = self.query_one("#vram_plot", PlotextPlot)
             vram_plot.plt.clear_data()
             if GPU_AVAILABLE and any(self.monitor.vram_history):
-                vram_plot.plt.plot(x_range, list(self.monitor.vram_history))
+                vram_plot.plt.plot(x_range, list(self.monitor.vram_history), marker="hd")
                 vram_plot.plt.title(f"VRAM Usage: {current_vram:.1f}%")
             else:
                 vram_plot.plt.title("VRAM: Not Available")
