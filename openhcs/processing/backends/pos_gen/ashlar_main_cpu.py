@@ -167,12 +167,12 @@ def ashlar_register_no_preprocessing(img1, img2, upsample=10):
     else:
         error = np.inf
 
-    # Log correlation quality
+    # Log all correlation results at INFO level for user visibility
     if error > 1.0:  # High error threshold for Ashlar
         logger.warning(f"Ashlar CPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
         logger.warning(f"  This indicates poor overlap or image quality between tiles")
     else:
-        logger.debug(f"Ashlar CPU: Good correlation - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
+        logger.info(f"Ashlar CPU: Correlation - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
 
     return shift, error
 
@@ -223,12 +223,12 @@ def ashlar_nccw_no_preprocessing(img1, img2):
         logger.warning(f"Ashlar CPU: NCCW invalid correlation - correlation={correlation:.6f}, total_amplitude={total_amplitude:.6f}")
         error = np.inf
 
-    # Log NCCW results
+    # Log all NCCW results at INFO level for user visibility
     if error > 10.0:  # High NCCW error threshold
         logger.warning(f"Ashlar CPU: HIGH NCCW ERROR - Error={error:.4f}")
         logger.warning(f"  This indicates poor image correlation between tiles")
     else:
-        logger.debug(f"Ashlar CPU: Good NCCW - Error={error:.4f}")
+        logger.info(f"Ashlar CPU: NCCW - Error={error:.4f}")
 
     return error
 
