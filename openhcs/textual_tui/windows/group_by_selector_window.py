@@ -56,9 +56,16 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
         padding: 0;
     }
 
-    /* Compact list views */
+    /* Constrain the dual lists container to leave room for bottom buttons */
+    GroupBySelectorWindow #lists_container {
+        height: 1fr;
+        width: 100%;
+    }
+
+    /* Compact list views - constrained height */
     GroupBySelectorWindow ListView {
         height: 1fr;
+        min-height: 3;
     }
 
     /* Compact static labels */
@@ -156,8 +163,8 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
                 yield Button("All", id="select_all", compact=True)
                 yield Button("None", id="select_none", compact=True)
 
-            # Dual lists
-            with Horizontal():
+            # Dual lists - constrained container
+            with Horizontal(id="lists_container"):
                 with Vertical():
                     yield Static("Available")
                     yield ListView(id="available_list")
