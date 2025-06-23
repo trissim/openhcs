@@ -523,10 +523,32 @@ class FunctionListEditorWidget(Container):
         try:
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
+            logger.info(f"Loaded pattern from {file_path}: {pattern}")
             self._initialize_pattern_data(pattern)
+            # Force UI refresh by triggering reactive system
+            self._refresh_ui_after_load()
             self._commit_and_notify()
+            logger.info(f"Successfully loaded pattern with {len(self.functions)} functions")
         except Exception as e:
             logger.error(f"Failed to load pattern: {e}")
+
+    def _refresh_ui_after_load(self) -> None:
+        """Force UI refresh after loading pattern by triggering reactive system."""
+        # Trigger reactive updates by reassigning reactive properties
+        # This forces recomposition and UI refresh
+        current_functions = self.functions
+        current_dict_mode = self.is_dict_mode
+        current_channel = self.selected_channel
+
+        # Force reactive updates by reassigning
+        self.functions = current_functions
+        self.is_dict_mode = current_dict_mode
+        self.selected_channel = current_channel
+
+        # Refresh component button
+        self._refresh_component_button()
+
+        logger.debug(f"UI refresh triggered: {len(self.functions)} functions, dict_mode={self.is_dict_mode}, channel={self.selected_channel}")
 
     def _save_pattern_to_file(self, file_path: Path) -> None:
         """Save pattern to .func file."""
