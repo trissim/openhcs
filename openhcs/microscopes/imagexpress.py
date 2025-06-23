@@ -83,7 +83,7 @@ class ImageXpressHandler(MicroscopeHandler):
         common_dir_found = False
 
         for subdir in subdirs:
-            if self.common_dirs in subdir.name:
+            if any(common_dir in subdir.name for common_dir in self.common_dirs):
                 self._flatten_zsteps(subdir, filemanager)
                 common_dir_found = True
 

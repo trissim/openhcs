@@ -72,14 +72,14 @@ class OpenHCSMetadataHandler(MetadataHandler):
             return self._metadata_cache
 
         metadata_file_path = self.find_metadata_file(current_path)
-        if not metadata_file_path or not self.filemanager.exists(str(metadata_file_path)):
+        if not metadata_file_path or not self.filemanager.exists(str(metadata_file_path), 'disk'):
             raise MetadataNotFoundError(
                 f"Metadata file '{self.METADATA_FILENAME}' not found in {plate_path}."
             )
 
         try:
-            # Use filemanager to read file content - assuming it returns bytes or string
-            content = self.filemanager.read_file(str(metadata_file_path))
+            # Use filemanager to load file content - returns string content
+            content = self.filemanager.load(str(metadata_file_path), 'disk')
             if isinstance(content, bytes):
                 content = content.decode('utf-8')
             self._metadata_cache = json.loads(content)
@@ -107,12 +107,12 @@ class OpenHCSMetadataHandler(MetadataHandler):
             Path to the 'openhcs_metadata.json' file if found, else None.
         """
         plate_p = Path(plate_path)
-        if not self.filemanager.is_dir(str(plate_p)):
+        if not self.filemanager.is_dir(str(plate_p), 'disk'):
             logger.warning(f"Plate path {plate_p} is not a directory.")
             return None
 
         expected_file = plate_p / self.METADATA_FILENAME
-        if self.filemanager.exists(str(expected_file)) and self.filemanager.is_file(str(expected_file)):
+        if self.filemanager.exists(str(expected_file), 'disk') and self.filemanager.is_file(str(expected_file), 'disk'):
             return expected_file
 
         logger.debug(f"Metadata file {self.METADATA_FILENAME} not found directly in {plate_path}.")

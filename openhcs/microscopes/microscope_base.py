@@ -553,15 +553,15 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
         ValueError: If microscope type cannot be determined
     """
     try:
-        # Build detection order: openhcs first, then filtered/ordered list
-        detection_order = ['openhcs']  # Always first, always included
+        # Build detection order: openhcsdata first, then filtered/ordered list
+        detection_order = ['openhcsdata']  # Always first, always included (correct registration name)
 
         if allowed_types is None:
             # Use all registered handlers in registration order
-            detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcs'])
+            detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcsdata'])
         else:
-            # Use filtered list, but ensure openhcs is first
-            filtered_types = [name for name in allowed_types if name != 'openhcs' and name in METADATA_HANDLERS]
+            # Use filtered list, but ensure openhcsdata is first
+            filtered_types = [name for name in allowed_types if name != 'openhcsdata' and name in METADATA_HANDLERS]
             detection_order.extend(filtered_types)
 
         # Try detection in order

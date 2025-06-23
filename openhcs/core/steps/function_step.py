@@ -687,10 +687,6 @@ class FunctionStep(AbstractStep):
                 "z_indexes": None  # Could be extracted from orchestrator metadata cache if needed
             }
 
-            # Create pandas DataFrame for TSV output
-            import pandas as pd
-            df = pd.DataFrame([metadata])
-
             # Save metadata file using same backend as step output
             from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
             metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
@@ -702,9 +698,10 @@ class FunctionStep(AbstractStep):
             # Ensure output directory exists
             context.filemanager.ensure_directory(str(step_output_dir), write_backend)
 
-            # Use filemanager.save() consistently for all backends - respects the codebase architecture
-            tsv_content = df.to_csv(sep='\t', index=False)
-            context.filemanager.save(tsv_content, str(metadata_path), write_backend)
+            # Create JSON content (not TSV) - OpenHCS handler expects JSON format
+            import json
+            json_content = json.dumps(metadata, indent=2)
+            context.filemanager.save(json_content, str(metadata_path), write_backend)
             logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
 
         except Exception as e:
