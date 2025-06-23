@@ -372,14 +372,9 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
         # Step 5: Execution phase with multiprocessing (like test_main.py but with processes)
         logger.info("🔥 SUBPROCESS: Starting execution phase with multiprocessing...")
 
-        # Calculate optimal worker count based on wells and available cores
-        import multiprocessing as mp
-        available_cores = mp.cpu_count()
-        well_count = len(wells)
-        # Use min of: available cores, well count, or max 8 processes per plate
-        max_workers = min(available_cores, well_count, 8)
-
-        logger.info(f"🔥 SUBPROCESS: Using {max_workers} processes for {well_count} wells")
+        # Use global config num_workers setting
+        max_workers = global_config.num_workers
+        logger.info(f"🔥 SUBPROCESS: Using {max_workers} workers from global config for {len(wells)} wells")
         write_heartbeat(status_file)
 
         # This is where hangs often occur - add extra monitoring
@@ -516,7 +511,7 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
             results = force_error_detection("execute_compiled_plate", orchestrator.execute_compiled_plate,
                 pipeline_definition=execution_pipeline,
                 compiled_contexts=compiled_contexts,
-                max_workers=None,  # Use orchestrator default (normal multithreading)
+                max_workers=max_workers,  # Use global config num_workers setting
                 visualizer=None    # No visualization in subprocess
             )
             death_marker("AFTER_FORCE_ERROR_DETECTION", f"results_type={type(results)}")
