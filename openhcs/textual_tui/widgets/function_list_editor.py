@@ -477,6 +477,7 @@ class FunctionListEditorWidget(Container):
                 self._load_pattern_from_file(result)
 
         # Use window-based file browser
+        from openhcs.textual_tui.services.file_browser_service import SelectionMode
         await open_file_browser_window(
             app=self.app,
             file_manager=self.app.filemanager,
@@ -484,6 +485,7 @@ class FunctionListEditorWidget(Container):
             backend=Backend.DISK,
             title="Load Function Pattern (.func)",
             mode=BrowserMode.LOAD,
+            selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.func'],
             cache_key=PathCacheKey.FUNCTION_PATTERNS,
             on_result_callback=handle_result
@@ -500,6 +502,7 @@ class FunctionListEditorWidget(Container):
                 self._save_pattern_to_file(result)
 
         # Use window-based file browser
+        from openhcs.textual_tui.services.file_browser_service import SelectionMode
         await open_file_browser_window(
             app=self.app,
             file_manager=self.app.filemanager,
@@ -507,6 +510,7 @@ class FunctionListEditorWidget(Container):
             backend=Backend.DISK,
             title="Save Function Pattern (.func)",
             mode=BrowserMode.SAVE,
+            selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.func'],
             default_filename="pattern.func",
             cache_key=PathCacheKey.FUNCTION_PATTERNS,
