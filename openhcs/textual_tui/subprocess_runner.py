@@ -21,57 +21,29 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 def setup_subprocess_logging(log_file_path: str):
-    """Set up logging for the subprocess to write to the same log file as parent."""
-    # Clear any existing handlers to ensure clean state
+    """Set up logging for the subprocess to inherit parent's configuration and write to shared log file."""
+    # Simple approach: just add a file handler to the root logger
+    # The subprocess inherits the parent's logger configuration automatically
+
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
 
-    # Setup file handler with same format as main process
-    file_handler = logging.FileHandler(log_file_path)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    # Only add file handler if not already present (avoid duplicates)
+    existing_handlers = [h for h in root_logger.handlers if isinstance(h, logging.FileHandler) and h.baseFilename == log_file_path]
 
-    # Configure root logger
-    root_logger.addHandler(file_handler)
-    root_logger.setLevel(logging.INFO)
+    if not existing_handlers:
+        # Setup file handler with same format as main process
+        file_handler = logging.FileHandler(log_file_path)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+        root_logger.addHandler(file_handler)
 
-    # Ensure ALL OpenHCS loggers use the same configuration
-    openhcs_logger = logging.getLogger("openhcs")
-    openhcs_logger.setLevel(logging.INFO)
+    # Ensure root logger level allows INFO and above (inherits from parent)
+    if root_logger.level > logging.INFO:
+        root_logger.setLevel(logging.INFO)
 
-    # Specifically configure MIST loggers to ensure they write to the log file
-    mist_loggers = [
-        "openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main",
-        "openhcs.processing.backends.pos_gen.mist_gpu_v2.pciam",
-        "openhcs.processing.backends.pos_gen.mist_cpu.mist_main",
-        "openhcs.processing.backends.pos_gen.mist_cpu.pciam"
-    ]
-
-    for mist_logger_name in mist_loggers:
-        mist_logger = logging.getLogger(mist_logger_name)
-        mist_logger.setLevel(logging.INFO)  # This will capture WARNING and ERROR messages
-
-    # Configure other common OpenHCS loggers
-    for logger_name in [
-        "openhcs.processing.backends.processors.cupy_processor",
-        "openhcs.processing.backends.pos_gen",
-        "openhcs.core.orchestrator",
-        "openhcs.core.pipeline",
-        "openhcs.io"
-    ]:
-        logger = logging.getLogger(logger_name)
-        logger.setLevel(logging.INFO)
-
-    # Prevent other modules from adding console handlers
-    logging.basicConfig = lambda *args, **kwargs: None
-
+    # Get subprocess logger
     logger = logging.getLogger(__name__)
-    logger.info("🔥 SUBPROCESS: Unified logging initialized for all OpenHCS components")
-    logger.info(f"🔥 SUBPROCESS: Log file: {log_file_path}")
-
-    # Test that MIST loggers work
-    for mist_logger_name in mist_loggers:
-        test_logger = logging.getLogger(mist_logger_name)
-        test_logger.info(f"🔥 SUBPROCESS: {mist_logger_name} configured and working")
+    logger.info("🔥 SUBPROCESS: Logging configured - inheriting from parent process")
+    logger.info(f"🔥 SUBPROCESS: Writing to shared log file: {log_file_path}")
 
     return logger
 
