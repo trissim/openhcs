@@ -197,28 +197,37 @@ class StatusBar(Widget):
             logger.debug(f"Could not determine log file path: {e}")
             return None
 
-    def check_log_file_updates(self) -> None:
+    async def check_log_file_updates(self) -> None:
         """Check for new log entries and update status bar."""
         if not self.log_file_path or not Path(self.log_file_path).exists():
             return
 
         try:
-            current_size = Path(self.log_file_path).stat().st_size
-            if current_size > self.log_file_position:
-                # Read new content
-                with open(self.log_file_path, 'r') as f:
-                    f.seek(self.log_file_position)
-                    new_lines = f.readlines()
-                    self.log_file_position = f.tell()
+            # Wrap all file I/O operations in executor to avoid blocking UI
+            import asyncio
 
-                # Process new log lines
-                for line in new_lines:
-                    line = line.strip()
-                    if line and self.is_subprocess_log(line):
-                        # Extract the message part for display
-                        message = self.extract_log_message(line)
-                        if message:
-                            self.add_log_message(message, "INFO")
+            def _read_log_updates():
+                current_size = Path(self.log_file_path).stat().st_size
+                if current_size > self.log_file_position:
+                    # Read new content
+                    with open(self.log_file_path, 'r') as f:
+                        f.seek(self.log_file_position)
+                        new_lines = f.readlines()
+                        new_position = f.tell()
+                    return new_lines, new_position
+                return [], self.log_file_position
+
+            new_lines, new_position = await asyncio.get_event_loop().run_in_executor(None, _read_log_updates)
+            self.log_file_position = new_position
+
+            # Process new log lines
+            for line in new_lines:
+                line = line.strip()
+                if line and self.is_subprocess_log(line):
+                    # Extract the message part for display
+                    message = self.extract_log_message(line)
+                    if message:
+                        self.add_log_message(message, "INFO")
 
         except Exception as e:
             logger.debug(f"Error reading log file: {e}")
