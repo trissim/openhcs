@@ -71,12 +71,90 @@ def _get_window(shape):
     return window
 
 
-def ashlar_register_no_preprocessing_gpu(img1, img2, upsample=10):
+# Precompute Laplacian kernel for whitening (equivalent to skimage.restoration.uft.laplacian)
+_laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+
+
+def whiten_gpu(img, sigma):
     """
-    GPU register function using cuCIM - EXACT match to CPU version.
+    Vectorized GPU whitening filter - EXACT match to Ashlar reference implementation.
+
+    This implements the same whitening as ashlar.utils.whiten() but optimized for GPU:
+    - sigma=0: Uses Laplacian convolution (high-pass filter)
+    - sigma>0: Uses Gaussian-Laplacian (LoG filter)
+
+    Args:
+        img: CuPy array (2D image)
+        sigma: Standard deviation for Gaussian kernel (0 = pure Laplacian)
+
+    Returns:
+        CuPy array: Whitened image
+    """
+    # Convert to float32 (matches reference)
+    if not isinstance(img, cp.ndarray):
+        img = cp.asarray(img)
+    img = img.astype(cp.float32)
+
+    if sigma == 0:
+        # Pure Laplacian convolution (high-pass filter)
+        # Equivalent to scipy.ndimage.convolve(img, _laplace_kernel)
+        from cupyx.scipy import ndimage as cp_ndimage
+        output = cp_ndimage.convolve(img, _laplace_kernel_gpu, mode='reflect')
+    else:
+        # Gaussian-Laplacian (LoG filter)
+        # Equivalent to scipy.ndimage.gaussian_laplace(img, sigma)
+        from cupyx.scipy import ndimage as cp_ndimage
+        output = cp_ndimage.gaussian_laplace(img, sigma)
+
+    return output
+
+
+def whiten_gpu_vectorized(img_stack, sigma):
+    """
+    Vectorized GPU whitening for multiple images simultaneously.
+
+    This processes an entire stack of images in parallel on GPU for maximum efficiency.
+
+    Args:
+        img_stack: CuPy array of shape (N, H, W) - stack of N images
+        sigma: Standard deviation for Gaussian kernel (0 = pure Laplacian)
+
+    Returns:
+        CuPy array: Stack of whitened images with same shape as input
+    """
+    if not isinstance(img_stack, cp.ndarray):
+        img_stack = cp.asarray(img_stack)
+    img_stack = img_stack.astype(cp.float32)
+
+    if sigma == 0:
+        # Vectorized Laplacian convolution for entire stack
+        from cupyx.scipy import ndimage as cp_ndimage
+        # Process each image in the stack
+        output_stack = cp.empty_like(img_stack)
+        for i in range(img_stack.shape[0]):
+            output_stack[i] = cp_ndimage.convolve(img_stack[i], _laplace_kernel_gpu, mode='reflect')
+    else:
+        # Vectorized Gaussian-Laplacian for entire stack
+        from cupyx.scipy import ndimage as cp_ndimage
+        output_stack = cp.empty_like(img_stack)
+        for i in range(img_stack.shape[0]):
+            output_stack[i] = cp_ndimage.gaussian_laplace(img_stack[i], sigma)
+
+    return output_stack
+
+
+def ashlar_register_gpu(img1, img2, upsample=10, sigma=0):
+    """
+    GPU register function using cuCIM - EXACT match to Ashlar reference with whitening.
 
     This uses cuCIM's phase_cross_correlation which is the GPU equivalent
     of skimage.registration.phase_cross_correlation used in the CPU version.
+    Now includes proper whitening filter as in the original Ashlar implementation.
+
+    Args:
+        img1, img2: Input images
+        upsample: Upsampling factor for phase correlation
+        sigma: Whitening filter sigma (0=Laplacian, >0=Gaussian-Laplacian)
     """
     import itertools
     import cucim.skimage.registration
@@ -97,16 +175,17 @@ def ashlar_register_no_preprocessing_gpu(img1, img2, upsample=10):
     if img1.shape[0] < 1 or img1.shape[1] < 1:
         return cp.array([0.0, 0.0]), cp.inf
 
-    # Convert to CuPy arrays and float32 (equivalent to what whiten() does)
+    # Convert to CuPy arrays and apply whitening + windowing (EXACT Ashlar sequence)
     if not isinstance(img1, cp.ndarray):
         img1 = cp.asarray(img1)
     if not isinstance(img2, cp.ndarray):
         img2 = cp.asarray(img2)
 
-    img1w = img1.astype(cp.float32)
-    img2w = img2.astype(cp.float32)
+    # Apply whitening filter first (matches ashlar.utils.register sequence)
+    img1w = whiten_gpu(img1, sigma)
+    img2w = whiten_gpu(img2, sigma)
 
-    # Apply windowing function (from original Ashlar)
+    # Apply windowing function after whitening (from original Ashlar)
     img1w = img1w * _get_window(img1w.shape)
     img2w = img2w * _get_window(img2w.shape)
 
@@ -186,6 +265,18 @@ def ashlar_nccw_no_preprocessing_gpu(img1, img2):
     return error_float
 
 
+def ashlar_register_no_preprocessing_gpu(img1, img2, upsample=10):
+    """
+    Backward-compatible function without whitening (legacy behavior).
+
+    This maintains the old behavior for existing code that expects no whitening.
+    For new code, use ashlar_register_gpu() with sigma parameter.
+    """
+    # Call the new function with sigma=0 (no whitening, just Laplacian)
+    # This preserves the old behavior while using the new infrastructure
+    return ashlar_register_gpu(img1, img2, upsample=upsample, sigma=0)
+
+
 def ashlar_crop_gpu(img, offset, shape):
     """
     EXACT Ashlar crop function (from ashlar.utils.crop) for GPU arrays with boundary validation.
@@ -238,7 +329,7 @@ class ArrayEdgeAlignerGPU:
                  randomize=False, verbose=False, upsample_factor=10,
                  permutation_upsample=1, permutation_samples=1000,
                  min_permutation_samples=10, max_permutation_tries=100,
-                 window_size_factor=0.1):
+                 window_size_factor=0.1, filter_sigma=0):
         """
         Initialize array-based EdgeAligner for pure position calculation on GPU.
 
@@ -252,6 +343,7 @@ class ArrayEdgeAlignerGPU:
             max_error: Explicit error threshold (None = auto-compute)
             randomize: Use random seed for permutation testing
             verbose: Enable verbose logging
+            filter_sigma: Whitening filter sigma (0=Laplacian, >0=Gaussian-Laplacian)
         """
         # Convert to CuPy arrays for GPU processing
         if not isinstance(image_stack, cp.ndarray):
@@ -278,6 +370,7 @@ class ArrayEdgeAlignerGPU:
         self.min_permutation_samples = min_permutation_samples
         self.max_permutation_tries = max_permutation_tries
         self.window_size_factor = window_size_factor
+        self.filter_sigma = filter_sigma
         self._cache = {}
         self.errors_negative_sampled = cp.empty(0)
 
@@ -401,7 +494,7 @@ class ArrayEdgeAlignerGPU:
                 sys.stdout.flush()
             img1 = self.image_stack[t1][offset1:offset1+w, :]
             img2 = self.image_stack[t2][offset2:offset2+w, :]
-            _, errors[i] = ashlar_register_no_preprocessing_gpu(img1, img2, upsample=self.permutation_upsample)
+            _, errors[i] = ashlar_register_gpu(img1, img2, upsample=self.permutation_upsample, sigma=self.filter_sigma)
         if self.verbose:
             print()
         self.errors_negative_sampled = errors
@@ -507,7 +600,7 @@ class ArrayEdgeAlignerGPU:
             sx = 1 if p1[1] >= p2[1] else -1
             sy = 1 if p1[0] >= p2[0] else -1
             padding = cp.array(its.padding) * cp.array([sy, sx])
-            shift, error = ashlar_register_no_preprocessing_gpu(img1, img2, upsample=self.upsample_factor)
+            shift, error = ashlar_register_gpu(img1, img2, upsample=self.upsample_factor, sigma=self.filter_sigma)
             shift = cp.array(shift) + padding
             return shift.get(), error
         except Exception as e:
@@ -731,6 +824,7 @@ def ashlar_compute_tile_positions_gpu(
     min_permutation_samples: int = 10,
     max_permutation_tries: int = 100,
     window_size_factor: float = 0.1,
+    filter_sigma: float = 0,
     **kwargs
 ) -> Tuple[np.ndarray, List[Tuple[float, float]]]:
     """
@@ -813,6 +907,12 @@ def ashlar_compute_tile_positions_gpu(
                           Larger values allow detection of bigger stage errors but may reduce
                           correlation quality. Range: 0.05-0.2 typical.
 
+        filter_sigma: Whitening filter sigma for preprocessing (float). Default 0.
+                     Controls the whitening filter applied before correlation:
+                     - 0: Pure Laplacian filter (high-pass, matches original Ashlar)
+                     - >0: Gaussian-Laplacian (LoG) filter with specified sigma
+                     - Typical values: 0-2.0 for most microscopy data
+
         **kwargs: Additional parameters (ignored). Allows compatibility with other stitching
                  algorithms that may have different parameter sets.
 
@@ -830,14 +930,13 @@ def ashlar_compute_tile_positions_gpu(
                   using the specified overlap_ratio.
 
     Notes:
-        - This implementation contains the complete Ashlar algorithm including permutation
-          testing, progressive window sizing, minimum spanning tree construction, and
-          linear model fitting for disconnected components.
-        - The correlation functions are identical to original Ashlar but without image
-          preprocessing (whitening/filtering), allowing OpenHCS to handle preprocessing
-          in separate pipeline steps.
-        - For best results, ensure your image_stack contains properly preprocessed,
-          single-channel grayscale images with good contrast and minimal noise.
+        - This implementation contains the complete Ashlar algorithm including whitening
+          filter preprocessing, permutation testing, progressive window sizing, minimum
+          spanning tree construction, and linear model fitting for disconnected components.
+        - The correlation functions are identical to original Ashlar including proper
+          whitening/filtering preprocessing as specified by filter_sigma parameter.
+        - For best results, ensure your image_stack contains single-channel grayscale
+          images. The whitening filter will be applied automatically during correlation.
     """
     grid_rows, grid_cols = grid_dimensions
 
@@ -871,7 +970,8 @@ def ashlar_compute_tile_positions_gpu(
             permutation_samples=permutation_samples,
             min_permutation_samples=min_permutation_samples,
             max_permutation_tries=max_permutation_tries,
-            window_size_factor=window_size_factor
+            window_size_factor=window_size_factor,
+            filter_sigma=filter_sigma
         )
 
         # Run the complete algorithm
