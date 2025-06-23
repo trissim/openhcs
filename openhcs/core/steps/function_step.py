@@ -463,7 +463,8 @@ class FunctionStep(AbstractStep):
         super().__init__(
             name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
             variable_components=variable_components, group_by=group_by,
-            force_disk_output=force_disk_output, input_dir=input_dir, output_dir=output_dir
+            force_disk_output=force_disk_output,
+            input_dir=input_dir, output_dir=output_dir
         )
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
@@ -604,6 +605,9 @@ class FunctionStep(AbstractStep):
                     )
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
+            # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
+            self._create_openhcs_metadata_automatically(context, step_plan)
+
             # 🔍 VRAM TRACKING: Log memory before final cleanup
             try:
                 from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
@@ -645,3 +649,93 @@ class FunctionStep(AbstractStep):
                 logger.warning(f"Failed to cleanup GPU memory after error: {cleanup_error}")
 
             raise
+
+    def _create_openhcs_metadata_automatically(
+        self,
+        context: 'ProcessingContext',
+        step_plan: Dict[str, Any]
+    ) -> None:
+        """
+        Automatically create OpenHCS metadata file after step execution.
+
+        This is a pure function that creates OpenHCS metadata using only context state.
+        Always creates metadata - no flags needed.
+
+        Args:
+            context: ProcessingContext containing microscope_handler and other state
+            step_plan: Step plan dictionary containing output_dir, write_backend, etc.
+        """
+        try:
+            # Extract required information from context and step_plan
+            step_output_dir = Path(step_plan['output_dir'])
+            write_backend = step_plan['write_backend']
+
+            # Check if we have microscope handler for metadata extraction
+            if not context.microscope_handler:
+                logger.debug("No microscope_handler in context - skipping OpenHCS metadata creation")
+                return
+
+            # Get source microscope information
+            source_parser_name = context.microscope_handler.parser.__class__.__name__
+
+            # Extract metadata from source microscope handler
+            try:
+                grid_dimensions = context.microscope_handler.metadata_handler.get_grid_dimensions(context.input_dir)
+                pixel_size = context.microscope_handler.metadata_handler.get_pixel_size(context.input_dir)
+            except Exception as e:
+                logger.debug(f"Could not extract grid_dimensions/pixel_size from source: {e}")
+                grid_dimensions = [1, 1]  # Default fallback
+                pixel_size = 1.0  # Default fallback
+
+            # Get list of image files in output directory
+            try:
+                image_files = []
+                if context.filemanager.exists(str(step_output_dir), write_backend):
+                    # List files in output directory
+                    files = context.filemanager.list_files(str(step_output_dir), write_backend)
+                    # Filter for image files (common extensions)
+                    image_extensions = {'.tif', '.tiff', '.png', '.jpg', '.jpeg'}
+                    image_files = [f for f in files if Path(f).suffix.lower() in image_extensions]
+                    logger.debug(f"Found {len(image_files)} image files in {step_output_dir}")
+            except Exception as e:
+                logger.debug(f"Could not list image files in output directory: {e}")
+                image_files = []
+
+            # Create metadata structure
+            metadata = {
+                "microscope_handler_name": "openhcsdata",
+                "source_filename_parser_name": source_parser_name,
+                "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
+                "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
+                "image_files": image_files,
+                "channels": None,  # Could be extracted from orchestrator metadata cache if needed
+                "wells": None,     # Could be extracted from orchestrator metadata cache if needed
+                "sites": None,     # Could be extracted from orchestrator metadata cache if needed
+                "z_indexes": None  # Could be extracted from orchestrator metadata cache if needed
+            }
+
+            # Create pandas DataFrame for TSV output
+            import pandas as pd
+            df = pd.DataFrame([metadata])
+
+            # Save metadata file using same backend as step output
+            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+            metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
+
+            # Ensure output directory exists
+            context.filemanager.ensure_directory(str(step_output_dir), write_backend)
+
+            if write_backend == 'disk':
+                # Direct file write for disk backend
+                df.to_csv(str(metadata_path), sep='\t', index=False)
+                logger.debug(f"Created OpenHCS metadata file (disk): {metadata_path}")
+            else:
+                # VFS save for memory backend
+                tsv_content = df.to_csv(sep='\t', index=False)
+                context.filemanager.save(tsv_content, str(metadata_path), write_backend)
+                logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
+
+        except Exception as e:
+            # Graceful degradation - log error but don't fail the step
+            logger.warning(f"Failed to create OpenHCS metadata file: {e}")
+            logger.debug(f"OpenHCS metadata creation error details:", exc_info=True)
