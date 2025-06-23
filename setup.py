@@ -42,13 +42,13 @@ setup(
             "torch>=2.5.0,<2.8.0",
             "torchvision>=0.20.0,<0.22.0",
 
-            # JAX - pinned to 0.4.38 for CuDNN 9.5.x compatibility
-            "jax==0.4.38",
-            "jaxlib==0.4.38",
+            # JAX - compatible with CUDA 12.6 and modern dependencies
+            "jax>=0.4.38,<0.6.0",
+            "jaxlib>=0.4.38,<0.6.0",
 
-            # JAX CUDA plugins - must match JAX version
-            "jax-cuda12-pjrt==0.4.38",
-            "jax-cuda12-plugin==0.4.38",
+            # JAX CUDA plugins - compatible range for CUDA 12.x
+            "jax-cuda12-pjrt>=0.4.38,<0.6.0",
+            "jax-cuda12-plugin>=0.4.38,<0.6.0",
 
             # CuPy - compatible with CUDA 12.x
             "cupy-cuda12x>=13.0.0,<14.0.0",
