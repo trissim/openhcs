@@ -38,18 +38,9 @@ def setup_subprocess_logging(log_file_path: str):
     openhcs_logger = logging.getLogger("openhcs")
     openhcs_logger.setLevel(logging.INFO)
 
-    # Specifically configure MIST loggers to ensure they write to the log file
-    mist_loggers = [
-        "openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main",
-        "openhcs.processing.backends.pos_gen.mist_gpu_v2.pciam",
-        "openhcs.processing.backends.pos_gen.mist_cpu.mist_main",
-        "openhcs.processing.backends.pos_gen.mist_cpu.pciam"
-    ]
-
-    for mist_logger_name in mist_loggers:
-        mist_logger = logging.getLogger(mist_logger_name)
-        mist_logger.setLevel(logging.INFO)  # Ensure WARNING and ERROR messages are captured
-        logger.info(f"🔥 SUBPROCESS: Configured MIST logger: {mist_logger_name}")
+    # Specifically configure MIST logger to ensure it writes to the log file
+    mist_logger = logging.getLogger("openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main")
+    mist_logger.setLevel(logging.INFO)
 
     # Configure other common OpenHCS loggers
     for logger_name in [
@@ -236,57 +227,34 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
 
         log_thread_count("after config import")
 
-        # Load current global config from cache (lower entropy solution)
-        log_thread_count("before global config loading")
+        # Reconstruct global config from dict with proper nested dataclass handling
+        log_thread_count("before global config creation")
 
-        # NUCLEAR WRAP: Load current global config from cache
-        def load_current_global_config():
-            # Import the cache service
-            import asyncio
-            from openhcs.textual_tui.services.global_config_cache import load_cached_global_config
+        # NUCLEAR WRAP: Global config creation with nested dataclass reconstruction
+        def create_global_config():
+            # Reconstruct nested dataclasses from dictionaries
+            path_planning_dict = global_config_dict.get('path_planning', {})
+            vfs_dict = global_config_dict.get('vfs', {})
 
-            # Load current config from cache (this is the source of truth)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                current_config = loop.run_until_complete(load_cached_global_config())
-                logger.info("🔥 SUBPROCESS: Loaded current global config from cache")
-                return current_config
-            finally:
-                loop.close()
+            path_planning = PathPlanningConfig(**path_planning_dict)
+            vfs = VFSConfig(**vfs_dict)
 
-        global_config = force_error_detection("load_current_global_config", load_current_global_config)
+            # Handle microscope enum
+            microscope_value = global_config_dict.get('microscope', Microscope.AUTO)
+            if isinstance(microscope_value, str):
+                # Convert string back to enum
+                microscope = Microscope(microscope_value)
+            else:
+                microscope = microscope_value
 
-        # Log config source for debugging
-        logger.info(f"🔥 SUBPROCESS: Using global config - num_workers: {global_config.num_workers}, microscope: {global_config.microscope}")
+            return GlobalPipelineConfig(
+                num_workers=global_config_dict.get('num_workers', 1),
+                path_planning=path_planning,
+                vfs=vfs,
+                microscope=microscope
+            )
 
-        # FALLBACK: If cache fails, reconstruct from passed dict (backward compatibility)
-        if global_config is None:
-            logger.warning("🔥 SUBPROCESS: Cache failed, falling back to passed config dict")
-            def create_global_config_from_dict():
-                # Reconstruct nested dataclasses from dictionaries
-                path_planning_dict = global_config_dict.get('path_planning', {})
-                vfs_dict = global_config_dict.get('vfs', {})
-
-                path_planning = PathPlanningConfig(**path_planning_dict)
-                vfs = VFSConfig(**vfs_dict)
-
-                # Handle microscope enum
-                microscope_value = global_config_dict.get('microscope', Microscope.AUTO)
-                if isinstance(microscope_value, str):
-                    # Convert string back to enum
-                    microscope = Microscope(microscope_value)
-                else:
-                    microscope = microscope_value
-
-                return GlobalPipelineConfig(
-                    num_workers=global_config_dict.get('num_workers', 1),
-                    path_planning=path_planning,
-                    vfs=vfs,
-                    microscope=microscope
-                )
-
-            global_config = force_error_detection("GlobalPipelineConfig_fallback_creation", create_global_config_from_dict)
+        global_config = force_error_detection("GlobalPipelineConfig_creation", create_global_config)
 
         log_thread_count("after global config creation")
 

@@ -1,0 +1,17 @@
+Debug Subprocess Data
+====================
+
+Generated: 2025-06-23 16:50:49.067561
+Plates: 1
+Plate paths: ['/home/ts/nvme_usb/OpenHCS/mfd-hips-cell-density-ctb-4x_Plate_12994_workspace_outputs']
+
+Pipeline data keys: ['/home/ts/nvme_usb/OpenHCS/mfd-hips-cell-density-ctb-4x_Plate_12994_workspace_outputs']
+
+Global config: {'num_workers': 9, 'path_planning': {'output_dir_suffix': '_process_after_bin', 'global_output_folder': '/home/ts/nvme_usb/OpenHCS'}, 'vfs': {'default_intermediate_backend': 'memory', 'default_materialization_backend': 'disk', 'persistent_storage_root_path': None}, 'microscope': <Microscope.AUTO: 'auto'>}
+
+To debug manually:
+1. Run: ./debug_subprocess_data_20250623_165038.sh (executable shell script)
+2. Or run: python /home/ts/code/projects/openhcs/openhcs/textual_tui/subprocess_runner.py debug_subprocess_data_20250623_165038.pkl debug_status.json debug_result.json debug.log
+3. Check debug_status.json for progress/death markers
+4. Check debug_result.json for results
+5. Check debug.log for detailed logs
