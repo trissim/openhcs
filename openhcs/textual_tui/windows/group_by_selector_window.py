@@ -33,30 +33,46 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
         min-width: 50; min-height: 20;
     }
 
-    /* Fixed height allocations */
+    /* Content area takes most space (like ConfigWindow) */
+    GroupBySelectorWindow .dialog-content {
+        height: 1fr;
+        width: 100%;
+    }
+
+    /* Top buttons row */
     GroupBySelectorWindow #top_buttons {
+        height: auto;
         align: center middle;
-        height: 1;
         width: 100%;
     }
 
+    /* Lists container fills remaining content space */
     GroupBySelectorWindow #lists_container {
-        height: 1fr;  /* Take remaining space after top/bottom buttons */
+        height: 1fr;
         width: 100%;
     }
 
+    /* Bottom buttons row - same as top buttons */
     GroupBySelectorWindow #bottom_buttons {
+        height: auto;
         align: center middle;
-        height: 1;
         width: 100%;
     }
 
-    /* Compact buttons */
+    /* All buttons styling */
     GroupBySelectorWindow Button {
         width: auto;
-        min-width: 4;
         margin: 0 1;
-        padding: 0;
+    }
+
+    /* Top buttons more compact */
+    GroupBySelectorWindow #top_buttons Button {
+        min-width: 4;
+    }
+
+    /* Bottom buttons standard size */
+    GroupBySelectorWindow #bottom_buttons Button {
+        min-width: 8;
     }
 
     /* List views fill container */
@@ -65,9 +81,9 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
         min-height: 3;
     }
 
-    /* Compact labels */
+    /* Static labels */
     GroupBySelectorWindow Static {
-        height: 1;
+        height: auto;
         padding: 0;
         margin: 0;
     }
@@ -151,16 +167,17 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
         return None
 
     def compose(self) -> ComposeResult:
-        """Compose the dual-list selector window."""
-        with Vertical():
-            # Top button row - centered
+        """Compose the dual-list selector window - follow working window pattern."""
+        # Content area (like ConfigWindow does)
+        with Container(classes="dialog-content"):
+            # Top button row
             with Horizontal(id="top_buttons"):
                 yield Button("→", id="move_right", compact=True)
                 yield Button("←", id="move_left", compact=True)
                 yield Button("All", id="select_all", compact=True)
                 yield Button("None", id="select_none", compact=True)
 
-            # Dual lists - constrained container
+            # Dual lists
             with Horizontal(id="lists_container"):
                 with Vertical():
                     yield Static("Available")
@@ -170,10 +187,10 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
                     yield Static("Selected")
                     yield ListView(id="selected_list")
 
-            # Bottom action buttons - centered
-            with Horizontal(id="bottom_buttons"):
-                yield Button("OK", id="ok_btn", compact=True)
-                yield Button("Cancel", id="cancel_btn", compact=True)
+        # Bottom buttons in horizontal row (like top buttons)
+        with Horizontal(id="bottom_buttons"):
+            yield Button("OK", id="ok_btn", compact=True)
+            yield Button("Cancel", id="cancel_btn", compact=True)
 
     def on_mount(self) -> None:
         """Initialize the lists."""
