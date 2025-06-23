@@ -365,15 +365,20 @@ def create_composite(
     normalized_weights = [w / weight_sum for w in weights]
 
     # Convert weights to JAX array for efficient computation
-    weights_array = jnp.array(normalized_weights, dtype=stack.dtype)
+    # CRITICAL: Use float32 for weights to preserve fractional values, not stack.dtype
+    weights_array = jnp.array(normalized_weights, dtype=jnp.float32)
 
     # Reshape weights for broadcasting: (N, 1, 1) to multiply with (N, Y, X)
     weights_array = weights_array.reshape(n_slices, 1, 1)
 
     # Create composite by weighted sum along the first axis
-    # Multiply each slice by its weight and sum
-    weighted_stack = stack * weights_array
+    # Convert stack to float32 for computation to avoid precision loss
+    stack_float = stack.astype(jnp.float32)
+    weighted_stack = stack_float * weights_array
     composite_slice = jnp.sum(weighted_stack, axis=0, keepdims=True)  # Keep as (1, Y, X)
+
+    # Convert back to original dtype
+    composite_slice = composite_slice.astype(stack.dtype)
 
     return composite_slice
 
