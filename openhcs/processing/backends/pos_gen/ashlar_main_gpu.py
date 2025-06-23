@@ -199,12 +199,10 @@ def ashlar_register_gpu(img1, img2, upsample=10, sigma=0):
         shift = cp.asnumpy(shift)
         error = float(error)
 
-        # Log all correlation results at INFO level for user visibility
+        # Only log high errors to avoid spam
         if error > 1.0:  # High error threshold for Ashlar
             logger.warning(f"Ashlar GPU: HIGH CORRELATION ERROR - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
             logger.warning(f"  This indicates poor overlap or image quality between tiles")
-        else:
-            logger.info(f"Ashlar GPU: Correlation - Error={error:.4f}, Shift=({shift[0]:.2f}, {shift[1]:.2f})")
 
     except Exception as e:
         # Fallback if correlation fails
@@ -940,7 +938,8 @@ def ashlar_compute_tile_positions_gpu(
     """
     grid_rows, grid_cols = grid_dimensions
 
-    logger.info(f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
+    if verbose:
+        logger.info(f"Ashlar GPU: Processing {grid_rows}x{grid_cols} grid with {len(image_stack)} tiles")
 
     try:
         # Convert to CuPy array if needed
