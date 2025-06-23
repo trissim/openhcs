@@ -38,9 +38,17 @@ def setup_subprocess_logging(log_file_path: str):
     openhcs_logger = logging.getLogger("openhcs")
     openhcs_logger.setLevel(logging.INFO)
 
-    # Specifically configure MIST logger to ensure it writes to the log file
-    mist_logger = logging.getLogger("openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main")
-    mist_logger.setLevel(logging.INFO)
+    # Specifically configure MIST loggers to ensure they write to the log file
+    mist_loggers = [
+        "openhcs.processing.backends.pos_gen.mist_gpu_v2.mist_main",
+        "openhcs.processing.backends.pos_gen.mist_gpu_v2.pciam",
+        "openhcs.processing.backends.pos_gen.mist_cpu.mist_main",
+        "openhcs.processing.backends.pos_gen.mist_cpu.pciam"
+    ]
+
+    for mist_logger_name in mist_loggers:
+        mist_logger = logging.getLogger(mist_logger_name)
+        mist_logger.setLevel(logging.INFO)  # This will capture WARNING and ERROR messages
 
     # Configure other common OpenHCS loggers
     for logger_name in [
@@ -60,8 +68,10 @@ def setup_subprocess_logging(log_file_path: str):
     logger.info("🔥 SUBPROCESS: Unified logging initialized for all OpenHCS components")
     logger.info(f"🔥 SUBPROCESS: Log file: {log_file_path}")
 
-    # Test that MIST logger works
-    mist_logger.info("🔥 SUBPROCESS: MIST GPU logger configured and working")
+    # Test that MIST loggers work
+    for mist_logger_name in mist_loggers:
+        test_logger = logging.getLogger(mist_logger_name)
+        test_logger.info(f"🔥 SUBPROCESS: {mist_logger_name} configured and working")
 
     return logger
 
