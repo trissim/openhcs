@@ -219,18 +219,42 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
         death_marker("BEFORE_CONFIG_IMPORT")
         # NUCLEAR WRAP: Config import
         def import_config():
-            from openhcs.core.config import GlobalPipelineConfig
-            return GlobalPipelineConfig
-        GlobalPipelineConfig = force_error_detection("import_config", import_config)
+            from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig, VFSConfig
+            from openhcs.constants import Microscope
+            return GlobalPipelineConfig, PathPlanningConfig, VFSConfig, Microscope
+        GlobalPipelineConfig, PathPlanningConfig, VFSConfig, Microscope = force_error_detection("import_config", import_config)
         death_marker("AFTER_CONFIG_IMPORT")
 
         log_thread_count("after config import")
 
-        # Reconstruct global config from dict
+        # Reconstruct global config from dict with proper nested dataclass handling
         log_thread_count("before global config creation")
 
-        # NUCLEAR WRAP: Global config creation
-        global_config = force_error_detection("GlobalPipelineConfig_creation", GlobalPipelineConfig, **global_config_dict)
+        # NUCLEAR WRAP: Global config creation with nested dataclass reconstruction
+        def create_global_config():
+            # Reconstruct nested dataclasses from dictionaries
+            path_planning_dict = global_config_dict.get('path_planning', {})
+            vfs_dict = global_config_dict.get('vfs', {})
+
+            path_planning = PathPlanningConfig(**path_planning_dict)
+            vfs = VFSConfig(**vfs_dict)
+
+            # Handle microscope enum
+            microscope_value = global_config_dict.get('microscope', Microscope.AUTO)
+            if isinstance(microscope_value, str):
+                # Convert string back to enum
+                microscope = Microscope(microscope_value)
+            else:
+                microscope = microscope_value
+
+            return GlobalPipelineConfig(
+                num_workers=global_config_dict.get('num_workers', 1),
+                path_planning=path_planning,
+                vfs=vfs,
+                microscope=microscope
+            )
+
+        global_config = force_error_detection("GlobalPipelineConfig_creation", create_global_config)
 
         log_thread_count("after global config creation")
 

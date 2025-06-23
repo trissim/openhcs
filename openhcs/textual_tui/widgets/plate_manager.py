@@ -446,10 +446,11 @@ class PlateManagerWidget(ButtonListWidget):
             log_file_path = get_current_log_file_path()
 
             # Pickle data for subprocess
+            import dataclasses
             subprocess_data = {
                 'plate_paths': plate_paths_to_run,
                 'pipeline_data': pipeline_data,
-                'global_config_dict': self.global_config.__dict__
+                'global_config_dict': dataclasses.asdict(self.global_config)
             }
 
             # Wrap pickle operation in executor to avoid blocking UI
