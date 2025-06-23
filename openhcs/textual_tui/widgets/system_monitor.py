@@ -227,6 +227,7 @@ class SystemMonitorTextual(Container):
         """Update system information in top-right"""
         try:
             from datetime import datetime
+            # Now get_metrics_dict() just returns cached data - no blocking calls!
             metrics = self.monitor.get_metrics_dict()
 
             info_text = f"""

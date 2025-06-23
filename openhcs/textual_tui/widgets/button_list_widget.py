@@ -359,13 +359,17 @@ class ButtonListWidget(Widget):
         except Exception as e:
             logger.error(f"Failed to update InlineButtonSelectionList: {e}", exc_info=True)
 
-    def _delayed_update_display(self) -> None:
+    def _delayed_update_display(self, retry_count: int = 0) -> None:
         """Update the display - called when widget is mounted or as fallback."""
         try:
             self._update_selection_list()
         except Exception as e:
-            logger.warning(f"Delayed update failed (widget may not be ready): {e}")
-            self.set_timer(0.1, self._delayed_update_display)
+            # Limit retries to prevent infinite timer loops
+            if retry_count < 5:  # Max 5 retries (0.5 seconds total)
+                logger.warning(f"Delayed update failed (widget may not be ready), retry {retry_count + 1}/5: {e}")
+                self.set_timer(0.1, lambda: self._delayed_update_display(retry_count + 1))
+            else:
+                logger.error(f"Delayed update failed after 5 retries, giving up: {e}")
             
     def action_add_item_buttons(self) -> None:
         """Add buttons to list items - not needed with InlineButtonSelectionList."""

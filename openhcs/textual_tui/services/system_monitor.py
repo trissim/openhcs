@@ -24,13 +24,16 @@ class SystemMonitor:
     
     def __init__(self, history_length=60):
         self.history_length = history_length
-        
+
         # Initialize data storage
         self.cpu_history = deque(maxlen=history_length)
         self.ram_history = deque(maxlen=history_length)
         self.gpu_history = deque(maxlen=history_length)
         self.vram_history = deque(maxlen=history_length)
         self.time_stamps = deque(maxlen=history_length)
+
+        # Cache current metrics to avoid duplicate system calls
+        self._current_metrics = {}
         
         # Initialize with zeros
         for _ in range(history_length):
@@ -41,24 +44,46 @@ class SystemMonitor:
             self.time_stamps.append(0)
     
     def update_metrics(self):
-        """Update system metrics"""
+        """Update system metrics and cache current values"""
         # CPU usage
-        cpu_percent = psutil.cpu_percent(interval=0.1)
+        cpu_percent = psutil.cpu_percent(interval=None)
         self.cpu_history.append(cpu_percent)
-        
+
         # RAM usage
         ram = psutil.virtual_memory()
         ram_percent = ram.percent
         self.ram_history.append(ram_percent)
-        
+
+        # Cache current metrics to avoid duplicate calls in get_metrics_dict()
+        self._current_metrics = {
+            'cpu_percent': cpu_percent,
+            'ram_percent': ram_percent,
+            'ram_used_gb': ram.used / (1024**3),
+            'ram_total_gb': ram.total / (1024**3),
+            'cpu_cores': psutil.cpu_count(),
+            'cpu_freq_mhz': psutil.cpu_freq().current if psutil.cpu_freq() else 0,
+        }
+
         # GPU usage (if available)
         if GPU_AVAILABLE:
             try:
                 gpus = GPUtil.getGPUs()
                 if gpus:
                     gpu = gpus[0]  # Use first GPU
-                    self.gpu_history.append(gpu.load * 100)
-                    self.vram_history.append(gpu.memoryUtil * 100)
+                    gpu_load = gpu.load * 100
+                    vram_util = gpu.memoryUtil * 100
+                    self.gpu_history.append(gpu_load)
+                    self.vram_history.append(vram_util)
+
+                    # Cache GPU metrics
+                    self._current_metrics.update({
+                        'gpu_percent': gpu_load,
+                        'vram_percent': vram_util,
+                        'gpu_name': gpu.name,
+                        'gpu_temp': gpu.temperature,
+                        'vram_used_mb': gpu.memoryUsed,
+                        'vram_total_mb': gpu.memoryTotal,
+                    })
                 else:
                     self.gpu_history.append(0)
                     self.vram_history.append(0)
@@ -68,7 +93,7 @@ class SystemMonitor:
         else:
             self.gpu_history.append(0)
             self.vram_history.append(0)
-        
+
         # Update timestamps
         self.time_stamps.append(time.time())
     
@@ -193,35 +218,20 @@ class SystemMonitor:
         return output
     
     def get_metrics_dict(self):
-        """Get current metrics as a dictionary"""
-        ram_info = psutil.virtual_memory()
-        
-        metrics = {
-            'cpu_percent': self.cpu_history[-1] if self.cpu_history else 0,
-            'ram_percent': self.ram_history[-1] if self.ram_history else 0,
-            'ram_used_gb': ram_info.used / (1024**3),
-            'ram_total_gb': ram_info.total / (1024**3),
-            'cpu_cores': psutil.cpu_count(),
-            'cpu_freq_mhz': psutil.cpu_freq().current if psutil.cpu_freq() else 0,
-        }
-        
-        if GPU_AVAILABLE:
-            try:
-                gpus = GPUtil.getGPUs()
-                if gpus:
-                    gpu = gpus[0]
-                    metrics.update({
-                        'gpu_percent': gpu.load * 100,
-                        'vram_percent': gpu.memoryUtil * 100,
-                        'gpu_name': gpu.name,
-                        'gpu_temp': gpu.temperature,
-                        'vram_used_mb': gpu.memoryUsed,
-                        'vram_total_mb': gpu.memoryTotal,
-                    })
-            except:
-                pass
-        
-        return metrics
+        """Get current metrics as a dictionary - uses cached data from update_metrics()"""
+        # Return cached metrics to avoid duplicate system calls
+        # If no cached data exists (first call), return defaults
+        if not self._current_metrics:
+            return {
+                'cpu_percent': 0,
+                'ram_percent': 0,
+                'ram_used_gb': 0,
+                'ram_total_gb': 0,
+                'cpu_cores': 0,
+                'cpu_freq_mhz': 0,
+            }
+
+        return self._current_metrics.copy()
 
 
 # Standalone CLI usage
