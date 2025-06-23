@@ -29,15 +29,30 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
 
     DEFAULT_CSS = """
     GroupBySelectorWindow {
-        width: 50; height: 15;
-        min-width: 50; min-height: 15;
+        width: 50; height: 18;
+        min-width: 50; min-height: 18;
+    }
+
+    /* Center the top button row */
+    GroupBySelectorWindow #top_buttons {
+        align: center middle;
+        height: 1;
+        width: 100%;
+    }
+
+    /* Center the bottom button row */
+    GroupBySelectorWindow #bottom_buttons {
+        align: center middle;
+        height: 1;
+        width: 100%;
+        margin-top: 1;
     }
 
     /* Make buttons more compact like in ButtonList and FileBrowser */
     GroupBySelectorWindow Button {
         width: auto;
         min-width: 4;
-        margin: 0;
+        margin: 0 1;
         padding: 0;
     }
 
@@ -134,25 +149,25 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
     def compose(self) -> ComposeResult:
         """Compose the dual-list selector window."""
         with Vertical():
-            # Button row - ultra compact
-            with Horizontal():
+            # Top button row - centered
+            with Horizontal(id="top_buttons"):
                 yield Button("→", id="move_right", compact=True)
                 yield Button("←", id="move_left", compact=True)
                 yield Button("All", id="select_all", compact=True)
                 yield Button("None", id="select_none", compact=True)
-            
+
             # Dual lists
             with Horizontal():
                 with Vertical():
                     yield Static("Available")
                     yield ListView(id="available_list")
-                
+
                 with Vertical():
                     yield Static("Selected")
                     yield ListView(id="selected_list")
-            
-            # Action buttons
-            with Horizontal():
+
+            # Bottom action buttons - centered
+            with Horizontal(id="bottom_buttons"):
                 yield Button("OK", id="ok_btn", compact=True)
                 yield Button("Cancel", id="cancel_btn", compact=True)
 
