@@ -568,7 +568,7 @@ class PlateManagerWidget(ButtonListWidget):
             self.file_observer = None
             self.file_watcher = None
 
-    def _check_process_status(self) -> None:
+    async def _check_process_status(self) -> None:
         """Check if subprocess is still running (called by timer)."""
         if not self._is_any_plate_running():
             logger.info("🔥 MONITOR: Subprocess finished - investigating...")
@@ -591,28 +591,45 @@ class PlateManagerWidget(ButtonListWidget):
                     logger.error(f"🔥 MONITOR: Subprocess failed with exit code {exit_code}")
 
                 # Read any remaining log entries
-                self._read_log_file_incremental()
+                await self._read_log_file_incremental()
 
             # Check results from files before cleaning up
             if self.status_file_path:
+                # Wrap all file existence checks in executor to avoid blocking UI
+                import asyncio
+
+                def _check_temp_files():
+                    status_exists = Path(self.status_file_path).exists()
+                    result_exists = Path(self.result_file_path).exists() if self.result_file_path else False
+                    data_exists = Path(self.data_file_path).exists() if self.data_file_path else False
+                    log_exists = Path(self.log_file_path).exists() if self.log_file_path else False
+
+                    status_content = ""
+                    if status_exists:
+                        try:
+                            with open(self.status_file_path, 'r') as f:
+                                status_content = f.read()
+                        except Exception as e:
+                            status_content = f"ERROR: {e}"
+
+                    return status_exists, result_exists, data_exists, log_exists, status_content
+
+                status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
+
                 # Debug: Check if temp files exist and have content
                 logger.info(f"🔥 MONITOR: Checking temp files:")
-                logger.info(f"🔥 MONITOR: Status file exists: {Path(self.status_file_path).exists()}")
-                logger.info(f"🔥 MONITOR: Result file exists: {Path(self.result_file_path).exists()}")
-                logger.info(f"🔥 MONITOR: Data file exists: {Path(self.data_file_path).exists()}")
-                logger.info(f"🔥 MONITOR: Log file exists: {Path(self.log_file_path).exists() if self.log_file_path else False}")
+                logger.info(f"🔥 MONITOR: Status file exists: {status_exists}")
+                logger.info(f"🔥 MONITOR: Result file exists: {result_exists}")
+                logger.info(f"🔥 MONITOR: Data file exists: {data_exists}")
+                logger.info(f"🔥 MONITOR: Log file exists: {log_exists}")
 
-                if Path(self.status_file_path).exists():
-                    try:
-                        with open(self.status_file_path, 'r') as f:
-                            content = f.read()
-                        logger.info(f"🔥 MONITOR: Status file content: '{content}'")
-                        if not content.strip():
-                            logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
-                    except Exception as e:
-                        logger.error(f"🔥 MONITOR: Could not read status file: {e}")
+                if status_exists:
+                    logger.info(f"🔥 MONITOR: Status file content: '{status_content}'")
+                    if not status_content.strip():
+                        logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
 
-                self._process_execution_results()
+                # Schedule async execution result processing
+                await self._process_execution_results()
 
             if self.current_process:
                 # FIXED: Don't wait with timeout - process is already finished!
@@ -624,77 +641,100 @@ class PlateManagerWidget(ButtonListWidget):
 
             self._reset_execution_state("Execution finished.")
 
-    def _read_log_file_incremental(self) -> None:
+    async def _read_log_file_incremental(self) -> None:
         """Read new content from the log file since last read."""
-        if not self.log_file_path or not Path(self.log_file_path).exists():
+        if not self.log_file_path:
             self.app.current_status = "🔥 LOG READER: No log file"
             return
-            
+
         try:
-            with open(self.log_file_path, 'r') as f:
-                # Seek to where we left off
-                f.seek(self.log_file_position)
-                new_content = f.read()
-                # Update position for next read
-                self.log_file_position = f.tell()
-                
+            # Wrap all file I/O operations in executor to avoid blocking UI
+            import asyncio
+
+            def _read_log_content():
+                if not Path(self.log_file_path).exists():
+                    return None, self.log_file_position
+
+                with open(self.log_file_path, 'r') as f:
+                    # Seek to where we left off
+                    f.seek(self.log_file_position)
+                    new_content = f.read()
+                    # Update position for next read
+                    new_position = f.tell()
+
+                return new_content, new_position
+
+            new_content, new_position = await asyncio.get_event_loop().run_in_executor(None, _read_log_content)
+            self.log_file_position = new_position
+
+            if new_content is None:
+                self.app.current_status = "🔥 LOG READER: No log file"
+                return
+
             if new_content and new_content.strip():
                 # Get the last non-empty line from new content
                 lines = new_content.strip().split('\n')
                 non_empty_lines = [line.strip() for line in lines if line.strip()]
-                
+
                 if non_empty_lines:
                     # Show the last line, truncated if too long
                     last_line = non_empty_lines[-1]
                     if len(last_line) > 100:
                         last_line = last_line[:97] + "..."
-                    
+
                     self.app.current_status = last_line
                 else:
                     self.app.current_status = "🔥 LOG READER: No lines found"
             else:
                 self.app.current_status = "🔥 LOG READER: No new content"
-                    
+
         except Exception as e:
             self.app.current_status = f"🔥 LOG READER ERROR: {e}"
 
-    def _process_execution_results(self) -> None:
+    async def _process_execution_results(self) -> None:
         """Process results from the subprocess files."""
         if not self.status_file_path:
             return
 
         try:
-            # Collect all status updates from file
-            status_updates = {}
-            result_updates = {}
+            # Wrap all file I/O operations in executor to avoid blocking UI
+            import asyncio
 
-            # Read status file (one JSON object per line)
-            if Path(self.status_file_path).exists():
-                try:
-                    with open(self.status_file_path, 'r') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line:
-                                data = json.loads(line)
-                                plate_path = data['plate_path']
-                                status = data['status']
-                                status_updates[plate_path] = status
-                except Exception as e:
-                    logger.debug(f"Could not read status file: {e}")
+            def _read_execution_files():
+                status_updates = {}
+                result_updates = {}
 
-            # Read result file (one JSON object per line)
-            if Path(self.result_file_path).exists():
-                try:
-                    with open(self.result_file_path, 'r') as f:
-                        for line in f:
-                            line = line.strip()
-                            if line:
-                                data = json.loads(line)
-                                plate_path = data['plate_path']
-                                result = data['result']
-                                result_updates[plate_path] = result
-                except Exception as e:
-                    logger.debug(f"Could not read result file: {e}")
+                # Read status file (one JSON object per line)
+                if Path(self.status_file_path).exists():
+                    try:
+                        with open(self.status_file_path, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line:
+                                    data = json.loads(line)
+                                    plate_path = data['plate_path']
+                                    status = data['status']
+                                    status_updates[plate_path] = status
+                    except Exception as e:
+                        logger.debug(f"Could not read status file: {e}")
+
+                # Read result file (one JSON object per line)
+                if Path(self.result_file_path).exists():
+                    try:
+                        with open(self.result_file_path, 'r') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line:
+                                    data = json.loads(line)
+                                    plate_path = data['plate_path']
+                                    result = data['result']
+                                    result_updates[plate_path] = result
+                    except Exception as e:
+                        logger.debug(f"Could not read result file: {e}")
+
+                return status_updates, result_updates
+
+            status_updates, result_updates = await asyncio.get_event_loop().run_in_executor(None, _read_execution_files)
 
             # Update plate statuses based on results
             current_plates = list(self.plates)
