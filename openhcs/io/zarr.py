@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import zarr
-import zarr.storage
+from zarr.storage import LocalStore
 
 from openhcs.io.base import StorageBackend
 
@@ -27,16 +27,33 @@ class ZarrStorageBackend(StorageBackend):
     This class provides a concrete implementation of the storage backend interfaces
     for Zarr storage. It stores data in a Zarr store on disk.
     """
+
+    def __init__(self, store_name: str = "images.zarr"):
+        """
+        Initialize Zarr backend with configurable store name.
+
+        Args:
+            store_name: Name of the zarr store directory (default: "images.zarr")
+        """
+        self.store_name = store_name
     def _split_store_and_key(self, path: Union[str, Path]) -> Tuple[Any, str]:
-        path = Path(path).resolve()
-        parts = list(path.parts)
-        for i in reversed(range(len(parts))):
-            if parts[i].endswith(".zarr"):
-                store_path = Path(*parts[: i + 1])
-                relative_key = Path(*parts[i + 1 :]).as_posix()
-                store = zarr.storage.DirectoryStore(str(store_path))
-                return store, relative_key
-        raise ValueError(f"No .zarr store found in path: {path}")
+        """
+        Auto-inject zarr store path for clean filesystem-like API.
+
+        Maps clean paths like "/path/to/plate/A01.tif" to:
+        - Store: "/path/to/plate/{self.store_name}"
+        - Key: "A01.tif"
+        """
+        path = Path(path)
+
+        # Store is always self.store_name in the same directory as the file
+        store_path = path.parent / self.store_name
+        store = LocalStore(str(store_path))
+
+        # Key is just the filename
+        relative_key = path.name
+
+        return store, relative_key
 
     def save(self, data: Any, output_path: Union[str, Path], **kwargs):
         """
