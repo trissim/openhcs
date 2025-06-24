@@ -303,14 +303,7 @@ RadioButton {
     margin: 0 1;  /* Horizontal margin for spacing between buttons */
 }
 
-/* File browser buttons should remain left-aligned */
-#buttons_panel .dialog-buttons {
-    text-align: left;
-}
 
-#buttons_panel .dialog-buttons Button {
-    margin: 0 1 0 0;  /* Right margin only for file browser buttons */
-}
 
 /* Start Menu Widget */
 StartMenuWidget {

@@ -59,20 +59,19 @@ class FileBrowserWindow(BaseOpenHCSWindow):
     FileBrowserWindow #buttons_panel {
         height: 1;      /* Exactly 1 row */
         width: 100%;
+        align: center middle;
     }
 
     /* Buttons should be very compact */
     FileBrowserWindow #buttons_panel Button {
         width: auto;    /* Auto-size buttons to content */
         min-width: 4;   /* Very small minimum width */
-        margin: 0;      /* No margins for ultra-compact fit */
         padding: 0;     /* No padding for maximum compactness */
     }
 
     /* Checkbox should also be very compact */
     FileBrowserWindow #buttons_panel Checkbox {
         width: auto;    /* Auto-size checkbox */
-        margin: 0;      /* No margins */
         padding: 0;     /* No padding */
     }
 
@@ -110,9 +109,29 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         width: 100%; /* Ensure full width */
     }
 
-    /* Path display should be minimal */
-    FileBrowserWindow #path_display {
+    /* Path area - horizontal layout for label + input */
+    FileBrowserWindow #path_area {
         height: 1;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Path label styling */
+    FileBrowserWindow .path-label {
+        width: auto;
+        min-width: 6;
+        text-align: left;
+        padding: 0 1 0 0;
+        margin: 0;
+    }
+
+    /* Path input should be minimal and editable */
+    FileBrowserWindow #path_input {
+        height: 1;
+        width: 1fr;
+        margin: 0;
+        padding: 0;
     }
 
     /* Filename area should have explicit height and styling */
@@ -200,8 +219,15 @@ class FileBrowserWindow(BaseOpenHCSWindow):
     def compose(self) -> ComposeResult:
         """Compose the enhanced file browser content."""
         with Vertical():
-            # Path display (fixed height at top)
-            yield Static(f"Path: {self.initial_path}", id="path_display")
+            # Path input with label (fixed height at top) - editable path field
+            with Horizontal(id="path_area"):
+                yield Static("Path:", classes="path-label")
+                yield Input(
+                    value=str(self.initial_path),
+                    placeholder="Enter path...",
+                    id="path_input",
+                    compact=True
+                )
 
             # Directory tree - scrollable area (this should expand to fill remaining space)
             with ScrollableContainer(id="tree_area"):
@@ -222,7 +248,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             # Bottom area: buttons on top, selection area below (fixed height at bottom)
             with Vertical(id="bottom_area"):
                 # All buttons in single horizontal row with compact spacing
-                with Horizontal(id="buttons_panel"):
+                with Horizontal(id="buttons_panel", classes="dialog-buttons"):
                     yield Button("🏠 Home", id="go_home", compact=True)
                     yield Button("⬆️ Up", id="go_up", compact=True)
 
@@ -342,10 +368,6 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         """Handle directory selection from tree."""
         logger.info(f"🔍 DIRECTORY SELECTED: {event.path}")
 
-        # Update path display
-        path_widget = self.query_one("#path_display", Static)
-        path_widget.update(f"Path: {event.path}")
-
         # Store selected path - ensure it's always a Path object
         if hasattr(event.path, '_path'):
             # OpenHCSPathAdapter
@@ -356,8 +378,43 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             # Convert string or other types to Path
             self.selected_path = Path(str(event.path))
 
+        # Update path input
+        self._update_path_display(self.selected_path)
+
         logger.info(f"🔍 STORED selected_path: {self.selected_path} (type: {type(self.selected_path)})")
-    
+
+    @on(Input.Submitted)
+    def on_path_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle path input submission to navigate to entered path."""
+        if event.input.id == "path_input":
+            entered_path = event.input.value.strip()
+            if entered_path:
+                try:
+                    new_path = Path(entered_path).resolve()
+
+                    # Check if path exists and is accessible
+                    if self.file_manager.exists(new_path, self.backend.value):
+                        # Check if it's a directory
+                        if self.file_manager.is_dir(new_path, self.backend.value):
+                            self._navigate_to_path(new_path)
+                            logger.info(f"🔍 NAVIGATED via path input to: {new_path}")
+                        else:
+                            # It's a file, navigate to its parent directory
+                            parent_path = new_path.parent
+                            self._navigate_to_path(parent_path)
+                            logger.info(f"🔍 NAVIGATED via path input to parent of file: {parent_path}")
+                    else:
+                        # Path doesn't exist, revert to current path
+                        current_path = self.selected_path or self.initial_path
+                        event.input.value = str(current_path)
+                        logger.warning(f"🔍 PATH NOT FOUND: {new_path}, reverted to {current_path}")
+
+                except Exception as e:
+                    # Invalid path, revert to current path
+                    current_path = self.selected_path or self.initial_path
+                    event.input.value = str(current_path)
+                    logger.warning(f"🔍 INVALID PATH: {entered_path}, error: {e}, reverted to {current_path}")
+
     @on(DirectoryTree.FileSelected)
     def on_file_selected(self, event: DirectoryTree.FileSelected) -> None:
         """Handle file selection from tree."""
@@ -623,8 +680,12 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             pass
     
     def _update_path_display(self, path: Path) -> None:
-        """Update the path display in the tree border title."""
+        """Update the path input field and tree border title."""
         try:
+            # Update the path input field
+            path_input = self.query_one("#path_input", Input)
+            path_input.value = str(path)
+
             # Set the border title on the directory tree
             self.directory_tree.border_title = f"Path: {path}"
         except Exception:
