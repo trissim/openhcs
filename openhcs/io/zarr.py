@@ -16,6 +16,7 @@ import zarr
 from zarr.storage import LocalStore
 
 from openhcs.io.base import StorageBackend
+from openhcs.io.exceptions import StorageResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,16 @@ class ZarrStorageBackend(StorageBackend):
             chunks = self._auto_chunks(data, chunk_divisor=kwargs.get("chunk_divisor", 1))
 
         try:
-            group.create_dataset(
+            # Create array with correct shape and dtype, then assign data
+            array = group.create_array(
                 name=key,
-                data=data,
+                shape=data.shape,
+                dtype=data.dtype,
                 chunks=chunks,
                 compressor=kwargs.get("compressor", None),
                 overwrite=False  # 🔒 Must be False by doctrine
             )
+            array[:] = data
         except Exception as e:
             raise StorageResolutionError(f"Failed to save to Zarr: {output_path}") from e
 
@@ -262,32 +266,29 @@ class ZarrStorageBackend(StorageBackend):
     def is_symlink(self, path: Union[str, Path]) -> bool:
         """
         Check if the given Zarr path represents a logical symlink (based on attribute contract).
-    
+
         Returns:
             bool: True if the key exists and has an OpenHCS-declared symlink attribute
-    
-        Raises:
-            FileNotFoundError: If the path doesn't exist in the group
-            StorageResolutionError: For backend access issues
+            False if the key doesn't exist or is not a symlink
         """
         store, key = self._split_store_and_key(path)
         group = zarr.group(store=store)
-    
+
         try:
             obj = group[key]
             attrs = getattr(obj, "attrs", {})
-            target = attrs.get("_symlink", None)
 
             if "_symlink" not in attrs:
                 return False
-    
+
             # Enforce that the _symlink attr matches schema (e.g. str or list of path components)
             if not isinstance(attrs["_symlink"], str):
                 raise StorageResolutionError(f"Invalid symlink format in Zarr attrs at: {path}")
-    
+
             return True
         except KeyError:
-            raise FileNotFoundError(f"No such key in Zarr group: {path}")
+            # Key doesn't exist, so it's not a symlink
+            return False
         except Exception as e:
             raise StorageResolutionError(f"Failed to inspect Zarr symlink at: {path}") from e
 
