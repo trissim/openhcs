@@ -293,6 +293,44 @@ class OpenHCSMetadataHandler(MetadataHandler):
             return plate_name
         logger.debug("No 'plate_name' data found in OpenHCS metadata.")
         return None
+
+    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
+        """
+        Get available storage backends from metadata in priority order.
+
+        Args:
+            plate_path: Path to the plate folder.
+
+        Returns:
+            Ordered dictionary mapping backend names to availability flags.
+            Order represents selection priority (first available backend is used).
+            Defaults to {"zarr": False, "disk": True} if not specified.
+        """
+        metadata = self._load_metadata(plate_path)
+        return metadata.get("available_backends", {"zarr": False, "disk": True})
+
+    def update_available_backends(self, plate_path: Union[str, Path], available_backends: Dict[str, bool]) -> None:
+        """
+        Update available storage backends in metadata and save to disk.
+
+        Args:
+            plate_path: Path to the plate folder.
+            available_backends: Ordered dict mapping backend names to availability flags.
+        """
+        # Load current metadata
+        metadata = self._load_metadata(plate_path)
+
+        # Update the available backends
+        metadata["available_backends"] = available_backends
+
+        # Save back to file
+        metadata_file_path = Path(plate_path) / self.METADATA_FILENAME
+        content = json.dumps(metadata, indent=2)
+        self.filemanager.save(content, str(metadata_file_path), 'disk')
+
+        # Update cache
+        self._metadata_cache = metadata
+        logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces_base import FilenameParser
 
@@ -415,14 +453,14 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         return OpenHCSMetadataHandler
 
     @property
-    def supported_backends(self) -> List[Backend]:
+    def compatible_backends(self) -> List[Backend]:
         """
-        OpenHCS supports both DISK and ZARR backends.
+        OpenHCS is compatible with ZARR (preferred) and DISK (fallback) backends.
 
-        DISK: Standard file operations for compatibility
-        ZARR: Advanced chunked storage for large datasets
+        ZARR: Advanced chunked storage for large datasets (preferred)
+        DISK: Standard file operations for compatibility (fallback)
         """
-        return [Backend.DISK, Backend.ZARR]
+        return [Backend.ZARR, Backend.DISK]
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """

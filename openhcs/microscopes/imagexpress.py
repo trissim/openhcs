@@ -55,9 +55,9 @@ class ImageXpressHandler(MicroscopeHandler):
         return ImageXpressMetadataHandler
 
     @property
-    def supported_backends(self) -> List[Backend]:
+    def compatible_backends(self) -> List[Backend]:
         """
-        ImageXpress supports DISK backend only.
+        ImageXpress is compatible with DISK backend only.
 
         Legacy microscope format with standard file operations.
         """

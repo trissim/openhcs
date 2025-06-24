@@ -56,9 +56,9 @@ class OperaPhenixHandler(MicroscopeHandler):
         return OperaPhenixMetadataHandler
 
     @property
-    def supported_backends(self) -> List[Backend]:
+    def compatible_backends(self) -> List[Backend]:
         """
-        Opera Phenix supports DISK backend only.
+        Opera Phenix is compatible with DISK backend only.
 
         Legacy microscope format with standard file operations.
         """

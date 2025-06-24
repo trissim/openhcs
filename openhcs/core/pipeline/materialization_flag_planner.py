@@ -24,10 +24,91 @@ from openhcs.constants.constants import (FORCE_DISK_WRITE, READ_BACKEND, # DEFAU
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.microscopes.microscope_base import MicroscopeHandler
 
 logger = logging.getLogger(__name__)
 
 
+def _select_first_step_read_backend(context: ProcessingContext, step_index: int) -> str:
+    """
+    Select the optimal read backend for the first step based on microscope handler compatibility.
+
+    Logic:
+    1. If single compatible backend → use it directly
+    2. If multiple compatible backends → check metadata availability and select first available
+    3. Fail loud if no compatible backends are available
+
+    Args:
+        context: ProcessingContext containing microscope handler and input directory
+        step_index: Index of the current step (0-based)
+
+    Returns:
+        Backend name as string (e.g., "disk", "zarr")
+
+    Raises:
+        RuntimeError: If no compatible backends are available or context is invalid
+    """
+    if step_index != 0:
+        return "disk"  # Only first step gets special treatment
+
+    # Validate context has required attributes
+    if not hasattr(context, 'microscope_handler') or context.microscope_handler is None:
+        error_msg = "ProcessingContext missing microscope_handler - cannot select backend"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    if not hasattr(context, 'input_dir') or context.input_dir is None:
+        error_msg = "ProcessingContext missing input_dir - cannot select backend"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    microscope_handler = context.microscope_handler
+
+    # Validate microscope handler has compatible_backends property
+    if not hasattr(microscope_handler, 'compatible_backends'):
+        error_msg = f"MicroscopeHandler {type(microscope_handler).__name__} missing compatible_backends property"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    compatible_backends = microscope_handler.compatible_backends
+
+    # Validate compatible_backends is not empty
+    if not compatible_backends:
+        error_msg = f"MicroscopeHandler {type(microscope_handler).__name__} has empty compatible_backends list"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    # Single backend: use it directly (ImageXpress, Opera Phenix)
+    if len(compatible_backends) == 1:
+        selected = compatible_backends[0].value
+        logger.debug(f"Single compatible backend: {selected}")
+        return selected
+
+    # Multiple backends: check metadata availability (OpenHCS)
+    try:
+        available_backends = microscope_handler.metadata_handler.get_available_backends(context.input_dir)
+        logger.debug(f"Available backends from metadata: {available_backends}")
+
+        # Find first compatible backend that's available
+        for backend in compatible_backends:
+            if available_backends.get(backend.value, False):
+                selected = backend.value
+                logger.debug(f"Selected available compatible backend: {selected}")
+                return selected
+
+        # No compatible backends available - FAIL LOUD
+        available_list = [k for k, v in available_backends.items() if v]
+        compatible_list = [b.value for b in compatible_backends]
+        error_msg = f"No compatible backends available in metadata. Compatible: {compatible_list}, Available: {available_list}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    except AttributeError as e:
+        # Handler doesn't have get_available_backends method (non-OpenHCS)
+        # Fall back to first compatible backend
+        selected = compatible_backends[0].value
+        logger.debug(f"Metadata method not available, using first compatible: {selected}")
+        return selected
 
 
 
@@ -136,8 +217,13 @@ class MaterializationFlagPlanner:
             if READ_BACKEND in current_step_plan:
                 logger.debug(f"Step {step_name} read_backend already set to '{current_step_plan[READ_BACKEND]}' by path planner, preserving it.")
             elif requires_disk_input: # Includes first step.
-                current_step_plan[READ_BACKEND] = "disk" # Reading initial dataset is 'disk'.
-                logger.debug(f"Step {step_name} requires disk input, using 'disk' for reading.")
+                if i == 0:  # First step gets intelligent backend selection
+                    selected_backend = _select_first_step_read_backend(context, i)
+                    current_step_plan[READ_BACKEND] = selected_backend
+                    logger.debug(f"First step {step_name} selected read backend: '{selected_backend}'")
+                else:  # Other steps requiring disk input
+                    current_step_plan[READ_BACKEND] = "disk"
+                    logger.debug(f"Step {step_name} requires disk input, using 'disk' for reading.")
             elif is_function_step: # Can read from an intermediate backend.
                 current_step_plan[READ_BACKEND] = vfs_config.default_intermediate_backend
                 logger.debug(f"Step {step_name} is FunctionStep and does not require disk input, using '{vfs_config.default_intermediate_backend}' for reading (from default_intermediate_backend).")

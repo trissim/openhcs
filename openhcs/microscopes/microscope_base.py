@@ -124,18 +124,20 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
 
     @property
     @abstractmethod
-    def supported_backends(self) -> List[Backend]:
+    def compatible_backends(self) -> List[Backend]:
         """
-        List of storage backends this microscope handler supports.
+        List of storage backends this microscope handler is compatible with, in priority order.
 
         Must be explicitly declared by each handler implementation.
+        The first backend in the list is the preferred/highest priority backend.
+        The compiler will use the first backend for initial step materialization.
+
         Common patterns:
-        - [Backend.DISK] - Basic handlers (most microscopes)
-        - [Backend.DISK, Backend.ZARR] - Advanced handlers (OpenHCS, etc.)
-        - [Backend.DISK, Backend.MEMORY, Backend.ZARR] - Full support
+        - [Backend.DISK] - Basic handlers (ImageXpress, Opera Phenix)
+        - [Backend.ZARR, Backend.DISK] - Advanced handlers (OpenHCS: zarr preferred, disk fallback)
 
         Returns:
-            List of Backend enum values this handler can work with
+            List of Backend enum values this handler can work with, in priority order
         """
         pass
 
@@ -523,6 +525,27 @@ def create_microscope_handler(microscope_type: str = 'auto',
                            "Parser will load upon first relevant method call with a path e.g. post_workspace.")
 
     return handler
+
+
+def validate_backend_compatibility(handler: MicroscopeHandler, backend: Backend) -> bool:
+    """
+    Validate that a microscope handler supports a given storage backend.
+
+    Args:
+        handler: MicroscopeHandler instance to check
+        backend: Backend to validate compatibility with
+
+    Returns:
+        bool: True if the handler supports the backend, False otherwise
+
+    Example:
+        >>> handler = ImageXpressHandler(filemanager)
+        >>> validate_backend_compatibility(handler, Backend.ZARR)
+        False
+        >>> validate_backend_compatibility(handler, Backend.DISK)
+        True
+    """
+    return backend in handler.supported_backends
 
 
 def _try_metadata_detection(handler_class, filemanager: FileManager, plate_folder: Path) -> Optional[Path]:
