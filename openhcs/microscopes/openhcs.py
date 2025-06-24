@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
+from openhcs.constants.constants import Backend
 from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.io.filemanager import FileManager
 from openhcs.microscopes.microscope_interfaces_base import MetadataHandler
@@ -412,6 +413,16 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     def metadata_handler_class(self) -> Type[MetadataHandler]:
         """Metadata handler class (for interface enforcement only)."""
         return OpenHCSMetadataHandler
+
+    @property
+    def supported_backends(self) -> List[Backend]:
+        """
+        OpenHCS supports both DISK and ZARR backends.
+
+        DISK: Standard file operations for compatibility
+        ZARR: Advanced chunked storage for large datasets
+        """
+        return [Backend.DISK, Backend.ZARR]
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """

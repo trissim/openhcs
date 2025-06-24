@@ -54,6 +54,15 @@ class ImageXpressHandler(MicroscopeHandler):
         """Metadata handler class (for interface enforcement only)."""
         return ImageXpressMetadataHandler
 
+    @property
+    def supported_backends(self) -> List[Backend]:
+        """
+        ImageXpress supports DISK backend only.
+
+        Legacy microscope format with standard file operations.
+        """
+        return [Backend.DISK]
+
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """
         Flattens the Z-step folder structure and renames image files for

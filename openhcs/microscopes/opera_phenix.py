@@ -55,6 +55,15 @@ class OperaPhenixHandler(MicroscopeHandler):
         """Metadata handler class (for interface enforcement only)."""
         return OperaPhenixMetadataHandler
 
+    @property
+    def supported_backends(self) -> List[Backend]:
+        """
+        Opera Phenix supports DISK backend only.
+
+        Legacy microscope format with standard file operations.
+        """
+        return [Backend.DISK]
+
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager):
         """
         Renames Opera Phenix images to follow a consistent field order

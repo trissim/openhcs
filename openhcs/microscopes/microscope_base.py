@@ -122,6 +122,23 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         """Metadata handler class (for interface enforcement only)."""
         pass
 
+    @property
+    @abstractmethod
+    def supported_backends(self) -> List[Backend]:
+        """
+        List of storage backends this microscope handler supports.
+
+        Must be explicitly declared by each handler implementation.
+        Common patterns:
+        - [Backend.DISK] - Basic handlers (most microscopes)
+        - [Backend.DISK, Backend.ZARR] - Advanced handlers (OpenHCS, etc.)
+        - [Backend.DISK, Backend.MEMORY, Backend.ZARR] - Full support
+
+        Returns:
+            List of Backend enum values this handler can work with
+        """
+        pass
+
     def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3):
         """
         Hook called after workspace symlink creation.
