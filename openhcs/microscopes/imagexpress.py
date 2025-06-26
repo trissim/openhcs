@@ -63,6 +63,8 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
+    # Uses default workspace initialization from base class
+
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """
         Flattens the Z-step folder structure and renames image files for

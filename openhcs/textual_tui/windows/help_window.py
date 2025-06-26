@@ -2,6 +2,8 @@
 
 from textual.app import ComposeResult
 from textual.widgets import Static, Button
+from textual.containers import ScrollableContainer
+
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 
 
@@ -47,8 +49,12 @@ For detailed documentation, see Nature Methods
 publication."""
 
     def compose(self) -> ComposeResult:
-        """Compose the help window content."""
-        yield Static(self.HELP_TEXT)
+        """Compose the help window content with scrollable area."""
+        # Scrollable content area
+        with ScrollableContainer():
+            yield Static(self.HELP_TEXT)
+
+        # Close button at bottom
         yield Button("Close", id="close", compact=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

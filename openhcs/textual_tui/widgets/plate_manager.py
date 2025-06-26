@@ -82,7 +82,7 @@ class PlateManagerWidget(ButtonListWidget):
         button_configs = [
             ButtonConfig("Add", "add_plate"),
             ButtonConfig("Del", "del_plate", disabled=True),
-            ButtonConfig("Edit", "edit_plate", disabled=True),
+            ButtonConfig("Edit", "edit_config", disabled=True),  # Unified edit button for config editing
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
@@ -145,7 +145,7 @@ class PlateManagerWidget(ButtonListWidget):
         action_map = {
             "add_plate": self.action_add_plate,
             "del_plate": self.action_delete_plate,
-            "edit_plate": self.action_edit_plate,
+            "edit_config": self.action_edit_config,  # Unified edit button
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
             "save_debug_pickle": self.action_save_debug_pickle,
@@ -285,7 +285,17 @@ class PlateManagerWidget(ButtonListWidget):
 
             self.query_one("#add_plate").disabled = is_running
             self.query_one("#del_plate").disabled = not self.plates or not has_selected_items or is_running
-            self.query_one("#edit_plate").disabled = not has_selection or is_running
+
+            # Edit button (config editing) enabled when 1+ orchestrators selected and initialized
+            selected_items, _ = self.get_selection_state()
+            edit_enabled = (
+                len(selected_items) > 0 and
+                all(item['status'] in ['-', 'o', 'C', 'F'] for item in selected_items) and  # Initialized, compiled, completed, or failed
+                all(item['path'] in self.orchestrators for item in selected_items) and
+                not is_running
+            )
+            self.query_one("#edit_config").disabled = not edit_enabled
+
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
 
@@ -485,15 +495,15 @@ class PlateManagerWidget(ButtonListWidget):
             logger.info(f"🔥 Subprocess logger will write to: {self.log_file_path}")
             logger.info(f"🔥 Subprocess stdout will be silenced (logger handles output)")
 
-            # SILENT SUBPROCESS: Let subprocess logger handle output to avoid duplication
+            # SIMPLE SUBPROCESS: Let subprocess log to its own file
             # Wrap subprocess creation in executor to avoid blocking UI
             def _create_subprocess():
                 return subprocess.Popen([
                     sys.executable, str(subprocess_script),
                     data_file.name, status_file.name, result_file.name, log_file_path
                 ],
-                stdout=subprocess.DEVNULL,  # Silence stdout to avoid duplication with logger
-                stderr=subprocess.DEVNULL,  # Silence stderr to avoid duplication with logger
+                stdout=subprocess.DEVNULL,  # Subprocess logs to its own file
+                stderr=subprocess.DEVNULL,  # Subprocess logs to its own file
                 text=True,  # Text mode for easier handling
                 )
 
@@ -501,8 +511,7 @@ class PlateManagerWidget(ButtonListWidget):
 
             logger.info(f"🔥 Subprocess started with PID: {self.current_process.pid}")
 
-            # NUCLEAR FIX: Don't start any output monitoring that could interfere
-            # Let the subprocess run completely independently
+            # Subprocess logs to its own dedicated file - no output monitoring needed
 
             # Update UI to show running state
             for plate in ready_items:
@@ -818,7 +827,7 @@ class PlateManagerWidget(ButtonListWidget):
             self.app.show_error("No Debug Data", "No subprocess data available. Run execution first.")
             return
 
-        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        # Enhanced file browser import removed - now using window system
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
         import pickle
@@ -1040,14 +1049,138 @@ class PlateManagerWidget(ButtonListWidget):
 
         self.app.current_status = f"Deleted {len(paths_to_delete)} plate(s)"
 
-    def action_edit_plate(self) -> None:
-        if self.selected_plate:
-            self.app.current_status = f"Editing plate: {self.selected_plate}"
-            # Launch dual editor for plate editing
-            from openhcs.textual_tui.screens.dual_editor import DualEditorScreen
+    # action_edit_plate removed - dual editor functionality consolidated into pipeline editor
 
-            editor = DualEditorScreen(plate_path=self.selected_plate)
-            self.app.push_screen(editor)
+    async def action_edit_config(self) -> None:
+        """Handle Edit button - unified config editing for single or multiple selected orchestrators."""
+        # Get current selection state
+        selected_items, selection_mode = self.get_selection_state()
+
+        if selection_mode == "empty":
+            self.app.current_status = "No orchestrators selected for configuration"
+            return
+
+        # Get selected orchestrators
+        selected_orchestrators = []
+        for item in selected_items:
+            plate_path = item['path']
+            if plate_path in self.orchestrators:
+                selected_orchestrators.append(self.orchestrators[plate_path])
+
+        if not selected_orchestrators:
+            self.app.current_status = "No initialized orchestrators selected"
+            return
+
+        # Use the same pattern as global config - launch config window
+        if len(selected_orchestrators) == 1:
+            # Single orchestrator - use existing global config window pattern
+            from openhcs.textual_tui.windows import ConfigWindow
+            from textual.css.query import NoMatches
+
+            orchestrator = selected_orchestrators[0]
+
+            def handle_single_config_save(new_config):
+                # Apply config to the single orchestrator
+                import asyncio
+                asyncio.create_task(orchestrator.apply_new_global_config(new_config))
+                self.app.current_status = "Configuration applied successfully"
+
+            # Try to find existing config window or create new one
+            try:
+                window = self.app.query_one(ConfigWindow)
+                window.open_state = True
+            except NoMatches:
+                window = ConfigWindow(
+                    GlobalPipelineConfig,
+                    orchestrator.global_config,
+                    on_save_callback=handle_single_config_save
+                )
+                await self.app.mount(window)
+                window.open_state = True
+        else:
+            # Multi-orchestrator mode - use new multi-orchestrator window
+            from openhcs.textual_tui.windows.multi_orchestrator_config_window import show_multi_orchestrator_config
+
+            def handle_multi_config_save(new_config, orchestrator_count):
+                self.app.current_status = f"Configuration applied to {orchestrator_count} orchestrators"
+
+            await show_multi_orchestrator_config(
+                self.app,
+                selected_orchestrators,
+                on_save_callback=handle_multi_config_save
+            )
+
+
+
+    def _analyze_orchestrator_configs(self, orchestrators: List['PipelineOrchestrator']) -> Dict[str, Dict[str, Any]]:
+        """Analyze configs across multiple orchestrators to detect same/different values.
+
+        Args:
+            orchestrators: List of PipelineOrchestrator instances
+
+        Returns:
+            Dict mapping field names to analysis results:
+            - {"type": "same", "value": actual_value, "default": default_value}
+            - {"type": "different", "values": [val1, val2, ...], "default": default_value}
+        """
+        import dataclasses
+        from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+
+        if not orchestrators:
+            return {}
+
+        # Get parameter info for defaults
+        param_info = SignatureAnalyzer.analyze(GlobalPipelineConfig)
+
+        config_analysis = {}
+
+        # Analyze each field in GlobalPipelineConfig
+        for field in dataclasses.fields(GlobalPipelineConfig):
+            field_name = field.name
+
+            # Get values from all orchestrators
+            values = []
+            for orch in orchestrators:
+                try:
+                    value = getattr(orch.global_config, field_name)
+                    values.append(value)
+                except AttributeError:
+                    # Field doesn't exist in this config, skip
+                    continue
+
+            if not values:
+                continue
+
+            # Get default value from parameter info
+            param_details = param_info.get(field_name)
+            default_value = param_details.default_value if param_details else None
+
+            # Check if all values are the same
+            if all(self._values_equal(v, values[0]) for v in values):
+                config_analysis[field_name] = {
+                    "type": "same",
+                    "value": values[0],
+                    "default": default_value
+                }
+            else:
+                config_analysis[field_name] = {
+                    "type": "different",
+                    "values": values,
+                    "default": default_value
+                }
+
+        return config_analysis
+
+    def _values_equal(self, val1: Any, val2: Any) -> bool:
+        """Check if two values are equal, handling dataclasses and complex types."""
+        import dataclasses
+
+        # Handle dataclass comparison
+        if dataclasses.is_dataclass(val1) and dataclasses.is_dataclass(val2):
+            return dataclasses.asdict(val1) == dataclasses.asdict(val2)
+
+        # Handle regular comparison
+        return val1 == val2
 
     def action_init_plate(self) -> None:
         """Handle Init Plate button - initialize selected plates."""

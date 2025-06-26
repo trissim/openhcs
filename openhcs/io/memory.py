@@ -37,7 +37,7 @@ class MemoryStorageBackend(StorageBackend):
         self._memory_store = shared_dict if shared_dict is not None else {}
         self._prefixes = set()  # Declared directory-like namespaces
 
-    def _normalize(self, path: Union[str, Path]) -> str:
+    def _normalize(self, path: Union[str, Path],bypass_normalization=False) -> str:
         """
         Normalize paths for memory backend storage.
 
@@ -53,22 +53,12 @@ class MemoryStorageBackend(StorageBackend):
         """
         path_obj = Path(path)
 
-        # Convert absolute paths to relative paths for memory backend
-        if path_obj.is_absolute():
-            # Remove the root component to make it relative
-            # /home/user/workspace_outputs -> workspace_outputs
-            # /workspace_outputs -> workspace_outputs
-            parts = path_obj.parts
-            if len(parts) > 1:
-                # Keep everything after the root
-                relative_path = Path(*parts[1:])
-            else:
-                # Single component absolute path like "/workspace"
-                relative_path = Path(parts[0].lstrip('/'))
-            return relative_path.as_posix()
-        else:
-            # Already relative, just normalize
+        if bypass_normalization:
             return path_obj.as_posix()
+
+        # Store paths as-is - no forced relative conversion
+        # This preserves absolute paths which are needed for cross-backend operations
+        return path_obj.as_posix()
 
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
         key = self._normalize(file_path)
@@ -93,9 +83,68 @@ class MemoryStorageBackend(StorageBackend):
         # Check if file already exists
         if key in self._memory_store:
             raise FileExistsError(f"Path already exists: {output_path}")
+        self._memory_store[key] = data
 
         # Save the file
-        self._memory_store[key] = data
+
+    def load_batch(self, file_paths: List[Union[str, Path]]) -> List[Any]:
+        """
+        Load multiple files sequentially using existing load method.
+
+        Args:
+            file_paths: List of file paths to load
+            **kwargs: Additional arguments passed to load method
+
+        Returns:
+            List of loaded data objects in the same order as file_paths
+        """
+        # 🔧 DEBUG: Show memory contents before batch load
+        print(f"🔧 MEMORY DEBUG: About to load {len(file_paths)} files")
+        print(f"🔧 MEMORY DEBUG: Requested paths: {[str(p) for p in file_paths]}")
+        print(f"🔧 MEMORY DEBUG: Total files in memory: {len(self._memory_store)}")
+        print(f"🔧 MEMORY DEBUG: Memory keys (first 10): {list(self._memory_store.keys())[:10]}")
+
+        # Show directory structure
+        directories = set()
+        for path in self._memory_store.keys():
+            directories.add(str(Path(path).parent))
+        print(f"🔧 MEMORY DEBUG: Directories in memory: {sorted(directories)}")
+
+        results = []
+        for file_path in file_paths:
+            result = self.load(file_path)
+            results.append(result)
+        return results
+
+    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]]) -> None:
+        """
+        Save multiple files sequentially using existing save method.
+
+        Args:
+            data_list: List of data objects to save
+            output_paths: List of destination paths (must match length of data_list)
+            **kwargs: Additional arguments passed to save method
+
+        Raises:
+            ValueError: If data_list and output_paths have different lengths
+        """
+        if len(data_list) != len(output_paths):
+            raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
+
+        for data, output_path in zip(data_list, output_paths):
+            self.save(data, output_path)
+
+        # 🔧 DEBUG: Show memory contents after batch write
+        print(f"🔧 MEMORY DEBUG: Batch saved {len(output_paths)} files")
+        print(f"🔧 MEMORY DEBUG: Paths written: {[str(p) for p in output_paths]}")
+        print(f"🔧 MEMORY DEBUG: Total files in memory: {len(self._memory_store)}")
+        print(f"🔧 MEMORY DEBUG: Memory keys (first 10): {list(self._memory_store.keys())[:10]}")
+
+        # Show directory structure
+        directories = set()
+        for path in self._memory_store.keys():
+            directories.add(str(Path(path).parent))
+        print(f"🔧 MEMORY DEBUG: Directories in memory: {sorted(directories)}")
 
     def list_files(
         self,
@@ -135,9 +184,15 @@ class MemoryStorageBackend(StorageBackend):
                 # If pattern is None, match all files
                 if pattern is None or fnmatch(filename, pattern):
                     if not extensions or Path(filename).suffix in extensions:
-                        result.append(Path(path))
+                        # Calculate depth for breadth-first sorting
+                        depth = rel_path.count('/')
+                        result.append((Path(path), depth))
 
-        return result
+        # Sort by depth first (breadth-first), then by path for consistency
+        result.sort(key=lambda x: (x[1], str(x[0])))
+
+        # Return just the paths
+        return [path for path, _ in result]
 
     def list_dir(self, path: Union[str, Path]) -> List[str]:
         dir_key = self._normalize(path)

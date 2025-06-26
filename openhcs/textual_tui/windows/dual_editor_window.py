@@ -2,7 +2,7 @@
 
 import logging
 from typing import Optional, Callable, Union, List, Dict
-from textual.screen import ModalScreen
+# ModalScreen import removed - using BaseOpenHCSWindow instead
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.message import Message

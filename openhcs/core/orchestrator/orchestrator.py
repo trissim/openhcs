@@ -102,11 +102,18 @@ class PipelineOrchestrator:
             if not plate_path.is_dir():
                 raise NotADirectoryError(f"Plate path is not a directory: {plate_path}")
 
+        # Initialize _plate_path_frozen first to allow plate_path to be set during initialization
+        object.__setattr__(self, '_plate_path_frozen', False)
+
         self.plate_path = plate_path
         self.workspace_path = workspace_path
 
         if self.plate_path is None and self.workspace_path is None:
             raise ValueError("Either plate_path or workspace_path must be provided for PipelineOrchestrator.")
+
+        # Freeze plate_path immediately after setting it to prove immutability
+        object.__setattr__(self, '_plate_path_frozen', True)
+        logger.info(f"🔒 PLATE_PATH FROZEN: {self.plate_path} is now immutable")
 
         if storage_registry:
             self.registry = storage_registry
@@ -115,7 +122,7 @@ class PipelineOrchestrator:
             from openhcs.io.base import storage_registry as global_registry
             self.registry = global_registry  # Use the global singleton registry
             logger.info("PipelineOrchestrator created its own StorageRegistry instance (global singleton).")
-        
+
         # Orchestrator always creates its own FileManager, using the determined registry
         self.filemanager = FileManager(self.registry)
         self.input_dir: Optional[Path] = None
@@ -129,64 +136,26 @@ class PipelineOrchestrator:
         # Metadata cache for component key→name mappings
         self._metadata_cache: Dict[GroupBy, Dict[str, Optional[str]]] = {}
 
-    def initialize_workspace(self, workspace_path: Optional[Union[str, Path]] = None):
-        """Initializes workspace path and mirrors plate directory if needed."""
-        if workspace_path:
-            self.workspace_path = Path(workspace_path) if isinstance(workspace_path, str) else workspace_path
+    def __setattr__(self, name: str, value: Any) -> None:
+        """
+        Set an attribute, preventing modification of plate_path after it's frozen.
 
-        if self.workspace_path is None and self.plate_path:
-            # Check if global output folder is configured
-            global_output_folder = self.global_config.path_planning.global_output_folder
-            if global_output_folder:
-                # Use global output folder: {global_folder}/{plate_name}_workspace
-                global_folder = Path(global_output_folder)
-                plate_name = self.plate_path.name
-                self.workspace_path = global_folder / f"{plate_name}{DEFAULT_WORKSPACE_DIR_SUFFIX}"
-            else:
-                # Use current behavior: {plate_path}_workspace
-                self.workspace_path = Path(str(self.plate_path) + DEFAULT_WORKSPACE_DIR_SUFFIX)
-        elif self.workspace_path is None:
-             raise ValueError("Cannot initialize workspace without either plate_path or a specified workspace_path.")
-
-        self.filemanager.ensure_directory(str(self.workspace_path), Backend.DISK.value)
-
-#        if self.microscope_handler is not None and self.input_dir is not None:
-#            logger.debug("Workspace already initialized.")
-#            return
-
-
-        if self.plate_path and self.workspace_path:
-            logger.info(f"Mirroring plate directory {self.plate_path} to workspace {self.workspace_path}...")
-            try:
-                num_links = self.filemanager.mirror_directory_with_symlinks(
-                    source_dir=str(self.plate_path),
-                    target_dir=str(self.workspace_path),
-                    backend=Backend.DISK.value,
-                    recursive=True,
-                    overwrite_symlinks_only=True,
-                )
-                logger.info(f"Created {num_links} symlinks in workspace.")
-                self.input_dir = Path(self.workspace_path)
-            except Exception as e:
-                error_msg = f"Failed to mirror plate directory to workspace: {e}"
-                logger.error(error_msg)
-                raise StorageWriteError(error_msg) from e
-        elif self.plate_path:
-            self.input_dir = self.plate_path
-            logger.info(f"Using plate path as input directory: {self.input_dir}")
-        elif self.workspace_path:
-            self.input_dir = self.workspace_path
-            logger.info(f"Using workspace path as input directory: {self.input_dir}")
-        else:
-            raise RuntimeError("Cannot determine input_dir due to missing plate_path and workspace_path.")
-
-        #set microscope handler's plate_folder to workspace path
-        try:
-            self.microscope_handler.plate_folder = self.workspace_path
-        except Exception as e:
-            error_msg = f"Failed to set plate_folder on microscope handler: {e}"
+        This proves that plate_path is truly immutable after initialization.
+        """
+        if name == 'plate_path' and getattr(self, '_plate_path_frozen', False):
+            import traceback
+            stack_trace = ''.join(traceback.format_stack())
+            error_msg = (
+                f"🚫 IMMUTABLE PLATE_PATH VIOLATION: Cannot modify plate_path after freezing!\n"
+                f"Current value: {getattr(self, 'plate_path', 'UNSET')}\n"
+                f"Attempted new value: {value}\n"
+                f"Stack trace:\n{stack_trace}"
+            )
             logger.error(error_msg)
-            raise RuntimeError(error_msg) from e
+            raise AttributeError(error_msg)
+        super().__setattr__(name, value)
+
+
 
     def initialize_microscope_handler(self):
         """Initializes the microscope handler."""
@@ -222,15 +191,24 @@ class PipelineOrchestrator:
             return self
 
         self.initialize_microscope_handler()
-        self.initialize_workspace(workspace_path)
 
-        # Process workspace with microscope-specific logic
-        logger.info("Processing workspace with microscope handler...")
-        actual_image_dir = self.microscope_handler.post_workspace(self.workspace_path, self.filemanager)
+        # Delegate workspace initialization to microscope handler
+        logger.info("Initializing workspace with microscope handler...")
+        actual_image_dir = self.microscope_handler.initialize_workspace(
+            self.plate_path, workspace_path, self.filemanager
+        )
 
         # Use the actual image directory returned by the microscope handler
         self.input_dir = Path(actual_image_dir)
         logger.info(f"Set input directory to: {self.input_dir}")
+
+        # Set workspace_path based on what the handler returned
+        if actual_image_dir != self.plate_path:
+            # Handler created a workspace
+            self.workspace_path = Path(actual_image_dir).parent if Path(actual_image_dir).name != "workspace" else Path(actual_image_dir)
+        else:
+            # Handler used plate directly (like OpenHCS)
+            self.workspace_path = None
 
         # Mark as initialized BEFORE caching to avoid chicken-and-egg problem
         self._initialized = True
@@ -264,6 +242,7 @@ class PipelineOrchestrator:
         context.microscope_handler = self.microscope_handler
         context.input_dir = self.input_dir
         context.workspace_path = self.workspace_path
+        context.plate_path = self.plate_path  # Add plate_path for path planner
         # Pass metadata cache for OpenHCS metadata creation
         context.metadata_cache = dict(self._metadata_cache)  # Copy to avoid pickling issues
         return context
@@ -321,8 +300,9 @@ class PipelineOrchestrator:
             is_responsible = (well_id == responsible_well)
             logger.debug(f"Well {well_id} metadata responsibility: {is_responsible}")
 
-            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible)
-            PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition)
+            PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible, plate_path=self.plate_path)
+            PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
+            PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
             PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
             PipelineCompiler.assign_gpu_resources_for_context(context)
 
@@ -363,65 +343,49 @@ class PipelineOrchestrator:
         # MULTIPROCESSING FIX: Update step IDs after pickle/unpickle
         _ensure_step_ids_for_multiprocessing(frozen_context, pipeline_definition, well_id)
 
-        try:
-            logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
+        logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
 
-            for step_index, step in enumerate(pipeline_definition):
-                try:
-                    # Generate step_id from object reference (elegant stateless approach)
-                    step_id = get_step_id(step)
-                    step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+        for step_index, step in enumerate(pipeline_definition):
+            # Generate step_id from object reference (elegant stateless approach)
+            step_id = get_step_id(step)
+            step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
 
-                    logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_id} ({step_name}) for well {well_id}")
+            logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_id} ({step_name}) for well {well_id}")
 
-                    if not hasattr(step, 'process'):
-                        error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_id} missing process method for well {well_id}"
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
+            if not hasattr(step, 'process'):
+                error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_id} missing process method for well {well_id}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
 
-                    step.process(frozen_context)
-                    logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
+            step.process(frozen_context)
+            logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
 
-                except Exception as step_error:
-                    import traceback
-                    full_traceback = traceback.format_exc()
-                    error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} ({step_id}) failed for well {well_id}: {step_error}"
-                    logger.error(error_msg, exc_info=True)
-                    logger.error(f"🔥 SINGLE_WELL TRACEBACK for well {well_id}, step {step_index+1} ({step_id}):\n{full_traceback}")
-                    raise RuntimeError(error_msg) from step_error
+    #        except Exception as step_error:
+    #            import traceback
+    #            full_traceback = traceback.format_exc()
+    #            error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} ({step_id}) failed for well {well_id}: {step_error}"
+    #            logger.error(error_msg, exc_info=True)
+    #            logger.error(f"🔥 SINGLE_WELL TRACEBACK for well {well_id}, step {step_index+1} ({step_id}):\n{full_traceback}")
+    #            raise RuntimeError(error_msg) from step_error
 
-                if visualizer:
-                    step_plan = frozen_context.step_plans[step_id]
-                    if step_plan['visualize']:
-                        output_dir = step_plan['output_dir']
-                        write_backend = step_plan['write_backend']
-                        if output_dir:
-                            logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
-                            visualizer.visualize_path(
-                                step_id=step_id,
-                                path=str(output_dir),
-                                backend=write_backend,
-                                well_id=well_id
-                            )
-                        else:
-                            logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
-            
-            logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
-            return {"status": "success", "well_id": well_id}
-        except Exception as e:
-            import traceback
-            full_traceback = traceback.format_exc()
-            error_msg = f"🔥 SINGLE_WELL ERROR: Pipeline execution failed for well {well_id}: {e}"
-            logger.error(error_msg, exc_info=True)
-            logger.error(f"🔥 SINGLE_WELL FULL TRACEBACK for well {well_id}:\n{full_traceback}")
-            return {"status": "error", "well_id": well_id, "error_message": str(e), "details": full_traceback}
-        except BaseException as critical_e:
-            import traceback
-            full_traceback = traceback.format_exc()
-            error_msg = f"🔥 SINGLE_WELL CRITICAL ERROR: Critical failure for well {well_id}: {critical_e}"
-            logger.error(error_msg, exc_info=True)
-            logger.error(f"🔥 SINGLE_WELL CRITICAL TRACEBACK for well {well_id}:\n{full_traceback}")
-            return {"status": "error", "well_id": well_id, "error_message": str(critical_e), "details": full_traceback}
+            if visualizer:
+                step_plan = frozen_context.step_plans[step_id]
+                if step_plan['visualize']:
+                    output_dir = step_plan['output_dir']
+                    write_backend = step_plan['write_backend']
+                    if output_dir:
+                        logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                        visualizer.visualize_path(
+                            step_id=step_id,
+                            path=str(output_dir),
+                            backend=write_backend,
+                            well_id=well_id
+                        )
+                    else:
+                        logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+        
+        logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
+        return {"status": "success", "well_id": well_id}
 
     def execute_compiled_plate(
         self,
@@ -480,74 +444,79 @@ class PipelineOrchestrator:
             # Start method may already be set, which is fine
             logger.debug(f"🔥 CUDA: Start method already configured: {e}")
 
-        # Always use ProcessPoolExecutor for true parallelism
-        logger.info(f"🔥 ORCHESTRATOR: Creating ProcessPoolExecutor with {actual_max_workers} workers")
+        # Choose executor type based on global config for debugging support
+        executor_type = "ThreadPoolExecutor" if self.global_config.use_threading else "ProcessPoolExecutor"
+        logger.info(f"🔥 ORCHESTRATOR: Creating {executor_type} with {actual_max_workers} workers")
 
-        # DEATH DETECTION: Mark ProcessPoolExecutor creation
-        logger.info("🔥 DEATH_MARKER: BEFORE_PROCESSPOOL_CREATION")
+        # DEATH DETECTION: Mark executor creation
+        logger.info(f"🔥 DEATH_MARKER: BEFORE_{executor_type.upper()}_CREATION")
 
-        try:
-            logger.info("🔥 DEATH_MARKER: ENTERING_PROCESSPOOL_CONTEXT")
-            with concurrent.futures.ProcessPoolExecutor(max_workers=actual_max_workers) as executor:
-                logger.info("🔥 DEATH_MARKER: PROCESSPOOL_CREATED_SUCCESSFULLY")
-                logger.info(f"🔥 ORCHESTRATOR: ProcessPoolExecutor created, submitting {len(compiled_contexts)} tasks")
+        # Choose appropriate executor class
+        if self.global_config.use_threading:
+            executor_class = concurrent.futures.ThreadPoolExecutor
+            logger.info("🔥 DEBUG MODE: Using ThreadPoolExecutor for easier debugging")
+        else:
+            executor_class = concurrent.futures.ProcessPoolExecutor
+            logger.info("🔥 PRODUCTION MODE: Using ProcessPoolExecutor for true parallelism")
 
-                # NUCLEAR ERROR TRACING: Create snapshot of compiled_contexts to prevent iteration issues
-                contexts_snapshot = dict(compiled_contexts.items())
-                logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
+        logger.info(f"🔥 DEATH_MARKER: ENTERING_{executor_type.upper()}_CONTEXT")
+        with executor_class(max_workers=actual_max_workers) as executor:
+            logger.info(f"🔥 DEATH_MARKER: {executor_type.upper()}_CREATED_SUCCESSFULLY")
+            logger.info(f"🔥 ORCHESTRATOR: {executor_type} created, submitting {len(compiled_contexts)} tasks")
 
-                logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
-                future_to_well_id = {}
-                for well_id, context in contexts_snapshot.items():
-                    try:
-                        logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
-                        logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
-                        future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
-                        future_to_well_id[future] = well_id
-                        logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
-                        logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
-                    except Exception as submit_error:
-                        error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for well {well_id}: {submit_error}"
-                        logger.error(error_msg, exc_info=True)
-                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(submit_error), "details": repr(submit_error)}
+            # NUCLEAR ERROR TRACING: Create snapshot of compiled_contexts to prevent iteration issues
+            contexts_snapshot = dict(compiled_contexts.items())
+            logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
 
-                logger.info("🔥 DEATH_MARKER: TASK_SUBMISSION_LOOP_COMPLETED")
+            logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
+            future_to_well_id = {}
+            for well_id, context in contexts_snapshot.items():
+                try:
+                    logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
+                    logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
+                    future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
+                    future_to_well_id[future] = well_id
+                    logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
+                    logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
+                except Exception as submit_error:
+                    error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for well {well_id}: {submit_error}"
+                    logger.error(error_msg, exc_info=True)
+                    # FAIL-FAST: Re-raise task submission errors immediately
+                    raise
 
-                logger.info(f"🔥 ORCHESTRATOR: All {len(future_to_well_id)} tasks submitted, waiting for completion")
-                logger.info("🔥 DEATH_MARKER: BEFORE_COMPLETION_LOOP")
+            logger.info("🔥 DEATH_MARKER: TASK_SUBMISSION_LOOP_COMPLETED")
 
-                completed_count = 0
-                logger.info("🔥 DEATH_MARKER: ENTERING_AS_COMPLETED_LOOP")
-                for future in concurrent.futures.as_completed(future_to_well_id):
-                    well_id = future_to_well_id[future]
-                    completed_count += 1
-                    logger.info(f"🔥 DEATH_MARKER: PROCESSING_COMPLETED_TASK_{completed_count}_WELL_{well_id}")
-                    logger.info(f"🔥 ORCHESTRATOR: Task {completed_count}/{len(future_to_well_id)} completed for well {well_id}")
+            logger.info(f"🔥 ORCHESTRATOR: All {len(future_to_well_id)} tasks submitted, waiting for completion")
+            logger.info("🔥 DEATH_MARKER: BEFORE_COMPLETION_LOOP")
 
-                    try:
-                        logger.info(f"🔥 DEATH_MARKER: CALLING_FUTURE_RESULT_FOR_WELL_{well_id}")
-                        result = future.result()
-                        logger.info(f"🔥 DEATH_MARKER: FUTURE_RESULT_SUCCESS_FOR_WELL_{well_id}")
-                        logger.info(f"🔥 ORCHESTRATOR: Well {well_id} result: {result}")
-                        execution_results[well_id] = result
-                        logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_WELL_{well_id}")
-                    except Exception as exc:
-                        import traceback
-                        full_traceback = traceback.format_exc()
-                        error_msg = f"Well {well_id} generated an exception during execution: {exc}"
-                        logger.error(f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True)
-                        logger.error(f"🔥 ORCHESTRATOR FULL TRACEBACK for well {well_id}:\n{full_traceback}")
-                        execution_results[well_id] = {"status": "error", "well_id": well_id, "error_message": str(exc), "details": full_traceback}
-                        logger.info(f"🔥 DEATH_MARKER: ERROR_STORED_FOR_WELL_{well_id}")
+            completed_count = 0
+            logger.info("🔥 DEATH_MARKER: ENTERING_AS_COMPLETED_LOOP")
+            for future in concurrent.futures.as_completed(future_to_well_id):
+                well_id = future_to_well_id[future]
+                completed_count += 1
+                logger.info(f"🔥 DEATH_MARKER: PROCESSING_COMPLETED_TASK_{completed_count}_WELL_{well_id}")
+                logger.info(f"🔥 ORCHESTRATOR: Task {completed_count}/{len(future_to_well_id)} completed for well {well_id}")
 
-                logger.info("🔥 DEATH_MARKER: COMPLETION_LOOP_FINISHED")
+                try:
+                    logger.info(f"🔥 DEATH_MARKER: CALLING_FUTURE_RESULT_FOR_WELL_{well_id}")
+                    result = future.result()
+                    logger.info(f"🔥 DEATH_MARKER: FUTURE_RESULT_SUCCESS_FOR_WELL_{well_id}")
+                    logger.info(f"🔥 ORCHESTRATOR: Well {well_id} result: {result}")
+                    execution_results[well_id] = result
+                    logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_WELL_{well_id}")
+                except Exception as exc:
+                    import traceback
+                    full_traceback = traceback.format_exc()
+                    error_msg = f"Well {well_id} generated an exception during execution: {exc}"
+                    logger.error(f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True)
+                    logger.error(f"🔥 ORCHESTRATOR FULL TRACEBACK for well {well_id}:\n{full_traceback}")
+                    # FAIL-FAST: Re-raise immediately instead of storing error
+                    raise
 
-                logger.info(f"🔥 ORCHESTRATOR: All tasks completed, {len(execution_results)} results collected")
+            logger.info("🔥 DEATH_MARKER: COMPLETION_LOOP_FINISHED")
 
-        except Exception as executor_error:
-            error_msg = f"🔥 ORCHESTRATOR CRITICAL: ProcessPoolExecutor failed: {executor_error}"
-            logger.error(error_msg, exc_info=True)
-            raise RuntimeError(error_msg) from executor_error
+            logger.info(f"🔥 ORCHESTRATOR: All tasks completed, {len(execution_results)} results collected")
+
 
         # 🔥 GPU CLEANUP: Clear GPU memory after plate execution
         try:
@@ -570,8 +539,7 @@ class PipelineOrchestrator:
         and returns the discovered component values as strings to match the pattern
         detection system format.
 
-        Reads from pre-computed cache for instant access. Cache must be populated
-        by calling cache_component_keys() during initialization.
+        Tries metadata cache first, falls back to filename parsing cache if metadata is empty.
 
         Args:
             group_by: GroupBy enum specifying which component to extract
@@ -581,23 +549,29 @@ class PipelineOrchestrator:
             List of component values as strings, sorted
 
         Raises:
-            RuntimeError: If orchestrator is not initialized or cache is empty
+            RuntimeError: If orchestrator is not initialized
         """
         if not self.is_initialized():
             raise RuntimeError("Orchestrator must be initialized before getting component keys.")
 
-        # Read from cache - should be pre-populated during initialization
-        if group_by not in self._component_keys_cache:
-            raise RuntimeError(f"Component keys cache is empty for {group_by.value}. "
-                             f"Ensure cache_component_keys() was called during initialization.")
+        # Try metadata cache first (preferred source)
+        if group_by in self._metadata_cache and self._metadata_cache[group_by]:
+            all_components = list(self._metadata_cache[group_by].keys())
+            logger.debug(f"Using metadata cache for {group_by.value}: {len(all_components)} components")
+        else:
+            # Fall back to filename parsing cache
+            if group_by not in self._component_keys_cache:
+                raise RuntimeError(f"Component keys cache is empty for {group_by.value}. "
+                                 f"Ensure cache_component_keys() was called during initialization.")
 
-        # Get cached result
-        all_components = self._component_keys_cache[group_by]
+            all_components = self._component_keys_cache[group_by]
 
-        if not all_components:
-            component_name = group_by.value
-            logger.warning(f"No {component_name} values found in input directory: {self.input_dir}")
-            return []
+            if not all_components:
+                component_name = group_by.value
+                logger.warning(f"No {component_name} values found in input directory: {self.input_dir}")
+                return []
+
+            logger.debug(f"Using filename parsing cache for {group_by.value}: {len(all_components)} components")
 
         if component_filter:
             str_component_filter = {str(c) for c in component_filter}
@@ -702,7 +676,8 @@ class PipelineOrchestrator:
 
         try:
             # Parse all metadata once using enum→method mapping
-            metadata = self.microscope_handler.metadata_handler.parse_metadata(self.input_dir)
+            # Use plate_path for metadata loading since metadata files are in plate root
+            metadata = self.microscope_handler.metadata_handler.parse_metadata(self.plate_path)
 
             # Initialize all GroupBy components with component keys mapped to None
             for group_by in [GroupBy.CHANNEL, GroupBy.WELL, GroupBy.SITE, GroupBy.Z_INDEX]:
@@ -715,9 +690,18 @@ class PipelineOrchestrator:
             for component_name, mapping in metadata.items():
                 try:
                     group_by = GroupBy(component_name)  # Convert string to enum
-                    # Update the existing dict with real metadata, preserving None for missing keys
+                    # For OpenHCS plates, metadata keys might be the only source of component keys
+                    # Merge metadata keys with any existing component keys from filename parsing
                     if group_by in self._metadata_cache:
-                        self._metadata_cache[group_by].update(mapping)
+                        # Start with existing component keys (from filename parsing)
+                        combined_cache = self._metadata_cache[group_by].copy()
+                        # Add any metadata keys that weren't found in filename parsing
+                        for metadata_key in mapping.keys():
+                            if metadata_key not in combined_cache:
+                                combined_cache[metadata_key] = None
+                        # Update with actual metadata values
+                        combined_cache.update(mapping)
+                        self._metadata_cache[group_by] = combined_cache
                     else:
                         self._metadata_cache[group_by] = mapping
                     logger.debug(f"Updated metadata for {group_by.value}: {len(mapping)} entries with real data")

@@ -6,36 +6,46 @@ from textual.widgets import Static
 from textual.app import ComposeResult
 from textual.reactive import reactive
 
-from openhcs.textual_tui.services.config_reflection_service import FieldSpec
+
 from .shared.parameter_form_manager import ParameterFormManager
 from .shared.signature_analyzer import SignatureAnalyzer
 
 
 class ConfigFormWidget(ScrollableContainer):
     """Reactive form widget for config editing."""
-    
-    field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
-    
-    def __init__(self, field_specs: List[FieldSpec], **kwargs):
-        super().__init__(**kwargs)
-        self.field_specs = field_specs
 
-        # Convert FieldSpec to shared component format
+    field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
+
+    def __init__(self, dataclass_type: type, instance: Any = None, **kwargs):
+        super().__init__(**kwargs)
+        self.dataclass_type = dataclass_type
+        self.instance = instance or dataclass_type()
+
+        # Analyze dataclass using unified parameter analysis
+        param_info = SignatureAnalyzer.analyze(dataclass_type)
+
+        # Convert to form manager format
         parameters = {}
         parameter_types = {}
         param_defaults = {}
 
-        for spec in field_specs:
-            parameters[spec.name] = spec.current_value
-            parameter_types[spec.name] = spec.actual_type
-            param_defaults[spec.name] = spec.default_value
+        for name, info in param_info.items():
+            current_value = getattr(self.instance, name, info.default_value)
+            parameters[name] = current_value
+            parameter_types[name] = info.param_type
+            param_defaults[name] = info.default_value
 
-        # Create shared form manager
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "config")
+        # Create shared form manager with parameter info for help functionality
+        self.form_manager = ParameterFormManager(parameters, parameter_types, "config", param_info)
         self.param_defaults = param_defaults
 
         # Initialize field values for reactive updates
         self.field_values = parameters.copy()
+
+    @classmethod
+    def from_dataclass(cls, dataclass_type: type, instance: Any = None, **kwargs):
+        """Create ConfigFormWidget from dataclass type and instance."""
+        return cls(dataclass_type, instance, **kwargs)
     
     def compose(self) -> ComposeResult:
         """Compose the config form using shared form manager."""

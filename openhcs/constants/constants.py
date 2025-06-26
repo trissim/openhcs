@@ -16,9 +16,9 @@ class VariableComponents(Enum):
 
 class Microscope(Enum):
     AUTO = "auto"
+    OPENHCS = "openhcs"  # Added for the OpenHCS pre-processed format
     IMAGEXPRESS = "ImageXpress"
     OPERAPHENIX = "OperaPhenix"
-    OPENHCS = "openhcs"  # Added for the OpenHCS pre-processed format
 
 class GroupBy(Enum):
     CHANNEL = VariableComponents.CHANNEL.value # Will be "channel"

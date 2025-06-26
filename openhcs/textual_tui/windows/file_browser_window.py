@@ -442,7 +442,38 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             logger.info(f"✅ FILE STORED: {self.selected_path} (type: {type(self.selected_path)})")
         else:
             logger.info(f"❌ FILE IGNORED: selection_mode {self.selection_mode} only allows directories")
-    
+
+    @on(OpenHCSDirectoryTree.AddToSelectionList)
+    def on_add_to_selection_list(self, event: OpenHCSDirectoryTree.AddToSelectionList) -> None:
+        """Handle adding multiple folders to selection list via double-click."""
+        logger.info(f"🔍 ADD TO SELECTION LIST: {len(event.paths)} folders")
+
+        for path in event.paths:
+            try:
+                # Check if path is compatible with selection mode
+                is_dir = self.file_manager.is_dir(path, self.backend.value)
+
+                if self.selection_mode == SelectionMode.DIRECTORIES_ONLY and not is_dir:
+                    logger.info(f"❌ SKIPPED: Cannot add file in DIRECTORIES_ONLY mode: {path}")
+                    continue
+                if self.selection_mode == SelectionMode.FILES_ONLY and is_dir:
+                    logger.info(f"❌ SKIPPED: Cannot add directory in FILES_ONLY mode: {path}")
+                    continue
+
+                # Add to selection list if not already present
+                if path not in self.selected_paths:
+                    self.selected_paths.add(path)
+                    logger.info(f"✅ ADDED TO LIST: {path}")
+                else:
+                    logger.info(f"⚠️ ALREADY IN LIST: {path}")
+
+            except Exception as e:
+                logger.error(f"❌ ERROR adding path to list: {path}, error: {e}")
+
+        # Update the selection display
+        self._update_selected_display()
+        logger.info(f"🔍 SELECTION LIST UPDATED: Total {len(self.selected_paths)} items")
+
     # Button handling now done through handle_button_action method
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -730,13 +761,35 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
     def _show_overwrite_confirmation(self, save_path: Path) -> None:
         """Show confirmation dialog for overwriting existing file."""
-        from openhcs.textual_tui.widgets.floating_window import ConfirmationWindow
+        # Create a simple confirmation window using BaseOpenHCSWindow
+        from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
+        from textual.widgets import Static, Button
+        from textual.containers import Container, Horizontal
+        from textual.app import ComposeResult
 
-        message = f"File '{save_path.name}' already exists.\nDo you want to overwrite it?"
-        confirmation = ConfirmationWindow(
-            title="Confirm Overwrite",
-            message=message
-        )
+        class OverwriteConfirmationWindow(BaseOpenHCSWindow):
+            def __init__(self, save_path: Path, on_result_callback):
+                super().__init__(
+                    window_id="overwrite_confirmation",
+                    title="Confirm Overwrite",
+                    mode="temporary"
+                )
+                self.save_path = save_path
+                self.on_result_callback = on_result_callback
+
+            def compose(self) -> ComposeResult:
+                message = f"File '{self.save_path.name}' already exists.\nDo you want to overwrite it?"
+                yield Static(message, classes="dialog-content")
+
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Yes", id="yes", compact=True)
+                    yield Button("No", id="no", compact=True)
+
+            def on_button_pressed(self, event: Button.Pressed) -> None:
+                result = event.button.id == "yes"
+                if self.on_result_callback:
+                    self.on_result_callback(result)
+                self.close_window()
 
         def handle_confirmation(result):
             """Handle the confirmation dialog result."""
@@ -745,7 +798,14 @@ class FileBrowserWindow(BaseOpenHCSWindow):
                 self._finish_with_result(save_path)  # Finish with the save path (will auto-cache)
             # If result is False/None (No/Cancel), do nothing - stay in dialog
 
-        self.app.push_screen(confirmation, handle_confirmation)
+        # Create and mount confirmation window
+        confirmation = OverwriteConfirmationWindow(save_path, handle_confirmation)
+        self.app.run_worker(self._mount_confirmation(confirmation))
+
+    async def _mount_confirmation(self, confirmation):
+        """Mount confirmation dialog."""
+        await self.app.mount(confirmation)
+        confirmation.open_state = True
 
 
 async def open_file_browser_window(

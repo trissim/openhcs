@@ -7,12 +7,14 @@ These fixtures were extracted from test_pipeline_orchestrator.py to avoid circul
 import shutil
 import pytest
 import io
+import os
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import numpy as np
 from typing import List, Union
 
 from openhcs.core.orchestrator import PipelineOrchestrator
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig
 # from openhcs.core.config import StitcherConfig, PipelineConfig
 from openhcs.core.pipeline import Pipeline
 # from openhcs.core.step_base import Step
@@ -54,12 +56,12 @@ MICROSCOPE_CONFIGS = {
 
 # Test parameters
 syn_data_params = {
-    "grid_size": (4, 4),
-    "tile_size": (512, 512),  # Increased from 64x64 to 128x128 for patch size compatibility
+    "grid_size": (3, 3),
+    "tile_size": (256, 256),  # Increased from 64x64 to 128x128 for patch size compatibility
     "overlap_percent": 10,
-    "wavelengths": 2,
+    "wavelengths": 3,
     "cell_size_range": (3, 6),
-    "wells": ['A01', 'D02']
+    "wells": ['A01', 'D02', 'B03', 'B06']
 }
 
 # Test-specific parameters that can be customized per microscope format
@@ -74,10 +76,52 @@ TEST_PARAMS = {
     }
 }
 
+# Backend configurations for parametrized testing
+BACKEND_CONFIGS = ["disk", "zarr"]
+
+# Data type configurations for parametrized testing
+DATA_TYPE_CONFIGS = {
+    "2d": {"z_stack_levels": 1, "name": "flat_plate"},
+    "3d": {"z_stack_levels": 5, "name": "zstack_plate"}
+}
+
 @pytest.fixture(scope="module", params=list(MICROSCOPE_CONFIGS.keys()))
 def microscope_config(request):
     """Provide microscope configuration based on the parameter."""
     return MICROSCOPE_CONFIGS[request.param]
+
+@pytest.fixture(scope="module", params=BACKEND_CONFIGS)
+def backend_config(request):
+    """Provide backend configuration based on the parameter."""
+    return request.param
+
+@pytest.fixture(scope="module", params=list(DATA_TYPE_CONFIGS.keys()))
+def data_type_config(request):
+    """Provide data type configuration based on the parameter."""
+    return DATA_TYPE_CONFIGS[request.param]
+
+@pytest.fixture(scope="module", params=["threading", "multiprocessing"])
+def execution_mode(request):
+    """
+    Parameterized fixture for execution mode - threading vs multiprocessing.
+
+    This allows tests to run with both execution modes to ensure compatibility.
+    Threading mode is useful for debugging, multiprocessing for production testing.
+    """
+    # Store original value if it exists
+    original_value = os.environ.get('OPENHCS_USE_THREADING')
+
+    # Set the execution mode based on parameter
+    use_threading = request.param == "threading"
+    os.environ['OPENHCS_USE_THREADING'] = 'true' if use_threading else 'false'
+
+    yield request.param
+
+    # Restore original value after test
+    if original_value is not None:
+        os.environ['OPENHCS_USE_THREADING'] = original_value
+    else:
+        os.environ.pop('OPENHCS_USE_THREADING', None)
 
 @pytest.fixture(scope="module")
 def base_test_dir(microscope_config):
@@ -163,6 +207,18 @@ def create_synthetic_plate_data(test_function_dir, microscope_config, test_param
     return plate_dir
 
 @pytest.fixture
+def plate_dir(test_function_dir, microscope_config, test_params, data_type_config):
+    """Create synthetic plate data for the specified microscope type and data type as a VirtualPath."""
+    return create_synthetic_plate_data(
+        test_function_dir=test_function_dir,
+        microscope_config=microscope_config,
+        test_params=test_params,
+        plate_name=data_type_config["name"],
+        z_stack_levels=data_type_config["z_stack_levels"]
+    )
+
+# Keep legacy fixtures for backward compatibility
+@pytest.fixture
 def flat_plate_dir(test_function_dir, microscope_config, test_params):
     """Create synthetic flat plate data for the specified microscope type as a VirtualPath."""
     return create_synthetic_plate_data(
@@ -229,6 +285,18 @@ def base_pipeline_config(microscope_config):
     }
     return config
 
+@pytest.fixture
+def debug_global_config(execution_mode, backend_config):
+    """Create a GlobalPipelineConfig optimized for debugging."""
+    
+    use_threading = execution_mode == "threading"
+    
+    return GlobalPipelineConfig(
+        num_workers=1,  # Single worker for easier debugging
+        vfs=VFSConfig(default_materialization_backend=backend_config),
+        use_threading=use_threading
+    )
+
 def create_config(base_config, **kwargs):
     """Create a new configuration by overriding base config values."""
     # Create a copy of the base config dict
@@ -257,7 +325,7 @@ def dapi_process(stack):
 def find_image_files(directory: Union[str, Path], pattern: str = "*",
                   recursive: bool = True) -> List[Path]:
     """
-    Find all image files in a directory matching a pattern.
+    Find all image files in a directory matching a pattern using breadth-first traversal.
 
     Args:
         directory: Directory to search
@@ -265,18 +333,44 @@ def find_image_files(directory: Union[str, Path], pattern: str = "*",
         recursive: Whether to search recursively (default: True)
 
     Returns:
-        List of Path objects for image files
+        List of Path objects for image files sorted by depth (shallower first)
     """
+    from collections import deque
+    import fnmatch
+
     directory = Path(directory)
     image_files = []
 
-    # Use rglob for recursive search or glob for non-recursive
-    glob_func = directory.rglob if recursive else directory.glob
+    if recursive:
+        # Use breadth-first traversal for recursive search
+        dirs_to_search = deque([(directory, 0)])  # (path, depth)
 
-    for ext in DEFAULT_IMAGE_EXTENSIONS:
-        pattern_with_ext = f"{pattern}{ext}"
-        if recursive:
-            pattern_with_ext = f"**/{pattern_with_ext}"
-        image_files.extend(list(glob_func(pattern_with_ext)))
+        while dirs_to_search:
+            current_dir, depth = dirs_to_search.popleft()
 
-    return sorted(image_files)
+            try:
+                for entry in current_dir.iterdir():
+                    if entry.is_file():
+                        # Check if file matches pattern and has image extension
+                        if fnmatch.fnmatch(entry.name, pattern):
+                            if entry.suffix.lower() in [ext.lower() for ext in DEFAULT_IMAGE_EXTENSIONS]:
+                                image_files.append((entry, depth))
+                    elif entry.is_dir():
+                        # Add subdirectory to queue for later processing
+                        dirs_to_search.append((entry, depth + 1))
+            except (PermissionError, OSError):
+                # Skip directories we can't read
+                continue
+
+        # Sort by depth first, then by path for consistent ordering
+        image_files.sort(key=lambda x: (x[1], str(x[0])))
+
+        # Return just the paths
+        return [file_path for file_path, _ in image_files]
+    else:
+        # Non-recursive search - use simple glob
+        for ext in DEFAULT_IMAGE_EXTENSIONS:
+            pattern_with_ext = f"{pattern}{ext}"
+            image_files.extend(list(directory.glob(pattern_with_ext)))
+
+        return sorted(image_files)

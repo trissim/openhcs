@@ -11,25 +11,88 @@ import os # For a potentially more dynamic default for num_workers
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Union, Dict, Any
+from enum import Enum
 from openhcs.constants import Microscope
+from openhcs.constants.constants import Backend
 
 logger = logging.getLogger(__name__)
+
+
+class ZarrCompressor(Enum):
+    """Available compression algorithms for zarr storage."""
+    BLOSC = "blosc"
+    ZLIB = "zlib"
+    LZ4 = "lz4"
+    ZSTD = "zstd"
+    NONE = "none"
+
+    def create_compressor(self, compression_level: int, shuffle: bool = True) -> Optional[Any]:
+        """Create the actual zarr compressor instance.
+
+        Args:
+            compression_level: Compression level (1-22 for ZSTD, 1-9 for others)
+            shuffle: Enable byte shuffling for better compression (blosc only)
+
+        Returns:
+            Configured zarr compressor instance or None for no compression
+        """
+        from zarr.codecs import BloscCodec, GzipCodec, ZstdCodec
+
+        # Convert boolean shuffle to string for BloscCodec
+        shuffle_str = 'shuffle' if shuffle else 'noshuffle'
+
+        match self:
+            case ZarrCompressor.NONE:
+                return None
+            case ZarrCompressor.BLOSC:
+                return BloscCodec(cname='lz4', clevel=compression_level, shuffle=shuffle_str)
+            case ZarrCompressor.ZLIB:
+                return GzipCodec(level=compression_level)
+            case ZarrCompressor.LZ4:
+                return BloscCodec(cname='lz4', clevel=compression_level, shuffle=shuffle_str)
+            case ZarrCompressor.ZSTD:
+                return ZstdCodec(level=compression_level)
+
+
+class ZarrChunkStrategy(Enum):
+    """Chunking strategies for zarr arrays."""
+    SINGLE = "single"  # Single chunk per array (optimal for batch I/O)
+    AUTO = "auto"      # Let zarr decide chunk size
+    CUSTOM = "custom"  # User-defined chunk sizes
+
+
+class MaterializationBackend(Enum):
+    """Available backends for materialization (persistent storage only)."""
+    ZARR = "zarr"
+    DISK = "disk"
+
+@dataclass(frozen=True)
+class ZarrConfig:
+    """Configuration for Zarr storage backend."""
+    store_name: str = "images.zarr"
+    """Name of the zarr store file."""
+
+    compressor: ZarrCompressor = ZarrCompressor.ZSTD
+    """Compression algorithm to use."""
+
+    compression_level: int = 19
+    """Compression level (1-22 for ZSTD, higher = more compression)."""
+
+    shuffle: bool = True
+    """Enable byte shuffling for better compression (blosc only)."""
+
+    chunk_strategy: ZarrChunkStrategy = ZarrChunkStrategy.SINGLE
+    """Chunking strategy for zarr arrays."""
+
 
 @dataclass(frozen=True)
 class VFSConfig:
     """Configuration for Virtual File System (VFS) related operations."""
-    default_intermediate_backend: Literal["memory", "disk", "zarr"] = "memory"
-    """Default backend for storing intermediate step results that are not explicitly materialized."""
-    
-    default_materialization_backend: Literal["disk", "zarr"] = "disk"
-    """Default backend for explicitly materialized outputs (e.g., final results, user-requested saves)."""
-    
-    persistent_storage_root_path: Optional[str] = None
-    """
-    Optional root path for persistent storage backends like 'disk' or 'zarr'.
-    If None, paths might be relative to a workspace or require full specification.
-    Example: "/mnt/hcs_data_root" or "./.openhcs_data"
-    """
+    intermediate_backend: Backend = Backend.MEMORY
+    """Backend for storing intermediate step results that are not explicitly materialized."""
+
+    materialization_backend: MaterializationBackend = MaterializationBackend.DISK
+    """Backend for explicitly materialized outputs (e.g., final results, user-requested saves)."""
 
 @dataclass(frozen=True)
 class PathPlanningConfig:
@@ -55,15 +118,23 @@ class GlobalPipelineConfig:
     """
     num_workers: int = field(default_factory=lambda: os.cpu_count() or 1)
     """Number of worker processes/threads for parallelizable tasks."""
-    
+
     path_planning: PathPlanningConfig = field(default_factory=PathPlanningConfig)
     """Configuration for path planning (directory suffixes)."""
-    
+
     vfs: VFSConfig = field(default_factory=VFSConfig)
     """Configuration for Virtual File System behavior."""
 
+    zarr: ZarrConfig = field(default_factory=ZarrConfig)
+    """Configuration for Zarr storage backend."""
+
+
+
     microscope: Microscope = Microscope.AUTO
     """Default microscope type for auto-detection."""
+    
+    use_threading: bool = field(default_factory=lambda: os.getenv('OPENHCS_USE_THREADING', 'false').lower() == 'true')
+    """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
 
     # Future extension point:
     # logging_config: Optional[Dict[str, Any]] = None # For configuring logging levels, handlers
@@ -76,8 +147,9 @@ class GlobalPipelineConfig:
 _DEFAULT_PATH_PLANNING_CONFIG = PathPlanningConfig()
 _DEFAULT_VFS_CONFIG = VFSConfig(
     # Example: Set a default persistent_storage_root_path if desired for out-of-the-box behavior
-    # persistent_storage_root_path="./openhcs_output_data" 
+    # persistent_storage_root_path="./openhcs_output_data"
 )
+_DEFAULT_ZARR_CONFIG = ZarrConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
     """
@@ -90,5 +162,6 @@ def get_default_global_config() -> GlobalPipelineConfig:
     return GlobalPipelineConfig(
         # num_workers is already handled by field(default_factory) in GlobalPipelineConfig
         path_planning=_DEFAULT_PATH_PLANNING_CONFIG,
-        vfs=_DEFAULT_VFS_CONFIG
+        vfs=_DEFAULT_VFS_CONFIG,
+        zarr=_DEFAULT_ZARR_CONFIG
     )

@@ -120,12 +120,10 @@ class OpenHCSMetadataHandler(MetadataHandler):
 
         # Attempt to find it recursively, though it's expected to be in the root.
         # This uses the filemanager's find_file_recursive method.
-        # Note: Behavior of find_file_recursive (e.g. backend usage) depends on FileManager implementation.
         try:
-            # Assuming find_file_recursive can take a backend hint if necessary,
-            # but current signature in stubs might not show it.
-            # For now, let's assume it uses a sensible default or is configured elsewhere.
-            found_files = self.filemanager.find_file_recursive(path=plate_p, filename=self.METADATA_FILENAME)
+            # Use correct signature: find_file_recursive(directory, filename, backend)
+            # Use disk backend for metadata file search
+            found_files = self.filemanager.find_file_recursive(plate_p, self.METADATA_FILENAME, 'disk')
             if found_files:
                 # find_file_recursive might return a list or a single path string/Path
                 if isinstance(found_files, list):
@@ -461,6 +459,26 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         DISK: Standard file operations for compatibility (fallback)
         """
         return [Backend.ZARR, Backend.DISK]
+
+    def initialize_workspace(self, plate_path: Path, workspace_path: Optional[Path], filemanager: FileManager) -> Path:
+        """
+        OpenHCS format doesn't need workspace - images are already processed and ready.
+
+        Args:
+            plate_path: Path to the original plate directory
+            workspace_path: Optional workspace path (ignored for OpenHCS)
+            filemanager: FileManager instance for file operations
+
+        Returns:
+            The plate path directly (no workspace needed)
+        """
+        logger.info(f"OpenHCS format: Using plate directory directly {plate_path} (no workspace needed)")
+
+        # Set plate_folder for this handler
+        self.plate_folder = plate_path
+        logger.debug(f"OpenHCSHandler: plate_folder set to {self.plate_folder}")
+
+        return plate_path
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """

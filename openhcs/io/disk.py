@@ -207,6 +207,40 @@ class DiskStorageBackend(StorageBackend):
         except Exception as e:
             raise ValueError(f"Error saving data to {disk_output_path}: {e}") from e
 
+    def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
+        """
+        Load multiple files sequentially using existing load method.
+
+        Args:
+            file_paths: List of file paths to load
+            **kwargs: Additional arguments passed to load method
+
+        Returns:
+            List of loaded data objects in the same order as file_paths
+        """
+        results = []
+        for file_path in file_paths:
+            result = self.load(file_path, **kwargs)
+            results.append(result)
+        return results
+
+    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], **kwargs) -> None:
+        """
+        Save multiple files sequentially using existing save method.
+
+        Args:
+            data_list: List of data objects to save
+            output_paths: List of destination paths (must match length of data_list)
+            **kwargs: Additional arguments passed to save method
+
+        Raises:
+            ValueError: If data_list and output_paths have different lengths
+        """
+        if len(data_list) != len(output_paths):
+            raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
+
+        for data, output_path in zip(data_list, output_paths):
+            self.save(data, output_path, **kwargs)
 
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:
@@ -233,10 +267,10 @@ class DiskStorageBackend(StorageBackend):
         if not disk_directory.is_dir():
             raise ValueError(f"Path is not a directory: {disk_directory}")
 
-        # Use appropriate glob pattern based on recursion and provided pattern
+        # Use appropriate search strategy based on recursion
         if recursive:
-            glob_pattern = f"**/{pattern}" if pattern else "**/*"
-            files = [p for p in disk_directory.glob(glob_pattern) if p.is_file()]
+            # Use breadth-first traversal to prioritize shallower files
+            files = self._list_files_breadth_first(disk_directory, pattern)
         else:
             glob_pattern = pattern if pattern else "*"
             files = [p for p in disk_directory.glob(glob_pattern) if p.is_file()]
@@ -249,6 +283,49 @@ class DiskStorageBackend(StorageBackend):
 
         # Return paths as strings
         return [str(f) for f in files]
+
+    def _list_files_breadth_first(self, directory: Path, pattern: Optional[str] = None) -> List[Path]:
+        """
+        List files using breadth-first traversal to prioritize shallower files.
+
+        This ensures that files in the root directory are found before files
+        in subdirectories, which is important for metadata detection.
+
+        Args:
+            directory: Root directory to search
+            pattern: Optional glob pattern to match filenames
+
+        Returns:
+            List of file paths sorted by depth (shallower first)
+        """
+        from collections import deque
+
+        files = []
+        # Use deque for breadth-first traversal
+        dirs_to_search = deque([(directory, 0)])  # (path, depth)
+
+        while dirs_to_search:
+            current_dir, depth = dirs_to_search.popleft()
+
+            try:
+                # Get all entries in current directory
+                for entry in current_dir.iterdir():
+                    if entry.is_file():
+                        # Check if file matches pattern
+                        if pattern is None or entry.match(pattern):
+                            files.append((entry, depth))
+                    elif entry.is_dir():
+                        # Add subdirectory to queue for later processing
+                        dirs_to_search.append((entry, depth + 1))
+            except (PermissionError, OSError):
+                # Skip directories we can't read
+                continue
+
+        # Sort by depth first, then by path for consistent ordering
+        files.sort(key=lambda x: (x[1], str(x[0])))
+
+        # Return just the paths
+        return [file_path for file_path, _ in files]
 
     def list_dir(self, path: Union[str, Path]) -> List[str]:
         path = Path(path)

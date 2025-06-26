@@ -20,6 +20,7 @@ plotext>=5.2.0
 psutil>=5.9.0
 GPUtil>=1.4.0
 textual-plotext
+textual-terminal
 textual-window  # Modern TUI framework for new textual_tui
 textual-universal-directorytree
 watchdog>=2.0.0  # For file system monitoring in subprocess output

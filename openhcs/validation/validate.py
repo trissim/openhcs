@@ -17,29 +17,43 @@ from openhcs.validation.ast_validator import ValidationViolation, validate_file
 
 def find_python_files(directory: Path, exclude_dirs: Optional[Set[str]] = None) -> List[Path]:
     """
-    Find all Python files in a directory recursively.
-    
+    Find all Python files in a directory recursively using breadth-first traversal.
+
     Args:
         directory: Directory to search.
         exclude_dirs: Set of directory names to exclude.
-    
+
     Returns:
-        List of Python file paths.
+        List of Python file paths sorted by depth (shallower first).
     """
+    from collections import deque
+
     if exclude_dirs is None:
         exclude_dirs = set()
-    
+
     python_files = []
-    
-    for root, dirs, files in os.walk(directory):
-        # Skip excluded directories
-        dirs[:] = [d for d in dirs if d not in exclude_dirs]
-        
-        for file in files:
-            if file.endswith('.py'):
-                python_files.append(Path(root) / file)
-    
-    return python_files
+    # Use deque for breadth-first traversal
+    dirs_to_search = deque([(directory, 0)])  # (path, depth)
+
+    while dirs_to_search:
+        current_dir, depth = dirs_to_search.popleft()
+
+        try:
+            for entry in current_dir.iterdir():
+                if entry.is_file() and entry.suffix == '.py':
+                    python_files.append((entry, depth))
+                elif entry.is_dir() and entry.name not in exclude_dirs:
+                    # Add subdirectory to queue for later processing
+                    dirs_to_search.append((entry, depth + 1))
+        except (PermissionError, OSError):
+            # Skip directories we can't read
+            continue
+
+    # Sort by depth first, then by path for consistent ordering
+    python_files.sort(key=lambda x: (x[1], str(x[0])))
+
+    # Return just the paths
+    return [file_path for file_path, _ in python_files]
 
 
 def validate_directory(directory: Path, exclude_dirs: Optional[Set[str]] = None) -> List[ValidationViolation]:

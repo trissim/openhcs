@@ -64,6 +64,8 @@ class OperaPhenixHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
+    # Uses default workspace initialization from base class
+
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager):
         """
         Renames Opera Phenix images to follow a consistent field order
@@ -103,7 +105,7 @@ class OperaPhenixHandler(MicroscopeHandler):
         try:
             # Clause 245: Workspace operations are disk-only by design
             # This call is structurally hardcoded to use the "disk" backend
-            index_xml = filemanager.find_file_recursive(workspace_path, Backend.DISK.value, filename="Index.xml")
+            index_xml = filemanager.find_file_recursive(workspace_path, "Index.xml", Backend.DISK.value)
             if index_xml:
                 xml_parser = OperaPhenixXmlParser(index_xml)
                 field_mapping = xml_parser.get_field_id_mapping()
@@ -569,7 +571,7 @@ class OperaPhenixMetadataHandler(MetadataHandler):
         # Use filemanager to find the file recursively
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
-        result = self.filemanager.find_file_recursive(plate_path, Backend.DISK.value, filename="Index.xml")
+        result = self.filemanager.find_file_recursive(plate_path, "Index.xml", Backend.DISK.value)
         if result is None:
             raise FileNotFoundError(
                 f"Index.xml not found in {plate_path}. "

@@ -28,25 +28,28 @@ from openhcs.io.filemanager import FileManager
 from .widgets.main_content import MainContent
 from .widgets.status_bar import StatusBar
 
-from .widgets.floating_window import BaseFloatingWindow
-
 # Textual-window imports
 from textual_window import Window, WindowSwitcher
 from openhcs.textual_tui.widgets.custom_window_bar import CustomWindowBar
 from openhcs.textual_tui.windows import HelpWindow, ConfigWindow, DualEditorWindow, PipelinePlateWindow
+from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 
 logger = logging.getLogger(__name__)
 
 
-class ErrorDialog(BaseFloatingWindow):
-    """Error dialog with syntax highlighting using global floating window system."""
+class ErrorDialog(BaseOpenHCSWindow):
+    """Error dialog with syntax highlighting using textual-window system."""
 
     def __init__(self, error_message: str, error_details: str = ""):
         self.error_message = error_message
         self.error_details = error_details
-        super().__init__(title="🚨 ERROR")
+        super().__init__(
+            window_id="error_dialog",
+            title="🚨 ERROR",
+            mode="temporary"
+        )
 
-    def compose_content(self) -> ComposeResult:
+    def compose(self) -> ComposeResult:
         """Compose the error dialog content."""
         # Error message
         yield Static(self.error_message, classes="error-message", markup=False)
@@ -63,13 +66,14 @@ class ErrorDialog(BaseFloatingWindow):
                 id="error_content"
             )
 
-    def compose_buttons(self) -> ComposeResult:
-        """Provide Close button."""
-        yield Button("Close", id="close", compact=True)
+        # Close button
+        with Container(classes="dialog-buttons"):
+            yield Button("Close", id="close", compact=True)
 
-    def handle_button_action(self, button_id: str, button_text: str):
-        """Handle button actions - Close button dismisses dialog."""
-        return False  # Dismiss with False result
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "close":
+            self.close_window()
 
     DEFAULT_CSS = """
     .error-message {
@@ -370,9 +374,25 @@ class OpenHCSTUIApp(App):
 
         logger.error(f"Global error: {error_message}", exc_info=exception)
 
-        # Show error dialog
-        error_dialog = ErrorDialog(error_message, error_details)
-        self.push_screen(error_dialog)
+        # Show error dialog using window system
+        from textual.css.query import NoMatches
+
+        try:
+            # Check if error dialog already exists
+            window = self.query_one(ErrorDialog)
+            # Update existing dialog
+            window.error_message = error_message
+            window.error_details = error_details
+            window.open_state = True
+        except NoMatches:
+            # Create new error dialog window
+            error_dialog = ErrorDialog(error_message, error_details)
+            self.run_worker(self._mount_error_dialog(error_dialog))
+
+    async def _mount_error_dialog(self, error_dialog):
+        """Mount error dialog window."""
+        await self.mount(error_dialog)
+        error_dialog.open_state = True
 
     def _handle_exception(self, error: Exception) -> None:
         """Let exceptions bubble up to global handler instead of silencing them."""

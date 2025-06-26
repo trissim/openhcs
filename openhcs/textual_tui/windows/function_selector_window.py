@@ -66,8 +66,8 @@ class FunctionSelectorWindow(BaseOpenHCSWindow):
             # Function tree
             yield self._build_function_tree()
             
-            # Buttons
-            with Horizontal():
+            # Buttons - use unified dialog-buttons class for centered alignment
+            with Horizontal(classes="dialog-buttons"):
                 yield Button("Select", id="select_btn", variant="primary", compact=True, disabled=True)
                 yield Button("Cancel", id="cancel_btn", compact=True)
 

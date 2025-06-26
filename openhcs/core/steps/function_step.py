@@ -10,6 +10,10 @@ are retrieved from this step's entry in `context.step_plans`.
 import logging
 import os
 import time
+import gc
+import json
+import shutil
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDict as TypingOrderedDict
 
@@ -25,8 +29,172 @@ from openhcs.core.memory.gpu_cleanup import cleanup_memory_by_type
 
 logger = logging.getLogger(__name__)
 
+
+def get_all_image_paths(input_dir, backend, well_id, filemanager):
+    """
+    Get all image file paths for a specific well from a directory.
+
+    Args:
+        input_dir: Directory to search for images
+        well_id: Well identifier to filter files
+        backend: Backend to use for file listing
+        filemanager: FileManager instance
+
+    Returns:
+        List of full file paths for the well
+    """
+    # List all image files in directory
+    all_image_files = filemanager.list_image_files(str(input_dir), backend)
+
+    # Filter by well and convert to strings
+    well_files = [str(f) for f in all_image_files if well_id in str(f)]
+
+    # Remove duplicates and sort
+    sorted_files = sorted(list(set(well_files)))
+
+    # Prepare full file paths
+    full_file_paths = [str(input_dir / f) for f in sorted_files]
+
+    logger.info(f"Found {len(all_image_files)} total files, {len(full_file_paths)} for well {well_id}")
+
+    return full_file_paths
+
+
+def create_image_path_getter(well_id, filemanager):
+    """
+    Create a specialized image path getter function using runtime context.
+
+    Args:
+        well_id: Well identifier
+        filemanager: FileManager instance
+
+    Returns:
+        Function that takes (input_dir, backend) and returns image paths for the well
+    """
+    def get_paths_for_well(input_dir, backend):
+        return get_all_image_paths(
+            input_dir=input_dir,
+            well_id=well_id,
+            backend=backend,
+            filemanager=filemanager
+        )
+    return get_paths_for_well
+
 # Environment variable to disable universal GPU defragmentation
 DISABLE_GPU_DEFRAG = os.getenv('OPENHCS_DISABLE_GPU_DEFRAG', 'false').lower() == 'true'
+
+def _bulk_preload_step_images(
+    step_input_dir: Path,
+    step_output_dir: Path,
+    well_id: str,
+    read_backend: str,
+    patterns_by_well: Dict[str, Any],
+    filemanager: 'FileManager',
+    microscope_handler: 'MicroscopeHandler',
+    zarr_config: Optional[Dict[str, Any]] = None
+) -> None:
+    """
+    Pre-load all images for this step from source backend into memory backend.
+
+    This reduces I/O overhead by doing a single bulk read operation
+    instead of loading images per pattern group.
+
+    Note: External conditional logic ensures this is only called for non-memory backends.
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"🔄 BULK PRELOAD: Loading images from {read_backend} to memory for well {well_id}")
+
+    # Get all files for this well from patterns
+    all_files = []
+    # Create specialized path getter for this well
+    get_paths_for_well = create_image_path_getter(well_id, filemanager)
+
+    # Get all image paths for this well
+    full_file_paths = get_paths_for_well(step_input_dir, read_backend)
+
+    if not full_file_paths:
+        raise RuntimeError(f"🔄 BULK PRELOAD: No files found for well {well_id} in {step_input_dir} with backend {read_backend}")
+
+    # Load from source backend with conditional zarr_config
+    if read_backend == Backend.ZARR.value:
+        raw_images = filemanager.load_batch(full_file_paths, read_backend, zarr_config=zarr_config)
+    else:
+        raw_images = filemanager.load_batch(full_file_paths, read_backend)
+
+    # Ensure directory exists in memory backend before saving
+    filemanager.ensure_directory(str(step_input_dir), Backend.MEMORY.value)
+
+    # Save to memory backend using OUTPUT paths
+   # memory_paths = [str(step_output_dir / Path(fp).name) for fp in full_file_paths]
+    for file_path in full_file_paths:
+        if filemanager.exists(file_path, Backend.MEMORY.value):
+            filemanager.delete(file_path, Backend.MEMORY.value)
+            logger.debug(f"🔄 BULK PRELOAD: Deleted existing file {file_path} before bulk preload")
+
+    filemanager.save_batch(raw_images, full_file_paths, Backend.MEMORY.value)
+    logger.debug(f"🔄 BULK PRELOAD: Saving {file_path} to memory")
+
+    # Clean up source references - keep only memory backend references
+    del raw_images
+
+    load_time = time.time() - start_time
+    logger.info(f"🔄 BULK PRELOAD: Completed in {load_time:.2f}s - {len(full_file_paths)} images now in memory")
+
+def _bulk_writeout_step_images(
+    step_output_dir: Path,
+    write_backend: str,
+    well_id: str,
+    zarr_config: Optional[Dict[str, Any]],
+    filemanager: 'FileManager'
+) -> None:
+    """
+    Write all processed images from memory to final backend (disk/zarr).
+
+    This reduces I/O overhead by doing a single bulk write operation
+    instead of writing images per pattern group.
+
+    Note: External conditional logic ensures this is only called for non-memory backends.
+    """
+    import time
+    start_time = time.time()
+
+    logger.info(f"🔄 BULK WRITEOUT: Writing images from memory to {write_backend} for well {well_id}")
+
+    # Create specialized path getter and get memory paths for this well
+    get_paths_for_well = create_image_path_getter(well_id, filemanager)
+    memory_file_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
+
+    if not memory_file_paths:
+        raise RuntimeError(f"🔄 BULK WRITEOUT: No image files found for well {well_id} in memory directory {step_output_dir}")
+
+    # Convert relative memory paths back to absolute paths for target backend
+    # Memory backend stores relative paths, but target backend needs absolute paths
+#    file_paths = 
+#    for memory_path in memory_file_paths:
+#        # Get just the filename and construct proper target path
+#        filename = Path(memory_path).name
+#        target_path = step_output_dir / filename
+#        file_paths.append(str(target_path))
+
+    file_paths = memory_file_paths
+    logger.info(f"🔄 BULK WRITEOUT: Found {len(file_paths)} image files in memory to write")
+
+    # Load all data from memory backend
+    memory_data = filemanager.load_batch(file_paths, Backend.MEMORY.value)
+
+    # Ensure output directory exists before bulk write
+    filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
+
+    # Bulk write to target backend with conditional zarr_config
+    if write_backend == Backend.ZARR.value:
+        filemanager.save_batch(memory_data, file_paths, write_backend, chunk_name=well_id, zarr_config=zarr_config)
+    else:
+        filemanager.save_batch(memory_data, file_paths, write_backend)
+
+    write_time = time.time() - start_time
+    logger.info(f"🔄 BULK WRITEOUT: Completed in {write_time:.2f}s - {len(memory_data)} images written to {write_backend}")
 
 def _targeted_gpu_cleanup_after_function(func_name: str, input_memory_type: str, device_id: Optional[int] = None, failed: bool = False) -> None:
     """Targeted GPU memory cleanup for specific frameworks used by the function."""
@@ -208,13 +376,13 @@ def _execute_chain_core(
 
 def _process_single_pattern_group(
     context: 'ProcessingContext',
-    pattern_group_info: Any, 
-    executable_func_or_chain: Any, 
-    base_func_args: Dict[str, Any], 
+    pattern_group_info: Any,
+    executable_func_or_chain: Any,
+    base_func_args: Dict[str, Any],
     step_input_dir: Path,
     step_output_dir: Path,
     well_id: str,
-    component_value: str, 
+    component_value: str,
     read_backend: str,
     write_backend: str,
     input_memory_type_from_plan: str, # Explicitly from plan
@@ -224,6 +392,7 @@ def _process_single_pattern_group(
     force_disk_output_flag: bool,
     special_inputs_map: Dict[str, str],
     special_outputs_map: TypingOrderedDict[str, str],
+    zarr_config: Optional[Dict[str, Any]],
     variable_components: Optional[List[str]] = None
 ) -> None:
     start_time = time.time()
@@ -235,7 +404,7 @@ def _process_single_pattern_group(
              raise RuntimeError("MicroscopeHandler not available in context.")
 
         matching_files = context.microscope_handler.path_list_from_pattern(
-            str(step_input_dir), pattern_group_info, context.filemanager, read_backend,
+            str(step_input_dir), pattern_group_info, context.filemanager, Backend.MEMORY.value,
             [vc.value for vc in variable_components] if variable_components else None
         )
 
@@ -249,15 +418,14 @@ def _process_single_pattern_group(
         matching_files.sort()
         print(f"🔥 PATTERN: Sorted files: {[Path(f).name for f in matching_files]}")
 
-        raw_slices = []
-        for file_path_suffix in matching_files:
-            full_file_path = step_input_dir / file_path_suffix
-            try:
-                image = context.filemanager.load(str(full_file_path), read_backend)
-                if image is not None:
-                    raw_slices.append(image)
-            except Exception as e:
-                logger.error(f"Error loading image {full_file_path}: {e}", exc_info=True)
+        try:
+            full_file_paths = [str(step_input_dir / f) for f in matching_files]
+            raw_slices = context.filemanager.load_batch(full_file_paths, Backend.MEMORY.value)
+            # Filter out None values if any
+            raw_slices = [img for img in raw_slices if img is not None]
+        except Exception as e:
+            logger.error(f"Error loading batch of images: {e}", exc_info=True)
+            raw_slices = []
         
         if not raw_slices:
             logger.warning(f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}")
@@ -274,15 +442,6 @@ def _process_single_pattern_group(
         main_data_stack = stack_slices(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
         )
-
-        # � CPU CLEANUP: Clear source arrays after GPU conversion to prevent memory doubling
-        from openhcs.constants.constants import MemoryType, Backend
-        if (input_memory_type_from_plan != MemoryType.NUMPY.value and
-            read_backend == Backend.DISK.value):
-            del raw_slices
-            import gc
-            gc.collect()
-            logger.debug(f"🔥 CPU CLEANUP: Cleared source arrays after conversion from disk to {input_memory_type_from_plan}")
 
         # �🔍 DEBUG: Log stacked result
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
@@ -338,9 +497,13 @@ def _process_single_pattern_group(
         elif num_outputs > num_inputs:
             logger.warning(f"Function returned more images ({num_outputs}) than inputs ({num_inputs}) - unexpected")
 
-        # Save the output images using the first N input filenames
-        for i, img_slice in enumerate(output_slices):
-            try:
+        # Save the output images using batch operations
+        try:
+            # Prepare batch data
+            output_data = []
+            output_paths_batch = []
+
+            for i, img_slice in enumerate(output_slices):
                 # FAIL FAST: No fallback filenames - if we have more outputs than inputs, something is wrong
                 if i >= len(matching_files):
                     raise ValueError(
@@ -351,24 +514,35 @@ def _process_single_pattern_group(
 
                 input_filename = matching_files[i]
                 output_filename = Path(input_filename).name
-
                 output_path = Path(step_output_dir) / output_filename
 
                 # Always ensure we can write to the output path (delete if exists)
-                if context.filemanager.exists(str(output_path), write_backend):
-                    context.filemanager.delete(str(output_path), write_backend)
+                if context.filemanager.exists(str(output_path), Backend.MEMORY.value):
+                    context.filemanager.delete(str(output_path), Backend.MEMORY.value)
 
-                # Ensure directory exists for the backend we're about to save to
-                context.filemanager.ensure_directory(str(step_output_dir), write_backend)
-                context.filemanager.save(img_slice, str(output_path), write_backend)
+                output_data.append(img_slice)
+                output_paths_batch.append(str(output_path))
 
-                if force_disk_output_flag and write_backend != Backend.DISK.value:
-                    logger.info(f"Force disk output: saving additional copy to disk: {output_path}")
-                    # Ensure directory exists for disk backend too
-                    context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
-                    context.filemanager.save(img_slice, str(output_path), Backend.DISK.value)
-            except Exception as e:
-                logger.error(f"Error saving output slice {i} for pattern {pattern_repr}: {e}", exc_info=True)
+            # Ensure directory exists
+            context.filemanager.ensure_directory(str(step_output_dir), Backend.MEMORY.value)
+
+                          # Only pass zarr_config to zarr backend - fail loud for invalid parameters
+                    #if write_backend == Backend.ZARR.value:
+          # Batch save
+           # context.filemanager.save_batch(output_data, output_paths_batch, write_backend, zarr_config=zarr_config)
+           #         else:
+            context.filemanager.save_batch(output_data, output_paths_batch, Backend.MEMORY.value)
+
+            # Force disk output if needed
+            #TODO SUPPORT DIFFERENT PHYSICAL BACKENDS WITH FORCE FLAG
+#            if force_disk_output_flag and write_backend != Backend.DISK.value:
+#                logger.info(f"Force disk output: saving additional copy to disk")
+#                context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
+#                # Disk backend doesn't need zarr_config - fail loud for invalid parameters
+#                context.filemanager.save_batch(output_data, output_paths_batch, Backend.DISK.value)
+
+        except Exception as e:
+            logger.error(f"Error saving batch of output slices for pattern {pattern_repr}: {e}", exc_info=True)
 
         # 🔥 CLEANUP: If function returned fewer images than inputs, delete the unused input files
         # This prevents unused channel files from remaining in memory after compositing
@@ -376,8 +550,8 @@ def _process_single_pattern_group(
             for j in range(num_outputs, num_inputs):
                 unused_input_filename = matching_files[j]
                 unused_input_path = Path(step_input_dir) / unused_input_filename
-                if context.filemanager.exists(str(unused_input_path), write_backend):
-                    context.filemanager.delete(str(unused_input_path), write_backend)
+                if context.filemanager.exists(str(unused_input_path), Backend.MEMORY.value):
+                    context.filemanager.delete(str(unused_input_path), Backend.MEMORY.value)
                     print(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
 
         # 🔍 VRAM TRACKING: Log memory before cleanup
@@ -393,7 +567,6 @@ def _process_single_pattern_group(
         cleanup_memory_by_type(output_memory_type_from_plan, device_id)
 
         # Force garbage collection to release any remaining references
-        import gc
         gc.collect()
 
         logger.debug(f"🔥 GPU CLEANUP: Cleared {input_memory_type_from_plan} and {output_memory_type_from_plan} GPU memory after pattern group")
@@ -455,6 +628,7 @@ class FunctionStep(AbstractStep):
             step_output_dir = Path(step_plan['output_dir'])
             variable_components = step_plan['variable_components']
             group_by = step_plan['group_by']
+            func_from_plan = step_plan['func']
             
             # special_inputs/outputs are dicts: {'key': 'vfs_path_value'}
             special_inputs = step_plan['special_inputs']
@@ -465,11 +639,33 @@ class FunctionStep(AbstractStep):
             write_backend = step_plan['write_backend']
             input_mem_type = step_plan['input_memory_type']
             output_mem_type = step_plan['output_memory_type']
+            microscope_handler = context.microscope_handler
+            filemanager = context.filemanager
+
+            # Create path getter for this well
+            get_paths_for_well = create_image_path_getter(well_id, filemanager)
+
+            # Get patterns first for bulk preload
+            patterns_by_well = microscope_handler.auto_detect_patterns(
+                str(step_input_dir),           # folder_path
+                filemanager,           # filemanager
+                read_backend,                  # backend
+                well_filter=[well_id],         # well_filter
+                extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
+                group_by=group_by.value if group_by else None,             # group_by
+                variable_components=[vc.value for vc in variable_components] if variable_components else None  # variable_components
+            )            
+
 
             # Only access gpu_id if the step requires GPU (has GPU memory types)
             from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
             requires_gpu = (input_mem_type in VALID_GPU_MEMORY_TYPES or
                            output_mem_type in VALID_GPU_MEMORY_TYPES)
+
+                        # Ensure variable_components is never None - use default if missing
+            if variable_components is None:
+                variable_components = [VariableComponents.SITE]  # Default fallback
+                logger.warning(f"Step {step_id} ({step_name}) had None variable_components, using default [SITE]")
 
             if requires_gpu:
                 device_id = step_plan['gpu_id']
@@ -487,6 +683,45 @@ class FunctionStep(AbstractStep):
             logger.info(f"Step {step_id} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
             logger.info(f"Step {step_id} ({step_name}) Paths: input_dir='{step_input_dir}', output_dir='{step_output_dir}', same_dir={same_dir}")
 
+            # 🔄 MATERIALIZATION READ: Bulk preload if not reading from memory
+            if read_backend != Backend.MEMORY.value:
+                # Get patterns first for bulk preload
+                
+                ## Get all files for this well from patterns
+                #all_files = []
+                #for pattern_group_info in patterns_by_well[well_id].values():
+                #    for pattern in pattern_group_info:
+                #        matching_files = microscope_handler.path_list_from_pattern(
+                #            step_input_dir, pattern, filemanager, read_backend
+                #        )
+                #        all_files.extend(matching_files)
+
+                _bulk_preload_step_images(step_input_dir, step_output_dir, well_id, read_backend,
+                                        patterns_by_well,filemanager, microscope_handler, step_plan["zarr_config"])
+
+            # 🔄 ZARR CONVERSION: Convert loaded memory data to zarr if needed
+            convert_to_zarr_path = step_plan.get('convert_to_zarr')
+            if convert_to_zarr_path and Path(convert_to_zarr_path).exists():
+                logger.info(f"Converting loaded data to zarr: {convert_to_zarr_path}")
+                zarr_config = step_plan.get('zarr_config', context.global_config.zarr)
+
+                # Get memory paths and data, then create zarr paths pointing to plate root
+                memory_paths = get_paths_for_well(step_input_dir, Backend.MEMORY.value)
+                memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
+
+                # Create zarr paths by joining convert_to_zarr_path with just the filename
+                zarr_paths = []
+                for memory_path in memory_paths:
+                    filename = Path(memory_path).name
+                    zarr_path = Path(convert_to_zarr_path) / filename
+                    zarr_paths.append(str(zarr_path))
+
+                filemanager.save_batch(memory_data, zarr_paths, Backend.ZARR.value,
+                                     chunk_name=well_id, zarr_config=zarr_config)
+
+                # 📄 OPENHCS METADATA: Create metadata for zarr conversion
+                self._create_openhcs_metadata_for_materialization(context, convert_to_zarr_path, Backend.ZARR.value)
+
             # 🔍 VRAM TRACKING: Log memory at step start
             try:
                 from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
@@ -494,25 +729,6 @@ class FunctionStep(AbstractStep):
             except Exception:
                 pass
 
-            if not context.microscope_handler:
-                raise RuntimeError(f"MicroscopeHandler not in context for step {step_id}")
-
-            # Ensure variable_components is never None - use default if missing
-            if variable_components is None:
-                variable_components = [VariableComponents.SITE]  # Default fallback
-                logger.warning(f"Step {step_id} ({step_name}) had None variable_components, using default [SITE]")
-
-            patterns_by_well = context.microscope_handler.auto_detect_patterns(
-                str(step_input_dir),           # folder_path
-                context.filemanager,           # filemanager
-                read_backend,                  # backend
-                well_filter=[well_id],         # well_filter
-                extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
-                group_by=group_by.value if group_by else None,             # group_by
-                variable_components=[vc.value for vc in variable_components]  # variable_components (guaranteed not None)
-            )
-
-            # 🔥 STEP EXECUTION DEBUG
             print(f"🔥 STEP: '{step_name}' processing well {well_id}")
             print(f"🔥 STEP: group_by={group_by}, variable_components={variable_components}")
 
@@ -526,37 +742,35 @@ class FunctionStep(AbstractStep):
                     print(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
 
 
+           # if well_id not in patterns_by_well or not patterns_by_well[well_id]:
+           #     # DEBUG: Check what's actually available
+           #     logger.error(f"🔥 PATTERN DEBUG: Failed to find patterns for well {well_id}")
+           #     logger.error(f"🔥 PATTERN DEBUG: Looking in directory: {step_input_dir}")
+           #     logger.error(f"🔥 PATTERN DEBUG: Read backend: {read_backend}")
+           #     logger.error(f"🔥 PATTERN DEBUG: All detected wells: {list(patterns_by_well.keys())}")
+           #     logger.error(f"🔥 PATTERN DEBUG: Total patterns found: {sum(len(patterns) for patterns in patterns_by_well.values())}")
 
-            if well_id not in patterns_by_well or not patterns_by_well[well_id]:
-                # DEBUG: Check what's actually available
-                logger.error(f"🔥 PATTERN DEBUG: Failed to find patterns for well {well_id}")
-                logger.error(f"🔥 PATTERN DEBUG: Looking in directory: {step_input_dir}")
-                logger.error(f"🔥 PATTERN DEBUG: Read backend: {read_backend}")
-                logger.error(f"🔥 PATTERN DEBUG: All detected wells: {list(patterns_by_well.keys())}")
-                logger.error(f"🔥 PATTERN DEBUG: Total patterns found: {sum(len(patterns) for patterns in patterns_by_well.values())}")
+           #     # Check memory backend state if using memory
+           #     if read_backend == "memory":
+           #         from openhcs.io.base import storage_registry
+           #         memory_backend = storage_registry["memory"]
+           #         logger.error(f"🔥 PATTERN DEBUG: Memory backend has {len(memory_backend._memory_store)} entries")
 
-                # Check memory backend state if using memory
-                if read_backend == "memory":
-                    from openhcs.io.base import storage_registry
-                    memory_backend = storage_registry["memory"]
-                    logger.error(f"🔥 PATTERN DEBUG: Memory backend has {len(memory_backend._memory_store)} entries")
+           #         # Show memory keys that contain the well ID
+           #         well_keys = [key for key in memory_backend._memory_store.keys() if well_id in key]
+           #         logger.error(f"🔥 PATTERN DEBUG: Memory keys containing '{well_id}': {well_keys}")
 
-                    # Show memory keys that contain the well ID
-                    well_keys = [key for key in memory_backend._memory_store.keys() if well_id in key]
-                    logger.error(f"🔥 PATTERN DEBUG: Memory keys containing '{well_id}': {well_keys}")
+           #         # Show all memory keys for context
+           #         all_keys = list(memory_backend._memory_store.keys())[:10]  # First 10 keys
+           #         logger.error(f"🔥 PATTERN DEBUG: First 10 memory keys: {all_keys}")
 
-                    # Show all memory keys for context
-                    all_keys = list(memory_backend._memory_store.keys())[:10]  # First 10 keys
-                    logger.error(f"🔥 PATTERN DEBUG: First 10 memory keys: {all_keys}")
+           #         # Check what the normalized directory path looks like
+           #         normalized_dir = memory_backend._normalize(step_input_dir)
+           #         logger.error(f"🔥 PATTERN DEBUG: Normalized directory path: '{normalized_dir}'")
 
-                    # Check what the normalized directory path looks like
-                    normalized_dir = memory_backend._normalize(step_input_dir)
-                    logger.error(f"🔥 PATTERN DEBUG: Normalized directory path: '{normalized_dir}'")
-
-                raise ValueError(f"No patterns for well {well_id} in {step_input_dir} for step {step_id}.")
+           #     raise ValueError(f"No patterns for well {well_id} in {step_input_dir} for step {step_id}.")
             
             # Get func from step plan (stored by FuncStepContractValidator during compilation)
-            func_from_plan = step_plan.get('func')
             if func_from_plan is None:
                 raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")
 
@@ -574,12 +788,21 @@ class FunctionStep(AbstractStep):
                         read_backend, write_backend, input_mem_type, output_mem_type,
                         device_id, same_dir, force_disk_output,
                         special_inputs, special_outputs, # Pass the maps from step_plan
+                        step_plan["zarr_config"],
                         variable_components
                     )
+            
+            # 📄 MATERIALIZATION WRITE: Only if not writing to memory
+            if write_backend != Backend.MEMORY.value:
+                memory_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
+                memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
+                filemanager.save_batch(memory_data, memory_paths, write_backend,
+                                     chunk_name=well_id, zarr_config=step_plan["zarr_config"])
+            
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
-            self._create_openhcs_metadata_automatically(context, step_plan)
+            self._create_openhcs_metadata_for_materialization(context, step_plan['output_dir'], step_plan['write_backend'])
 
             # 🔍 VRAM TRACKING: Log memory before final cleanup
             try:
@@ -590,10 +813,9 @@ class FunctionStep(AbstractStep):
 
             # 🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step completion
             cleanup_memory_by_type(input_mem_type, device_id)
-            cleanup_memory_by_type(output_mem_type, device_id)
+            #cleanup_memory_by_type(output_mem_type, device_id)
 
             # Force garbage collection to ensure all references are released
-            import gc
             gc.collect()
 
             logger.debug(f"🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step {step_name} completion")
@@ -615,7 +837,6 @@ class FunctionStep(AbstractStep):
             try:
                 cleanup_memory_by_type(input_mem_type, device_id)
                 cleanup_memory_by_type(output_mem_type, device_id)
-                import gc
                 gc.collect()
                 logger.debug(f"🔥 ERROR GPU CLEANUP: Cleaned up GPU memory after error in step {step_name}")
             except Exception as cleanup_error:
@@ -644,32 +865,30 @@ class FunctionStep(AbstractStep):
             logger.debug(f"Error extracting {group_by.value} metadata from cache: {e}")
             return None
 
-    def _create_openhcs_metadata_automatically(
+    def _create_openhcs_metadata_for_materialization(
         self,
         context: 'ProcessingContext',
-        step_plan: Dict[str, Any]
+        output_dir: str,
+        write_backend: str
     ) -> None:
         """
-        Automatically create OpenHCS metadata file after step execution.
-
-        This is a pure function that creates OpenHCS metadata using only context state.
-        Always creates metadata - no flags needed.
+        Create OpenHCS metadata file for materialization writes.
 
         Args:
             context: ProcessingContext containing microscope_handler and other state
-            step_plan: Step plan dictionary containing output_dir, write_backend, etc.
+            output_dir: Output directory path where metadata should be written
+            write_backend: Backend being used for the write (disk/zarr)
         """
-        # Check if this well is responsible for metadata creation
-        if not step_plan.get('create_openhcs_metadata', False):
-            logger.debug(f"Well {step_plan.get('well_id', 'unknown')} skipping metadata creation (not responsible)")
+        # Check if this is a materialization write (disk/zarr) - memory writes don't need metadata
+        if write_backend == Backend.MEMORY.value:
+            logger.debug(f"Skipping metadata creation (memory write)")
             return
 
-        logger.debug(f"Well {step_plan.get('well_id', 'unknown')} creating metadata (responsible well)")
+        logger.debug(f"Creating metadata for materialization write: {write_backend} -> {output_dir}")
 
         try:
-            # Extract required information from context and step_plan
-            step_output_dir = Path(step_plan['output_dir'])
-            write_backend = step_plan['write_backend']
+            # Extract required information
+            step_output_dir = Path(output_dir)
 
             # Check if we have microscope handler for metadata extraction
             if not context.microscope_handler:
@@ -694,17 +913,20 @@ class FunctionStep(AbstractStep):
                 if context.filemanager.exists(str(step_output_dir), write_backend):
                     # List files in output directory
                     files = context.filemanager.list_files(str(step_output_dir), write_backend)
-                    # Filter for image files (common extensions)
+                    # Filter for image files (common extensions) and convert to strings
                     image_extensions = {'.tif', '.tiff', '.png', '.jpg', '.jpeg'}
-                    image_files = [f for f in files if Path(f).suffix.lower() in image_extensions]
+                    image_files = [str(f) for f in files if Path(f).suffix.lower() in image_extensions]
                     logger.debug(f"Found {len(image_files)} image files in {step_output_dir}")
             except Exception as e:
                 logger.debug(f"Could not list image files in output directory: {e}")
                 image_files = []
 
+            # Detect available backends based on actual output files
+            available_backends = self._detect_available_backends(step_output_dir)
+
             # Create metadata structure
             metadata = {
-                "microscope_handler_name": "openhcsdata",
+                "microscope_handler_name": context.microscope_handler.microscope_type,
                 "source_filename_parser_name": source_parser_name,
                 "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
                 "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
@@ -712,27 +934,49 @@ class FunctionStep(AbstractStep):
                 "channels": self._extract_component_metadata(context, GroupBy.CHANNEL),
                 "wells": self._extract_component_metadata(context, GroupBy.WELL),
                 "sites": self._extract_component_metadata(context, GroupBy.SITE),
-                "z_indexes": self._extract_component_metadata(context, GroupBy.Z_INDEX)
+                "z_indexes": self._extract_component_metadata(context, GroupBy.Z_INDEX),
+                "available_backends": available_backends
             }
 
-            # Save metadata file using same backend as step output
+            # Save metadata file using disk backend (JSON files always on disk)
             from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
             metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
 
-            # Always ensure we can write to the metadata path (delete if exists) - same pattern as images
-            if context.filemanager.exists(str(metadata_path), write_backend):
-                context.filemanager.delete(str(metadata_path), write_backend)
+            # Always ensure we can write to the metadata path (delete if exists)
+            if context.filemanager.exists(str(metadata_path), Backend.DISK.value):
+                context.filemanager.delete(str(metadata_path), Backend.DISK.value)
 
-            # Ensure output directory exists
-            context.filemanager.ensure_directory(str(step_output_dir), write_backend)
+            # Ensure output directory exists on disk
+            context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
 
-            # Create JSON content (not TSV) - OpenHCS handler expects JSON format
+            # Create JSON content - OpenHCS handler expects JSON format
             import json
             json_content = json.dumps(metadata, indent=2)
-            context.filemanager.save(json_content, str(metadata_path), write_backend)
-            logger.debug(f"Created OpenHCS metadata file ({write_backend}): {metadata_path}")
+            context.filemanager.save(json_content, str(metadata_path), Backend.DISK.value)
+            logger.debug(f"Created OpenHCS metadata file (disk): {metadata_path}")
 
         except Exception as e:
             # Graceful degradation - log error but don't fail the step
             logger.warning(f"Failed to create OpenHCS metadata file: {e}")
             logger.debug(f"OpenHCS metadata creation error details:", exc_info=True)
+
+    def _detect_available_backends(self, output_dir: Path) -> Dict[str, bool]:
+        """Detect which storage backends are actually available based on output files."""
+
+        backends = {Backend.ZARR.value: False, Backend.DISK.value: False}
+
+        # Check for zarr stores
+        if list(output_dir.glob("*.zarr")):
+            backends[Backend.ZARR.value] = True
+
+        # Check for image files
+        for ext in DEFAULT_IMAGE_EXTENSIONS:
+            if list(output_dir.glob(f"*{ext}")):
+                backends[Backend.DISK.value] = True
+                break
+
+        logger.info(f"Backend detection result: {backends}")
+        return backends
+
+
+

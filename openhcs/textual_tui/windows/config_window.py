@@ -3,10 +3,9 @@
 from typing import Type, Any, Callable, Optional
 from textual.app import ComposeResult
 from textual.widgets import Button
-from textual.containers import Container
+from textual.containers import Container, Horizontal
 
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
-from openhcs.textual_tui.services.config_reflection_service import FieldIntrospector
 from openhcs.textual_tui.widgets.config_form import ConfigFormWidget
 
 
@@ -44,11 +43,8 @@ class ConfigWindow(BaseOpenHCSWindow):
         self.current_config = current_config
         self.on_save_callback = on_save_callback
 
-        # Analyze config structure (same as original ConfigDialogScreen)
-        self.field_specs = FieldIntrospector.analyze_dataclass(config_class, current_config)
-
-        # Create the form widget (reuse existing logic)
-        self.config_form = ConfigFormWidget(self.field_specs)
+        # Create the form widget using unified parameter analysis
+        self.config_form = ConfigFormWidget.from_dataclass(config_class, current_config)
 
     def calculate_content_height(self) -> int:
         """Calculate dialog height based on number of fields."""
@@ -80,8 +76,9 @@ class ConfigWindow(BaseOpenHCSWindow):
             yield self.config_form
 
         # Buttons
-        yield Button("Save", id="save", compact=True)
-        yield Button("Cancel", id="cancel", compact=True)
+        with Horizontal(classes="dialog-buttons"):
+            yield Button("Save", id="save", compact=True)
+            yield Button("Cancel", id="cancel", compact=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

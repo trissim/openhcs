@@ -46,7 +46,7 @@ class StepParameterEditorWidget(ScrollableContainer):
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
 
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "step")
+        self.form_manager = ParameterFormManager(parameters, parameter_types, "step", param_info)
         self.param_defaults = param_defaults
 
     def compose(self) -> ComposeResult:
@@ -101,9 +101,9 @@ class StepParameterEditorWidget(ScrollableContainer):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         if event.button.id == "load_step_btn":
-            self._load_step()
+            self.run_worker(self._load_step())
         elif event.button.id == "save_as_btn":
-            self._save_step_as()
+            self.run_worker(self._save_step_as())
         elif event.button.id.startswith("reset_step_"):
             # Individual parameter reset
             param_name = event.button.id.split("_", 2)[2]
@@ -175,19 +175,21 @@ class StepParameterEditorWidget(ScrollableContainer):
         except Exception as e:
             logger.warning(f"Failed to refresh form widgets: {e}")
 
-    def _load_step(self) -> None:
+    async def _load_step(self) -> None:
         """Load step configuration from file."""
-        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
+        from openhcs.textual_tui.services.file_browser_service import SelectionMode
         from openhcs.constants.constants import Backend
 
         def handle_result(result):
             if result and isinstance(result, Path):
                 self._load_step_from_file(result)
 
-        # Launch enhanced file browser for .step files
+        # Launch file browser window for .step files
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
-        browser = EnhancedFileBrowserScreen(
+        await open_file_browser_window(
+            app=self.app,
             file_manager=self.app.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.STEP_SETTINGS),
             backend=Backend.DISK,
@@ -195,23 +197,26 @@ class StepParameterEditorWidget(ScrollableContainer):
             mode=BrowserMode.LOAD,
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.step'],
-            cache_key=PathCacheKey.STEP_SETTINGS
+            cache_key=PathCacheKey.STEP_SETTINGS,
+            on_result_callback=handle_result,
+            caller_id="step_parameter_editor"
         )
-        self.app.push_screen(browser, handle_result)
 
-    def _save_step_as(self) -> None:
+    async def _save_step_as(self) -> None:
         """Save step configuration to file."""
-        from openhcs.textual_tui.screens.enhanced_file_browser import EnhancedFileBrowserScreen, BrowserMode, SelectionMode
+        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
+        from openhcs.textual_tui.services.file_browser_service import SelectionMode
         from openhcs.constants.constants import Backend
 
         def handle_result(result):
             if result and isinstance(result, Path):
                 self._save_step_to_file(result)
 
-        # Launch enhanced file browser for saving .step files
+        # Launch file browser window for saving .step files
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
-        browser = EnhancedFileBrowserScreen(
+        await open_file_browser_window(
+            app=self.app,
             file_manager=self.app.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.STEP_SETTINGS),
             backend=Backend.DISK,
@@ -220,9 +225,10 @@ class StepParameterEditorWidget(ScrollableContainer):
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.step'],
             default_filename="step_settings.step",
-            cache_key=PathCacheKey.STEP_SETTINGS
+            cache_key=PathCacheKey.STEP_SETTINGS,
+            on_result_callback=handle_result,
+            caller_id="step_parameter_editor"
         )
-        self.app.push_screen(browser, handle_result)
 
     def _load_step_from_file(self, file_path: Path) -> None:
         """Load step parameters from .step file."""

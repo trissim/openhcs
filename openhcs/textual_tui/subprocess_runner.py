@@ -21,29 +21,28 @@ from pathlib import Path
 from typing import Dict, List, Any
 
 def setup_subprocess_logging(log_file_path: str):
-    """Set up logging for the subprocess to inherit parent's configuration and write to shared log file."""
-    # Simple approach: just add a file handler to the root logger
-    # The subprocess inherits the parent's logger configuration automatically
+    """Set up dedicated logging for the subprocess - all logs go to the specified file."""
 
+    # Configure root logger to capture ALL logs from subprocess and OpenHCS modules
     root_logger = logging.getLogger()
+    root_logger.handlers.clear()  # Clear any existing handlers
 
-    # Only add file handler if not already present (avoid duplicates)
-    existing_handlers = [h for h in root_logger.handlers if isinstance(h, logging.FileHandler) and h.baseFilename == log_file_path]
+    # Create file handler for subprocess logs
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(file_handler)
+    root_logger.setLevel(logging.INFO)
 
-    if not existing_handlers:
-        # Setup file handler with same format as main process
-        file_handler = logging.FileHandler(log_file_path)
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        root_logger.addHandler(file_handler)
+    # Ensure all OpenHCS module logs are captured
+    logging.getLogger("openhcs").setLevel(logging.INFO)
 
-    # Ensure root logger level allows INFO and above (inherits from parent)
-    if root_logger.level > logging.INFO:
-        root_logger.setLevel(logging.INFO)
+    # Prevent console output - everything goes to file
+    logging.basicConfig = lambda *args, **kwargs: None
 
     # Get subprocess logger
-    logger = logging.getLogger(__name__)
-    logger.info("🔥 SUBPROCESS: Logging configured - inheriting from parent process")
-    logger.info(f"🔥 SUBPROCESS: Writing to shared log file: {log_file_path}")
+    logger = logging.getLogger("openhcs.subprocess")
+    logger.info("🔥 SUBPROCESS: Dedicated logging configured")
+    logger.info(f"🔥 SUBPROCESS: All logs writing to: {log_file_path}")
 
     return logger
 
@@ -217,6 +216,20 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
             # Reconstruct nested dataclasses from dictionaries
             path_planning_dict = global_config_dict.get('path_planning', {})
             vfs_dict = global_config_dict.get('vfs', {})
+
+            # Convert backend strings to enums for VFS config
+            from openhcs.constants.constants import Backend
+            from openhcs.core.config import MaterializationBackend
+
+            if 'intermediate_backend' in vfs_dict:
+                backend_str = vfs_dict['intermediate_backend']
+                if isinstance(backend_str, str):
+                    vfs_dict['intermediate_backend'] = Backend(backend_str)
+
+            if 'materialization_backend' in vfs_dict:
+                backend_str = vfs_dict['materialization_backend']
+                if isinstance(backend_str, str):
+                    vfs_dict['materialization_backend'] = MaterializationBackend(backend_str)
 
             path_planning = PathPlanningConfig(**path_planning_dict)
             vfs = VFSConfig(**vfs_dict)

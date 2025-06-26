@@ -145,6 +145,57 @@ class FileManager:
                 f"Failed to save data to {output_path} using backend '{backend}'"
             ) from e
 
+    def load_batch(self, file_paths: List[Union[str, Path]], backend: str, **kwargs) -> List[Any]:
+        """
+        Load multiple files using the specified backend.
+
+        Args:
+            file_paths: List of file paths to load
+            backend: Backend to use for loading
+            **kwargs: Additional keyword arguments passed to the backend's load_batch method
+
+        Returns:
+            List of loaded data objects in the same order as file_paths
+
+        Raises:
+            StorageResolutionError: If the backend is not supported or load fails
+        """
+        try:
+            backend_instance = self._get_backend(backend)
+            return backend_instance.load_batch(file_paths, **kwargs)
+        except StorageResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during batch load with backend {backend}: {e}", exc_info=True)
+            raise StorageResolutionError(
+                f"Failed to load batch of {len(file_paths)} files using backend '{backend}'"
+            ) from e
+
+    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], backend: str, **kwargs) -> None:
+        """
+        Save multiple data objects using the specified backend.
+
+        Args:
+            data_list: List of data objects to save
+            output_paths: List of destination paths (must match length of data_list)
+            backend: Backend to use for saving
+            **kwargs: Additional keyword arguments passed to the backend's save_batch method
+
+        Raises:
+            StorageResolutionError: If the backend is not supported or save fails
+            ValueError: If data_list and output_paths have different lengths
+        """
+        try:
+            backend_instance = self._get_backend(backend)
+            backend_instance.save_batch(data_list, output_paths, **kwargs)
+        except StorageResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during batch save with backend {backend}: {e}", exc_info=True)
+            raise StorageResolutionError(
+                f"Failed to save batch of {len(data_list)} files using backend '{backend}'"
+            ) from e
+
     def list_image_files(self, directory: Union[str, Path], backend: str,
                          pattern: str = None, extensions: Set[str] = DEFAULT_IMAGE_EXTENSIONS, recursive: bool = False) -> List[str]:
         """
@@ -213,7 +264,7 @@ class FileManager:
         return natural_sort(files)
 
 
-    def find_file_recursive(self, directory: Union[str, Path], backend: str, filename: str) -> Union[str, None]:
+    def find_file_recursive(self, directory: Union[str, Path], filename: str, backend: str) -> Union[str, None]:
         """
         Find a file recursively in a directory using the specified backend.
 
@@ -221,8 +272,8 @@ class FileManager:
 
         Args:
             directory: Directory to search (str or Path)
-            backend: Backend to use for listing ('disk', 'memory', 'zarr') - POSITIONAL
             filename: Name of the file to find
+            backend: Backend to use for listing ('disk', 'memory', 'zarr') - POSITIONAL
 
         Returns:
             String path to the file if found, None otherwise
@@ -597,19 +648,22 @@ class FileManager:
         recursive: bool = True
     ) -> Tuple[List[str], List[str]]:
         """
-        Collect all valid directories and files starting from base_dir.
-    
+        Collect all valid directories and files starting from base_dir using breadth-first traversal.
+
         Returns:
             (dirs, files): Lists of string paths for directories and files
         """
+        from collections import deque
+
         base_dir = str(base_dir)
-        stack = [base_dir]
+        # Use deque for breadth-first traversal (FIFO instead of LIFO)
+        queue = deque([base_dir])
         dirs: List[str] = []
         files: List[str] = []
-    
-        while stack:
-            current_path = stack.pop()
-    
+
+        while queue:
+            current_path = queue.popleft()  # FIFO for breadth-first
+
             try:
                 entries = self.list_dir(current_path, backend)
                 dirs.append(current_path)
@@ -619,19 +673,19 @@ class FileManager:
             except Exception as e:
                 print(f"[collect_dirs_and_files] Unexpected error at {current_path}: {type(e).__name__} — {e}")
                 continue  # Fail-safe: skip unexpected issues
-            
+
             if entries is None:
                 # Defensive fallback — entries must be iterable
                 print(f"[collect_dirs_and_files] WARNING: list_dir() returned None at {current_path}")
                 continue
-            
+
             for entry in entries:
                 full_path = str(Path(current_path) / entry)
                 try:
                     self.list_dir(full_path, backend)
                     dirs.append(full_path)
                     if recursive:
-                        stack.append(full_path)
+                        queue.append(full_path)  # Add to end of queue for breadth-first
                 except (NotADirectoryError, FileNotFoundError):
                     files.append(full_path)
                 except Exception as e:

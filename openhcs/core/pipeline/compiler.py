@@ -21,12 +21,14 @@ Doctrinal Clauses:
 """
 
 import logging
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union # Callable removed
 from collections import OrderedDict # For special_outputs and special_inputs order (used by PathPlanner)
 
-from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES, READ_BACKEND, WRITE_BACKEND
+from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES, READ_BACKEND, WRITE_BACKEND, Backend
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.config import MaterializationBackend
 from openhcs.core.pipeline.funcstep_contract_validator import \
     FuncStepContractValidator
 from openhcs.core.pipeline.materialization_flag_planner import \
@@ -55,7 +57,8 @@ class PipelineCompiler:
     def initialize_step_plans_for_context(
         context: ProcessingContext,
         steps_definition: List[AbstractStep],
-        metadata_writer: bool = False
+        metadata_writer: bool = False,
+        plate_path: Optional[Path] = None
         # base_input_dir and well_id parameters removed, will use from context
     ) -> None:
         """
@@ -67,6 +70,7 @@ class PipelineCompiler:
             context: ProcessingContext to initialize step plans for
             steps_definition: List of AbstractStep objects defining the pipeline
             metadata_writer: If True, this well is responsible for creating OpenHCS metadata files
+            plate_path: Path to plate root for zarr conversion detection
         """
         if context.is_frozen():
             raise AttributeError("Cannot initialize step plans in a frozen ProcessingContext.")
@@ -83,6 +87,16 @@ class PipelineCompiler:
                     "step_type": step.__class__.__name__,
                     "well_id": context.well_id,
                 }
+
+        # === ZARR CONVERSION DETECTION ===
+        # If we want zarr output, store conversion path (plate root) and original input dir
+        if plate_path and steps_definition:
+            vfs_config = context.get_vfs_config()
+            if vfs_config.materialization_backend == MaterializationBackend.ZARR:
+                context.zarr_conversion_path = str(plate_path)
+                context.original_input_dir = str(context.input_dir)
+            else:
+                context.zarr_conversion_path = None
 
         # The well_id and base_input_dir are available from the context object.
         PipelinePathPlanner.prepare_pipeline_paths(
@@ -158,10 +172,54 @@ class PipelineCompiler:
     # now modifies context.step_plans in-place and takes context directly.
 
     @staticmethod
+    def declare_zarr_stores_for_context(
+        context: ProcessingContext,
+        steps_definition: List[AbstractStep],
+        orchestrator
+    ) -> None:
+        """
+        Declare zarr store creation functions for runtime execution.
+
+        This method runs after path planning but before materialization flag planning
+        to declare which steps need zarr stores and provide the metadata needed
+        for runtime store creation.
+
+        Args:
+            context: ProcessingContext for current well
+            steps_definition: List of AbstractStep objects
+            orchestrator: Orchestrator instance for accessing all wells
+        """
+        from openhcs.constants.constants import GroupBy, Backend
+
+        all_wells = orchestrator.get_component_keys(GroupBy.WELL)
+
+        vfs_config = context.get_vfs_config()
+
+        for step in steps_definition:
+            step_plan = context.step_plans[step.step_id]
+
+            will_use_zarr = (
+                vfs_config.materialization_backend == MaterializationBackend.ZARR and
+                (step.requires_disk_output or
+                 getattr(step, "force_disk_output", False) or
+                 steps_definition.index(step) == len(steps_definition) - 1)
+            )
+
+            if will_use_zarr:
+                step_plan["zarr_config"] = {
+                    "store_name": "images.zarr",
+                    "all_wells": all_wells,
+                    "needs_initialization": True
+                }
+                logger.debug(f"Step '{step.name}' will use zarr backend for well {context.well_id}")
+            else:
+                step_plan["zarr_config"] = None
+
+    @staticmethod
     def plan_materialization_flags_for_context(
         context: ProcessingContext,
-        steps_definition: List[AbstractStep]
-        # well_id parameter removed, will use from context if needed by internal logic (currently not)
+        steps_definition: List[AbstractStep],
+        orchestrator
     ) -> None:
         """
         Plans and injects materialization flags into context.step_plans
@@ -177,7 +235,8 @@ class PipelineCompiler:
         # and modifies context.step_plans in-place.
         MaterializationFlagPlanner.prepare_pipeline_flags(
             context,
-            steps_definition
+            steps_definition,
+            orchestrator.plate_path
         )
 
         # Post-check (optional, but good for ensuring contracts are met by the planner)

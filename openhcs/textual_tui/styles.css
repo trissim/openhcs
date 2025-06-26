@@ -27,15 +27,30 @@ Collapsible > .collapsible--contents {
     padding: 0;
 }
 
-/* SelectionList styling - remove circles, keep highlighting */
+/* SelectionList styling - remove circles, keep highlighting, ultra-compact */
 SelectionList > .selection-list--option {
-    padding-left: 1;
+    padding-left: 0;  /* Reduce left padding to minimize space between checkbox and content */
     text-style: none;
+    margin: 0;
+    padding-right: 0;
 }
 
 SelectionList > .selection-list--option-highlighted {
     background: $accent;
     color: $text;
+}
+
+/* Ultra-compact SelectionList - remove all internal spacing */
+SelectionList {
+    padding: 0;
+    margin: 0;
+}
+
+/* Reduce spacing in ButtonListWidget specifically */
+ButtonListWidget SelectionList > .selection-list--option {
+    padding-left: 0;  /* No left padding */
+    padding-right: 0; /* No right padding */
+    margin: 0;
 }
 
 /* MenuBar */
@@ -126,6 +141,18 @@ StatusBar #log_display {
     margin: 0;  /* Remove horizontal margin for compact layout */
     padding: 0;  /* Remove padding for ultra-compact buttons */
     min-width: 0;
+}
+
+/* ButtonListWidget - ultra-compact layout */
+ButtonListWidget Vertical {
+    padding: 0;
+    margin: 0;
+}
+
+ButtonListWidget Horizontal {
+    padding: 0;
+    margin: 0;
+    margin-bottom: 0;  /* Ensure no bottom margin on button row */
 }
 
 /* Exception: Function pane buttons should size to content with compact padding */
@@ -293,17 +320,109 @@ RadioButton {
     content-align: left top;
 }
 
-/* Dialog buttons - centered for confirmation dialogs, left-aligned for file browsers */
+/* AUTOMATIC BUTTON ALIGNMENT - No manual classes needed! */
+
+/* Target all Horizontal containers in windows that contain buttons */
+BaseOpenHCSWindow Horizontal,
+Window Horizontal {
+    height: auto;
+    align: center middle;  /* Auto-center all button containers */
+    width: 100%;
+    text-align: center;
+}
+
+/* Style all buttons in window containers */
+BaseOpenHCSWindow Button,
+Window Button {
+    width: auto;
+    margin: 0 1;  /* Horizontal spacing between buttons */
+    min-width: 8; /* Standard button width (like GroupBy selector) */
+}
+
+/* Exception: Don't center main content button containers (plate manager, etc.) */
+#plate_manager_container Horizontal,
+#pipeline_editor_container Horizontal {
+    align: left top;  /* Override for main content areas */
+    text-align: left;
+}
+
+#plate_manager_container Button,
+#pipeline_editor_container Button {
+    width: 1fr;      /* Override: main content buttons fill width */
+    margin: 0;       /* Override: no spacing for compact layout */
+    min-width: 0;    /* Override: no minimum width */
+}
+
+/* Legacy dialog-buttons class for explicit control */
 .dialog-buttons {
+    height: auto;
+    align: center middle;
+    width: 100%;
     text-align: center;
 }
 
 .dialog-buttons Button {
     width: auto;
-    margin: 0 1;  /* Horizontal margin for spacing between buttons */
+    margin: 0 1;
+    min-width: 8;
 }
 
 
+
+/* DIFFERENT VALUES STYLING - Text inputs and universal widgets */
+
+/* No special styling - looks like normal input */
+.different-values-input {
+    /* No special styling - just normal input appearance */
+}
+
+/* Simple different values widgets - minimal disabled appearance */
+DifferentValuesCheckbox {
+    /* Compact 1x1 button appearance, looks disabled */
+    width: 3;
+    height: 1;
+    opacity: 0.6;
+    color: $text-muted;
+}
+
+DifferentValuesRadioSet {
+    /* Looks disabled until clicked */
+    opacity: 0.6;
+    color: $text-muted;
+}
+
+/* Universal styling for non-text widgets */
+.different-values-widget {
+    border: dashed $warning !important;
+    color: $warning !important;
+    background: $surface !important;
+    opacity: 0.7;
+}
+
+.different-values-widget:hover {
+    border: solid $warning !important;
+    background: $warning 20% !important;
+    opacity: 1.0;
+}
+
+/* Simple disabled appearance for different values widgets */
+.different-values-disabled {
+    color: $text-muted !important;
+}
+
+/* Modified from different state */
+.modified-from-different {
+    border: solid $success !important;
+    color: $text !important;
+    background: $success 10% !important;
+}
+
+/* User modified state */
+.user-modified {
+    border: solid $primary !important;
+    color: $text !important;
+    background: $primary 10% !important;
+}
 
 /* Start Menu Widget */
 StartMenuWidget {

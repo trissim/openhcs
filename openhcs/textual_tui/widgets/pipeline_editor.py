@@ -138,7 +138,7 @@ class PipelineEditorWidget(ButtonListWidget):
         """Update button states based on current selection and mathematical constraints."""
         try:
             has_plate = bool(self.current_plate)
-            is_initialized = self.current_plate_status in ['-', 'o']  # Initialized or compiled
+            is_initialized = self.current_plate_status in ['-', 'o', 'C', 'F']  # Initialized, compiled, completed, or failed
             has_steps = len(self.pipeline_steps) > 0
             has_selection = len(selected_values) > 0
 
@@ -290,7 +290,7 @@ class PipelineEditorWidget(ButtonListWidget):
         """Update button enabled/disabled states based on mathematical constraints."""
         try:
             has_plate = bool(self.current_plate)
-            is_initialized = self.current_plate_status in ['-', 'o']  # Initialized or compiled
+            is_initialized = self.current_plate_status in ['-', 'o', 'C', 'F']  # Initialized, compiled, completed, or failed
             has_steps = len(self.pipeline_steps) > 0
             has_valid_selection = bool(self.selected_step) and self._find_step_index_by_selection() is not None
 
@@ -551,6 +551,9 @@ class PipelineEditorWidget(ButtonListWidget):
             # Replace current pipeline with concatenated steps
             self.pipeline_steps = all_steps
 
+            # Apply to multiple orchestrators if they are selected
+            self._apply_pipeline_to_selected_orchestrators(all_steps)
+
             # Create status message
             if len(loaded_files) == 1:
                 status = f"Loaded {len(all_steps)} steps from {loaded_files[0]}"
@@ -580,6 +583,34 @@ class PipelineEditorWidget(ButtonListWidget):
         except Exception as e:
             logger.error(f"Failed to load pipeline from {file_path.name}: {e}")
             raise
+
+    def _apply_pipeline_to_selected_orchestrators(self, pipeline_steps: List) -> None:
+        """Apply loaded pipeline to all selected orchestrators."""
+        if not self.plate_manager:
+            return
+
+        # Get selected orchestrators from plate manager
+        selected_items, selection_mode = self.plate_manager.get_selection_state()
+
+        if selection_mode == "empty" or len(selected_items) <= 1:
+            # Single or no selection - normal behavior
+            return
+
+        # Multiple orchestrators selected - apply pipeline to all
+        applied_count = 0
+        for item in selected_items:
+            plate_path = item['path']
+            if plate_path in self.plate_manager.orchestrators:
+                orchestrator = self.plate_manager.orchestrators[plate_path]
+                orchestrator.pipeline_definition = list(pipeline_steps)
+
+                # Also save to our plate pipelines storage
+                self.save_pipeline_for_plate(plate_path, list(pipeline_steps))
+                applied_count += 1
+
+        if applied_count > 1:
+            self.app.current_status += f" → Applied to {applied_count} orchestrators"
+            logger.info(f"Applied pipeline to {applied_count} selected orchestrators")
 
     def _load_pipeline_from_file(self, file_path: Path) -> None:
         """Load pipeline from .pipeline file (legacy single-file method)."""

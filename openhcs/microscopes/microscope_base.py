@@ -141,6 +141,75 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         """
         pass
 
+    def initialize_workspace(self, plate_path: Path, workspace_path: Optional[Path], filemanager: FileManager) -> Path:
+        """
+        Default workspace initialization: create workspace in plate folder and mirror with symlinks.
+
+        Most microscope handlers need workspace mirroring. Override this method only if different behavior is needed.
+
+        Args:
+            plate_path: Path to the original plate directory
+            workspace_path: Optional workspace path (creates default in plate folder if None)
+            filemanager: FileManager instance for file operations
+
+        Returns:
+            Path to the actual directory containing images to process
+        """
+        from openhcs.constants.constants import Backend
+
+        # Create workspace path in plate folder if not provided
+        if workspace_path is None:
+            workspace_path = plate_path / "workspace"
+
+        # Check if workspace already exists - skip mirroring if it does
+        if workspace_path.exists():
+            logger.info(f"📁 EXISTING WORKSPACE FOUND: {workspace_path} - skipping mirror operation")
+            num_links = 0  # No new links created
+        else:
+            # Ensure workspace directory exists
+            filemanager.ensure_directory(str(workspace_path), Backend.DISK.value)
+
+            # Mirror plate directory with symlinks
+            logger.info(f"Mirroring plate directory {plate_path} to workspace {workspace_path}...")
+            try:
+                num_links = filemanager.mirror_directory_with_symlinks(
+                    source_dir=str(plate_path),
+                    target_dir=str(workspace_path),
+                    backend=Backend.DISK.value,
+                    recursive=True,
+                    overwrite_symlinks_only=True,
+                )
+                logger.info(f"Created {num_links} symlinks in workspace.")
+            except Exception as mirror_error:
+                # If mirroring fails, clean up and try again with fail-loud
+                logger.warning(f"⚠️ MIRROR FAILED: {mirror_error}. Cleaning workspace and retrying...")
+                try:
+                    import shutil
+                    shutil.rmtree(workspace_path)
+                    logger.info(f"🧹 Cleaned up failed workspace: {workspace_path}")
+
+                    # Recreate directory and try mirroring again
+                    filemanager.ensure_directory(str(workspace_path), Backend.DISK.value)
+                    num_links = filemanager.mirror_directory_with_symlinks(
+                        source_dir=str(plate_path),
+                        target_dir=str(workspace_path),
+                        backend=Backend.DISK.value,
+                        recursive=True,
+                        overwrite_symlinks_only=True,
+                    )
+                    logger.info(f"✅ RETRY SUCCESS: Created {num_links} symlinks in workspace.")
+                except Exception as retry_error:
+                    # Fail loud on second attempt
+                    error_msg = f"Failed to mirror plate directory to workspace after cleanup: {retry_error}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg) from retry_error
+
+        # Set plate_folder for this handler
+        self.plate_folder = workspace_path
+
+        # Prepare workspace and return final image directory
+        return self.post_workspace(workspace_path, filemanager)
+
     def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3):
         """
         Hook called after workspace symlink creation.

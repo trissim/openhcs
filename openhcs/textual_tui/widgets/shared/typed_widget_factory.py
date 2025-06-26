@@ -2,25 +2,27 @@
 
 import dataclasses
 from enum import Enum
-from typing import get_origin, get_args
+from typing import get_origin, get_args, Any, Optional
 from textual.widgets import Input, Checkbox, Collapsible
 from .enum_radio_set import EnumRadioSet
+from ..different_values_wrapper import create_different_values_widget
 
 class TypedWidgetFactory:
-    """Simple type → widget mapping. That's it."""
+    """Simple type → widget mapping with universal 'DIFFERENT VALUES' support."""
 
     @staticmethod
-    def create_widget(param_type, current_value, widget_id):
-        """Mathematical mapping: type → widget."""
+    def create_widget(param_type, current_value, widget_id, is_different_values=False, default_value=None):
+        """Mathematical mapping: type → widget with optional 'DIFFERENT VALUES' support."""
 
+        # Create the appropriate widget based on type
         if param_type == bool:
-            return Checkbox(value=bool(current_value or False), id=widget_id, compact=True)
+            widget = Checkbox(value=bool(current_value or False), id=widget_id, compact=True)
         elif param_type == int:
-            return Input(value=str(current_value or ""), type="integer", id=widget_id)
+            widget = Input(value=str(current_value or ""), type="integer", id=widget_id)
         elif param_type == float:
-            return Input(value=str(current_value or ""), type="number", id=widget_id)
+            widget = Input(value=str(current_value or ""), type="number", id=widget_id)
         elif hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
-            return EnumRadioSet(param_type, current_value, id=widget_id)
+            widget = EnumRadioSet(param_type, current_value, id=widget_id)
         elif TypedWidgetFactory._is_list_of_enums(param_type):
             # Handle List[Enum] types (like List[VariableComponents])
             enum_type = TypedWidgetFactory._get_enum_from_list(param_type)
@@ -29,12 +31,35 @@ class TypedWidgetFactory:
             if current_value and isinstance(current_value, list) and len(current_value) > 0:
                 first_item = current_value[0]
                 display_value = first_item.value if hasattr(first_item, 'value') else str(first_item)
-            return EnumRadioSet(enum_type, display_value, id=widget_id)
+            widget = EnumRadioSet(enum_type, display_value, id=widget_id)
         elif dataclasses.is_dataclass(param_type):
-            return TypedWidgetFactory._create_nested_dataclass_widget(param_type, current_value, widget_id)
+            widget = TypedWidgetFactory._create_nested_dataclass_widget(param_type, current_value, widget_id)
         else:
             # Everything else is text input
-            return Input(value=str(current_value or ""), type="text", id=widget_id)
+            widget = Input(value=str(current_value or ""), type="text", id=widget_id)
+
+        # If this is a different values field, wrap it with universal functionality
+        if is_different_values and default_value is not None:
+            from ..different_values_wrapper import DifferentValuesWrapper
+            wrapper = DifferentValuesWrapper(
+                widget=widget,
+                default_value=default_value,
+                field_name=widget_id
+            )
+            widget._different_values_wrapper = wrapper
+
+        return widget
+
+    @staticmethod
+    def create_different_values_widget(param_type, default_value, widget_id, field_name=""):
+        """Create a widget specifically for 'DIFFERENT VALUES' state."""
+        return TypedWidgetFactory.create_widget(
+            param_type=param_type,
+            current_value=None,  # No current value in different state
+            widget_id=widget_id,
+            is_different_values=True,
+            default_value=default_value
+        )
 
     @staticmethod
     def _is_list_of_enums(param_type) -> bool:

@@ -1,11 +1,9 @@
-"""Clickable help labels for displaying docstring information."""
+"""Unified clickable help components using consolidated help system."""
 
 from typing import Union, Callable, Optional
 from textual.widgets import Static
 from textual.events import Click
 from textual.message import Message
-
-from .docstring_help_dialog import DocstringHelpDialog, ParameterHelpDialog
 
 
 class ClickableHelpLabel(Static):
@@ -36,43 +34,19 @@ class ClickableHelpLabel(Static):
         self.add_class("clickable-help")
         
     async def on_click(self, event: Click) -> None:
-        """Handle click events to show help window."""
+        """Handle click events to show help window using unified manager."""
         event.stop()  # Prevent event bubbling
 
+        from openhcs.textual_tui.windows.help_windows import HelpWindowManager
+
         if self.help_target:
-            # Show function/class help using window
-            from openhcs.textual_tui.windows import DocstringHelpWindow
-            from textual.css.query import NoMatches
-
-            try:
-                window = self.app.query_one(DocstringHelpWindow)
-                # Window exists, update it and open
-                window.target = self.help_target
-                from openhcs.textual_tui.widgets.shared.signature_analyzer import DocstringExtractor
-                window.docstring_info = DocstringExtractor.extract(self.help_target)
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = DocstringHelpWindow(self.help_target)
-                await self.app.mount(window)
-                window.open_state = True
+            # Show function/class help using unified manager
+            await HelpWindowManager.show_docstring_help(self.app, self.help_target)
         elif self.param_name and self.param_description:
-            # Show parameter help using window
-            from openhcs.textual_tui.windows import ParameterHelpWindow
-            from textual.css.query import NoMatches
-
-            try:
-                window = self.app.query_one(ParameterHelpWindow)
-                # Window exists, update it and open
-                window.param_name = self.param_name
-                window.param_description = self.param_description
-                window.param_type = self.param_type
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = ParameterHelpWindow(self.param_name, self.param_description, self.param_type)
-                await self.app.mount(window)
-                window.open_state = True
+            # Show parameter help using unified manager
+            await HelpWindowManager.show_parameter_help(
+                self.app, self.param_name, self.param_description, self.param_type
+            )
 
 
 class ClickableFunctionTitle(ClickableHelpLabel):
@@ -127,40 +101,16 @@ class HelpIndicator(Static):
         self.add_class("help-indicator")
         
     async def on_click(self, event: Click) -> None:
-        """Handle click events to show help window."""
+        """Handle click events to show help window using unified manager."""
         event.stop()
 
+        from openhcs.textual_tui.windows.help_windows import HelpWindowManager
+
         if self.help_target:
-            # Show function/class help using window
-            from openhcs.textual_tui.windows import DocstringHelpWindow
-            from textual.css.query import NoMatches
-
-            try:
-                window = self.app.query_one(DocstringHelpWindow)
-                # Window exists, update it and open
-                window.target = self.help_target
-                from openhcs.textual_tui.widgets.shared.signature_analyzer import DocstringExtractor
-                window.docstring_info = DocstringExtractor.extract(self.help_target)
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = DocstringHelpWindow(self.help_target)
-                await self.app.mount(window)
-                window.open_state = True
+            # Show function/class help using unified manager
+            await HelpWindowManager.show_docstring_help(self.app, self.help_target)
         elif self.param_name and self.param_description:
-            # Show parameter help using window
-            from openhcs.textual_tui.windows import ParameterHelpWindow
-            from textual.css.query import NoMatches
-
-            try:
-                window = self.app.query_one(ParameterHelpWindow)
-                # Window exists, update it and open
-                window.param_name = self.param_name
-                window.param_description = self.param_description
-                window.param_type = self.param_type
-                window.open_state = True
-            except NoMatches:
-                # Expected case: window doesn't exist yet, create new one
-                window = ParameterHelpWindow(self.param_name, self.param_description, self.param_type)
-                await self.app.mount(window)
-                window.open_state = True
+            # Show parameter help using unified manager
+            await HelpWindowManager.show_parameter_help(
+                self.app, self.param_name, self.param_description, self.param_type
+            )

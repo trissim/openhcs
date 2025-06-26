@@ -136,7 +136,19 @@ class PipelinePathPlanner:
         path_config = context.get_path_planning_config()
         step_plans = context.step_plans # Work on the context's step_plans
         well_id = context.well_id
-        initial_pipeline_input_dir = context.input_dir # Assuming context.input_dir is the equivalent
+
+        # ALWAYS use plate_path for path planning calculations to ensure consistent naming
+        # Store the real input_dir for first step override at the end
+        real_input_dir = context.input_dir
+        if context.zarr_conversion_path:
+            # For zarr conversion, use zarr conversion path for calculations
+            initial_pipeline_input_dir = Path(context.zarr_conversion_path)
+        elif hasattr(context, 'plate_path') and context.plate_path:
+            # Use plate_path for all calculations to ensure consistent output naming
+            initial_pipeline_input_dir = Path(context.plate_path)
+        else:
+            # Fallback to input_dir if plate_path not available
+            initial_pipeline_input_dir = context.input_dir
 
         if not step_plans: # Should be initialized by PipelineCompiler before this call
             raise ValueError("Context step_plans must be initialized before path planning.")
@@ -145,8 +157,7 @@ class PipelinePathPlanner:
 
         steps = pipeline_definition
 
-        # Modify step_plans in place (step_paths is an alias to context.step_plans)
-        step_paths = step_plans
+        # Modify step_plans in place
     
         # Track available special outputs by key for validation
         declared_outputs = {}
@@ -186,15 +197,15 @@ class PipelinePathPlanner:
 
             # --- Process input directory ---
             if i == 0: # First step
-                if step_id in step_paths and "input_dir" in step_paths[step_id]:
-                    step_input_dir = Path(step_paths[step_id]["input_dir"])
+                if step_id in step_plans and "input_dir" in step_plans[step_id]:
+                    step_input_dir = Path(step_plans[step_id]["input_dir"])
                 elif hasattr(step, "input_dir") and step.input_dir is not None:
                     step_input_dir = Path(step.input_dir) # User override on step object
                 else:
                     step_input_dir = initial_pipeline_input_dir # Fallback to pipeline-level input dir
             else: # Subsequent steps (i > 0)
-                if step_id in step_paths and "input_dir" in step_paths[step_id]:
-                    step_input_dir = Path(step_paths[step_id]["input_dir"])
+                if step_id in step_plans and "input_dir" in step_plans[step_id]:
+                    step_input_dir = Path(step_plans[step_id]["input_dir"])
                 elif hasattr(step, "input_dir") and step.input_dir is not None:
                     # Keep input from step kwargs/attributes for subsequent steps too
                     step_input_dir = Path(step.input_dir)
@@ -202,8 +213,8 @@ class PipelinePathPlanner:
                     # Default: Use previous step's output
                     prev_step = steps[i-1]
                     prev_step_id = prev_step.step_id
-                    if prev_step_id in step_paths and "output_dir" in step_paths[prev_step_id]:
-                        step_input_dir = Path(step_paths[prev_step_id]["output_dir"])
+                    if prev_step_id in step_plans and "output_dir" in step_plans[prev_step_id]:
+                        step_input_dir = Path(step_plans[prev_step_id]["output_dir"])
                     else:
                         # This should ideally not be reached if previous steps always have output_dir
                         raise ValueError(f"Previous step {prev_step.name} (ID: {prev_step_id}) has no output_dir in step_plans.")
@@ -230,16 +241,16 @@ class PipelinePathPlanner:
                         if prev_is_chain_breaker:
                             logger.info(f"🔗 CHAINBREAKER: Detected chainbreaker function '{func_to_check.__name__}' in step '{prev_step.name}'")
 
-                # If previous step is chain breaker, use first step's input dir and set disk backend
+                # If previous step is chain breaker, use first step's input dir and same backend as first step
                 if prev_is_chain_breaker:
-                    # Get first step's input_dir - check step_paths first, then calculate it
+                    # Get first step's input_dir - check step_plans first, then calculate it
                     first_step = steps[0]
                     first_step_id = first_step.step_id
                     first_step_input_dir = None
 
-                    # Try to get from step_paths (if first step was already processed)
-                    if first_step_id in step_paths and "input_dir" in step_paths[first_step_id]:
-                        first_step_input_dir = step_paths[first_step_id]["input_dir"]
+                    # Try to get from step_plans (if first step was already processed)
+                    if first_step_id in step_plans and "input_dir" in step_plans[first_step_id]:
+                        first_step_input_dir = step_plans[first_step_id]["input_dir"]
                     # Otherwise, calculate it the same way we do for first step
                     elif hasattr(first_step, "input_dir") and first_step.input_dir is not None:
                         first_step_input_dir = str(first_step.input_dir)
@@ -249,24 +260,33 @@ class PipelinePathPlanner:
                     if first_step_input_dir:
                         original_step_input_dir = step_input_dir
                         step_input_dir = Path(first_step_input_dir)
-                        chain_breaker_read_backend = 'disk'  # Store for later application
-                        logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' redirected from '{original_step_input_dir}' to first step input '{first_step_input_dir}' and will use disk backend")
+
+                        # Use same backend as first step instead of hardcoded 'disk'
+                        if first_step_id in step_plans and READ_BACKEND in step_plans[first_step_id]:
+                            chain_breaker_read_backend = step_plans[first_step_id][READ_BACKEND]
+                            logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' will use same backend as first step: '{chain_breaker_read_backend}'")
+                        else:
+                            from openhcs.constants.constants import Backend
+                            chain_breaker_read_backend = Backend.DISK.value
+                            logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' using fallback disk backend (first step backend not yet determined)")
+
+                        logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' redirected from '{original_step_input_dir}' to first step input '{first_step_input_dir}'")
                     else:
                         logger.warning(f"Step '{step_name}' follows chain breaker '{prev_step.name}' but could not determine first step input_dir")
                 
             # --- Process output directory ---
-            # Check if step_paths already has this step with output_dir
-            if step_id in step_paths and "output_dir" in step_paths[step_id]:
-                step_output_dir = Path(step_paths[step_id]["output_dir"])
+            # Check if step_plans already has this step with output_dir
+            if step_id in step_plans and "output_dir" in step_plans[step_id]:
+                step_output_dir = Path(step_plans[step_id]["output_dir"])
             elif hasattr(step, "output_dir") and step.output_dir is not None:
                 # Keep output from step kwargs
                 step_output_dir = Path(step.output_dir)
             elif i < len(steps) - 1:
                 next_step = steps[i+1]
                 next_step_id = next_step.step_id
-                if next_step_id in step_paths and "input_dir" in step_paths[next_step_id]:
+                if next_step_id in step_plans and "input_dir" in step_plans[next_step_id]:
                     # Use next step's input from step_plans
-                    step_output_dir = Path(step_paths[next_step_id]["input_dir"])
+                    step_output_dir = Path(step_plans[next_step_id]["input_dir"])
                 elif hasattr(next_step, "input_dir") and next_step.input_dir is not None:
                     # Use next step's input from step attribute
                     step_output_dir = Path(next_step.input_dir)
@@ -274,61 +294,33 @@ class PipelinePathPlanner:
                     # For first step (i == 0) OR steps following chainbreakers, create output directory with suffix
                     # For other subsequent steps (i > 0), work in place (use same directory as input)
                     if i == 0 or prev_is_chain_breaker:
-                        # Use same directory as input with default suffix
+                        # Create output directory with suffix
                         current_suffix = path_config.output_dir_suffix
-
-                        # For first step, use workspace directory name instead of input directory name
-                        if hasattr(context, 'workspace_path') and context.workspace_path:
-                            workspace_path = Path(context.workspace_path)
-                            # Check if global output folder is configured
-                            global_output_folder = path_config.global_output_folder
-                            if global_output_folder:
-                                # Use global output folder: {global_folder}/{workspace_name}{suffix}
-                                global_folder = Path(global_output_folder)
-                                step_output_dir = global_folder / f"{workspace_path.name}{current_suffix}"
-                            else:
-                                # Use current behavior: same parent as workspace
-                                step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
-                        else:
-                            step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
+                        step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
                     else:
                         # Subsequent steps work in place - use same directory as input
                         step_output_dir = step_input_dir
             else:
-                # Last step: Always create output directory with suffix (final results)
-                current_suffix = path_config.output_dir_suffix
-
-                # For last step, use workspace directory name instead of input directory name
-                if hasattr(context, 'workspace_path') and context.workspace_path:
-                    workspace_path = Path(context.workspace_path)
-                    # Check if global output folder is configured
-                    global_output_folder = path_config.global_output_folder
-                    if global_output_folder:
-                        # Use global output folder: {global_folder}/{workspace_name}{suffix}
-                        global_folder = Path(global_output_folder)
-                        step_output_dir = global_folder / f"{workspace_path.name}{current_suffix}"
-                    else:
-                        # Use current behavior: same parent as workspace
-                        step_output_dir = workspace_path.with_name(f"{workspace_path.name}{current_suffix}")
-                else:
-                    step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{current_suffix}")
+                # Last step: Work in place - use same directory as input
+                step_output_dir = step_input_dir
                 
-            # --- Rule: First step and chainbreaker followers must have different input and output ---
-            if (i == 0 or prev_is_chain_breaker) and step_output_dir == step_input_dir:
-                # For the first step, always use the general output_dir_suffix if it needs differentiation
-                # Use workspace directory name instead of input directory name
-                if hasattr(context, 'workspace_path') and context.workspace_path:
-                    workspace_path = Path(context.workspace_path)
+            # --- Rule: First step and chainbreaker followers use global output logic ---
+            if (i == 0 or prev_is_chain_breaker):
+                # For the first step and chain breakers, apply global output folder logic
+                # Always use plate_path.name for consistent output naming
+                if hasattr(context, 'plate_path') and context.plate_path:
+                    plate_path = Path(context.plate_path)
                     # Check if global output folder is configured
                     global_output_folder = path_config.global_output_folder
                     if global_output_folder:
-                        # Use global output folder: {global_folder}/{workspace_name}{suffix}
+                        # Use global output folder: {global_folder}/{plate_name}{suffix}
                         global_folder = Path(global_output_folder)
-                        step_output_dir = global_folder / f"{workspace_path.name}{path_config.output_dir_suffix}"
+                        step_output_dir = global_folder / f"{plate_path.name}{path_config.output_dir_suffix}"
                     else:
-                        # Use current behavior: same parent as workspace
-                        step_output_dir = workspace_path.with_name(f"{workspace_path.name}{path_config.output_dir_suffix}")
+                        # Use plate parent directory: {plate_parent}/{plate_name}{suffix}
+                        step_output_dir = plate_path.with_name(f"{plate_path.name}{path_config.output_dir_suffix}")
                 else:
+                    # Fallback to input directory name if plate_path not available
                     step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{path_config.output_dir_suffix}")
 
             # --- Process special I/O ---
@@ -411,18 +403,19 @@ class PipelinePathPlanner:
 
 
 
-            # Create step path info
-            step_paths[step_id] = {
+            # Update step plan with path info
+            step_plans[step_id].update({
                 "input_dir": str(step_input_dir),
                 "output_dir": str(step_output_dir),
                 "pipeline_position": i,
+                "follows_chain_breaker": prev_is_chain_breaker,  # Flag for zarr conversion logic
                 "special_inputs": special_inputs,
                 "special_outputs": special_outputs,
-            }
+            })
 
             # Apply chain breaker read backend if needed
             if chain_breaker_read_backend is not None:
-                step_paths[step_id][READ_BACKEND] = chain_breaker_read_backend
+                step_plans[step_id][READ_BACKEND] = chain_breaker_read_backend
 
             # --- Ensure directories exist using appropriate backends ---
             # Get the write backend for this step's output directory
@@ -451,8 +444,8 @@ class PipelinePathPlanner:
             curr_step_name = step.name
             prev_step_name = steps[i-1].name
 
-            curr_step_input_dir = step_paths[curr_step_id]["input_dir"]
-            prev_step_output_dir = step_paths[prev_step_id]["output_dir"]
+            curr_step_input_dir = step_plans[curr_step_id]["input_dir"]
+            prev_step_output_dir = step_plans[prev_step_id]["output_dir"]
 
             # Check if the PREVIOUS step is a chain breaker
             prev_step = steps[i-1]
@@ -474,7 +467,7 @@ class PipelinePathPlanner:
             if not prev_is_chain_breaker_flag_from_plan and curr_step_input_dir != prev_step_output_dir:
                 # Check if connected through special I/O
                 has_special_connection = False
-                for _, input_info in step_paths[curr_step_id].get("special_inputs", {}).items(): # key variable renamed to _
+                for _, input_info in step_plans[curr_step_id].get("special_inputs", {}).items(): # key variable renamed to _
                     if input_info["source_step_id"] == prev_step_id:
                         has_special_connection = True
                         break
@@ -482,4 +475,22 @@ class PipelinePathPlanner:
                 if not has_special_connection:
                     raise PlanError(f"Path discontinuity: {prev_step_name} output ({prev_step_output_dir}) doesn't connect to {curr_step_name} input ({curr_step_input_dir})") # Added paths to error
 
-        return step_paths
+        # === ZARR CONVERSION FIRST STEP OVERRIDE ===
+        # If zarr conversion is happening, override first step to read from original location
+        if context.zarr_conversion_path and steps:
+            first_step_id = steps[0].step_id
+            step_plans[first_step_id]['input_dir'] = context.original_input_dir
+            step_plans[first_step_id]['convert_to_zarr'] = context.zarr_conversion_path
+            logger.info(f"Zarr conversion: first step reads from {context.original_input_dir}, converts to {context.zarr_conversion_path}")
+
+        # === FIRST STEP INPUT OVERRIDE ===
+        # If we used plate_path for calculations but real input is different, override first step
+        elif hasattr(context, 'plate_path') and context.plate_path and real_input_dir and steps:
+            plate_path_str = str(context.plate_path)
+            real_input_str = str(real_input_dir)
+            if plate_path_str != real_input_str:
+                first_step_id = steps[0].step_id
+                step_plans[first_step_id]['input_dir'] = real_input_str
+                logger.info(f"Path planning: used plate_path ({plate_path_str}) for calculations, overriding first step to read from real input ({real_input_str})")
+
+        return step_plans

@@ -1,9 +1,10 @@
 # File: openhcs/textual_tui/widgets/shared/signature_analyzer.py
 
+import ast
 import inspect
 import dataclasses
 import re
-from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional
+from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type
 
 class ParameterInfo(NamedTuple):
     """Information about a parameter."""
@@ -41,17 +42,57 @@ class DocstringExtractor:
         if not docstring:
             return DocstringInfo()
 
+        # Try AST-based parsing first for better accuracy
+        try:
+            return DocstringExtractor._parse_docstring_ast(target, docstring)
+        except Exception:
+            # Fall back to regex-based parsing
+            return DocstringExtractor._parse_docstring(docstring)
+
+    @staticmethod
+    def _parse_docstring_ast(target: Union[Callable, type], docstring: str) -> DocstringInfo:
+        """Parse docstring using AST for more accurate extraction.
+
+        This method uses AST to parse the source code and extract docstring
+        information more accurately, especially for complex multiline descriptions.
+        """
+        try:
+            # Get source code
+            source = inspect.getsource(target)
+            tree = ast.parse(source)
+
+            # Find the function/class node
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    if ast.get_docstring(node) == docstring:
+                        return DocstringExtractor._parse_ast_docstring(node, docstring)
+
+            # Fallback to regex parsing if AST parsing fails
+            return DocstringExtractor._parse_docstring(docstring)
+
+        except Exception:
+            # Fallback to regex parsing
+            return DocstringExtractor._parse_docstring(docstring)
+
+    @staticmethod
+    def _parse_ast_docstring(node: Union[ast.FunctionDef, ast.ClassDef], docstring: str) -> DocstringInfo:
+        """Parse docstring from AST node with enhanced multiline support."""
+        # For now, use the improved regex parser
+        # This can be extended later with more sophisticated AST-based parsing
         return DocstringExtractor._parse_docstring(docstring)
 
     @staticmethod
     def _parse_docstring(docstring: str) -> DocstringInfo:
-        """Parse a docstring into structured components.
+        """Parse a docstring into structured components with improved multiline support.
 
         Supports multiple docstring formats:
         - Google style (Args:, Returns:, Examples:)
         - NumPy style (Parameters, Returns, Examples)
         - Sphinx style (:param name:, :returns:)
         - Simple format (just description)
+
+        Uses improved parsing for multiline parameter descriptions that continues
+        until a blank line or new parameter/section is encountered.
         """
         lines = docstring.strip().split('\n')
 
@@ -64,58 +105,114 @@ class DocstringExtractor:
 
         current_section = 'description'
         current_param = None
+        current_param_lines = []
 
-        for line in lines:
+        def _finalize_current_param():
+            """Finalize the current parameter description."""
+            if current_param and current_param_lines:
+                # Join lines and clean up whitespace
+                param_desc = '\n'.join(current_param_lines).strip()
+                parameters[current_param] = param_desc
+
+        for i, line in enumerate(lines):
+            original_line = line
             line = line.strip()
 
-            # Skip empty lines in description
-            if not line and current_section == 'description':
-                if description_lines:  # Only add if we have content
-                    description_lines.append('')
-                continue
-
-            # Check for section headers
+            # Check for section headers first
             if line.lower() in ('args:', 'arguments:', 'parameters:'):
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
                 current_section = 'parameters'
                 continue
             elif line.lower() in ('returns:', 'return:'):
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
                 current_section = 'returns'
                 continue
             elif line.lower() in ('examples:', 'example:'):
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
                 current_section = 'examples'
                 continue
 
             # Parse content based on current section
             if current_section == 'description':
+                # Handle empty lines in description
+                if not line:
+                    if description_lines:  # Only add if we have content
+                        description_lines.append('')
+                    continue
+
                 if not summary and line:
                     summary = line
                 else:
                     description_lines.append(line)
 
             elif current_section == 'parameters':
-                # Handle different parameter formats
+                # Check for new parameter definition
                 param_match = re.match(r'^(\w+):\s*(.+)', line)
                 sphinx_match = re.match(r'^:param\s+(\w+):\s*(.+)', line)
+                simple_param_match = re.match(r'^(\w+)\s+(.+)', line) if line and not line.startswith(' ') else None
 
-                if param_match:
-                    param_name, param_desc = param_match.groups()
-                    parameters[param_name] = param_desc.strip()
+                if param_match or sphinx_match:
+                    # Finalize previous parameter
+                    _finalize_current_param()
+
+                    # Start new parameter
+                    if param_match:
+                        param_name, param_desc = param_match.groups()
+                    else:  # sphinx_match
+                        param_name, param_desc = sphinx_match.groups()
+
                     current_param = param_name
-                elif sphinx_match:
-                    param_name, param_desc = sphinx_match.groups()
-                    parameters[param_name] = param_desc.strip()
-                    current_param = param_name
-                elif current_param and line.startswith(' '):
-                    # Continuation of previous parameter description
-                    parameters[current_param] += ' ' + line.strip()
+                    current_param_lines = [param_desc.strip()]
+
+                elif not line:
+                    # Empty line - check if this ends the current parameter
+                    # Look ahead to see if next non-empty line starts a new parameter
+                    next_line_starts_param = False
+                    for j in range(i + 1, len(lines)):
+                        next_line = lines[j].strip()
+                        if not next_line:
+                            continue
+                        # Check if next line starts a new parameter or section
+                        if (re.match(r'^(\w+):\s*(.+)', next_line) or
+                            re.match(r'^:param\s+(\w+):\s*(.+)', next_line) or
+                            next_line.lower() in ('returns:', 'return:', 'examples:', 'example:') or
+                            (not next_line.startswith(' ') and len(next_line.split()) >= 2)):
+                            next_line_starts_param = True
+                            break
+                        else:
+                            break
+
+                    if next_line_starts_param:
+                        # This empty line ends the current parameter
+                        _finalize_current_param()
+                        current_param = None
+                        current_param_lines = []
+                    elif current_param_lines:
+                        # Add empty line to current parameter (for formatting)
+                        current_param_lines.append('')
+
+                elif current_param and (line.startswith(' ') or original_line.startswith('    ')):
+                    # Continuation of current parameter (indented)
+                    current_param_lines.append(line)
+
                 elif line and not line.startswith(' '):
-                    # New parameter without colon format (simple list)
+                    # Potential new parameter without colon format
                     words = line.split()
-                    if words:
+                    if len(words) >= 2:
+                        # Finalize previous parameter
+                        _finalize_current_param()
+
+                        # Start new parameter
                         param_name = words[0].rstrip(':')
-                        param_desc = ' '.join(words[1:]) if len(words) > 1 else ''
-                        parameters[param_name] = param_desc
+                        param_desc = ' '.join(words[1:])
                         current_param = param_name
+                        current_param_lines = [param_desc]
 
             elif current_section == 'returns':
                 if returns is None:
@@ -128,6 +225,9 @@ class DocstringExtractor:
                     examples = line
                 else:
                     examples += '\n' + line
+
+        # Finalize any remaining parameter
+        _finalize_current_param()
 
         # Clean up description
         description = '\n'.join(description_lines).strip() if description_lines else None
@@ -146,22 +246,30 @@ class SignatureAnalyzer:
     """Universal analyzer for extracting parameter information from any target."""
     
     @staticmethod
-    def analyze(target: Union[Callable, type]) -> Dict[str, ParameterInfo]:
-        """Extract parameter information from any target: function, constructor, or dataclass.
-        
+    def analyze(target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
+        """Extract parameter information from any target: function, constructor, dataclass, or instance.
+
         Args:
-            target: Function, constructor, or dataclass type
-            
+            target: Function, constructor, dataclass type, or dataclass instance
+
         Returns:
             Dict mapping parameter names to ParameterInfo
         """
         if not target:
             return {}
-        
+
         # Dispatch based on target type
-        if dataclasses.is_dataclass(target):
-            return SignatureAnalyzer._analyze_dataclass(target)
+        if inspect.isclass(target):
+            if dataclasses.is_dataclass(target):
+                return SignatureAnalyzer._analyze_dataclass(target)
+            else:
+                # Try to analyze constructor
+                return SignatureAnalyzer._analyze_callable(target.__init__)
+        elif dataclasses.is_dataclass(target):
+            # Instance of dataclass
+            return SignatureAnalyzer._analyze_dataclass_instance(target)
         else:
+            # Function, method, or other callable
             return SignatureAnalyzer._analyze_callable(target)
     
     @staticmethod
@@ -250,7 +358,59 @@ class SignatureAnalyzer:
                 )
 
             return parameters
-            
+
         except Exception:
             # Return empty dict on error
+            return {}
+
+    @staticmethod
+    def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
+        """Extract parameter information from a dataclass instance."""
+        try:
+            # Get the type and analyze it
+            dataclass_type = type(instance)
+            parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
+
+            # Update default values with current instance values
+            for name, param_info in parameters.items():
+                if hasattr(instance, name):
+                    current_value = getattr(instance, name)
+                    # Create new ParameterInfo with current value as default
+                    parameters[name] = ParameterInfo(
+                        name=param_info.name,
+                        param_type=param_info.param_type,
+                        default_value=current_value,
+                        is_required=param_info.is_required,
+                        description=param_info.description
+                    )
+
+            return parameters
+
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
+        """Extract parameter information from a dataclass instance."""
+        try:
+            # Get the type and analyze it
+            dataclass_type = type(instance)
+            parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
+
+            # Update default values with current instance values
+            for name, param_info in parameters.items():
+                if hasattr(instance, name):
+                    current_value = getattr(instance, name)
+                    # Create new ParameterInfo with current value as default
+                    parameters[name] = ParameterInfo(
+                        name=param_info.name,
+                        param_type=param_info.param_type,
+                        default_value=current_value,
+                        is_required=param_info.is_required,
+                        description=param_info.description
+                    )
+
+            return parameters
+
+        except Exception:
             return {}

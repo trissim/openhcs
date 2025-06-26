@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from .typed_widget_factory import TypedWidgetFactory
 from .signature_analyzer import SignatureAnalyzer
 from .clickable_help_label import ClickableParameterLabel, HelpIndicator
+from ..different_values_input import DifferentValuesInput
 
 class ParameterFormManager:
     """Mathematical: (parameters, types, field_id) → parameter form"""
@@ -52,9 +53,9 @@ class ParameterFormManager:
             nested_parameters[nested_name] = nested_current_value
             nested_parameter_types[nested_name] = nested_info.param_type
 
-        # Create nested form manager with hierarchical underscore notation
+        # Create nested form manager with hierarchical underscore notation and parameter info
         nested_field_id = f"{self.field_id}_{param_name}"
-        nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id)
+        nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id, nested_param_info)
 
         # Store reference to nested form manager for updates
         if not hasattr(self, 'nested_managers'):
@@ -69,12 +70,54 @@ class ParameterFormManager:
 
     def _build_regular_parameter_form(self, param_name: str, param_type: type, current_value: Any) -> ComposeResult:
         """Build form for regular (non-dataclass) parameter."""
-        # Convert enum to string for widget (centralized conversion)
-        widget_value = current_value.value if hasattr(current_value, 'value') else current_value
+        # Check if this field has different values across orchestrators
+        config_analysis = getattr(self, 'config_analysis', {})
+        field_analysis = config_analysis.get(param_name, {})
 
         # Create widget using hierarchical underscore notation
         widget_id = f"{self.field_id}_{param_name}"
-        input_widget = TypedWidgetFactory.create_widget(param_type, widget_value, widget_id)
+
+        # Handle different values based on widget type
+        if field_analysis.get('type') == 'different':
+            default_value = field_analysis.get('default')
+
+            # For text inputs, use the clean DifferentValuesInput
+            if param_type in [str, int, float]:
+                from ..different_values_input import DifferentValuesInput
+                input_widget = DifferentValuesInput(
+                    default_value=default_value,
+                    field_name=param_name,
+                    id=widget_id
+                )
+            elif param_type == bool:
+                # For checkboxes, use simple different values checkbox
+                from ..different_values_checkbox import DifferentValuesCheckbox
+                input_widget = DifferentValuesCheckbox(
+                    default_value=default_value,
+                    field_name=param_name,
+                    id=widget_id
+                )
+            elif hasattr(param_type, '__bases__') and any(base.__name__ == 'Enum' for base in param_type.__bases__):
+                # For enums, use simple different values radio set
+                from ..different_values_radio_set import DifferentValuesRadioSet
+                input_widget = DifferentValuesRadioSet(
+                    enum_type=param_type,
+                    default_value=default_value,
+                    field_name=param_name,
+                    id=widget_id
+                )
+            else:
+                # Fallback to universal wrapper for other types
+                input_widget = TypedWidgetFactory.create_different_values_widget(
+                    param_type=param_type,
+                    default_value=default_value,
+                    widget_id=widget_id,
+                    field_name=param_name
+                )
+        else:
+            # Convert enum to string for widget (centralized conversion)
+            widget_value = current_value.value if hasattr(current_value, 'value') else current_value
+            input_widget = TypedWidgetFactory.create_widget(param_type, widget_value, widget_id)
 
         # Get parameter info for help functionality
         param_info = self._get_parameter_info(param_name)
@@ -85,17 +128,14 @@ class ParameterFormManager:
             row.styles.height = "auto"
 
             # Parameter label with help (auto width - sizes to content)
-            if param_description:
-                # Clickable label with help
-                label = ClickableParameterLabel(
-                    param_name,
-                    param_description,
-                    param_type,
-                    classes="param-label clickable"
-                )
-            else:
-                # Regular label
-                label = Static(f"{param_name}:", classes="param-label")
+            # Always use clickable label with help - provide default description if none exists
+            description = param_description or f"Parameter: {param_name.replace('_', ' ')}"
+            label = ClickableParameterLabel(
+                param_name,
+                description,
+                param_type,
+                classes="param-label clickable"
+            )
 
             label.styles.width = "auto"
             label.styles.text_align = "left"
@@ -207,6 +247,25 @@ class ParameterFormManager:
         # Handle regular parameters
         if param_name in self.parameters:
             self.parameters[param_name] = default_value
+
+            # Handle special reset behavior for DifferentValuesInput widgets
+            self._handle_different_values_reset(param_name)
+
+    def _handle_different_values_reset(self, param_name: str):
+        """Handle reset behavior for DifferentValuesInput widgets."""
+        # Check if this field has different values across orchestrators
+        config_analysis = getattr(self, 'config_analysis', {})
+        field_analysis = config_analysis.get(param_name, {})
+
+        if field_analysis.get('type') == 'different':
+            # For different values fields, reset means go back to "DIFFERENT VALUES" state
+            # We need to find the widget and call its reset method
+            widget_id = f"{self.field_id}_{param_name}"
+
+            # This will be handled by the screen/container that manages the widgets
+            # The widget itself will handle the reset via its reset_to_different() method
+            # We just need to ensure the parameter value reflects the "different" state
+            pass  # Widget-level reset will be handled by the containing screen
 
     def reset_all_parameters(self, defaults: Dict[str, Any]):
         """Reset all parameters to defaults with nested dataclass support."""
@@ -386,9 +445,9 @@ class ParameterFormManager:
                     nested_parameters[nested_name] = nested_current_value
                     nested_parameter_types[nested_name] = nested_info.param_type
 
-                # Create nested form manager with hierarchical underscore notation
+                # Create nested form manager with hierarchical underscore notation and parameter info
                 nested_field_id = f"{self.field_id}_{param_name}"
-                nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id)
+                nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id, nested_param_info)
 
                 # Store reference to nested form manager for updates
                 if not hasattr(self, 'nested_managers'):

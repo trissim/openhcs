@@ -62,6 +62,42 @@ class StorageBackend(ABC):
         pass
 
     @abstractmethod
+    def load_batch(self, file_paths: List[Union[str, Path]], **kwargs) -> List[Any]:
+        """
+        Load multiple files in a single batch operation.
+
+        Args:
+            file_paths: List of file paths to load
+            **kwargs: Additional arguments for the load operation
+
+        Returns:
+            List of loaded data objects in the same order as file_paths
+
+        Raises:
+            FileNotFoundError: If any file does not exist
+            TypeError: If any file_path is not a valid path type
+            ValueError: If any file cannot be loaded
+        """
+        pass
+
+    @abstractmethod
+    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], **kwargs) -> None:
+        """
+        Save multiple data objects in a single batch operation.
+
+        Args:
+            data_list: List of data objects to save
+            output_paths: List of destination paths (must match length of data_list)
+            **kwargs: Additional arguments for the save operation
+
+        Raises:
+            ValueError: If data_list and output_paths have different lengths
+            TypeError: If any output_path is not a valid path type
+            ValueError: If any data cannot be saved
+        """
+        pass
+
+    @abstractmethod
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Path]:
         """
