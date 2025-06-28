@@ -120,8 +120,17 @@ class PipelineOrchestrator:
             logger.info("PipelineOrchestrator using provided StorageRegistry instance.")
         else:
             from openhcs.io.base import storage_registry as global_registry
-            self.registry = global_registry  # Use the global singleton registry
-            logger.info("PipelineOrchestrator created its own StorageRegistry instance (global singleton).")
+            # Create a copy of the global registry to avoid modifying shared state
+            self.registry = global_registry.copy()
+            logger.info("PipelineOrchestrator created its own StorageRegistry instance (copy of global).")
+
+        # Override zarr backend with orchestrator's config
+        from openhcs.io.zarr import ZarrStorageBackend
+        from openhcs.constants.constants import Backend
+
+        zarr_backend_with_config = ZarrStorageBackend(self.global_config.zarr)
+        self.registry[Backend.ZARR.value] = zarr_backend_with_config
+        logger.info(f"Orchestrator zarr backend configured with {self.global_config.zarr.compressor.value} compression")
 
         # Orchestrator always creates its own FileManager, using the determined registry
         self.filemanager = FileManager(self.registry)
