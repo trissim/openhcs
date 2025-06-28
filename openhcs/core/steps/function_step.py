@@ -203,9 +203,12 @@ def _bulk_writeout_step_images(
         # Calculate zarr dimensions from file paths
         if microscope_handler is not None:
             n_channels, n_z, n_fields = _calculate_zarr_dimensions(file_paths, microscope_handler)
+            # Parse well to get row and column for zarr structure
+            row, col = microscope_handler.parser.extract_row_column(well_id)
             filemanager.save_batch(memory_data, file_paths, write_backend,
                                  chunk_name=well_id, zarr_config=zarr_config,
-                                 n_channels=n_channels, n_z=n_z, n_fields=n_fields)
+                                 n_channels=n_channels, n_z=n_z, n_fields=n_fields,
+                                 row=row, col=col)
         else:
             # Fallback without dimensions if microscope_handler not available
             filemanager.save_batch(memory_data, file_paths, write_backend, chunk_name=well_id, zarr_config=zarr_config)
@@ -767,10 +770,13 @@ class FunctionStep(AbstractStep):
                 # Parse actual filenames to determine dimensions
                 # Calculate zarr dimensions from file paths
                 n_channels, n_z, n_fields = _calculate_zarr_dimensions(zarr_paths, context.microscope_handler)
+                # Parse well to get row and column for zarr structure
+                row, col = context.microscope_handler.parser.extract_row_column(well_id)
 
                 filemanager.save_batch(memory_data, zarr_paths, Backend.ZARR.value,
                                      chunk_name=well_id, zarr_config=zarr_config,
-                                     n_channels=n_channels, n_z=n_z, n_fields=n_fields)
+                                     n_channels=n_channels, n_z=n_z, n_fields=n_fields,
+                                     row=row, col=col)
 
                 # 📄 OPENHCS METADATA: Create metadata for zarr conversion
                 self._create_openhcs_metadata_for_materialization(context, convert_to_zarr_path, Backend.ZARR.value)
@@ -853,9 +859,12 @@ class FunctionStep(AbstractStep):
                 # Add zarr dimensions if writing to zarr backend
                 if write_backend == Backend.ZARR.value:
                     n_channels, n_z, n_fields = _calculate_zarr_dimensions(memory_paths, context.microscope_handler)
+                    # Parse well to get row and column for zarr structure
+                    row, col = context.microscope_handler.parser.extract_row_column(well_id)
                     filemanager.save_batch(memory_data, memory_paths, write_backend,
                                          chunk_name=well_id, zarr_config=step_plan["zarr_config"],
-                                         n_channels=n_channels, n_z=n_z, n_fields=n_fields)
+                                         n_channels=n_channels, n_z=n_z, n_fields=n_fields,
+                                         row=row, col=col)
                 else:
                     filemanager.save_batch(memory_data, memory_paths, write_backend,
                                          chunk_name=well_id, zarr_config=step_plan["zarr_config"])

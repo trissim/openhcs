@@ -244,7 +244,7 @@ class ZarrStorageBackend(StorageBackend):
         Args:
             data_list: List of image data to save
             output_paths: List of output file paths
-            **kwargs: Must include chunk_name, n_channels, n_z, n_fields
+            **kwargs: Must include chunk_name, n_channels, n_z, n_fields, row, col
         """
 
         # Extract required parameters from kwargs
@@ -252,6 +252,8 @@ class ZarrStorageBackend(StorageBackend):
         n_channels = kwargs.get('n_channels')
         n_z = kwargs.get('n_z')
         n_fields = kwargs.get('n_fields')
+        row = kwargs.get('row')
+        col = kwargs.get('col')
 
         # Validate required parameters
         if chunk_name is None:
@@ -262,6 +264,10 @@ class ZarrStorageBackend(StorageBackend):
             raise ValueError("n_z must be provided")
         if n_fields is None:
             raise ValueError("n_fields must be provided")
+        if row is None:
+            raise ValueError("row must be provided")
+        if col is None:
+            raise ValueError("col must be provided")
 
         if not data_list:
             logger.warning(f"Empty data list for chunk {chunk_name}")
@@ -273,21 +279,7 @@ class ZarrStorageBackend(StorageBackend):
         base_dir = Path(output_paths[0]).parent
         store_path = base_dir / self.store_name
 
-        logger.debug(f"Saving batch for chunk {chunk_name} with {len(data_list)} images")
-
-        # Extract row and column from chunk_name (well identifier)
-        # For now, use simple parsing - this should be replaced with parser-based extraction
-        if len(chunk_name) < 2:
-            logger.warning(f"Invalid chunk name format: {chunk_name}")
-            return
-
-        # Simple parsing for common formats like "A01", "C04"
-        row = chunk_name[0]
-        col = chunk_name[1:]
-
-        if not row.isalpha() or not col.isdigit():
-            logger.warning(f"Invalid well format: {chunk_name}. Expected format like 'A01', 'C04'")
-            return
+        logger.debug(f"Saving batch for chunk {chunk_name} with {len(data_list)} images to row={row}, col={col}")
 
         # Convert GPU arrays to CPU arrays before saving
         cpu_data_list = []
