@@ -7,21 +7,24 @@ Shows live log messages from OpenHCS operations.
 
 import logging
 import os
+import time
 from datetime import datetime
 from collections import deque
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Static
 from textual.widget import Widget
+from textual.worker import get_current_worker
 
 logger = logging.getLogger(__name__)
 
 
 class TUILogHandler(logging.Handler):
-    """Custom logging handler that feeds log messages to the TUI status bar."""
+    """Custom logging handler that feeds log messages to the TUI status bar with batching."""
 
     def __init__(self, status_bar: 'StatusBar'):
         super().__init__()
@@ -32,18 +35,48 @@ class TUILogHandler(logging.Handler):
         formatter = logging.Formatter('%(levelname)s: %(message)s')
         self.setFormatter(formatter)
 
+        # Batching to reduce call_from_thread frequency
+        self.pending_messages = []
+        self.last_update_time = 0
+        self.batch_interval = 0.5  # Batch messages for 500ms
+
     def emit(self, record):
-        """Emit a log record to the status bar."""
+        """Emit a log record to the status bar with batching."""
         try:
             msg = self.format(record)
-            # Use call_from_thread to safely update UI from any thread
-            if hasattr(self.status_bar.app, 'call_from_thread'):
-                self.status_bar.app.call_from_thread(self.status_bar.add_log_message, msg, record.levelname)
-            else:
-                # Fallback for direct calls
-                self.status_bar.add_log_message(msg, record.levelname)
+
+            # Add to pending messages
+            self.pending_messages.append((msg, record.levelname))
+
+            # Only update UI if enough time has passed (batching)
+            current_time = time.time()
+            if current_time - self.last_update_time >= self.batch_interval:
+                self._flush_pending_messages()
+                self.last_update_time = current_time
+
         except Exception:
             # Don't let logging errors crash the app
+            pass
+
+    def _flush_pending_messages(self):
+        """Flush all pending messages to the UI."""
+        if not self.pending_messages:
+            return
+
+        # Take the most recent message as the current display
+        latest_msg, latest_level = self.pending_messages[-1]
+
+        # Clear pending messages
+        self.pending_messages.clear()
+
+        # Update UI with latest message only (avoid spam)
+        try:
+            if hasattr(self.status_bar.app, 'call_from_thread'):
+                self.status_bar.app.call_from_thread(self.status_bar.add_log_message, latest_msg, latest_level)
+            else:
+                # Fallback for direct calls
+                self.status_bar.add_log_message(latest_msg, latest_level)
+        except Exception:
             pass
 
 
@@ -67,10 +100,10 @@ class StatusBar(Widget):
         self.log_history = deque(maxlen=max_history)  # Keep recent log messages
         self.log_handler: Optional[TUILogHandler] = None
 
-        # Log file monitoring for subprocess logs
+        # Log file monitoring for subprocess logs - using Textual workers
         self.log_file_path: Optional[str] = None
         self.log_file_position: int = 0
-        self.log_monitor_timer = None
+        self.log_monitor_worker = None
 
         logger.debug("StatusBar initialized with real-time logging")
     
@@ -86,20 +119,25 @@ class StatusBar(Widget):
     def watch_current_log_message(self, message: str) -> None:
         """Update the display when current_log_message changes."""
         self.last_updated = datetime.now().strftime("%H:%M:%S")
+        # Use call_later to defer DOM operations to next event loop cycle
+        self.call_later(self._update_log_display)
+
+    def _update_log_display(self) -> None:
+        """Update the log display - deferred to avoid blocking reactive watchers."""
         try:
             log_display = self.query_one("#log_display")
             log_display.update(self.get_log_display())
         except Exception:
             # Widget might not be mounted yet
             pass
-    
+
     def on_mount(self) -> None:
         """Set up log handler when widget is mounted."""
         self.setup_log_handler()
         self.start_log_file_monitoring()
 
     def on_unmount(self) -> None:
-        """Clean up log handler when widget is unmounted."""
+        """Clean up log handler and background thread when widget is unmounted."""
         self.cleanup_log_handler()
         self.stop_log_file_monitoring()
 
@@ -160,21 +198,25 @@ class StatusBar(Widget):
         self.current_log_message = "Ready"
 
     def start_log_file_monitoring(self) -> None:
-        """Start monitoring the log file for subprocess updates."""
+        """Start monitoring the log file for subprocess updates using Textual worker."""
         # Get current log file path from the logging system
         self.log_file_path = self.get_current_log_file_path()
         if self.log_file_path and Path(self.log_file_path).exists():
             # Start from end of file to only show new logs
             self.log_file_position = Path(self.log_file_path).stat().st_size
-            # Monitor every 0.1 seconds for very responsive updates
-            self.log_monitor_timer = self.set_interval(0.1, self.check_log_file_updates)
-            logger.debug(f"Started log file monitoring: {self.log_file_path}")
+
+            # Stop any existing monitoring
+            self.stop_log_file_monitoring()
+
+            # Start Textual worker using @work decorated method
+            self.log_monitor_worker = self._log_monitor_worker()
+            logger.debug(f"Started worker log file monitoring: {self.log_file_path}")
 
     def stop_log_file_monitoring(self) -> None:
-        """Stop monitoring the log file."""
-        if self.log_monitor_timer:
-            self.log_monitor_timer.stop()
-            self.log_monitor_timer = None
+        """Stop monitoring the log file and cleanup worker."""
+        if self.log_monitor_worker and not self.log_monitor_worker.is_finished:
+            self.log_monitor_worker.cancel()
+        self.log_monitor_worker = None
         logger.debug("Stopped log file monitoring")
 
     def get_current_log_file_path(self) -> Optional[str]:
@@ -197,40 +239,52 @@ class StatusBar(Widget):
             logger.debug(f"Could not determine log file path: {e}")
             return None
 
-    async def check_log_file_updates(self) -> None:
-        """Check for new log entries and update status bar."""
-        if not self.log_file_path or not Path(self.log_file_path).exists():
-            return
+    @work(thread=True, exclusive=True)
+    def _log_monitor_worker(self) -> None:
+        """Textual worker that monitors log file for changes."""
+        worker = get_current_worker()
 
-        try:
-            # Wrap all file I/O operations in executor to avoid blocking UI
-            import asyncio
+        while not worker.is_cancelled:
+            try:
+                if not self.log_file_path or not Path(self.log_file_path).exists():
+                    time.sleep(0.5)  # Check every 500ms (reduced frequency)
+                    continue
 
-            def _read_log_updates():
+                # Check for new content
                 current_size = Path(self.log_file_path).stat().st_size
                 if current_size > self.log_file_position:
                     # Read new content
                     with open(self.log_file_path, 'r') as f:
                         f.seek(self.log_file_position)
                         new_lines = f.readlines()
-                        new_position = f.tell()
-                    return new_lines, new_position
-                return [], self.log_file_position
+                        self.log_file_position = f.tell()
 
-            new_lines, new_position = await asyncio.get_event_loop().run_in_executor(None, _read_log_updates)
-            self.log_file_position = new_position
+                    # Process new log lines and batch UI updates
+                    messages_to_add = []
+                    for line in new_lines:
+                        line = line.strip()
+                        if line and self.is_subprocess_log(line):
+                            # Extract the message part for display
+                            message = self.extract_log_message(line)
+                            if message:
+                                messages_to_add.append(message)
 
-            # Process new log lines
-            for line in new_lines:
-                line = line.strip()
-                if line and self.is_subprocess_log(line):
-                    # Extract the message part for display
-                    message = self.extract_log_message(line)
-                    if message:
-                        self.add_log_message(message, "INFO")
+                    # Batch update UI if we have messages and not cancelled
+                    if messages_to_add and not worker.is_cancelled:
+                        # Thread-safe UI update - batch all messages at once
+                        self.app.call_from_thread(self._batch_add_log_messages, messages_to_add)
 
-        except Exception as e:
-            logger.debug(f"Error reading log file: {e}")
+                # Sleep for 2 seconds before next check (much reduced frequency)
+                time.sleep(2.0)
+
+            except Exception as e:
+                logger.debug(f"Error in log monitor worker: {e}")
+                time.sleep(1.0)  # Longer sleep on error
+
+    def _batch_add_log_messages(self, messages: List[str]) -> None:
+        """Add multiple log messages at once to reduce reactive watcher triggers."""
+        for message in messages:
+            self.add_log_message(message, "INFO")
 
     def is_subprocess_log(self, line: str) -> bool:
         """Accept ANY log line - show all subprocess output."""

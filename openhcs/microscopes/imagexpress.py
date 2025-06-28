@@ -63,6 +63,14 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
+    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
+        """
+        Get available storage backends for ImageXpress plates.
+
+        ImageXpress only supports DISK backend.
+        """
+        return {"disk": True, "zarr": False}
+
     # Uses default workspace initialization from base class
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
@@ -365,6 +373,31 @@ class ImageXpressFilenameParser(FilenameParser):
         else:
             logger.debug("Could not parse ImageXpress filename: %s", filename)
             return None
+
+    def extract_row_column(self, well: str) -> Tuple[str, str]:
+        """
+        Extract row and column from ImageXpress well identifier.
+
+        Args:
+            well (str): Well identifier (e.g., 'A01', 'C04')
+
+        Returns:
+            Tuple[str, str]: (row, column) where row is like 'A', 'C' and column is like '01', '04'
+
+        Raises:
+            ValueError: If well format is invalid
+        """
+        if not well or len(well) < 2:
+            raise ValueError(f"Invalid well format: {well}")
+
+        # ImageXpress format: A01, B02, C04, etc.
+        row = well[0]
+        col = well[1:]
+
+        if not row.isalpha() or not col.isdigit():
+            raise ValueError(f"Invalid ImageXpress well format: {well}. Expected format like 'A01', 'C04'")
+
+        return row, col
 
     def construct_filename(self, well: str, site: Optional[Union[int, str]] = None,
                           channel: Optional[int] = None,

@@ -253,11 +253,13 @@ class OpenHCSTUIApp(App):
     
     def compose(self) -> ComposeResult:
         """Compose the main application layout."""
-        # Add textual-window components
-        yield WindowSwitcher()  # Invisible Alt-Tab overlay
+        # TEMPORARILY DISABLED - testing if WindowSwitcher causes hangs
+        # yield WindowSwitcher()  # Invisible Alt-Tab overlay
 
         # Custom WindowBar with no left button
         yield CustomWindowBar(dock="bottom", start_open=True)
+
+
 
         # Status bar for status messages
         yield StatusBar()

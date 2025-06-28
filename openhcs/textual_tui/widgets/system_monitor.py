@@ -1,8 +1,10 @@
 from textual.app import App, ComposeResult
 from textual.widgets import Static, Header, Footer
 from textual.containers import Container, Horizontal, Vertical, Grid
-from textual import events
+from typing import Optional
+from textual import events, work
 from textual.reactive import reactive
+from textual.worker import get_current_worker
 import asyncio
 import psutil
 from collections import deque
@@ -74,7 +76,7 @@ class SystemMonitorTextual(Container):
     def __init__(self):
         super().__init__()
         self.monitor = SystemMonitor()
-        self.update_timer = None
+        self.monitor_worker = None
 
     def compose(self) -> ComposeResult:
         """Compose the system monitor layout"""
@@ -96,23 +98,28 @@ class SystemMonitorTextual(Container):
 
     async def on_mount(self) -> None:
         """Start the monitoring when widget is mounted"""
-        self._start_monitoring()
+        # Start the worker using the @work decorated method
+        self.monitor_worker = self._monitor_worker()
+        self.is_monitoring = True
+
+    def on_unmount(self) -> None:
+        """Stop monitoring and cleanup background thread when widget is unmounted"""
+        self._stop_monitoring()
 
     def _start_monitoring(self) -> None:
-        """Start the monitoring timer"""
-        if self.update_timer:
-            self.update_timer.stop()
-        self.update_timer = self.set_interval(
-            self.update_interval,
-            self.update_display
-        )
+        """Start the monitoring Textual worker"""
+        # Stop any existing monitoring
+        self._stop_monitoring()
+
+        # Start Textual worker using @work decorated method
+        self.monitor_worker = self._monitor_worker()
         self.is_monitoring = True
 
     def _stop_monitoring(self) -> None:
-        """Stop the monitoring timer"""
-        if self.update_timer:
-            self.update_timer.stop()
-            self.update_timer = None
+        """Stop the monitoring worker"""
+        if self.monitor_worker and not self.monitor_worker.is_finished:
+            self.monitor_worker.cancel()
+        self.monitor_worker = None
         self.is_monitoring = False
 
     def toggle_monitoring(self) -> None:
@@ -125,6 +132,41 @@ class SystemMonitorTextual(Container):
     async def manual_refresh(self) -> None:
         """Manual refresh - called from menu"""
         await self.update_display()
+
+    @work(thread=True, exclusive=True)
+    def _monitor_worker(self) -> None:
+        """Textual worker that collects system metrics and updates UI."""
+        worker = get_current_worker()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("SystemMonitor worker started")
+
+        while not worker.is_cancelled:
+            try:
+                # Collect system metrics
+                self.monitor.update_metrics()
+
+                # Update UI via call_from_thread every cycle (1 second updates)
+                if not worker.is_cancelled:
+                    self.app.call_from_thread(self._update_ui_from_thread)
+
+                # Sleep for the update interval (default 1 second)
+                time.sleep(self.update_interval)
+
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Error in system monitor worker: {e}")
+                time.sleep(2.0)  # Longer sleep on error
+
+    def _update_ui_from_thread(self) -> None:
+        """Update UI components - called from background thread via call_from_thread."""
+        if PLOTEXT_AVAILABLE:
+            self._update_plots()
+        else:
+            self._update_fallback_display()
+
+        self._update_system_info()
 
     def _get_ascii_header(self) -> str:
         """Get the OpenHCS ASCII art header"""
@@ -139,17 +181,13 @@ class SystemMonitorTextual(Container):
 ╚══════════════════════════════════════════════════════════════╝"""
 
     async def update_display(self) -> None:
-        """Update the display with new system stats"""
+        """Update the display with new system stats - for manual refresh only"""
         # Update metrics using the SystemMonitor from services - wrap in executor to avoid blocking
         import asyncio
         await asyncio.get_event_loop().run_in_executor(None, self.monitor.update_metrics)
 
-        if PLOTEXT_AVAILABLE:
-            self._update_plots()
-        else:
-            self._update_fallback_display()
-
-        self._update_system_info()
+        # Update UI directly (this is for manual refresh)
+        self._update_ui_from_thread()
 
     def _update_plots(self) -> None:
         """Update the plotext plots"""
@@ -162,38 +200,38 @@ class SystemMonitorTextual(Container):
 
             x_range = list(range(len(self.monitor.cpu_history)))
 
-            # Update CPU plot with high-definition markers
+            # Update CPU plot with Braille patterns for higher resolution
             cpu_plot = self.query_one("#cpu_plot", PlotextPlot)
             cpu_plot.plt.clear_data()
-            cpu_plot.plt.plot(x_range, list(self.monitor.cpu_history), marker="hd")
+            cpu_plot.plt.plot(x_range, list(self.monitor.cpu_history), marker="braille")
             cpu_plot.plt.title(f"CPU Usage: {current_cpu:.1f}%")
             cpu_plot.plt.ylim(0, 100)
             cpu_plot.refresh()  # Force visual refresh
 
-            # Update RAM plot with high-definition markers
+            # Update RAM plot with Braille patterns for higher resolution
             ram_plot = self.query_one("#ram_plot", PlotextPlot)
             ram_plot.plt.clear_data()
-            ram_plot.plt.plot(x_range, list(self.monitor.ram_history), marker="hd")
+            ram_plot.plt.plot(x_range, list(self.monitor.ram_history), marker="braille")
             ram_plot.plt.title(f"RAM Usage: {current_ram:.1f}%")
             ram_plot.plt.ylim(0, 100)
             ram_plot.refresh()  # Force visual refresh
 
-            # Update GPU plot with high-definition markers
+            # Update GPU plot with Braille patterns for higher resolution
             gpu_plot = self.query_one("#gpu_plot", PlotextPlot)
             gpu_plot.plt.clear_data()
             if GPU_AVAILABLE and any(self.monitor.gpu_history):
-                gpu_plot.plt.plot(x_range, list(self.monitor.gpu_history), marker="hd")
+                gpu_plot.plt.plot(x_range, list(self.monitor.gpu_history), marker="braille")
                 gpu_plot.plt.title(f"GPU Usage: {current_gpu:.1f}%")
             else:
                 gpu_plot.plt.title("GPU: Not Available")
             gpu_plot.plt.ylim(0, 100)
             gpu_plot.refresh()  # Force visual refresh
 
-            # Update VRAM plot with high-definition markers
+            # Update VRAM plot with Braille patterns for higher resolution
             vram_plot = self.query_one("#vram_plot", PlotextPlot)
             vram_plot.plt.clear_data()
             if GPU_AVAILABLE and any(self.monitor.vram_history):
-                vram_plot.plt.plot(x_range, list(self.monitor.vram_history), marker="hd")
+                vram_plot.plt.plot(x_range, list(self.monitor.vram_history), marker="braille")
                 vram_plot.plt.title(f"VRAM Usage: {current_vram:.1f}%")
             else:
                 vram_plot.plt.title("VRAM: Not Available")

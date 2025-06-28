@@ -9,7 +9,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Type
+from typing import Any, Dict, List, Optional, Union, Type, Tuple
 
 from openhcs.constants.constants import Backend
 from openhcs.microscopes.opera_phenix_xml_parser import OperaPhenixXmlParser
@@ -31,6 +31,9 @@ class OperaPhenixHandler(MicroscopeHandler):
     for plate structure parsing, metadata extraction, and any optional
     post-processing steps required after workspace setup.
     """
+
+    # Explicit microscope type for proper registration
+    _microscope_type = 'opera_phenix'
 
     # Class attribute for automatic metadata handler registration (set after class definition)
     _metadata_handler_class = None
@@ -61,6 +64,14 @@ class OperaPhenixHandler(MicroscopeHandler):
         Opera Phenix is compatible with DISK backend only.
 
         Legacy microscope format with standard file operations.
+        """
+        return [Backend.DISK]
+
+    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
+        """
+        Get available storage backends for Opera Phenix plates.
+
+        Opera Phenix only supports DISK backend.
         """
         return [Backend.DISK]
 
@@ -514,6 +525,42 @@ class OperaPhenixFilenameParser(FilenameParser):
             site_padding=3,
             z_padding=3
         )
+
+    def extract_row_column(self, well: str) -> Tuple[str, str]:
+        """
+        Extract row and column from Opera Phenix well identifier.
+
+        Args:
+            well (str): Well identifier (e.g., 'R03C04' or 'A01')
+
+        Returns:
+            Tuple[str, str]: (row, column) where row is like 'A', 'B' and column is like '01', '04'
+
+        Raises:
+            ValueError: If well format is invalid
+        """
+        if not well:
+            raise ValueError(f"Invalid well format: {well}")
+
+        # Check if well is in Opera Phenix format (e.g., 'R01C03')
+        match = self._well_pattern.match(well)
+        if match:
+            # Extract row and column from Opera Phenix format
+            row_num = int(match.group(1))
+            col_num = int(match.group(2))
+            # Convert to letter-number format: R01C03 -> A, 03
+            row = chr(ord('A') + row_num - 1)  # R01 -> A, R02 -> B, etc.
+            col = f"{col_num:02d}"  # Ensure 2-digit padding
+            return row, col
+        else:
+            # Assume simple format like 'A01', 'C04'
+            if len(well) < 2:
+                raise ValueError(f"Invalid well format: {well}")
+            row = well[0]
+            col = well[1:]
+            if not row.isalpha() or not col.isdigit():
+                raise ValueError(f"Invalid Opera Phenix well format: {well}. Expected 'R01C03' or 'A01' format")
+            return row, col
 
 
 class OperaPhenixMetadataHandler(MetadataHandler):

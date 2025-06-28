@@ -89,14 +89,21 @@ class PipelineCompiler:
                 }
 
         # === ZARR CONVERSION DETECTION ===
-        # If we want zarr output, store conversion path (plate root) and original input dir
-        if plate_path and steps_definition:
-            vfs_config = context.get_vfs_config()
-            if vfs_config.materialization_backend == MaterializationBackend.ZARR:
-                context.zarr_conversion_path = str(plate_path)
-                context.original_input_dir = str(context.input_dir)
-            else:
-                context.zarr_conversion_path = None
+        # Set up zarr conversion only if we want zarr output and plate isn't already zarr
+        wants_zarr = (plate_path and steps_definition and
+                     context.get_vfs_config().materialization_backend == MaterializationBackend.ZARR)
+
+        # Check if plate already has zarr backend available
+        already_zarr = False
+        if wants_zarr:
+            available_backends = context.microscope_handler.get_available_backends(plate_path)
+            already_zarr = Backend.ZARR in available_backends
+
+        if wants_zarr and not already_zarr:
+            context.zarr_conversion_path = str(plate_path)
+            context.original_input_dir = str(context.input_dir)
+        else:
+            context.zarr_conversion_path = None
 
         # The well_id and base_input_dir are available from the context object.
         PipelinePathPlanner.prepare_pipeline_paths(

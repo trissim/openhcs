@@ -48,8 +48,8 @@ class MicroscopeHandlerMeta(ABCMeta):
             # Auto-register in MICROSCOPE_HANDLERS
             MICROSCOPE_HANDLERS[microscope_type] = new_class
 
-            # Store the microscope type for later metadata handler registration
-            new_class._microscope_type_key = microscope_type
+            # Store the microscope type as the standard class attribute
+            new_class._microscope_type = microscope_type
 
             # Auto-register metadata handler if the class has one
             metadata_handler_class = getattr(new_class, '_metadata_handler_class', None)
@@ -67,12 +67,12 @@ def register_metadata_handler(handler_class, metadata_handler_class):
 
     This function is called when _metadata_handler_class is set after class definition.
     """
-    microscope_type = getattr(handler_class, '_microscope_type_key', None)
+    microscope_type = getattr(handler_class, '_microscope_type', None)
     if microscope_type:
         METADATA_HANDLERS[microscope_type] = metadata_handler_class
         logger.debug(f"Registered metadata handler {metadata_handler_class.__name__} for '{microscope_type}'")
     else:
-        logger.warning(f"Could not register metadata handler for {handler_class.__name__} - no microscope type key found")
+        logger.warning(f"Could not register metadata handler for {handler_class.__name__} - no microscope type found")
 
 
 
@@ -138,6 +138,21 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
 
         Returns:
             List of Backend enum values this handler can work with, in priority order
+        """
+        pass
+
+    @abstractmethod
+    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
+        """
+        Get available storage backends for this specific plate.
+
+        Args:
+            plate_path: Path to the plate folder
+
+        Returns:
+            List of Backend enums that are available for this plate.
+            For most handlers, this will be based on compatible_backends.
+            For OpenHCS, this reads from metadata.
         """
         pass
 

@@ -460,6 +460,19 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
         """
         return [Backend.ZARR, Backend.DISK]
 
+    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
+        """
+        Get available storage backends from metadata.
+
+        Only returns backends that this handler supports AND are available in metadata.
+        """
+        backend_dict = self.metadata_handler.get_available_backends(plate_path)
+        available_backends = []
+        for backend in self.compatible_backends:
+            if backend_dict.get(backend.value, False):
+                available_backends.append(backend)
+        return available_backends
+
     def initialize_workspace(self, plate_path: Path, workspace_path: Optional[Path], filemanager: FileManager) -> Path:
         """
         OpenHCS format doesn't need workspace - images are already processed and ready.

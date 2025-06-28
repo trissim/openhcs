@@ -14,13 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import numpy as np
 import zarr
-
-try:
-    from ome_zarr.writer import write_image, write_plate_metadata, write_well_metadata
-    from ome_zarr.io import parse_url
-    OME_ZARR_AVAILABLE = True
-except ImportError:
-    OME_ZARR_AVAILABLE = False
+from zarr.storage import LocalStore
 
 from openhcs.constants.constants import Backend, DEFAULT_IMAGE_EXTENSIONS
 from openhcs.io.base import StorageBackend
@@ -44,30 +38,21 @@ class ZarrStorageBackend(StorageBackend):
     - Full path mapping for batch operations
     """
 
-    def __init__(self, zarr_config: Optional['ZarrConfig'] = None):
+    def __init__(self, store_name: str = "images.zarr", compressor: Optional[Any] = None,
+                 compression_level: Optional[int] = None):
         """
-        Initialize Zarr backend with ZarrConfig.
+        Initialize Zarr backend with configurable store name and compression settings.
 
         Args:
-            zarr_config: ZarrConfig dataclass with all zarr settings (uses defaults if None)
+            store_name: Name of the zarr store directory (default: "images.zarr")
+            compressor: Zarr compressor to use (default: None for no compression)
+                       Examples: zarr.Blosc(), zarr.Zlib(), zarr.LZ4(), zarr.Zstd()
+            compression_level: Compression level (1-9, default: None)
+                              Only used if compressor supports levels
         """
-        # Import here to avoid circular imports
-        from openhcs.core.config import ZarrConfig
-
-        if zarr_config is None:
-            zarr_config = ZarrConfig()
-
-        self.config = zarr_config
-
-        # Convenience attributes
-        self.store_name = zarr_config.store_name
-        self.compression_level = zarr_config.compression_level
-
-        # Create actual compressor from config
-        self.compressor = self.config.compressor.create_compressor(
-            self.config.compression_level,
-            self.config.shuffle
-        )
+        self.store_name = store_name
+        self.compressor = compressor
+        self.compression_level = compression_level
 
     def _get_compressor(self) -> Optional[Any]:
         """
@@ -96,8 +81,6 @@ class ZarrStorageBackend(StorageBackend):
 
         return self.compressor
 
-
-
     def _split_store_and_key(self, path: Union[str, Path]) -> Tuple[Any, str]:
         """
         Auto-inject zarr store path for clean filesystem-like API.
@@ -118,8 +101,8 @@ class ZarrStorageBackend(StorageBackend):
             store_path = path.parent / self.store_name
             relative_key = path.name
 
-        # In zarr v2, we just use the path string directly
-        return str(store_path), relative_key
+        store = LocalStore(str(store_path))
+        return store, relative_key
 
     def save(self, data: Any, output_path: Union[str, Path], **kwargs):
         """
@@ -185,109 +168,85 @@ class ZarrStorageBackend(StorageBackend):
         # Open store as group (not array)
         root = zarr.open_group(str(store_path), mode='r')
 
-        # Group files by well based on OME-ZARR structure
-        well_to_files = {}
-        well_to_indices = {}
+        # Group files by chunk based on filename mapping
+        chunk_to_files = {}
+        chunk_to_indices = {}
 
-        # Search OME-ZARR structure for requested files
-        for row_name in root.group_keys():
-            if len(row_name) == 1 and row_name.isalpha():  # Row directory (A, B, etc.)
-                row_group = root[row_name]
-                for col_name in row_group.group_keys():
-                    if col_name.isdigit():  # Column directory (01, 02, etc.)
-                        well_group = row_group[col_name]
-                        well_name = f"{row_name}{col_name}"
+        # Search all chunks for the requested files
+        for chunk_name in root.array_keys():
+            chunk_array = root[chunk_name]
+            if "filename_map" in chunk_array.attrs:
+                filename_map = dict(chunk_array.attrs["filename_map"])
 
-                        # Check if this well has our filename mapping in the field array
-                        if "0" in well_group.group_keys():
-                            field_group = well_group["0"]
-                            if "0" in field_group.array_keys():
-                                field_array = field_group["0"]
-                                if "openhcs_filename_map" in field_array.attrs:
-                                    filename_map = dict(field_array.attrs["openhcs_filename_map"])
+                # Check which requested files are in this chunk
+                for i, path in enumerate(file_paths):
+                    filename = str(path)  # Use full path for matching
+                    if filename in filename_map:
+                        if chunk_name not in chunk_to_files:
+                            chunk_to_files[chunk_name] = []
+                            chunk_to_indices[chunk_name] = []
+                        chunk_to_files[chunk_name].append(i)  # Original position in file_paths
+                        chunk_to_indices[chunk_name].append(filename_map[filename])  # Index in chunk
 
-                                    # Check which requested files are in this well
-                                    for i, path in enumerate(file_paths):
-                                        filename = str(path)  # Use full path for matching
-                                        if filename in filename_map:
-                                            if well_name not in well_to_files:
-                                                well_to_files[well_name] = []
-                                                well_to_indices[well_name] = []
-                                            well_to_files[well_name].append(i)  # Original position in file_paths
-                                            well_to_indices[well_name].append(filename_map[filename])  # 5D coordinates (field, channel, z)
-
-        # Load data from each well using single well chunk
+        # Load data from each chunk in single batch reads
         results = [None] * len(file_paths)  # Pre-allocate results array
 
-        for well_name, file_positions in well_to_files.items():
-            row, col = well_name[0], well_name[1:]
-            well_group = root[row][col]
-            well_indices = well_to_indices[well_name]
+        for chunk_name, file_positions in chunk_to_files.items():
+            chunk_array = root[chunk_name]
+            chunk_indices = chunk_to_indices[chunk_name]
 
-            # Load entire well field array in single operation (well chunking)
-            field_group = well_group["0"]
-            field_array = field_group["0"]
-            all_well_data = field_array[:]  # Single I/O operation for entire well
+            # Single batch read of entire chunk
+            all_chunk_data = chunk_array[:]
 
-            # Extract requested 2D slices using 5D coordinates
-            for file_pos, coords_5d in zip(file_positions, well_indices):
-                field_idx, channel_idx, z_idx = coords_5d
-                # Extract 2D slice: (field, channel, z, y, x) -> (y, x)
-                results[file_pos] = all_well_data[field_idx, channel_idx, z_idx, :, :]  # 2D slice
+            # Extract requested images and place in correct positions
+            for file_pos, chunk_idx in zip(file_positions, chunk_indices):
+                results[file_pos] = all_chunk_data[chunk_idx]
 
-        logger.debug(f"Loaded {len(file_paths)} images from zarr store at {store_path} from {len(well_to_files)} wells")
+        logger.debug(f"Loaded {len(file_paths)} images from zarr store at {store_path} from {len(chunk_to_files)} chunks")
         return results
 
-    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], **kwargs) -> None:
-        """Save multiple images using ome-zarr-py for proper OME-ZARR compliance with multi-dimensional support.
-
-        Args:
-            data_list: List of image data to save
-            output_paths: List of output file paths
-            **kwargs: Must include chunk_name, n_channels, n_z, n_fields
-        """
-
-        # Extract required parameters from kwargs
-        chunk_name = kwargs.get('chunk_name')
-        n_channels = kwargs.get('n_channels')
-        n_z = kwargs.get('n_z')
-        n_fields = kwargs.get('n_fields')
-
-        # Validate required parameters
-        if chunk_name is None:
-            raise ValueError("chunk_name must be provided")
-        if n_channels is None:
-            raise ValueError("n_channels must be provided")
-        if n_z is None:
-            raise ValueError("n_z must be provided")
-        if n_fields is None:
-            raise ValueError("n_fields must be provided")
-
-        if not data_list:
-            logger.warning(f"Empty data list for chunk {chunk_name}")
-            return
-
-        if not OME_ZARR_AVAILABLE:
-            raise ImportError("ome-zarr package is required. Install with: pip install ome-zarr")
+    def save_batch(self, data_list: List[Any], output_paths: List[Union[str, Path]], chunk_name: str = None, **kwargs) -> None:
+        """Save multiple images as a chunk in shared zarr store."""
 
         base_dir = Path(output_paths[0]).parent
         store_path = base_dir / self.store_name
 
-        logger.debug(f"Saving batch for chunk {chunk_name} with {len(data_list)} images")
+        # Use chunk_name or generate one from first filename
+        if chunk_name is None:
+            chunk_name = Path(output_paths[0]).stem
 
-        # Extract row and column from chunk_name (well identifier)
-        # For now, use simple parsing - this should be replaced with parser-based extraction
-        if len(chunk_name) < 2:
-            logger.warning(f"Invalid chunk name format: {chunk_name}")
-            return
+        # Ensure parent directory exists
+        store_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Simple parsing for common formats like "A01", "C04"
-        row = chunk_name[0]
-        col = chunk_name[1:]
+        # Open or create zarr group (shared store)
+        root = zarr.open_group(str(store_path), mode='a')  # 'a' = read/write, create if doesn't exist
 
-        if not row.isalpha() or not col.isdigit():
-            logger.warning(f"Invalid well format: {chunk_name}. Expected format like 'A01', 'C04'")
-            return
+        # Create array for this chunk within the shared store
+        batch_size = len(data_list)
+        sample_shape = data_list[0].shape
+        chunk_shape = (batch_size, *sample_shape)
+
+        # Get compression settings using v3 API
+        compressor = self._get_compressor()
+        if compressor is not None:
+            compressors = [compressor]
+        else:
+            compressors = None  # No compression
+
+        # Create chunk array in the shared store
+        chunk_array = root.create_array(
+            chunk_name,
+            shape=chunk_shape,
+            chunks=chunk_shape,  # Use same shape as chunks for single chunk
+            dtype=data_list[0].dtype,
+            compressors=compressors,  # zarr v3 API
+            overwrite=True  # Allow overwriting if chunk already exists
+        )
+
+        # Store filename mapping in chunk attributes
+        filename_map = {str(path): i for i, path in enumerate(output_paths)}
+        chunk_array.attrs["filename_map"] = filename_map
+        chunk_array.attrs["output_paths"] = [str(path) for path in output_paths]
 
         # Convert GPU arrays to CPU arrays before saving
         cpu_data_list = []
@@ -302,211 +261,20 @@ class ZarrStorageBackend(StorageBackend):
             else:  # Already CPU array (NumPy, etc.)
                 cpu_data_list.append(data)
 
-        # Initialize ome-zarr store (allow overwriting)
-        # Use 'a' mode to allow appending/overwriting individual arrays
-        store = parse_url(str(store_path), mode="a").store
-        root = zarr.group(store=store)
-
-        # Write plate metadata with locking to prevent concurrent corruption (if enabled)
-        should_write_plate_metadata = kwargs.get('write_plate_metadata', self.config.write_plate_metadata)
-        if should_write_plate_metadata:
-            self._ensure_plate_metadata_with_lock(root, row, col, store_path)
-
-        # Create HCS-compliant structure: plate/row/col/field/resolution
-        # Create row group if it doesn't exist
-        if row not in root:
-            row_group = root.create_group(row)
-        else:
-            row_group = root[row]
-
-        # Create well group (remove existing if present to allow overwrite)
-        if col in row_group:
-            del row_group[col]
-        well_group = row_group.create_group(col)
-
-        # Add HCS well metadata
-        well_metadata = {
-            "images": [
-                {
-                    "path": "0",  # Single image containing all fields
-                    "acquisition": 0
-                }
-            ],
-            "version": "0.5"
-        }
-        well_group.attrs["ome"] = {"version": "0.5", "well": well_metadata}
-
-        # Create field group (single field "0" containing all field data)
-        field_group = well_group.require_group("0")
-
-        # Always use full 5D structure: (fields, channels, z, y, x)
-        # Define OME-NGFF compliant axes
-        axes = [
-            {'name': 'field', 'type': 'field'},  # Custom field type - allowed before space
-            {'name': 'c', 'type': 'channel'},
-            {'name': 'z', 'type': 'space'},
-            {'name': 'y', 'type': 'space'},
-            {'name': 'x', 'type': 'space'}
-        ]
-
-        # Get image dimensions
-        sample_image = cpu_data_list[0]
-        height, width = sample_image.shape[-2:]
-
-        # Always reshape to full 5D: (n_fields, n_channels, n_z, y, x)
-        target_shape = [n_fields, n_channels, n_z, height, width]
-
-        # Stack and reshape data
+        # Single batch write - stack all images and write at once
         stacked_data = np.stack(cpu_data_list, axis=0)
+        chunk_array[:] = stacked_data
 
-        # Calculate total expected images for validation
-        total_expected = n_fields * n_channels * n_z
-        if len(data_list) != total_expected:
-            logger.warning(f"Data count mismatch: got {len(data_list)}, expected {total_expected} "
-                         f"(fields={n_fields}, channels={n_channels}, z={n_z})")
+    
+        """Ensure zarr store exists, creating it if necessary."""
+        if store_path.exists():
+            return
 
-        # Always reshape to 5D structure
-        reshaped_data = stacked_data.reshape(target_shape)
-
-        logger.info(f"Zarr save_batch: {len(data_list)} images → {stacked_data.shape} → {reshaped_data.shape}")
-        axes_names = [ax['name'] for ax in axes]
-        logger.info(f"Dimensions: fields={n_fields}, channels={n_channels}, z={n_z}, axes={''.join(axes_names)}")
-
-        # Create field group (single field "0" containing all field data)
-        if "0" in well_group:
-            field_group = well_group["0"]
+        zarr_config = kwargs["zarr_config"]
+        if zarr_config and zarr_config["needs_initialization"]:
+            self._create_store_with_locking(store_path, zarr_config["all_wells"], sample_shape, sample_dtype, batch_size)
         else:
-            field_group = well_group.create_group("0")
-
-        # Write OME-ZARR well metadata with single field (well-chunked approach)
-        write_well_metadata(well_group, ['0'])
-
-        # Use single chunk approach for optimal performance
-        storage_options = {
-            "chunks": reshaped_data.shape,  # Single chunk for entire well
-            "compressor": self._get_compressor()
-        }
-
-        # Write as single well-chunked array with proper multi-dimensional axes
-        write_image(
-            image=reshaped_data,
-            group=field_group,
-            axes=axes,
-            storage_options=storage_options,
-            scaler=None,  # Single scale only for performance
-            compute=True
-        )
-
-        # Axes are already correctly set by write_image function
-
-        # Store filename mapping with 5D coordinates (field, channel, z, y, x)
-        # Convert flat index to 5D coordinates for proper zarr slicing
-        filename_map = {}
-        for i, path in enumerate(output_paths):
-            # Calculate 5D coordinates from flat index
-            field_idx = i // (n_channels * n_z)
-            remaining = i % (n_channels * n_z)
-            channel_idx = remaining // n_z
-            z_idx = remaining % n_z
-
-            # Store as tuple (field, channel, z) - y,x are full slices
-            filename_map[str(path)] = (field_idx, channel_idx, z_idx)
-
-        field_array = field_group['0']
-        field_array.attrs["openhcs_filename_map"] = filename_map
-        field_array.attrs["openhcs_output_paths"] = [str(path) for path in output_paths]
-        field_array.attrs["openhcs_dimensions"] = {
-            "n_fields": n_fields,
-            "n_channels": n_channels,
-            "n_z": n_z
-        }
-
-        logger.debug(f"Successfully saved batch for chunk {chunk_name}")
-
-        # Aggressive memory cleanup
-        del cpu_data_list
-        import gc
-        gc.collect()
-
-    def _ensure_plate_metadata_with_lock(self, root: zarr.Group, row: str, col: str, store_path: Path) -> None:
-        """Ensure plate-level metadata includes ALL existing wells with file locking."""
-        import fcntl
-
-        lock_path = store_path.with_suffix('.metadata.lock')
-
-        try:
-            with open(lock_path, 'w') as lock_file:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                self._ensure_plate_metadata(root, row, col)
-        except Exception as e:
-            logger.error(f"Failed to update plate metadata with lock: {e}")
-            raise
-        finally:
-            if lock_path.exists():
-                lock_path.unlink()
-
-    def _ensure_plate_metadata(self, root: zarr.Group, row: str, col: str) -> None:
-        """Ensure plate-level metadata includes ALL existing wells in the store."""
-
-        # Scan the store for all existing wells
-        all_rows = set()
-        all_cols = set()
-        all_wells = []
-
-        for row_name in root.group_keys():
-            if isinstance(root[row_name], zarr.Group):  # Ensure it's a row group
-                row_group = root[row_name]
-                all_rows.add(row_name)
-
-                for col_name in row_group.group_keys():
-                    if isinstance(row_group[col_name], zarr.Group):  # Ensure it's a well group
-                        all_cols.add(col_name)
-                        well_path = f"{row_name}/{col_name}"
-                        all_wells.append(well_path)
-
-        # Include the current well being added (might not exist yet)
-        all_rows.add(row)
-        all_cols.add(col)
-        current_well_path = f"{row}/{col}"
-        if current_well_path not in all_wells:
-            all_wells.append(current_well_path)
-
-        # Sort for consistent ordering
-        sorted_rows = sorted(all_rows)
-        sorted_cols = sorted(all_cols)
-        sorted_wells = sorted(all_wells)
-
-        # Build wells metadata with proper indices
-        wells_metadata = []
-        for well_path in sorted_wells:
-            well_row, well_col = well_path.split("/")
-            row_index = sorted_rows.index(well_row)
-            col_index = sorted_cols.index(well_col)
-            wells_metadata.append({
-                "path": well_path,
-                "rowIndex": row_index,
-                "columnIndex": col_index
-            })
-
-        # Add acquisition metadata for HCS compliance
-        acquisitions = [
-            {
-                "id": 0,
-                "name": "default_acquisition",
-                "maximumfieldcount": 1  # Single field containing all field data
-            }
-        ]
-
-        # Write complete HCS plate metadata
-        write_plate_metadata(
-            root,
-            sorted_rows,
-            sorted_cols,
-            wells_metadata,
-            acquisitions=acquisitions,
-            field_count=1,
-            name="OpenHCS_Plate"
-        )
+            self._create_store_with_locking(store_path, ["single_well"], sample_shape, sample_dtype, batch_size)
 
     def _create_store_with_locking(self, store_path: Path, all_wells: List[str], sample_shape: tuple, sample_dtype: np.dtype, batch_size: int) -> None:
         """Create zarr store with file locking for multiprocessing safety."""
@@ -639,47 +407,27 @@ class ZarrStorageBackend(StorageBackend):
             return True
 
         try:
-            # Open zarr group and traverse OME-ZARR structure
+            # Open zarr group and get all array keys directly (Zarr 3.x compatible)
             group = zarr.open_group(store=store)
+            array_keys = list(group.array_keys())
 
-            # Check if this is OME-ZARR structure (has plate metadata)
-            if "plate" in group.attrs:
-                # OME-ZARR structure: traverse A/01/ wells
-                for row_name in group.group_keys():
-                    if len(row_name) == 1 and row_name.isalpha():  # Row directory (A, B, etc.)
-                        row_group = group[row_name]
-                        for col_name in row_group.group_keys():
-                            if col_name.isdigit():  # Column directory (01, 02, etc.)
-                                well_group = row_group[col_name]
-
-                                # Get filenames from field array metadata
-                                if "0" in well_group.group_keys():
-                                    field_group = well_group["0"]
-                                    if "0" in field_group.array_keys():
-                                        field_array = field_group["0"]
-                                        if "openhcs_output_paths" in field_array.attrs:
-                                            output_paths = field_array.attrs["openhcs_output_paths"]
-                                            for filename in output_paths:
-                                                filename_only = Path(filename).name
-                                                if _matches_filters(filename_only):
-                                                    result.append(Path(filename))
-            else:
-                # Legacy flat structure: get array keys directly
-                array_keys = list(group.array_keys())
-                for array_key in array_keys:
-                    try:
-                        array = group[array_key]
-                        if "output_paths" in array.attrs:
-                            # Get original filenames from array attributes
-                            output_paths = array.attrs["output_paths"]
-                            for filename in output_paths:
-                                filename_only = Path(filename).name
-                                if _matches_filters(filename_only):
-                                    result.append(Path(filename))
-
-                    except Exception as e:
-                        # Skip arrays that can't be accessed
-                        continue
+            for array_key in array_keys:
+                try:
+                    array = group[array_key]
+                    if "output_paths" in array.attrs:
+                        # Get original filenames from array attributes
+                        output_paths = array.attrs["output_paths"]
+                        for filename in output_paths:
+                            filename_only = Path(filename).name
+                            if _matches_filters(filename_only):
+                                result.append(Path(filename))
+                    else:
+                        # Fallback to array key if no output_paths
+                        if _matches_filters(array_key):
+                            result.append(Path(array_key))
+                except Exception as e:
+                    # Skip arrays that can't be accessed
+                    continue
 
         except Exception as e:
             raise StorageResolutionError(f"Failed to list zarr arrays: {e}") from e
@@ -690,7 +438,7 @@ class ZarrStorageBackend(StorageBackend):
         store, relative_key = self._split_store_and_key(path)
 
         # Normalize key for Zarr API
-        key = relative_key.rstrip("/")
+        key = relative_key.rstrip("/") if relative_key else ""
 
         try:
             # Zarr 3.x uses async API - convert async generator to list
@@ -859,8 +607,14 @@ class ZarrStorageBackend(StorageBackend):
         except Exception as e:
             raise StorageResolutionError(f"Failed to inspect Zarr symlink at: {path}") from e
 
-    def _auto_chunks(self, data: Any, chunk_divisor: int = 1) -> Tuple[int, ...]:
-        shape = data.shape
+    def _auto_chunks(self, data: Any, chunk_divisor: int = 1) -> Union[Tuple[int, ...], bool]:
+        shape = getattr(data, "shape", None)
+        if shape is None:
+            return True  # fallback to Zarr's default
+
+        # Example heuristic: chunk along first dimension (e.g., time, slices)
+        if len(shape) == 0:
+            return True  # scalar
 
         # Simple logic: 1/10th of each dim, with min 1
         return tuple(max(1, s // chunk_divisor) for s in shape)

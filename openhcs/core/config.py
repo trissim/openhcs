@@ -36,22 +36,19 @@ class ZarrCompressor(Enum):
         Returns:
             Configured zarr compressor instance or None for no compression
         """
-        from zarr.codecs import BloscCodec, GzipCodec, ZstdCodec
-
-        # Convert boolean shuffle to string for BloscCodec
-        shuffle_str = 'shuffle' if shuffle else 'noshuffle'
+        import zarr
 
         match self:
             case ZarrCompressor.NONE:
                 return None
             case ZarrCompressor.BLOSC:
-                return BloscCodec(cname='lz4', clevel=compression_level, shuffle=shuffle_str)
+                return zarr.Blosc(cname='lz4', clevel=compression_level, shuffle=shuffle)
             case ZarrCompressor.ZLIB:
-                return GzipCodec(level=compression_level)
+                return zarr.Zlib(level=compression_level)
             case ZarrCompressor.LZ4:
-                return BloscCodec(cname='lz4', clevel=compression_level, shuffle=shuffle_str)
+                return zarr.Blosc(cname='lz4', clevel=compression_level, shuffle=shuffle)
             case ZarrCompressor.ZSTD:
-                return ZstdCodec(level=compression_level)
+                return zarr.Zstd(level=compression_level)
 
 
 class ZarrChunkStrategy(Enum):
@@ -72,17 +69,23 @@ class ZarrConfig:
     store_name: str = "images.zarr"
     """Name of the zarr store file."""
 
-    compressor: ZarrCompressor = ZarrCompressor.ZSTD
+    compressor: ZarrCompressor = ZarrCompressor.LZ4
     """Compression algorithm to use."""
 
-    compression_level: int = 19
-    """Compression level (1-22 for ZSTD, higher = more compression)."""
+    compression_level: int = 9
+    """Compression level (1-9 for LZ4, higher = more compression)."""
 
     shuffle: bool = True
     """Enable byte shuffling for better compression (blosc only)."""
 
     chunk_strategy: ZarrChunkStrategy = ZarrChunkStrategy.SINGLE
     """Chunking strategy for zarr arrays."""
+
+    ome_zarr_metadata: bool = True
+    """Generate OME-ZARR compatible metadata and structure."""
+
+    write_plate_metadata: bool = True
+    """Write plate-level metadata for HCS viewing (required for napari ome-zarr)."""
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,7 @@ setup(
         "opencv-python>=4.5.0",
         "PyYAML>=6.0",
         "zarr>=2.10.0",
+        "ome-zarr>=0.8.0",
         "pygments>=2.10.0",
         "textual>=3.0.0",
         "textual-serve>=1.0.0",

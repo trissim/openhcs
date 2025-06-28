@@ -6,31 +6,51 @@ Matches the functionality from the current prompt-toolkit TUI.
 """
 
 import asyncio
+import copy
+import dataclasses
+import inspect
+import json
 import logging
+import numpy as np
+import os
+import pickle
+import re
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
-import pickle
-import json
 import time
+import traceback
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
+from PIL import Image
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.reactive import reactive
 from textual.widgets import Button, Static, SelectionList
 from textual.widget import Widget
+from textual.css.query import NoMatches
 from .button_list_widget import ButtonListWidget, ButtonConfig
 from textual import work, on
+from textual.worker import get_current_worker
 
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
+from openhcs.core.pipeline import Pipeline
 from openhcs.io.filemanager import FileManager
 from openhcs.core.memory.gpu_cleanup import cleanup_all_gpu_frameworks
 from openhcs.io.base import storage_registry
 from openhcs.io.memory import MemoryStorageBackend
+from openhcs.io.zarr import ZarrStorageBackend
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.constants.constants import GroupBy
+from openhcs.constants.constants import GroupBy, Backend, VariableComponents
+from openhcs.textual_tui.services.file_browser_service import SelectionMode
+from openhcs.textual_tui.services.window_service import WindowService
+from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey, get_path_cache
+from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +72,6 @@ def get_current_log_file_path() -> str:
                 return handler.baseFilename
 
         # Last resort: create a default path
-        from pathlib import Path
         log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         return str(log_dir / f"openhcs_subprocess_{int(time.time())}.log")
@@ -86,6 +105,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
+            ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR
             ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Enabled for debugging
         ]
         super().__init__(
@@ -102,6 +122,9 @@ class PlateManagerWidget(ButtonListWidget):
         self.on_plate_selected: Optional[Callable[[str], None]] = None
         self.pipeline_editor: Optional['PipelineEditorWidget'] = None
 
+        # Initialize window service to avoid circular imports
+        self.window_service = None  # Will be set in on_mount
+
         # --- Subprocess Architecture ---
         self.current_process: Optional[subprocess.Popen] = None
         self.status_file_path: Optional[str] = None
@@ -112,8 +135,8 @@ class PlateManagerWidget(ButtonListWidget):
         # File watcher for real-time log monitoring
         self.file_observer: Optional[Observer] = None
         self.file_watcher: Optional[LogFileWatcher] = None
-        # Keep timer for process status checking (reduced frequency)
-        self.monitoring_timer = self.set_interval(10.0, self._check_process_status, pause=True)  # Check process every 10 seconds
+        # Textual worker for process status checking
+        self.monitoring_worker = None
         # ---
         
         logger.debug("PlateManagerWidget initialized")
@@ -131,6 +154,7 @@ class PlateManagerWidget(ButtonListWidget):
     def on_unmount(self) -> None:
         logger.info("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
         self.action_stop_execution()
+        self._stop_monitoring()
         # DISABLED: self._stop_file_watcher()
 
     def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
@@ -148,10 +172,10 @@ class PlateManagerWidget(ButtonListWidget):
             "edit_config": self.action_edit_config,  # Unified edit button
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
+            "export_ome_zarr": self.action_export_ome_zarr,
             "save_debug_pickle": self.action_save_debug_pickle,
         }
         if button_id in action_map:
-            import inspect
             action = action_map[button_id]
             if inspect.iscoroutinefunction(action):
                 await action()
@@ -176,14 +200,15 @@ class PlateManagerWidget(ButtonListWidget):
         self.app.current_status = f"Moved plate '{plate_name}' {direction}"
 
     def on_mount(self) -> None:
+        # Initialize window service
+        self.window_service = WindowService(self.app)
+
         self.call_later(self._delayed_update_display)
-        self.set_timer(0.1, self._delayed_update_display)
         self.call_later(self._update_button_states)
     
     def watch_plates(self, plates: List[Dict]) -> None:
         """Automatically update UI when plates changes (follows PipelineEditor pattern)."""
         # DEBUG: Log when plates list changes to track the source of the reset
-        import traceback
         stack_trace = ''.join(traceback.format_stack()[-3:-1])  # Get last 2 stack frames
         logger.info(f"🔍 PLATES CHANGED: {len(plates)} plates. Call stack:\n{stack_trace}")
 
@@ -222,7 +247,6 @@ class PlateManagerWidget(ButtonListWidget):
                 return [], "empty"
         except Exception as e:
             # DOM CORRUPTION DETECTED - This is a critical error
-            import traceback
             stack_trace = ''.join(traceback.format_stack()[-3:-1])
             logger.error(f"🚨 DOM CORRUPTION: Failed to get selection state: {e}")
             logger.error(f"🚨 DOM CORRUPTION: Call stack:\n{stack_trace}")
@@ -298,6 +322,14 @@ class PlateManagerWidget(ButtonListWidget):
 
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
+
+            # Export button - enabled when plate is initialized and has workspace
+            export_enabled = (
+                has_selection and
+                self.selected_plate in self.orchestrators and
+                not is_running
+            )
+            self.query_one("#export_ome_zarr").disabled = not export_enabled
 
             # Debug button - enabled when subprocess data is available
             has_debug_data = hasattr(self, '_last_subprocess_data')
@@ -400,8 +432,8 @@ class PlateManagerWidget(ButtonListWidget):
         self.log_file_path = None
         self.log_file_position = 0
         
-        if self.monitoring_timer:
-            self.monitoring_timer.pause()
+        if self.monitoring_worker and not self.monitoring_worker.is_finished:
+            self.monitoring_worker.cancel()
         
         current_plates = list(self.plates)
         for plate in current_plates:
@@ -456,7 +488,6 @@ class PlateManagerWidget(ButtonListWidget):
             log_file_path = get_current_log_file_path()
 
             # Pickle data for subprocess
-            import dataclasses
             subprocess_data = {
                 'plate_paths': plate_paths_to_run,
                 'pipeline_data': pipeline_data,
@@ -464,7 +495,6 @@ class PlateManagerWidget(ButtonListWidget):
             }
 
             # Wrap pickle operation in executor to avoid blocking UI
-            import asyncio
             def _write_pickle_data():
                 with open(data_file.name, 'wb') as f:
                     pickle.dump(subprocess_data, f)
@@ -523,9 +553,9 @@ class PlateManagerWidget(ButtonListWidget):
             
             # DISABLED: Start log file watcher for real-time monitoring
             # self._start_log_file_watcher()
-            
-            if self.monitoring_timer:
-                self.monitoring_timer.resume()
+
+            # Start background monitoring worker
+            self._start_monitoring()
 
         except Exception as e:
             logger.critical(f"Failed to start subprocess: {e}", exc_info=True)
@@ -582,8 +612,8 @@ class PlateManagerWidget(ButtonListWidget):
         """Check if subprocess is still running (called by timer)."""
         if not self._is_any_plate_running():
             logger.info("🔥 MONITOR: Subprocess finished - investigating...")
-            if self.monitoring_timer:
-                self.monitoring_timer.pause()
+            if self.monitoring_worker and not self.monitoring_worker.is_finished:
+                self.monitoring_worker.cancel()
 
             # Get subprocess exit code and detailed info
             if self.current_process:
@@ -606,8 +636,6 @@ class PlateManagerWidget(ButtonListWidget):
             # Check results from files before cleaning up
             if self.status_file_path:
                 # Wrap all file existence checks in executor to avoid blocking UI
-                import asyncio
-
                 def _check_temp_files():
                     status_exists = Path(self.status_file_path).exists()
                     result_exists = Path(self.result_file_path).exists() if self.result_file_path else False
@@ -651,6 +679,118 @@ class PlateManagerWidget(ButtonListWidget):
 
             self._reset_execution_state("Execution finished.")
 
+    def _start_monitoring(self) -> None:
+        """Start background monitoring worker for process status."""
+        # Stop any existing monitoring
+        self._stop_monitoring()
+
+        # Start Textual worker using @work decorated method
+        self.monitoring_worker = self._monitoring_worker()
+        logger.debug("Started background process monitoring")
+
+    def _stop_monitoring(self) -> None:
+        """Stop background monitoring worker."""
+        if self.monitoring_worker and not self.monitoring_worker.is_finished:
+            self.monitoring_worker.cancel()
+        self.monitoring_worker = None
+        logger.debug("Stopped background process monitoring")
+
+    @work(thread=True, exclusive=True)
+    def _monitoring_worker(self) -> None:
+        """Textual worker that monitors subprocess status."""
+        worker = get_current_worker()
+
+        while not worker.is_cancelled:
+            try:
+                if not self._is_any_plate_running():
+                    # Process has finished - update UI via call_from_thread
+                    if not worker.is_cancelled:
+                        self.app.call_from_thread(self._handle_process_completion_sync)
+                    break  # Exit monitoring loop
+
+                # Sleep for 10 seconds before next check
+                time.sleep(10.0)
+
+            except Exception as e:
+                logger.debug(f"Error in process monitoring worker: {e}")
+                time.sleep(5.0)  # Sleep on error
+
+    def _handle_process_completion_sync(self) -> None:
+        """Handle subprocess completion - called from background thread via call_from_thread."""
+        # This needs to be sync since call_from_thread can't handle async
+        # Schedule the async version
+        import asyncio
+        asyncio.create_task(self._handle_process_completion_async())
+
+    async def _handle_process_completion_async(self) -> None:
+        """Handle subprocess completion - async version."""
+        logger.info("🔥 MONITOR: Subprocess finished - investigating...")
+
+        # Get subprocess exit code and detailed info
+        if self.current_process:
+            exit_code = self.current_process.poll()
+            logger.info(f"🔥 MONITOR: Subprocess exit code: {exit_code}")
+
+            # Classify the exit
+            if exit_code == 0:
+                logger.info("🔥 MONITOR: Subprocess completed successfully")
+            elif exit_code is None:
+                logger.error("🔥 MONITOR: Subprocess still running but poll() returned None - this is weird!")
+            elif exit_code < 0:
+                logger.error(f"🔥 MONITOR: Subprocess killed by signal {-exit_code}")
+            else:
+                logger.error(f"🔥 MONITOR: Subprocess failed with exit code {exit_code}")
+
+            # Read any remaining log entries
+            await self._read_log_file_incremental()
+
+        # Check results from files before cleaning up
+        if self.status_file_path:
+            # Wrap all file existence checks in executor to avoid blocking UI
+            def _check_temp_files():
+                status_exists = Path(self.status_file_path).exists()
+                result_exists = Path(self.result_file_path).exists() if self.result_file_path else False
+                data_exists = Path(self.data_file_path).exists() if self.data_file_path else False
+                log_exists = Path(self.log_file_path).exists() if self.log_file_path else False
+
+                status_content = ""
+                if status_exists:
+                    try:
+                        with open(self.status_file_path, 'r') as f:
+                            status_content = f.read()
+                    except Exception as e:
+                        status_content = f"ERROR: {e}"
+
+                return status_exists, result_exists, data_exists, log_exists, status_content
+
+            status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
+
+            # Debug: Check if temp files exist and have content
+            logger.info(f"🔥 MONITOR: Checking temp files:")
+            logger.info(f"🔥 MONITOR: Status file exists: {status_exists}")
+            logger.info(f"🔥 MONITOR: Result file exists: {result_exists}")
+            logger.info(f"🔥 MONITOR: Data file exists: {data_exists}")
+            logger.info(f"🔥 MONITOR: Log file exists: {log_exists}")
+
+            if status_exists:
+                logger.info(f"🔥 MONITOR: Status file content: '{status_content}'")
+                if not status_content.strip():
+                    logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
+
+            # Schedule async execution result processing
+            await self._process_execution_results()
+
+        if self.current_process:
+            # FIXED: Don't wait with timeout - process is already finished!
+            # The poll() check above already confirmed it's done
+            try:
+                self.current_process.wait()  # NO TIMEOUT! Just clean up the zombie process
+            except Exception as e:
+                logger.warning(f"🔥 MONITOR: Error during process cleanup: {e}")
+
+        self._reset_execution_state("Execution finished.")
+        self._stop_monitoring()  # Stop monitoring since process is done
+
     async def _read_log_file_incremental(self) -> None:
         """Read new content from the log file since last read."""
         if not self.log_file_path:
@@ -659,8 +799,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         try:
             # Wrap all file I/O operations in executor to avoid blocking UI
-            import asyncio
-
             def _read_log_content():
                 if not Path(self.log_file_path).exists():
                     return None, self.log_file_position
@@ -708,8 +846,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         try:
             # Wrap all file I/O operations in executor to avoid blocking UI
-            import asyncio
-
             def _read_execution_files():
                 status_updates = {}
                 result_updates = {}
@@ -781,9 +917,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         if self.current_process and self.current_process.poll() is None:  # Still running
             try:
-                import os
-                import signal
-                
                 # Kill the entire process group, not just the parent process
                 # The subprocess creates its own process group, so we need to kill that group
                 logger.info(f"🛑 Killing process group for PID {self.current_process.pid}...")
@@ -795,7 +928,6 @@ class PlateManagerWidget(ButtonListWidget):
                 os.killpg(process_group_id, signal.SIGTERM)
                 
                 # Give processes time to exit gracefully
-                import time
                 time.sleep(1)
                 
                 # Force kill if still alive
@@ -821,6 +953,105 @@ class PlateManagerWidget(ButtonListWidget):
         """Handle Add Plate button."""
         await self._open_plate_directory_browser()
 
+    async def action_export_ome_zarr(self) -> None:
+        """Export selected plate to OME-ZARR format."""
+        if not self.selected_plate:
+            self.app.show_error("No Selection", "Please select a plate to export.")
+            return
+
+        # Get the orchestrator for the selected plate
+        orchestrator = self.orchestrators.get(self.selected_plate)
+        if not orchestrator:
+            self.app.show_error("Not Initialized", "Please initialize the plate before exporting.")
+            return
+
+        # Open file browser for export location
+        def handle_export_result(selected_paths):
+            if selected_paths:
+                export_path = Path(selected_paths[0]) if isinstance(selected_paths, list) else Path(selected_paths)
+                self._start_ome_zarr_export(orchestrator, export_path)
+
+        await self.window_service.open_file_browser(
+            file_manager=self.filemanager,
+            initial_path=get_cached_browser_path(PathCacheKey.GENERAL),
+            backend=Backend.DISK,
+            title="Select OME-ZARR Export Directory",
+            mode="save",
+            selection_mode=SelectionMode.DIRECTORIES_ONLY,
+            cache_key=PathCacheKey.GENERAL,
+            on_result_callback=handle_export_result,
+            caller_id="plate_manager_export"
+        )
+
+    def _start_ome_zarr_export(self, orchestrator, export_path: Path):
+        """Start OME-ZARR export process."""
+        async def run_export():
+            try:
+                self.app.current_status = f"Exporting to OME-ZARR: {export_path}"
+
+                # Create export-specific config with ZARR materialization
+                export_config = orchestrator.global_config
+                export_vfs_config = VFSConfig(
+                    intermediate_backend=export_config.vfs.intermediate_backend,
+                    materialization_backend=MaterializationBackend.ZARR
+                )
+
+                # Update orchestrator config for export
+                export_global_config = dataclasses.replace(export_config, vfs=export_vfs_config)
+
+                # Create zarr backend with OME-ZARR enabled
+                zarr_backend = ZarrStorageBackend(ome_zarr_metadata=True)
+
+                # Copy processed data from current workspace/plate to OME-ZARR format
+                # For OpenHCS format, workspace_path is None, so use input_dir (plate path)
+                source_path = orchestrator.workspace_path or orchestrator.input_dir
+                if source_path and source_path.exists():
+                    # Find processed images in workspace/plate
+                    processed_images = list(source_path.rglob("*.tif"))
+
+                    if processed_images:
+                        # Group by well for batch operations
+                        wells_data = defaultdict(list)
+
+                        for img_path in processed_images:
+                            # Extract well from filename
+                            well_match = None
+                            # Try ImageXpress pattern: A01_s001_w1_z001.tif
+                            match = re.search(r'([A-Z]\d{2})_', img_path.name)
+                            if match:
+                                well_id = match.group(1)
+                                wells_data[well_id].append(img_path)
+
+                        # Export each well to OME-ZARR
+                        export_store_path = export_path / "plate.zarr"
+
+                        for well_id, well_images in wells_data.items():
+                            # Load images
+                            images = []
+                            for img_path in well_images:
+                                img = Image.open(img_path)
+                                images.append(np.array(img))
+
+                            # Create output paths for OME-ZARR structure
+                            output_paths = [export_store_path / f"{well_id}_{i:03d}.tif"
+                                          for i in range(len(images))]
+
+                            # Save to OME-ZARR format
+                            zarr_backend.save_batch(images, output_paths, chunk_name=well_id)
+
+                        self.app.current_status = f"✅ OME-ZARR export completed: {export_store_path}"
+                    else:
+                        self.app.show_error("No Data", "No processed images found in workspace.")
+                else:
+                    self.app.show_error("No Workspace", "Plate workspace not found. Run pipeline first.")
+
+            except Exception as e:
+                logger.error(f"OME-ZARR export failed: {e}", exc_info=True)
+                self.app.show_error("Export Failed", f"OME-ZARR export failed: {str(e)}")
+
+        # Run export in background
+        asyncio.create_task(run_export())
+
     async def action_save_debug_pickle(self) -> None:
         """Save the last subprocess pickle file for manual debugging."""
         if not hasattr(self, '_last_subprocess_data'):
@@ -828,11 +1059,6 @@ class PlateManagerWidget(ButtonListWidget):
             return
 
         # Enhanced file browser import removed - now using window system
-        from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
-        import pickle
-        from datetime import datetime
-
         # Generate default filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_filename = f"debug_subprocess_data_{timestamp}.pkl"
@@ -883,7 +1109,6 @@ class PlateManagerWidget(ButtonListWidget):
                     f.write(f"echo \"  - debug.log (detailed logs)\"\n")
 
                 # Make shell script executable
-                import stat
                 shell_script.chmod(shell_script.stat().st_mode | stat.S_IEXEC)
 
                 # Save command file for reference
@@ -927,16 +1152,12 @@ class PlateManagerWidget(ButtonListWidget):
                 self.app.show_error("Save Failed", error_msg)
 
         # Open textual-window file browser for saving
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
-
-        await open_file_browser_window(
-            app=self.app,
+        await self.window_service.open_file_browser(
             file_manager=self.filemanager,
             initial_path=get_cached_browser_path(PathCacheKey.DEBUG_FILES),
             backend=Backend.DISK,
             title="Save Debug Subprocess Data",
-            mode=BrowserMode.SAVE,
+            mode="save",
             selection_mode=SelectionMode.FILES_ONLY,
             filter_extensions=['.pkl'],
             default_filename=default_filename,
@@ -947,24 +1168,17 @@ class PlateManagerWidget(ButtonListWidget):
 
     async def _open_plate_directory_browser(self):
         """Open textual-window file browser for plate directory selection."""
-        from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
-        from openhcs.textual_tui.services.file_browser_service import SelectionMode
-        from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
-        from pathlib import Path
-
         # Get cached path for better UX - remembers last used directory
         path_cache = get_path_cache()
         initial_path = path_cache.get_initial_path(PathCacheKey.PLATE_IMPORT, Path.home())
 
         # Open textual-window file browser for directory selection
-        await open_file_browser_window(
-            app=self.app,
+        await self.window_service.open_file_browser(
             file_manager=self.filemanager,
             initial_path=initial_path,
             backend=Backend.DISK,
             title="Select Plate Directory",
-            mode=BrowserMode.LOAD,
+            mode="load",
             selection_mode=SelectionMode.DIRECTORIES_ONLY,
             cache_key=PathCacheKey.PLATE_IMPORT,
             on_result_callback=self._add_plate_callback,
@@ -973,8 +1187,6 @@ class PlateManagerWidget(ButtonListWidget):
 
     def _add_plate_callback(self, selected_paths) -> None:
         """Handle directory selection from file browser."""
-        from pathlib import Path
-
         logger.debug(f"_add_plate_callback called with: {selected_paths} (type: {type(selected_paths)})")
 
         if selected_paths is None or selected_paths is False:
@@ -1013,7 +1225,6 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Cache the parent directory for next time (save user navigation time)
         if selected_paths:
-            from openhcs.textual_tui.utils.path_cache import get_path_cache, PathCacheKey
             # Use parent of first selected path as the cached directory
             first_path = selected_paths[0] if isinstance(selected_paths[0], Path) else Path(selected_paths[0])
             parent_dir = first_path.parent
@@ -1074,39 +1285,26 @@ class PlateManagerWidget(ButtonListWidget):
         # Use the same pattern as global config - launch config window
         if len(selected_orchestrators) == 1:
             # Single orchestrator - use existing global config window pattern
-            from openhcs.textual_tui.windows import ConfigWindow
-            from textual.css.query import NoMatches
-
             orchestrator = selected_orchestrators[0]
 
             def handle_single_config_save(new_config):
                 # Apply config to the single orchestrator
-                import asyncio
                 asyncio.create_task(orchestrator.apply_new_global_config(new_config))
                 self.app.current_status = "Configuration applied successfully"
 
-            # Try to find existing config window or create new one
-            try:
-                window = self.app.query_one(ConfigWindow)
-                window.open_state = True
-            except NoMatches:
-                window = ConfigWindow(
-                    GlobalPipelineConfig,
+            # Use window service to open config window
+            await self.window_service.open_config_window(
+                GlobalPipelineConfig,
                     orchestrator.global_config,
-                    on_save_callback=handle_single_config_save
-                )
-                await self.app.mount(window)
-                window.open_state = True
+                on_save_callback=handle_single_config_save
+            )
         else:
             # Multi-orchestrator mode - use new multi-orchestrator window
-            from openhcs.textual_tui.windows.multi_orchestrator_config_window import show_multi_orchestrator_config
-
             def handle_multi_config_save(new_config, orchestrator_count):
                 self.app.current_status = f"Configuration applied to {orchestrator_count} orchestrators"
 
-            await show_multi_orchestrator_config(
-                self.app,
-                selected_orchestrators,
+            await self.window_service.open_multi_orchestrator_config(
+                orchestrators=selected_orchestrators,
                 on_save_callback=handle_multi_config_save
             )
 
@@ -1123,9 +1321,6 @@ class PlateManagerWidget(ButtonListWidget):
             - {"type": "same", "value": actual_value, "default": default_value}
             - {"type": "different", "values": [val1, val2, ...], "default": default_value}
         """
-        import dataclasses
-        from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
-
         if not orchestrators:
             return {}
 
@@ -1173,8 +1368,6 @@ class PlateManagerWidget(ButtonListWidget):
 
     def _values_equal(self, val1: Any, val2: Any) -> bool:
         """Check if two values are equal, handling dataclasses and complex types."""
-        import dataclasses
-
         # Handle dataclass comparison
         if dataclasses.is_dataclass(val1) and dataclasses.is_dataclass(val2):
             return dataclasses.asdict(val1) == dataclasses.asdict(val2)
@@ -1213,8 +1406,6 @@ class PlateManagerWidget(ButtonListWidget):
     @work(exclusive=True)
     async def _init_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate initialization."""
-        import asyncio
-
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
@@ -1312,8 +1503,6 @@ class PlateManagerWidget(ButtonListWidget):
     @work(exclusive=True)
     async def _compile_plates_worker(self, selected_items: List[Dict]) -> None:
         """Background worker for plate compilation."""
-        import asyncio
-
         for plate_data in selected_items:
             plate_path = plate_data['path']
 
@@ -1353,8 +1542,6 @@ class PlateManagerWidget(ButtonListWidget):
                 self.orchestrators[plate_path] = orchestrator
 
                 # Make fresh copy for compilation
-                import copy
-                from openhcs.constants.constants import VariableComponents
                 execution_pipeline = copy.deepcopy(definition_pipeline)
 
                 # Fix step IDs after deep copy to match new object IDs
@@ -1371,7 +1558,6 @@ class PlateManagerWidget(ButtonListWidget):
 
                 # Get wells and compile (async - run in executor to avoid blocking UI)
                 # Wrap in Pipeline object like test_main.py does
-                from openhcs.core.pipeline import Pipeline
                 pipeline_obj = Pipeline(steps=execution_pipeline)
 
                 # Run heavy operations in executor to avoid blocking UI

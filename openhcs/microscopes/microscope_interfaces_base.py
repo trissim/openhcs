@@ -48,6 +48,22 @@ class FilenameParser(ABC):
         pass
 
     @abstractmethod
+    def extract_row_column(self, well: str) -> Tuple[str, str]:
+        """
+        Extract row and column from a well identifier.
+
+        Args:
+            well (str): Well identifier (e.g., 'A01', 'R03C04', 'C04')
+
+        Returns:
+            Tuple[str, str]: (row, column) where row is like 'A', 'B' and column is like '01', '04'
+
+        Raises:
+            ValueError: If well format is invalid for this parser
+        """
+        pass
+
+    @abstractmethod
     def construct_filename(self, well: str, site: Optional[Union[int, str]] = None,
                           channel: Optional[int] = None,
                           z_index: Optional[Union[int, str]] = None,

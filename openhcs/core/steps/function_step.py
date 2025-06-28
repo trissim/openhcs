@@ -147,7 +147,8 @@ def _bulk_writeout_step_images(
     write_backend: str,
     well_id: str,
     zarr_config: Optional[Dict[str, Any]],
-    filemanager: 'FileManager'
+    filemanager: 'FileManager',
+    microscope_handler: Optional[Any] = None
 ) -> None:
     """
     Write all processed images from memory to final backend (disk/zarr).
@@ -189,12 +190,49 @@ def _bulk_writeout_step_images(
 
     # Bulk write to target backend with conditional zarr_config
     if write_backend == Backend.ZARR.value:
-        filemanager.save_batch(memory_data, file_paths, write_backend, chunk_name=well_id, zarr_config=zarr_config)
+        # Calculate zarr dimensions from file paths
+        if microscope_handler is not None:
+            n_channels, n_z, n_fields = _calculate_zarr_dimensions(file_paths, microscope_handler)
+            filemanager.save_batch(memory_data, file_paths, write_backend,
+                                 chunk_name=well_id, zarr_config=zarr_config,
+                                 n_channels=n_channels, n_z=n_z, n_fields=n_fields)
+        else:
+            # Fallback without dimensions if microscope_handler not available
+            filemanager.save_batch(memory_data, file_paths, write_backend, chunk_name=well_id, zarr_config=zarr_config)
     else:
         filemanager.save_batch(memory_data, file_paths, write_backend)
 
     write_time = time.time() - start_time
     logger.info(f"🔄 BULK WRITEOUT: Completed in {write_time:.2f}s - {len(memory_data)} images written to {write_backend}")
+
+def _calculate_zarr_dimensions(file_paths: List[Union[str, Path]], microscope_handler) -> tuple[int, int, int]:
+    """
+    Calculate zarr dimensions (n_channels, n_z, n_fields) from file paths using microscope parser.
+
+    Args:
+        file_paths: List of file paths to analyze
+        microscope_handler: Microscope handler with filename parser
+
+    Returns:
+        Tuple of (n_channels, n_z, n_fields)
+    """
+    parsed_files = []
+    for file_path in file_paths:
+        filename = Path(file_path).name
+        metadata = microscope_handler.parser.parse_filename(filename)
+        parsed_files.append(metadata)
+
+    # Count unique values for each dimension from actual files
+    n_channels = len(set(f.get('channel') for f in parsed_files if f.get('channel') is not None))
+    n_z = len(set(f.get('z_index') for f in parsed_files if f.get('z_index') is not None))
+    n_fields = len(set(f.get('site') for f in parsed_files if f.get('site') is not None))
+
+    # Ensure at least 1 for each dimension (handle cases where metadata is missing)
+    n_channels = max(1, n_channels)
+    n_z = max(1, n_z)
+    n_fields = max(1, n_fields)
+
+    return n_channels, n_z, n_fields
 
 def _targeted_gpu_cleanup_after_function(func_name: str, input_memory_type: str, device_id: Optional[int] = None, failed: bool = False) -> None:
     """Targeted GPU memory cleanup for specific frameworks used by the function."""
@@ -716,8 +754,13 @@ class FunctionStep(AbstractStep):
                     zarr_path = Path(convert_to_zarr_path) / filename
                     zarr_paths.append(str(zarr_path))
 
+                # Parse actual filenames to determine dimensions
+                # Calculate zarr dimensions from file paths
+                n_channels, n_z, n_fields = _calculate_zarr_dimensions(zarr_paths, context.microscope_handler)
+
                 filemanager.save_batch(memory_data, zarr_paths, Backend.ZARR.value,
-                                     chunk_name=well_id, zarr_config=zarr_config)
+                                     chunk_name=well_id, zarr_config=zarr_config,
+                                     n_channels=n_channels, n_z=n_z, n_fields=n_fields)
 
                 # 📄 OPENHCS METADATA: Create metadata for zarr conversion
                 self._create_openhcs_metadata_for_materialization(context, convert_to_zarr_path, Backend.ZARR.value)
@@ -796,8 +839,16 @@ class FunctionStep(AbstractStep):
             if write_backend != Backend.MEMORY.value:
                 memory_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
                 memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
-                filemanager.save_batch(memory_data, memory_paths, write_backend,
-                                     chunk_name=well_id, zarr_config=step_plan["zarr_config"])
+
+                # Add zarr dimensions if writing to zarr backend
+                if write_backend == Backend.ZARR.value:
+                    n_channels, n_z, n_fields = _calculate_zarr_dimensions(memory_paths, context.microscope_handler)
+                    filemanager.save_batch(memory_data, memory_paths, write_backend,
+                                         chunk_name=well_id, zarr_config=step_plan["zarr_config"],
+                                         n_channels=n_channels, n_z=n_z, n_fields=n_fields)
+                else:
+                    filemanager.save_batch(memory_data, memory_paths, write_backend,
+                                         chunk_name=well_id, zarr_config=step_plan["zarr_config"])
             
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 

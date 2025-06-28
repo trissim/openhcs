@@ -364,10 +364,10 @@ class ButtonListWidget(Widget):
         try:
             self._update_selection_list()
         except Exception as e:
-            # Limit retries to prevent infinite timer loops
-            if retry_count < 5:  # Max 5 retries (0.5 seconds total)
+            # Limit retries to prevent infinite loops
+            if retry_count < 5:  # Max 5 retries
                 logger.warning(f"Delayed update failed (widget may not be ready), retry {retry_count + 1}/5: {e}")
-                self.set_timer(0.1, lambda: self._delayed_update_display(retry_count + 1))
+                self.call_later(lambda: self._delayed_update_display(retry_count + 1))
             else:
                 logger.error(f"Delayed update failed after 5 retries, giving up: {e}")
             
