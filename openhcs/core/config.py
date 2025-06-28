@@ -46,7 +46,7 @@ class ZarrCompressor(Enum):
             case ZarrCompressor.ZLIB:
                 return zarr.Zlib(level=compression_level)
             case ZarrCompressor.LZ4:
-                return zarr.Blosc(cname='lz4', clevel=compression_level, shuffle=shuffle)
+                return zarr.LZ4(acceleration=compression_level)
             case ZarrCompressor.ZSTD:
                 return zarr.Zstd(level=compression_level)
 

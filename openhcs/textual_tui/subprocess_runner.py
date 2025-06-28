@@ -88,7 +88,7 @@ def write_result(result_file: str, plate_path: str, result: Any):
     except Exception as e:
         print(f"Failed to write result: {e}")
 
-def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: Dict,
+def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
                     status_file: str, result_file: str, logger):
     """
     Run a single plate using the integration test pattern.
@@ -208,50 +208,11 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config_dict: 
 
         log_thread_count("after config import")
 
-        # Reconstruct global config from dict with proper nested dataclass handling
-        log_thread_count("before global config creation")
-
-        # NUCLEAR WRAP: Global config creation with nested dataclass reconstruction
-        def create_global_config():
-            # Reconstruct nested dataclasses from dictionaries
-            path_planning_dict = global_config_dict.get('path_planning', {})
-            vfs_dict = global_config_dict.get('vfs', {})
-
-            # Convert backend strings to enums for VFS config
-            from openhcs.constants.constants import Backend
-            from openhcs.core.config import MaterializationBackend
-
-            if 'intermediate_backend' in vfs_dict:
-                backend_str = vfs_dict['intermediate_backend']
-                if isinstance(backend_str, str):
-                    vfs_dict['intermediate_backend'] = Backend(backend_str)
-
-            if 'materialization_backend' in vfs_dict:
-                backend_str = vfs_dict['materialization_backend']
-                if isinstance(backend_str, str):
-                    vfs_dict['materialization_backend'] = MaterializationBackend(backend_str)
-
-            path_planning = PathPlanningConfig(**path_planning_dict)
-            vfs = VFSConfig(**vfs_dict)
-
-            # Handle microscope enum
-            microscope_value = global_config_dict.get('microscope', Microscope.AUTO)
-            if isinstance(microscope_value, str):
-                # Convert string back to enum
-                microscope = Microscope(microscope_value)
-            else:
-                microscope = microscope_value
-
-            return GlobalPipelineConfig(
-                num_workers=global_config_dict.get('num_workers', 1),
-                path_planning=path_planning,
-                vfs=vfs,
-                microscope=microscope
-            )
-
-        global_config = force_error_detection("GlobalPipelineConfig_creation", create_global_config)
-
-        log_thread_count("after global config creation")
+        # Global config is already a proper object from pickle - no reconstruction needed!
+        log_thread_count("using pickled global config")
+        logger.info(f"🔥 SUBPROCESS: Using pickled global config: {type(global_config)}")
+        logger.info(f"🔥 SUBPROCESS: Zarr compressor: {global_config.zarr.compressor.value}")
+        log_thread_count("after global config validation")
 
         # NUCLEAR WRAP: GPU registry setup
         force_error_detection("setup_global_gpu_registry", setup_global_gpu_registry, global_config=global_config)
@@ -811,7 +772,7 @@ def main():
         
         plate_paths = data['plate_paths']
         pipeline_data = data['pipeline_data']  # Dict[plate_path, List[FunctionStep]]
-        global_config_dict = data['global_config_dict']
+        global_config = data['global_config']
         
         logger.info(f"🔥 SUBPROCESS: Loaded data for {len(plate_paths)} plates")
         logger.info(f"🔥 SUBPROCESS: Plates: {plate_paths}")
@@ -824,7 +785,7 @@ def main():
             run_single_plate(
                 plate_path=plate_path,
                 pipeline_steps=pipeline_steps,
-                global_config_dict=global_config_dict,
+                global_config=global_config,
                 status_file=status_file,
                 result_file=result_file,
                 logger=logger

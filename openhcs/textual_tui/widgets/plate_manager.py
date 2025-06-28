@@ -491,7 +491,7 @@ class PlateManagerWidget(ButtonListWidget):
             subprocess_data = {
                 'plate_paths': plate_paths_to_run,
                 'pipeline_data': pipeline_data,
-                'global_config_dict': dataclasses.asdict(self.app.global_config)  # Always use current app config
+                'global_config': self.app.global_config  # Pickle config object directly
             }
 
             # Wrap pickle operation in executor to avoid blocking UI
