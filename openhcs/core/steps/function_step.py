@@ -30,7 +30,7 @@ from openhcs.core.memory.gpu_cleanup import cleanup_memory_by_type
 logger = logging.getLogger(__name__)
 
 
-def get_all_image_paths(input_dir, backend, well_id, filemanager):
+def get_all_image_paths(input_dir, backend, well_id, filemanager, microscope_handler):
     """
     Get all image file paths for a specific well from a directory.
 
@@ -39,6 +39,7 @@ def get_all_image_paths(input_dir, backend, well_id, filemanager):
         well_id: Well identifier to filter files
         backend: Backend to use for file listing
         filemanager: FileManager instance
+        microscope_handler: Microscope handler with parser for filename parsing
 
     Returns:
         List of full file paths for the well
@@ -46,27 +47,35 @@ def get_all_image_paths(input_dir, backend, well_id, filemanager):
     # List all image files in directory
     all_image_files = filemanager.list_image_files(str(input_dir), backend)
 
-    # Filter by well and convert to strings
-    well_files = [str(f) for f in all_image_files if well_id in str(f)]
+    # Filter by well using parser (FIXED: was using naive string matching)
+    well_files = []
+    parser = microscope_handler.parser
+
+    for f in all_image_files:
+        filename = os.path.basename(str(f))
+        metadata = parser.parse_filename(filename)
+        if metadata and metadata.get('well') == well_id:
+            well_files.append(str(f))
 
     # Remove duplicates and sort
     sorted_files = sorted(list(set(well_files)))
 
     # Prepare full file paths
-    full_file_paths = [str(input_dir / f) for f in sorted_files]
+    full_file_paths = [str(input_dir / Path(f).name) for f in sorted_files]
 
     logger.info(f"Found {len(all_image_files)} total files, {len(full_file_paths)} for well {well_id}")
 
     return full_file_paths
 
 
-def create_image_path_getter(well_id, filemanager):
+def create_image_path_getter(well_id, filemanager, microscope_handler):
     """
     Create a specialized image path getter function using runtime context.
 
     Args:
         well_id: Well identifier
         filemanager: FileManager instance
+        microscope_handler: Microscope handler with parser for filename parsing
 
     Returns:
         Function that takes (input_dir, backend) and returns image paths for the well
@@ -76,7 +85,8 @@ def create_image_path_getter(well_id, filemanager):
             input_dir=input_dir,
             well_id=well_id,
             backend=backend,
-            filemanager=filemanager
+            filemanager=filemanager,
+            microscope_handler=microscope_handler
         )
     return get_paths_for_well
 
@@ -109,7 +119,7 @@ def _bulk_preload_step_images(
     # Get all files for this well from patterns
     all_files = []
     # Create specialized path getter for this well
-    get_paths_for_well = create_image_path_getter(well_id, filemanager)
+    get_paths_for_well = create_image_path_getter(well_id, filemanager, microscope_handler)
 
     # Get all image paths for this well
     full_file_paths = get_paths_for_well(step_input_dir, read_backend)
@@ -164,7 +174,7 @@ def _bulk_writeout_step_images(
     logger.info(f"🔄 BULK WRITEOUT: Writing images from memory to {write_backend} for well {well_id}")
 
     # Create specialized path getter and get memory paths for this well
-    get_paths_for_well = create_image_path_getter(well_id, filemanager)
+    get_paths_for_well = create_image_path_getter(well_id, filemanager, microscope_handler)
     memory_file_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
 
     if not memory_file_paths:
@@ -681,7 +691,7 @@ class FunctionStep(AbstractStep):
             filemanager = context.filemanager
 
             # Create path getter for this well
-            get_paths_for_well = create_image_path_getter(well_id, filemanager)
+            get_paths_for_well = create_image_path_getter(well_id, filemanager, microscope_handler)
 
             # Get patterns first for bulk preload
             patterns_by_well = microscope_handler.auto_detect_patterns(

@@ -177,7 +177,8 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
             workspace_path = plate_path / "workspace"
 
         # Check if workspace already exists - skip mirroring if it does
-        if workspace_path.exists():
+        workspace_already_exists = workspace_path.exists()
+        if workspace_already_exists:
             logger.info(f"📁 EXISTING WORKSPACE FOUND: {workspace_path} - skipping mirror operation")
             num_links = 0  # No new links created
         else:
@@ -223,9 +224,9 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         self.plate_folder = workspace_path
 
         # Prepare workspace and return final image directory
-        return self.post_workspace(workspace_path, filemanager)
+        return self.post_workspace(workspace_path, filemanager, skip_preparation=workspace_already_exists)
 
-    def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3):
+    def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3, skip_preparation: bool = False):
         """
         Hook called after workspace symlink creation.
         Applies normalization logic followed by consistent filename padding.
@@ -237,6 +238,7 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
             workspace_path: Path to the workspace (string or Path object)
             filemanager: FileManager instance for file operations
             width: Width for padding (default: 3)
+            skip_preparation: If True, skip microscope-specific preparation (default: False)
 
         Returns:
             Path to the normalized image directory
@@ -252,8 +254,13 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         if not workspace_path.exists():
             raise FileNotFoundError(f"Workspace path does not exist: {workspace_path}")
 
-        # Apply microscope-specific preparation logic
-        prepared_dir = self._prepare_workspace(workspace_path, filemanager)
+        # Apply microscope-specific preparation logic (skip if workspace already existed)
+        if skip_preparation:
+            logger.info(f"📁 SKIPPING PREPARATION: Workspace already existed - using as-is")
+            prepared_dir = workspace_path
+        else:
+            logger.info(f"🔄 APPLYING PREPARATION: Processing new workspace")
+            prepared_dir = self._prepare_workspace(workspace_path, filemanager)
 
         # Deterministically resolve the image directory based on common_dirs
         # Clause 245: Workspace operations are disk-only by design

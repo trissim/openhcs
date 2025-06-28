@@ -92,6 +92,17 @@ class OperaPhenixHandler(MicroscopeHandler):
         Returns:
             Path to the normalized image directory.
         """
+
+        # Check if workspace has already been processed by looking for temp directory
+        # If temp directory exists, workspace was already processed - skip processing
+        temp_dir_name = "__opera_phenix_temp"
+        for entry in filemanager.list_dir(workspace_path, Backend.DISK.value):
+            entry_path = Path(workspace_path) / entry
+            if entry_path.is_dir() and entry_path.name == temp_dir_name:
+                logger.info(f"📁 WORKSPACE ALREADY PROCESSED: Found {temp_dir_name} - skipping Opera Phenix preparation")
+                return workspace_path
+
+        logger.info(f"🔄 PROCESSING WORKSPACE: Applying Opera Phenix name remapping to {workspace_path}")
         # Find the image directory using the common_dirs property
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
@@ -127,28 +138,29 @@ class OperaPhenixHandler(MicroscopeHandler):
             logger.error("Error loading Index.xml: %s", e)
             logger.debug("Using default field mapping due to error.")
 
+        # Get all image files in the directory BEFORE creating temp directory
+        # This prevents recursive mirroring of the temp directory
+        # Clause 245: Workspace operations are disk-only by design
+        # This call is structurally hardcoded to use the "disk" backend
+        image_files = filemanager.list_image_files(image_dir, Backend.DISK.value)
+
         # Create a uniquely named temporary directory for renamed files
         # Use "__opera_phenix_temp" to make it clearly identifiable
         if isinstance(image_dir, str):
             temp_dir = os.path.join(image_dir, "__opera_phenix_temp")
         else:  # Path object
             temp_dir = image_dir / "__opera_phenix_temp"
-            
+
         # SAFETY CHECK: Ensure temp directory is within workspace
         if not str(temp_dir).startswith(str(workspace_path)):
             logger.error("SAFETY VIOLATION: Temp directory would be created outside workspace: %s", temp_dir)
             raise RuntimeError(f"Temp directory would be created outside workspace: {temp_dir}")
-            
+
         # Clause 245: Workspace operations are disk-only by design
         # This call is structurally hardcoded to use the "disk" backend
         filemanager.ensure_directory(temp_dir, Backend.DISK.value)
-        
-        logger.debug("Created temporary directory for Opera Phenix workspace preparation: %s", temp_dir)
 
-        # Get all image files in the directory
-        # Clause 245: Workspace operations are disk-only by design
-        # This call is structurally hardcoded to use the "disk" backend
-        image_files = filemanager.list_image_files(image_dir, Backend.DISK.value)
+        logger.debug("Created temporary directory for Opera Phenix workspace preparation: %s", temp_dir)
 
         # Process each file
         for file_path in image_files:
