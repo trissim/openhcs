@@ -71,10 +71,12 @@ class InlineButtonSelectionList(SelectionList):
         """Update the widget width based on content."""
         content_width = self._calculate_content_width()
         if content_width > 0:
-            # Set minimum width to content width to enable horizontal scrolling
-            self.styles.width = content_width
+            # Set minimum width to content width but allow expansion to fill container
+            self.styles.min_width = content_width
+            self.styles.width = "100%"  # Fill available space
         else:
-            # Reset to auto width when no content (removes horizontal scrolling)
+            # Reset to auto width when no content
+            self.styles.min_width = 0
             self.styles.width = "auto"
 
     def render_line(self, y: int) -> Strip:
