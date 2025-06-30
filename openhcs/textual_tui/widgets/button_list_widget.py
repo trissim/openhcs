@@ -49,8 +49,36 @@ class InlineButtonSelectionList(SelectionList):
         super().__init__(**kwargs)
         self.on_item_moved_callback = on_item_moved_callback
 
+    def _calculate_content_width(self) -> int:
+        """Calculate the width needed to display the longest item without truncation."""
+        if not self._options:
+            return 0
+
+        # Find the longest text content
+        max_width = 0
+        for option in self._options:
+            # Get the text content from the option
+            text = str(option.prompt)
+            # Add button width (7 characters: " ↑  ↓  ") plus some padding
+            content_width = len(text) + 7 + 2  # buttons + padding
+            max_width = max(max_width, content_width)
+
+        return max_width
+
+
+
+    def _update_content_width(self):
+        """Update the widget width based on content."""
+        content_width = self._calculate_content_width()
+        if content_width > 0:
+            # Set minimum width to content width to enable horizontal scrolling
+            self.styles.width = content_width
+        else:
+            # Reset to auto width when no content (removes horizontal scrolling)
+            self.styles.width = "auto"
+
     def render_line(self, y: int) -> Strip:
-        """Override to add ↑↓ buttons at start of each line."""
+        """Override to add ↑↓ buttons at start of each line with horizontal scrolling support."""
         # Get original line from SelectionList
         original = super().render_line(y)
 
@@ -62,16 +90,19 @@ class InlineButtonSelectionList(SelectionList):
             from rich.style import Style
 
             # Create styled button segments
-            #button_style = Style(bgcolor="blue", color="white", bold=True)
-            button_style = Style( color="white", bold=True)
+            button_style = Style(color="white", bold=True)
             up_segment = Segment(" ↑ ", button_style)
             down_segment = Segment(" ↓ ", button_style)
             space_segment = Segment(" ")
 
             buttons = Strip([up_segment, down_segment, space_segment])
 
-            # Combine strips
-            return Strip.join([buttons, original])
+            # Combine strips - don't truncate, let overflow-x handle scrolling
+            combined = Strip.join([buttons, original])
+
+            # Allow the strip to be wider than the widget for horizontal scrolling
+            # The overflow-x: auto CSS will handle the scrolling
+            return combined
         else:
             return original
 
@@ -167,13 +198,15 @@ class ButtonListWidget(Widget):
                         compact=config.compact
                     )
 
-            # Use SelectionList with overlaid buttons
-            selection_list = InlineButtonSelectionList(
-                id=self.list_id,
-                on_item_moved_callback=self.on_item_moved_callback
-            )
-            selection_list.styles.height = "1fr"  # CRITICAL: Fill remaining space
-            yield selection_list
+            # Use SelectionList with overlaid buttons wrapped in ScrollableContainer for horizontal scrolling
+            from textual.containers import ScrollableContainer
+            with ScrollableContainer() as scroll_container:
+                scroll_container.styles.height = "1fr"  # CRITICAL: Fill remaining space
+                selection_list = InlineButtonSelectionList(
+                    id=self.list_id,
+                    on_item_moved_callback=self.on_item_moved_callback
+                )
+                yield selection_list
     
     def on_mount(self) -> None:
         """Called when widget is mounted."""
@@ -355,6 +388,9 @@ class ButtonListWidget(Widget):
                     selection_list.highlighted = self.selected_item
                 except Exception:
                     pass  # Item not found, ignore
+
+            # Update content width for horizontal scrolling (only when items change)
+            selection_list._update_content_width()
 
         except Exception as e:
             logger.error(f"Failed to update InlineButtonSelectionList: {e}", exc_info=True)

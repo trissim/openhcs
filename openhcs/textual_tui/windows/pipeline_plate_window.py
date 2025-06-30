@@ -70,8 +70,6 @@ class PipelinePlateWindow(BaseOpenHCSWindow):
         # Set up plate selection callback (exact coordination logic from MainContent)
         def on_plate_selected(plate_path: str):
             self.pipeline_widget.current_plate = plate_path
-            plate_status = self.plate_widget.get_plate_status(plate_path)
-            self.pipeline_widget.current_plate_status = plate_status
 
         self.plate_widget.on_plate_selected = on_plate_selected
 

@@ -122,25 +122,25 @@ class DiskStorageBackend(StorageBackend):
              self.format_registry.register(ext.lower(), writer, reader)
 
     # Format-specific writer/reader functions (pickleable)
-    def _jax_writer(self, path, data):
+    def _jax_writer(self, path, data, **kwargs):
         np.save(path, jax.device_get(data))
 
     def _jax_reader(self, path):
         return jnp.array(np.load(path))
 
-    def _cupy_writer(self, path, data):
+    def _cupy_writer(self, path, data, **kwargs):
         cupy.save(path, data)
 
     def _cupy_reader(self, path):
         return cupy.load(path)
 
-    def _tensorflow_writer(self, path, data):
+    def _tensorflow_writer(self, path, data, **kwargs):
         tf.io.write_file(path.as_posix(), tf.io.serialize_tensor(data))
 
     def _tensorflow_reader(self, path):
         return tf.io.parse_tensor(tf.io.read_file(path.as_posix()), out_type=tf.dtypes.float32)
 
-    def _tiff_writer(self, path, data):
+    def _tiff_writer(self, path, data, **kwargs):
         tifffile.imwrite(path, data)
 
     def _tiff_reader(self, path):

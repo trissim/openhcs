@@ -89,7 +89,7 @@ def write_result(result_file: str, plate_path: str, result: Any):
         print(f"Failed to write result: {e}")
 
 def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
-                    status_file: str, result_file: str, logger):
+                    status_file: str, result_file: str, logger, log_file_base: str = None):
     """
     Run a single plate using the integration test pattern.
 
@@ -492,7 +492,8 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
                 pipeline_definition=execution_pipeline,
                 compiled_contexts=compiled_contexts,
                 max_workers=max_workers,  # Use global config num_workers setting
-                visualizer=None    # No visualization in subprocess
+                visualizer=None,    # No visualization in subprocess
+                log_file_base=log_file_base  # Pass log base for worker process logging
             )
             death_marker("AFTER_FORCE_ERROR_DETECTION", f"results_type={type(results)}")
 
@@ -617,11 +618,22 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
 
 def main():
     """Main entry point for subprocess runner."""
-    if len(sys.argv) != 5:
-        print("Usage: python subprocess_runner.py <data_file.pkl> <status_file.json> <result_file.json> <log_file.log>")
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        print("Usage: python subprocess_runner.py <data_file.pkl> <status_file.json> <result_file.json> <log_file_base> [unique_id]")
         sys.exit(1)
 
-    data_file, status_file, result_file, log_file = sys.argv[1:5]
+    data_file = sys.argv[1]
+    status_file = sys.argv[2]
+    result_file = sys.argv[3]
+    log_file_base = sys.argv[4]
+    unique_id = sys.argv[5] if len(sys.argv) == 6 else None
+
+    # Generate unique log file path
+    if unique_id:
+        log_file = f"{log_file_base}_{unique_id}.log"
+    else:
+        import uuid
+        log_file = f"{log_file_base}_{uuid.uuid4().hex[:8]}.log"
 
     # PROCESS GROUP CLEANUP: Create new process group to manage all child processes
     try:
@@ -788,7 +800,8 @@ def main():
                 global_config=global_config,
                 status_file=status_file,
                 result_file=result_file,
-                logger=logger
+                logger=logger,
+                log_file_base=log_file_base
             )
         
         logger.info("🔥 SUBPROCESS: All plates completed successfully")

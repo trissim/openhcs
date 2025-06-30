@@ -134,8 +134,26 @@ def main():
     asyncio.run(main_async(args))
 
 
+def _setup_signal_handlers():
+    """Setup signal handlers for clean shutdown."""
+    import signal
+    import threading
+    import os
+
+    def force_cleanup(signum, frame):
+        """Force cleanup all threads on signal."""
+        print("\nForcing immediate exit...")
+        # Don't try to set daemon on running threads - just exit immediately
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, force_cleanup)
+    signal.signal(signal.SIGTERM, force_cleanup)
+
 async def main_async(args):
     """Async main function for TUI mode."""
+
+    # Setup signal handlers for clean shutdown
+    _setup_signal_handlers()
 
     # Set multiprocessing start method FIRST, before any other initialization
     try:

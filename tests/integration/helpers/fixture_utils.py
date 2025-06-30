@@ -14,7 +14,7 @@ import numpy as np
 from typing import List, Union
 
 from openhcs.core.orchestrator import PipelineOrchestrator
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
 # from openhcs.core.config import StitcherConfig, PipelineConfig
 from openhcs.core.pipeline import Pipeline
 # from openhcs.core.step_base import Step
@@ -293,7 +293,7 @@ def debug_global_config(execution_mode, backend_config):
     
     return GlobalPipelineConfig(
         num_workers=1,  # Single worker for easier debugging
-        vfs=VFSConfig(default_materialization_backend=backend_config),
+        vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
         use_threading=use_threading
     )
 

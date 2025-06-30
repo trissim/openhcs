@@ -27,6 +27,15 @@ class GroupBy(Enum):
     WELL = VariableComponents.WELL.value     # Will be "well"
     NONE = "" # Added for allow_blank in Select
 
+class OrchestratorState(Enum):
+    """Simple orchestrator state tracking - no complex state machine."""
+    CREATED = "created"      # Object exists, not initialized
+    READY = "ready"          # Initialized, ready for compilation
+    COMPILED = "compiled"    # Compilation complete, ready for execution
+    EXECUTING = "executing"  # Execution in progress
+    COMPLETED = "completed"  # Execution completed successfully
+    FAILED = "failed"        # Error state
+
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
 DEFAULT_IMAGE_EXTENSIONS: Set[str] = {".tif", ".tiff", ".TIF", ".TIFF"}

@@ -12,6 +12,7 @@ from openhcs.textual_tui.windows.help_windows import DocstringHelpWindow, Parame
 from openhcs.textual_tui.windows.terminal_window import TerminalWindow
 from openhcs.textual_tui.windows.debug_class_explorer import DebugClassExplorerWindow
 from openhcs.textual_tui.windows.multi_orchestrator_config_window import MultiOrchestratorConfigWindow
+from openhcs.textual_tui.windows.toolong_window import ToolongWindow
 
 __all__ = [
     "BaseOpenHCSWindow",
@@ -27,5 +28,6 @@ __all__ = [
     "DocstringHelpWindow",
     "ParameterHelpWindow",
     "DebugClassExplorerWindow",
-    "MultiOrchestratorConfigWindow"
+    "MultiOrchestratorConfigWindow",
+    "ToolongWindow"
 ]

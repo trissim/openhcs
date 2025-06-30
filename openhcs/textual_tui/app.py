@@ -226,8 +226,6 @@ class OpenHCSTUIApp(App):
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Previous"),
         ("f1", "toggle_window_switcher", "Switch Windows"),
-        ("ctrl+comma", "show_global_config", "Config"),
-        ("f2", "show_help", "Help"),
     ]
     
     # App-level reactive state
@@ -248,7 +246,10 @@ class OpenHCSTUIApp(App):
         # Create shared components (pattern from SimpleOpenHCSTUILauncher)
         self.storage_registry = storage_registry
         self.filemanager = FileManager(self.storage_registry)
-        
+
+        # Toolong compatibility attributes
+        self.save_merge = None  # For Toolong LogView compatibility
+
         logger.info("OpenHCSTUIApp initialized with Textual reactive system")
     
     def compose(self) -> ComposeResult:
@@ -397,7 +398,18 @@ class OpenHCSTUIApp(App):
         error_dialog.open_state = True
 
     def _handle_exception(self, error: Exception) -> None:
-        """Let exceptions bubble up to global handler instead of silencing them."""
+        """Handle exceptions with special cases for Toolong internal errors."""
+        # Check for known Toolong internal timing errors that are non-fatal
+        error_str = str(error)
+        if (
+            "No nodes match" in error_str and
+            ("FindDialog" in error_str or "Label" in error_str) and
+            ("InfoOverlay" in error_str or "LogView" in error_str)
+        ):
+            # This is a known Toolong internal timing issue - log but don't crash
+            logger.warning(f"Ignoring Toolong internal timing error: {error_str}")
+            return
+
         # Log the error for debugging
         logger.error(f"Unhandled exception in TUI: {str(error)}", exc_info=True)
 
@@ -412,6 +424,33 @@ class OpenHCSTUIApp(App):
     def _on_unhandled_exception(self, error: Exception) -> None:
         """Let unhandled exceptions bubble up."""
         self._handle_exception(error)
+
+    async def on_unmount(self) -> None:
+        """Clean up when app is shutting down with aggressive thread cleanup."""
+        logger.info("OpenHCS TUI app unmounting, cleaning up threads...")
+
+        # Force cleanup of any ReactiveLogMonitor instances
+        try:
+            from openhcs.textual_tui.widgets.reactive_log_monitor import ReactiveLogMonitor
+            monitors = self.query(ReactiveLogMonitor)
+            for monitor in monitors:
+                monitor.stop_monitoring()
+        except Exception as e:
+            logger.debug(f"Error cleaning up ReactiveLogMonitors: {e}")
+
+        # Force immediate exit if threads don't stop cleanly
+        try:
+            import threading
+            import time
+            time.sleep(0.1)  # Give threads a moment to stop
+            active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and t.is_alive()]
+            if active_threads:
+                logger.warning(f"Found {len(active_threads)} active threads during shutdown")
+                # Don't try to modify running threads - just log and continue
+        except Exception as e:
+            logger.debug(f"Error checking threads: {e}")
+
+        logger.info("OpenHCS TUI app cleanup complete")
 
 
 async def main():

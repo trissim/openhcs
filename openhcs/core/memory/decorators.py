@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, TypeVar
 
 from openhcs.constants.constants import VALID_MEMORY_TYPES
 from openhcs.core.utils import optional_import
+from openhcs.core.memory.oom_recovery import _execute_with_oom_recovery
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +232,7 @@ def numpy(
     return decorator(func)
 
 
-def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str = "cupy") -> Any:
+def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str = "cupy", oom_recovery: bool = True) -> Any:
     """
     Decorator that declares a function as operating on cupy arrays.
 
@@ -243,6 +244,7 @@ def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str
         func: The function to decorate (optional)
         input_type: The memory type for the function's input (default: "cupy")
         output_type: The memory type for the function's output (default: "cupy")
+        oom_recovery: Enable automatic OOM recovery (default: True)
 
     Returns:
         The decorated function with memory type attributes and stream management
@@ -264,13 +266,20 @@ def cupy(func: Optional[F] = None, *, input_type: str = "cupy", output_type: str
                 gpu_context = get_thread_gpu_context()
                 cupy_stream = gpu_context.get_cupy_stream()
 
-                if cupy_stream is not None:
-                    # Execute function in stream context
-                    with cupy_stream:
+                def execute_with_stream():
+                    if cupy_stream is not None:
+                        # Execute function in stream context
+                        with cupy_stream:
+                            return func(*args, **kwargs)
+                    else:
+                        # No CUDA available, execute without stream
                         return func(*args, **kwargs)
+
+                # Execute with OOM recovery if enabled
+                if oom_recovery:
+                    return _execute_with_oom_recovery(execute_with_stream, input_type)
                 else:
-                    # No CUDA available, execute without stream
-                    return func(*args, **kwargs)
+                    return execute_with_stream()
             else:
                 # CuPy not available, execute without stream
                 return func(*args, **kwargs)
@@ -292,7 +301,8 @@ def torch(
     func: Optional[F] = None,
     *,
     input_type: str = "torch",
-    output_type: str = "torch"
+    output_type: str = "torch",
+    oom_recovery: bool = True
 ) -> Any:
     """
     Decorator that declares a function as operating on torch tensors.
@@ -305,6 +315,7 @@ def torch(
         func: The function to decorate (optional)
         input_type: The memory type for the function's input (default: "torch")
         output_type: The memory type for the function's output (default: "torch")
+        oom_recovery: Enable automatic OOM recovery (default: True)
 
     Returns:
         The decorated function with memory type attributes and stream management
@@ -326,13 +337,20 @@ def torch(
                 gpu_context = get_thread_gpu_context()
                 torch_stream = gpu_context.get_torch_stream()
 
-                if torch_stream is not None:
-                    # Execute function in stream context
-                    with torch.cuda.stream(torch_stream):
+                def execute_with_stream():
+                    if torch_stream is not None:
+                        # Execute function in stream context
+                        with torch.cuda.stream(torch_stream):
+                            return func(*args, **kwargs)
+                    else:
+                        # No CUDA available, execute without stream
                         return func(*args, **kwargs)
+
+                # Execute with OOM recovery if enabled
+                if oom_recovery:
+                    return _execute_with_oom_recovery(execute_with_stream, input_type)
                 else:
-                    # No CUDA available, execute without stream
-                    return func(*args, **kwargs)
+                    return execute_with_stream()
             else:
                 # PyTorch not available or CUDA not available, execute without stream
                 return func(*args, **kwargs)
@@ -354,7 +372,8 @@ def tensorflow(
     func: Optional[F] = None,
     *,
     input_type: str = "tensorflow",
-    output_type: str = "tensorflow"
+    output_type: str = "tensorflow",
+    oom_recovery: bool = True
 ) -> Any:
     """
     Decorator that declares a function as operating on tensorflow tensors.
@@ -367,6 +386,7 @@ def tensorflow(
         func: The function to decorate (optional)
         input_type: The memory type for the function's input (default: "tensorflow")
         output_type: The memory type for the function's output (default: "tensorflow")
+        oom_recovery: Enable automatic OOM recovery (default: True)
 
     Returns:
         The decorated function with memory type attributes and device management
@@ -384,10 +404,17 @@ def tensorflow(
         def wrapper(*args, **kwargs):
             tf = _get_tensorflow()
             if tf is not None and tf.config.list_physical_devices('GPU'):
-                # Use GPU device context for thread isolation
-                # TensorFlow manages internal CUDA streams automatically
-                with tf.device('/GPU:0'):
-                    return func(*args, **kwargs)
+                def execute_with_device():
+                    # Use GPU device context for thread isolation
+                    # TensorFlow manages internal CUDA streams automatically
+                    with tf.device('/GPU:0'):
+                        return func(*args, **kwargs)
+
+                # Execute with OOM recovery if enabled
+                if oom_recovery:
+                    return _execute_with_oom_recovery(execute_with_device, input_type)
+                else:
+                    return execute_with_device()
             else:
                 # TensorFlow not available or GPU not available, execute without device context
                 return func(*args, **kwargs)
@@ -409,7 +436,8 @@ def jax(
     func: Optional[F] = None,
     *,
     input_type: str = "jax",
-    output_type: str = "jax"
+    output_type: str = "jax",
+    oom_recovery: bool = True
 ) -> Any:
     """
     Decorator that declares a function as operating on JAX arrays.
@@ -422,6 +450,7 @@ def jax(
         func: The function to decorate (optional)
         input_type: The memory type for the function's input (default: "jax")
         output_type: The memory type for the function's output (default: "jax")
+        oom_recovery: Enable automatic OOM recovery (default: True)
 
     Returns:
         The decorated function with memory type attributes and device management
@@ -443,10 +472,17 @@ def jax(
                 gpu_devices = [d for d in devices if d.platform == 'gpu']
 
                 if gpu_devices:
-                    # Use GPU device placement for thread isolation
-                    # JAX/XLA manages internal CUDA streams automatically
-                    with jax_module.default_device(gpu_devices[0]):
-                        return func(*args, **kwargs)
+                    def execute_with_device():
+                        # Use GPU device placement for thread isolation
+                        # JAX/XLA manages internal CUDA streams automatically
+                        with jax_module.default_device(gpu_devices[0]):
+                            return func(*args, **kwargs)
+
+                    # Execute with OOM recovery if enabled
+                    if oom_recovery:
+                        return _execute_with_oom_recovery(execute_with_device, input_type)
+                    else:
+                        return execute_with_device()
                 else:
                     # No GPU devices available, execute without device placement
                     return func(*args, **kwargs)
@@ -471,25 +507,44 @@ def pyclesperanto(
     func: Optional[F] = None,
     *,
     input_type: str = "pyclesperanto",
-    output_type: str = "pyclesperanto"
+    output_type: str = "pyclesperanto",
+    oom_recovery: bool = True
 ) -> Any:
     """
     Decorator that declares a function as operating on pyclesperanto GPU arrays.
 
-    This is a convenience wrapper around memory_types with pyclesperanto defaults.
+    This decorator provides automatic OOM recovery for pyclesperanto functions.
 
     Args:
         func: The function to decorate (optional)
         input_type: The memory type for the function's input (default: "pyclesperanto")
         output_type: The memory type for the function's output (default: "pyclesperanto")
+        oom_recovery: Enable automatic OOM recovery (default: True)
 
     Returns:
-        The decorated function with memory type attributes set
+        The decorated function with memory type attributes and OOM recovery
 
     Raises:
         ValueError: If input_type or output_type is not a supported memory type
     """
-    decorator = memory_types(input_type=input_type, output_type=output_type)
+    def decorator(func: F) -> F:
+        # Set memory type attributes
+        memory_decorator = memory_types(input_type=input_type, output_type=output_type)
+        func = memory_decorator(func)
+
+        # Add OOM recovery wrapper
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if oom_recovery:
+                return _execute_with_oom_recovery(lambda: func(*args, **kwargs), input_type)
+            else:
+                return func(*args, **kwargs)
+
+        # Preserve memory type attributes
+        wrapper.input_memory_type = func.input_memory_type
+        wrapper.output_memory_type = func.output_memory_type
+
+        return wrapper
 
     # Handle both @pyclesperanto and @pyclesperanto(input_type=..., output_type=...) forms
     if func is None:

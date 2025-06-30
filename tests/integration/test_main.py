@@ -15,7 +15,7 @@ from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps import FunctionStep as Step
 from openhcs.constants.constants import VariableComponents
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
 
 # Import processing functions directly
 from openhcs.processing.backends.processors.torch_processor import (
@@ -120,7 +120,7 @@ def test_main(plate_dir: Union[Path,str], backend_config: str, data_type_config:
         use_threading = execution_mode == "threading"
         
         config = GlobalPipelineConfig(
-            vfs=VFSConfig(default_materialization_backend=backend_config),
+            vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
             use_threading=use_threading
         )
         

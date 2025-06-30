@@ -20,6 +20,7 @@ from textual import work
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.constants.constants import OrchestratorState
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ class PipelineEditorWidget(ButtonListWidget):
     # Textual reactive state
     pipeline_steps = reactive([])
     current_plate = reactive("")
-    current_plate_status = reactive("?")  # Track plate initialization status
     selected_step = reactive("")
     plate_pipelines = reactive({})  # {plate_path: List[FunctionStep]} - per-plate pipeline storage
     
@@ -82,6 +82,22 @@ class PipelineEditorWidget(ButtonListWidget):
         step_name = getattr(step, 'name', 'Unknown Step')
         display_text = f"📋 {step_name}"
         return display_text, step_name
+
+    def _is_current_plate_initialized(self) -> bool:
+        """Check if current plate has an initialized orchestrator."""
+        if not self.current_plate or not self.plate_manager:
+            logger.debug(f"PipelineEditor: No current plate ({self.current_plate}) or plate_manager ({self.plate_manager})")
+            return False
+
+        orchestrator = self.plate_manager.orchestrators.get(self.current_plate)
+        if orchestrator is None:
+            logger.debug(f"PipelineEditor: No orchestrator found for plate {self.current_plate}")
+            return False
+
+        is_initialized = orchestrator.state in [OrchestratorState.READY, OrchestratorState.COMPILED,
+                                               OrchestratorState.COMPLETED, OrchestratorState.FAILED]
+        logger.debug(f"PipelineEditor: Plate {self.current_plate} orchestrator state: {orchestrator.state}, initialized: {is_initialized}")
+        return is_initialized
 
     async def _handle_button_press(self, button_id: str) -> None:
         """Handle button presses from ButtonListWidget (supports async actions)."""
@@ -138,7 +154,7 @@ class PipelineEditorWidget(ButtonListWidget):
         """Update button states based on current selection and mathematical constraints."""
         try:
             has_plate = bool(self.current_plate)
-            is_initialized = self.current_plate_status in ['-', 'o', 'C', 'F']  # Initialized, compiled, completed, or failed
+            is_initialized = self._is_current_plate_initialized()
             has_steps = len(self.pipeline_steps) > 0
             has_selection = len(selected_values) > 0
 
@@ -260,26 +276,17 @@ class PipelineEditorWidget(ButtonListWidget):
         if self.current_plate in self.plate_manager.plate_compiled_data:
             del self.plate_manager.plate_compiled_data[self.current_plate]
 
-        # Find the current plate and reset status
-        for plate in self.plate_manager.plates:
-            if plate.get('path') == self.current_plate:
-                plate['status'] = '-'  # Reset to initialized
+        # Reset orchestrator state to READY (initialized)
+        orchestrator = self.plate_manager.orchestrators.get(self.current_plate)
+        if orchestrator and orchestrator.state == OrchestratorState.COMPILED:
+            orchestrator._state = OrchestratorState.READY
 
-                # Trigger reactive update by reassigning the plates list (correct pattern)
-                self.plate_manager.plates = list(self.plate_manager.plates)
-
-                # Update our own status
-                self.current_plate_status = '-'
-                break
-
-        # Update plate manager button states immediately
+        # Trigger UI refresh after orchestrator state change
         if self.plate_manager:
+            self.plate_manager._trigger_ui_refresh()
             self.plate_manager._update_button_states()
     
-    def watch_current_plate_status(self, status: str) -> None:
-        """Automatically update UI when plate status changes."""
-        self._update_button_states()
-        logger.debug(f"Plate status changed: {status}")
+
 
     def watch_selected_step(self, step_id: str) -> None:
         """Automatically update UI when selected_step changes."""
@@ -290,18 +297,25 @@ class PipelineEditorWidget(ButtonListWidget):
         """Update button enabled/disabled states based on mathematical constraints."""
         try:
             has_plate = bool(self.current_plate)
-            is_initialized = self.current_plate_status in ['-', 'o', 'C', 'F']  # Initialized, compiled, completed, or failed
+            is_initialized = self._is_current_plate_initialized()
             has_steps = len(self.pipeline_steps) > 0
             has_valid_selection = bool(self.selected_step) and self._find_step_index_by_selection() is not None
+
+            logger.debug(f"PipelineEditor: Button state update - has_plate: {has_plate}, is_initialized: {is_initialized}, has_steps: {has_steps}")
 
             # Mathematical constraints:
             # - Pipeline editing requires initialization
             # - Step operations require steps to exist
             # - Edit requires valid selection that maps to actual step
-            self.query_one("#add_step").disabled = not (has_plate and is_initialized)
+            add_enabled = has_plate and is_initialized
+            load_enabled = has_plate and is_initialized
+
+            logger.debug(f"PipelineEditor: Setting add_step.disabled = {not add_enabled}, load_pipeline.disabled = {not load_enabled}")
+
+            self.query_one("#add_step").disabled = not add_enabled
             self.query_one("#del_step").disabled = not has_steps
             self.query_one("#edit_step").disabled = not (has_steps and has_valid_selection)
-            self.query_one("#load_pipeline").disabled = not (has_plate and is_initialized)
+            self.query_one("#load_pipeline").disabled = not load_enabled
             self.query_one("#save_pipeline").disabled = not has_steps
         except Exception:
             # Buttons might not be mounted yet

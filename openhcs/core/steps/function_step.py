@@ -25,7 +25,6 @@ from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
-from openhcs.core.memory.gpu_cleanup import cleanup_memory_by_type
 
 logger = logging.getLogger(__name__)
 
@@ -247,24 +246,7 @@ def _calculate_zarr_dimensions(file_paths: List[Union[str, Path]], microscope_ha
 
     return n_channels, n_z, n_fields
 
-def _targeted_gpu_cleanup_after_function(func_name: str, input_memory_type: str, device_id: Optional[int] = None, failed: bool = False) -> None:
-    """Targeted GPU memory cleanup for specific frameworks used by the function."""
-    if DISABLE_GPU_DEFRAG:
-        return
 
-    try:
-        from openhcs.core.memory.gpu_cleanup import cleanup_gpu_memory_by_framework
-        
-        # Clean up the input memory type framework (what the function received)
-        cleanup_gpu_memory_by_framework(input_memory_type, device_id)
-        
-        status = "FAILED" if failed else "SUCCESS"
-        logger.debug(f"🔧 TARGETED CLEANUP ({status}): {func_name} completed, cleaned frameworks: {input_memory_type}")
-
-    except ImportError:
-        pass  # GPU frameworks not available
-    except Exception as e:
-        logger.warning(f"🔧 TARGETED CLEANUP: Failed for {func_name}: {e}")
 
 def _is_3d(array: Any) -> bool:
     """Check if an array is 3D."""
@@ -326,23 +308,12 @@ def _execute_function_core(
 
 
 
-    try:
-        raw_function_output = func_callable(main_data_arg, **final_kwargs)
+    raw_function_output = func_callable(main_data_arg, **final_kwargs)
 
-        # 🔍 DEBUG: Log output dimensions
-        output_shape = getattr(raw_function_output, 'shape', 'no shape attr')
-        output_type = type(raw_function_output).__name__
-        logger.info(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
-
-        # 🔧 TARGETED GPU CLEANUP: Clean memory for specific framework after function
-        step_id = next(iter(context.step_plans.keys()))
-        _targeted_gpu_cleanup_after_function(func_callable.__name__, input_memory_type, device_id)
-
-    except Exception as e:
-        # 🔧 TARGETED GPU CLEANUP: Clean memory even on failure
-        step_id = next(iter(context.step_plans.keys()))
-        _targeted_gpu_cleanup_after_function(func_callable.__name__, input_memory_type, device_id, failed=True)
-        raise e
+    # 🔍 DEBUG: Log output dimensions
+    output_shape = getattr(raw_function_output, 'shape', 'no shape attr')
+    output_type = type(raw_function_output).__name__
+    logger.info(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
 
     main_output_data = raw_function_output
     
@@ -605,29 +576,7 @@ def _process_single_pattern_group(
                     context.filemanager.delete(str(unused_input_path), Backend.MEMORY.value)
                     print(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
 
-        # 🔍 VRAM TRACKING: Log memory before cleanup
-        try:
-            from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-            log_gpu_memory_usage(f"pattern group {pattern_repr} (before cleanup)")
-        except Exception:
-            pass
 
-        # 🔥 GPU CLEANUP: Clear GPU memory after processing pattern group
-        # Clean both input and output memory types to ensure comprehensive cleanup
-        cleanup_memory_by_type(input_memory_type_from_plan, device_id)
-        cleanup_memory_by_type(output_memory_type_from_plan, device_id)
-
-        # Force garbage collection to release any remaining references
-        gc.collect()
-
-        logger.debug(f"🔥 GPU CLEANUP: Cleared {input_memory_type_from_plan} and {output_memory_type_from_plan} GPU memory after pattern group")
-
-        # 🔍 VRAM TRACKING: Log memory after cleanup
-        try:
-            from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-            log_gpu_memory_usage(f"pattern group {pattern_repr} (after cleanup)")
-        except Exception:
-            pass
 
         logger.debug(f"Finished pattern group {pattern_repr} in {(time.time() - start_time):.2f}s.")
     except Exception as e:
@@ -736,17 +685,6 @@ class FunctionStep(AbstractStep):
 
             # 🔄 MATERIALIZATION READ: Bulk preload if not reading from memory
             if read_backend != Backend.MEMORY.value:
-                # Get patterns first for bulk preload
-                
-                ## Get all files for this well from patterns
-                #all_files = []
-                #for pattern_group_info in patterns_by_well[well_id].values():
-                #    for pattern in pattern_group_info:
-                #        matching_files = microscope_handler.path_list_from_pattern(
-                #            step_input_dir, pattern, filemanager, read_backend
-                #        )
-                #        all_files.extend(matching_files)
-
                 _bulk_preload_step_images(step_input_dir, step_output_dir, well_id, read_backend,
                                         patterns_by_well,filemanager, microscope_handler, step_plan["zarr_config"])
 
@@ -800,36 +738,6 @@ class FunctionStep(AbstractStep):
                     # Ungrouped patterns (when group_by is None)
                     print(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
 
-
-           # if well_id not in patterns_by_well or not patterns_by_well[well_id]:
-           #     # DEBUG: Check what's actually available
-           #     logger.error(f"🔥 PATTERN DEBUG: Failed to find patterns for well {well_id}")
-           #     logger.error(f"🔥 PATTERN DEBUG: Looking in directory: {step_input_dir}")
-           #     logger.error(f"🔥 PATTERN DEBUG: Read backend: {read_backend}")
-           #     logger.error(f"🔥 PATTERN DEBUG: All detected wells: {list(patterns_by_well.keys())}")
-           #     logger.error(f"🔥 PATTERN DEBUG: Total patterns found: {sum(len(patterns) for patterns in patterns_by_well.values())}")
-
-           #     # Check memory backend state if using memory
-           #     if read_backend == "memory":
-           #         from openhcs.io.base import storage_registry
-           #         memory_backend = storage_registry["memory"]
-           #         logger.error(f"🔥 PATTERN DEBUG: Memory backend has {len(memory_backend._memory_store)} entries")
-
-           #         # Show memory keys that contain the well ID
-           #         well_keys = [key for key in memory_backend._memory_store.keys() if well_id in key]
-           #         logger.error(f"🔥 PATTERN DEBUG: Memory keys containing '{well_id}': {well_keys}")
-
-           #         # Show all memory keys for context
-           #         all_keys = list(memory_backend._memory_store.keys())[:10]  # First 10 keys
-           #         logger.error(f"🔥 PATTERN DEBUG: First 10 memory keys: {all_keys}")
-
-           #         # Check what the normalized directory path looks like
-           #         normalized_dir = memory_backend._normalize(step_input_dir)
-           #         logger.error(f"🔥 PATTERN DEBUG: Normalized directory path: '{normalized_dir}'")
-
-           #     raise ValueError(f"No patterns for well {well_id} in {step_input_dir} for step {step_id}.")
-            
-            # Get func from step plan (stored by FuncStepContractValidator during compilation)
             if func_from_plan is None:
                 raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")
 
@@ -855,47 +763,21 @@ class FunctionStep(AbstractStep):
             if write_backend != Backend.MEMORY.value:
                 memory_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
                 memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
-
-                # Add zarr dimensions if writing to zarr backend
-                if write_backend == Backend.ZARR.value:
-                    n_channels, n_z, n_fields = _calculate_zarr_dimensions(memory_paths, context.microscope_handler)
-                    # Parse well to get row and column for zarr structure
-                    row, col = context.microscope_handler.parser.extract_row_column(well_id)
-                    filemanager.save_batch(memory_data, memory_paths, write_backend,
-                                         chunk_name=well_id, zarr_config=step_plan["zarr_config"],
-                                         n_channels=n_channels, n_z=n_z, n_fields=n_fields,
-                                         row=row, col=col)
-                else:
-                    filemanager.save_batch(memory_data, memory_paths, write_backend,
-                                         chunk_name=well_id, zarr_config=step_plan["zarr_config"])
+                # Calculate zarr dimensions (ignored by non-zarr backends)
+                n_channels, n_z, n_fields = _calculate_zarr_dimensions(memory_paths, context.microscope_handler)
+                row, col = context.microscope_handler.parser.extract_row_column(well_id)
+                filemanager.ensure_directory(step_output_dir, write_backend)
+                filemanager.save_batch(memory_data, memory_paths, write_backend,
+                                     chunk_name=well_id, zarr_config=step_plan["zarr_config"],
+                                     n_channels=n_channels, n_z=n_z, n_fields=n_fields,
+                                     row=row, col=col)
             
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
             self._create_openhcs_metadata_for_materialization(context, step_plan['output_dir'], step_plan['write_backend'])
 
-            # 🔍 VRAM TRACKING: Log memory before final cleanup
-            try:
-                from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-                log_gpu_memory_usage(f"step {step_name} completion (before final cleanup)")
-            except Exception:
-                pass
 
-            # 🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step completion
-            cleanup_memory_by_type(input_mem_type, device_id)
-            #cleanup_memory_by_type(output_mem_type, device_id)
-
-            # Force garbage collection to ensure all references are released
-            gc.collect()
-
-            logger.debug(f"🔥 FINAL GPU CLEANUP: Comprehensive cleanup after step {step_name} completion")
-
-            # 🔍 VRAM TRACKING: Log memory after final cleanup
-            try:
-                from openhcs.core.memory.gpu_cleanup import log_gpu_memory_usage
-                log_gpu_memory_usage(f"step {step_name} completion (after final cleanup)")
-            except Exception:
-                pass
 
         except Exception as e:
             import traceback
@@ -903,14 +785,7 @@ class FunctionStep(AbstractStep):
             logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)
             logger.error(f"Full traceback for FunctionStep {step_id} ({step_name}):\n{full_traceback}")
 
-            # 🔥 ERROR GPU CLEANUP: Clean up even on error to prevent memory leaks
-            try:
-                cleanup_memory_by_type(input_mem_type, device_id)
-                cleanup_memory_by_type(output_mem_type, device_id)
-                gc.collect()
-                logger.debug(f"🔥 ERROR GPU CLEANUP: Cleaned up GPU memory after error in step {step_name}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup GPU memory after error: {cleanup_error}")
+
 
             raise
 

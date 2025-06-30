@@ -19,6 +19,7 @@ from textual.reactive import reactive
 from textual.widgets import Static
 from textual.widget import Widget
 from textual.worker import get_current_worker
+from textual.events import Click
 
 logger = logging.getLogger(__name__)
 
@@ -104,17 +105,53 @@ class StatusBar(Widget):
         self.log_file_path: Optional[str] = None
         self.log_file_position: int = 0
         self.log_monitor_worker = None
+        self.subprocess_base_log_path: Optional[str] = None  # For ReactiveLogMonitor
 
         logger.debug("StatusBar initialized with real-time logging")
     
     def compose(self) -> ComposeResult:
         """Compose the status bar layout."""
-        yield Static(self.get_log_display(), id="log_display", markup=False)
+        # Make the status bar clickable to open Toolong
+        yield Static(
+            self.get_log_display() + " 📋",
+            id="log_display",
+            markup=False,
+            classes="clickable-status"
+        )
 
     def get_log_display(self) -> str:
         """Get the formatted log display string."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         return f"[{timestamp}] {self.current_log_message}"
+
+    async def on_click(self, event: Click) -> None:
+        """Handle click on status bar to open Toolong log viewer."""
+        try:
+            await self.open_toolong_viewer()
+        except Exception as e:
+            logger.error(f"Failed to open Toolong viewer: {e}")
+            self.add_log_message(f"Error opening log viewer: {e}", "ERROR")
+
+    async def open_toolong_viewer(self) -> None:
+        """Open Toolong log viewer in a window using ReactiveLogMonitor."""
+        from openhcs.textual_tui.windows.toolong_window import ToolongWindow
+        from textual.css.query import NoMatches
+
+        # Determine base log path for subprocess logs (if any)
+        base_log_path = ""
+        if hasattr(self, 'subprocess_base_log_path') and self.subprocess_base_log_path:
+            base_log_path = self.subprocess_base_log_path
+
+        # Try to find existing window - if it doesn't exist, create new one
+        try:
+            window = self.app.query_one(ToolongWindow)
+            # Window exists, just open it
+            window.open_state = True
+        except NoMatches:
+            # Expected case: window doesn't exist yet, create new one
+            window = ToolongWindow(base_log_path=base_log_path)
+            await self.app.mount(window)
+            window.open_state = True
 
     def watch_current_log_message(self, message: str) -> None:
         """Update the display when current_log_message changes."""
@@ -179,6 +216,42 @@ class StatusBar(Widget):
     def get_recent_logs(self, count: int = 10) -> list:
         """Get the most recent log messages."""
         return list(self.log_history)[-count:]
+
+    def collect_log_files(self) -> List[str]:
+        """Collect all available OpenHCS log files for viewing."""
+        log_files = []
+
+        # Add main TUI log file if available
+        if self.log_file_path and Path(self.log_file_path).exists():
+            log_files.append(self.log_file_path)
+
+        # Look for subprocess and worker log files in the log directory
+        if self.log_file_path:
+            log_dir = Path(self.log_file_path).parent
+
+            # Find subprocess logs
+            subprocess_logs = list(log_dir.glob("openhcs_subprocess_*.log"))
+            log_files.extend(str(f) for f in subprocess_logs)
+
+            # Find worker logs
+            worker_logs = list(log_dir.glob("openhcs_subprocess_*_worker_*.log"))
+            log_files.extend(str(f) for f in worker_logs)
+
+        # Remove duplicates and sort
+        log_files = sorted(list(set(log_files)))
+
+        logger.info(f"Collected {len(log_files)} log files for Toolong viewer")
+        return log_files
+
+    def start_log_monitoring(self, base_log_path: str) -> None:
+        """Start log monitoring for subprocess with base path tracking."""
+        self.subprocess_base_log_path = base_log_path
+        logger.info(f"StatusBar: Started log monitoring for base path: {base_log_path}")
+
+    def stop_log_monitoring(self) -> None:
+        """Stop log monitoring and clear subprocess base path."""
+        self.subprocess_base_log_path = None
+        logger.info("StatusBar: Stopped log monitoring")
 
     # Legacy methods for compatibility
     def set_status(self, message: str) -> None:
