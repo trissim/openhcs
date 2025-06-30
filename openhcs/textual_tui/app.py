@@ -249,8 +249,18 @@ class OpenHCSTUIApp(App):
 
         # Toolong compatibility attributes
         self.save_merge = None  # For Toolong LogView compatibility
+        self.file_paths = []  # For LogScreen compatibility
+        self.watcher = None  # For LogScreen compatibility
+        self.merge = False  # For LogScreen compatibility
 
         logger.info("OpenHCSTUIApp initialized with Textual reactive system")
+
+    def configure_toolong(self, file_paths: list, watcher, merge: bool = False):
+        """Configure app for Toolong LogScreen compatibility."""
+        self.file_paths = file_paths
+        self.watcher = watcher
+        self.merge = merge
+        logger.info(f"App configured for Toolong with {len(file_paths)} files, merge={merge}")
     
     def compose(self) -> ComposeResult:
         """Compose the main application layout."""

@@ -286,7 +286,7 @@ FunctionPaneWidget {
 
 /* Select widgets - with underlined text and no borders */
 Select {
-    height: 1;
+    height: auto;  /* CHANGED: was 1, now auto to test dropdown expansion */
     padding: 0;
     margin: 0;
     text-style: underline;
@@ -328,8 +328,11 @@ FunctionPaneWidget Horizontal Horizontal Button {
 
 /* Make Select dropdowns show full list */
 SelectOverlay {
-    max-height: 100vh;  /* Use full viewport height */
+    max-height: 15;     /* Allow multiple lines but not too many */
+    height: auto;       /* Allow natural height expansion */
     width: auto;
+    overlay: screen;    /* Enable overlay behavior globally */
+    constrain: none inside;  /* Remove container constraints globally */
 }
 
 /* RadioSet and RadioButton alignment - always left aligned */

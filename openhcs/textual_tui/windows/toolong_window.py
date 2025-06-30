@@ -53,57 +53,112 @@ class ToolongWindow(BaseOpenHCSWindow):
     }
     """
     
-    def __init__(self, log_files: List[str] = None, base_log_path: str = "", **kwargs):
+    def __init__(self, base_log_path: str = "", **kwargs):
         """
         Initialize the Toolong window.
 
         Args:
-            log_files: List of log file paths to display (legacy support)
-            base_log_path: Base path for reactive log monitoring
+            base_log_path: Base path for subprocess log monitoring (optional)
         """
-        # Determine base path from log files if not provided
-        if not base_log_path and log_files:
-            # Extract base path from first log file
-            first_log = Path(log_files[0])
-            if first_log.suffix == '.log':
-                base_log_path = str(first_log.with_suffix(''))
-
-        # Determine window title
-        if base_log_path:
-            base_name = Path(base_log_path).name
-            title = f"Log Viewer - {base_name}"
-        elif log_files:
-            if len(log_files) == 1:
-                title = f"Log Viewer - {Path(log_files[0]).name}"
-            else:
-                title = f"Log Viewer - {len(log_files)} files"
-        else:
-            title = "Log Viewer"
-
         super().__init__(
             window_id="toolong_viewer",
-            title=title,
+            title="Log Viewer",
             mode="temporary",
             **kwargs
         )
+
+        # Find current TUI log file
+        self.tui_log_file = self._find_current_tui_log()
+
+        # Store base_log_path for reference
         self.base_log_path = base_log_path
-        self.log_files = log_files or []
-        
+
+        # Determine logs directory for file watching
+        if base_log_path:
+            # Use directory of base_log_path for watching subprocess logs
+            self.logs_directory = Path(base_log_path).parent
+        elif self.tui_log_file:
+            # Fall back to TUI log directory
+            self.logs_directory = Path(self.tui_log_file).parent
+        else:
+            self.logs_directory = None
+
+    def _find_current_tui_log(self) -> str:
+        """Find the current TUI process log file (not subprocess or worker logs)."""
+        import glob
+
+        # Look for TUI log files (exclude subprocess and worker logs)
+        log_pattern = "/home/ts/.local/share/openhcs/logs/openhcs_unified_*.log"
+        all_logs = sorted(glob.glob(log_pattern))
+
+        # Filter to only actual TUI logs (not subprocess or worker logs)
+        tui_logs = []
+        for log_file in all_logs:
+            log_name = Path(log_file).name
+            # TUI logs don't contain "subprocess" or "worker" in the name
+            if "_subprocess_" not in log_name and "_worker_" not in log_name:
+                tui_logs.append(log_file)
+
+        if tui_logs:
+            # Return the most recent TUI log
+            logger.info(f"Found {len(tui_logs)} TUI logs, using most recent: {Path(tui_logs[-1]).name}")
+            return tui_logs[-1]
+        else:
+            logger.warning("No TUI log files found")
+            return None
+
+    def _find_session_logs(self) -> List[str]:
+        """Find all logs belonging to the current TUI session."""
+        import glob
+
+        if not self.tui_log_file:
+            return []
+
+        # Extract session base from TUI log
+        # openhcs_unified_20250630_092636.log -> openhcs_unified_20250630_092636
+        tui_base = Path(self.tui_log_file).stem
+
+        # Find all logs that start with this session base
+        log_pattern = str(self.logs_directory / f"{tui_base}*.log")
+        session_logs = sorted(glob.glob(log_pattern))
+
+        logger.info(f"Found {len(session_logs)} logs for session '{tui_base}':")
+        for log_file in session_logs:
+            logger.info(f"  - {Path(log_file).name}")
+
+        return session_logs
+
+    def _find_all_openhcs_logs(self) -> List[str]:
+        """Find all existing OpenHCS log files."""
+        import glob
+
+        if not self.logs_directory:
+            return []
+
+        # Look for all OpenHCS log files
+        log_pattern = str(self.logs_directory / "openhcs_*.log")
+        all_logs = sorted(glob.glob(log_pattern))
+
+        logger.info(f"Found {len(all_logs)} existing OpenHCS log files")
+        for log_file in all_logs:
+            logger.info(f"  - {Path(log_file).name}")
+
+        return all_logs
+
     def compose(self) -> ComposeResult:
         """Compose the Toolong window layout using SimpleToolongWidget."""
         try:
-            # Use SimpleToolongWidget for direct Toolong integration
-            if self.log_files:
-                yield SimpleToolongWidget(self.log_files)
+            # Find all logs for current session
+            session_logs = self._find_session_logs()
+
+            if session_logs:
+                # Start with all existing session logs, watch for new ones
+                yield SimpleToolongWidget(
+                    log_files=session_logs,  # All session logs
+                    base_log_path=str(self.logs_directory) if self.logs_directory else None
+                )
             else:
-                # Find current log files if none provided
-                import glob
-                log_pattern = "/home/ts/.local/share/openhcs/logs/openhcs_unified_*.log"
-                current_logs = sorted(glob.glob(log_pattern))
-                if current_logs:
-                    yield SimpleToolongWidget(current_logs[-1:])  # Most recent log
-                else:
-                    yield Static("No log files found", classes="error-message")
+                yield Static("No session log files found", classes="error-message")
 
         except Exception as e:
             logger.error(f"Failed to create SimpleToolongWidget: {e}")

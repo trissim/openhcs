@@ -517,15 +517,19 @@ class PlateManagerWidget(ButtonListWidget):
 
             # Generate unique ID for this subprocess
             import time
+            subprocess_timestamp = int(time.time())
             plate_names = [Path(path).name for path in plate_paths_to_run]
-            unique_id = f"plates_{'_'.join(plate_names[:2])}_{int(time.time())}"  # Limit to first 2 plates for filename length
+            unique_id = f"plates_{'_'.join(plate_names[:2])}_{subprocess_timestamp}"  # Limit to first 2 plates for filename length
 
-            # Get base log file path (without extension)
-            base_log_path = get_current_log_file_path()
-            if base_log_path.endswith('.log'):
-                log_file_base = base_log_path[:-4]  # Remove .log extension
+            # Build subprocess log name from TUI log base
+            tui_log_path = get_current_log_file_path()
+            if tui_log_path.endswith('.log'):
+                tui_base = tui_log_path[:-4]  # Remove .log extension
             else:
-                log_file_base = base_log_path
+                tui_base = tui_log_path
+
+            # Create hierarchical log file base: TUI_base_subprocess_timestamp
+            log_file_base = f"{tui_base}_subprocess_{subprocess_timestamp}"
 
             # Pickle data for subprocess
             subprocess_data = {

@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import TabbedContent, TabPane
+from textual.widgets import TabbedContent, TabPane, Select
 from textual.lazy import Lazy
 
 # Import Toolong components
@@ -77,38 +77,79 @@ class ToolongWidget(Widget):
         return sorted(paths, key=lambda p: Path(p).name)
     
     def compose(self) -> ComposeResult:
-        """Compose the Toolong widget using the same structure as Toolong UI."""
+        """Compose the Toolong widget using dropdown selector instead of tabs."""
         if not self.log_files:
             # No log files - show empty state
             from textual.widgets import Static
             yield Static("No log files available", classes="empty-state")
             return
-            
-        # Use the exact same structure as Toolong's LogScreen
-        with TabbedContent():
-            if self.merge and len(self.log_files) > 1:
-                # Merged view - single tab with all files
-                tab_name = " + ".join(Path(path).name for path in self.log_files)
-                with TabPane(tab_name):
-                    yield Lazy(
-                        LogView(
-                            self.log_files,
-                            self.watcher,
-                            can_tail=False,  # Merged views don't tail
-                        )
+
+        from textual.widgets import Select, Container
+        from textual.containers import Horizontal
+
+        # Create dropdown options with friendly names
+        options = []
+        for log_file in self.log_files:
+            display_name = self._get_friendly_name(log_file)
+            options.append((display_name, log_file))
+
+        # Dropdown selector
+        with Horizontal(classes="log-selector"):
+            yield Select(
+                options=options,
+                value=self.log_files[0] if self.log_files else None,
+                id="log_selector",
+                compact=True
+            )
+
+        # Container for log view
+        with Container(id="log_container"):
+            if self.log_files:
+                yield Lazy(
+                    LogView(
+                        [self.log_files[0]],  # Start with first file
+                        self.watcher,
+                        can_tail=self.can_tail,
                     )
+                )
+
+    def _get_friendly_name(self, log_file: str) -> str:
+        """Convert log file path to friendly display name."""
+        import re
+        file_name = Path(log_file).name
+
+        if "unified" in file_name:
+            if "worker_" in file_name:
+                # Extract worker ID: openhcs_unified_20250630_094200_subprocess_123_worker_456_789.log
+                worker_match = re.search(r'worker_(\d+)', file_name)
+                return f"Worker {worker_match.group(1)}" if worker_match else "Worker"
+            elif "_subprocess_" in file_name:
+                return "Subprocess"
             else:
-                # Individual tabs for each file
-                for log_file in self.log_files:
-                    tab_name = Path(log_file).name
-                    with TabPane(tab_name):
-                        yield Lazy(
-                            LogView(
-                                [log_file],
-                                self.watcher,
-                                can_tail=self.can_tail,
-                            )
-                        )
+                return "TUI Main"
+        elif "subprocess" in file_name:
+            return "Subprocess"
+        else:
+            return Path(log_file).name
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle dropdown selection change."""
+        if event.control.id == "log_selector" and event.value:
+            selected_path = event.value
+
+            # Update the log view with selected file
+            container = self.query_one("#log_container")
+
+            # Remove existing log view
+            container.query("*").remove()
+
+            # Add new log view for selected file
+            new_view = LogView(
+                [selected_path],
+                self.watcher,
+                can_tail=self.can_tail,
+            )
+            container.mount(new_view)
     
     def on_mount(self) -> None:
         """Start the watcher when widget is mounted."""
@@ -121,22 +162,13 @@ class ToolongWidget(Widget):
         else:
             logger.info("Shared watcher already running")
 
-        # Hide tabs if only one file
+        # Focus LogLines (no tabs in dropdown structure)
         try:
-            tabbed_content = self.query_one(TabbedContent)
-            tab_panes = self.query(TabPane)
-            tabbed_content.query("Tabs").set(display=len(tab_panes) > 1)
-
-            # Focus the first LogLines and enable tailing
-            if tab_panes:
-                active_pane = tabbed_content.active_pane
-                if active_pane:
-                    log_lines = active_pane.query("LogView > LogLines")
-                    if log_lines:
-                        log_lines.first().focus()
-
+            log_lines = self.query("LogView > LogLines")
+            if log_lines:
+                log_lines.first().focus()
         except Exception as e:
-            logger.debug(f"Could not configure tabs or focus: {e}")
+            logger.debug(f"Could not focus LogLines: {e}")
 
         # Simple tailing setup
         if self.can_tail:

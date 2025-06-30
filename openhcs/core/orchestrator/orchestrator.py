@@ -41,14 +41,17 @@ def _configure_worker_logging(log_file_base: str):
     Configure logging for worker process.
 
     This function is called once per worker process when it starts.
-    Each worker will get its own log file based on the well it processes.
+    Each worker will get its own log file with a unique identifier.
     """
     import os
     import logging
+    import time
 
-    # Get the current process ID to create unique log file
+    # Create unique worker identifier using PID and timestamp
     worker_pid = os.getpid()
-    worker_log_file = f"{log_file_base}_worker_{worker_pid}.log"
+    worker_timestamp = int(time.time() * 1000000)  # Microsecond precision for uniqueness
+    worker_id = f"{worker_pid}_{worker_timestamp}"
+    worker_log_file = f"{log_file_base}_worker_{worker_id}.log"
 
     # Configure root logger to capture ALL logs from worker process
     root_logger = logging.getLogger()
@@ -65,7 +68,7 @@ def _configure_worker_logging(log_file_base: str):
 
     # Get worker logger
     worker_logger = logging.getLogger("openhcs.worker")
-    worker_logger.info(f"🔥 WORKER: Process {worker_pid} logging configured")
+    worker_logger.info(f"🔥 WORKER: Process {worker_pid} (ID: {worker_id}) logging configured")
     worker_logger.info(f"🔥 WORKER: All logs writing to: {worker_log_file}")
 
 
@@ -370,12 +373,13 @@ class PipelineOrchestrator:
                 compiled_contexts[well_id] = context
                 logger.debug(f"Compilation finished for well: {well_id}")
 
-                logger.info("Stripping attributes from pipeline definition steps.")
-                StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
+            # After processing all wells, strip attributes and finalize
+            logger.info("Stripping attributes from pipeline definition steps.")
+            StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
 
-                self._state = OrchestratorState.COMPILED
-                logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
-                return compiled_contexts
+            self._state = OrchestratorState.COMPILED
+            logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
+            return compiled_contexts
         except Exception as e:
             self._state = OrchestratorState.FAILED
             logger.error(f"Failed to compile pipelines: {e}")
