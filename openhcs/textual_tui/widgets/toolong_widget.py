@@ -21,6 +21,9 @@ from toolong.watcher import get_watcher
 
 logger = logging.getLogger(__name__)
 
+# Import shared watcher to prevent conflicts
+from openhcs.textual_tui.widgets.simple_toolong_widget import get_shared_watcher
+
 
 class ToolongWidget(Widget):
     """
@@ -66,7 +69,7 @@ class ToolongWidget(Widget):
         self.log_files = self._sort_paths(log_files)
         self.merge = merge
         self.can_tail = can_tail
-        self.watcher = get_watcher()
+        self.watcher = get_shared_watcher()  # Use shared watcher to prevent conflicts
         
     @classmethod
     def _sort_paths(cls, paths: List[str]) -> List[str]:
@@ -111,8 +114,12 @@ class ToolongWidget(Widget):
         """Start the watcher when widget is mounted."""
         logger.info(f"ToolongWidget mounting with {len(self.log_files)} log files")
 
-        # Start the watcher and enable tailing
-        self.watcher.start()
+        # Start the watcher and enable tailing (only if not already running)
+        if not hasattr(self.watcher, '_thread') or self.watcher._thread is None:
+            logger.info("Starting shared watcher")
+            self.watcher.start()
+        else:
+            logger.info("Shared watcher already running")
 
         # Hide tabs if only one file
         try:
@@ -151,11 +158,9 @@ class ToolongWidget(Widget):
 
     def on_unmount(self) -> None:
         """Clean up the watcher when widget is unmounted."""
-        logger.info("ToolongWidget unmounting, stopping watcher")
-        try:
-            self.watcher.close()
-        except Exception as e:
-            logger.debug(f"Error stopping watcher: {e}")
+        logger.info("ToolongWidget unmounting")
+        # Don't close shared watcher - other widgets might be using it
+        # The shared watcher will be cleaned up when the app exits
     
     def add_log_file(self, log_file: str) -> None:
         """Add a new log file to the widget."""
