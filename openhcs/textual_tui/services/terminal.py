@@ -152,7 +152,21 @@ from array import array
 from datetime import datetime, timedelta
 from functools import partial
 from collections import defaultdict
-from itertools import imap, izip
+# Python 3 compatibility - imap and izip are now map and zip
+try:
+    from itertools import imap, izip
+except ImportError:
+    # Python 3
+    imap = map
+    izip = zip
+
+# Python 3 compatibility - generator.next() is now next(generator)
+def next_compat(generator):
+    """Compatibility function for generator.next() vs next(generator)"""
+    try:
+        return generator.next()  # Python 2
+    except AttributeError:
+        return next(generator)   # Python 3
 try:
     from collections import OrderedDict
 except ImportError: # Python <2.7 didn't have OrderedDict in collections
@@ -997,11 +1011,8 @@ class AutoExpireDict(dict):
 
 # AutoExpireDict only works if Tornado is present.
 # Don't use the HTML_CACHE if Tornado isn't available.
-try:
-    from tornado.ioloop import IOLoop, PeriodicCallback
-    HTML_CACHE = AutoExpireDict(timeout=timedelta(minutes=1), interval=30000)
-except ImportError:
-    HTML_CACHE = None
+# For OpenHCS, we disable HTML_CACHE since we don't use Tornado
+HTML_CACHE = None
 
 class FileType(object):
     """
@@ -1767,11 +1778,11 @@ class Terminal(object):
     RE_TITLE_SEQ = re.compile(r'\x1b\][0-2]\;(.*?)(\x07|\x1b\\)')
     # The below regex is used to match our optional (non-standard) handler
     RE_OPT_SEQ = re.compile(r'\x1b\]_\;(.+?)(\x07|\x1b\\)')
-    RE_NUMBERS = re.compile('\d*') # Matches any number
-    RE_SIGINT = re.compile(b'.*\^C', re.MULTILINE|re.DOTALL)
+    RE_NUMBERS = re.compile(r'\d*') # Matches any number
+    RE_SIGINT = re.compile(rb'.*\^C', re.MULTILINE|re.DOTALL)
 
     def __init__(self, rows=24, cols=80, em_dimensions=None, temppath='/tmp',
-    linkpath='/tmp', icondir=None, encoding='utf-8', async=None, debug=False,
+    linkpath='/tmp', icondir=None, encoding='utf-8', async_mode=None, debug=False,
     enabled_filetypes="all"):
         """
         Initializes the terminal by calling *self.initialize(rows, cols)*.  This
@@ -1857,7 +1868,7 @@ class Terminal(object):
         self.linkpath = linkpath
         self.icondir = icondir
         self.encoding = encoding
-        self.async = async
+        self.async_mode = async_mode
         if enabled_filetypes == "all":
             enabled_filetypes = [
                 PDFFile,
@@ -2121,7 +2132,7 @@ class Terminal(object):
         # Used for mapping unicode chars to acutal renditions (to save memory):
         self.renditions_store = {
             u' ': [], # Nada, nothing, no rendition.  Not the same as below
-            self.rend_counter.next(): [0] # Default is actually reset
+            next_compat(self.rend_counter): [0] # Default is actually reset
         }
         self.watcher = None # Placeholder for the file watcher thread (if used)
 
@@ -3176,7 +3187,7 @@ class Terminal(object):
         `self.matched_header`) and stores the result in `self.captured_files`
         and creates a reference to that location at the current cursor location.
         """
-        ref = self.file_counter.next()
+        ref = next_compat(self.file_counter)
         logging.debug("_filetype_instance(%s)" % repr(ref))
         # Before doing anything else we need to mark the current cursor
         # location as belonging to our file
@@ -4034,7 +4045,7 @@ class Terminal(object):
             # previous rendition...
             reduced = _reduce_renditions(out_renditions)
             if reduced not in self.renditions_store.values():
-                new_ref_point = self.rend_counter.next()
+                new_ref_point = next_compat(self.rend_counter)
                 self.renditions_store.update({new_ref_point: reduced})
                 self.cur_rendition = new_ref_point
             else: # Find the right reference point to use
@@ -4046,7 +4057,7 @@ class Terminal(object):
         cur_rendition_list = self.renditions_store[self.cur_rendition]
         reduced = _reduce_renditions(cur_rendition_list + new_renditions)
         if reduced not in self.renditions_store.values():
-            new_ref_point = self.rend_counter.next()
+            new_ref_point = next_compat(self.rend_counter)
             self.renditions_store.update({new_ref_point: reduced})
             self.cur_rendition = new_ref_point
         else: # Find the right reference point to use
@@ -4481,7 +4492,7 @@ class Terminal(object):
             This places <span class="cursor">(current character)</span> around
             the cursor location.
         """
-        if self.async:
+        if self.async_mode:
             state_obj = {
                 'html_cache': HTML_CACHE,
                 'screen': self.screen,
@@ -4492,7 +4503,7 @@ class Terminal(object):
                 'show_cursor': self.expanded_modes['25'],
                 'class_prefix': self.class_prefix
             }
-            self.async.call_singleton(
+            self.async_mode.call_singleton(
                 spanify_screen, identifier, state_obj, callback=callback)
         else:
             scrollback, screen = self.dump_html(renditions=renditions)

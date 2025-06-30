@@ -97,11 +97,15 @@ class PersistentTailLogLines(LogLines):
     """LogLines that doesn't automatically disable tailing on user interaction."""
 
     def __init__(self, watcher, file_paths):
+        logger.info(f"PersistentTailLogLines.__init__: file_paths={file_paths}, watcher={type(watcher).__name__}")
         super().__init__(watcher, file_paths)
         self._persistent_tail = True
 
     def post_message(self, message):
         """Override to block TailFile(False) messages when persistent tailing is enabled."""
+        # Handle FileError messages safely when app context is not available
+        from toolong.messages import FileError
+
         if (isinstance(message, TailFile) and
             not message.tail and
             self._persistent_tail):
@@ -110,7 +114,6 @@ class PersistentTailLogLines(LogLines):
             return
 
         # Handle FileError messages safely when app context is not available
-        from toolong.messages import FileError
         if isinstance(message, FileError):
             try:
                 super().post_message(message)
@@ -120,6 +123,44 @@ class PersistentTailLogLines(LogLines):
                 return
         else:
             super().post_message(message)
+
+    def on_scan_complete(self, event) -> None:
+        """Override to ensure start_tail is actually called after scan completes."""
+        logger.info(f"🔍 PersistentTailLogLines.on_scan_complete called! files={len(self.log_files)}, can_tail={self.can_tail}")
+
+        # Call parent first
+        super().on_scan_complete(event)
+
+        # Force start_tail if conditions are met
+        if len(self.log_files) == 1 and self.can_tail:
+            logger.info(f"PersistentTailLogLines: Ensuring start_tail() is called (files={len(self.log_files)}, can_tail={self.can_tail})")
+            try:
+                logger.info(f"🔍 About to call start_tail() - current watcher: {type(self.watcher).__name__}")
+                self.start_tail()
+                logger.info(f"✅ PersistentTailLogLines: start_tail() called successfully in on_scan_complete")
+
+                # Debug: Check if watcher is actually watching the file
+                if hasattr(self.watcher, '_watched_files'):
+                    watched_files = getattr(self.watcher, '_watched_files', {})
+                    logger.info(f"🔍 Watcher now watching {len(watched_files)} files: {list(watched_files.keys())}")
+                elif hasattr(self.watcher, '_file_descriptors'):
+                    file_descriptors = getattr(self.watcher, '_file_descriptors', {})
+                    logger.info(f"🔍 Watcher has {len(file_descriptors)} file descriptors: {list(file_descriptors.keys())}")
+                else:
+                    logger.warning(f"⚠️ Cannot inspect watcher state - no _watched_files or _file_descriptors")
+
+                # Debug: Check if file is actually being tailed
+                if hasattr(self, 'tail') and self.tail:
+                    logger.info(f"🔍 LogLines tail status: {self.tail}")
+                else:
+                    logger.warning(f"⚠️ LogLines tail status is False!")
+
+            except Exception as e:
+                logger.error(f"❌ PersistentTailLogLines: start_tail() failed in on_scan_complete: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            logger.info(f"PersistentTailLogLines: start_tail() conditions not met (files={len(self.log_files)}, can_tail={self.can_tail})")
 
     def action_scroll_up(self) -> None:
         """Override scroll up to not disable tailing when persistent."""
@@ -181,6 +222,18 @@ class PersistentTailLogLines(LogLines):
 
 class PersistentTailLogView(LogView):
     """LogView that uses PersistentTailLogLines."""
+
+    def on_mount(self) -> None:
+        """Override to ensure tailing is enabled after mount."""
+        # Force enable tailing for persistent behavior
+        self.tail = True
+        logger.info(f"PersistentTailLogView mounted with tail={self.tail}, can_tail={self.can_tail}")
+
+    async def watch_tail(self, old_value: bool, new_value: bool) -> None:
+        """Watch for changes to the tail property."""
+        logger.info(f"🔍 PersistentTailLogView tail changed: {old_value} → {new_value}")
+        if hasattr(super(), 'watch_tail'):
+            await super().watch_tail(old_value, new_value)
 
     def compose(self):
         """Override to use our custom LogLines with proper data binding."""
@@ -326,10 +379,14 @@ class OpenHCSToolongWidget(Widget):
             if self.merge and len(self.file_paths) > 1:
                 tab_name = " + ".join(Path(path).name for path in self.file_paths)
                 with TabPane(tab_name):
+                    # Create separate watcher for merged view (like original toolong)
+                    from toolong.watcher import get_watcher
+                    watcher = get_watcher()
+                    watcher.start()  # CRITICAL: Start the watcher thread!
                     yield Lazy(
                         PersistentTailLogView(
                             self.file_paths,
-                            self.watcher,
+                            watcher,  # Separate watcher
                             can_tail=False,
                         )
                     )
@@ -339,10 +396,14 @@ class OpenHCSToolongWidget(Widget):
                     tab_name = self._create_friendly_tab_name(path)
 
                     with TabPane(tab_name):
+                        # Create separate watcher for each LogView (like original toolong)
+                        from toolong.watcher import get_watcher
+                        watcher = get_watcher()
+                        watcher.start()  # CRITICAL: Start the watcher thread!
                         yield Lazy(
                             PersistentTailLogView(
                                 [path],
-                                self.watcher,
+                                watcher,  # Separate watcher for each tab
                                 can_tail=True,
                             )
                         )
@@ -406,14 +467,33 @@ class OpenHCSToolongWidget(Widget):
                     logger.info(f"Enabled tail=True on LogView: {log_view}")
 
             # Enable persistent tailing on LogLines and start individual file tailing
-            for log_lines in self.query("PersistentTailLogLines"):
+            log_lines_widgets = self.query("PersistentTailLogLines")
+            logger.info(f"🔍 Found {len(log_lines_widgets)} PersistentTailLogLines widgets for tailing setup")
+
+            for log_lines in log_lines_widgets:
+                logger.info(f"🔍 Processing LogLines: {log_lines}, log_files={len(getattr(log_lines, 'log_files', []))}")
+
                 log_lines._persistent_tail = True
                 log_lines.post_message(TailFile(True))
 
-                # Start tailing on individual log files (this is the key!)
+                # Check if file is opened before starting tailing
                 if hasattr(log_lines, 'start_tail') and len(log_lines.log_files) == 1:
-                    log_lines.start_tail()
-                    logger.info(f"Started file tailing on LogLines: {log_lines}")
+                    log_file = log_lines.log_files[0]
+                    file_opened = hasattr(log_file, 'file') and log_file.file is not None
+                    logger.info(f"🔍 File status: path={getattr(log_file, 'path', 'unknown')}, file_opened={file_opened}")
+
+                    if file_opened:
+                        try:
+                            log_lines.start_tail()
+                            logger.info(f"✅ Started file tailing on LogLines: {log_lines}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to start tailing on LogLines: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        logger.info(f"⏰ File not opened yet, tailing will start after scan completes")
+                else:
+                    logger.warning(f"⚠️ Cannot start tailing: has_start_tail={hasattr(log_lines, 'start_tail')}, log_files={len(getattr(log_lines, 'log_files', []))}")
 
                 logger.info(f"Enabled persistent tailing for {log_lines}")
         except Exception as e:
@@ -693,14 +773,9 @@ class OpenHCSToolongWidget(Widget):
                 self._file_observer = None
                 logger.info("File observer stopped")
 
-            # Stop LogLines readers first
-            for log_lines in self.query("PersistentTailLogLines"):
-                try:
-                    if hasattr(log_lines, '_line_reader') and log_lines._line_reader:
-                        log_lines._line_reader.stop()
-                        logger.info(f"Stopped line reader for {log_lines}")
-                except Exception as e:
-                    logger.warning(f"Error stopping line reader: {e}")
+            # No shared watcher cleanup needed - each LogView has its own watcher
+            # The individual watchers will be cleaned up when their LogLines widgets unmount
+            logger.info("No shared watcher cleanup needed - using separate watchers per LogView")
 
             # Don't close shared watcher - other widgets might be using it
             # The shared watcher will be cleaned up when the app exits

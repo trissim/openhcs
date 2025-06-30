@@ -10,6 +10,7 @@ from openhcs.textual_tui.windows.function_selector_window import FunctionSelecto
 from openhcs.textual_tui.windows.group_by_selector_window import GroupBySelectorWindow
 from openhcs.textual_tui.windows.help_windows import DocstringHelpWindow, ParameterHelpWindow
 from openhcs.textual_tui.windows.terminal_window import TerminalWindow
+from openhcs.textual_tui.windows.advanced_terminal_window import AdvancedTerminalWindow
 from openhcs.textual_tui.windows.debug_class_explorer import DebugClassExplorerWindow
 from openhcs.textual_tui.windows.multi_orchestrator_config_window import MultiOrchestratorConfigWindow
 from openhcs.textual_tui.windows.toolong_window import ToolongWindow
@@ -27,6 +28,8 @@ __all__ = [
     "GroupBySelectorWindow",
     "DocstringHelpWindow",
     "ParameterHelpWindow",
+    "TerminalWindow",
+    "AdvancedTerminalWindow",
     "DebugClassExplorerWindow",
     "MultiOrchestratorConfigWindow",
     "ToolongWindow"

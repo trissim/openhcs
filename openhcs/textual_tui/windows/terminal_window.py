@@ -19,6 +19,12 @@ try:
     from textual_terminal._terminal import TerminalEmulator
     TERMINAL_AVAILABLE = True
 
+    # Import our extracted terminal enhancements
+    from openhcs.textual_tui.services.terminal_enhancements import terminal_enhancements
+
+    # Import Gate One terminal for enhanced features
+    from openhcs.textual_tui.services.terminal import Terminal as GateOneTerminal
+
     # Monkey-patch Terminal to track cursor styles
     _original_terminal_recv = Terminal.recv
 
@@ -395,6 +401,47 @@ exec {self.shell_command}
                 await terminal.send_queue.put(["stdin", char])
             # Send enter key
             await terminal.send_queue.put(["stdin", "\n"])
+
+    def analyze_terminal_output(self, text: str) -> dict:
+        """
+        Analyze terminal output using enhanced escape sequence parsing.
+
+        Returns:
+            Dictionary with parsed information about colors, styles, etc.
+        """
+        if not TERMINAL_AVAILABLE:
+            return {}
+
+        try:
+            parts = terminal_enhancements.parse_enhanced_escape_sequences(text)
+
+            analysis = {
+                'has_colors': False,
+                'has_styles': False,
+                'title_changes': [],
+                'color_sequences': [],
+                'text_parts': [],
+            }
+
+            for text_part, seq_type, params in parts:
+                if seq_type == 'text':
+                    analysis['text_parts'].append(text_part)
+                elif seq_type == 'csi' and params.get('command') == 'm':
+                    # Color/style sequence
+                    color_info = terminal_enhancements.parse_color_sequence(params.get('params', []))
+                    analysis['color_sequences'].append(color_info)
+                    if color_info.get('fg_color') or color_info.get('bg_color'):
+                        analysis['has_colors'] = True
+                    if any(color_info.get(k) for k in ['bold', 'italic', 'underline']):
+                        analysis['has_styles'] = True
+                elif seq_type == 'title':
+                    analysis['title_changes'].append(params.get('title', ''))
+
+            return analysis
+
+        except Exception as e:
+            # Fallback to empty analysis if parsing fails
+            return {}
 
     def on_mount(self) -> None:
         """Called when terminal window is mounted."""
