@@ -15,8 +15,8 @@ from textual.widgets import Static
 # Import OpenHCS window base class
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 
-# Import our simple Toolong widget
-from openhcs.textual_tui.widgets.simple_toolong_widget import SimpleToolongWidget
+# Import our OpenHCS Toolong widget
+from openhcs.textual_tui.widgets.openhcs_toolong_widget import OpenHCSToolongWidget
 
 
 
@@ -146,22 +146,25 @@ class ToolongWindow(BaseOpenHCSWindow):
         return all_logs
 
     def compose(self) -> ComposeResult:
-        """Compose the Toolong window layout using SimpleToolongWidget."""
+        """Compose the Toolong window layout using OpenHCSToolongWidget."""
         try:
             # Find all logs for current session
             session_logs = self._find_session_logs()
 
             if session_logs:
                 # Start with all existing session logs, watch for new ones
-                yield SimpleToolongWidget(
-                    log_files=session_logs,  # All session logs
+                yield OpenHCSToolongWidget(
+                    file_paths=session_logs,  # All session logs
+                    show_tabs=False,  # Hide tabs, use dropdown only
+                    show_dropdown=True,  # Show dropdown selector
+                    show_controls=True,  # Show control buttons
                     base_log_path=str(self.logs_directory) if self.logs_directory else None
                 )
             else:
                 yield Static("No session log files found", classes="error-message")
 
         except Exception as e:
-            logger.error(f"Failed to create SimpleToolongWidget: {e}")
+            logger.error(f"Failed to create OpenHCSToolongWidget: {e}")
             yield Static(
                 f"Error loading log viewer: {e}\n\n" +
                 "Please check that log files exist and are readable.",

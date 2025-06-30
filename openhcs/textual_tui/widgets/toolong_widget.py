@@ -22,7 +22,7 @@ from toolong.watcher import get_watcher
 logger = logging.getLogger(__name__)
 
 # Import shared watcher to prevent conflicts
-from openhcs.textual_tui.widgets.simple_toolong_widget import get_shared_watcher
+from openhcs.textual_tui.widgets.openhcs_toolong_widget import get_shared_watcher
 
 
 class ToolongWidget(Widget):
