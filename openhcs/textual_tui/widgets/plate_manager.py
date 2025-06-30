@@ -1247,7 +1247,8 @@ class PlateManagerWidget(ButtonListWidget):
             selection_mode=SelectionMode.DIRECTORIES_ONLY,
             cache_key=PathCacheKey.PLATE_IMPORT,
             on_result_callback=self._add_plate_callback,
-            caller_id="plate_manager"
+            caller_id="plate_manager",
+            enable_multi_selection=True
         )
 
     def _add_plate_callback(self, selected_paths) -> None:

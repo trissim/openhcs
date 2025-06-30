@@ -28,6 +28,7 @@ class WindowService:
         cache_key: Optional[PathCacheKey] = None,
         on_result_callback: Optional[Callable] = None,
         caller_id: str = "unknown",
+        enable_multi_selection: bool = False,
     ):
         """Open file browser window without circular imports."""
         # Lazy import to avoid circular dependency
@@ -50,6 +51,7 @@ class WindowService:
             cache_key=cache_key,
             on_result_callback=on_result_callback,
             caller_id=caller_id,
+            enable_multi_selection=enable_multi_selection,
         )
     
     async def open_config_window(self, config, on_save_callback: Optional[Callable] = None):
