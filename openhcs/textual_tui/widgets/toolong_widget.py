@@ -16,7 +16,7 @@ from textual.widgets import TabbedContent, TabPane
 from textual.lazy import Lazy
 
 # Import Toolong components
-from toolong.log_view import LogView
+from toolong.ui import LogScreen
 from toolong.watcher import get_watcher
 
 logger = logging.getLogger(__name__)
@@ -111,16 +111,16 @@ class ToolongWidget(Widget):
         """Start the watcher when widget is mounted."""
         logger.info(f"ToolongWidget mounting with {len(self.log_files)} log files")
 
-        # Start the watcher (like Toolong UI does)
+        # Start the watcher and enable tailing
         self.watcher.start()
 
-        # Hide tabs if only one file (like Toolong UI does)
+        # Hide tabs if only one file
         try:
             tabbed_content = self.query_one(TabbedContent)
             tab_panes = self.query(TabPane)
             tabbed_content.query("Tabs").set(display=len(tab_panes) > 1)
 
-            # Focus the first LogLines (like Toolong UI does)
+            # Focus the first LogLines and enable tailing
             if tab_panes:
                 active_pane = tabbed_content.active_pane
                 if active_pane:
@@ -131,39 +131,23 @@ class ToolongWidget(Widget):
         except Exception as e:
             logger.debug(f"Could not configure tabs or focus: {e}")
 
-        # Enable tailing by default for real-time log updates
+        # Simple tailing setup
         if self.can_tail:
-            # Use a longer delay to ensure LogLines are fully initialized
-            self.set_timer(1.0, self._enable_tailing)
+            self.call_after_refresh(self._enable_tailing)
 
     def _enable_tailing(self) -> None:
-        """Enable tailing on all LogView widgets and start file watchers."""
+        """Enable tailing on LogView widgets."""
         try:
-            log_views = self.query("LogView")
-            logger.info(f"Found {len(log_views)} LogView widgets")
-
-            for log_view in log_views:
+            for log_view in self.query("LogView"):
                 if hasattr(log_view, 'can_tail') and log_view.can_tail:
-                    # Set tail property to enable UI tailing mode
                     log_view.tail = True
-                    logger.info(f"Enabled tailing for LogView: {log_view}")
 
-                    # Also need to start the actual file watcher on LogLines
-                    log_lines = log_view.query("LogLines")
-                    logger.info(f"Found {len(log_lines)} LogLines widgets in LogView")
-
-                    for log_line in log_lines:
-                        if hasattr(log_line, 'start_tail'):
-                            logger.info(f"LogLines has {len(log_line.log_files)} log files")
-                            if len(log_line.log_files) == 1:
-                                log_line.start_tail()
-                                logger.info(f"Started file watcher for LogLines: {log_line}")
-                            else:
-                                logger.warning(f"Cannot start tailing: LogLines has {len(log_line.log_files)} files (need exactly 1)")
-                        else:
-                            logger.warning(f"LogLines does not have start_tail method: {log_line}")
+                    # Also start the file watcher for single-file LogLines
+                    for log_lines in log_view.query("LogLines"):
+                        if hasattr(log_lines, 'start_tail') and len(log_lines.log_files) == 1:
+                            log_lines.start_tail()
         except Exception as e:
-            logger.error(f"Could not enable tailing: {e}", exc_info=True)
+            logger.debug(f"Could not enable tailing: {e}")
 
     def on_unmount(self) -> None:
         """Clean up the watcher when widget is unmounted."""

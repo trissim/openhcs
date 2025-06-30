@@ -15,11 +15,8 @@ from textual.widgets import Static
 # Import OpenHCS window base class
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 
-# Import our reactive log monitor
-from openhcs.textual_tui.widgets.reactive_log_monitor import ReactiveLogMonitor
-
-# Import Toolong components for LogViewWrapper
-from toolong.log_view import LogView
+# Import our simple Toolong widget
+from openhcs.textual_tui.widgets.simple_toolong_widget import SimpleToolongWidget
 
 
 
@@ -93,17 +90,23 @@ class ToolongWindow(BaseOpenHCSWindow):
         self.log_files = log_files or []
         
     def compose(self) -> ComposeResult:
-        """Compose the Toolong window layout using ReactiveLogMonitor."""
+        """Compose the Toolong window layout using SimpleToolongWidget."""
         try:
-            # Always use ReactiveLogMonitor - it can show TUI logs even without subprocess
-            yield ReactiveLogMonitor(
-                base_log_path=self.base_log_path,
-                auto_start=True,
-                include_tui_log=True  # Always show TUI log
-            )
+            # Use SimpleToolongWidget for direct Toolong integration
+            if self.log_files:
+                yield SimpleToolongWidget(self.log_files)
+            else:
+                # Find current log files if none provided
+                import glob
+                log_pattern = "/home/ts/.local/share/openhcs/logs/openhcs_unified_*.log"
+                current_logs = sorted(glob.glob(log_pattern))
+                if current_logs:
+                    yield SimpleToolongWidget(current_logs[-1:])  # Most recent log
+                else:
+                    yield Static("No log files found", classes="error-message")
 
         except Exception as e:
-            logger.error(f"Failed to create ReactiveLogMonitor: {e}")
+            logger.error(f"Failed to create SimpleToolongWidget: {e}")
             yield Static(
                 f"Error loading log viewer: {e}\n\n" +
                 "Please check that log files exist and are readable.",
