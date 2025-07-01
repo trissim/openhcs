@@ -88,7 +88,9 @@ class ToolongWindow(BaseOpenHCSWindow):
         import glob
 
         # Look for TUI log files (exclude subprocess and worker logs)
-        log_pattern = "/home/ts/.local/share/openhcs/logs/openhcs_unified_*.log"
+        # Use cross-platform path resolution instead of hardcoded path
+        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_pattern = str(log_dir / "openhcs_unified_*.log")
         all_logs = sorted(glob.glob(log_pattern))
 
         # Filter to only actual TUI logs (not subprocess or worker logs)
