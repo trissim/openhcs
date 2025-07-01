@@ -27,9 +27,10 @@ setup(
         "pygments>=2.10.0",
         "textual>=3.0.0",
         "textual-serve>=1.0.0",
-        "textual-terminal @ file:///home/ts/code/projects/textual-terminal",
+        "textual-terminal",
         "textual-universal-directorytree",
-        "textual-window",
+        "textual-window @ git+https://github.com/trissim/textual-window.git",
+        "toolong @ git+https://github.com/trissim/toolong.git",
         "plotext>=5.2.0",
         "psutil>=5.9.0",
         "GPUtil>=1.4.0",
@@ -59,7 +60,10 @@ setup(
             "tensorflow>=2.15.0,<2.20.0",
 
             # TensorFlow Probability - for memory-efficient percentile calculations
-            "tensorflow-probability[tf]>=0.25.0"
+            "tensorflow-probability[tf]>=0.25.0",
+
+            # pyclesperanto - OpenCL-based GPU image processing
+            "pyclesperanto>=0.24.0"
         ]
     }
 )
