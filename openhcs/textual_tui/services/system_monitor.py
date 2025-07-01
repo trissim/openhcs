@@ -4,7 +4,9 @@ Real-time system monitoring with plotext visualization
 """
 
 import plotext as plt
+import platform
 import psutil
+import subprocess
 import time
 from datetime import datetime
 from collections import deque
@@ -17,6 +19,30 @@ try:
     GPU_AVAILABLE = True
 except ImportError:
     GPU_AVAILABLE = False
+
+
+def is_wsl():
+    """Check if running in Windows Subsystem for Linux."""
+    return 'microsoft' in platform.uname().release.lower()
+
+
+def get_cpu_freq_mhz():
+    """Get CPU frequency in MHz, with WSL compatibility."""
+    if is_wsl():
+        try:
+            output = subprocess.check_output(
+                ['powershell.exe', '-Command',
+                 'Get-CimInstance -ClassName Win32_Processor | Select-Object -ExpandProperty CurrentClockSpeed'],
+                stderr=subprocess.DEVNULL
+            )
+            return int(output.strip())
+        except Exception:
+            return 0
+    try:
+        freq = psutil.cpu_freq()
+        return int(freq.current) if freq else 0
+    except Exception:
+        return 0
 
 
 class SystemMonitor:
@@ -61,7 +87,7 @@ class SystemMonitor:
             'ram_used_gb': ram.used / (1024**3),
             'ram_total_gb': ram.total / (1024**3),
             'cpu_cores': psutil.cpu_count(),
-            'cpu_freq_mhz': psutil.cpu_freq().current if psutil.cpu_freq() else 0,
+            'cpu_freq_mhz': get_cpu_freq_mhz(),
         }
 
         # GPU usage (if available)
@@ -189,7 +215,7 @@ class SystemMonitor:
             print("\n" + "═" * 75)
             print(f"System Information | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             print("═" * 75)
-            print(f"CPU Cores: {psutil.cpu_count()} | CPU Frequency: {psutil.cpu_freq().current:.0f} MHz")
+            print(f"CPU Cores: {psutil.cpu_count()} | CPU Frequency: {get_cpu_freq_mhz()} MHz")
             print(f"Total RAM: {ram_total_gb:.1f} GB | Available RAM: {ram_info.available/(1024**3):.1f} GB")
             
             if GPU_AVAILABLE:

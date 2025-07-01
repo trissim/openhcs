@@ -11,6 +11,8 @@ while still importing the core toolong functionality.
 import logging
 import os
 import re
+import threading
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -330,7 +332,11 @@ class OpenHCSToolongWidget(Widget):
         # Tab creation protection
         self._tab_creation_in_progress = False
 
-
+        # Thread-safe log addition system to prevent race conditions
+        self._log_addition_lock = threading.Lock()
+        self._pending_logs = set()  # Track logs being processed
+        self._debounce_timer = None
+        self._debounce_delay = 0.1  # 100ms debounce delay
 
         logger.info(f"OpenHCSToolongWidget.__init__ completed with show_tabs={show_tabs}, show_dropdown={show_dropdown}, show_controls={show_controls}")
 
@@ -813,18 +819,64 @@ class OpenHCSToolongWidget(Widget):
                 str(file_path) not in self.file_paths)
 
     def _add_log_file(self, log_file_path: str):
-        """Add a new log file and refresh the widget."""
-        if log_file_path not in self.file_paths:
+        """Thread-safe log file addition with debouncing to prevent race conditions."""
+        with self._log_addition_lock:
+            # Check if already processing this log
+            if log_file_path in self._pending_logs:
+                logger.debug(f"Log file {log_file_path} already being processed, skipping")
+                return
+
+            # Check if already exists
+            if log_file_path in self.file_paths:
+                logger.debug(f"Log file {log_file_path} already exists, skipping")
+                return
+
+            # Add to pending set to prevent duplicate processing
+            self._pending_logs.add(log_file_path)
+            logger.info(f"Adding new log file to pending: {log_file_path}")
+
+        # Use debouncing to handle rapid successive additions
+        self._debounced_log_addition(log_file_path)
+
+    def _debounced_log_addition(self, log_file_path: str):
+        """Debounced log addition to handle rapid file creation."""
+        # Cancel existing timer if any
+        if self._debounce_timer:
+            self._debounce_timer.cancel()
+
+        # Start new timer
+        self._debounce_timer = threading.Timer(
+            self._debounce_delay,
+            self._process_pending_logs
+        )
+        self._debounce_timer.start()
+
+    def _process_pending_logs(self):
+        """Process all pending log additions in a single batch."""
+        with self._log_addition_lock:
+            if not self._pending_logs:
+                return
+
             # Store old file paths before modifying
             old_file_paths = self.file_paths.copy()
+            new_logs = list(self._pending_logs)
 
-            # Add new file and sort
-            self.file_paths.append(log_file_path)
-            self.file_paths = UI.sort_paths(self.file_paths)  # Keep sorted for consistent display
-            logger.info(f"Added new log file: {log_file_path}")
+            # Add all pending logs
+            for log_path in new_logs:
+                if log_path not in self.file_paths:
+                    self.file_paths.append(log_path)
+                    logger.info(f"Processed pending log file: {log_path}")
 
-            # Update the widget with new file paths (this will trigger latest file selection)
-            self.update_file_paths(self.file_paths, old_file_paths)
+            # Sort for consistent display
+            self.file_paths = UI.sort_paths(self.file_paths)
+
+            # Clear pending logs
+            self._pending_logs.clear()
+
+            # Update UI in a single batch operation
+            if len(self.file_paths) != len(old_file_paths):
+                logger.info(f"Batch updating UI: {len(old_file_paths)} → {len(self.file_paths)} files")
+                self.call_after_refresh(self.update_file_paths, self.file_paths, old_file_paths)
 
 
 

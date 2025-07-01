@@ -27,7 +27,7 @@ setup(
         "pygments>=2.10.0",
         "textual>=3.0.0",
         "textual-serve>=1.0.0",
-        "textual-terminal",
+        "textual-terminal @ file:///home/ts/code/projects/textual-terminal",
         "textual-universal-directorytree",
         "textual-window",
         "plotext>=5.2.0",
