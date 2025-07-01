@@ -63,7 +63,7 @@ setup(
             "tensorflow-probability[tf]>=0.25.0",
 
             # pyclesperanto - OpenCL-based GPU image processing
-            "pyclesperanto>=0.24.0"
+            "pyclesperanto"
         ]
     }
 )
