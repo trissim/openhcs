@@ -143,7 +143,17 @@ def _setup_signal_handlers():
     def force_cleanup(signum, frame):
         """Force cleanup all threads on signal."""
         print("\nForcing immediate exit...")
-        # Don't try to set daemon on running threads - just exit immediately
+
+        # Try to cleanup background threads first
+        try:
+            active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and t.is_alive()]
+            if active_threads:
+                print(f"Cleaning up {len(active_threads)} background threads...")
+                # Can't set daemon on running threads, just note them and force exit
+        except:
+            pass
+
+        # Force immediate exit
         os._exit(0)
 
     signal.signal(signal.SIGINT, force_cleanup)
@@ -183,8 +193,14 @@ async def main_async(args):
         app = OpenHCSTUIApp(global_config=global_config)
         logger.info("Starting OpenHCS Textual TUI application...")
 
-        await app.run_async()
-        
+        # Run the app with a timeout wrapper to prevent hanging
+        try:
+            await asyncio.wait_for(app.run_async(), timeout=None)  # No timeout for normal operation
+        except asyncio.TimeoutError:
+            logger.warning("App run timed out, forcing exit")
+            import os
+            os._exit(0)
+
     except KeyboardInterrupt:
         logger.info("TUI terminated by user (Ctrl+C)")
     except Exception as e:
@@ -192,6 +208,19 @@ async def main_async(args):
         sys.exit(1)
     finally:
         logger.info("OpenHCS Textual TUI finished")
+
+        # Final cleanup check - force exit if we're still hanging
+        try:
+            import threading
+            import time
+            time.sleep(0.1)
+            active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and t.is_alive()]
+            if active_threads:
+                logger.warning(f"Final cleanup: {len(active_threads)} threads still active, forcing exit")
+                import os
+                os._exit(0)
+        except:
+            pass
 
 
 if __name__ == "__main__":

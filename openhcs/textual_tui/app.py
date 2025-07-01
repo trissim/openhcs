@@ -303,10 +303,37 @@ class OpenHCSTUIApp(App):
         # Log the status change - status bar will pick it up automatically
         logger.info(status)
     
+
+
     def action_quit(self) -> None:
-        """Handle quit action."""
+        """Handle quit action with aggressive cleanup."""
         logger.info("OpenHCS TUI shutting down")
-        self.exit()
+
+        # Force cleanup of background threads before exit
+        try:
+            import threading
+            import time
+
+            # Give a moment for normal cleanup
+            self.exit()
+
+            # Schedule aggressive cleanup after a short delay
+            def force_cleanup():
+                time.sleep(0.5)  # Give normal exit a chance
+                active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and t.is_alive()]
+                if active_threads:
+                    logger.warning(f"Force cleaning up {len(active_threads)} threads on quit")
+                    # Can't set daemon on running threads, just force exit
+                    import os
+                    os._exit(0)
+
+            # Start cleanup thread as daemon
+            cleanup_thread = threading.Thread(target=force_cleanup, daemon=True)
+            cleanup_thread.start()
+
+        except Exception as e:
+            logger.debug(f"Error in quit cleanup: {e}")
+            self.exit()
 
     def action_toggle_window_switcher(self):
         """Toggle the window switcher."""
@@ -448,15 +475,25 @@ class OpenHCSTUIApp(App):
         except Exception as e:
             logger.debug(f"Error cleaning up ReactiveLogMonitors: {e}")
 
-        # Force immediate exit if threads don't stop cleanly
+        # Force cleanup of any PlateManager workers
+        try:
+            from openhcs.textual_tui.widgets.plate_manager import PlateManager
+            plate_managers = self.query(PlateManager)
+            for pm in plate_managers:
+                if hasattr(pm, '_stop_monitoring'):
+                    pm._stop_monitoring()
+        except Exception as e:
+            logger.debug(f"Error cleaning up PlateManagers: {e}")
+
+        # Aggressive thread cleanup
         try:
             import threading
             import time
-            time.sleep(0.1)  # Give threads a moment to stop
+            time.sleep(0.2)  # Give threads a moment to stop
             active_threads = [t for t in threading.enumerate() if t != threading.current_thread() and t.is_alive()]
             if active_threads:
                 logger.warning(f"Found {len(active_threads)} active threads during shutdown")
-                # Don't try to modify running threads - just log and continue
+                # Can't set daemon on running threads, just log them
         except Exception as e:
             logger.debug(f"Error checking threads: {e}")
 

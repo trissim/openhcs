@@ -99,7 +99,6 @@ class PersistentTailLogLines(LogLines):
     """LogLines that doesn't automatically disable tailing on user interaction."""
 
     def __init__(self, watcher, file_paths):
-        logger.info(f"PersistentTailLogLines.__init__: file_paths={file_paths}, watcher={type(watcher).__name__}")
         super().__init__(watcher, file_paths)
         self._persistent_tail = True
 
@@ -112,7 +111,6 @@ class PersistentTailLogLines(LogLines):
             not message.tail and
             self._persistent_tail):
             # Block the message - don't send TailFile(False)
-            logger.info(f"PersistentTailLogLines: Blocked TailFile(False) message (persistent_tail={self._persistent_tail})")
             return
 
         # Handle FileError messages safely when app context is not available
@@ -128,41 +126,17 @@ class PersistentTailLogLines(LogLines):
 
     def on_scan_complete(self, event) -> None:
         """Override to ensure start_tail is actually called after scan completes."""
-        logger.info(f"🔍 PersistentTailLogLines.on_scan_complete called! files={len(self.log_files)}, can_tail={self.can_tail}")
-
         # Call parent first
         super().on_scan_complete(event)
 
         # Force start_tail if conditions are met
         if len(self.log_files) == 1 and self.can_tail:
-            logger.info(f"PersistentTailLogLines: Ensuring start_tail() is called (files={len(self.log_files)}, can_tail={self.can_tail})")
             try:
-                logger.info(f"🔍 About to call start_tail() - current watcher: {type(self.watcher).__name__}")
                 self.start_tail()
-                logger.info(f"✅ PersistentTailLogLines: start_tail() called successfully in on_scan_complete")
-
-                # Debug: Check if watcher is actually watching the file
-                if hasattr(self.watcher, '_watched_files'):
-                    watched_files = getattr(self.watcher, '_watched_files', {})
-                    logger.info(f"🔍 Watcher now watching {len(watched_files)} files: {list(watched_files.keys())}")
-                elif hasattr(self.watcher, '_file_descriptors'):
-                    file_descriptors = getattr(self.watcher, '_file_descriptors', {})
-                    logger.info(f"🔍 Watcher has {len(file_descriptors)} file descriptors: {list(file_descriptors.keys())}")
-                else:
-                    logger.warning(f"⚠️ Cannot inspect watcher state - no _watched_files or _file_descriptors")
-
-                # Debug: Check if file is actually being tailed
-                if hasattr(self, 'tail') and self.tail:
-                    logger.info(f"🔍 LogLines tail status: {self.tail}")
-                else:
-                    logger.warning(f"⚠️ LogLines tail status is False!")
-
             except Exception as e:
                 logger.error(f"❌ PersistentTailLogLines: start_tail() failed in on_scan_complete: {e}")
                 import traceback
                 traceback.print_exc()
-        else:
-            logger.info(f"PersistentTailLogLines: start_tail() conditions not met (files={len(self.log_files)}, can_tail={self.can_tail})")
 
     def action_scroll_up(self) -> None:
         """Override scroll up to not disable tailing when persistent."""
@@ -233,7 +207,6 @@ class PersistentTailLogView(LogView):
 
     async def watch_tail(self, old_value: bool, new_value: bool) -> None:
         """Watch for changes to the tail property."""
-        logger.info(f"🔍 PersistentTailLogView tail changed: {old_value} → {new_value}")
         if hasattr(super(), 'watch_tail'):
             await super().watch_tail(old_value, new_value)
 
@@ -263,7 +236,6 @@ class PersistentTailLogView(LogView):
         """Override to ensure tailing is enabled after mount."""
         # Force enable tailing for persistent behavior
         self.tail = True
-        logger.info(f"PersistentTailLogView mounted with tail={self.tail}, can_tail={self.can_tail}")
 
     async def on_scan_complete(self, event) -> None:
         """Override to ensure tailing remains enabled after scan."""
@@ -271,7 +243,6 @@ class PersistentTailLogView(LogView):
         await super().on_scan_complete(event)
         # Force enable tailing (this is critical!)
         self.tail = True
-        logger.info(f"PersistentTailLogView scan complete, forced tail=True")
 
 
 class OpenHCSToolongWidget(Widget):
@@ -529,15 +500,11 @@ class OpenHCSToolongWidget(Widget):
     def _force_hide_tabs_after_activation(self):
         """Force hide tabs after tab activation events."""
         try:
-            logger.info("_force_hide_tabs_after_activation called")
             tabs_elements = self.query("#main_tabs Tabs")
             if tabs_elements:
                 for tabs_element in tabs_elements:
                     tabs_element.display = False
                     tabs_element.styles.display = "none"
-                    logger.info(f"Force hidden tabs after activation: {tabs_element}")
-            else:
-                logger.warning("No tabs found to hide after activation")
         except Exception as e:
             logger.error(f"_force_hide_tabs_after_activation failed: {e}")
 
