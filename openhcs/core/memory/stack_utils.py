@@ -178,7 +178,23 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
     # Create pre-allocated result array in target memory type
     if memory_type == MEMORY_TYPE_NUMPY:
         import numpy as np
-        result = np.empty(stack_shape, dtype=first_slice.dtype)
+
+        # Handle torch dtypes by converting a sample slice first
+        first_slice_source_type = _detect_memory_type(first_slice)
+        if first_slice_source_type == MEMORY_TYPE_TORCH:
+            # Convert torch tensor to numpy to get compatible dtype
+            from openhcs.core.memory.converters import convert_memory
+            sample_converted = convert_memory(
+                data=first_slice,
+                source_type=first_slice_source_type,
+                target_type=memory_type,
+                gpu_id=gpu_id,
+                allow_cpu_roundtrip=True  # Allow CPU roundtrip for numpy conversion
+            )
+            result = np.empty(stack_shape, dtype=sample_converted.dtype)
+        else:
+            # Use dtype directly for non-torch types
+            result = np.empty(stack_shape, dtype=first_slice.dtype)
     elif memory_type == MEMORY_TYPE_CUPY:
         cupy = optional_import("cupy")
         if cupy is None:
@@ -189,7 +205,19 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
         torch = optional_import("torch")
         if torch is None:
             raise ValueError(f"PyTorch is required for memory type {memory_type}")
-        result = torch.empty(stack_shape, dtype=first_slice.dtype, device=f"cuda:{gpu_id}")
+
+        # Convert first slice to get the correct torch dtype
+        from openhcs.core.memory.converters import convert_memory
+        first_slice_source_type = _detect_memory_type(first_slice)
+        sample_converted = convert_memory(
+            data=first_slice,
+            source_type=first_slice_source_type,
+            target_type=memory_type,
+            gpu_id=gpu_id,
+            allow_cpu_roundtrip=False
+        )
+
+        result = torch.empty(stack_shape, dtype=sample_converted.dtype, device=sample_converted.device)
     elif memory_type == MEMORY_TYPE_TENSORFLOW:
         tf = optional_import("tensorflow")
         if tf is None:

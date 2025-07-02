@@ -71,7 +71,8 @@ def _numpy_to_torch(data: Any, gpu_id: int) -> Any:
         raise ValueError(f"Invalid GPU ID: {gpu_id}. Must be a non-negative integer.")
 
     # Always use the specified GPU device
-    return torch.tensor(data, device=f"cuda:{gpu_id}")
+    device = torch.device(f"cuda:{gpu_id}")
+    return torch.tensor(data, device=device)
 
 
 def _numpy_to_pyclesperanto(data: Any, gpu_id: int) -> Any:
@@ -153,6 +154,146 @@ def _pyclesperanto_to_pyclesperanto(data: Any) -> Any:
     """Convert pyclesperanto array to pyclesperanto array (identity operation)."""
     cle = _ensure_module("pyclesperanto")
     return data
+
+
+def _pyclesperanto_to_torch(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert pyclesperanto array to torch tensor, staying on GPU.
+
+    Args:
+        data: The pyclesperanto array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted torch tensor
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If torch is not installed
+    """
+    torch = _ensure_module("torch")
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    try:
+        # Use CUDA array interface for zero-copy conversion
+        if _supports_cuda_array_interface(data):
+            # Convert via CUDA array interface
+            tensor = torch.as_tensor(data, device=f"cuda:{device_id if device_id is not None else 0}")
+
+            # Move to specified device if needed
+            if device_id is not None and tensor.device.index != device_id:
+                tensor = tensor.to(f"cuda:{device_id}")
+
+            return tensor
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.PYCLESPERANTO.value,
+                target_type=MemoryType.TORCH.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+    # Fallback: CPU roundtrip
+    numpy_data = cle.pull(data)
+    if device_id is not None:
+        return torch.tensor(numpy_data, device=f"cuda:{device_id}")
+    return torch.tensor(numpy_data)
+
+
+def _pyclesperanto_to_tensorflow(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert pyclesperanto array to tensorflow tensor, staying on GPU.
+
+    Args:
+        data: The pyclesperanto array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted tensorflow tensor
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If tensorflow is not installed
+    """
+    tf = _ensure_module("tensorflow")
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    try:
+        # Use CUDA array interface for zero-copy conversion
+        if _supports_cuda_array_interface(data):
+            # Convert via CUDA array interface
+            with tf.device(f"/device:GPU:{device_id if device_id is not None else 0}"):
+                return tf.experimental.dlpack.from_dlpack(data.__dlpack__())
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.PYCLESPERANTO.value,
+                target_type=MemoryType.TENSORFLOW.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+    # Fallback: CPU roundtrip
+    numpy_data = cle.pull(data)
+    if device_id is not None:
+        with tf.device(f"/device:GPU:{device_id}"):
+            return tf.convert_to_tensor(numpy_data)
+    return tf.convert_to_tensor(numpy_data)
+
+
+def _pyclesperanto_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert pyclesperanto array to JAX array, staying on GPU.
+
+    Args:
+        data: The pyclesperanto array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted JAX array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If jax is not installed
+    """
+    jax = _ensure_module("jax")
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    try:
+        # Use DLPack for zero-copy conversion
+        if hasattr(data, '__dlpack__'):
+            dlpack = data.__dlpack__()
+            result = jax.dlpack.from_dlpack(dlpack)
+
+            # Move to specified device if needed
+            if device_id is not None:
+                result = jax.device_put(result, jax.devices("gpu")[device_id])
+
+            return result
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.PYCLESPERANTO.value,
+                target_type=MemoryType.JAX.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+    # Fallback: CPU roundtrip
+    numpy_data = cle.pull(data)
+    result = jax.numpy.array(numpy_data)
+
+    if device_id is not None:
+        result = jax.device_put(result, jax.devices("gpu")[device_id])
+
+    return result
 
 
 # CuPy conversion functions
@@ -703,6 +844,59 @@ def _tensorflow_to_numpy(data: Any) -> Any:
         The converted numpy array
     """
     return data.numpy()
+
+
+def _torch_to_pyclesperanto(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert torch tensor to pyclesperanto array, staying on GPU.
+
+    Args:
+        data: The torch tensor to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted pyclesperanto array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If pyclesperanto is not installed
+    """
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    if data.is_cuda:
+        try:
+            # Use CUDA array interface for zero-copy conversion
+            if _supports_cuda_array_interface(data):
+                # Select target device
+                target_device = device_id if device_id is not None else data.device.index
+                cle.select_device(target_device)
+
+                # Convert via CUDA array interface
+                return cle.asarray(data.detach())
+        except Exception as e:
+            if not allow_cpu_roundtrip:
+                raise MemoryConversionError(
+                    source_type=MemoryType.TORCH.value,
+                    target_type=MemoryType.PYCLESPERANTO.value,
+                    method="GPU_conversion",
+                    reason=str(e)
+                ) from e
+
+    # Fallback: CPU roundtrip
+    if not allow_cpu_roundtrip:
+        raise MemoryConversionError(
+            source_type=MemoryType.TORCH.value,
+            target_type=MemoryType.PYCLESPERANTO.value,
+            method="GPU-native",
+            reason="PyTorch tensor is not on CUDA"
+        )
+
+    # CPU roundtrip conversion
+    numpy_data = data.detach().cpu().numpy()
+    cle.select_device(device_id if device_id is not None else 0)
+    return cle.push(numpy_data)
 
 
 def _torch_to_jax(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
@@ -1256,3 +1450,117 @@ def _tensorflow_to_tensorflow(data: Any, device_id: Optional[int] = None) -> Any
             return tf.identity(data)
 
     return tf.identity(data)
+
+
+def _tensorflow_to_pyclesperanto(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert tensorflow tensor to pyclesperanto array, staying on GPU.
+
+    Args:
+        data: The tensorflow tensor to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted pyclesperanto array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If pyclesperanto is not installed
+    """
+    tf = _ensure_module("tensorflow")
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    try:
+        # Use DLPack for zero-copy conversion
+        if hasattr(tf.experimental, 'dlpack') and hasattr(tf.experimental.dlpack, 'to_dlpack'):
+            dlpack = tf.experimental.dlpack.to_dlpack(data)
+
+            # Select target device
+            target_device = device_id if device_id is not None else 0
+            cle.select_device(target_device)
+
+            # Convert from DLPack
+            return cle.from_dlpack(dlpack)
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.TENSORFLOW.value,
+                target_type=MemoryType.PYCLESPERANTO.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+    # Fallback: CPU roundtrip
+    numpy_data = data.numpy()
+    cle.select_device(device_id if device_id is not None else 0)
+    return cle.push(numpy_data)
+
+
+def _jax_to_jax(data: Any, device_id: Optional[int] = None) -> Any:
+    """
+    Convert JAX array to JAX array (identity operation).
+
+    Args:
+        data: The JAX array to convert
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The cloned JAX array, possibly on a different device
+    """
+    jax = _ensure_module("jax")
+
+    result = data.copy()
+
+    # Move to specified device if needed
+    if device_id is not None:
+        result = jax.device_put(result, jax.devices("gpu")[device_id])
+
+    return result
+
+
+def _jax_to_pyclesperanto(data: Any, allow_cpu_roundtrip: bool = False, device_id: Optional[int] = None) -> Any:
+    """
+    Convert JAX array to pyclesperanto array, staying on GPU.
+
+    Args:
+        data: The JAX array to convert
+        allow_cpu_roundtrip: Whether to allow fallback to CPU roundtrip
+        device_id: The target GPU device ID (optional)
+
+    Returns:
+        The converted pyclesperanto array
+
+    Raises:
+        MemoryConversionError: If conversion fails and CPU fallback is not authorized
+        ImportError: If pyclesperanto is not installed
+    """
+    jax = _ensure_module("jax")
+    cle = _ensure_module("pyclesperanto")
+
+    # Try GPU-to-GPU conversion first
+    try:
+        # Use DLPack for zero-copy conversion
+        if hasattr(data, '__dlpack__'):
+            dlpack = data.__dlpack__()
+
+            # Select target device
+            target_device = device_id if device_id is not None else 0
+            cle.select_device(target_device)
+
+            # Convert from DLPack
+            return cle.from_dlpack(dlpack)
+    except Exception as e:
+        if not allow_cpu_roundtrip:
+            raise MemoryConversionError(
+                source_type=MemoryType.JAX.value,
+                target_type=MemoryType.PYCLESPERANTO.value,
+                method="GPU_conversion",
+                reason=str(e)
+            ) from e
+
+    # Fallback: CPU roundtrip
+    numpy_data = _jax_to_numpy(data)
+    cle.select_device(device_id if device_id is not None else 0)
+    return cle.push(numpy_data)

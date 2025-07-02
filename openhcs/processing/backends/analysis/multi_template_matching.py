@@ -111,6 +111,14 @@ def multi_template_crop_reference_channel(
     if MTM is None:
         raise ImportError("MTM library not available. Install with: pip install Multi-Template-Matching")
 
+    # Debug: Check input type and convert if necessary
+    logging.debug(f"MTM input type: {type(image_stack)}, shape: {getattr(image_stack, 'shape', 'no shape attr')}")
+
+    # Ensure image_stack is a numpy array
+    if not isinstance(image_stack, np.ndarray):
+        logging.warning(f"MTM: Converting input from {type(image_stack)} to numpy array")
+        image_stack = np.array(image_stack)
+
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D array")
 
@@ -419,6 +427,21 @@ def multi_template_crop(
     if MTM is None:
         raise ImportError("MTM library not available. Install with: pip install Multi-Template-Matching")
     
+    # DETAILED DEBUG: Trace the exact issue
+    logging.error(f"MTM DEBUG: Input type: {type(image_stack)}")
+    logging.error(f"MTM DEBUG: Input shape: {getattr(image_stack, 'shape', 'NO SHAPE ATTRIBUTE')}")
+    logging.error(f"MTM DEBUG: Input ndim: {getattr(image_stack, 'ndim', 'NO NDIM ATTRIBUTE')}")
+    logging.error(f"MTM DEBUG: Is numpy array: {isinstance(image_stack, np.ndarray)}")
+    logging.error(f"MTM DEBUG: Input class module: {image_stack.__class__.__module__}")
+    logging.error(f"MTM DEBUG: Input class name: {image_stack.__class__.__name__}")
+
+    # Test slicing to see what we get
+    if hasattr(image_stack, 'shape') and len(image_stack.shape) > 0:
+        test_slice = image_stack[0]
+        logging.error(f"MTM DEBUG: First slice type: {type(test_slice)}")
+        logging.error(f"MTM DEBUG: First slice shape: {getattr(test_slice, 'shape', 'NO SHAPE ATTRIBUTE')}")
+        logging.error(f"MTM DEBUG: First slice is numpy: {isinstance(test_slice, np.ndarray)}")
+
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D array")
     
@@ -445,6 +468,7 @@ def multi_template_crop(
     # Process each slice
     for z_idx in range(image_stack.shape[0]):
         slice_img = image_stack[z_idx]
+        logging.debug(f"MTM: Processing slice {z_idx}, slice_img type: {type(slice_img)}, shape: {getattr(slice_img, 'shape', 'NO SHAPE ATTRIBUTE')}")
         result = _process_single_slice(
             slice_img, 
             template_list, 
@@ -595,84 +619,79 @@ def _process_single_slice(
 ) -> TemplateMatchResult:
     """Process a single slice for template matching."""
 
-    try:
-        # Prepare slice for MTM
-        if normalize_input and slice_img.dtype != np.uint8:
-            # Normalize to 0-255 range
-            slice_min, slice_max = slice_img.min(), slice_img.max()
-            if slice_max > slice_min:
-                slice_normalized = ((slice_img - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
-            else:
-                slice_normalized = np.zeros_like(slice_img, dtype=np.uint8)
+    # DETAILED DEBUG: Check what we received
+    logging.error(f"_process_single_slice DEBUG: slice_img type: {type(slice_img)}")
+    logging.error(f"_process_single_slice DEBUG: slice_img shape: {getattr(slice_img, 'shape', 'NO SHAPE')}")
+    logging.error(f"_process_single_slice DEBUG: template_list type: {type(template_list)}")
+    logging.error(f"_process_single_slice DEBUG: template_list length: {len(template_list) if hasattr(template_list, '__len__') else 'NO LEN'}")
+    if template_list and len(template_list) > 0:
+        logging.error(f"_process_single_slice DEBUG: first template type: {type(template_list[0])}")
+        if len(template_list[0]) > 1:
+            logging.error(f"_process_single_slice DEBUG: first template array type: {type(template_list[0][1])}")
+
+    # Prepare slice for MTM - LET ERRORS FAIL LOUD
+    if normalize_input and slice_img.dtype != np.uint8:
+        # Normalize to 0-255 range
+        slice_min, slice_max = slice_img.min(), slice_img.max()
+        if slice_max > slice_min:
+            slice_normalized = ((slice_img - slice_min) / (slice_max - slice_min) * 255).astype(np.uint8)
         else:
-            slice_normalized = slice_img.astype(np.uint8)
+            slice_normalized = np.zeros_like(slice_img, dtype=np.uint8)
+    else:
+        slice_normalized = slice_img.astype(np.uint8)
 
-        # Perform template matching
-        hits = MTM.matchTemplates(
-            slice_normalized,
-            template_list,
-            score_threshold=score_threshold,
-            maxOverlap=0.25,  # Prevent overlapping matches
-            N_object=max_matches
-        )
+    # Perform template matching - FIXED ARGUMENT ORDER
+    hits = MTM.matchTemplates(
+        template_list,      # First parameter: listTemplates
+        slice_normalized,   # Second parameter: image
+        score_threshold=score_threshold,
+        maxOverlap=0.25,    # Prevent overlapping matches
+        N_object=max_matches
+    )
 
-        # Process results
-        best_match = None
-        crop_bbox = None
-        best_rotation_angle = 0.0
+    # Process results
+    best_match = None
+    crop_bbox = None
+    best_rotation_angle = 0.0
 
-        if hits:
-            # Sort by score (hits format: [label, bbox, score])
-            hits_sorted = sorted(hits, key=lambda x: x[2], reverse=True)
-            best_match = hits_sorted[0] if hits_sorted else None
+    if hits:
+        # Sort by score (hits format: [label, bbox, score])
+        hits_sorted = sorted(hits, key=lambda x: x[2], reverse=True)
+        best_match = hits_sorted[0] if hits_sorted else None
 
-            if best_match and use_best_match_only:
-                # Extract rotation angle from template label
-                template_label = best_match[0]
-                if template_label.startswith("template_"):
-                    try:
-                        best_rotation_angle = float(template_label.split("_")[1])
-                    except (IndexError, ValueError):
-                        best_rotation_angle = 0.0
+        if best_match and use_best_match_only:
+            # Extract rotation angle from template label
+            template_label = best_match[0]
+            if template_label.startswith("template_"):
+                try:
+                    best_rotation_angle = float(template_label.split("_")[1])
+                except (IndexError, ValueError):
+                    best_rotation_angle = 0.0
 
-                # Extract bounding box (x, y, width, height)
-                bbox = best_match[1]
-                x, y, w, h = bbox
+            # Extract bounding box (x, y, width, height)
+            bbox = best_match[1]
+            x, y, w, h = bbox
 
-                # Apply margin and clamp to image bounds
-                x_start = max(0, x - crop_margin)
-                y_start = max(0, y - crop_margin)
-                x_end = min(slice_img.shape[1], x + w + crop_margin)
-                y_end = min(slice_img.shape[0], y + h + crop_margin)
+            # Apply margin and clamp to image bounds
+            x_start = max(0, x - crop_margin)
+            y_start = max(0, y - crop_margin)
+            x_end = min(slice_img.shape[1], x + w + crop_margin)
+            y_end = min(slice_img.shape[0], y + h + crop_margin)
 
-                crop_bbox = (x_start, y_start, x_end - x_start, y_end - y_start)
+            crop_bbox = (x_start, y_start, x_end - x_start, y_end - y_start)
 
-        # Create result
-        return TemplateMatchResult(
-            slice_index=z_idx,
-            matches=hits,
-            best_match=best_match,
-            crop_bbox=crop_bbox,
-            match_score=best_match[2] if best_match else 0.0,
-            num_matches=len(hits),
-            best_rotation_angle=best_rotation_angle
-        )
+    # Create result
+    return TemplateMatchResult(
+        slice_index=z_idx,
+        matches=hits,
+        best_match=best_match,
+        crop_bbox=crop_bbox,
+        match_score=best_match[2] if best_match else 0.0,
+        num_matches=len(hits),
+        best_rotation_angle=best_rotation_angle
+    )
 
-    except Exception as e:
-        # Handle MTM errors gracefully
-        error_msg = f"Template matching failed for slice {z_idx}: {e}"
-        logging.warning(error_msg)
-
-        return TemplateMatchResult(
-            slice_index=z_idx,
-            matches=[],
-            best_match=None,
-            crop_bbox=(0, 0, slice_img.shape[1], slice_img.shape[0]),
-            match_score=0.0,
-            num_matches=0,
-            best_rotation_angle=0.0,
-            error_message=error_msg
-        )
+    # REMOVED: Exception handling - let errors fail loud instead of silent warnings
 
 
 def _stack_with_padding(cropped_slices: List[np.ndarray], pad_mode: str) -> np.ndarray:
