@@ -515,7 +515,7 @@ class PipelinePathPlanner:
         results_path = path_config.materialization_results_path
 
         if not Path(results_path).is_absolute():
-            plate_folder = Path(context.plate_path).parent
+            plate_folder = Path(context.plate_path)
             return str(plate_folder / results_path)
         else:
             return results_path

@@ -282,17 +282,11 @@ def _execute_function_core(
             else:
                 special_path_value = path_info  # Fallback if it's already a string
 
-            # Add well_id prefix to filename for memory backend to match special output logic
-            from pathlib import Path
-            special_path_obj = Path(special_path_value)
-            prefixed_filename = f"{well_id}_{special_path_obj.name}"
-            prefixed_special_path = str(special_path_obj.parent / prefixed_filename)
-
-            logger.debug(f"Loading special input '{arg_name}' from path '{prefixed_special_path}' (memory backend)")
+            logger.debug(f"Loading special input '{arg_name}' from path '{special_path_value}' (memory backend)")
             try:
-                final_kwargs[arg_name] = context.filemanager.load(prefixed_special_path, Backend.MEMORY.value)
+                final_kwargs[arg_name] = context.filemanager.load(special_path_value, Backend.MEMORY.value)
             except Exception as e:
-                logger.error(f"Failed to load special input '{arg_name}' from '{prefixed_special_path}': {e}", exc_info=True)
+                logger.error(f"Failed to load special input '{arg_name}' from '{special_path_value}': {e}", exc_info=True)
                 raise
 
     # Auto-inject context if function signature expects it
@@ -317,6 +311,7 @@ def _execute_function_core(
 
     main_output_data = raw_function_output
     
+    logger.debug(f"🔍 SPECIAL OUTPUT: {special_outputs_plan}")
     if special_outputs_plan: 
         num_special_outputs = len(special_outputs_plan)
         if not isinstance(raw_function_output, tuple) or len(raw_function_output) != (1 + num_special_outputs):
@@ -331,6 +326,7 @@ def _execute_function_core(
         # Iterate through special_outputs_plan (which must be ordered by compiler)
         # and match with positionally returned special values.
         for i, (output_key, vfs_path_info) in enumerate(special_outputs_plan.items()):
+            logger.debug(f"Saving special output '{output_key}' to VFS path '{vfs_path_info}' (memory backend)")
             if i < len(returned_special_values_tuple):
                 value_to_save = returned_special_values_tuple[i]
                 # Extract path string from the path info dictionary
@@ -339,17 +335,17 @@ def _execute_function_core(
                     vfs_path = vfs_path_info['path']
                 else:
                     vfs_path = vfs_path_info  # Fallback if it's already a string
-                # Add well_id prefix to filename for memory backend to avoid thread collisions
-                from pathlib import Path
-                vfs_path_obj = Path(vfs_path)
-                prefixed_filename = f"{well_id}_{vfs_path_obj.name}"
-                prefixed_vfs_path = str(vfs_path_obj.parent / prefixed_filename)
+               # # Add well_id prefix to filename for memory backend to avoid thread collisions
+               # from pathlib import Path
+               # vfs_path_obj = Path(vfs_path)
+               # prefixed_filename = f"{well_id}_{vfs_path_obj.name}"
+               # prefixed_vfs_path = str(vfs_path_obj.parent / prefixed_filename)
 
-                logger.debug(f"Saving special output '{output_key}' to VFS path '{prefixed_vfs_path}' (memory backend)")
+                logger.debug(f"Saving special output '{output_key}' to VFS path '{vfs_path}' (memory backend)")
                 # Ensure directory exists for memory backend
-                parent_dir = str(Path(prefixed_vfs_path).parent)
+                parent_dir = str(Path(vfs_path).parent)
                 context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
-                context.filemanager.save(value_to_save, prefixed_vfs_path, Backend.MEMORY.value)
+                context.filemanager.save(value_to_save, vfs_path, Backend.MEMORY.value)
             else:
                 # This indicates a mismatch that should ideally be caught by schema/validation
                 logger.error(f"Mismatch: {num_special_outputs} special outputs planned, but fewer values returned by function for key '{output_key}'.")
@@ -469,6 +465,8 @@ def _process_single_pattern_group(
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
         stack_type = type(main_data_stack).__name__
         logger.debug(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
+        
+        logger.info(f"🔍 special_outputs_map: {special_outputs_map}")
         
         final_base_kwargs = base_func_args.copy()
         
@@ -779,7 +777,7 @@ class FunctionStep(AbstractStep):
             # 🔬 SPECIAL DATA MATERIALIZATION
             special_outputs = step_plan.get('special_outputs', {})
             if special_outputs:
-                self._materialize_special_outputs(context, step_plan, special_outputs)
+                self._materialize_special_outputs(filemanager, step_plan, special_outputs)
 
 
 
@@ -927,14 +925,15 @@ class FunctionStep(AbstractStep):
         logger.debug(f"Backend detection result: {backends}")
         return backends
 
-    def _materialize_special_outputs(self, context, step_plan, special_outputs):
+    def _materialize_special_outputs(self, filemanager, step_plan, special_outputs):
         """Load special data from memory and call materialization functions."""
         for output_key, output_info in special_outputs.items():
             mat_func = output_info.get('materialization_function')
             if mat_func:
                 path = output_info['path']
-                special_data = context.filemanager.load(path, Backend.MEMORY.value)
-                mat_func(special_data, path, context.filemanager)
+                filemanager.ensure_directory(Path(path).parent, Backend.MEMORY.value)
+                special_data = filemanager.load(path, Backend.MEMORY.value)
+                mat_func(special_data, path, filemanager)
 
 
 

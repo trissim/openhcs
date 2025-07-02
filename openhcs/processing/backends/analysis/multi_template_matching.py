@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import logging
 import json
 import pandas as pd
+from openhcs.constants.constants import Backend
+from pathlib import Path
 
 try:
     import MTM
@@ -21,7 +23,6 @@ except ImportError:
 
 from openhcs.core.memory.decorators import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import special_outputs
-
 
 @dataclass
 class TemplateMatchResult:
@@ -35,9 +36,90 @@ class TemplateMatchResult:
     best_rotation_angle: float  # Angle of best matching template
     error_message: Optional[str] = None
 
+def materialize_mtm_match_results(data: List[TemplateMatchResult], path: str, filemanager) -> str:
+    """Materialize MTM match results as analysis-ready CSV with confidence analysis."""
+    csv_path = path.replace('.pkl', '_mtm_matches.csv')
+
+    rows = []
+    for result in data:
+        slice_idx = result.slice_index
+
+        # Process all matches for this slice
+        # MTM hits format: [label, bbox, score] where bbox is (x, y, width, height)
+        for i, match in enumerate(result.matches):
+            if len(match) >= 3:
+                template_label, bbox, score = match[0], match[1], match[2]
+                x, y, w, h = bbox if len(bbox) >= 4 else (0, 0, 0, 0)
+
+                rows.append({
+                    'slice_index': slice_idx,
+                    'match_id': f"slice_{slice_idx}_match_{i}",
+                    'bbox_x': x,
+                    'bbox_y': y,
+                    'bbox_width': w,
+                    'bbox_height': h,
+                    'confidence_score': score,
+                    'template_name': template_label,
+                    'is_best_match': (match == result.best_match),
+                    'was_cropped': result.crop_bbox is not None
+                })
+            else:
+                # Handle malformed match data
+                rows.append({
+                    'slice_index': slice_idx,
+                    'match_id': f"slice_{slice_idx}_match_{i}",
+                    'bbox_x': 0,
+                    'bbox_y': 0,
+                    'bbox_width': 0,
+                    'bbox_height': 0,
+                    'confidence_score': 0.0,
+                    'template_name': 'malformed_match',
+                    'is_best_match': False,
+                    'was_cropped': result.crop_bbox is not None
+                })
+
+    if rows:
+        df = pd.DataFrame(rows)
+
+        # Add analysis columns
+        if len(df) > 0 and 'confidence_score' in df.columns:
+            df['high_confidence'] = df['confidence_score'] > 0.8
+
+            # Only create quartiles if we have enough unique values
+            unique_scores = df['confidence_score'].nunique()
+            if unique_scores >= 4:
+                try:
+                    df['confidence_quartile'] = pd.qcut(df['confidence_score'], 4, labels=['Q1', 'Q2', 'Q3', 'Q4'], duplicates='drop')
+                except ValueError:
+                    # Fallback to simple binning if qcut fails
+                    df['confidence_quartile'] = pd.cut(df['confidence_score'], 4, labels=['Q1', 'Q2', 'Q3', 'Q4'])
+            else:
+                # Not enough unique values for quartiles, use simple high/low classification
+                df['confidence_quartile'] = df['confidence_score'].apply(lambda x: 'High' if x > 0.8 else 'Low')
+
+            # Add spatial clustering if we have position data
+            if 'bbox_x' in df.columns and 'bbox_y' in df.columns:
+                try:
+                    from sklearn.cluster import KMeans
+                    if len(df) >= 3:
+                        coords = df[['bbox_x', 'bbox_y']].values
+                        n_clusters = min(3, len(df))
+                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                        df['spatial_cluster'] = kmeans.fit_predict(coords)
+                    else:
+                        df['spatial_cluster'] = 0
+                except ImportError:
+                    df['spatial_cluster'] = 0
+
+        csv_content = df.to_csv(index=False)
+        filemanager.ensure_directory(Path(csv_path).parent, Backend.DISK.value)
+        filemanager.save(csv_content, csv_path, Backend.DISK.value)
+
+    return csv_path
+
 
 @numpy_func
-@special_outputs("match_results")
+@special_outputs(("match_results", materialize_mtm_match_results))
 def multi_template_crop_reference_channel(
     image_stack: np.ndarray,
     template_path: str,
@@ -45,7 +127,7 @@ def multi_template_crop_reference_channel(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: str = "cv2.TM_CCOEFF_NORMED",
+    method: int = cv2.TM_SQDIFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -76,7 +158,7 @@ def multi_template_crop_reference_channel(
         Maximum number of matches to find in the reference channel
     crop_margin : int, default=0
         Additional pixels to include around the matched template region
-    method : str, default="cv2.TM_CCOEFF_NORMED"
+    method : int, default=cv2.TM_SQDIFF_NORMED,
         OpenCV template matching method (currently not used by MTM)
     use_best_match_only : bool, default=True
         If True, only crop around the best match in the reference channel
@@ -216,7 +298,7 @@ def multi_template_crop_subset(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: str = "cv2.TM_CCOEFF_NORMED",
+    method: int = cv2.TM_SQDIFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -249,7 +331,7 @@ def multi_template_crop_subset(
         Maximum number of matches to find in the reference channel
     crop_margin : int, default=0
         Additional pixels around the matched region
-    method : str, default="cv2.TM_CCOEFF_NORMED"
+    method : int, default=cv2.TM_SQDIFF_NORMED,
         OpenCV template matching method
     use_best_match_only : bool, default=True
         If True, only crop around the best match
@@ -363,7 +445,7 @@ def multi_template_crop(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: str = "cv2.TM_CCOEFF_NORMED",
+    method: int = cv2.TM_SQDIFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -391,7 +473,7 @@ def multi_template_crop(
         Maximum number of matches to find per slice
     crop_margin : int, default=0
         Additional pixels to include around the matched template region
-    method : str, default="cv2.TM_CCOEFF_NORMED"
+    method : int, default=cv2.TM_SQDIFF_NORMED
         OpenCV template matching method (currently not used by MTM)
     use_best_match_only : bool, default=True
         If True, only crop around the best match per slice
@@ -508,55 +590,6 @@ def multi_template_crop(
     return cropped_stack, match_results
 
 
-def materialize_mtm_match_results(data: List[TemplateMatchResult], path: str, filemanager) -> str:
-    """Materialize MTM match results as analysis-ready CSV with confidence analysis."""
-    csv_path = path.replace('.pkl', '_mtm_matches.csv')
-
-    rows = []
-    for result in data:
-        slice_idx = result.slice_index
-
-        # Process all matches for this slice
-        for i, match in enumerate(result.matches):
-            rows.append({
-                'slice_index': slice_idx,
-                'match_id': f"slice_{slice_idx}_match_{i}",
-                'bbox_x': match.get('BBox', [0, 0, 0, 0])[0],
-                'bbox_y': match.get('BBox', [0, 0, 0, 0])[1],
-                'bbox_width': match.get('BBox', [0, 0, 0, 0])[2],
-                'bbox_height': match.get('BBox', [0, 0, 0, 0])[3],
-                'confidence_score': match.get('Score', 0.0),
-                'template_name': match.get('TemplateName', 'unknown'),
-                'is_best_match': (match == result.best_match),
-                'was_cropped': result.crop_bbox is not None
-            })
-
-    if rows:
-        df = pd.DataFrame(rows)
-
-        # Add analysis columns
-        if len(df) > 0 and 'confidence_score' in df.columns:
-            df['high_confidence'] = df['confidence_score'] > 0.8
-            df['confidence_quartile'] = pd.qcut(df['confidence_score'], 4, labels=['Q1', 'Q2', 'Q3', 'Q4'], duplicates='drop')
-
-            # Add spatial clustering if we have position data
-            if 'bbox_x' in df.columns and 'bbox_y' in df.columns:
-                try:
-                    from sklearn.cluster import KMeans
-                    if len(df) >= 3:
-                        coords = df[['bbox_x', 'bbox_y']].values
-                        n_clusters = min(3, len(df))
-                        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                        df['spatial_cluster'] = kmeans.fit_predict(coords)
-                    else:
-                        df['spatial_cluster'] = 0
-                except ImportError:
-                    df['spatial_cluster'] = 0
-
-        csv_content = df.to_csv(index=False)
-        filemanager.save(csv_content, csv_path, "disk")
-
-    return csv_path
 
 
 def _create_rotated_templates(template: np.ndarray, rotation_range: float, rotation_step: float) -> List[Tuple[str, np.ndarray]]:
@@ -615,7 +648,8 @@ def _process_single_slice(
     max_matches: int,
     crop_margin: int,
     use_best_match_only: bool,
-    normalize_input: bool
+    normalize_input: bool,
+    method: int = cv2.TM_SQDIFF_NORMED
 ) -> TemplateMatchResult:
     """Process a single slice for template matching."""
 
@@ -646,7 +680,8 @@ def _process_single_slice(
         slice_normalized,   # Second parameter: image
         score_threshold=score_threshold,
         maxOverlap=0.25,    # Prevent overlapping matches
-        N_object=max_matches
+        N_object=max_matches,
+        method=method
     )
 
     # Process results
@@ -656,7 +691,7 @@ def _process_single_slice(
 
     if hits:
         # Sort by score (hits format: [label, bbox, score])
-        hits_sorted = sorted(hits, key=lambda x: x[2], reverse=True)
+        hits_sorted = sorted(hits, key=lambda x: x[2])
         best_match = hits_sorted[0] if hits_sorted else None
 
         if best_match and use_best_match_only:
