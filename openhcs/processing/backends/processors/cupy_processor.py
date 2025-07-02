@@ -702,50 +702,60 @@ def tophat(
 
     return result
 
-# Define ElementwiseKernel for true parallel 2D Sobel processing
-_sobel_2d_parallel = cp.ElementwiseKernel(
-    'raw T input, int32 Y, int32 X, int32 mode, T cval',
-    'T output',
-    '''
-    // Calculate which slice, row, col this thread handles
-    int z = i / (Y * X);
-    int y = (i % (Y * X)) / X;
-    int x = i % X;
+# Lazy initialization of ElementwiseKernel to avoid import errors
+_sobel_2d_parallel = None
 
-    // Calculate base index for this slice
-    int slice_base = z * Y * X;
+def _get_sobel_2d_kernel():
+    """Get or create the Sobel 2D parallel kernel."""
+    global _sobel_2d_parallel
+    if _sobel_2d_parallel is None:
+        if cp is None:
+            raise ImportError("CuPy is required for GPU Sobel operations")
 
-    // Helper function to get pixel with configurable boundary handling
-    auto get_pixel = [&](int py, int px) -> T {
-        if (mode == 0) {  // constant
-            if (py < 0 || py >= Y || px < 0 || px >= X) return cval;
-        } else if (mode == 1) {  // reflect
-            py = py < 0 ? -py : (py >= Y ? 2*Y - py - 2 : py);
-            px = px < 0 ? -px : (px >= X ? 2*X - px - 2 : px);
-        } else if (mode == 2) {  // nearest
-            py = py < 0 ? 0 : (py >= Y ? Y-1 : py);
-            px = px < 0 ? 0 : (px >= X ? X-1 : px);
-        } else if (mode == 3) {  // wrap
-            py = py < 0 ? py + Y : (py >= Y ? py - Y : py);
-            px = px < 0 ? px + X : (px >= X ? px - X : px);
-        }
-        return input[slice_base + py * X + px];
-    };
+        _sobel_2d_parallel = cp.ElementwiseKernel(
+            'raw T input, int32 Y, int32 X, int32 mode, T cval',
+            'T output',
+            '''
+            // Calculate which slice, row, col this thread handles
+            int z = i / (Y * X);
+            int y = (i % (Y * X)) / X;
+            int x = i % X;
 
-    // Sobel X kernel: [[-1,0,1],[-2,0,2],[-1,0,1]] (within slice only)
-    T gx = -get_pixel(y-1, x-1) + get_pixel(y-1, x+1) +
-           -2*get_pixel(y, x-1) + 2*get_pixel(y, x+1) +
-           -get_pixel(y+1, x-1) + get_pixel(y+1, x+1);
+            // Calculate base index for this slice
+            int slice_base = z * Y * X;
 
-    // Sobel Y kernel: [[-1,-2,-1],[0,0,0],[1,2,1]] (within slice only)
-    T gy = -get_pixel(y-1, x-1) - 2*get_pixel(y-1, x) - get_pixel(y-1, x+1) +
-            get_pixel(y+1, x-1) + 2*get_pixel(y+1, x) + get_pixel(y+1, x+1);
+            // Helper function to get pixel with configurable boundary handling
+            auto get_pixel = [&](int py, int px) -> T {
+                if (mode == 0) {  // constant
+                    if (py < 0 || py >= Y || px < 0 || px >= X) return cval;
+                } else if (mode == 1) {  // reflect
+                    py = py < 0 ? -py : (py >= Y ? 2*Y - py - 2 : py);
+                    px = px < 0 ? -px : (px >= X ? 2*X - px - 2 : px);
+                } else if (mode == 2) {  // nearest
+                    py = py < 0 ? 0 : (py >= Y ? Y-1 : py);
+                    px = px < 0 ? 0 : (px >= X ? X-1 : px);
+                } else if (mode == 3) {  // wrap
+                    py = py < 0 ? py + Y : (py >= Y ? py - Y : py);
+                    px = px < 0 ? px + X : (px >= X ? px - X : px);
+                }
+                return input[slice_base + py * X + px];
+            };
 
-    // Calculate magnitude
-    output = sqrt(gx*gx + gy*gy);
-    ''',
-    'sobel_2d_parallel'
-)
+            // Sobel X kernel: [[-1,0,1],[-2,0,2],[-1,0,1]] (within slice only)
+            T gx = -get_pixel(y-1, x-1) + get_pixel(y-1, x+1) +
+                   -2*get_pixel(y, x-1) + 2*get_pixel(y, x+1) +
+                   -get_pixel(y+1, x-1) + get_pixel(y+1, x+1);
+
+            // Sobel Y kernel: [[-1,-2,-1],[0,0,0],[1,2,1]] (within slice only)
+            T gy = -get_pixel(y-1, x-1) - 2*get_pixel(y-1, x) - get_pixel(y-1, x+1) +
+                    get_pixel(y+1, x-1) + 2*get_pixel(y+1, x) + get_pixel(y+1, x+1);
+
+            // Calculate magnitude
+            output = sqrt(gx*gx + gy*gy);
+            ''',
+            'sobel_2d_parallel'
+        )
+    return _sobel_2d_parallel
 
 @cupy_func
 def sobel_2d_vectorized(image: "cp.ndarray", mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
@@ -777,7 +787,8 @@ def sobel_2d_vectorized(image: "cp.ndarray", mode: str = "reflect", cval: float 
     output = cp.zeros_like(input_float)
 
     # Launch parallel kernel - each thread processes one pixel
-    _sobel_2d_parallel(input_float, Y, X, mode_int, cp.float32(cval), output)
+    sobel_kernel = _get_sobel_2d_kernel()
+    sobel_kernel(input_float, Y, X, mode_int, cp.float32(cval), output)
 
     return output.astype(image.dtype)
 
