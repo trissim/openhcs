@@ -300,7 +300,8 @@ def _execute_function_core(
     input_type = type(main_data_arg).__name__
     logger.debug(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
 
-
+    # ⚡ INFO: Terse function execution log for user feedback
+    logger.info(f"⚡ Executing: {func_callable.__name__}")
 
     raw_function_output = func_callable(main_data_arg, **final_kwargs)
 
