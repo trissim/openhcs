@@ -14,6 +14,7 @@ setup(
     install_requires=[
         "numpy>=1.20.0",
         "scikit-image>=0.18.0",
+        "scikit-learn>=1.0.0",
         "scipy>=1.6.0",
         "pandas>=1.2.0",
         "imageio>=2.9.0",
