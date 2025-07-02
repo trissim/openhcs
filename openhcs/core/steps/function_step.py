@@ -310,9 +310,11 @@ def _execute_function_core(
     logger.debug(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
 
     main_output_data = raw_function_output
-    
-    logger.debug(f"🔍 SPECIAL OUTPUT: {special_outputs_plan}")
-    if special_outputs_plan: 
+
+    # Only log special outputs if there are any (avoid spamming empty dict logs)
+    if special_outputs_plan:
+        logger.debug(f"🔍 SPECIAL OUTPUT: {special_outputs_plan}")
+    if special_outputs_plan:
         num_special_outputs = len(special_outputs_plan)
         if not isinstance(raw_function_output, tuple) or len(raw_function_output) != (1 + num_special_outputs):
             raise ValueError(
