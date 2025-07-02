@@ -13,6 +13,7 @@ import numpy as np
 import networkx as nx
 import scipy.spatial.distance
 import sklearn.linear_model
+import pandas as pd
 
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs, chain_breaker
 from openhcs.core.memory.decorators import numpy as numpy_func
@@ -801,3 +802,43 @@ def ashlar_compute_tile_positions_cpu(
     logger.info(f"Ashlar CPU: Completed processing {len(positions)} tile positions")
 
     return image_stack, positions
+
+
+def materialize_ashlar_cpu_positions(data: List[Tuple[float, float]], path: str, filemanager) -> str:
+    """Materialize Ashlar CPU tile positions as scientific CSV with grid metadata."""
+    csv_path = path.replace('.pkl', '_ashlar_positions.csv')
+
+    df = pd.DataFrame(data, columns=['x_position_um', 'y_position_um'])
+    df['tile_id'] = range(len(df))
+
+    # Estimate grid dimensions from position layout
+    unique_x = sorted(df['x_position_um'].unique())
+    unique_y = sorted(df['y_position_um'].unique())
+
+    grid_cols = len(unique_x)
+    grid_rows = len(unique_y)
+
+    # Add grid coordinates
+    df['grid_row'] = df.index // grid_cols
+    df['grid_col'] = df.index % grid_cols
+
+    # Add spacing information
+    if len(unique_x) > 1:
+        x_spacing = unique_x[1] - unique_x[0]
+        df['x_spacing_um'] = x_spacing
+    else:
+        df['x_spacing_um'] = 0
+
+    if len(unique_y) > 1:
+        y_spacing = unique_y[1] - unique_y[0]
+        df['y_spacing_um'] = y_spacing
+    else:
+        df['y_spacing_um'] = 0
+
+    # Add metadata
+    df['algorithm'] = 'ashlar_cpu'
+    df['grid_dimensions'] = f"{grid_rows}x{grid_cols}"
+
+    csv_content = df.to_csv(index=False)
+    filemanager.save(csv_content, csv_path, "disk")
+    return csv_path

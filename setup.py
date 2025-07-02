@@ -21,6 +21,7 @@ setup(
         "imagecodecs>=2021.1.1",
         #"ashlar>=1.14.0",
         "opencv-python>=4.5.0",
+        "Multi-Template-Matching>=2.0.0",
         "PyYAML>=6.0",
         "zarr>=2.10.0",
         "ome-zarr>=0.8.0",

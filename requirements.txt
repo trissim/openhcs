@@ -7,6 +7,7 @@ tifffile>=2021.1.1
 imagecodecs>=2021.1.1  # Required for TIFF reading
 ashlar>=1.14.0
 opencv-python>=4.5.0
+Multi-Template-Matching>=2.0.0  # For template matching and object detection
 PyYAML>=6.0
 zarr>=2.10.0 # For ZarrStorageAdapter
 ome-zarr>=0.8.0 # For OME-ZARR compliance and napari compatibility

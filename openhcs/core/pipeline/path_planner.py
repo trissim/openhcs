@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from openhcs.constants.constants import READ_BACKEND, WRITE_BACKEND
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
-from openhcs.core.pipeline.pipeline_utils import get_core_callable, to_snake_case
+from openhcs.core.pipeline.pipeline_utils import get_core_callable
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
@@ -330,9 +330,8 @@ class PipelinePathPlanner:
             # Process special outputs
             if s_outputs_keys: # Use the keys derived from core_callable or step attribute
                 for key in sorted(list(s_outputs_keys)): # Iterate over sorted keys
-                    snake_case_key = to_snake_case(key)
-                    # Path generation updated to [output_dir]/[snake_case_key].pkl
-                    output_path = Path(step_output_dir) / f"{snake_case_key}.pkl"
+                    # Use key directly - no unnecessary sanitization!
+                    output_path = Path(step_output_dir) / f"{key}.pkl"
                     special_outputs[key] = {"path": str(output_path)}
                     # Register this output for future steps
                     declared_outputs[key] = {
@@ -362,8 +361,7 @@ class PipelinePathPlanner:
                         # Current step produces this special input itself - self-fulfilling
                         # This will be handled when special outputs are processed
                         # For now, we'll create a placeholder that will be updated
-                        snake_case_key = to_snake_case(key)
-                        output_path = Path(step_output_dir) / f"{snake_case_key}.pkl"
+                        output_path = Path(step_output_dir) / f"{key}.pkl"
                         special_inputs[key] = {
                             "path": str(output_path),
                             "source_step_id": step_id  # Self-reference
