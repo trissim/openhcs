@@ -121,8 +121,8 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
-            ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR
-            ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Enabled for debugging
+            # ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR - HIDDEN FROM UI
+            # ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality - HIDDEN FROM UI
         ]
         super().__init__(
             button_configs=button_configs,
@@ -182,8 +182,8 @@ class PlateManagerWidget(ButtonListWidget):
             "edit_config": self.action_edit_config,  # Unified edit button
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
-            "export_ome_zarr": self.action_export_ome_zarr,
-            "save_debug_pickle": self.action_save_debug_pickle,
+            # "export_ome_zarr": self.action_export_ome_zarr,  # HIDDEN
+            # "save_debug_pickle": self.action_save_debug_pickle,  # HIDDEN
         }
         if button_id in action_map:
             action = action_map[button_id]
@@ -348,17 +348,23 @@ class PlateManagerWidget(ButtonListWidget):
             self.query_one("#init_plate").disabled = not has_selection or is_running
             self.query_one("#compile_plate").disabled = not has_selection or is_running
 
-            # Export button - enabled when plate is initialized and has workspace
-            export_enabled = (
-                has_selection and
-                self.selected_plate in self.orchestrators and
-                not is_running
-            )
-            self.query_one("#export_ome_zarr").disabled = not export_enabled
+            # Export button - enabled when plate is initialized and has workspace (HIDDEN FROM UI)
+            # export_enabled = (
+            #     has_selection and
+            #     self.selected_plate in self.orchestrators and
+            #     not is_running
+            # )
+            # try:
+            #     self.query_one("#export_ome_zarr").disabled = not export_enabled
+            # except:
+            #     pass  # Button is hidden from UI
 
-            # Debug button - enabled when subprocess data is available
-            has_debug_data = hasattr(self, '_last_subprocess_data')
-            self.query_one("#save_debug_pickle").disabled = not has_debug_data
+            # Debug button - enabled when subprocess data is available (HIDDEN FROM UI)
+            # has_debug_data = hasattr(self, '_last_subprocess_data')
+            # try:
+            #     self.query_one("#save_debug_pickle").disabled = not has_debug_data
+            # except:
+            #     pass  # Button is hidden from UI
 
         except Exception as e:
             # Only log if it's not a mounting/unmounting issue
