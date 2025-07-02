@@ -127,7 +127,7 @@ def multi_template_crop_reference_channel(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_SQDIFF_NORMED,
+    method: int = cv2.TM_CCOEFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -158,7 +158,7 @@ def multi_template_crop_reference_channel(
         Maximum number of matches to find in the reference channel
     crop_margin : int, default=0
         Additional pixels to include around the matched template region
-    method : int, default=cv2.TM_SQDIFF_NORMED,
+    method : int, default=cv2.TM_CCOEFF_NORMED,
         OpenCV template matching method (currently not used by MTM)
     use_best_match_only : bool, default=True
         If True, only crop around the best match in the reference channel
@@ -298,7 +298,7 @@ def multi_template_crop_subset(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_SQDIFF_NORMED,
+    method: int = cv2.TM_CCOEFF,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -331,7 +331,7 @@ def multi_template_crop_subset(
         Maximum number of matches to find in the reference channel
     crop_margin : int, default=0
         Additional pixels around the matched region
-    method : int, default=cv2.TM_SQDIFF_NORMED,
+    method : int, default=cv2.TM_CCOEFF_NORMED,
         OpenCV template matching method
     use_best_match_only : bool, default=True
         If True, only crop around the best match
@@ -445,7 +445,7 @@ def multi_template_crop(
     score_threshold: float = 0.8,
     max_matches: int = 1,
     crop_margin: int = 0,
-    method: int = cv2.TM_SQDIFF_NORMED,
+    method: int = cv2.TM_CCOEFF_NORMED,
     use_best_match_only: bool = True,
     normalize_input: bool = True,
     pad_mode: str = "constant",
@@ -473,7 +473,7 @@ def multi_template_crop(
         Maximum number of matches to find per slice
     crop_margin : int, default=0
         Additional pixels to include around the matched template region
-    method : int, default=cv2.TM_SQDIFF_NORMED
+    method : int, default=cv2.TM_CCOEFF_NORMED
         OpenCV template matching method (currently not used by MTM)
     use_best_match_only : bool, default=True
         If True, only crop around the best match per slice
@@ -649,7 +649,7 @@ def _process_single_slice(
     crop_margin: int,
     use_best_match_only: bool,
     normalize_input: bool,
-    method: int = cv2.TM_SQDIFF_NORMED
+    method: int = cv2.TM_CCOEFF_NORMED
 ) -> TemplateMatchResult:
     """Process a single slice for template matching."""
 

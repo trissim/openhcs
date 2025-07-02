@@ -106,8 +106,6 @@ class StartMenuDropdown(ModalScreen[None]):
             yield ButtonStatic("Config", id="config")
             yield ButtonStatic("Monitor", id="toggle_monitor")
             yield ButtonStatic("Term", id="term")
-            yield ButtonStatic("Term2", id="term2")
-            yield ButtonStatic("Debug", id="debug")
             yield ButtonStatic("Help", id="help")
             yield ButtonStatic("Quit", id="quit")
 
@@ -142,10 +140,6 @@ class StartMenuDropdown(ModalScreen[None]):
             await self._handle_config()
         elif button_id == "term":
             await self._handle_term()
-        elif button_id == "term2":
-            await self._handle_term2()
-        elif button_id == "debug":
-            await self._handle_debug()
         elif button_id == "help":
             await self._handle_help()
         elif button_id == "toggle_monitor":
@@ -223,37 +217,7 @@ class StartMenuDropdown(ModalScreen[None]):
             await self.app.mount(window)
             window.open_state = True
 
-    async def _handle_term2(self) -> None:
-        """Handle term2 button press - open advanced terminal window."""
-        from openhcs.textual_tui.windows.advanced_terminal_window import AdvancedTerminalWindow
-        from textual.css.query import NoMatches
 
-        # Try to find existing advanced terminal window - if it doesn't exist, create new one
-        try:
-            window = self.app.query_one(AdvancedTerminalWindow)
-            # Window exists, just open it
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = AdvancedTerminalWindow()
-            await self.app.mount(window)
-            window.open_state = True
-
-    async def _handle_debug(self) -> None:
-        """Handle debug button press."""
-        from openhcs.textual_tui.windows import DebugClassExplorerWindow
-        from textual.css.query import NoMatches
-
-        # Try to find existing debug window - if it doesn't exist, create new one
-        try:
-            window = self.app.query_one(DebugClassExplorerWindow)
-            # Window exists, just open it
-            window.open_state = True
-        except NoMatches:
-            # Expected case: window doesn't exist yet, create new one
-            window = DebugClassExplorerWindow()
-            await self.app.mount(window)
-            window.open_state = True
 
     async def _handle_help(self) -> None:
         """Handle help button press."""

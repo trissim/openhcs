@@ -158,10 +158,13 @@ class PipelinePathPlanner:
         steps = pipeline_definition
 
         # Modify step_plans in place
-    
+
         # Track available special outputs by key for validation
         declared_outputs = {}
-    
+
+        # First pass: determine all step output directories
+        step_output_dirs = {}
+
         # Single pass through steps
         for i, step in enumerate(steps):
             step_id = step.step_id
@@ -323,14 +326,26 @@ class PipelinePathPlanner:
                     # Fallback to input directory name if plate_path not available
                     step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{path_config.output_dir_suffix}")
 
+            # Store the output directory for this step
+            step_output_dirs[step_id] = step_output_dir
+
             # --- Process special I/O ---
             special_outputs = {}
             special_inputs = {}
 
             # Process special outputs
             if s_outputs_keys: # Use the keys derived from core_callable or step attribute
+                # Determine final output directory (last step's output directory)
+                final_output_dir = None
+                if len(steps) > 0:
+                    last_step_id = steps[-1].step_id
+                    if last_step_id in step_output_dirs:
+                        final_output_dir = step_output_dirs[last_step_id]
+                    elif i == len(steps) - 1:  # This is the last step
+                        final_output_dir = step_output_dir
+
                 # Get materialization results path from config
-                results_base_path = PipelinePathPlanner._resolve_materialization_results_path(path_config, context)
+                results_base_path = PipelinePathPlanner._resolve_materialization_results_path(path_config, context, final_output_dir)
 
                 # Extract materialization functions from decorator (if FunctionStep)
                 materialization_functions = {}
@@ -510,12 +525,17 @@ class PipelinePathPlanner:
         return step_plans
 
     @staticmethod
-    def _resolve_materialization_results_path(path_config, context):
+    def _resolve_materialization_results_path(path_config, context, final_output_dir=None):
         """Resolve materialization results path from config."""
         results_path = path_config.materialization_results_path
 
         if not Path(results_path).is_absolute():
-            plate_folder = Path(context.plate_path)
-            return str(plate_folder / results_path)
+            # Use final output directory as base instead of plate_path
+            if final_output_dir:
+                base_folder = Path(final_output_dir)
+            else:
+                # Fallback to plate_path if final_output_dir not available
+                base_folder = Path(context.plate_path)
+            return str(base_folder / results_path)
         else:
             return results_path
