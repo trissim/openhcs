@@ -292,28 +292,28 @@ class FunctionListEditorWidget(Container):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
-        logger.info(f"🔍 BUTTON: Button pressed: {event.button.id}")
+        logger.debug(f"🔍 BUTTON: Button pressed: {event.button.id}")
 
         if event.button.id == "add_function_btn":
-            logger.info(f"🔍 BUTTON: Add function button pressed")
+            logger.debug(f"🔍 BUTTON: Add function button pressed")
             await self._add_function()
         elif event.button.id == "load_func_btn":
-            logger.info(f"🔍 BUTTON: Load func button pressed - calling _load_func()")
+            logger.debug(f"🔍 BUTTON: Load func button pressed - calling _load_func()")
             await self._load_func()
         elif event.button.id == "save_func_as_btn":
-            logger.info(f"🔍 BUTTON: Save func as button pressed")
+            logger.debug(f"🔍 BUTTON: Save func as button pressed")
             await self._save_func_as()
         elif event.button.id == "edit_vim_btn":
-            logger.info(f"🔍 BUTTON: Edit vim button pressed")
+            logger.debug(f"🔍 BUTTON: Edit vim button pressed")
             self._edit_in_vim()
         elif event.button.id == "component_btn":
-            logger.info(f"🔍 BUTTON: Component button pressed")
+            logger.debug(f"🔍 BUTTON: Component button pressed")
             await self._show_component_selection_dialog()
         elif event.button.id == "prev_channel_btn":
-            logger.info(f"🔍 BUTTON: Previous channel button pressed")
+            logger.debug(f"🔍 BUTTON: Previous channel button pressed")
             self._navigate_channel(-1)
         elif event.button.id == "next_channel_btn":
-            logger.info(f"🔍 BUTTON: Next channel button pressed")
+            logger.debug(f"🔍 BUTTON: Next channel button pressed")
             self._navigate_channel(1)
         else:
             logger.warning(f"🔍 BUTTON: Unknown button pressed: {event.button.id}")
@@ -485,35 +485,35 @@ class FunctionListEditorWidget(Container):
 
     async def _load_func(self) -> None:
         """Load function pattern from .func file."""
-        logger.info(f"🔍 LOAD FUNC: _load_func() called - starting file browser...")
+        logger.debug(f"🔍 LOAD FUNC: _load_func() called - starting file browser...")
 
         from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
         from openhcs.constants.constants import Backend
         from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
 
         def handle_result(result):
-            logger.info(f"🔍 LOAD FUNC: File browser callback received result: {result} (type: {type(result)})")
+            logger.debug(f"🔍 LOAD FUNC: File browser callback received result: {result} (type: {type(result)})")
 
             # Handle both single Path and list of Paths (disable multi-loading, take first only)
             file_path = None
             if isinstance(result, Path):
                 file_path = result
-                logger.info(f"🔍 LOAD FUNC: Single Path received: {file_path}")
+                logger.debug(f"🔍 LOAD FUNC: Single Path received: {file_path}")
             elif isinstance(result, list) and len(result) > 0:
                 file_path = result[0]  # Take only the first file (disable multi-loading)
                 if len(result) > 1:
                     logger.warning(f"🔍 LOAD FUNC: Multiple files selected, using only first: {file_path}")
                 else:
-                    logger.info(f"🔍 LOAD FUNC: List with single Path received: {file_path}")
+                    logger.debug(f"🔍 LOAD FUNC: List with single Path received: {file_path}")
 
             if file_path and isinstance(file_path, Path):
-                logger.info(f"🔍 LOAD FUNC: Valid Path extracted, calling _load_pattern_from_file({file_path})")
+                logger.debug(f"🔍 LOAD FUNC: Valid Path extracted, calling _load_pattern_from_file({file_path})")
                 self._load_pattern_from_file(file_path)
             else:
                 logger.warning(f"🔍 LOAD FUNC: No valid Path found in result: {result}")
 
         # Use window-based file browser
-        logger.info(f"🔍 LOAD FUNC: Opening file browser window...")
+        logger.debug(f"🔍 LOAD FUNC: Opening file browser window...")
         from openhcs.textual_tui.services.file_browser_service import SelectionMode
         await open_file_browser_window(
             app=self.app,
@@ -527,7 +527,7 @@ class FunctionListEditorWidget(Container):
             cache_key=PathCacheKey.FUNCTION_PATTERNS,
             on_result_callback=handle_result
         )
-        logger.info(f"🔍 LOAD FUNC: File browser window opened, waiting for user selection...")
+        logger.debug(f"🔍 LOAD FUNC: File browser window opened, waiting for user selection...")
 
     async def _save_func_as(self) -> None:
         """Save function pattern to .func file."""
@@ -557,22 +557,22 @@ class FunctionListEditorWidget(Container):
 
     def _load_pattern_from_file(self, file_path: Path) -> None:
         """Load pattern from .func file."""
-        logger.info(f"🔍 LOAD FUNC: _load_pattern_from_file called with: {file_path}")
-        logger.info(f"🔍 LOAD FUNC: File exists: {file_path.exists()}")
-        logger.info(f"🔍 LOAD FUNC: File size: {file_path.stat().st_size if file_path.exists() else 'N/A'} bytes")
+        logger.debug(f"🔍 LOAD FUNC: _load_pattern_from_file called with: {file_path}")
+        logger.debug(f"🔍 LOAD FUNC: File exists: {file_path.exists()}")
+        logger.debug(f"🔍 LOAD FUNC: File size: {file_path.stat().st_size if file_path.exists() else 'N/A'} bytes")
 
         import pickle
         try:
-            logger.info(f"🔍 LOAD FUNC: Opening file for reading...")
+            logger.debug(f"🔍 LOAD FUNC: Opening file for reading...")
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
-            logger.info(f"🔍 LOAD FUNC: Successfully loaded pattern from pickle: {pattern}")
-            logger.info(f"🔍 LOAD FUNC: Pattern type: {type(pattern)}")
+            logger.debug(f"🔍 LOAD FUNC: Successfully loaded pattern from pickle: {pattern}")
+            logger.debug(f"🔍 LOAD FUNC: Pattern type: {type(pattern)}")
 
             # Log current state before loading
-            logger.info(f"🔍 LOAD FUNC: BEFORE - functions: {len(self.functions)} items")
-            logger.info(f"🔍 LOAD FUNC: BEFORE - is_dict_mode: {self.is_dict_mode}")
-            logger.info(f"🔍 LOAD FUNC: BEFORE - selected_channel: {self.selected_channel}")
+            logger.debug(f"🔍 LOAD FUNC: BEFORE - functions: {len(self.functions)} items")
+            logger.debug(f"🔍 LOAD FUNC: BEFORE - is_dict_mode: {self.is_dict_mode}")
+            logger.debug(f"🔍 LOAD FUNC: BEFORE - selected_channel: {self.selected_channel}")
 
             # Process pattern and create NEW objects (like add button does)
             # This is crucial - reactive system only triggers on new object assignment
@@ -617,32 +617,32 @@ class FunctionListEditorWidget(Container):
                 new_selected_channel = None
 
             # Assign NEW objects to reactive properties (like add button does)
-            logger.info(f"🔍 LOAD FUNC: Assigning new values to reactive properties...")
-            logger.info(f"🔍 LOAD FUNC: new_pattern_data: {new_pattern_data}")
-            logger.info(f"🔍 LOAD FUNC: new_is_dict_mode: {new_is_dict_mode}")
-            logger.info(f"🔍 LOAD FUNC: new_functions: {len(new_functions)} items: {new_functions}")
-            logger.info(f"🔍 LOAD FUNC: new_selected_channel: {new_selected_channel}")
+            logger.debug(f"🔍 LOAD FUNC: Assigning new values to reactive properties...")
+            logger.debug(f"🔍 LOAD FUNC: new_pattern_data: {new_pattern_data}")
+            logger.debug(f"🔍 LOAD FUNC: new_is_dict_mode: {new_is_dict_mode}")
+            logger.debug(f"🔍 LOAD FUNC: new_functions: {len(new_functions)} items: {new_functions}")
+            logger.debug(f"🔍 LOAD FUNC: new_selected_channel: {new_selected_channel}")
 
             self.pattern_data = new_pattern_data
-            logger.info(f"🔍 LOAD FUNC: ✅ Assigned pattern_data")
+            logger.debug(f"🔍 LOAD FUNC: ✅ Assigned pattern_data")
 
             self.is_dict_mode = new_is_dict_mode
-            logger.info(f"🔍 LOAD FUNC: ✅ Assigned is_dict_mode")
+            logger.debug(f"🔍 LOAD FUNC: ✅ Assigned is_dict_mode")
 
             self.functions = new_functions  # This triggers reactive system!
-            logger.info(f"🔍 LOAD FUNC: ✅ Assigned functions - THIS SHOULD TRIGGER REACTIVE SYSTEM!")
+            logger.debug(f"🔍 LOAD FUNC: ✅ Assigned functions - THIS SHOULD TRIGGER REACTIVE SYSTEM!")
 
             self.selected_channel = new_selected_channel
-            logger.info(f"🔍 LOAD FUNC: ✅ Assigned selected_channel")
+            logger.debug(f"🔍 LOAD FUNC: ✅ Assigned selected_channel")
 
-            logger.info(f"🔍 LOAD FUNC: Calling _commit_and_notify...")
+            logger.debug(f"🔍 LOAD FUNC: Calling _commit_and_notify...")
             self._commit_and_notify()
 
             # Final state logging
-            logger.info(f"🔍 LOAD FUNC: FINAL - functions: {len(self.functions)} items")
-            logger.info(f"🔍 LOAD FUNC: FINAL - is_dict_mode: {self.is_dict_mode}")
-            logger.info(f"🔍 LOAD FUNC: FINAL - selected_channel: {self.selected_channel}")
-            logger.info(f"🔍 LOAD FUNC: ✅ Successfully completed loading process!")
+            logger.debug(f"🔍 LOAD FUNC: FINAL - functions: {len(self.functions)} items")
+            logger.debug(f"🔍 LOAD FUNC: FINAL - is_dict_mode: {self.is_dict_mode}")
+            logger.debug(f"🔍 LOAD FUNC: FINAL - selected_channel: {self.selected_channel}")
+            logger.debug(f"🔍 LOAD FUNC: ✅ Successfully completed loading process!")
 
         except Exception as e:
             logger.error(f"🔍 LOAD FUNC: ❌ ERROR - Failed to load pattern: {e}")

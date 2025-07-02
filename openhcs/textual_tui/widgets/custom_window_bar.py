@@ -29,15 +29,9 @@ class CustomWindowBar(WindowBar):
 
     def __init__(self, **kwargs):
         """Initialize with logging."""
-        logger.info("🔘 WINDOWBAR INIT: CustomWindowBar created")
         super().__init__(**kwargs)
-        logger.info(f"🔘 WINDOWBAR INIT: CustomWindowBar initialized")
-        logger.info(f"🔘 WINDOWBAR INIT: Manager = {self.manager}")
-        logger.info(f"🔘 WINDOWBAR INIT: Manager windowbar = {getattr(self.manager, 'windowbar', 'None')}")
 
         # Verify our methods are being used
-        logger.info(f"🔘 WINDOWBAR INIT: add_window_button method = {self.add_window_button}")
-        logger.info(f"🔘 WINDOWBAR INIT: update_window_button_state method = {self.update_window_button_state}")
     
     DEFAULT_CSS = """
     CustomWindowBar {
@@ -61,27 +55,21 @@ class CustomWindowBar(WindowBar):
 
     def compose(self) -> ComposeResult:
         """Compose the window bar with only the right button (no left button)."""
-        logger.info("🔘 WINDOWBAR COMPOSE: Creating CustomWindowBar")
         # Only yield the right button - no left button
         yield WindowBarAllButton(window_bar=self, id="windowbar_button_right")
-        logger.info("🔘 WINDOWBAR COMPOSE: Right button created")
 
     def on_mount(self) -> None:
         """Log children after mounting to see what actually exists."""
-        logger.info("🔘 WINDOWBAR MOUNT: CustomWindowBar mounted")
         all_children = [f"{child.__class__.__name__}(id={getattr(child, 'id', 'no-id')})" for child in self.children]
-        logger.info(f"🔘 WINDOWBAR MOUNT: Children after mount: {all_children}")
 
         # Check if both buttons exist
         try:
             left_button = self.query_one("#windowbar_button_left")
-            logger.info(f"🔘 WINDOWBAR MOUNT: Left button found: {left_button}")
         except Exception as e:
             logger.error(f"🔘 WINDOWBAR MOUNT: Left button missing: {e}")
 
         try:
             right_button = self.query_one("#windowbar_button_right")
-            logger.info(f"🔘 WINDOWBAR MOUNT: Right button found: {right_button}")
         except Exception as e:
             logger.error(f"🔘 WINDOWBAR MOUNT: Right button missing: {e}")
 
@@ -95,12 +83,10 @@ class CustomWindowBar(WindowBar):
         Override the parent method to add separators between buttons.
         """
         try:
-            logger.info(f"🔘 BUTTON CREATE START: {window.id} (name: {window.name})")
 
             # Check if button already exists
             try:
                 existing_button = self.query_one(f"#{window.id}_button")
-                logger.warning(f"🔘 BUTTON ALREADY EXISTS: {window.id} - skipping creation")
                 return
             except Exception:
                 pass  # Button doesn't exist, continue with creation
@@ -136,7 +122,6 @@ class CustomWindowBar(WindowBar):
                 # Verify button was actually added
                 try:
                     verify_button = self.query_one(f"#{window.id}_button")
-                    logger.info(f"🔘 BUTTON CREATE SUCCESS: {window.id} - verified in DOM")
                 except Exception as e:
                     logger.error(f"🔘 BUTTON CREATE: Button not found after mount! {window.id} - {e}")
                     raise
@@ -161,7 +146,6 @@ class CustomWindowBar(WindowBar):
         # Remove the window button
         try:
             self.query_one(f"#{window.id}_button").remove()
-            logger.info(f"🔘 BUTTON REMOVE SUCCESS: {window.id}")
         except Exception as e:
             logger.warning(f"🔘 BUTTON REMOVE FAILED: {window.id} - {e}")
 
@@ -175,7 +159,6 @@ class CustomWindowBar(WindowBar):
 
         This is called by the WindowManager when a window is minimized or opened.
         """
-        logger.info(f"🔘 BUTTON UPDATE START: {window.id} -> state={state}")
 
         try:
             # Log current WindowBar state
@@ -197,10 +180,8 @@ class CustomWindowBar(WindowBar):
             # Update the button state
             if state:
                 button.window_state = True
-                logger.info(f"🔘 BUTTON UPDATE SUCCESS: {window.id} -> opened")
             else:
                 button.window_state = False
-                logger.info(f"🔘 BUTTON UPDATE SUCCESS: {window.id} -> minimized")
 
         except Exception as e:
             # Button doesn't exist yet - this might be normal during window creation
@@ -211,8 +192,4 @@ class CustomWindowBar(WindowBar):
 
     def __getattribute__(self, name):
         """Override to log when manager accesses our methods."""
-        if name == 'add_window_button':
-            logger.info(f"🔘 METHOD ACCESS: Manager accessing add_window_button")
-        elif name == 'update_window_button_state':
-            logger.info(f"🔘 METHOD ACCESS: Manager accessing update_window_button_state")
         return super().__getattribute__(name)

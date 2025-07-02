@@ -103,7 +103,7 @@ class ToolongWindow(BaseOpenHCSWindow):
 
         if tui_logs:
             # Return the most recent TUI log
-            logger.info(f"Found {len(tui_logs)} TUI logs, using most recent: {Path(tui_logs[-1]).name}")
+            logger.debug(f"Found {len(tui_logs)} TUI logs, using most recent: {Path(tui_logs[-1]).name}")
             return tui_logs[-1]
         else:
             logger.warning("No TUI log files found")
@@ -124,9 +124,9 @@ class ToolongWindow(BaseOpenHCSWindow):
         log_pattern = str(self.logs_directory / f"{tui_base}*.log")
         session_logs = sorted(glob.glob(log_pattern))
 
-        logger.info(f"Found {len(session_logs)} logs for session '{tui_base}':")
+        logger.debug(f"Found {len(session_logs)} logs for session '{tui_base}':")
         for log_file in session_logs:
-            logger.info(f"  - {Path(log_file).name}")
+            logger.debug(f"  - {Path(log_file).name}")
 
         return session_logs
 
@@ -141,9 +141,9 @@ class ToolongWindow(BaseOpenHCSWindow):
         log_pattern = str(self.logs_directory / "openhcs_*.log")
         all_logs = sorted(glob.glob(log_pattern))
 
-        logger.info(f"Found {len(all_logs)} existing OpenHCS log files")
+        logger.debug(f"Found {len(all_logs)} existing OpenHCS log files")
         for log_file in all_logs:
-            logger.info(f"  - {Path(log_file).name}")
+            logger.debug(f"  - {Path(log_file).name}")
 
         return all_logs
 
@@ -176,13 +176,13 @@ class ToolongWindow(BaseOpenHCSWindow):
     async def on_mount(self) -> None:
         """Set up the window when mounted."""
         # ReactiveLogMonitor handles its own setup
-        logger.info(f"Toolong window opened with base path: {self.base_log_path}")
+        logger.debug(f"Toolong window opened with base path: {self.base_log_path}")
 
 
 
     async def on_unmount(self) -> None:
         """Clean up when window is unmounted."""
-        logger.info("Toolong window unmounting, ensuring cleanup...")
+        logger.debug("Toolong window unmounting, ensuring cleanup...")
 
         # Explicitly stop ReactiveLogMonitor to ensure thread cleanup
         try:
@@ -192,4 +192,4 @@ class ToolongWindow(BaseOpenHCSWindow):
         except Exception as e:
             logger.debug(f"Could not find ReactiveLogMonitor to stop: {e}")
 
-        logger.info("Toolong window closed")
+        logger.debug("Toolong window closed")

@@ -253,14 +253,14 @@ class OpenHCSTUIApp(App):
         self.watcher = None  # For LogScreen compatibility
         self.merge = False  # For LogScreen compatibility
 
-        logger.info("OpenHCSTUIApp initialized with Textual reactive system")
+        logger.debug("OpenHCSTUIApp initialized with Textual reactive system")
 
     def configure_toolong(self, file_paths: list, watcher, merge: bool = False):
         """Configure app for Toolong LogScreen compatibility."""
         self.file_paths = file_paths
         self.watcher = watcher
         self.merge = merge
-        logger.info(f"App configured for Toolong with {len(file_paths)} files, merge={merge}")
+        logger.debug(f"App configured for Toolong with {len(file_paths)} files, merge={merge}")
     
     def compose(self) -> ComposeResult:
         """Compose the main application layout."""
@@ -290,10 +290,10 @@ class OpenHCSTUIApp(App):
         # No need to manually update it anymore
 
         # Add our start menu button to the WindowBar using the same pattern as window buttons
-        logger.info("🚀 APP MOUNT: About to add start menu button")
+        logger.debug("🚀 APP MOUNT: About to add start menu button")
         try:
             await self._add_start_menu_button()
-            logger.info("🚀 APP MOUNT: Start menu button added")
+            logger.debug("🚀 APP MOUNT: Start menu button added")
         except Exception as e:
             logger.error(f"🚀 APP MOUNT: Start menu button failed: {e}")
             # Continue without start menu button for now
@@ -343,28 +343,28 @@ class OpenHCSTUIApp(App):
     async def _add_start_menu_button(self):
         """Add our start menu button to the WindowBar at the leftmost position."""
         try:
-            logger.info("🚀 START MENU: Creating start menu button")
+            logger.debug("🚀 START MENU: Creating start menu button")
             from openhcs.textual_tui.widgets.start_menu_button import StartMenuButton
 
             # Get the CustomWindowBar
-            logger.info("🚀 START MENU: Getting CustomWindowBar")
+            logger.debug("🚀 START MENU: Getting CustomWindowBar")
             window_bar = self.query_one(CustomWindowBar)
-            logger.info(f"🚀 START MENU: Found window bar: {window_bar}")
+            logger.debug(f"🚀 START MENU: Found window bar: {window_bar}")
 
             # Check if right button exists (no left button in CustomWindowBar)
-            logger.info("🚀 START MENU: Looking for right button")
+            logger.debug("🚀 START MENU: Looking for right button")
             right_button = window_bar.query_one("#windowbar_button_right")
-            logger.info(f"🚀 START MENU: Found right button: {right_button}")
+            logger.debug(f"🚀 START MENU: Found right button: {right_button}")
 
             # Add our start menu button at the very beginning (leftmost position)
             # Mount before the right button to be at the far left
-            logger.info("🚀 START MENU: Creating StartMenuButton")
+            logger.debug("🚀 START MENU: Creating StartMenuButton")
             start_button = StartMenuButton(window_bar=window_bar, id="start_menu_button")
-            logger.info(f"🚀 START MENU: Created start button: {start_button}")
+            logger.debug(f"🚀 START MENU: Created start button: {start_button}")
 
-            logger.info("🚀 START MENU: Mounting start button")
+            logger.debug("🚀 START MENU: Mounting start button")
             await window_bar.mount(start_button, before=right_button)
-            logger.info("🚀 START MENU: Start menu button mounted successfully")
+            logger.debug("🚀 START MENU: Start menu button mounted successfully")
 
         except Exception as e:
             logger.error(f"🚀 START MENU: Failed to add start menu button: {e}")

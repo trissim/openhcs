@@ -317,7 +317,7 @@ def check_gpu_memory_usage() -> None:
 
     This is a utility function for debugging memory issues.
     """
-    logger.info("🔍 GPU Memory Usage Report:")
+    logger.debug("🔍 GPU Memory Usage Report:")
 
     # Check PyTorch
     try:
@@ -326,11 +326,11 @@ def check_gpu_memory_usage() -> None:
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / 1024**3
                 reserved = torch.cuda.memory_reserved(i) / 1024**3
-                logger.info(f"  PyTorch GPU {i}: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+                logger.debug(f"  PyTorch GPU {i}: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
         else:
-            logger.info("  PyTorch: No CUDA available")
+            logger.debug("  PyTorch: No CUDA available")
     except ImportError:
-        logger.info("  PyTorch: Not installed")
+        logger.debug("  PyTorch: Not installed")
 
     # Check CuPy
     try:
@@ -338,14 +338,14 @@ def check_gpu_memory_usage() -> None:
         mempool = cupy.get_default_memory_pool()
         used_bytes = mempool.used_bytes()
         total_bytes = mempool.total_bytes()
-        logger.info(f"  CuPy: {used_bytes / 1024**3:.2f}GB used, {total_bytes / 1024**3:.2f}GB total")
+        logger.debug(f"  CuPy: {used_bytes / 1024**3:.2f}GB used, {total_bytes / 1024**3:.2f}GB total")
     except ImportError:
-        logger.info("  CuPy: Not installed")
+        logger.debug("  CuPy: Not installed")
     except Exception as e:
-        logger.info(f"  CuPy: Error checking memory - {e}")
+        logger.debug(f"  CuPy: Error checking memory - {e}")
 
     # Note: TensorFlow and JAX don't have easy memory introspection
-    logger.info("  TensorFlow/JAX: Memory usage not easily queryable")
+    logger.debug("  TensorFlow/JAX: Memory usage not easily queryable")
 
 
 def log_gpu_memory_usage(context: str = "") -> None:
@@ -364,11 +364,11 @@ def log_gpu_memory_usage(context: str = "") -> None:
                 allocated = torch.cuda.memory_allocated(i) / 1024**3
                 reserved = torch.cuda.memory_reserved(i) / 1024**3
                 free_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3 - reserved
-                logger.info(f"🔍 VRAM{context_str} GPU {i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {free_memory:.2f}GB free")
+                logger.debug(f"🔍 VRAM{context_str} GPU {i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {free_memory:.2f}GB free")
         else:
-            logger.info(f"🔍 VRAM{context_str}: No CUDA available")
+            logger.debug(f"🔍 VRAM{context_str}: No CUDA available")
     except ImportError:
-        logger.info(f"🔍 VRAM{context_str}: PyTorch not available")
+        logger.debug(f"🔍 VRAM{context_str}: PyTorch not available")
     except Exception as e:
         logger.warning(f"🔍 VRAM{context_str}: Error checking memory - {e}")
 
@@ -427,7 +427,7 @@ def force_comprehensive_cleanup() -> None:
 
     This is the nuclear option for clearing GPU memory when you suspect leaks.
     """
-    logger.info("🧹 FORCE COMPREHENSIVE CLEANUP: Starting nuclear cleanup...")
+    logger.debug("🧹 FORCE COMPREHENSIVE CLEANUP: Starting nuclear cleanup...")
 
     # Clean all GPU frameworks
     cleanup_all_gpu_frameworks()
@@ -441,4 +441,4 @@ def force_comprehensive_cleanup() -> None:
     # Check memory usage after cleanup
     check_gpu_memory_usage()
 
-    logger.info("🧹 FORCE COMPREHENSIVE CLEANUP: Complete")
+    logger.debug("🧹 FORCE COMPREHENSIVE CLEANUP: Complete")

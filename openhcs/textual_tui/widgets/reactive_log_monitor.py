@@ -129,16 +129,16 @@ class ReactiveLogMonitor(Widget):
     
     def on_mount(self) -> None:
         """Set up log monitoring when widget is mounted."""
-        logger.info(f"ReactiveLogMonitor.on_mount() called, auto_start={self.auto_start}")
+        logger.debug(f"ReactiveLogMonitor.on_mount() called, auto_start={self.auto_start}")
         if self.auto_start:
-            logger.info("Starting monitoring from on_mount")
+            logger.debug("Starting monitoring from on_mount")
             self.start_monitoring()
         else:
             logger.warning("Auto-start disabled, not starting monitoring")
 
     def on_unmount(self) -> None:
         """Clean up when widget is unmounted."""
-        logger.info("ReactiveLogMonitor unmounting, cleaning up watchers...")
+        logger.debug("ReactiveLogMonitor unmounting, cleaning up watchers...")
         self.stop_monitoring()
     
     def start_monitoring(self, base_log_path: str = None) -> None:
@@ -148,36 +148,36 @@ class ReactiveLogMonitor(Widget):
         Args:
             base_log_path: Optional new base path to monitor
         """
-        logger.info(f"start_monitoring() called with base_log_path='{base_log_path}'")
+        logger.debug(f"start_monitoring() called with base_log_path='{base_log_path}'")
 
         if base_log_path:
             self.base_log_path = base_log_path
 
-        logger.info(f"Current state: base_log_path='{self.base_log_path}', include_tui_log={self.include_tui_log}")
+        logger.debug(f"Current state: base_log_path='{self.base_log_path}', include_tui_log={self.include_tui_log}")
 
         # We can monitor even without base_log_path if include_tui_log is True
         if not self.base_log_path and not self.include_tui_log:
             raise RuntimeError("Cannot start log monitoring: no base log path and TUI log disabled")
 
         if self.base_log_path:
-            logger.info(f"Starting reactive log monitoring for subprocess: {self.base_log_path}")
+            logger.debug(f"Starting reactive log monitoring for subprocess: {self.base_log_path}")
         else:
-            logger.info("Starting reactive log monitoring for TUI log only")
+            logger.debug("Starting reactive log monitoring for TUI log only")
 
         # Discover existing logs - THIS SHOULD CRASH IF NO TUI LOG FOUND
-        logger.info("About to discover existing logs...")
+        logger.debug("About to discover existing logs...")
         self._discover_existing_logs()
-        logger.info("Finished discovering existing logs")
+        logger.debug("Finished discovering existing logs")
 
         # Start file system watcher (only if we have subprocess logs to watch)
         if self.base_log_path:
             self._start_file_watcher()
 
-        logger.info("Log monitoring started successfully")
+        logger.debug("Log monitoring started successfully")
     
     def stop_monitoring(self) -> None:
         """Stop all log monitoring with proper thread cleanup."""
-        logger.info("Stopping reactive log monitoring")
+        logger.debug("Stopping reactive log monitoring")
         
         try:
             # Stop file system watcher first
@@ -192,7 +192,7 @@ class ReactiveLogMonitor(Widget):
         self.active_logs = set()
         self._log_info_cache.clear()
         
-        logger.info("Reactive log monitoring stopped")
+        logger.debug("Reactive log monitoring stopped")
 
     def get_current_tui_log_path(self) -> Path:
         """Get the current TUI process log file path - FAIL LOUD if not found."""
@@ -232,7 +232,7 @@ class ReactiveLogMonitor(Widget):
             if not tui_log.exists():
                 raise RuntimeError(f"TUI log file does not exist: {tui_log}")
             discovered_logs.add(tui_log)
-            logger.info(f"Added TUI log to monitoring: {tui_log}")
+            logger.debug(f"Added TUI log to monitoring: {tui_log}")
         
         # Include subprocess logs if base_log_path is provided
         if self.base_log_path:
@@ -351,45 +351,45 @@ class ReactiveLogMonitor(Widget):
         new_logs.add(log_path)
         self.active_logs = new_logs
 
-        logger.info(f"Added log file to monitoring: {log_info.display_name} ({log_path})")
+        logger.debug(f"Added log file to monitoring: {log_info.display_name} ({log_path})")
 
     def watch_active_logs(self, logs: Set[Path]) -> None:
         """Reactive: Update dropdown when active logs change."""
-        logger.info(f"Active logs changed: {len(logs)} logs")
+        logger.debug(f"Active logs changed: {len(logs)} logs")
         # Always try to update - the _update_log_selector method has its own safety checks
-        logger.info("Updating log selector")
+        logger.debug("Updating log selector")
         self._update_log_selector()
 
     def _update_log_selector(self) -> None:
         """Update dropdown selector with available logs."""
-        logger.info(f"_update_log_selector called, is_mounted={self.is_mounted}")
+        logger.debug(f"_update_log_selector called, is_mounted={self.is_mounted}")
 
         try:
             # Check if the selector exists (might not be ready yet or removed during unmount)
             try:
                 log_selector = self.query_one("#log_selector", Select)
-                logger.info(f"Found log selector widget: {log_selector}")
+                logger.debug(f"Found log selector widget: {log_selector}")
             except Exception as e:
                 logger.debug(f"Log selector not found (widget not ready or unmounting?): {e}")
                 return
-            logger.info(f"Found log selector widget: {log_selector}")
+            logger.debug(f"Found log selector widget: {log_selector}")
 
             # Sort logs: TUI first, then main subprocess, then workers by well ID
             sorted_logs = self._sort_logs_for_display(self.active_logs)
-            logger.info(f"Active logs: {[str(p) for p in self.active_logs]}")
-            logger.info(f"Sorted logs: {[str(p) for p in sorted_logs]}")
+            logger.debug(f"Active logs: {[str(p) for p in self.active_logs]}")
+            logger.debug(f"Sorted logs: {[str(p) for p in sorted_logs]}")
 
             # Build dropdown options
             options = []
             for log_path in sorted_logs:
                 log_info = self._log_info_cache.get(log_path)
-                logger.info(f"Log path {log_path} -> log_info: {log_info}")
+                logger.debug(f"Log path {log_path} -> log_info: {log_info}")
                 if log_info:
                     options.append((log_info.display_name, str(log_path)))
                 else:
                     logger.warning(f"No log_info found for {log_path} in cache: {list(self._log_info_cache.keys())}")
 
-            logger.info(f"Built options: {options}")
+            logger.debug(f"Built options: {options}")
 
             if not options:
                 logger.error("CRITICAL: No options built! This should never happen with TUI log.")
@@ -397,21 +397,21 @@ class ReactiveLogMonitor(Widget):
 
             # Update selector options
             log_selector.set_options(options)
-            logger.info(f"Set options on selector, current value: {log_selector.value}")
+            logger.debug(f"Set options on selector, current value: {log_selector.value}")
 
             # Force refresh the selector
             log_selector.refresh()
-            logger.info("Forced selector refresh")
+            logger.debug("Forced selector refresh")
 
             # Auto-select first option (TUI log) if nothing selected
             if options and (log_selector.value == "loading" or log_selector.value not in [opt[1] for opt in options]):
-                logger.info(f"Auto-selecting first option: {options[0]}")
+                logger.debug(f"Auto-selecting first option: {options[0]}")
                 log_selector.value = options[0][1]
-                logger.info(f"About to show log file: {options[0][1]}")
+                logger.debug(f"About to show log file: {options[0][1]}")
                 self._show_log_file(Path(options[0][1]))
-                logger.info(f"Finished showing log file: {options[0][1]}")
+                logger.debug(f"Finished showing log file: {options[0][1]}")
             else:
-                logger.info("Not auto-selecting, current selection is valid")
+                logger.debug("Not auto-selecting, current selection is valid")
 
         except Exception as e:
             # FAIL LOUD - UI updates should not silently fail
@@ -419,7 +419,7 @@ class ReactiveLogMonitor(Widget):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle log file selection change."""
-        logger.info(f"Select changed: value={event.value}, type={type(event.value)}")
+        logger.debug(f"Select changed: value={event.value}, type={type(event.value)}")
 
         # Handle NoSelection/BLANK - this should not happen if we always have TUI log
         if event.value == Select.BLANK or event.value is None:
@@ -428,40 +428,40 @@ class ReactiveLogMonitor(Widget):
 
         # Handle valid selections
         if event.value and event.value != "loading" and event.value != "none":
-            logger.info(f"Showing log file: {event.value}")
+            logger.debug(f"Showing log file: {event.value}")
             self._show_log_file(Path(event.value))
         else:
             logger.warning(f"Ignoring invalid selection: {event.value}")
 
     def _show_log_file(self, log_path: Path) -> None:
         """Show the selected log file using proper Toolong structure."""
-        logger.info(f"_show_log_file called with: {log_path}")
+        logger.debug(f"_show_log_file called with: {log_path}")
         try:
             log_container = self.query_one("#log_view_container", Container)
-            logger.info(f"Found log container: {log_container}")
+            logger.debug(f"Found log container: {log_container}")
 
             # Clear existing content
             existing_widgets = log_container.query("*")
-            logger.info(f"Clearing {len(existing_widgets)} existing widgets")
+            logger.debug(f"Clearing {len(existing_widgets)} existing widgets")
             existing_widgets.remove()
 
             # Create complete ToolongWidget - this encapsulates all Toolong functionality
             from openhcs.textual_tui.widgets.toolong_widget import ToolongWidget
 
-            logger.info(f"Creating ToolongWidget for: {log_path}")
+            logger.debug(f"Creating ToolongWidget for: {log_path}")
 
             # Create ToolongWidget for the selected file
             toolong_widget = ToolongWidget.from_single_file(
                 str(log_path),
                 can_tail=True
             )
-            logger.info(f"Created ToolongWidget: {toolong_widget}")
+            logger.debug(f"Created ToolongWidget: {toolong_widget}")
 
             # Mount the complete ToolongWidget
-            logger.info("Mounting ToolongWidget to container")
+            logger.debug("Mounting ToolongWidget to container")
             log_container.mount(toolong_widget)
 
-            logger.info(f"Successfully showing log file with ToolongWidget: {log_path}")
+            logger.debug(f"Successfully showing log file with ToolongWidget: {log_path}")
 
         except Exception as e:
             logger.error(f"Failed to show log file {log_path}: {e}", exc_info=True)
@@ -470,7 +470,7 @@ class ReactiveLogMonitor(Widget):
                 log_container = self.query_one("#log_view_container", Container)
                 log_container.query("*").remove()
                 log_container.mount(Static(f"Error loading log: {e}", classes="error-message"))
-                logger.info("Mounted error message")
+                logger.debug("Mounted error message")
             except Exception as e2:
                 logger.error(f"Failed to show error message: {e2}")
 
@@ -535,7 +535,7 @@ class ReactiveLogMonitor(Widget):
             # Start watching
             self._file_observer.start()
 
-            logger.info(f"Started file system watcher for: {watch_directory}")
+            logger.debug(f"Started file system watcher for: {watch_directory}")
 
         except Exception as e:
             logger.error(f"Failed to start file system watcher: {e}")

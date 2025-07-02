@@ -228,6 +228,8 @@ class DiskStorageBackend(StorageBackend):
         """
         Save multiple files sequentially using existing save method.
 
+        Converts GPU arrays to CPU numpy arrays before saving using OpenHCS memory conversion system.
+
         Args:
             data_list: List of data objects to save
             output_paths: List of destination paths (must match length of data_list)
@@ -239,8 +241,35 @@ class DiskStorageBackend(StorageBackend):
         if len(data_list) != len(output_paths):
             raise ValueError(f"data_list length ({len(data_list)}) must match output_paths length ({len(output_paths)})")
 
-        for data, output_path in zip(data_list, output_paths):
-            self.save(data, output_path, **kwargs)
+        # Convert GPU arrays to CPU numpy arrays using OpenHCS memory conversion system
+        from openhcs.core.memory.converters import convert_memory
+        from openhcs.core.memory.stack_utils import _detect_memory_type
+        from openhcs.constants.constants import MemoryType
+
+        cpu_data_list = []
+        for data in data_list:
+            # Detect the memory type of the data
+            source_type = _detect_memory_type(data)
+
+            # Convert to numpy if not already numpy
+            if source_type == MemoryType.NUMPY.value:
+                # Already numpy, use as-is
+                cpu_data_list.append(data)
+            else:
+                # Convert to numpy using OpenHCS memory conversion system
+                # Allow CPU roundtrip since we're explicitly going to disk
+                numpy_data = convert_memory(
+                    data=data,
+                    source_type=source_type,
+                    target_type=MemoryType.NUMPY.value,
+                    gpu_id=0,  # Placeholder since numpy doesn't use GPU ID
+                    allow_cpu_roundtrip=True
+                )
+                cpu_data_list.append(numpy_data)
+
+        # Save converted data using existing save method
+        for cpu_data, output_path in zip(cpu_data_list, output_paths):
+            self.save(cpu_data, output_path, **kwargs)
 
     def list_files(self, directory: Union[str, Path], pattern: Optional[str] = None,
                   extensions: Optional[Set[str]] = None, recursive: bool = False) -> List[Union[str,Path]]:

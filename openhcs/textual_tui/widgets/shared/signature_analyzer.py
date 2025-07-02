@@ -96,7 +96,6 @@ class DocstringExtractor:
         """
         lines = docstring.strip().split('\n')
 
-        # Extract summary (first non-empty line)
         summary = None
         description_lines = []
         parameters = {}
@@ -110,129 +109,89 @@ class DocstringExtractor:
         def _finalize_current_param():
             """Finalize the current parameter description."""
             if current_param and current_param_lines:
-                # Join lines and clean up whitespace
                 param_desc = '\n'.join(current_param_lines).strip()
                 parameters[current_param] = param_desc
-
+            
         for i, line in enumerate(lines):
             original_line = line
             line = line.strip()
 
-            # Check for section headers first
             if line.lower() in ('args:', 'arguments:', 'parameters:'):
                 _finalize_current_param()
                 current_param = None
                 current_param_lines = []
                 current_section = 'parameters'
+                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
+                    continue
                 continue
             elif line.lower() in ('returns:', 'return:'):
                 _finalize_current_param()
                 current_param = None
                 current_param_lines = []
                 current_section = 'returns'
+                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
+                    continue
                 continue
             elif line.lower() in ('examples:', 'example:'):
                 _finalize_current_param()
                 current_param = None
                 current_param_lines = []
                 current_section = 'examples'
+                if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
+                    continue
                 continue
 
-            # Parse content based on current section
             if current_section == 'description':
-                # Handle empty lines in description
-                if not line:
-                    if description_lines:  # Only add if we have content
-                        description_lines.append('')
-                    continue
-
                 if not summary and line:
                     summary = line
                 else:
-                    description_lines.append(line)
+                    description_lines.append(original_line) # Keep original indentation
 
             elif current_section == 'parameters':
-                # Check for new parameter definition
-                param_match = re.match(r'^(\w+):\s*(.+)', line)
-                sphinx_match = re.match(r'^:param\s+(\w+):\s*(.+)', line)
-                simple_param_match = re.match(r'^(\w+)\s+(.+)', line) if line and not line.startswith(' ') else None
+                param_match_google = re.match(r'^(\w+):\s*(.+)', line)
+                param_match_sphinx = re.match(r'^:param\s+(\w+):\s*(.+)', line)
+                param_match_numpy = re.match(r'^(\w+)\s*:\s*(.+)', line)
 
-                if param_match or sphinx_match:
-                    # Finalize previous parameter
+                if param_match_google or param_match_sphinx or param_match_numpy:
                     _finalize_current_param()
 
-                    # Start new parameter
-                    if param_match:
-                        param_name, param_desc = param_match.groups()
-                    else:  # sphinx_match
-                        param_name, param_desc = sphinx_match.groups()
+                    if param_match_google:
+                        param_name, param_desc = param_match_google.groups()
+                    elif param_match_sphinx:
+                        param_name, param_desc = param_match_sphinx.groups()
+                    else: # numpy
+                        param_name, param_desc = param_match_numpy.groups()
 
                     current_param = param_name
                     current_param_lines = [param_desc.strip()]
-
-                elif not line:
-                    # Empty line - check if this ends the current parameter
-                    # Look ahead to see if next non-empty line starts a new parameter
-                    next_line_starts_param = False
-                    for j in range(i + 1, len(lines)):
-                        next_line = lines[j].strip()
-                        if not next_line:
-                            continue
-                        # Check if next line starts a new parameter or section
-                        if (re.match(r'^(\w+):\s*(.+)', next_line) or
-                            re.match(r'^:param\s+(\w+):\s*(.+)', next_line) or
-                            next_line.lower() in ('returns:', 'return:', 'examples:', 'example:') or
-                            (not next_line.startswith(' ') and len(next_line.split()) >= 2)):
-                            next_line_starts_param = True
-                            break
-                        else:
-                            break
-
-                    if next_line_starts_param:
-                        # This empty line ends the current parameter
-                        _finalize_current_param()
-                        current_param = None
-                        current_param_lines = []
-                    elif current_param_lines:
-                        # Add empty line to current parameter (for formatting)
-                        current_param_lines.append('')
-
-                elif current_param and (line.startswith(' ') or original_line.startswith('    ')):
-                    # Continuation of current parameter (indented)
+                elif current_param and (original_line.startswith('    ') or original_line.startswith('\t')):
+                    # Indented continuation line
                     current_param_lines.append(line)
-
-                elif line and not line.startswith(' '):
-                    # Potential new parameter without colon format
-                    words = line.split()
-                    if len(words) >= 2:
-                        # Finalize previous parameter
-                        _finalize_current_param()
-
-                        # Start new parameter
-                        param_name = words[0].rstrip(':')
-                        param_desc = ' '.join(words[1:])
-                        current_param = param_name
-                        current_param_lines = [param_desc]
-
+                elif not line:
+                    _finalize_current_param()
+                    current_param = None
+                    current_param_lines = []
+                elif current_param:
+                    # Non-indented continuation line (part of the same block)
+                    current_param_lines.append(line)
+            
             elif current_section == 'returns':
                 if returns is None:
                     returns = line
                 else:
-                    returns += ' ' + line
-
+                    returns += '\n' + line
+            
             elif current_section == 'examples':
                 if examples is None:
                     examples = line
                 else:
                     examples += '\n' + line
 
-        # Finalize any remaining parameter
         _finalize_current_param()
 
-        # Clean up description
-        description = '\n'.join(description_lines).strip() if description_lines else None
+        description = '\n'.join(description_lines).strip()
         if description == summary:
-            description = None  # Avoid duplication
+            description = None
 
         return DocstringInfo(
             summary=summary,
@@ -241,6 +200,7 @@ class DocstringExtractor:
             returns=returns,
             examples=examples
         )
+
 
 class SignatureAnalyzer:
     """Universal analyzer for extracting parameter information from any target."""
@@ -326,6 +286,9 @@ class SignatureAnalyzer:
             # Extract docstring information from dataclass
             docstring_info = DocstringExtractor.extract(dataclass_type)
 
+            # Extract inline field documentation using AST
+            inline_docs = SignatureAnalyzer._extract_inline_field_docs(dataclass_type)
+
             parameters = {}
 
             for field in dataclasses.fields(dataclass_type):
@@ -342,10 +305,16 @@ class SignatureAnalyzer:
                     default_value = None
                     is_required = True
 
-                # Get field description from docstring or field metadata
+                # Get field description from multiple sources (priority order)
                 field_description = None
+
+                # 1. Field metadata (highest priority)
                 if hasattr(field, 'metadata') and 'description' in field.metadata:
                     field_description = field.metadata['description']
+                # 2. Inline documentation strings (new!)
+                elif field.name in inline_docs:
+                    field_description = inline_docs[field.name]
+                # 3. Docstring parameters (fallback)
                 else:
                     field_description = docstring_info.parameters.get(field.name)
 
@@ -361,6 +330,92 @@ class SignatureAnalyzer:
 
         except Exception:
             # Return empty dict on error
+            return {}
+
+    @staticmethod
+    def _extract_inline_field_docs(dataclass_type: type) -> Dict[str, str]:
+        """Extract inline field documentation strings using AST parsing.
+
+        This handles multiple patterns used for field documentation:
+
+        Pattern 1 - Next line string literal:
+        @dataclass
+        class Config:
+            field_name: str = "default"
+            '''Field description here.'''
+
+        Pattern 2 - Same line string literal (less common):
+        @dataclass
+        class Config:
+            field_name: str = "default"  # '''Field description'''
+
+        Pattern 3 - Traditional docstring parameters (handled by DocstringExtractor):
+        @dataclass
+        class Config:
+            '''
+            Args:
+                field_name: Field description here.
+            '''
+            field_name: str = "default"
+        """
+        try:
+            import ast
+            import re
+
+            source = inspect.getsource(dataclass_type)
+            tree = ast.parse(source)
+
+            # Find the class definition
+            class_node = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == dataclass_type.__name__:
+                    class_node = node
+                    break
+
+            if not class_node:
+                return {}
+
+            field_docs = {}
+            source_lines = source.split('\n')
+
+            # Method 1: Look for field assignments followed by string literals (next line)
+            for i, node in enumerate(class_node.body):
+                if isinstance(node, ast.AnnAssign) and hasattr(node.target, 'id'):
+                    field_name = node.target.id
+
+                    # Check if the next node is a string literal (documentation)
+                    if i + 1 < len(class_node.body):
+                        next_node = class_node.body[i + 1]
+                        if isinstance(next_node, ast.Expr) and isinstance(next_node.value, ast.Constant):
+                            if isinstance(next_node.value.value, str):
+                                field_docs[field_name] = next_node.value.value.strip()
+                                continue
+
+                    # Method 2: Check for inline comments on the same line
+                    # Get the line number of the field definition
+                    field_line_num = node.lineno - 1  # Convert to 0-based indexing
+                    if 0 <= field_line_num < len(source_lines):
+                        line = source_lines[field_line_num]
+
+                        # Look for string literals in comments on the same line
+                        # Pattern: field: type = value  # """Documentation"""
+                        comment_match = re.search(r'#\s*["\']([^"\']+)["\']', line)
+                        if comment_match:
+                            field_docs[field_name] = comment_match.group(1).strip()
+                            continue
+
+                        # Look for triple-quoted strings on the same line
+                        # Pattern: field: type = value  """Documentation"""
+                        triple_quote_match = re.search(r'"""([^"]+)"""|\'\'\'([^\']+)\'\'\'', line)
+                        if triple_quote_match:
+                            doc_text = triple_quote_match.group(1) or triple_quote_match.group(2)
+                            field_docs[field_name] = doc_text.strip()
+
+            return field_docs
+
+        except Exception as e:
+            # Return empty dict if AST parsing fails
+            # Could add logging here for debugging: logger.debug(f"AST parsing failed: {e}")
             return {}
 
     @staticmethod

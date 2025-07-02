@@ -80,7 +80,7 @@ class OpenHCSMetadataHandler(MetadataHandler):
 
         try:
             # Use filemanager to load file content - returns string content
-            content = self.filemanager.load(str(metadata_file_path), 'disk')
+            content = self.filemanager.load(str(metadata_file_path), Backend.DISK.value)
             if isinstance(content, bytes):
                 content = content.decode('utf-8')
             self._metadata_cache = json.loads(content)
@@ -324,7 +324,7 @@ class OpenHCSMetadataHandler(MetadataHandler):
         # Save back to file
         metadata_file_path = Path(plate_path) / self.METADATA_FILENAME
         content = json.dumps(metadata, indent=2)
-        self.filemanager.save(content, str(metadata_file_path), 'disk')
+        self.filemanager.save(content, str(metadata_file_path), Backend.DISK.value)
 
         # Update cache
         self._metadata_cache = metadata

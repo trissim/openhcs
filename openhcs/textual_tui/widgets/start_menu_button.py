@@ -311,7 +311,7 @@ class StartMenuDropdown(ModalScreen[None]):
             try:
                 pipeline_editor = main_content.query_one("PipelineEditorWidget")
                 # Pipeline editor is designed to use self.app.global_config, but let's be safe
-                logger.info("Pipeline editor will automatically use updated app.global_config")
+                logger.debug("Pipeline editor will automatically use updated app.global_config")
             except Exception:
                 # Pipeline editor might not exist or be mounted
                 pass

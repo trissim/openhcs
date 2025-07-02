@@ -24,7 +24,7 @@ from openhcs.core.utils import optional_import
 logger = logging.getLogger(__name__)
 
 # 🔍 MEMORY CONVERSION LOGGING: Test log to verify logger is working
-logger.info("🔄 STACK_UTILS: Module loaded - memory conversion logging enabled")
+logger.debug("🔄 STACK_UTILS: Module loaded - memory conversion logging enabled")
 
 
 def _is_2d(data: Any) -> bool:
@@ -245,7 +245,7 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:
-        logger.info(f"🔄 STACK_SLICES: Converted {conversion_count}/{len(slices)} slices to {memory_type}")
+        logger.debug(f"🔄 STACK_SLICES: Converted {conversion_count}/{len(slices)} slices to {memory_type}")
     # Silent success for no-conversion cases to reduce log pollution
 
     return result
@@ -296,7 +296,7 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
     else:
         # Use direct convert_memory call and log the conversion
         from openhcs.core.memory.converters import convert_memory
-        logger.info(f"🔄 UNSTACK_SLICES: Converting array - {source_type} → {memory_type}")
+        logger.debug(f"🔄 UNSTACK_SLICES: Converting array - {source_type} → {memory_type}")
         array = convert_memory(
             data=array,
             source_type=source_type,
@@ -316,7 +316,7 @@ def unstack_slices(array: Any, memory_type: str, gpu_id: int, validate_slices: b
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log conversions or issues
     if source_type != memory_type:
-        logger.info(f"🔄 UNSTACK_SLICES: Converted and extracted {len(slices)} slices")
+        logger.debug(f"🔄 UNSTACK_SLICES: Converted and extracted {len(slices)} slices")
     elif len(slices) == 0:
         logger.warning(f"🔄 UNSTACK_SLICES: No slices extracted (empty array)")
     # Silent success for no-conversion cases to reduce log pollution

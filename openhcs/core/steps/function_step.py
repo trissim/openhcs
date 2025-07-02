@@ -62,7 +62,7 @@ def get_all_image_paths(input_dir, backend, well_id, filemanager, microscope_han
     # Prepare full file paths
     full_file_paths = [str(input_dir / Path(f).name) for f in sorted_files]
 
-    logger.info(f"Found {len(all_image_files)} total files, {len(full_file_paths)} for well {well_id}")
+    logger.debug(f"Found {len(all_image_files)} total files, {len(full_file_paths)} for well {well_id}")
 
     return full_file_paths
 
@@ -113,7 +113,7 @@ def _bulk_preload_step_images(
     import time
     start_time = time.time()
 
-    logger.info(f"🔄 BULK PRELOAD: Loading images from {read_backend} to memory for well {well_id}")
+    logger.debug(f"🔄 BULK PRELOAD: Loading images from {read_backend} to memory for well {well_id}")
 
     # Get all files for this well from patterns
     all_files = []
@@ -149,7 +149,7 @@ def _bulk_preload_step_images(
     del raw_images
 
     load_time = time.time() - start_time
-    logger.info(f"🔄 BULK PRELOAD: Completed in {load_time:.2f}s - {len(full_file_paths)} images now in memory")
+    logger.debug(f"🔄 BULK PRELOAD: Completed in {load_time:.2f}s - {len(full_file_paths)} images now in memory")
 
 def _bulk_writeout_step_images(
     step_output_dir: Path,
@@ -170,7 +170,7 @@ def _bulk_writeout_step_images(
     import time
     start_time = time.time()
 
-    logger.info(f"🔄 BULK WRITEOUT: Writing images from memory to {write_backend} for well {well_id}")
+    logger.debug(f"🔄 BULK WRITEOUT: Writing images from memory to {write_backend} for well {well_id}")
 
     # Create specialized path getter and get memory paths for this well
     get_paths_for_well = create_image_path_getter(well_id, filemanager, microscope_handler)
@@ -189,7 +189,7 @@ def _bulk_writeout_step_images(
 #        file_paths.append(str(target_path))
 
     file_paths = memory_file_paths
-    logger.info(f"🔄 BULK WRITEOUT: Found {len(file_paths)} image files in memory to write")
+    logger.debug(f"🔄 BULK WRITEOUT: Found {len(file_paths)} image files in memory to write")
 
     # Load all data from memory backend
     memory_data = filemanager.load_batch(file_paths, Backend.MEMORY.value)
@@ -215,7 +215,7 @@ def _bulk_writeout_step_images(
         filemanager.save_batch(memory_data, file_paths, write_backend)
 
     write_time = time.time() - start_time
-    logger.info(f"🔄 BULK WRITEOUT: Completed in {write_time:.2f}s - {len(memory_data)} images written to {write_backend}")
+    logger.debug(f"🔄 BULK WRITEOUT: Completed in {write_time:.2f}s - {len(memory_data)} images written to {write_backend}")
 
 def _calculate_zarr_dimensions(file_paths: List[Union[str, Path]], microscope_handler) -> tuple[int, int, int]:
     """
@@ -304,7 +304,7 @@ def _execute_function_core(
     # 🔍 DEBUG: Log input dimensions
     input_shape = getattr(main_data_arg, 'shape', 'no shape attr')
     input_type = type(main_data_arg).__name__
-    logger.info(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
+    logger.debug(f"🔍 FUNCTION INPUT: {func_callable.__name__} - shape: {input_shape}, type: {input_type}")
 
 
 
@@ -313,7 +313,7 @@ def _execute_function_core(
     # 🔍 DEBUG: Log output dimensions
     output_shape = getattr(raw_function_output, 'shape', 'no shape attr')
     output_type = type(raw_function_output).__name__
-    logger.info(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
+    logger.debug(f"🔍 FUNCTION OUTPUT: {func_callable.__name__} - shape: {output_shape}, type: {output_type}")
 
     main_output_data = raw_function_output
     
@@ -419,7 +419,7 @@ def _process_single_pattern_group(
 ) -> None:
     start_time = time.time()
     pattern_repr = str(pattern_group_info)[:100]
-    print(f"🔥 PATTERN: Processing {pattern_repr} for well {well_id}")
+    logger.debug(f"🔥 PATTERN: Processing {pattern_repr} for well {well_id}")
 
     try:
         if not context.microscope_handler:
@@ -434,11 +434,11 @@ def _process_single_pattern_group(
             logger.warning(f"No matching files for pattern group {pattern_repr} in {step_input_dir}")
             return
 
-        print(f"🔥 PATTERN: Found {len(matching_files)} files: {[Path(f).name for f in matching_files]}")
+        logger.debug(f"🔥 PATTERN: Found {len(matching_files)} files: {[Path(f).name for f in matching_files]}")
 
         # Sort files to ensure consistent ordering (especially important for z-stacks)
         matching_files.sort()
-        print(f"🔥 PATTERN: Sorted files: {[Path(f).name for f in matching_files]}")
+        logger.debug(f"🔥 PATTERN: Sorted files: {[Path(f).name for f in matching_files]}")
 
         try:
             full_file_paths = [str(step_input_dir / f) for f in matching_files]
@@ -454,10 +454,10 @@ def _process_single_pattern_group(
             return
 
         # 🔍 DEBUG: Log stacking operation
-        logger.info(f"🔍 STACKING: {len(raw_slices)} slices → memory_type: {input_memory_type_from_plan}")
+        logger.debug(f"🔍 STACKING: {len(raw_slices)} slices → memory_type: {input_memory_type_from_plan}")
         if raw_slices:
             slice_shapes = [getattr(s, 'shape', 'no shape') for s in raw_slices[:3]]  # First 3 shapes
-            logger.info(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
+            logger.debug(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
 
 
 
@@ -468,7 +468,7 @@ def _process_single_pattern_group(
         # �🔍 DEBUG: Log stacked result
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
         stack_type = type(main_data_stack).__name__
-        logger.info(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
+        logger.debug(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
         
         final_base_kwargs = base_func_args.copy()
         
@@ -490,13 +490,13 @@ def _process_single_pattern_group(
         input_shape = getattr(main_data_stack, 'shape', 'unknown')
         output_shape = getattr(processed_stack, 'shape', 'unknown')
         processed_type = type(processed_stack).__name__
-        logger.info(f"🔍 PROCESSING RESULT: input: {input_shape} → output: {output_shape}, type: {processed_type}")
+        logger.debug(f"🔍 PROCESSING RESULT: input: {input_shape} → output: {output_shape}, type: {processed_type}")
 
         if not _is_3d(processed_stack):
              raise ValueError(f"Main processing must result in a 3D array, got {getattr(processed_stack, 'shape', 'unknown')}")
 
         # 🔍 DEBUG: Log unstacking operation
-        logger.info(f"🔍 UNSTACKING: shape: {output_shape} → memory_type: {output_memory_type_from_plan}")
+        logger.debug(f"🔍 UNSTACKING: shape: {output_shape} → memory_type: {output_memory_type_from_plan}")
 
 
 
@@ -507,7 +507,7 @@ def _process_single_pattern_group(
         # 🔍 DEBUG: Log unstacked result
         if output_slices:
             unstacked_shapes = [getattr(s, 'shape', 'no shape') for s in output_slices[:3]]  # First 3 shapes
-            logger.info(f"🔍 UNSTACKED RESULT: {len(output_slices)} slices, sample shapes: {unstacked_shapes}")
+            logger.debug(f"🔍 UNSTACKED RESULT: {len(output_slices)} slices, sample shapes: {unstacked_shapes}")
 
         # Handle cases where function returns fewer images than inputs (e.g., z-stack flattening, channel compositing)
         # In such cases, we save only the returned images using the first N input filenames
@@ -556,12 +556,11 @@ def _process_single_pattern_group(
             context.filemanager.save_batch(output_data, output_paths_batch, Backend.MEMORY.value)
 
             # Force disk output if needed
-            #TODO SUPPORT DIFFERENT PHYSICAL BACKENDS WITH FORCE FLAG
-#            if force_disk_output_flag and write_backend != Backend.DISK.value:
-#                logger.info(f"Force disk output: saving additional copy to disk")
-#                context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
-#                # Disk backend doesn't need zarr_config - fail loud for invalid parameters
-#                context.filemanager.save_batch(output_data, output_paths_batch, Backend.DISK.value)
+            if force_disk_output_flag and write_backend != Backend.DISK.value:
+                logger.info(f"Force disk output: saving additional copy to disk at {step_output_dir}")
+                context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
+                # Disk backend doesn't need zarr_config - fail loud for invalid parameters
+                context.filemanager.save_batch(output_data, output_paths_batch, Backend.DISK.value)
 
         except Exception as e:
             logger.error(f"Error saving batch of output slices for pattern {pattern_repr}: {e}", exc_info=True)
@@ -574,7 +573,7 @@ def _process_single_pattern_group(
                 unused_input_path = Path(step_input_dir) / unused_input_filename
                 if context.filemanager.exists(str(unused_input_path), Backend.MEMORY.value):
                     context.filemanager.delete(str(unused_input_path), Backend.MEMORY.value)
-                    print(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
+                    logger.debug(f"🔥 CLEANUP: Deleted unused input file: {unused_input_filename}")
 
 
 
@@ -726,17 +725,16 @@ class FunctionStep(AbstractStep):
             except Exception:
                 pass
 
-            print(f"🔥 STEP: '{step_name}' processing well {well_id}")
-            print(f"🔥 STEP: group_by={group_by}, variable_components={variable_components}")
+            logger.info(f"🔥 STEP: Starting processing for '{step_name}' well {well_id} (group_by={group_by.name}, variable_components={[vc.name for vc in variable_components]})")
 
             if well_id in patterns_by_well:
                 if isinstance(patterns_by_well[well_id], dict):
                     # Grouped patterns (when group_by is set)
                     for comp_val, pattern_list in patterns_by_well[well_id].items():
-                        print(f"🔥 STEP: Component '{comp_val}' has {len(pattern_list)} patterns: {pattern_list}")
+                        logger.debug(f"🔥 STEP: Component '{comp_val}' has {len(pattern_list)} patterns: {pattern_list}")
                 else:
                     # Ungrouped patterns (when group_by is None)
-                    print(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
+                    logger.debug(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
 
             if func_from_plan is None:
                 raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")
@@ -758,6 +756,7 @@ class FunctionStep(AbstractStep):
                         step_plan["zarr_config"],
                         variable_components
                     )
+            logger.info(f"🔥 STEP: Completed processing for '{step_name}' well {well_id}.")
             
             # 📄 MATERIALIZATION WRITE: Only if not writing to memory
             if write_backend != Backend.MEMORY.value:
@@ -776,6 +775,11 @@ class FunctionStep(AbstractStep):
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
             self._create_openhcs_metadata_for_materialization(context, step_plan['output_dir'], step_plan['write_backend'])
+
+            # 🔬 SPECIAL DATA MATERIALIZATION
+            special_outputs = step_plan.get('special_outputs', {})
+            if special_outputs:
+                self._materialize_special_outputs(context, step_plan, special_outputs)
 
 
 
@@ -920,8 +924,17 @@ class FunctionStep(AbstractStep):
                 backends[Backend.DISK.value] = True
                 break
 
-        logger.info(f"Backend detection result: {backends}")
+        logger.debug(f"Backend detection result: {backends}")
         return backends
+
+    def _materialize_special_outputs(self, context, step_plan, special_outputs):
+        """Load special data from memory and call materialization functions."""
+        for output_key, output_info in special_outputs.items():
+            mat_func = output_info.get('materialization_function')
+            if mat_func:
+                path = output_info['path']
+                special_data = context.filemanager.load(path, Backend.MEMORY.value)
+                mat_func(special_data, path, context.filemanager)
 
 
 

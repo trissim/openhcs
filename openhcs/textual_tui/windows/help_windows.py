@@ -23,6 +23,58 @@ class BaseHelpWindow(BaseOpenHCSWindow):
 class DocstringHelpWindow(BaseHelpWindow):
     """Window for displaying docstring information."""
 
+    DEFAULT_CSS = """
+    DocstringHelpWindow ScrollableContainer {
+        text-align: left;
+        align: left top;
+    }
+
+    DocstringHelpWindow Static {
+        text-align: left;
+    }
+
+    .help-summary {
+        margin: 1 0;
+        padding: 1;
+        background: $surface;
+        border: solid $primary;
+        text-align: left;
+    }
+
+    .help-description {
+        margin: 1 0;
+        padding: 1;
+        text-align: left;
+    }
+
+    .help-section-header {
+        margin: 1 0 0 0;
+        text-style: bold;
+        color: $accent;
+        text-align: left;
+    }
+
+    .help-parameter {
+        margin: 0 0 0 2;
+        color: $text;
+        text-align: left;
+    }
+
+    .help-returns {
+        margin: 0 0 0 2;
+        color: $text;
+        text-align: left;
+    }
+
+    .help-examples {
+        margin: 1 0;
+        padding: 1;
+        background: $surface;
+        border: solid $accent;
+        text-align: left;
+    }
+    """
+
     def __init__(self, target: Union[Callable, type], title: Optional[str] = None, **kwargs):
         self.target = target
         self.docstring_info = DocstringExtractor.extract(target)
@@ -69,12 +121,42 @@ class DocstringHelpWindow(BaseHelpWindow):
                 yield Static("[bold]Examples:[/bold]", classes="help-section-header")
                 yield Markdown(f"```python\n{self.docstring_info.examples}\n```", classes="help-examples")
 
-        # Close button at bottom
+        # Close button at bottom - automatically centered by CSS
         yield Button("Close", id="close", compact=True)
 
 
 class ParameterHelpWindow(BaseHelpWindow):
     """Window for displaying individual parameter documentation."""
+
+    DEFAULT_CSS = """
+    ParameterHelpWindow ScrollableContainer {
+        text-align: left;
+        align: left top;
+    }
+
+    ParameterHelpWindow Static {
+        text-align: left;
+    }
+
+    .param-header {
+        margin: 0 0 1 0;
+        text-style: bold;
+        color: $primary;
+        text-align: left;
+    }
+
+    .param-description {
+        margin: 1 0;
+        text-align: left;
+    }
+
+    .param-no-desc {
+        margin: 1 0;
+        color: $text-muted;
+        text-style: italic;
+        text-align: left;
+    }
+    """
 
     def __init__(self, param_name: str, param_description: str, param_type: type = None, **kwargs):
         self.param_name = param_name
@@ -104,7 +186,7 @@ class ParameterHelpWindow(BaseHelpWindow):
             else:
                 yield Static("[dim]No description available[/dim]", classes="param-no-desc")
 
-        # Close button at bottom
+        # Close button at bottom - automatically centered by CSS
         yield Button("Close", id="close", compact=True)
 
 

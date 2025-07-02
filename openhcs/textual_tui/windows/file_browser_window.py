@@ -314,14 +314,14 @@ class FileBrowserWindow(BaseOpenHCSWindow):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
         button_id = event.button.id
-        logger.info(f"🔍 BUTTON PRESSED: {button_id}")
+        logger.debug(f"🔍 BUTTON PRESSED: {button_id}")
 
         if button_id == "go_home":
             self._handle_go_home()
         elif button_id == "go_up":
             self._handle_go_up()
         elif button_id == "add_current":
-            logger.info("🔍 ADD BUTTON: Calling _handle_add_current")
+            logger.debug("🔍 ADD BUTTON: Calling _handle_add_current")
             self._handle_add_current()
         elif button_id == "remove_selected":
             self._handle_remove_selected()
@@ -403,7 +403,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
     @on(DirectoryTree.DirectorySelected)
     def on_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
         """Handle directory selection from tree."""
-        logger.info(f"🔍 DIRECTORY SELECTED: {event.path}")
+        logger.debug(f"🔍 DIRECTORY SELECTED: {event.path}")
 
         # Store selected path - ensure it's always a Path object
         if hasattr(event.path, '_path'):
@@ -418,7 +418,12 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         # Update path input
         self._update_path_display(self.selected_path)
 
-        logger.info(f"🔍 STORED selected_path: {self.selected_path} (type: {type(self.selected_path)})")
+        # For save mode, update filename input when directory is selected
+        # This allows users to see the directory name as a potential filename base
+        if self.mode == BrowserMode.SAVE:
+            self._update_filename_from_selection(self.selected_path)
+
+        logger.debug(f"🔍 STORED selected_path: {self.selected_path} (type: {type(self.selected_path)})")
 
     @on(Input.Submitted)
     def on_path_input_submitted(self, event: Input.Submitted) -> None:
@@ -434,12 +439,12 @@ class FileBrowserWindow(BaseOpenHCSWindow):
                         # Check if it's a directory
                         if self.file_manager.is_dir(new_path, self.backend.value):
                             self._navigate_to_path(new_path)
-                            logger.info(f"🔍 NAVIGATED via path input to: {new_path}")
+                            logger.debug(f"🔍 NAVIGATED via path input to: {new_path}")
                         else:
                             # It's a file, navigate to its parent directory
                             parent_path = new_path.parent
                             self._navigate_to_path(parent_path)
-                            logger.info(f"🔍 NAVIGATED via path input to parent of file: {parent_path}")
+                            logger.debug(f"🔍 NAVIGATED via path input to parent of file: {parent_path}")
                     else:
                         # Path doesn't exist, revert to current path
                         current_path = self.selected_path or self.initial_path
@@ -457,25 +462,24 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         """Handle file selection from tree."""
         logger.debug(f"File selected event: {event.path} (selection_mode: {self.selection_mode})")
 
+        # Always store the selected file path for save mode filename updates
+        if hasattr(event.path, '_path'):
+            # OpenHCSPathAdapter
+            selected_file_path = Path(event.path._path)
+        elif isinstance(event.path, Path):
+            selected_file_path = event.path
+        else:
+            # Convert string or other types to Path
+            selected_file_path = Path(str(event.path))
+
+        # For save mode, always update filename input with selected file name
+        # This works regardless of selection_mode since we want filename suggestions
+        if self.mode == BrowserMode.SAVE:
+            self._update_filename_from_selection(selected_file_path)
+
+        # Store selected path only if selection mode allows files
         if self.selection_mode in [SelectionMode.FILES_ONLY, SelectionMode.BOTH]:
-            # Store selected file path
-            if hasattr(event.path, '_path'):
-                # OpenHCSPathAdapter
-                self.selected_path = Path(event.path._path)
-            elif isinstance(event.path, Path):
-                self.selected_path = event.path
-            else:
-                # Convert string or other types to Path
-                self.selected_path = Path(str(event.path))
-
-            # For save mode, populate filename input with selected file name
-            if self.mode == BrowserMode.SAVE:
-                try:
-                    filename_input = self.query_one("#filename_input", Input)
-                    filename_input.value = self.selected_path.name
-                except Exception:
-                    pass  # Input might not be mounted yet
-
+            self.selected_path = selected_file_path
             logger.info(f"✅ FILE STORED: {self.selected_path} (type: {type(self.selected_path)})")
         else:
             logger.info(f"❌ FILE IGNORED: selection_mode {self.selection_mode} only allows directories")
@@ -509,12 +513,12 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
         # Update the selection display
         self._update_selected_display()
-        logger.info(f"🔍 SELECTION LIST UPDATED: Total {len(self.selected_paths)} items")
+        logger.debug(f"🔍 SELECTION LIST UPDATED: Total {len(self.selected_paths)} items")
 
     @on(OpenHCSDirectoryTree.NavigateToFolder)
     def on_navigate_to_folder(self, event: OpenHCSDirectoryTree.NavigateToFolder) -> None:
         """Handle double-click navigation into a folder."""
-        logger.info(f"🔍 NAVIGATE TO FOLDER: {event.path}")
+        logger.debug(f"🔍 NAVIGATE TO FOLDER: {event.path}")
 
         try:
             # Verify the path is a directory
@@ -531,7 +535,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
     @on(OpenHCSDirectoryTree.SelectFile)
     def on_select_file(self, event: OpenHCSDirectoryTree.SelectFile) -> None:
         """Handle double-click file selection - equivalent to highlight + Select button."""
-        logger.info(f"🔍 SELECT FILE: {event.path}")
+        logger.debug(f"🔍 SELECT FILE: {event.path}")
 
         try:
             # Verify the path is a file (not a directory)
@@ -543,10 +547,17 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             self.selected_path = event.path
             self._update_path_display(event.path.parent)  # Update path display to parent directory
 
-            # Immediately trigger the select action (equivalent to clicking Select button)
+            # For save mode, update filename input with selected file name
+            if self.mode == BrowserMode.SAVE:
+                self._update_filename_from_selection(event.path)
+                # In save mode, don't auto-close on double-click - just populate filename
+                logger.debug(f"✅ FILENAME POPULATED: {event.path.name}")
+                return
+
+            # For load mode, immediately trigger the select action (equivalent to clicking Select button)
             result = self._handle_select_all()
             if result is not None:
-                logger.info(f"✅ FILE SELECTED: {event.path}")
+                logger.debug(f"✅ FILE SELECTED: {event.path}")
                 self._finish_with_result(result)
             else:
                 logger.warning(f"❌ FILE SELECTION FAILED: {event.path}")
@@ -568,7 +579,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
     def _finish_folder_editing(self, new_name: str) -> None:
         """Complete the folder editing process."""
-        logger.info(f"🔍 FINISH EDIT: Completing folder edit with name '{new_name}'")
+        logger.debug(f"🔍 FINISH EDIT: Completing folder edit with name '{new_name}'")
 
         try:
             # Remove the editing container
@@ -590,7 +601,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             # Validate new name
             new_name = new_name.strip()
             if not new_name or new_name == original_name:
-                logger.info(f"📝 EDIT CANCELLED: No change or empty name")
+                logger.debug(f"📝 EDIT CANCELLED: No change or empty name")
                 return
 
             # Create new path
@@ -604,7 +615,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             # Rename the folder using FileManager move operation
             self.file_manager.move(old_path, new_path, self.backend.value)
 
-            logger.info(f"✅ FOLDER RENAMED: {original_name} -> {new_name}")
+            logger.debug(f"✅ FOLDER RENAMED: {original_name} -> {new_name}")
 
             # Refresh the tree to show the renamed folder
             tree = self.query_one("#tree_panel", OpenHCSDirectoryTree)
@@ -617,7 +628,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         """Handle key events, including Escape to cancel folder editing."""
         if event.key == "escape" and hasattr(self, 'editing_folder_path'):
             # Cancel folder editing
-            logger.info("🔍 EDIT CANCELLED: Escape key pressed")
+            logger.debug("🔍 EDIT CANCELLED: Escape key pressed")
             try:
                 edit_container = self.query_one("#folder_edit_container", Container)
                 edit_container.remove()
@@ -708,7 +719,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         if self.enable_multi_selection:
             # Multi-selection mode: add all folders with checkmarks
             selected_folders = tree.multi_selected_paths
-            logger.info(f"🔍 ADD BUTTON: Adding {len(selected_folders)} multi-selected folders, selection_mode={self.selection_mode}")
+            logger.debug(f"🔍 ADD BUTTON: Adding {len(selected_folders)} multi-selected folders, selection_mode={self.selection_mode}")
 
             if not selected_folders:
                 logger.warning("❌ ADD FAILED: No folders selected (use right-click to select multiple folders)")
@@ -719,14 +730,14 @@ class FileBrowserWindow(BaseOpenHCSWindow):
                 logger.warning("❌ ADD FAILED: No folder selected")
                 return
             selected_folders = {self.selected_path}
-            logger.info(f"🔍 ADD BUTTON: Adding single selected folder {self.selected_path}, selection_mode={self.selection_mode}")
+            logger.debug(f"🔍 ADD BUTTON: Adding single selected folder {self.selected_path}, selection_mode={self.selection_mode}")
 
         added_count = 0
         for path in selected_folders:
             try:
                 is_dir = self.file_manager.is_dir(path, self.backend.value)
                 item_type = "directory" if is_dir else "file"
-                logger.info(f"🔍 ADD CHECK: {item_type} '{path.name}' in {self.selection_mode} mode")
+                logger.debug(f"🔍 ADD CHECK: {item_type} '{path.name}' in {self.selection_mode} mode")
 
                 # Check if this type is allowed
                 if self.selection_mode == SelectionMode.DIRECTORIES_ONLY and not is_dir:
@@ -749,7 +760,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
         # Update the selection display
         self._update_selected_display()
-        logger.info(f"✅ ADD COMPLETE: Added {added_count} new items (Total: {len(self.selected_paths)})")
+        logger.debug(f"✅ ADD COMPLETE: Added {added_count} new items (Total: {len(self.selected_paths)})")
 
     def _handle_new_folder(self) -> None:
         """Create a new folder with in-place editable name."""
@@ -787,7 +798,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
     def _start_folder_editing(self, folder_path: Path, current_name: str) -> None:
         """Start editing of a folder name using a simple modal approach."""
-        logger.info(f"🔍 EDIT FOLDER: Starting folder name editing for {folder_path}")
+        logger.debug(f"🔍 EDIT FOLDER: Starting folder name editing for {folder_path}")
 
         try:
             # For now, implement a simple approach - create a temporary input area
@@ -823,7 +834,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
             edit_input.action_home(select=True)
             edit_input.action_end(select=True)
 
-            logger.info(f"✅ EDIT FOLDER: Folder name editing started for {current_name}")
+            logger.debug(f"✅ EDIT FOLDER: Folder name editing started for {current_name}")
 
         except Exception as e:
             logger.error(f"❌ ERROR starting folder editing: {e}")
@@ -833,7 +844,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         if self.selected_path and self.selected_path in self.selected_paths:
             self.selected_paths.remove(self.selected_path)
             self._update_selected_display()
-            logger.debug(f"Removed {self.selected_path} from selection")
+            logger.info(f"Removed {self.selected_path} from selection")
 
     def _handle_select_all(self):
         """
@@ -881,20 +892,20 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
                 # Check compatibility with selection mode
                 if self.selection_mode == SelectionMode.DIRECTORIES_ONLY and is_dir:
-                    logger.info(f"🔍 SELECT: Using cursor selection {self.selected_path}")
+                    logger.debug(f"🔍 SELECT: Using cursor selection {self.selected_path}")
                     return [self.selected_path]
                 elif self.selection_mode == SelectionMode.FILES_ONLY and not is_dir:
-                    logger.info(f"🔍 SELECT: Using cursor selection {self.selected_path}")
+                    logger.debug(f"🔍 SELECT: Using cursor selection {self.selected_path}")
                     return [self.selected_path]
                 elif self.selection_mode == SelectionMode.BOTH:
-                    logger.info(f"🔍 SELECT: Using cursor selection {self.selected_path}")
+                    logger.debug(f"🔍 SELECT: Using cursor selection {self.selected_path}")
                     return [self.selected_path]
 
             except Exception:
                 pass
 
         # No valid selection
-        logger.info("🔍 SELECT: No valid selection found")
+        logger.debug("🔍 SELECT: No valid selection found")
         return None
 
     def _handle_save_file(self):
@@ -1005,6 +1016,45 @@ class FileBrowserWindow(BaseOpenHCSWindow):
         except Exception:
             # Widget might not be mounted yet
             pass
+
+    def _update_filename_from_selection(self, selected_path: Path) -> None:
+        """Update the filename input field based on the selected file or directory.
+
+        This provides intelligent filename suggestions in save mode:
+        - For files: Use the filename directly
+        - For directories: Use the directory name as a base filename
+        """
+        if self.mode != BrowserMode.SAVE:
+            return
+
+        try:
+            filename_input = self.query_one("#filename_input", Input)
+
+            # Determine if the selected path is a file or directory
+            try:
+                is_dir = self.file_manager.is_dir(selected_path, self.backend.value)
+            except Exception:
+                # If we can't determine, assume it's a file based on extension
+                is_dir = not selected_path.suffix
+
+            if is_dir:
+                # For directories, use the directory name as filename base
+                suggested_name = selected_path.name
+
+                # Add appropriate extension if filter is specified
+                if self.filter_extensions and suggested_name:
+                    suggested_name = self._ensure_extension(suggested_name, self.filter_extensions[0])
+
+                filename_input.value = suggested_name
+                logger.debug(f"🔍 FILENAME UPDATED from directory: {suggested_name}")
+            else:
+                # For files, use the filename directly
+                filename_input.value = selected_path.name
+                logger.debug(f"🔍 FILENAME UPDATED from file: {selected_path.name}")
+
+        except Exception as e:
+            logger.debug(f"Failed to update filename input: {e}")
+            # Input might not be mounted yet or other error
 
     def _ensure_extension(self, filename: str, extension: str) -> str:
         """Ensure filename has the correct extension."""

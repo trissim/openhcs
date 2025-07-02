@@ -112,6 +112,14 @@ class PathPlanningConfig:
     Example: "/data/results" or "/mnt/hcs_output"
     """
 
+    materialization_results_path: str = "results"
+    """
+    Path for materialized analysis results (CSV, JSON files from special outputs).
+    Can be relative to plate folder or absolute path.
+    Default: "results" creates a results/ folder in the plate directory.
+    Examples: "results", "./analysis", "/data/analysis_results", "../shared_results"
+    """
+
 
 @dataclass(frozen=True)
 class GlobalPipelineConfig:

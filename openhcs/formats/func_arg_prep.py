@@ -25,18 +25,18 @@ def prepare_patterns_and_functions(patterns, processing_funcs, component='defaul
     logger = logging.getLogger(__name__)
 
     # Debug: Log what we received
-    logger.info(f"🔍 PATTERN DEBUG: prepare_patterns_and_functions called")
-    logger.info(f"🔍 PATTERN DEBUG: patterns type: {type(patterns)}")
-    logger.info(f"🔍 PATTERN DEBUG: patterns keys/content: {list(patterns.keys()) if isinstance(patterns, dict) else f'List with {len(patterns)} items'}")
-    logger.info(f"🔍 PATTERN DEBUG: processing_funcs type: {type(processing_funcs)}")
-    logger.info(f"🔍 PATTERN DEBUG: processing_funcs keys: {list(processing_funcs.keys()) if isinstance(processing_funcs, dict) else 'Not a dict'}")
-    logger.info(f"🔍 PATTERN DEBUG: component: {component}")
+    logger.debug(f"🔍 PATTERN DEBUG: prepare_patterns_and_functions called")
+    logger.debug(f"🔍 PATTERN DEBUG: patterns type: {type(patterns)}")
+    logger.debug(f"🔍 PATTERN DEBUG: patterns keys/content: {list(patterns.keys()) if isinstance(patterns, dict) else f'List with {len(patterns)} items'}")
+    logger.debug(f"🔍 PATTERN DEBUG: processing_funcs type: {type(processing_funcs)}")
+    logger.debug(f"🔍 PATTERN DEBUG: processing_funcs keys: {list(processing_funcs.keys()) if isinstance(processing_funcs, dict) else 'Not a dict'}")
+    logger.debug(f"🔍 PATTERN DEBUG: component: {component}")
 
     # Ensure patterns are in a dictionary format
     # If already a dict, use as is; otherwise wrap the list in a dictionary
     grouped_patterns = patterns if isinstance(patterns, dict) else {component: patterns}
 
-    logger.info(f"🔍 PATTERN DEBUG: grouped_patterns keys: {list(grouped_patterns.keys())}")
+    logger.debug(f"🔍 PATTERN DEBUG: grouped_patterns keys: {list(grouped_patterns.keys())}")
 
     # SMART FILTERING: If processing_funcs is a dict, only process components that have function definitions
     if isinstance(processing_funcs, dict) and isinstance(grouped_patterns, dict):
@@ -61,9 +61,9 @@ def prepare_patterns_and_functions(patterns, processing_funcs, component='defaul
         # Log what was filtered
         filtered_out = original_components - set(filtered_grouped_patterns.keys())
         if filtered_out:
-            logger.info(f"🔍 PATTERN DEBUG: Filtered out components without function definitions: {filtered_out}")
+            logger.debug(f"🔍 PATTERN DEBUG: Filtered out components without function definitions: {filtered_out}")
 
-        logger.info(f"🔍 PATTERN DEBUG: Processing components: {list(filtered_grouped_patterns.keys())}")
+        logger.debug(f"🔍 PATTERN DEBUG: Processing components: {list(filtered_grouped_patterns.keys())}")
         grouped_patterns = filtered_grouped_patterns
 
         # Validate that we have at least one component to process

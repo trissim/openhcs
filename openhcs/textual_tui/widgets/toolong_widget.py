@@ -153,14 +153,11 @@ class ToolongWidget(Widget):
     
     def on_mount(self) -> None:
         """Start the watcher when widget is mounted."""
-        logger.info(f"ToolongWidget mounting with {len(self.log_files)} log files")
 
         # Start the watcher and enable tailing (only if not already running)
         if not hasattr(self.watcher, '_thread') or self.watcher._thread is None:
-            logger.info("Starting shared watcher")
             self.watcher.start()
         else:
-            logger.info("Shared watcher already running")
 
         # Focus LogLines (no tabs in dropdown structure)
         try:
@@ -190,7 +187,6 @@ class ToolongWidget(Widget):
 
     def on_unmount(self) -> None:
         """Clean up the watcher when widget is unmounted."""
-        logger.info("ToolongWidget unmounting")
         # Don't close shared watcher - other widgets might be using it
         # The shared watcher will be cleaned up when the app exits
     
@@ -200,14 +196,12 @@ class ToolongWidget(Widget):
             self.log_files.append(log_file)
             self.log_files = self._sort_paths(self.log_files)
             # Would need to refresh the widget to show new file
-            logger.info(f"Added log file: {log_file}")
     
     def remove_log_file(self, log_file: str) -> None:
         """Remove a log file from the widget."""
         if log_file in self.log_files:
             self.log_files.remove(log_file)
             # Would need to refresh the widget to remove file
-            logger.info(f"Removed log file: {log_file}")
     
     @classmethod
     def from_single_file(cls, log_file: str, can_tail: bool = True) -> "ToolongWidget":

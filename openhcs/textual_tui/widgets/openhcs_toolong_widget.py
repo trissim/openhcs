@@ -59,7 +59,7 @@ class LogFileHandler(FileSystemEventHandler):
         if not event.is_directory and event.src_path.endswith('.log'):
             file_path = Path(event.src_path)
             if self.widget._is_relevant_log_file(file_path):
-                logger.info(f"New log file detected: {file_path}")
+                logger.debug(f"New log file detected: {file_path}")
                 self.widget._add_log_file(str(file_path))
 
 
@@ -203,7 +203,7 @@ class PersistentTailLogView(LogView):
         """Override to ensure tailing is enabled after mount."""
         # Force enable tailing for persistent behavior
         self.tail = True
-        logger.info(f"PersistentTailLogView mounted with tail={self.tail}, can_tail={self.can_tail}")
+        logger.debug(f"PersistentTailLogView mounted with tail={self.tail}, can_tail={self.can_tail}")
 
     async def watch_tail(self, old_value: bool, new_value: bool) -> None:
         """Watch for changes to the tail property."""
@@ -278,7 +278,7 @@ class OpenHCSToolongWidget(Widget):
         base_log_path: Optional[str] = None,
         **kwargs
     ) -> None:
-        logger.info(f"OpenHCSToolongWidget.__init__ called with {len(file_paths)} files: {[Path(f).name for f in file_paths]}")
+        logger.debug(f"OpenHCSToolongWidget.__init__ called with {len(file_paths)} files: {[Path(f).name for f in file_paths]}")
         super().__init__(**kwargs)
         self.file_paths = UI.sort_paths(file_paths)
         self.merge = merge
@@ -309,7 +309,7 @@ class OpenHCSToolongWidget(Widget):
         self._debounce_timer = None
         self._debounce_delay = 0.1  # 100ms debounce delay
 
-        logger.info(f"OpenHCSToolongWidget.__init__ completed with show_tabs={show_tabs}, show_dropdown={show_dropdown}, show_controls={show_controls}")
+        logger.debug(f"OpenHCSToolongWidget.__init__ completed with show_tabs={show_tabs}, show_dropdown={show_dropdown}, show_controls={show_controls}")
 
         # Start file watcher if we have a base log path for dynamic detection
         if self.base_log_path:
@@ -317,7 +317,7 @@ class OpenHCSToolongWidget(Widget):
 
     def compose(self) -> ComposeResult:
         """Compose the Toolong widget using persistent tailing LogViews."""
-        logger.info(f"OpenHCSToolongWidget compose() called with {len(self.file_paths)} files")
+        logger.debug(f"OpenHCSToolongWidget compose() called with {len(self.file_paths)} files")
 
         # Conditionally add control buttons
         if self.show_controls:
@@ -343,13 +343,13 @@ class OpenHCSToolongWidget(Widget):
                         current_index = i
 
                 yield Select(initial_options, id="log_selector", compact=True, allow_blank=False, value=current_index)
-                logger.info(f"Yielded Select widget with {len(initial_options)} initial options, selected index: {current_index}")
+                logger.debug(f"Yielded Select widget with {len(initial_options)} initial options, selected index: {current_index}")
             else:
                 # Create empty Select that will be populated later
                 yield Select([("Loading...", -1)], id="log_selector", compact=True, allow_blank=False, value=-1)
-                logger.info("Yielded Select widget with placeholder option")
+                logger.debug("Yielded Select widget with placeholder option")
         else:
-            logger.info("Skipped Select widget (show_dropdown=False)")
+            logger.debug("Skipped Select widget (show_dropdown=False)")
 
         # Always create tabs (needed for dropdown), but conditionally hide them
         with HiddenTabsTabbedContent(id="main_tabs", force_hide_tabs=not self.show_tabs):
@@ -385,7 +385,7 @@ class OpenHCSToolongWidget(Widget):
                             )
                         )
 
-        logger.info(f"OpenHCSToolongWidget compose() completed")
+        logger.debug(f"OpenHCSToolongWidget compose() completed")
 
     def _create_friendly_tab_name(self, path: str) -> str:
         """Create a friendly display name for a log file path."""
@@ -413,20 +413,20 @@ class OpenHCSToolongWidget(Widget):
     def on_mount(self) -> None:
         """Update dropdown when widget mounts and enable persistent tailing."""
         try:
-            logger.info("OpenHCSToolongWidget on_mount called")
+            logger.debug("OpenHCSToolongWidget on_mount called")
 
             # Start the watcher (critical for real-time updates!)
             if not hasattr(self.watcher, '_thread') or self.watcher._thread is None:
-                logger.info("Starting watcher for real-time log updates")
+                logger.debug("Starting watcher for real-time log updates")
                 self.watcher.start()
             else:
-                logger.info("Watcher already running")
+                logger.debug("Watcher already running")
 
             # Set tabs_ready to True after mounting to trigger dropdown update
             self.call_after_refresh(self._mark_tabs_ready)
             # Enable persistent tailing by default
             self.call_after_refresh(self._enable_persistent_tailing)
-            logger.info("OpenHCSToolongWidget on_mount completed successfully")
+            logger.debug("OpenHCSToolongWidget on_mount completed successfully")
         except Exception as e:
             logger.error(f"OpenHCSToolongWidget on_mount failed: {e}")
             import traceback
@@ -435,20 +435,20 @@ class OpenHCSToolongWidget(Widget):
     def _enable_persistent_tailing(self) -> None:
         """Enable persistent tailing on all LogViews and LogLines."""
         try:
-            logger.info("Enabling persistent tailing by default")
+            logger.debug("Enabling persistent tailing by default")
 
             # Enable tailing on LogView widgets (this is critical!)
             for log_view in self.query("PersistentTailLogView"):
                 if hasattr(log_view, 'can_tail') and log_view.can_tail:
                     log_view.tail = True
-                    logger.info(f"Enabled tail=True on LogView: {log_view}")
+                    logger.debug(f"Enabled tail=True on LogView: {log_view}")
 
             # Enable persistent tailing on LogLines and start individual file tailing
             log_lines_widgets = self.query("PersistentTailLogLines")
-            logger.info(f"🔍 Found {len(log_lines_widgets)} PersistentTailLogLines widgets for tailing setup")
+            logger.debug(f"🔍 Found {len(log_lines_widgets)} PersistentTailLogLines widgets for tailing setup")
 
             for log_lines in log_lines_widgets:
-                logger.info(f"🔍 Processing LogLines: {log_lines}, log_files={len(getattr(log_lines, 'log_files', []))}")
+                logger.debug(f"🔍 Processing LogLines: {log_lines}, log_files={len(getattr(log_lines, 'log_files', []))}")
 
                 log_lines._persistent_tail = True
                 log_lines.post_message(TailFile(True))
@@ -457,29 +457,29 @@ class OpenHCSToolongWidget(Widget):
                 if hasattr(log_lines, 'start_tail') and len(log_lines.log_files) == 1:
                     log_file = log_lines.log_files[0]
                     file_opened = hasattr(log_file, 'file') and log_file.file is not None
-                    logger.info(f"🔍 File status: path={getattr(log_file, 'path', 'unknown')}, file_opened={file_opened}")
+                    logger.debug(f"🔍 File status: path={getattr(log_file, 'path', 'unknown')}, file_opened={file_opened}")
 
                     if file_opened:
                         try:
                             log_lines.start_tail()
-                            logger.info(f"✅ Started file tailing on LogLines: {log_lines}")
+                            logger.debug(f"✅ Started file tailing on LogLines: {log_lines}")
                         except Exception as e:
                             logger.error(f"❌ Failed to start tailing on LogLines: {e}")
                             import traceback
                             traceback.print_exc()
                     else:
-                        logger.info(f"⏰ File not opened yet, tailing will start after scan completes")
+                        logger.debug(f"⏰ File not opened yet, tailing will start after scan completes")
                 else:
                     logger.warning(f"⚠️ Cannot start tailing: has_start_tail={hasattr(log_lines, 'start_tail')}, log_files={len(getattr(log_lines, 'log_files', []))}")
 
-                logger.info(f"Enabled persistent tailing for {log_lines}")
+                logger.debug(f"Enabled persistent tailing for {log_lines}")
         except Exception as e:
             logger.error(f"Failed to enable persistent tailing: {e}")
 
     def _mark_tabs_ready(self) -> None:
         """Mark tabs as ready, which will trigger the watcher."""
         try:
-            logger.info("Marking tabs as ready")
+            logger.debug("Marking tabs as ready")
 
             # Control tab visibility using the existing logic pattern
             # When show_tabs=False, pretend there's only 1 tab so tabs are hidden
@@ -488,10 +488,10 @@ class OpenHCSToolongWidget(Widget):
             effective_tab_count = actual_tab_count if self.show_tabs else 1
 
             self.query("#main_tabs Tabs").set(display=effective_tab_count > 1)
-            logger.info(f"Tab visibility: show_tabs={self.show_tabs}, actual_tabs={actual_tab_count}, effective_tabs={effective_tab_count}, display={effective_tab_count > 1}")
+            logger.debug(f"Tab visibility: show_tabs={self.show_tabs}, actual_tabs={actual_tab_count}, effective_tabs={effective_tab_count}, display={effective_tab_count > 1}")
 
             self.tabs_ready = True
-            logger.info("tabs_ready set to True")
+            logger.debug("tabs_ready set to True")
         except Exception as e:
             logger.error(f"_mark_tabs_ready failed: {e}")
             import traceback
@@ -511,24 +511,24 @@ class OpenHCSToolongWidget(Widget):
     def watch_tabs_ready(self, tabs_ready: bool) -> None:
         """Watcher that updates dropdown when tabs are ready."""
         if tabs_ready:
-            logger.info("tabs_ready watcher triggered")
+            logger.debug("tabs_ready watcher triggered")
             self._update_dropdown_from_tabs()
 
     def _update_dropdown_from_tabs(self) -> None:
         """Update dropdown options to match current tabs."""
-        logger.info("_update_dropdown_from_tabs called")
+        logger.debug("_update_dropdown_from_tabs called")
 
         # Check if dropdown exists
         try:
             select = self.query_one("#log_selector", Select)
         except:
-            logger.info("No dropdown selector found, skipping update")
+            logger.debug("No dropdown selector found, skipping update")
             return
 
         tabbed_content = self.query_one("#main_tabs", TabbedContent)
         tab_panes = tabbed_content.query(TabPane)
 
-        logger.info(f"Found {len(tab_panes)} tab panes")
+        logger.debug(f"Found {len(tab_panes)} tab panes")
 
         # Check if we need to update options (either placeholder or different count)
         current_value = select.value
@@ -542,45 +542,45 @@ class OpenHCSToolongWidget(Widget):
                 current_file_index = self.file_paths.index(self._current_file_path)
                 if current_value != current_file_index:
                     selection_needs_update = True
-                    logger.info(f"Selection needs update: current={current_value}, should be={current_file_index}")
+                    logger.debug(f"Selection needs update: current={current_value}, should be={current_file_index}")
             except ValueError:
                 logger.warning(f"Current file {self._current_file_path} not found in file_paths")
                 selection_needs_update = True  # Force update if current file not found
 
         if not options_need_update and not selection_needs_update:
-            logger.info("Dropdown already has correct options and selection, skipping update")
+            logger.debug("Dropdown already has correct options and selection, skipping update")
             return
 
         # Only update options if needed
         if options_need_update:
-            logger.info(f"Found {len(tab_panes)} tab panes")
-            logger.info(f"Tab pane IDs: {[getattr(pane, 'id', 'no-id') for pane in tab_panes]}")
+            logger.debug(f"Found {len(tab_panes)} tab panes")
+            logger.debug(f"Tab pane IDs: {[getattr(pane, 'id', 'no-id') for pane in tab_panes]}")
 
             # Create dropdown options from tab labels
             options = []
-            logger.info("Starting to process tab panes...")
+            logger.debug("Starting to process tab panes...")
             for i, tab_pane in enumerate(tab_panes):
-                logger.info(f"Processing tab_pane {i}: {tab_pane}")
+                logger.debug(f"Processing tab_pane {i}: {tab_pane}")
                 # Get the tab title from the TabPane - this is what shows in the tab
                 tab_label = getattr(tab_pane, '_title', str(tab_pane))
-                logger.info(f"Tab {i}: {tab_label}")
+                logger.debug(f"Tab {i}: {tab_label}")
                 options.append((tab_label, i))
 
-            logger.info(f"Created options: {options}")
+            logger.debug(f"Created options: {options}")
 
             # Update dropdown - let Textual handle sizing automatically
-            logger.info("About to call select.set_options...")
+            logger.debug("About to call select.set_options...")
             select.set_options(options)
-            logger.info(f"Set dropdown options: {options}")
+            logger.debug(f"Set dropdown options: {options}")
         else:
-            logger.info("Options don't need updating, only updating selection")
+            logger.debug("Options don't need updating, only updating selection")
 
         # Update selection - prioritize current file path over active tab
         if self._current_file_path:
             try:
                 current_file_index = self.file_paths.index(self._current_file_path)
                 select.value = current_file_index
-                logger.info(f"Set dropdown to current file index: {current_file_index} ({Path(self._current_file_path).name})")
+                logger.debug(f"Set dropdown to current file index: {current_file_index} ({Path(self._current_file_path).name})")
                 return
             except ValueError:
                 logger.warning(f"Current file {self._current_file_path} not found in file_paths")
@@ -592,21 +592,21 @@ class OpenHCSToolongWidget(Widget):
                 try:
                     active_index = list(tab_panes).index(active_tab)
                     select.value = active_index
-                    logger.info(f"Set dropdown to active tab index: {active_index}")
+                    logger.debug(f"Set dropdown to active tab index: {active_index}")
                 except ValueError:
                     # Active tab not found in list, default to first option
                     select.value = 0
-                    logger.info("Active tab not found, defaulting to first option")
+                    logger.debug("Active tab not found, defaulting to first option")
             else:
                 # No active tab, select first option
                 select.value = 0
-                logger.info("No active tab, selecting first option")
+                logger.debug("No active tab, selecting first option")
         else:
             logger.warning("No tab panes available for dropdown")
 
     def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         """Handle tab activation - update dropdown to match."""
-        logger.info(f"Tab activated: {event.tab}")
+        logger.debug(f"Tab activated: {event.tab}")
 
         # Update current file path tracking based on active tab
         try:
@@ -618,7 +618,7 @@ class OpenHCSToolongWidget(Widget):
                 active_index = list(tab_panes).index(active_tab)
                 if 0 <= active_index < len(self.file_paths):
                     self._current_file_path = self.file_paths[active_index]
-                    logger.info(f"Updated current file path to: {Path(self._current_file_path).name}")
+                    logger.debug(f"Updated current file path to: {Path(self._current_file_path).name}")
         except Exception as e:
             logger.error(f"Error updating current file path: {e}")
 
@@ -647,7 +647,7 @@ class OpenHCSToolongWidget(Widget):
                     # Update current file path tracking
                     if event.value < len(self.file_paths):
                         self._current_file_path = self.file_paths[event.value]
-                        logger.info(f"Switched to tab {event.value}, file: {Path(self._current_file_path).name}")
+                        logger.debug(f"Switched to tab {event.value}, file: {Path(self._current_file_path).name}")
                     else:
                         logger.warning(f"Tab index {event.value} out of range for file_paths")
                 else:
@@ -661,12 +661,12 @@ class OpenHCSToolongWidget(Widget):
         if event.button.id == "toggle_auto_tail":
             self.auto_tail = not self.auto_tail
             event.button.label = f"Auto-Scroll {'On' if self.auto_tail else 'Off'}"
-            logger.info(f"Auto-scroll toggled: {self.auto_tail}")
+            logger.debug(f"Auto-scroll toggled: {self.auto_tail}")
 
         elif event.button.id == "toggle_manual_tail":
             self.manual_tail_enabled = not self.manual_tail_enabled
             event.button.label = f"{'Resume' if not self.manual_tail_enabled else 'Pause'}"
-            logger.info(f"Manual tailing toggled: {self.manual_tail_enabled}")
+            logger.debug(f"Manual tailing toggled: {self.manual_tail_enabled}")
 
             # Control persistent tailing through OpenHCSToolongWidget
             self.toggle_persistent_tailing(self.manual_tail_enabled)
@@ -674,13 +674,13 @@ class OpenHCSToolongWidget(Widget):
         elif event.button.id == "scroll_to_bottom":
             # Use OpenHCSToolongWidget method to scroll to bottom and enable tailing
             self.scroll_to_bottom_and_tail()
-            logger.info("Scrolled to bottom and enabled tailing")
+            logger.debug("Scrolled to bottom and enabled tailing")
 
 
 
     def update_file_paths(self, new_file_paths: List[str], old_file_paths: List[str] = None) -> None:
         """Update tabs when new file paths are detected."""
-        logger.info(f"OpenHCSToolongWidget.update_file_paths called with {len(new_file_paths)} files")
+        logger.debug(f"OpenHCSToolongWidget.update_file_paths called with {len(new_file_paths)} files")
 
         # Use provided old_file_paths or current self.file_paths
         if old_file_paths is None:
@@ -692,27 +692,27 @@ class OpenHCSToolongWidget(Widget):
 
         # Find newly added files
         newly_added = new_file_paths_set - old_file_paths_set
-        logger.info(f"DEBUG: old_file_paths_set={len(old_file_paths_set)}, new_file_paths_set={len(new_file_paths_set)}, newly_added={len(newly_added)}")
+        logger.debug(f"DEBUG: old_file_paths_set={len(old_file_paths_set)}, new_file_paths_set={len(new_file_paths_set)}, newly_added={len(newly_added)}")
         if newly_added:
-            logger.info(f"Found {len(newly_added)} newly added files: {[Path(p).name for p in newly_added]}")
+            logger.debug(f"Found {len(newly_added)} newly added files: {[Path(p).name for p in newly_added]}")
             # Find the most recent file
             most_recent_file = max(newly_added, key=lambda p: os.path.getmtime(p))
-            logger.info(f"Most recent file: {Path(most_recent_file).name}")
+            logger.debug(f"Most recent file: {Path(most_recent_file).name}")
 
             # ALWAYS switch to the most recent file when new files are added
             self._current_file_path = most_recent_file
-            logger.info(f"Switching to most recent file: {Path(most_recent_file).name}")
+            logger.debug(f"Switching to most recent file: {Path(most_recent_file).name}")
         else:
-            logger.info("No newly added files detected")
+            logger.debug("No newly added files detected")
 
         # If no current file is set, default to first file
         if not self._current_file_path and new_file_paths:
             self._current_file_path = new_file_paths[0]
-            logger.info(f"No current file set, defaulting to first: {Path(self._current_file_path).name}")
+            logger.debug(f"No current file set, defaulting to first: {Path(self._current_file_path).name}")
 
         # If new files were added, trigger a full recompose
         if newly_added:
-            logger.info(f"New files detected, triggering recompose for {len(newly_added)} new files")
+            logger.debug(f"New files detected, triggering recompose for {len(newly_added)} new files")
             self.refresh(recompose=True)
         else:
             # Just update dropdown if no new files
@@ -737,22 +737,22 @@ class OpenHCSToolongWidget(Widget):
     def on_unmount(self) -> None:
         """Clean up watcher and LogLines when widget is unmounted."""
         try:
-            logger.info("OpenHCSToolongWidget unmounting, cleaning up resources")
+            logger.debug("OpenHCSToolongWidget unmounting, cleaning up resources")
 
             # Stop file observer if running
             if self._file_observer:
                 self._file_observer.stop()
                 self._file_observer.join()
                 self._file_observer = None
-                logger.info("File observer stopped")
+                logger.debug("File observer stopped")
 
             # No shared watcher cleanup needed - each LogView has its own watcher
             # The individual watchers will be cleaned up when their LogLines widgets unmount
-            logger.info("No shared watcher cleanup needed - using separate watchers per LogView")
+            logger.debug("No shared watcher cleanup needed - using separate watchers per LogView")
 
             # Don't close shared watcher - other widgets might be using it
             # The shared watcher will be cleaned up when the app exits
-            logger.info("OpenHCSToolongWidget unmount completed")
+            logger.debug("OpenHCSToolongWidget unmount completed")
         except Exception as e:
             logger.error(f"Error during OpenHCSToolongWidget unmount: {e}")
 
@@ -772,7 +772,7 @@ class OpenHCSToolongWidget(Widget):
             handler = LogFileHandler(self)
             self._file_observer.schedule(handler, str(log_dir), recursive=False)
             self._file_observer.start()
-            logger.info(f"Started file watcher for OpenHCS logs in: {log_dir}")
+            logger.debug(f"Started file watcher for OpenHCS logs in: {log_dir}")
         except Exception as e:
             logger.error(f"Failed to start file watcher: {e}")
 
@@ -800,7 +800,7 @@ class OpenHCSToolongWidget(Widget):
 
             # Add to pending set to prevent duplicate processing
             self._pending_logs.add(log_file_path)
-            logger.info(f"Adding new log file to pending: {log_file_path}")
+            logger.debug(f"Adding new log file to pending: {log_file_path}")
 
         # Use debouncing to handle rapid successive additions
         self._debounced_log_addition(log_file_path)
@@ -832,7 +832,7 @@ class OpenHCSToolongWidget(Widget):
             for log_path in new_logs:
                 if log_path not in self.file_paths:
                     self.file_paths.append(log_path)
-                    logger.info(f"Processed pending log file: {log_path}")
+                    logger.debug(f"Processed pending log file: {log_path}")
 
             # Sort for consistent display
             self.file_paths = UI.sort_paths(self.file_paths)
@@ -842,7 +842,7 @@ class OpenHCSToolongWidget(Widget):
 
             # Update UI in a single batch operation
             if len(self.file_paths) != len(old_file_paths):
-                logger.info(f"Batch updating UI: {len(old_file_paths)} → {len(self.file_paths)} files")
+                logger.debug(f"Batch updating UI: {len(old_file_paths)} → {len(self.file_paths)} files")
                 self.call_after_refresh(self.update_file_paths, self.file_paths, old_file_paths)
 
 

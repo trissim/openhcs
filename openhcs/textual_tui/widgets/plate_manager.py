@@ -159,7 +159,7 @@ class PlateManagerWidget(ButtonListWidget):
 
 
     def on_unmount(self) -> None:
-        logger.info("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
+        logger.debug("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
         self.action_stop_execution()
         self._stop_monitoring()
 
@@ -220,7 +220,7 @@ class PlateManagerWidget(ButtonListWidget):
         """Automatically update UI when items changes (follows ButtonListWidget pattern)."""
         # DEBUG: Log when items list changes to track the source of the reset
         stack_trace = ''.join(traceback.format_stack()[-3:-1])  # Get last 2 stack frames
-        logger.info(f"🔍 ITEMS CHANGED: {len(items)} plates. Call stack:\n{stack_trace}")
+        logger.debug(f"🔍 ITEMS CHANGED: {len(items)} plates. Call stack:\n{stack_trace}")
 
         # CRITICAL: Call parent's watch_items to update the SelectionList
         super().watch_items(items)
@@ -474,7 +474,7 @@ class PlateManagerWidget(ButtonListWidget):
         self._trigger_ui_refresh()
         self._update_button_states()
         self.app.current_status = status_message
-        logger.info("🧹 Execution state reset and UI updated.")
+        logger.debug("🧹 Execution state reset and UI updated.")
 
     async def action_run_plate(self) -> None:
         selected_items, _ = self.get_selection_state()
@@ -489,7 +489,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         try:
             # Use subprocess approach like integration tests
-            logger.info("🔥 Using subprocess approach for clean isolation")
+            logger.debug("🔥 Using subprocess approach for clean isolation")
 
             plate_paths_to_run = [item['path'] for item in ready_items]
 
@@ -546,14 +546,14 @@ class PlateManagerWidget(ButtonListWidget):
 
             await asyncio.get_event_loop().run_in_executor(None, _write_pickle_data)
 
-            logger.info(f"🔥 Created data file: {data_file.name}")
-            logger.info(f"🔥 Status file: {status_file.name}")
-            logger.info(f"🔥 Result file: {result_file.name}")
+            logger.debug(f"🔥 Created data file: {data_file.name}")
+            logger.debug(f"🔥 Status file: {status_file.name}")
+            logger.debug(f"🔥 Result file: {result_file.name}")
             # Generate actual log file path that subprocess will create
             actual_log_file_path = f"{log_file_base}_{unique_id}.log"
-            logger.info(f"🔥 Log file base: {log_file_base}")
-            logger.info(f"🔥 Unique ID: {unique_id}")
-            logger.info(f"🔥 Actual log file: {actual_log_file_path}")
+            logger.debug(f"🔥 Log file base: {log_file_base}")
+            logger.debug(f"🔥 Unique ID: {unique_id}")
+            logger.debug(f"🔥 Actual log file: {actual_log_file_path}")
 
             # DEBUGGING: Store subprocess data for manual debugging
             self._last_subprocess_data = subprocess_data
@@ -569,9 +569,9 @@ class PlateManagerWidget(ButtonListWidget):
             self.log_file_path = actual_log_file_path
             self.log_file_position = self._get_current_log_position()  # Start from current end
 
-            logger.info(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {status_file.name} {result_file.name} {log_file_base} {unique_id}")
-            logger.info(f"🔥 Subprocess logger will write to: {self.log_file_path}")
-            logger.info(f"🔥 Subprocess stdout will be silenced (logger handles output)")
+            logger.debug(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {status_file.name} {result_file.name} {log_file_base} {unique_id}")
+            logger.debug(f"🔥 Subprocess logger will write to: {self.log_file_path}")
+            logger.debug(f"🔥 Subprocess stdout will be silenced (logger handles output)")
 
             # SIMPLE SUBPROCESS: Let subprocess log to its own file
             # Wrap subprocess creation in executor to avoid blocking UI
@@ -628,7 +628,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Notify status bar to start log monitoring
             if hasattr(self.app, 'status_bar') and self.app.status_bar:
                 self.app.status_bar.start_log_monitoring(base_log_path)
-                logger.info(f"Started reactive log monitoring for: {base_log_path}")
+                logger.debug(f"Started reactive log monitoring for: {base_log_path}")
             else:
                 logger.warning("Status bar not available for log monitoring")
 
@@ -641,7 +641,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Notify status bar to stop log monitoring
             if hasattr(self.app, 'status_bar') and self.app.status_bar:
                 self.app.status_bar.stop_log_monitoring()
-                logger.info("Stopped reactive log monitoring")
+                logger.debug("Stopped reactive log monitoring")
         except Exception as e:
             logger.error(f"Failed to stop log monitoring: {e}")
 
@@ -674,7 +674,7 @@ class PlateManagerWidget(ButtonListWidget):
     async def _check_process_status(self) -> None:
         """Check if subprocess is still running (called by timer)."""
         if not self._is_any_plate_running():
-            logger.info("🔥 MONITOR: Subprocess finished - investigating...")
+            logger.debug("🔥 MONITOR: Subprocess finished - investigating...")
             if self.monitoring_worker and not self.monitoring_worker.is_finished:
                 self.monitoring_worker.cancel()
 
@@ -718,14 +718,14 @@ class PlateManagerWidget(ButtonListWidget):
                 status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
 
                 # Debug: Check if temp files exist and have content
-                logger.info(f"🔥 MONITOR: Checking temp files:")
-                logger.info(f"🔥 MONITOR: Status file exists: {status_exists}")
-                logger.info(f"🔥 MONITOR: Result file exists: {result_exists}")
-                logger.info(f"🔥 MONITOR: Data file exists: {data_exists}")
-                logger.info(f"🔥 MONITOR: Log file exists: {log_exists}")
+                logger.debug(f"🔥 MONITOR: Checking temp files:")
+                logger.debug(f"🔥 MONITOR: Status file exists: {status_exists}")
+                logger.debug(f"🔥 MONITOR: Result file exists: {result_exists}")
+                logger.debug(f"🔥 MONITOR: Data file exists: {data_exists}")
+                logger.debug(f"🔥 MONITOR: Log file exists: {log_exists}")
 
                 if status_exists:
-                    logger.info(f"🔥 MONITOR: Status file content: '{status_content}'")
+                    logger.debug(f"🔥 MONITOR: Status file content: '{status_content}'")
                     if not status_content.strip():
                         logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
 
@@ -833,14 +833,14 @@ class PlateManagerWidget(ButtonListWidget):
             status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
 
             # Debug: Check if temp files exist and have content
-            logger.info(f"🔥 MONITOR: Checking temp files:")
-            logger.info(f"🔥 MONITOR: Status file exists: {status_exists}")
-            logger.info(f"🔥 MONITOR: Result file exists: {result_exists}")
-            logger.info(f"🔥 MONITOR: Data file exists: {data_exists}")
-            logger.info(f"🔥 MONITOR: Log file exists: {log_exists}")
+            logger.debug(f"🔥 MONITOR: Checking temp files:")
+            logger.debug(f"🔥 MONITOR: Status file exists: {status_exists}")
+            logger.debug(f"🔥 MONITOR: Result file exists: {result_exists}")
+            logger.debug(f"🔥 MONITOR: Data file exists: {data_exists}")
+            logger.debug(f"🔥 MONITOR: Log file exists: {log_exists}")
 
             if status_exists:
-                logger.info(f"🔥 MONITOR: Status file content: '{status_content}'")
+                logger.debug(f"🔥 MONITOR: Status file content: '{status_content}'")
                 if not status_content.strip():
                     logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
 
@@ -960,7 +960,7 @@ class PlateManagerWidget(ButtonListWidget):
 
                     if status == "COMPLETED":
                         orchestrator._state = OrchestratorState.COMPLETED
-                        logger.info(f"🔥 Plate {plate['name']} completed successfully")
+                        logger.debug(f"🔥 Plate {plate['name']} completed successfully")
                     elif status.startswith("ERROR:"):
                         orchestrator._state = OrchestratorState.FAILED
                         plate['error'] = status[6:]  # Keep error in plate dict for now
@@ -1213,7 +1213,7 @@ class PlateManagerWidget(ButtonListWidget):
                     f.write(f"5. Check debug.log for detailed logs\n")
 
                 self.app.current_status = f"Debug files saved: {selected_path.name}, {shell_script.name} (executable), {command_file.name}, {info_file.name}"
-                logger.info(f"Debug subprocess data saved to {selected_path}")
+                logger.debug(f"Debug subprocess data saved to {selected_path}")
 
             except Exception as e:
                 error_msg = f"Failed to save debug pickle: {e}"
@@ -1531,7 +1531,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Notify pipeline editor of status change
             status_symbol = get_orchestrator_status_symbol(self.orchestrators.get(actual_plate['path']))
             self._notify_pipeline_editor_status_change(actual_plate['path'], status_symbol)
-            logger.info(f"Updated plate {actual_plate['name']} status")
+            logger.debug(f"Updated plate {actual_plate['name']} status")
 
         # Final UI update (reactive system handles this automatically when self.items is modified)
         self._update_button_states()

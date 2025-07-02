@@ -219,7 +219,7 @@ class ButtonListWidget(Widget):
     
     def watch_items(self, items: List[Dict]) -> None:
         """Automatically update UI when items reactive property changes."""
-        logger.info(f"watch_items called with {len(items)} items")
+        logger.debug(f"watch_items called with {len(items)} items")
         # Update the SelectionList
         self._update_selection_list()
         # Update button states
@@ -371,16 +371,16 @@ class ButtonListWidget(Widget):
                 logger.info(f"Adding option: {display_text}")
 
             selection_list.add_options(options)
-            logger.info(f"Added {len(options)} options to SelectionList")
+            logger.debug(f"Added {len(options)} options to SelectionList")
 
             # Force refresh the SelectionList display
             selection_list.refresh()
-            logger.info("Called refresh() on SelectionList")
+            logger.debug("Called refresh() on SelectionList")
 
             # Force refresh the SelectionList display
             try:
                 selection_list.refresh()
-                logger.info("Called refresh() on SelectionList")
+                logger.debug("Called refresh() on SelectionList")
             except Exception as e:
                 logger.warning(f"Failed to refresh SelectionList: {e}")
 

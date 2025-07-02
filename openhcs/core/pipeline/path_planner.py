@@ -329,10 +329,26 @@ class PipelinePathPlanner:
 
             # Process special outputs
             if s_outputs_keys: # Use the keys derived from core_callable or step attribute
+                # Get materialization results path from config
+                results_base_path = PipelinePathPlanner._resolve_materialization_results_path(path_config, context)
+
+                # Extract materialization functions from decorator (if FunctionStep)
+                materialization_functions = {}
+                if isinstance(step, FunctionStep) and core_callable:
+                    materialization_functions = getattr(core_callable, '__materialization_functions__', {})
+
                 for key in sorted(list(s_outputs_keys)): # Iterate over sorted keys
-                    # Use key directly - no unnecessary sanitization!
-                    output_path = Path(step_output_dir) / f"{key}.pkl"
-                    special_outputs[key] = {"path": str(output_path)}
+                    # Build path using materialization results config
+                    filename = f"{well_id}_{key}.pkl"
+                    output_path = Path(results_base_path) / filename
+
+                    # Get materialization function for this key
+                    mat_func = materialization_functions.get(key)
+
+                    special_outputs[key] = {
+                        "path": str(output_path),
+                        "materialization_function": mat_func
+                    }
                     # Register this output for future steps
                     declared_outputs[key] = {
                         "step_id": step_id,
@@ -492,3 +508,14 @@ class PipelinePathPlanner:
                 logger.info(f"Path planning: used plate_path ({plate_path_str}) for calculations, overriding first step to read from real input ({real_input_str})")
 
         return step_plans
+
+    @staticmethod
+    def _resolve_materialization_results_path(path_config, context):
+        """Resolve materialization results path from config."""
+        results_path = path_config.materialization_results_path
+
+        if not Path(results_path).is_absolute():
+            plate_folder = Path(context.plate_path).parent
+            return str(plate_folder / results_path)
+        else:
+            return results_path
