@@ -262,7 +262,7 @@ class FuncStepContractValidator:
                 first_fn.__name__, input_type, output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
             ))
 
-        # Validate that all functions have the same memory types
+        # Validate that all functions have valid memory type declarations
         for fn in functions[1:]:
             # Validate that the function has explicit memory type declarations
             try:
@@ -277,15 +277,9 @@ class FuncStepContractValidator:
                     fn.__name__, fn_input_type, fn_output_type, ", ".join(sorted(VALID_MEMORY_TYPES))
                 ))
 
-            # Validate that the function's memory types match the first function's memory types
-            if fn_input_type != input_type or fn_output_type != output_type:
-                raise ValueError(inconsistent_memory_types_error(
-                    step_name, f"{first_fn.__name__}({input_type}/{output_type})",
-                    f"{fn.__name__}({fn_input_type}/{fn_output_type})"
-                ))
-
-        # Return the shared memory types
-        return input_type, output_type
+        # Return first function's input type and last function's output type
+        last_function = functions[-1]
+        return input_type, last_function.output_memory_type
 
     @staticmethod
     def _validate_required_args(func: Callable, kwargs: Dict[str, Any], step_name: str) -> None:

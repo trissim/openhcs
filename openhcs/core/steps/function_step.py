@@ -368,6 +368,8 @@ def _execute_chain_core(
     input_memory_type: str,
 ) -> Any:
     current_stack = initial_data_stack
+    current_memory_type = input_memory_type  # Track memory type from frozen context
+
     for i, func_item in enumerate(func_chain):
         actual_callable: Callable
         base_kwargs_for_item: Dict[str, Any] = {}
@@ -379,9 +381,19 @@ def _execute_chain_core(
             actual_callable = func_item
         else:
             raise TypeError(f"Invalid item in function chain: {func_item}.")
-        
+
+        # Convert to function's input memory type (noop if same)
+        from openhcs.core.memory.converters import convert_memory
+        current_stack = convert_memory(
+            data=current_stack,
+            source_type=current_memory_type,
+            target_type=actual_callable.input_memory_type,
+            gpu_id=device_id,
+            allow_cpu_roundtrip=False
+        )
+
         outputs_plan_for_this_call = step_special_outputs_plan if is_last_in_chain else {}
-        
+
         current_stack = _execute_function_core(
             func_callable=actual_callable,
             main_data_arg=current_stack,
@@ -393,6 +405,10 @@ def _execute_chain_core(
             device_id=device_id,
             input_memory_type=input_memory_type,
         )
+
+        # Update current memory type from frozen context
+        current_memory_type = actual_callable.output_memory_type
+
     return current_stack
 
 def _process_single_pattern_group(

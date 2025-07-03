@@ -170,12 +170,57 @@ def _scan_and_register_functions() -> None:
             logger.warning("Error importing module %s: %s", module_name, e)
 
 
+def register_function(func: Callable, backend: str = None, **kwargs) -> None:
+    """
+    Manually register a function with the function registry.
+
+    This is the public API for registering functions that are not auto-discovered
+    by the module scanner (e.g., dynamically decorated functions).
+
+    Args:
+        func: The function to register (must have input_memory_type and output_memory_type attributes)
+        backend: Optional backend name (defaults to func.input_memory_type)
+        **kwargs: Additional metadata (ignored for compatibility)
+
+    Raises:
+        ValueError: If function doesn't have required memory type attributes
+        ValueError: If memory types are invalid
+    """
+    with _registry_lock:
+        # Ensure registry is initialized
+        if not _registry_initialized:
+            _auto_initialize_registry()
+
+        # Validate function has required attributes
+        if not hasattr(func, "input_memory_type") or not hasattr(func, "output_memory_type"):
+            raise ValueError(
+                f"Function '{func.__name__}' must have input_memory_type and output_memory_type attributes"
+            )
+
+        input_type = func.input_memory_type
+        output_type = func.output_memory_type
+
+        # Validate memory types
+        if input_type not in VALID_MEMORY_TYPES:
+            raise ValueError(f"Invalid input memory type: {input_type}")
+        if output_type not in VALID_MEMORY_TYPES:
+            raise ValueError(f"Invalid output memory type: {output_type}")
+
+        # Use input_memory_type as backend if not specified
+        memory_type = backend or input_type
+        if memory_type not in VALID_MEMORY_TYPES:
+            raise ValueError(f"Invalid backend memory type: {memory_type}")
+
+        # Register the function
+        _register_function(func, memory_type)
+
+
 def _register_function(func: Callable, memory_type: str) -> None:
     """
     Register a function for a specific memory type.
-    
-    This is an internal function used during automatic scanning.
-    
+
+    This is an internal function used during automatic scanning and manual registration.
+
     Args:
         func: The function to register
         memory_type: The memory type (e.g., "numpy", "cupy", "torch")
@@ -187,13 +232,13 @@ def _register_function(func: Callable, memory_type: str) -> None:
             func.__name__, memory_type
         )
         return
-    
+
     # Add function to registry
     FUNC_REGISTRY[memory_type].append(func)
-    
+
     # Add memory_type attribute for easier inspection
     setattr(func, "backend", memory_type)
-    
+
     logger.debug(
         "Registered function '%s' for memory type '%s'",
         func.__name__, memory_type
