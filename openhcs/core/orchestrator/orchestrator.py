@@ -276,7 +276,7 @@ class PipelineOrchestrator:
             logger.info("PipelineOrchestrator fully initialized with cached component keys and metadata.")
             return self
         except Exception as e:
-            self._state = OrchestratorState.FAILED
+            self._state = OrchestratorState.INIT_FAILED
             logger.error(f"Failed to initialize orchestrator: {e}")
             raise
 
@@ -381,7 +381,7 @@ class PipelineOrchestrator:
             logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
             return compiled_contexts
         except Exception as e:
-            self._state = OrchestratorState.FAILED
+            self._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")
             raise
 
@@ -610,12 +610,12 @@ class PipelineOrchestrator:
             if all(result.get("status") == "success" for result in execution_results.values()):
                 self._state = OrchestratorState.COMPLETED
             else:
-                self._state = OrchestratorState.FAILED
+                self._state = OrchestratorState.EXEC_FAILED
 
             logger.info(f"🔥 ORCHESTRATOR: Plate execution finished. Results: {execution_results}")
             return execution_results
         except Exception as e:
-            self._state = OrchestratorState.FAILED
+            self._state = OrchestratorState.EXEC_FAILED
             logger.error(f"Failed to execute compiled plate: {e}")
             raise
 

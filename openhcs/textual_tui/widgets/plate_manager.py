@@ -62,12 +62,14 @@ def get_orchestrator_status_symbol(orchestrator: PipelineOrchestrator) -> str:
         return "?"  # No orchestrator (newly added plate)
 
     state_to_symbol = {
-        OrchestratorState.CREATED: "?",      # Created but not initialized
-        OrchestratorState.READY: "-",        # Initialized, ready for compilation
-        OrchestratorState.COMPILED: "o",     # Compiled, ready for execution
-        OrchestratorState.EXECUTING: "!",    # Execution in progress
-        OrchestratorState.COMPLETED: "C",    # Execution completed successfully
-        OrchestratorState.FAILED: "F",       # Error state
+        OrchestratorState.CREATED: "?",         # Created but not initialized
+        OrchestratorState.READY: "-",           # Initialized, ready for compilation
+        OrchestratorState.COMPILED: "o",        # Compiled, ready for execution
+        OrchestratorState.EXECUTING: "!",       # Execution in progress
+        OrchestratorState.COMPLETED: "C",       # Execution completed successfully
+        OrchestratorState.INIT_FAILED: "I",     # Initialization failed
+        OrchestratorState.COMPILE_FAILED: "P",  # Compilation failed (P for Pipeline)
+        OrchestratorState.EXEC_FAILED: "X",     # Execution failed
     }
 
     return state_to_symbol.get(orchestrator.state, "?")
@@ -169,7 +171,16 @@ class PlateManagerWidget(ButtonListWidget):
         orchestrator = self.orchestrators.get(plate_path)
         status_symbol = get_orchestrator_status_symbol(orchestrator)
 
-        status_symbols = {"?": "➕", "-": "✅", "o": "⚡", "!": "🔄", "X": "❌", "F": "🔥", "C": "🏁"}
+        status_symbols = {
+            "?": "➕",   # Created (not initialized)
+            "-": "✅",   # Ready (initialized)
+            "o": "⚡",   # Compiled
+            "!": "🔄",   # Executing
+            "C": "🏁",   # Completed
+            "I": "🚫",   # Init failed
+            "P": "💥",   # Compile failed (Pipeline)
+            "X": "❌"    # Execution failed
+        }
         status_icon = status_symbols.get(status_symbol, "❓")
         plate_name = plate.get('name', 'Unknown')
         display_text = f"{status_icon} {plate_name} - {plate_path}"
@@ -345,8 +356,22 @@ class PlateManagerWidget(ButtonListWidget):
             )
             self.query_one("#edit_config").disabled = not edit_enabled
 
-            self.query_one("#init_plate").disabled = not has_selection or is_running
-            self.query_one("#compile_plate").disabled = not has_selection or is_running
+            # Init button - enabled when plates are selected, can be initialized, and not running
+            init_enabled = (
+                len(selected_items) > 0 and
+                any(self._can_orchestrator_be_initialized(item['path']) for item in selected_items) and
+                not is_running
+            )
+            self.query_one("#init_plate").disabled = not init_enabled
+
+            # Compile button - enabled when plates are selected, initialized, and not running
+            selected_items, _ = self.get_selection_state()
+            compile_enabled = (
+                len(selected_items) > 0 and
+                all(self._is_orchestrator_initialized(item['path']) for item in selected_items) and
+                not is_running
+            )
+            self.query_one("#compile_plate").disabled = not compile_enabled
 
             # Export button - enabled when plate is initialized and has workspace (HIDDEN FROM UI)
             # export_enabled = (
@@ -397,7 +422,15 @@ class PlateManagerWidget(ButtonListWidget):
         if orchestrator is None:
             return False
         return orchestrator.state in [OrchestratorState.READY, OrchestratorState.COMPILED,
-                                     OrchestratorState.COMPLETED, OrchestratorState.FAILED]
+                                     OrchestratorState.COMPLETED, OrchestratorState.COMPILE_FAILED,
+                                     OrchestratorState.EXEC_FAILED]
+
+    def _can_orchestrator_be_initialized(self, plate_path: str) -> bool:
+        """Check if orchestrator can be initialized (doesn't exist or is in a re-initializable state)."""
+        orchestrator = self.orchestrators.get(plate_path)
+        if orchestrator is None:
+            return True  # No orchestrator exists, can be initialized
+        return orchestrator.state in [OrchestratorState.CREATED, OrchestratorState.INIT_FAILED]
 
     def _notify_pipeline_editor_status_change(self, plate_path: str, new_status: str) -> None:
         """Notify pipeline editor when plate status changes (enables Add button immediately)."""
@@ -471,10 +504,10 @@ class PlateManagerWidget(ButtonListWidget):
         if self.monitoring_worker and not self.monitoring_worker.is_finished:
             self.monitoring_worker.cancel()
         
-        # Reset any executing orchestrators to failed state
+        # Reset any executing orchestrators to execution failed state
         for plate_path, orchestrator in self.orchestrators.items():
             if orchestrator.state == OrchestratorState.EXECUTING:
-                orchestrator._state = OrchestratorState.FAILED
+                orchestrator._state = OrchestratorState.EXEC_FAILED
 
         # Trigger UI refresh after state changes
         self._trigger_ui_refresh()
@@ -968,7 +1001,7 @@ class PlateManagerWidget(ButtonListWidget):
                         orchestrator._state = OrchestratorState.COMPLETED
                         logger.debug(f"🔥 Plate {plate['name']} completed successfully")
                     elif status.startswith("ERROR:"):
-                        orchestrator._state = OrchestratorState.FAILED
+                        orchestrator._state = OrchestratorState.EXEC_FAILED
                         plate['error'] = status[6:]  # Keep error in plate dict for now
                         logger.error(f"🔥 Plate {plate['name']} failed: {plate['error']}")
 
@@ -1465,7 +1498,7 @@ class PlateManagerWidget(ButtonListWidget):
         for item in selected_items:
             plate_path = item['path']
             orchestrator = self.orchestrators.get(plate_path)
-            if orchestrator is not None and orchestrator.state not in [OrchestratorState.CREATED, OrchestratorState.READY, OrchestratorState.FAILED]:
+            if orchestrator is not None and orchestrator.state not in [OrchestratorState.CREATED, OrchestratorState.READY, OrchestratorState.INIT_FAILED]:
                 invalid_plates.append(item)
 
         if invalid_plates:
@@ -1526,7 +1559,7 @@ class PlateManagerWidget(ButtonListWidget):
                     global_config=self.global_config,
                     storage_registry=self.filemanager.registry
                 )
-                failed_orchestrator._state = OrchestratorState.FAILED
+                failed_orchestrator._state = OrchestratorState.INIT_FAILED
                 self.orchestrators[plate_path] = failed_orchestrator
                 actual_plate['error'] = str(e)
 
@@ -1544,7 +1577,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Update status
         success_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.READY])
-        error_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.FAILED])
+        error_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.INIT_FAILED])
 
         if error_count == 0:
             logger.info(f"Successfully initialized {success_count} plates")
@@ -1565,7 +1598,7 @@ class PlateManagerWidget(ButtonListWidget):
         for item in selected_items:
             plate_path = item['path']
             orchestrator = self.orchestrators.get(plate_path)
-            if orchestrator is None or orchestrator.state not in [OrchestratorState.READY, OrchestratorState.FAILED]:
+            if orchestrator is None or orchestrator.state not in [OrchestratorState.READY, OrchestratorState.COMPILE_FAILED, OrchestratorState.EXEC_FAILED]:
                 uninitialized.append(item)
 
         if uninitialized:
@@ -1696,7 +1729,7 @@ class PlateManagerWidget(ButtonListWidget):
 
         # Update status
         success_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.COMPILED])
-        error_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.FAILED])
+        error_count = len([p for p in selected_items if self.orchestrators.get(p['path']) and self.orchestrators[p['path']].state == OrchestratorState.COMPILE_FAILED])
 
         if error_count == 0:
             logger.info(f"Successfully compiled {success_count} plates")

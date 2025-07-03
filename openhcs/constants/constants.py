@@ -29,12 +29,14 @@ class GroupBy(Enum):
 
 class OrchestratorState(Enum):
     """Simple orchestrator state tracking - no complex state machine."""
-    CREATED = "created"      # Object exists, not initialized
-    READY = "ready"          # Initialized, ready for compilation
-    COMPILED = "compiled"    # Compilation complete, ready for execution
-    EXECUTING = "executing"  # Execution in progress
-    COMPLETED = "completed"  # Execution completed successfully
-    FAILED = "failed"        # Error state
+    CREATED = "created"         # Object exists, not initialized
+    READY = "ready"             # Initialized, ready for compilation
+    COMPILED = "compiled"       # Compilation complete, ready for execution
+    EXECUTING = "executing"     # Execution in progress
+    COMPLETED = "completed"     # Execution completed successfully
+    INIT_FAILED = "init_failed"       # Initialization failed
+    COMPILE_FAILED = "compile_failed" # Compilation failed (implies initialized)
+    EXEC_FAILED = "exec_failed"       # Execution failed (implies compiled)
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"

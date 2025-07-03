@@ -95,7 +95,8 @@ class PipelineEditorWidget(ButtonListWidget):
             return False
 
         is_initialized = orchestrator.state in [OrchestratorState.READY, OrchestratorState.COMPILED,
-                                               OrchestratorState.COMPLETED, OrchestratorState.FAILED]
+                                               OrchestratorState.COMPLETED, OrchestratorState.COMPILE_FAILED,
+                                               OrchestratorState.EXEC_FAILED]
         logger.debug(f"PipelineEditor: Plate {self.current_plate} orchestrator state: {orchestrator.state}, initialized: {is_initialized}")
         return is_initialized
 
