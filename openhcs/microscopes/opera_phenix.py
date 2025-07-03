@@ -620,22 +620,18 @@ class OperaPhenixMetadataHandler(MetadataHandler):
         if index_xml.exists():
             return index_xml
 
-        # Check for Index.xml in the Measurement directory
-        measurement_dir = plate_path / "Measurement"
-        if measurement_dir.exists():
-            index_xml = measurement_dir / "Index.xml"
+        # Check for Index.xml in the Images directory
+        images_dir = plate_path / "Images"
+        if images_dir.exists():
+            index_xml = images_dir / "Index.xml"
             if index_xml.exists():
                 return index_xml
 
-        # Use filemanager to find the file recursively
-        # Clause 245: Workspace operations are disk-only by design
-        # This call is structurally hardcoded to use the "disk" backend
-        result = self.filemanager.find_file_recursive(plate_path, "Index.xml", Backend.DISK.value)
-        if result is None:
-            raise FileNotFoundError(
-                f"Index.xml not found in {plate_path}. "
-                "Opera Phenix metadata requires Index.xml file."
-            )
+        # No recursive search - only check root and Images directories
+        raise FileNotFoundError(
+            f"Index.xml not found in {plate_path} or {plate_path}/Images. "
+            "Opera Phenix metadata requires Index.xml file."
+        )
 
         # Ensure result is a Path object
         if isinstance(result, str):
