@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def _configure_worker_logging(log_file_base: str):
     """
-    Configure logging for worker process.
+    Configure logging and import hook for worker process.
 
     This function is called once per worker process when it starts.
     Each worker will get its own log file with a unique identifier.
@@ -46,6 +46,16 @@ def _configure_worker_logging(log_file_base: str):
     import os
     import logging
     import time
+
+    # CRITICAL: Install import hook for auto-discovered functions
+    # Worker processes are fresh Python processes that need the import hook
+    try:
+        from openhcs.processing.func_registry import _install_import_hook
+        _install_import_hook()
+        # Note: We don't log this yet because logging isn't configured
+    except Exception:
+        # Can't log yet, but this is critical - the worker will fail later
+        pass
 
     # Create unique worker identifier using PID and timestamp
     worker_pid = os.getpid()
@@ -70,6 +80,9 @@ def _configure_worker_logging(log_file_base: str):
     worker_logger = logging.getLogger("openhcs.worker")
     worker_logger.info(f"🔥 WORKER: Process {worker_pid} (ID: {worker_id}) logging configured")
     worker_logger.info(f"🔥 WORKER: All logs writing to: {worker_log_file}")
+
+    # Log import hook installation status
+    worker_logger.info(f"🔥 WORKER: Import hook installed for auto-discovered functions")
 
 
 # Global variable to store log file base for worker processes

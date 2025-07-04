@@ -277,6 +277,15 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
 
         log_thread_count("after storage registry import")
 
+        # NUCLEAR WRAP: Function registry import (CRITICAL for auto-discovered functions)
+        def import_function_registry():
+            from openhcs.processing.func_registry import FUNC_REGISTRY
+            return FUNC_REGISTRY
+        FUNC_REGISTRY = force_error_detection("import_function_registry", import_function_registry)
+
+        log_thread_count("after function registry import")
+        logger.info("🔥 SUBPROCESS: Function registry imported and auto-initialized!")
+
         log_thread_count("before orchestrator creation")
 
         # NUCLEAR WRAP: Orchestrator creation

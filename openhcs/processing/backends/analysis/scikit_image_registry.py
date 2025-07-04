@@ -305,3 +305,52 @@ if __name__ == "__main__":
     print(f"\nFunctions with slice-by-slice parameters: {len(slice_param_funcs)}")
     for meta in slice_param_funcs[:10]:  # Show first 10
         print(f"  {meta.module}.{meta.name}: {meta.slice_by_slice_param}")
+
+
+def _register_skimage_ops_direct() -> None:
+    """
+    Direct registration of scikit-image functions without triggering registry initialization.
+
+    This is called during Phase 2 of registry initialization to avoid circular dependencies.
+    """
+    from openhcs.processing.func_registry import _register_function
+    from openhcs.core.memory.decorators import numpy as numpy_func
+
+    print("🔧 Direct registration of scikit-image functions...")
+
+    registered_count = 0
+    skipped_count = 0
+
+    # Get functions using build_skimage_registry (same as register_skimage_ops)
+    registry = build_skimage_registry()
+
+    for full_name, meta in registry.items():
+        try:
+            # Skip functions that don't support arrays or have unknown contracts
+            if meta.contract == ProcessingContract.UNKNOWN:
+                skipped_count += 1
+                continue
+
+            # Skip dimension-changing functions (OpenHCS requires array-in/array-out)
+            if meta.contract == ProcessingContract.DIM_CHANGE:
+                skipped_count += 1
+                continue
+
+            # Use the original function directly to avoid pickle issues
+            func_to_register = meta.func
+
+            # Add memory type attributes directly to the original function
+            # This makes the function pickleable since it's the same object as the module function
+            func_to_register.input_memory_type = "numpy"
+            func_to_register.output_memory_type = "numpy"
+
+            # Direct registration without triggering initialization
+            _register_function(func_to_register, "numpy")
+            registered_count += 1
+
+        except Exception as e:
+            print(f"Warning: Failed to register {full_name}: {e}")
+            skipped_count += 1
+
+    print(f"✅ Direct registered {registered_count} scikit-image functions")
+    print(f"⚠️  Skipped {skipped_count} functions (unknown contracts or dim_change)")

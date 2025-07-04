@@ -247,13 +247,21 @@ class SignatureAnalyzer:
             param_list = list(sig.parameters.items())
 
             for i, (param_name, param) in enumerate(param_list):
-                # Skip self, cls, kwargs - parent can filter more if needed
-                if param_name in ('self', 'cls', 'kwargs'):
+                # Skip self, cls - parent can filter more if needed
+                if param_name in ('self', 'cls'):
                     continue
 
                 # Skip the first parameter (after self/cls) - this is always the image/tensor
                 # that gets passed automatically by the processing system
                 if i == 0 or (i == 1 and param_list[0][0] in ('self', 'cls')):
+                    continue
+
+                # Handle **kwargs parameters - try to extract original function signature
+                if param.kind == inspect.Parameter.VAR_KEYWORD:
+                    # Try to find the original function if this is a wrapper
+                    original_params = SignatureAnalyzer._extract_original_parameters(callable_obj)
+                    if original_params:
+                        parameters.update(original_params)
                     continue
 
                 param_type = type_hints.get(param_name, str)
@@ -276,7 +284,69 @@ class SignatureAnalyzer:
         except Exception:
             # Return empty dict on error
             return {}
-    
+
+    @staticmethod
+    def _extract_original_parameters(callable_obj: Callable) -> Dict[str, ParameterInfo]:
+        """
+        Extract parameters from the original function if this is a wrapper with **kwargs.
+
+        This handles cases where scikit-image or other auto-registered functions
+        are wrapped with (image, **kwargs) signatures.
+        """
+        try:
+            # Check if this function has access to the original function
+            # Common patterns: __wrapped__, closure variables, etc.
+
+            # Pattern 1: Check if it's a functools.wraps wrapper
+            if hasattr(callable_obj, '__wrapped__'):
+                return SignatureAnalyzer._analyze_callable(callable_obj.__wrapped__)
+
+            # Pattern 2: Check closure for original function reference
+            if hasattr(callable_obj, '__closure__') and callable_obj.__closure__:
+                for cell in callable_obj.__closure__:
+                    if hasattr(cell.cell_contents, '__call__'):
+                        # Found a callable in closure - might be the original function
+                        try:
+                            orig_sig = inspect.signature(cell.cell_contents)
+                            # Skip if it also has **kwargs (avoid infinite recursion)
+                            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in orig_sig.parameters.values()):
+                                continue
+                            return SignatureAnalyzer._analyze_callable(cell.cell_contents)
+                        except:
+                            continue
+
+            # Pattern 3: Try to extract from function name and module
+            # This is a fallback for scikit-image functions
+            if hasattr(callable_obj, '__name__') and hasattr(callable_obj, '__module__'):
+                func_name = callable_obj.__name__
+                module_name = callable_obj.__module__
+
+                # Try to find the original function in scikit-image
+                if 'skimage' in module_name:
+                    try:
+                        import importlib
+                        # Extract the actual module path (remove wrapper module parts)
+                        if 'scikit_image_registry' in module_name:
+                            # This is our wrapper, try to find the original in skimage
+                            for skimage_module in ['skimage.filters', 'skimage.morphology',
+                                                 'skimage.segmentation', 'skimage.feature',
+                                                 'skimage.measure', 'skimage.transform',
+                                                 'skimage.restoration', 'skimage.exposure']:
+                                try:
+                                    mod = importlib.import_module(skimage_module)
+                                    if hasattr(mod, func_name):
+                                        orig_func = getattr(mod, func_name)
+                                        return SignatureAnalyzer._analyze_callable(orig_func)
+                                except:
+                                    continue
+                    except:
+                        pass
+
+            return {}
+
+        except Exception:
+            return {}
+
     @staticmethod
     def _analyze_dataclass(dataclass_type: type) -> Dict[str, ParameterInfo]:
         """Extract parameter information from dataclass fields."""

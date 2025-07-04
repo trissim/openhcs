@@ -269,3 +269,62 @@ if __name__ == "__main__":  # pragma: no cover – manual use
         "dim_change": [n for n, m in r.items() if m.dim_change],
     }
     pprint({k: len(v) for k, v in summary.items()})
+
+
+def _register_pycle_ops_direct() -> None:
+    """
+    Direct registration of pyclesperanto functions without triggering registry initialization.
+
+    This is called during Phase 2 of registry initialization to avoid circular dependencies.
+    """
+    from openhcs.processing.func_registry import _register_function
+    from openhcs.core.memory.decorators import pyclesperanto
+    import inspect
+
+    print("🔧 Direct registration of pyclesperanto functions...")
+
+    registered_count = 0
+    skipped_count = 0
+
+    # Get functions using build_pycle_registry (same as register_pycle_ops)
+    registry = build_pycle_registry()
+
+    for meta in registry.values():
+        # Check if function returns array (array-in/array-out pattern)
+        try:
+            sig = inspect.signature(meta.func)
+            return_annotation = str(sig.return_annotation)
+
+            # Skip functions that don't return arrays
+            if not ('Array' in return_annotation or 'ndarray' in return_annotation):
+                skipped_count += 1
+                continue
+
+        except Exception:
+            skipped_count += 1
+            continue
+
+        # Skip dimension-changing functions (they break array chains)
+        if meta.dim_change:
+            skipped_count += 1
+            continue
+
+        try:
+            # Instead of creating a wrapper, add memory type attributes directly to the original function
+            # This makes the function pickleable since it's the same object as the module function
+            original_func = meta.func
+
+            # Add memory type attributes directly to the original function
+            original_func.input_memory_type = "pyclesperanto"
+            original_func.output_memory_type = "pyclesperanto"
+
+            # Direct registration without triggering initialization
+            _register_function(original_func, "pyclesperanto")
+            registered_count += 1
+
+        except Exception as e:
+            print(f"Warning: Failed to register {meta.name}: {e}")
+            skipped_count += 1
+
+    print(f"✅ Direct registered {registered_count} pyclesperanto functions")
+    print(f"⚠️  Skipped {skipped_count} functions (dim_change or errors)")

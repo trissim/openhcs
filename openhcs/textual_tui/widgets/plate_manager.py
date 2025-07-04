@@ -1493,17 +1493,18 @@ class PlateManagerWidget(ButtonListWidget):
             logger.warning("No plates available for initialization")
             return
 
-        # Validate all selected plates can be initialized (allow failed plates to be re-initialized)
+        # Validate all selected plates can be initialized (allow ALL failed plates to be re-initialized)
         invalid_plates = []
         for item in selected_items:
             plate_path = item['path']
             orchestrator = self.orchestrators.get(plate_path)
-            if orchestrator is not None and orchestrator.state not in [OrchestratorState.CREATED, OrchestratorState.READY, OrchestratorState.INIT_FAILED]:
+            # Only block plates that are currently executing - all other states can be re-initialized
+            if orchestrator is not None and orchestrator.state == OrchestratorState.EXECUTING:
                 invalid_plates.append(item)
 
         if invalid_plates:
             names = [item['name'] for item in invalid_plates]
-            logger.warning(f"Cannot initialize plates with invalid status: {', '.join(names)}")
+            logger.warning(f"Cannot initialize plates that are currently executing: {', '.join(names)}")
             return
 
         # Start async initialization
@@ -1593,17 +1594,24 @@ class PlateManagerWidget(ButtonListWidget):
             logger.warning("No plates available for compilation")
             return
 
-        # Validate all selected plates are initialized (allow failed plates to be re-compiled)
-        uninitialized = []
+        # Validate all selected plates are ready for compilation (allow failed plates to be re-compiled)
+        not_ready = []
         for item in selected_items:
             plate_path = item['path']
             orchestrator = self.orchestrators.get(plate_path)
-            if orchestrator is None or orchestrator.state not in [OrchestratorState.READY, OrchestratorState.COMPILE_FAILED, OrchestratorState.EXEC_FAILED]:
-                uninitialized.append(item)
+            # Allow READY, COMPILE_FAILED, EXEC_FAILED, COMPILED, and COMPLETED states to be compiled/recompiled
+            if orchestrator is None or orchestrator.state not in [OrchestratorState.READY, OrchestratorState.COMPILE_FAILED, OrchestratorState.EXEC_FAILED, OrchestratorState.COMPILED, OrchestratorState.COMPLETED]:
+                not_ready.append(item)
 
-        if uninitialized:
-            names = [item['name'] for item in uninitialized]
-            logger.warning(f"Cannot compile uninitialized plates: {', '.join(names)}")
+        if not_ready:
+            names = [item['name'] for item in not_ready]
+            # More accurate error message based on actual state
+            if any(self.orchestrators.get(item['path']) is None for item in not_ready):
+                logger.warning(f"Cannot compile plates that haven't been initialized: {', '.join(names)}")
+            elif any(self.orchestrators.get(item['path']).state == OrchestratorState.EXECUTING for item in not_ready):
+                logger.warning(f"Cannot compile plates that are currently executing: {', '.join(names)}")
+            else:
+                logger.warning(f"Cannot compile plates in current state: {', '.join(names)}")
             return
 
         # Validate all selected plates have pipelines

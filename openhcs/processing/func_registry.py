@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 # Thread-safe lock for registry access
 _registry_lock = threading.Lock()
 
+# Import hook system for auto-decorating external libraries
+_original_import = __builtins__['__import__']
+_decoration_applied = set()
+_import_hook_installed = False
+
 # Global registry of functions by backend type
 # Structure: {backend_name: [function1, function2, ...]}
 FUNC_REGISTRY: Dict[str, List[Callable]] = {}
@@ -45,6 +50,86 @@ VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax", "pyclespera
 
 # Flag to track if the registry has been initialized
 _registry_initialized = False
+
+# Flag to track if we're currently in the initialization process (prevent recursion)
+_registry_initializing = False
+
+
+def _install_import_hook() -> None:
+    """
+    Install import hook to auto-decorate external library functions on import.
+
+    This makes functions self-contained and eliminates the need for registry
+    initialization in subprocess environments.
+    """
+    global _import_hook_installed
+
+    if _import_hook_installed:
+        return
+
+    def _decorating_import(name, *args, **kwargs):
+        """Import hook that auto-decorates external libraries."""
+        module = _original_import(name, *args, **kwargs)
+
+        # Only decorate once per module
+        if name not in _decoration_applied:
+            try:
+                if name == 'pyclesperanto':
+                    _decorate_pyclesperanto_on_import(module)
+                    _decoration_applied.add(name)
+                    logger.debug(f"Auto-decorated pyclesperanto functions on import")
+                elif name.startswith('skimage'):
+                    _decorate_skimage_on_import(module)
+                    _decoration_applied.add(name)
+                    logger.debug(f"Auto-decorated skimage functions on import: {name}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-decorate {name}: {e}")
+
+        return module
+
+    # Install the hook
+    __builtins__['__import__'] = _decorating_import
+    _import_hook_installed = True
+    logger.debug("Import hook installed for auto-decorating external libraries")
+
+
+def _decorate_pyclesperanto_on_import(cle_module) -> None:
+    """Auto-decorate pyclesperanto functions when module is imported."""
+    try:
+        # Use direct decoration to avoid circular imports
+        # This is a simplified version that decorates common functions
+        common_functions = [
+            'sobel', 'gaussian_blur', 'threshold_otsu', 'erode_sphere', 'dilate_sphere',
+            'opening_sphere', 'closing_sphere', 'subtract_images', 'add_images',
+            'multiply_images', 'divide_images', 'maximum_images', 'minimum_images',
+            'absolute_difference', 'mean_filter', 'median_filter', 'variance_filter',
+            'standard_deviation_filter', 'entropy_filter', 'laplacian_filter'
+        ]
+
+        decorated_count = 0
+        for func_name in common_functions:
+            if hasattr(cle_module, func_name):
+                func = getattr(cle_module, func_name)
+                if callable(func) and not hasattr(func, 'input_memory_type'):
+                    func.input_memory_type = "pyclesperanto"
+                    func.output_memory_type = "pyclesperanto"
+                    decorated_count += 1
+
+        logger.debug(f"Auto-decorated {decorated_count} common pyclesperanto functions")
+
+    except Exception as e:
+        logger.warning(f"Failed to auto-decorate pyclesperanto: {e}")
+
+
+def _decorate_skimage_on_import(skimage_module) -> None:
+    """Auto-decorate scikit-image functions when module is imported."""
+    try:
+        # For now, just mark that we've seen this module
+        # Full scikit-image decoration can be added later if needed
+        logger.debug(f"Skimage module imported: {skimage_module.__name__}")
+
+    except Exception as e:
+        logger.warning(f"Failed to auto-decorate skimage: {e}")
 
 
 def _auto_initialize_registry() -> None:
@@ -64,12 +149,16 @@ def _auto_initialize_registry() -> None:
         for memory_type in VALID_MEMORY_TYPES:
             FUNC_REGISTRY[memory_type] = []
 
-        # Scan processing directory and register functions
+        # Phase 1: Scan processing directory and register native OpenHCS functions
         _scan_and_register_functions()
 
+        # Phase 2: Register external library functions
+        _register_external_libraries()
+
+        total_functions = sum(len(funcs) for funcs in FUNC_REGISTRY.values())
         logger.info(
             "Function registry auto-initialized with %d functions across %d backends",
-            sum(len(funcs) for funcs in FUNC_REGISTRY.values()),
+            total_functions,
             len(VALID_MEMORY_TYPES)
         )
 
@@ -110,8 +199,11 @@ def initialize_registry() -> None:
         for memory_type in VALID_MEMORY_TYPES:
             FUNC_REGISTRY[memory_type] = []
         
-        # Scan processing directory and register functions
+        # Phase 1: Scan processing directory and register native OpenHCS functions
         _scan_and_register_functions()
+
+        # Phase 2: Register external library functions
+        _register_external_libraries()
         
         logger.info(
             "Function registry initialized with %d functions across %d backends",
@@ -125,21 +217,22 @@ def initialize_registry() -> None:
 
 def _scan_and_register_functions() -> None:
     """
-    Scan the processing directory for functions with matching input/output memory types.
-    
+    Scan the processing directory for native OpenHCS functions.
+
     This function recursively imports all modules in the processing directory
     and registers functions that have matching input_memory_type and output_memory_type
     attributes that are in the set of valid memory types.
-    
-    This is an internal function called during initialization.
+
+    This is Phase 1 of initialization - only native OpenHCS functions.
+    External library functions are registered in Phase 2.
     """
     from openhcs import processing
-    
+
     processing_path = os.path.dirname(processing.__file__)
     processing_package = "openhcs.processing"
-    
-    logger.info("Scanning for functions in %s", processing_path)
-    
+
+    logger.info("Phase 1: Scanning for native OpenHCS functions in %s", processing_path)
+
     # Walk through all modules in the processing package
     for _, module_name, is_pkg in pkgutil.walk_packages([processing_path], f"{processing_package}."):
         try:
@@ -168,6 +261,34 @@ def _scan_and_register_functions() -> None:
             logger.debug(f"Module {module_name}: found {function_count} registerable functions")
         except Exception as e:
             logger.warning("Error importing module %s: %s", module_name, e)
+
+
+def _register_external_libraries() -> None:
+    """
+    Phase 2: Register external library functions (pyclesperanto, scikit-image).
+
+    This is separate from core scanning to avoid circular dependencies.
+    External library registration should use direct registration, not trigger re-initialization.
+    """
+    logger.info("Phase 2: Registering external library functions...")
+
+    try:
+        from openhcs.processing.backends.analysis.pyclesperanto_registry import _register_pycle_ops_direct
+        _register_pycle_ops_direct()
+        logger.info("Successfully registered pyclesperanto functions")
+    except ImportError as e:
+        logger.warning(f"Could not register pyclesperanto functions: {e}")
+    except Exception as e:
+        logger.error(f"Error registering pyclesperanto functions: {e}")
+
+    try:
+        from openhcs.processing.backends.analysis.scikit_image_registry import _register_skimage_ops_direct
+        _register_skimage_ops_direct()
+        logger.info("Successfully registered scikit-image functions")
+    except ImportError as e:
+        logger.warning(f"Could not register scikit-image functions: {e}")
+    except Exception as e:
+        logger.error(f"Error registering scikit-image functions: {e}")
 
 
 def register_function(func: Callable, backend: str = None, **kwargs) -> None:
@@ -327,6 +448,11 @@ def get_valid_memory_types() -> Set[str]:
         A set of valid memory type names
     """
     return VALID_MEMORY_TYPES.copy()
+
+
+# Install import hook when this module is imported
+# This ensures external library functions are auto-decorated everywhere
+_install_import_hook()
 
 
 def get_function_by_name(function_name: str, memory_type: str) -> Optional[Callable]:

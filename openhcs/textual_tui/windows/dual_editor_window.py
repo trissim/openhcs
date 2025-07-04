@@ -100,7 +100,7 @@ class TabbedContentWithButtons(TabbedContent):
 
         tabs.extend([
             spacer,
-            ButtonTab("Save", "save", disabled=True),
+            ButtonTab("Save", "save", disabled=False),  # Always enabled
             ButtonTab("Close", "close"),
         ])
 
@@ -284,18 +284,17 @@ class DualEditorWindow(BaseOpenHCSWindow):
         has_changes = not self._steps_equal(self.editing_step, self.original_step)
         self.has_changes = has_changes
 
-        # For new steps, always enable save button since they need to be saved
-        # For existing steps, enable only when there are changes
-        save_should_be_enabled = self.is_new or has_changes
+        # Always keep save button enabled - user requested this for better UX
+        # No need to disable save button based on changes
 
-        # Update save button state
+        # Update save button state - always enabled
         try:
             # Find the save button tab by looking for button tabs
             tabs = self.query(ButtonTab)
             for tab in tabs:
                 if tab.button_id == "save":
-                    tab.disabled = not save_should_be_enabled
-                    logger.debug(f"Save button disabled={not save_should_be_enabled} (is_new={self.is_new}, has_changes={has_changes})")
+                    tab.disabled = False  # Always enabled
+                    logger.debug(f"Save button always enabled (user preference)")
                     break
         except Exception as e:
             logger.debug(f"Error updating save button state: {e}")

@@ -25,6 +25,9 @@ try:
 except ImportError:
     pass
 
+# Auto-registration is now handled centrally in func_registry._scan_and_register_functions()
+# No need to trigger it here anymore
+
 __all__ = [
     # DXF mask pipeline
     "dxf_mask_pipeline",

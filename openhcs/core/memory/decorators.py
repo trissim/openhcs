@@ -544,6 +544,13 @@ def pyclesperanto(
         wrapper.input_memory_type = func.input_memory_type
         wrapper.output_memory_type = func.output_memory_type
 
+        # Make wrapper pickleable by preserving original function identity
+        wrapper.__module__ = getattr(func, '__module__', wrapper.__module__)
+        wrapper.__qualname__ = getattr(func, '__qualname__', wrapper.__qualname__)
+
+        # Store reference to original function for pickle support
+        wrapper.__wrapped__ = func
+
         return wrapper
 
     # Handle both @pyclesperanto and @pyclesperanto(input_type=..., output_type=...) forms
