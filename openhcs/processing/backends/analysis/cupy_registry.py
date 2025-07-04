@@ -270,22 +270,23 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
 
 def _register_cupy_ops_direct() -> None:
     """
-    Direct decoration of CuPy ndimage functions - SIMPLE APPROACH.
-
-    Just add memory type attributes directly to the original functions.
-    No wrappers, no complexity - just make external functions BE OpenHCS functions.
+    Register CuPy ndimage functions using unified decoration pattern.
 
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
     try:
         import cupyx.scipy.ndimage as ndimage
     except ImportError:
-        print("⚠️  CuPy not available - skipping CuPy registration")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("CuPy not available - skipping CuPy registration")
         return
 
     from openhcs.processing.func_registry import _register_function
+    import logging
 
-    print("🔧 Direct decoration of CuPy ndimage functions - SIMPLE APPROACH...")
+    logger = logging.getLogger(__name__)
+    logger.info("Registering CuPy ndimage functions using unified pattern")
 
     decorated_count = 0
     skipped_count = 0
@@ -305,24 +306,31 @@ def _register_cupy_ops_direct() -> None:
                 skipped_count += 1
                 continue
 
-            # SIMPLE: Just add memory type attributes directly to the original function
-            original_func = meta.func
-
-            # Add memory type attributes - this makes it an OpenHCS function
+            # Apply unified decoration pattern
             from openhcs.constants import MemoryType
-            original_func.input_memory_type = MemoryType.CUPY.value
-            original_func.output_memory_type = MemoryType.CUPY.value
+            from openhcs.processing.func_registry import _apply_unified_decoration
 
-            # Register the original function (now it's an OpenHCS function)
-            _register_function(original_func, MemoryType.CUPY.value)
+            wrapper_func = _apply_unified_decoration(
+                original_func=meta.func,
+                func_name=func_name,
+                memory_type=MemoryType.CUPY,
+                create_wrapper=False  # CuPy generally preserves dtypes well
+            )
+
+            # Register the function
+            _register_function(wrapper_func, MemoryType.CUPY.value)
             decorated_count += 1
 
         except Exception as e:
-            print(f"Warning: Failed to decorate {func_name}: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to decorate {func_name}: {e}")
             skipped_count += 1
 
-    print(f"✅ Decorated {decorated_count} CuPy ndimage functions as OpenHCS functions")
-    print(f"⚠️  Skipped {skipped_count} functions (unknown contracts or dim_change)")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Decorated {decorated_count} CuPy ndimage functions as OpenHCS functions")
+    logger.info(f"Skipped {skipped_count} functions (unknown contracts or dim_change)")
 
 
 if __name__ == "__main__":  # pragma: no cover – manual use

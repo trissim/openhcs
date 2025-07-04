@@ -414,6 +414,13 @@ class ParameterFormManager:
                 # Handle generic types like List[float], Tuple[int, int], Dict[str, int]
                 # Use ast.literal_eval since List("[1]") doesn't work, but ast.literal_eval("[1]") does
                 return ast.literal_eval(string_value)
+            elif param_type is Any:
+                # No type hints available - try ast.literal_eval for Python literals
+                try:
+                    return ast.literal_eval(string_value)
+                except (ValueError, SyntaxError):
+                    # If literal_eval fails, return as string
+                    return string_value
             else:
                 # For everything else, try calling the type directly
                 return param_type(string_value)

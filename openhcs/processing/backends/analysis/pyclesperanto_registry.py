@@ -418,21 +418,28 @@ def _register_pycle_ops_direct() -> None:
             continue
 
         try:
-            # SIMPLE: Just add memory type attributes directly to the original function
-            original_func = meta.func
-
-            # Add memory type attributes - this makes it an OpenHCS function
+            # Apply unified decoration pattern
             from openhcs.constants import MemoryType
-            original_func.input_memory_type = MemoryType.PYCLESPERANTO.value
-            original_func.output_memory_type = MemoryType.PYCLESPERANTO.value
+            from openhcs.processing.func_registry import _apply_unified_decoration
 
-            # Register the original function (now it's an OpenHCS function)
-            _register_function(original_func, MemoryType.PYCLESPERANTO.value)
+            wrapper_func = _apply_unified_decoration(
+                original_func=meta.func,
+                func_name=meta.name,
+                memory_type=MemoryType.PYCLESPERANTO,
+                create_wrapper=False  # pyclesperanto generally preserves dtypes well
+            )
+
+            # Register the function
+            _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
             decorated_count += 1
 
         except Exception as e:
-            print(f"Warning: Failed to decorate {meta.name}: {e}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to decorate {meta.name}: {e}")
             skipped_count += 1
 
-    print(f"✅ Decorated {decorated_count} pyclesperanto functions as OpenHCS functions")
-    print(f"⚠️  Skipped {skipped_count} functions (dim_change or errors)")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Decorated {decorated_count} pyclesperanto functions as OpenHCS functions")
+    logger.info(f"Skipped {skipped_count} functions (dim_change or errors)")

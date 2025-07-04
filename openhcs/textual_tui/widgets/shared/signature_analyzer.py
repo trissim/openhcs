@@ -264,7 +264,8 @@ class SignatureAnalyzer:
                         parameters.update(original_params)
                     continue
 
-                param_type = type_hints.get(param_name, str)
+                from typing import Any
+                param_type = type_hints.get(param_name, Any)
                 default_value = param.default if param.default != inspect.Parameter.empty else None
                 is_required = param.default == inspect.Parameter.empty
 

@@ -284,6 +284,56 @@ def _scan_and_register_functions() -> None:
             logger.warning("Error importing module %s: %s", module_name, e)
 
 
+def _apply_unified_decoration(original_func, func_name, memory_type, create_wrapper=True):
+    """
+    Unified decoration pattern for all external library functions.
+
+    This applies the same hybrid approach across all registries:
+    1. Direct decoration (for subprocess compatibility)
+    2. Optional enhanced wrapper (for dtype preservation)
+    3. Module replacement (for best user experience)
+
+    Args:
+        original_func: The original external library function
+        func_name: Function name for wrapper creation
+        memory_type: MemoryType enum value (NUMPY, CUPY, PYCLESPERANTO)
+        create_wrapper: Whether to create dtype-preserving wrapper
+
+    Returns:
+        The function to register (wrapper if created, original if not)
+    """
+    from openhcs.constants import MemoryType
+    import sys
+
+    # Step 1: Direct decoration (for subprocess compatibility)
+    original_func.input_memory_type = memory_type.value
+    original_func.output_memory_type = memory_type.value
+
+    if not create_wrapper:
+        return original_func
+
+    # Step 2: Create enhanced wrapper (for dtype preservation)
+    if memory_type == MemoryType.NUMPY:
+        from openhcs.processing.backends.analysis.scikit_image_registry import _create_dtype_preserving_wrapper
+        wrapper_func = _create_dtype_preserving_wrapper(original_func, func_name)
+    else:
+        # For GPU libraries, use simpler wrapper (they generally preserve dtypes better)
+        wrapper_func = original_func
+
+    wrapper_func.input_memory_type = memory_type.value
+    wrapper_func.output_memory_type = memory_type.value
+
+    # Step 3: Module replacement (for best user experience)
+    module_name = original_func.__module__
+    if module_name in sys.modules:
+        target_module = sys.modules[module_name]
+        if hasattr(target_module, func_name):
+            setattr(target_module, func_name, wrapper_func)
+            logger.debug(f"Replaced {module_name}.{func_name} with enhanced function")
+
+    return wrapper_func
+
+
 def _register_external_libraries() -> None:
     """
     Phase 2: Register external library functions (pyclesperanto, scikit-image).
@@ -530,5 +580,5 @@ def get_all_function_names(memory_type: str) -> List[str]:
 # Auto-initialize the registry on module import (following storage_registry pattern)
 # Skip initialization in subprocess workers for faster startup
 import os
-if not os.environ.get('OPENHCS_SKIP_REGISTRY_INIT'):
+if not os.environ.get('OPENHCS_SUBPROCESS_MODE'):
     _auto_initialize_registry()

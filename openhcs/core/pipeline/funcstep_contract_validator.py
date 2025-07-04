@@ -284,13 +284,6 @@ class FuncStepContractValidator:
                 fn_input_type = fn.input_memory_type
                 fn_output_type = fn.output_memory_type
             except AttributeError as exc:
-                # DEBUG: Add more information about the failing function
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"🔍 DEBUG: Function '{fn.__name__}' missing memory type attributes")
-                logger.error(f"🔍 DEBUG: Function module: {getattr(fn, '__module__', 'unknown')}")
-                logger.error(f"🔍 DEBUG: Function type: {type(fn)}")
-                logger.error(f"🔍 DEBUG: Function attributes: {[attr for attr in dir(fn) if 'memory' in attr.lower()]}")
                 raise ValueError(missing_memory_type_error(fn.__name__, step_name)) from exc
 
             # Validate memory types against known valid types

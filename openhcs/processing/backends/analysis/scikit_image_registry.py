@@ -16,9 +16,18 @@ import warnings
 import json
 import os
 from pathlib import Path
+import logging
 
 # Suppress scikit-image warnings during analysis
 warnings.filterwarnings('ignore', category=UserWarning, module='skimage')
+
+# Set up logger
+logger = logging.getLogger(__name__)
+
+
+# ===== UNIFIED REGISTRY PATTERN =====
+
+
 
 
 # ===== METADATA CACHING SYSTEM =====
@@ -31,39 +40,32 @@ def _get_metadata_cache_path() -> Path:
 
 
 def _save_function_metadata(registry: Dict[str, 'SkimageFunction']) -> None:
-    """Save function analysis metadata to cache for subprocess workers."""
+    """Save minimal function metadata to cache for subprocess workers."""
     cache_path = _get_metadata_cache_path()
 
-    # Convert registry to serializable format
+    # Store only essential data needed for subprocess registration
     metadata = {}
     for full_name, func_meta in registry.items():
-        # Store the actual module where the function lives (not the public API module)
-        actual_module = func_meta.func.__module__
-
-        metadata[full_name] = {
-            'name': func_meta.name,
-            'module': actual_module,  # Store actual module path where function lives
-            'contract': func_meta.contract.value,
-            'supports_3d': func_meta.supports_3d,
-            'has_channel_axis': func_meta.has_channel_axis,
-            'slice_by_slice_param': func_meta.slice_by_slice_param,
-            'doc': func_meta.doc
-        }
+        # Only cache functions that will be decorated (skip UNKNOWN/DIM_CHANGE)
+        if func_meta.contract in [ProcessingContract.SLICE_SAFE, ProcessingContract.CROSS_Z]:
+            metadata[full_name] = {
+                'name': func_meta.name,
+                'module': func_meta.func.__module__,  # Actual module where function lives
+                'contract': func_meta.contract.value
+            }
 
     try:
         with open(cache_path, 'w') as f:
             json.dump(metadata, f, indent=2)
-        import logging
         logger = logging.getLogger(__name__)
         logger.info(f"Saved function metadata cache: {len(metadata)} functions")
     except Exception as e:
-        import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to save metadata cache: {e}")
 
 
-def _load_function_metadata() -> Optional[Dict[str, Dict[str, Any]]]:
-    """Load function analysis metadata from cache for subprocess workers."""
+def _load_function_metadata() -> Optional[Dict[str, Dict[str, str]]]:
+    """Load minimal function metadata from cache for subprocess workers."""
     cache_path = _get_metadata_cache_path()
 
     if not cache_path.exists():
@@ -72,12 +74,10 @@ def _load_function_metadata() -> Optional[Dict[str, Dict[str, Any]]]:
     try:
         with open(cache_path, 'r') as f:
             metadata = json.load(f)
-        import logging
         logger = logging.getLogger(__name__)
         logger.info(f"Loaded function metadata cache: {len(metadata)} functions")
         return metadata
     except Exception as e:
-        import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to load metadata cache: {e}")
         return None
@@ -91,6 +91,12 @@ PURE_ARRAY_FUNCTIONS = {
     'laplacian', 'erosion', 'dilation', 'opening', 'closing', 'unsharp_mask',
     'wiener', 'richardson_lucy', 'denoise_tv_chambolle', 'denoise_bilateral',
     'rank_filter', 'minimum_filter', 'maximum_filter', 'percentile_filter'
+}
+
+# Edge detection functions that should be processed slice-by-slice
+# These functions compute gradients and should NOT include Z-gradients for microscopy fields
+SLICE_BY_SLICE_FUNCTIONS = {
+    'sobel', 'prewitt', 'scharr', 'laplacian', 'roberts', 'farid'
 }
 
 # Category 2: Value-returning functions - return (array, computed_value)
@@ -597,14 +603,8 @@ def _register_skimage_ops_direct() -> None:
     from openhcs.processing.func_registry import _register_function
     import os
 
-    import logging
-    logger = logging.getLogger(__name__)
-
     # Check if we're in subprocess mode - use cached metadata instead of expensive analysis
-    subprocess_mode = os.environ.get('OPENHCS_SUBPROCESS_MODE')
-    logger.info(f"DEBUG: OPENHCS_SUBPROCESS_MODE = {subprocess_mode}")
-
-    if subprocess_mode == '1':
+    if os.environ.get('OPENHCS_SUBPROCESS_MODE'):
         logger.info("SUBPROCESS: Using cached metadata for scikit-image function registration")
         _register_skimage_ops_from_cache()
         return
@@ -631,57 +631,17 @@ def _register_skimage_ops_direct() -> None:
                 skipped_count += 1
                 continue
 
-            # Only decorate SLICE_SAFE and CROSS_Z functions
-            original_func = meta.func
-
-            # HYBRID APPROACH: Decorate original function AND create enhanced wrapper
-            # This gives us subprocess compatibility + dtype preservation + auto conversion
-
-            # Step 1: Decorate the original function directly (for subprocess compatibility)
+            # Apply unified decoration pattern
             from openhcs.constants import MemoryType
-            original_func.input_memory_type = MemoryType.NUMPY.value
-            original_func.output_memory_type = MemoryType.NUMPY.value
+            from openhcs.processing.func_registry import _apply_unified_decoration
+            wrapper_func = _apply_unified_decoration(
+                original_func=meta.func,
+                func_name=meta.name,
+                memory_type=MemoryType.NUMPY,
+                create_wrapper=True  # scikit-image needs dtype preservation
+            )
 
-            # Step 2: Create enhanced wrapper with dtype preservation
-            wrapper_func = _create_dtype_preserving_wrapper(original_func, meta.name)
-            wrapper_func.input_memory_type = MemoryType.NUMPY.value
-            wrapper_func.output_memory_type = MemoryType.NUMPY.value
-
-            # Step 3: Replace module functions with enhanced wrapper (best of both worlds)
-            import sys
-            module_name = original_func.__module__
-            func_name = original_func.__name__
-
-            # Get the actual module directly from sys.modules
-            if module_name in sys.modules:
-                target_module = sys.modules[module_name]
-
-                # Replace the function directly in the defining module
-                if hasattr(target_module, func_name):
-                    setattr(target_module, func_name, wrapper_func)
-                    print(f"  ✅ Replaced {module_name}.{func_name} with enhanced wrapper")
-
-                    # Also update any importing modules (e.g., skimage.filters imports from skimage._shared.filters)
-                    # Check common importing patterns for scikit-image
-                    if module_name.startswith('skimage._shared.'):
-                        # Check if this function is imported into skimage.filters
-                        public_module_name = module_name.replace('._shared.', '.')
-                        if public_module_name in sys.modules:
-                            public_module = sys.modules[public_module_name]
-                            if hasattr(public_module, func_name):
-                                setattr(public_module, func_name, wrapper_func)
-                                print(f"  ✅ Also updated {public_module_name}.{func_name}")
-
-                else:
-                    print(f"  ⚠️ Function {func_name} not found in module {module_name}")
-                    skipped_count += 1
-                    continue
-            else:
-                print(f"  ⚠️ Module {module_name} not found in sys.modules")
-                skipped_count += 1
-                continue
-
-            # Step 4: Register the enhanced wrapper (OpenHCS gets the best version)
+            # Register the enhanced function
             _register_function(wrapper_func, MemoryType.NUMPY.value)
             decorated_count += 1
 
@@ -695,16 +655,6 @@ def _register_skimage_ops_direct() -> None:
     # Save metadata cache for subprocess workers
     _save_function_metadata(registry)
 
-    # Verify a few key functions were decorated properly
-    try:
-        import skimage.filters
-        if hasattr(skimage.filters.gaussian, 'input_memory_type'):
-            logger.info("Verification: skimage.filters.gaussian properly decorated")
-        else:
-            logger.error("Verification failed: skimage.filters.gaussian missing memory type attributes")
-    except Exception as e:
-        logger.warning(f"Could not verify decoration: {e}")
-
 
 def _register_skimage_ops_from_cache() -> None:
     """
@@ -717,8 +667,6 @@ def _register_skimage_ops_from_cache() -> None:
     from openhcs.constants import MemoryType
     import sys
 
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info("SUBPROCESS: Registering scikit-image functions from metadata cache")
 
     # Load cached metadata
@@ -732,13 +680,8 @@ def _register_skimage_ops_from_cache() -> None:
 
     for full_name, meta in metadata.items():
         try:
-            # Skip functions that were skipped in main process
-            if meta['contract'] in ['UNKNOWN', 'DIM_CHANGE']:
-                skipped_count += 1
-                continue
-
-            # Import the function using the full module path from cache
-            module_name = meta['module']  # Now contains full path like 'skimage.filters'
+            # All cached functions are decoratable (SLICE_SAFE or CROSS_Z)
+            module_name = meta['module']
             func_name = meta['name']
 
             try:
@@ -754,37 +697,16 @@ def _register_skimage_ops_from_cache() -> None:
                 skipped_count += 1
                 continue
 
-            # Apply the same hybrid decoration as main process
-            # Step 1: Decorate the original function directly (for subprocess compatibility)
-            original_func.input_memory_type = MemoryType.NUMPY.value
-            original_func.output_memory_type = MemoryType.NUMPY.value
+            # Apply the same unified decoration as main process
+            from openhcs.processing.func_registry import _apply_unified_decoration
+            wrapper_func = _apply_unified_decoration(
+                original_func=original_func,
+                func_name=func_name,
+                memory_type=MemoryType.NUMPY,
+                create_wrapper=True  # scikit-image needs dtype preservation
+            )
 
-            # Step 2: Create enhanced wrapper with dtype preservation
-            wrapper_func = _create_dtype_preserving_wrapper(original_func, func_name)
-            wrapper_func.input_memory_type = MemoryType.NUMPY.value
-            wrapper_func.output_memory_type = MemoryType.NUMPY.value
-
-            # Step 3: Replace module function with enhanced wrapper
-            if module_name in sys.modules:
-                target_module = sys.modules[module_name]
-                if hasattr(target_module, func_name):
-                    setattr(target_module, func_name, wrapper_func)
-                    logger.info(f"SUBPROCESS: Replaced {module_name}.{func_name} with enhanced wrapper")
-
-                    # Handle _shared module imports (like gaussian)
-                    if module_name.startswith('skimage._shared.'):
-                        public_module_name = module_name.replace('._shared.', '.')
-                        if public_module_name in sys.modules:
-                            public_module = sys.modules[public_module_name]
-                            if hasattr(public_module, func_name):
-                                setattr(public_module, func_name, wrapper_func)
-                                logger.info(f"SUBPROCESS: Also replaced {public_module_name}.{func_name}")
-                else:
-                    logger.warning(f"SUBPROCESS: Function {func_name} not found in {module_name}")
-            else:
-                logger.warning(f"SUBPROCESS: Module {module_name} not in sys.modules")
-
-            # Step 4: Register the enhanced wrapper
+            # Register the enhanced function
             _register_function(wrapper_func, MemoryType.NUMPY.value)
             decorated_count += 1
 
@@ -794,16 +716,6 @@ def _register_skimage_ops_from_cache() -> None:
 
     logger.info(f"SUBPROCESS: Decorated {decorated_count} scikit-image functions from cache")
     logger.info(f"SUBPROCESS: Skipped {skipped_count} functions (UNKNOWN/DIM_CHANGE or errors)")
-
-    # Verify key functions
-    try:
-        import skimage.filters
-        if hasattr(skimage.filters.gaussian, 'input_memory_type'):
-            logger.info("SUBPROCESS: Verification successful - all functions ready for compilation")
-        else:
-            logger.error("SUBPROCESS: Verification failed - functions missing memory type attributes")
-    except Exception as e:
-        logger.warning(f"SUBPROCESS: Could not verify decoration: {e}")
 
 
 
