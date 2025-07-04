@@ -23,6 +23,8 @@ from openhcs.processing.backends import (analysis, assemblers, enhance,
 from openhcs.processing.func_registry import (FUNC_REGISTRY,
                                                  get_function_info,
                                                  get_functions_by_memory_type,
+                                                 get_function_by_name,
+                                                 get_all_function_names,
                                                  get_valid_memory_types,
                                                  is_registry_initialized)
 # Import decorators directly from core module (function_registry.py is deprecated)

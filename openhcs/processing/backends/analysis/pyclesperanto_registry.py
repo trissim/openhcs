@@ -271,9 +271,117 @@ if __name__ == "__main__":  # pragma: no cover – manual use
     pprint({k: len(v) for k, v in summary.items()})
 
 
+def _scale_and_convert_pyclesperanto(result, target_dtype):
+    """
+    Scale pyclesperanto results to target integer range and convert dtype.
+
+    pyclesperanto functions often return float32 regardless of input type,
+    similar to scikit-image behavior.
+    """
+    try:
+        import pyclesperanto as cle
+        import numpy as np
+    except ImportError:
+        return result
+
+    if not hasattr(result, 'dtype'):
+        return result
+
+    # Check if result is floating point and target is integer
+    result_is_float = np.issubdtype(result.dtype, np.floating)
+    target_is_int = target_dtype in [np.uint8, np.uint16, np.uint32, np.int8, np.int16, np.int32]
+
+    if result_is_float and target_is_int:
+        # For pyclesperanto, we need to handle the scaling differently
+        # pyclesperanto functions often return values in a different range than input
+
+        # Get min/max of result for proper scaling
+        result_min = float(cle.minimum_of_all_pixels(result))
+        result_max = float(cle.maximum_of_all_pixels(result))
+
+        if result_max > result_min:  # Avoid division by zero
+            # Normalize to [0, 1] range
+            # Step 1: subtract minimum (result - min)
+            normalized = cle.subtract_image_from_scalar(result, scalar=result_min)
+            # Step 2: divide by range (result - min) / (max - min) = multiply by 1/(max-min)
+            range_val = result_max - result_min
+            normalized = cle.multiply_image_and_scalar(normalized, scalar=1.0/range_val)
+
+            # Scale to target dtype range
+            if target_dtype == np.uint8:
+                scaled = cle.multiply_image_and_scalar(normalized, scalar=255.0)
+            elif target_dtype == np.uint16:
+                scaled = cle.multiply_image_and_scalar(normalized, scalar=65535.0)
+            elif target_dtype == np.uint32:
+                scaled = cle.multiply_image_and_scalar(normalized, scalar=4294967295.0)
+            else:
+                scaled = normalized
+
+            # Convert to target dtype using push/pull method
+            scaled_cpu = cle.pull(scaled).astype(target_dtype)
+            return cle.push(scaled_cpu)
+        else:
+            # Constant image, just convert dtype
+            result_cpu = cle.pull(result).astype(target_dtype)
+            return cle.push(result_cpu)
+
+    # Direct conversion for same numeric type families or if no conversion needed
+    if result.dtype != target_dtype:
+        result_cpu = cle.pull(result).astype(target_dtype)
+        return cle.push(result_cpu)
+    else:
+        return result
+
+
+def _create_pyclesperanto_array_compliant_wrapper(original_func, func_name):
+    """
+    Create a wrapper that ensures array-in/array-out compliance and dtype preservation for pyclesperanto functions.
+
+    All OpenHCS functions must:
+    1. Take 3D pyclesperanto array as first argument
+    2. Return 3D pyclesperanto array as first output
+    3. Additional outputs (values, coordinates) as 2nd, 3rd, etc. returns
+    4. Preserve input dtype when appropriate
+    """
+    from functools import wraps
+
+    @wraps(original_func)
+    def pyclesperanto_array_compliant_wrapper(image_3d, *args, **kwargs):
+        original_dtype = image_3d.dtype
+        result = original_func(image_3d, *args, **kwargs)
+
+        # Most pyclesperanto functions are pure array functions that should preserve dtype
+        # pyclesperanto doesn't have as many value-returning functions as scikit-image
+
+        # Check if result is a pyclesperanto array
+        try:
+            import pyclesperanto as cle
+            if hasattr(result, 'dtype') and hasattr(result, 'shape'):
+                # This is an array result - apply dtype preservation
+                if result.dtype != original_dtype:
+                    return _scale_and_convert_pyclesperanto(result, original_dtype)
+                return result
+            else:
+                # This might be a scalar/value result - return (array, value) tuple
+                return image_3d, result
+        except ImportError:
+            # Fallback if pyclesperanto not available
+            return result
+
+    # Preserve function metadata
+    pyclesperanto_array_compliant_wrapper.__name__ = original_func.__name__
+    pyclesperanto_array_compliant_wrapper.__module__ = original_func.__module__
+    pyclesperanto_array_compliant_wrapper.__doc__ = original_func.__doc__
+
+    return pyclesperanto_array_compliant_wrapper
+
+
 def _register_pycle_ops_direct() -> None:
     """
-    Direct registration of pyclesperanto functions without triggering registry initialization.
+    Direct decoration of pyclesperanto functions - SIMPLE APPROACH.
+
+    Just add memory type attributes directly to the original functions.
+    No wrappers, no complexity - just make external functions BE OpenHCS functions.
 
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
@@ -281,9 +389,9 @@ def _register_pycle_ops_direct() -> None:
     from openhcs.core.memory.decorators import pyclesperanto
     import inspect
 
-    print("🔧 Direct registration of pyclesperanto functions...")
+    print("🔧 Direct decoration of pyclesperanto functions - SIMPLE APPROACH...")
 
-    registered_count = 0
+    decorated_count = 0
     skipped_count = 0
 
     # Get functions using build_pycle_registry (same as register_pycle_ops)
@@ -310,21 +418,21 @@ def _register_pycle_ops_direct() -> None:
             continue
 
         try:
-            # Instead of creating a wrapper, add memory type attributes directly to the original function
-            # This makes the function pickleable since it's the same object as the module function
+            # SIMPLE: Just add memory type attributes directly to the original function
             original_func = meta.func
 
-            # Add memory type attributes directly to the original function
-            original_func.input_memory_type = "pyclesperanto"
-            original_func.output_memory_type = "pyclesperanto"
+            # Add memory type attributes - this makes it an OpenHCS function
+            from openhcs.constants import MemoryType
+            original_func.input_memory_type = MemoryType.PYCLESPERANTO.value
+            original_func.output_memory_type = MemoryType.PYCLESPERANTO.value
 
-            # Direct registration without triggering initialization
-            _register_function(original_func, "pyclesperanto")
-            registered_count += 1
+            # Register the original function (now it's an OpenHCS function)
+            _register_function(original_func, MemoryType.PYCLESPERANTO.value)
+            decorated_count += 1
 
         except Exception as e:
-            print(f"Warning: Failed to register {meta.name}: {e}")
+            print(f"Warning: Failed to decorate {meta.name}: {e}")
             skipped_count += 1
 
-    print(f"✅ Direct registered {registered_count} pyclesperanto functions")
+    print(f"✅ Decorated {decorated_count} pyclesperanto functions as OpenHCS functions")
     print(f"⚠️  Skipped {skipped_count} functions (dim_change or errors)")

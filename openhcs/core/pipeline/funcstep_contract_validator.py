@@ -26,7 +26,22 @@ logger = logging.getLogger(__name__)
 
 # Simple, direct error messages
 def missing_memory_type_error(func_name, step_name):
-    return f"Function '{func_name}' in step '{step_name}' needs memory type decorator (@numpy, @cupy, @torch, etc.)"
+    return (
+        f"Function '{func_name}' in step '{step_name}' needs memory type decorator (@numpy, @cupy, @torch, etc.)\n"
+        f"\n"
+        f"💡 SOLUTION: Use OpenHCS registry functions instead of raw external library functions:\n"
+        f"\n"
+        f"❌ WRONG:\n"
+        f"   import pyclesperanto as cle\n"
+        f"   step = FunctionStep(func=cle.{func_name}, name='{step_name}')\n"
+        f"\n"
+        f"✅ CORRECT:\n"
+        f"   from openhcs.processing.func_registry import get_function_by_name\n"
+        f"   {func_name}_func = get_function_by_name('{func_name}', 'pyclesperanto')  # or 'numpy', 'cupy'\n"
+        f"   step = FunctionStep(func={func_name}_func, name='{step_name}')\n"
+        f"\n"
+        f"📋 Available functions: Use get_all_function_names('pyclesperanto') to see all options"
+    )
 
 def inconsistent_memory_types_error(step_name, func1, func2):
     return f"Functions in step '{step_name}' have different memory types: {func1} vs {func2}"
@@ -269,6 +284,13 @@ class FuncStepContractValidator:
                 fn_input_type = fn.input_memory_type
                 fn_output_type = fn.output_memory_type
             except AttributeError as exc:
+                # DEBUG: Add more information about the failing function
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"🔍 DEBUG: Function '{fn.__name__}' missing memory type attributes")
+                logger.error(f"🔍 DEBUG: Function module: {getattr(fn, '__module__', 'unknown')}")
+                logger.error(f"🔍 DEBUG: Function type: {type(fn)}")
+                logger.error(f"🔍 DEBUG: Function attributes: {[attr for attr in dir(fn) if 'memory' in attr.lower()]}")
                 raise ValueError(missing_memory_type_error(fn.__name__, step_name)) from exc
 
             # Validate memory types against known valid types

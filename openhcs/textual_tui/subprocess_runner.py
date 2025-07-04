@@ -11,7 +11,7 @@ Usage:
 
 import sys
 import json
-import pickle
+import dill as pickle
 import logging
 import traceback
 import signal
@@ -19,6 +19,22 @@ import atexit
 import os
 from pathlib import Path
 from typing import Dict, List, Any
+
+# Enable subprocess mode - use cached metadata instead of expensive analysis
+os.environ['OPENHCS_SKIP_REGISTRY_INIT'] = '1'
+os.environ['OPENHCS_SUBPROCESS_MODE'] = '1'
+
+# Initialize registry structure for function registration
+import openhcs.processing.func_registry as func_registry_module
+with func_registry_module._registry_lock:
+    if not func_registry_module._registry_initialized:
+        func_registry_module.FUNC_REGISTRY.clear()
+        for memory_type in func_registry_module.VALID_MEMORY_TYPES:
+            func_registry_module.FUNC_REGISTRY[memory_type] = []
+        func_registry_module._registry_initialized = True
+
+# Manually call external library registration (since auto-init is skipped)
+func_registry_module._register_external_libraries()
 
 def setup_subprocess_logging(log_file_path: str):
     """Set up dedicated logging for the subprocess - all logs go to the specified file."""
@@ -285,6 +301,22 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
 
         log_thread_count("after function registry import")
         logger.info("🔥 SUBPROCESS: Function registry imported and auto-initialized!")
+
+        # DEBUG: Check if functions are properly decorated
+        try:
+            import skimage.filters
+            sobel_func = skimage.filters.sobel
+            has_input = hasattr(sobel_func, 'input_memory_type')
+            has_output = hasattr(sobel_func, 'output_memory_type')
+            logger.info(f"🔍 DEBUG: sobel function has memory types: input={has_input}, output={has_output}")
+            if has_input:
+                logger.info(f"🔍 DEBUG: sobel memory types: {sobel_func.input_memory_type} → {sobel_func.output_memory_type}")
+
+            # Check registry count
+            numpy_funcs = FUNC_REGISTRY.get('numpy', [])
+            logger.info(f"🔍 DEBUG: Registry contains {len(numpy_funcs)} numpy functions")
+        except Exception as e:
+            logger.error(f"🔍 DEBUG: Failed to check function decoration: {e}")
 
         log_thread_count("before orchestrator creation")
 
@@ -794,15 +826,20 @@ def main():
         plate_paths = data['plate_paths']
         pipeline_data = data['pipeline_data']  # Dict[plate_path, List[FunctionStep]]
         global_config = data['global_config']
+
+        # Registry initialization is skipped via environment variable for fast startup
+        logger.info("🔥 SUBPROCESS: Registry initialization skipped for fast startup")
         
         logger.info(f"🔥 SUBPROCESS: Loaded data for {len(plate_paths)} plates")
         logger.info(f"🔥 SUBPROCESS: Plates: {plate_paths}")
         
+        # Workers will also skip registry initialization via environment variable
+
         # Process each plate (like test_main.py but for multiple plates)
         for plate_path in plate_paths:
             pipeline_steps = pipeline_data[plate_path]
             logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(pipeline_steps)} steps")
-            
+
             run_single_plate(
                 plate_path=plate_path,
                 pipeline_steps=pipeline_steps,

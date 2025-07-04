@@ -42,10 +42,17 @@ def _configure_worker_logging(log_file_base: str):
 
     This function is called once per worker process when it starts.
     Each worker will get its own log file with a unique identifier.
+
+    Args:
+        log_file_base: Base path for worker log files
     """
     import os
     import logging
     import time
+
+    # CRITICAL: Skip function registry initialization for fast worker startup
+    # The environment variable is inherited from the subprocess runner
+    # Note: We don't log this yet because logging isn't configured
 
     # CRITICAL: Install import hook for auto-discovered functions
     # Worker processes are fresh Python processes that need the import hook

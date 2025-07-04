@@ -561,7 +561,7 @@ class FunctionListEditorWidget(Container):
         logger.debug(f"🔍 LOAD FUNC: File exists: {file_path.exists()}")
         logger.debug(f"🔍 LOAD FUNC: File size: {file_path.stat().st_size if file_path.exists() else 'N/A'} bytes")
 
-        import pickle
+        import dill as pickle
         try:
             logger.debug(f"🔍 LOAD FUNC: Opening file for reading...")
             with open(file_path, 'rb') as f:

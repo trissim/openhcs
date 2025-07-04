@@ -6,7 +6,7 @@ with proper FileManager abstraction and async safety.
 """
 
 import asyncio
-import pickle
+import dill as pickle
 import logging
 from pathlib import Path
 from typing import Union, List, Dict, Optional, Any

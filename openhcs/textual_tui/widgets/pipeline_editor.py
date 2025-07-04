@@ -585,7 +585,7 @@ class PipelineEditorWidget(ButtonListWidget):
 
     def _load_single_pipeline_file(self, file_path: Path) -> List:
         """Load pipeline steps from a single .pipeline file."""
-        import pickle
+        import dill as pickle
         try:
             with open(file_path, 'rb') as f:
                 pattern = pickle.load(f)
@@ -684,7 +684,7 @@ class PipelineEditorWidget(ButtonListWidget):
 
     def _save_pipeline_to_file(self, file_path: Path) -> None:
         """Save pipeline to .pipeline file."""
-        import pickle
+        import dill as pickle
         try:
             with open(file_path, 'wb') as f:
                 pickle.dump(list(self.pipeline_steps), f)

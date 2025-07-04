@@ -6,7 +6,7 @@ file format as .func, .step, and other OpenHCS user data files.
 """
 
 import asyncio
-import pickle
+import dill as pickle
 import logging
 from pathlib import Path
 from typing import Optional

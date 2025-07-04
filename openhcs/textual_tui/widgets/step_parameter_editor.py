@@ -232,7 +232,7 @@ class StepParameterEditorWidget(ScrollableContainer):
 
     def _load_step_from_file(self, file_path: Path) -> None:
         """Load step parameters from .step file."""
-        import pickle
+        import dill as pickle
         try:
             with open(file_path, 'rb') as f:
                 step_data = pickle.load(f)

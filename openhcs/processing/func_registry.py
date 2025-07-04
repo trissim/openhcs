@@ -215,6 +215,27 @@ def initialize_registry() -> None:
         _registry_initialized = True
 
 
+def load_prebuilt_registry(registry_data: Dict) -> None:
+    """
+    Load a pre-built function registry from serialized data.
+
+    This allows subprocess workers to skip function discovery by loading
+    a registry that was built in the main process.
+
+    Args:
+        registry_data: Dictionary containing the pre-built registry
+    """
+    with _registry_lock:
+        global _registry_initialized
+
+        FUNC_REGISTRY.clear()
+        FUNC_REGISTRY.update(registry_data)
+        _registry_initialized = True
+
+        total_functions = sum(len(funcs) for funcs in FUNC_REGISTRY.values())
+        logger.info(f"Loaded pre-built registry with {total_functions} functions")
+
+
 def _scan_and_register_functions() -> None:
     """
     Scan the processing directory for native OpenHCS functions.
@@ -289,6 +310,15 @@ def _register_external_libraries() -> None:
         logger.warning(f"Could not register scikit-image functions: {e}")
     except Exception as e:
         logger.error(f"Error registering scikit-image functions: {e}")
+
+    try:
+        from openhcs.processing.backends.analysis.cupy_registry import _register_cupy_ops_direct
+        _register_cupy_ops_direct()
+        logger.info("Successfully registered CuPy ndimage functions")
+    except ImportError as e:
+        logger.warning(f"Could not register CuPy functions: {e}")
+    except Exception as e:
+        logger.error(f"Error registering CuPy functions: {e}")
 
 
 def register_function(func: Callable, backend: str = None, **kwargs) -> None:
@@ -498,4 +528,7 @@ def get_all_function_names(memory_type: str) -> List[str]:
 
 
 # Auto-initialize the registry on module import (following storage_registry pattern)
-_auto_initialize_registry()
+# Skip initialization in subprocess workers for faster startup
+import os
+if not os.environ.get('OPENHCS_SKIP_REGISTRY_INIT'):
+    _auto_initialize_registry()

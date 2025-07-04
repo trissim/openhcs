@@ -579,6 +579,7 @@ class PlateManagerWidget(ButtonListWidget):
 
             # Wrap pickle operation in executor to avoid blocking UI
             def _write_pickle_data():
+                import dill as pickle
                 with open(data_file.name, 'wb') as f:
                     pickle.dump(subprocess_data, f)
                 data_file.close()
@@ -1179,6 +1180,7 @@ class PlateManagerWidget(ButtonListWidget):
 
             try:
                 # Save the subprocess data to the selected file
+                import dill as pickle
                 with open(selected_path, 'wb') as f:
                     pickle.dump(self._last_subprocess_data, f)
 
