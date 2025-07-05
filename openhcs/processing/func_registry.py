@@ -316,8 +316,11 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
     if memory_type == MemoryType.NUMPY:
         from openhcs.processing.backends.analysis.scikit_image_registry import _create_dtype_preserving_wrapper
         wrapper_func = _create_dtype_preserving_wrapper(original_func, func_name)
+    elif memory_type == MemoryType.CUPY:
+        from openhcs.processing.backends.analysis.cupy_registry import _create_cupy_dtype_preserving_wrapper
+        wrapper_func = _create_cupy_dtype_preserving_wrapper(original_func, func_name)
     else:
-        # For GPU libraries, use simpler wrapper (they generally preserve dtypes better)
+        # For other GPU libraries, use simpler wrapper (they generally preserve dtypes better)
         wrapper_func = original_func
 
     wrapper_func.input_memory_type = memory_type.value

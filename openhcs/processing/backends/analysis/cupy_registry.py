@@ -105,55 +105,115 @@ class ProcessingContract(Enum):
     UNKNOWN = "unknown"        # Could not determine
 
 
-def _create_cupy_array_compliant_wrapper(original_func, func_name):
+def _create_cupy_dtype_preserving_wrapper(original_func, func_name):
     """
-    Create a wrapper that ensures array-in/array-out compliance and dtype preservation for CuPy functions.
-    
-    All OpenHCS functions must:
-    1. Take 3D CuPy array as first argument
-    2. Return 3D CuPy array as first output
-    3. Additional outputs (values, coordinates) as 2nd, 3rd, etc. returns
-    4. Preserve input dtype when appropriate
+    Create a wrapper that preserves input data type and adds slice_by_slice parameter for CuPy functions.
+
+    CuPy functions generally preserve dtypes better than scikit-image, but this wrapper
+    ensures consistent behavior and adds slice_by_slice parameter to avoid cross-slice
+    contamination in 3D arrays.
+
+    Uses the slice-by-slice logic from the existing OpenHCS module for consistency.
     """
+    import numpy as np
+    import inspect
+    from functools import wraps
+
     @wraps(original_func)
-    def cupy_array_compliant_wrapper(image_3d, *args, **kwargs):
-        original_dtype = image_3d.dtype
-        result = original_func(image_3d, *args, **kwargs)
-        
-        # Category 1: Pure array functions (sobel, gaussian, etc.)
-        if func_name in PURE_ARRAY_FUNCTIONS:
-            # CuPy functions usually preserve dtype already, but ensure it
+    def cupy_dtype_and_slice_preserving_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
+        try:
+            # Store original dtype
+            original_dtype = image.dtype
+
+            # Handle slice_by_slice processing for 3D arrays using OpenHCS stack utilities
+            if slice_by_slice and hasattr(image, 'ndim') and image.ndim == 3:
+                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+
+                # Detect memory type and use proper OpenHCS utilities
+                memory_type = _detect_memory_type(image)
+                gpu_id = 0  # Default GPU ID for slice processing
+
+                # Unstack 3D array into 2D slices
+                slices_2d = unstack_slices(image, memory_type, gpu_id)
+
+                # Process each slice
+                processed_slices = []
+                for slice_2d in slices_2d:
+                    slice_result = original_func(slice_2d, *args, **kwargs)
+                    processed_slices.append(slice_result)
+
+                # Stack results back into 3D array
+                result = stack_slices(processed_slices, memory_type, gpu_id)
+            else:
+                # Call the original function normally
+                result = original_func(image, *args, **kwargs)
+
+            # Convert result back to original dtype if it's different (same logic as scikit-image wrapper)
             if hasattr(result, 'dtype') and result.dtype != original_dtype:
-                return _scale_and_convert_cupy(result, original_dtype)
-            return result
-        
-        # Category 2: Value-returning functions (center_of_mass, etc.)
-        elif func_name in VALUE_RETURNING_FUNCTIONS:
-            # Return (pass_through_array, computed_value)
-            return image_3d, result
-        
-        # Category 3: Mask-returning functions (binary_erosion, etc.)
-        elif func_name in MASK_RETURNING_FUNCTIONS:
-            # Convert bool mask to original dtype range if needed
-            if hasattr(result, 'dtype') and result.dtype == cp.bool_:
-                if original_dtype == cp.uint16:
-                    return result.astype(cp.uint16) * 65535
-                elif original_dtype == cp.uint8:
-                    return result.astype(cp.uint8) * 255
+                # For edge detection functions like sobel, we need to scale the output
+                # from float range to the original dtype range (same as scikit-image wrapper)
+                if cp.issubdtype(result.dtype, cp.floating) and not cp.issubdtype(original_dtype, cp.floating):
+                    # Scale float output to integer range
+                    if original_dtype == cp.uint8:
+                        result = (result * 255).astype(original_dtype)
+                    elif original_dtype == cp.uint16:
+                        result = (result * 65535).astype(original_dtype)
+                    elif original_dtype == cp.uint32:
+                        result = (result * 4294967295).astype(original_dtype)
+                    else:
+                        # For other integer types, just convert without scaling
+                        result = result.astype(original_dtype)
                 else:
-                    return result.astype(original_dtype)
-            return _scale_and_convert_cupy(result, original_dtype)
-        
-        # Auto-detect for unknown functions
-        else:
-            return _auto_detect_cupy_array_compliance(result, image_3d, original_dtype)
+                    # Direct conversion for same numeric type families
+                    result = result.astype(original_dtype)
+
+            return result
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in CuPy dtype/slice preserving wrapper for {func_name}: {e}")
+            # Return original result on error
+            return original_func(image, *args, **kwargs)
+
     
-    # Preserve function metadata
-    cupy_array_compliant_wrapper.__name__ = original_func.__name__
-    cupy_array_compliant_wrapper.__module__ = original_func.__module__
-    cupy_array_compliant_wrapper.__doc__ = original_func.__doc__
-    
-    return cupy_array_compliant_wrapper
+    # Manually add slice_by_slice parameter to signature (after @wraps)
+    original_sig = inspect.signature(original_func)
+    new_params = list(original_sig.parameters.values())
+
+    # Check if slice_by_slice parameter already exists
+    param_names = [p.name for p in new_params]
+    if 'slice_by_slice' not in param_names:
+        # Add slice_by_slice parameter as keyword-only
+        slice_param = inspect.Parameter(
+            'slice_by_slice',
+            inspect.Parameter.KEYWORD_ONLY,
+            default=False,
+            annotation=bool
+        )
+        new_params.append(slice_param)
+
+        # Create new signature and override the @wraps signature
+        new_sig = original_sig.replace(parameters=new_params)
+        cupy_dtype_and_slice_preserving_wrapper.__signature__ = new_sig
+
+        # Set type annotations manually for get_type_hints() compatibility
+        cupy_dtype_and_slice_preserving_wrapper.__annotations__ = getattr(original_func, '__annotations__', {}).copy()
+        cupy_dtype_and_slice_preserving_wrapper.__annotations__['slice_by_slice'] = bool
+
+    # Update docstring to mention slice_by_slice parameter
+    original_doc = cupy_dtype_and_slice_preserving_wrapper.__doc__ or ""
+    slice_doc = """
+
+    Additional OpenHCS Parameters
+    -----------------------------
+    slice_by_slice : bool, optional (default: False)
+        If True, process 3D arrays slice-by-slice to avoid cross-slice contamination.
+        If False, use original 3D behavior. Recommended for edge detection functions
+        on stitched microscopy data to prevent artifacts at field boundaries.
+    """
+    cupy_dtype_and_slice_preserving_wrapper.__doc__ = original_doc + slice_doc
+
+    return cupy_dtype_and_slice_preserving_wrapper
 
 
 @dataclass
@@ -216,77 +276,114 @@ def _test_cupy_3d_behavior(func, func_name):
 
 def build_cupy_registry() -> Dict[str, CupyFunction]:
     """
-    Build a registry of CuPy ndimage functions with their metadata.
+    Build a registry of CuCIM skimage functions with their metadata.
+
+    CuCIM provides GPU-accelerated versions of scikit-image functions that are
+    equivalent to their CPU counterparts but run on GPU.
     """
     try:
-        import cupyx.scipy.ndimage as ndimage
-    except ImportError:
-        print("⚠️  CuPy not available - skipping CuPy registry")
+        import cucim.skimage
+        print("🔍 Analyzing CuCIM skimage functions...")
+    except ImportError as e:
+        print(f"❌ CuCIM skimage not available: {e}")
+        print("❌ No fallback - CuCIM is required for GPU scikit-image functions")
         return {}
-    
-    print("🔍 Analyzing CuPy ndimage functions...")
-    
+
     registry = {}
     analyzed_functions = 0
-    
-    # Get all functions from cupyx.scipy.ndimage
-    for name in dir(ndimage):
-        if not name.startswith('_') and callable(getattr(ndimage, name)):
-            func = getattr(ndimage, name)
-            if hasattr(func, '__module__') and 'cupyx.scipy.ndimage' in func.__module__:
-                try:
-                    # Test 3D behavior
-                    contract, supports_3d = _test_cupy_3d_behavior(func, name)
-                    
-                    # Get documentation
-                    doc = (func.__doc__ or "").split('\n')[0].strip()
-                    
-                    # Get signature
+
+    # Define modules to scan for GPU-accelerated scikit-image functions
+    modules_to_scan = [
+        ('filters', 'cucim.skimage.filters'),
+        ('morphology', 'cucim.skimage.morphology'),
+        ('measure', 'cucim.skimage.measure'),
+        ('segmentation', 'cucim.skimage.segmentation'),
+        ('feature', 'cucim.skimage.feature'),
+        ('restoration', 'cucim.skimage.restoration'),
+        ('transform', 'cucim.skimage.transform'),
+        ('exposure', 'cucim.skimage.exposure'),
+        ('color', 'cucim.skimage.color'),
+        ('util', 'cucim.skimage.util'),
+    ]
+
+    # Scan each module for functions
+    for module_name, module_path in modules_to_scan:
+        try:
+            # Import the module dynamically
+            module = __import__(module_path, fromlist=[module_name])
+            print(f"  📦 Analyzing {module_path}...")
+
+            for name in dir(module):
+                if not name.startswith('_') and callable(getattr(module, name)):
+                    func = getattr(module, name)
+
+                    # Skip classes and non-function objects
+                    if not hasattr(func, '__call__') or (hasattr(func, '__name__') and func.__name__[0].isupper()):
+                        continue
+
                     try:
-                        signature = str(inspect.signature(func))
-                    except:
-                        signature = "signature unavailable"
-                    
-                    # Create function metadata
-                    cupy_func = CupyFunction(
-                        name=name,
-                        func=func,
-                        module=func.__module__,
-                        contract=contract,
-                        supports_3d=supports_3d,
-                        doc=doc,
-                        signature=signature
-                    )
-                    
-                    registry[name] = cupy_func
-                    analyzed_functions += 1
-                    
-                except Exception as e:
-                    print(f"    ⚠️  Failed to analyze {name}: {e}")
-    
-    print(f"✅ Analyzed {analyzed_functions} CuPy ndimage functions")
+                        # Test 3D behavior (CuCIM functions should handle 3D well)
+                        contract, supports_3d = _test_cupy_3d_behavior(func, name)
+
+                        # Get documentation
+                        doc = (func.__doc__ or "").split('\n')[0].strip()
+
+                        # Get signature
+                        try:
+                            signature = str(inspect.signature(func))
+                        except:
+                            signature = "signature unavailable"
+
+                        # Create function metadata (use original name for filters, prefixed for others)
+                        full_name = name if module_name == 'filters' else f"{module_name}_{name}"
+
+                        cupy_func = CupyFunction(
+                            name=full_name,
+                            func=func,
+                            module=module_path,
+                            contract=contract,
+                            supports_3d=supports_3d,
+                            doc=doc,
+                            signature=signature
+                        )
+
+                        registry[full_name] = cupy_func
+                        analyzed_functions += 1
+
+                    except Exception as e:
+                        print(f"    ⚠️  Failed to analyze {module_name}.{name}: {e}")
+
+        except ImportError as e:
+            print(f"    ⚠️  Could not import {module_path}: {e}")
+        except Exception as e:
+            print(f"    ⚠️  Error scanning {module_path}: {e}")
+
+    print(f"✅ Analyzed {analyzed_functions} CuCIM skimage functions")
     return registry
+
+
+
 
 
 def _register_cupy_ops_direct() -> None:
     """
-    Register CuPy ndimage functions using unified decoration pattern.
+    Register CuCIM skimage functions using unified decoration pattern.
 
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
     try:
-        import cupyx.scipy.ndimage as ndimage
+        import cucim.skimage
     except ImportError:
         import logging
         logger = logging.getLogger(__name__)
-        logger.warning("CuPy not available - skipping CuPy registration")
+        logger.warning("CuCIM skimage not available - skipping GPU scikit-image registration")
         return
 
     from openhcs.processing.func_registry import _register_function
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info("Registering CuPy ndimage functions using unified pattern")
+    logger.info("Registering CuCIM skimage functions using unified pattern")
 
     decorated_count = 0
     skipped_count = 0
@@ -306,7 +403,7 @@ def _register_cupy_ops_direct() -> None:
                 skipped_count += 1
                 continue
 
-            # Apply unified decoration pattern
+            # Apply unified decoration pattern with CuPy wrapper
             from openhcs.constants import MemoryType
             from openhcs.processing.func_registry import _apply_unified_decoration
 
@@ -314,7 +411,7 @@ def _register_cupy_ops_direct() -> None:
                 original_func=meta.func,
                 func_name=func_name,
                 memory_type=MemoryType.CUPY,
-                create_wrapper=False  # CuPy generally preserves dtypes well
+                create_wrapper=True  # Use CuPy dtype preserving wrapper
             )
 
             # Register the function
