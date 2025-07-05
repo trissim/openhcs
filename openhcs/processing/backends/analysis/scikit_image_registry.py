@@ -533,22 +533,46 @@ if __name__ == "__main__":
 
 def _create_dtype_preserving_wrapper(original_func, func_name):
     """
-    Create a wrapper that preserves input data type for scikit-image functions.
+    Create a wrapper that preserves input data type and adds slice_by_slice parameter.
 
     Many scikit-image functions return float64 regardless of input type.
-    This wrapper ensures the output has the same dtype as the input.
+    This wrapper ensures the output has the same dtype as the input and adds
+    a slice_by_slice parameter to avoid cross-slice contamination in 3D arrays.
+
+    Uses the slice-by-slice logic from the existing OpenHCS module for consistency.
     """
     import numpy as np
+    import inspect
     from functools import wraps
 
     @wraps(original_func)
-    def dtype_preserving_wrapper(image, *args, **kwargs):
+    def dtype_and_slice_preserving_wrapper(image, *args, slice_by_slice: bool = False, **kwargs):
         try:
             # Store original dtype
             original_dtype = image.dtype
 
-            # Call the original function
-            result = original_func(image, *args, **kwargs)
+            # Handle slice_by_slice processing for 3D arrays using OpenHCS stack utilities
+            if slice_by_slice and hasattr(image, 'ndim') and image.ndim == 3:
+                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+
+                # Detect memory type and use proper OpenHCS utilities
+                memory_type = _detect_memory_type(image)
+                gpu_id = 0  # Default GPU ID for slice processing
+
+                # Unstack 3D array into 2D slices
+                slices_2d = unstack_slices(image, memory_type, gpu_id)
+
+                # Process each slice
+                processed_slices = []
+                for slice_2d in slices_2d:
+                    slice_result = original_func(slice_2d, *args, **kwargs)
+                    processed_slices.append(slice_result)
+
+                # Stack results back into 3D array
+                result = stack_slices(processed_slices, memory_type, gpu_id)
+            else:
+                # Call the original function normally
+                result = original_func(image, *args, **kwargs)
 
             # Convert result back to original dtype if it's different
             if hasattr(result, 'dtype') and result.dtype != original_dtype:
@@ -573,16 +597,48 @@ def _create_dtype_preserving_wrapper(original_func, func_name):
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Error in dtype preserving wrapper for {func_name}: {e}")
+            logger.error(f"Error in dtype/slice preserving wrapper for {func_name}: {e}")
             # Return original result on error
             return original_func(image, *args, **kwargs)
 
-    # Preserve function metadata
-    dtype_preserving_wrapper.__name__ = original_func.__name__
-    dtype_preserving_wrapper.__module__ = original_func.__module__
-    dtype_preserving_wrapper.__doc__ = original_func.__doc__
+    # Manually add slice_by_slice parameter to signature (after @wraps)
+    original_sig = inspect.signature(original_func)
+    new_params = list(original_sig.parameters.values())
 
-    return dtype_preserving_wrapper
+    # Check if slice_by_slice parameter already exists
+    param_names = [p.name for p in new_params]
+    if 'slice_by_slice' not in param_names:
+        # Add slice_by_slice parameter as keyword-only
+        slice_param = inspect.Parameter(
+            'slice_by_slice',
+            inspect.Parameter.KEYWORD_ONLY,
+            default=False,
+            annotation=bool
+        )
+        new_params.append(slice_param)
+
+        # Create new signature and override the @wraps signature
+        new_sig = original_sig.replace(parameters=new_params)
+        dtype_and_slice_preserving_wrapper.__signature__ = new_sig
+
+        # Set type annotations manually for get_type_hints() compatibility
+        dtype_and_slice_preserving_wrapper.__annotations__ = getattr(original_func, '__annotations__', {}).copy()
+        dtype_and_slice_preserving_wrapper.__annotations__['slice_by_slice'] = bool
+
+    # Update docstring to mention slice_by_slice parameter
+    original_doc = dtype_and_slice_preserving_wrapper.__doc__ or ""
+    slice_doc = """
+
+    Additional OpenHCS Parameters
+    -----------------------------
+    slice_by_slice : bool, optional (default: False)
+        If True, process 3D arrays slice-by-slice to avoid cross-slice contamination.
+        If False, use original 3D behavior. Recommended for edge detection functions
+        on stitched microscopy data to prevent artifacts at field boundaries.
+    """
+    dtype_and_slice_preserving_wrapper.__doc__ = original_doc + slice_doc
+
+    return dtype_and_slice_preserving_wrapper
 
 
 
