@@ -109,9 +109,9 @@ def _create_cupy_dtype_preserving_wrapper(original_func, func_name):
     """
     Create a wrapper that preserves input data type and adds slice_by_slice parameter for CuPy functions.
 
-    CuPy functions generally preserve dtypes better than scikit-image, but this wrapper
-    ensures consistent behavior and adds slice_by_slice parameter to avoid cross-slice
-    contamination in 3D arrays.
+    This uses the SAME pattern as scikit-image for consistency. CuPy functions generally preserve
+    dtypes better than scikit-image, but this wrapper ensures consistent behavior and adds
+    slice_by_slice parameter to avoid cross-slice contamination in 3D arrays.
 
     Uses the slice-by-slice logic from the existing OpenHCS module for consistency.
     """
@@ -175,8 +175,8 @@ def _create_cupy_dtype_preserving_wrapper(original_func, func_name):
             # Return original result on error
             return original_func(image, *args, **kwargs)
 
-    
-    # Manually add slice_by_slice parameter to signature (after @wraps)
+
+    # Manually add slice_by_slice parameter to signature (after @wraps) - SAME as scikit-image
     original_sig = inspect.signature(original_func)
     new_params = list(original_sig.parameters.values())
 
@@ -200,7 +200,7 @@ def _create_cupy_dtype_preserving_wrapper(original_func, func_name):
         cupy_dtype_and_slice_preserving_wrapper.__annotations__ = getattr(original_func, '__annotations__', {}).copy()
         cupy_dtype_and_slice_preserving_wrapper.__annotations__['slice_by_slice'] = bool
 
-    # Update docstring to mention slice_by_slice parameter
+    # Update docstring to mention slice_by_slice parameter - SAME as scikit-image
     original_doc = cupy_dtype_and_slice_preserving_wrapper.__doc__ or ""
     slice_doc = """
 

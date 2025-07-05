@@ -144,18 +144,17 @@ def whiten_gpu_vectorized(img_stack, sigma):
     return output_stack
 
 
-def ashlar_register_gpu(img1, img2, upsample=10, sigma=0):
+def ashlar_register_gpu(img1, img2, upsample=10):
     """
-    GPU register function using cuCIM - EXACT match to Ashlar reference with whitening.
+    GPU register function using cuCIM - matches CPU version with windowing only.
 
     This uses cuCIM's phase_cross_correlation which is the GPU equivalent
     of skimage.registration.phase_cross_correlation used in the CPU version.
-    Now includes proper whitening filter as in the original Ashlar implementation.
+    No whitening filter - just windowing like the CPU version.
 
     Args:
         img1, img2: Input images
         upsample: Upsampling factor for phase correlation
-        sigma: Whitening filter sigma (0=Laplacian, >0=Gaussian-Laplacian)
     """
     import itertools
     import cucim.skimage.registration
@@ -176,24 +175,20 @@ def ashlar_register_gpu(img1, img2, upsample=10, sigma=0):
     if img1.shape[0] < 1 or img1.shape[1] < 1:
         return cp.array([0.0, 0.0]), cp.inf
 
-    # Convert to CuPy arrays and apply whitening + windowing (EXACT Ashlar sequence)
+    # Convert to CuPy arrays
     if not isinstance(img1, cp.ndarray):
         img1 = cp.asarray(img1)
     if not isinstance(img2, cp.ndarray):
         img2 = cp.asarray(img2)
 
-    # Apply whitening filter first (matches ashlar.utils.register sequence)
-    img1w = whiten_gpu(img1, sigma)
-    img2w = whiten_gpu(img2, sigma)
-
-    # Apply windowing function after whitening (from original Ashlar)
-    img1w = img1w * _get_window(img1w.shape)
-    img2w = img2w * _get_window(img2w.shape)
+    # Convert to float32 and apply windowing (matches CPU version)
+    img1w = img1.astype(cp.float32) * _get_window(img1.shape)
+    img2w = img2.astype(cp.float32) * _get_window(img2.shape)
 
     # Use cuCIM's phase cross correlation (GPU equivalent of skimage)
     try:
         shift, error, phase_diff = cucim.skimage.registration.phase_cross_correlation(
-            img1w, img2w, upsample_factor=upsample, return_error=True
+            img1w, img2w, upsample_factor=upsample
         )
 
         # Convert to numpy for consistency with CPU version
@@ -264,16 +259,7 @@ def ashlar_nccw_no_preprocessing_gpu(img1, img2):
     return error_float
 
 
-def ashlar_register_no_preprocessing_gpu(img1, img2, upsample=10):
-    """
-    Backward-compatible function without whitening (legacy behavior).
 
-    This maintains the old behavior for existing code that expects no whitening.
-    For new code, use ashlar_register_gpu() with sigma parameter.
-    """
-    # Call the new function with sigma=0 (no whitening, just Laplacian)
-    # This preserves the old behavior while using the new infrastructure
-    return ashlar_register_gpu(img1, img2, upsample=upsample, sigma=0)
 
 
 def ashlar_crop_gpu(img, offset, shape):
@@ -328,9 +314,9 @@ class ArrayEdgeAlignerGPU:
                  randomize=False, verbose=False, upsample_factor=10,
                  permutation_upsample=1, permutation_samples=1000,
                  min_permutation_samples=10, max_permutation_tries=100,
-                 window_size_factor=0.1, filter_sigma=0):
+                 window_size_factor=0.1):
         """
-        Initialize array-based EdgeAligner for pure position calculation on GPU.
+        Initialize array-based EdgeAligner for position calculation on GPU.
 
         Args:
             image_stack: 3D numpy/cupy array (num_tiles, height, width) - preprocessed grayscale
@@ -342,7 +328,6 @@ class ArrayEdgeAlignerGPU:
             max_error: Explicit error threshold (None = auto-compute)
             randomize: Use random seed for permutation testing
             verbose: Enable verbose logging
-            filter_sigma: Whitening filter sigma (0=Laplacian, >0=Gaussian-Laplacian)
         """
         # Convert to CuPy arrays for GPU processing
         if not isinstance(image_stack, cp.ndarray):
@@ -369,7 +354,6 @@ class ArrayEdgeAlignerGPU:
         self.min_permutation_samples = min_permutation_samples
         self.max_permutation_tries = max_permutation_tries
         self.window_size_factor = window_size_factor
-        self.filter_sigma = filter_sigma
         self._cache = {}
         self.errors_negative_sampled = cp.empty(0)
 
@@ -493,7 +477,7 @@ class ArrayEdgeAlignerGPU:
                 sys.stdout.flush()
             img1 = self.image_stack[t1][offset1:offset1+w, :]
             img2 = self.image_stack[t2][offset2:offset2+w, :]
-            _, errors[i] = ashlar_register_gpu(img1, img2, upsample=self.permutation_upsample, sigma=self.filter_sigma)
+            _, errors[i] = ashlar_register_gpu(img1, img2, upsample=self.permutation_upsample)
         if self.verbose:
             print()
         self.errors_negative_sampled = errors
@@ -599,7 +583,7 @@ class ArrayEdgeAlignerGPU:
             sx = 1 if p1[1] >= p2[1] else -1
             sy = 1 if p1[0] >= p2[0] else -1
             padding = cp.array(its.padding) * cp.array([sy, sx])
-            shift, error = ashlar_register_gpu(img1, img2, upsample=self.upsample_factor, sigma=self.filter_sigma)
+            shift, error = ashlar_register_gpu(img1, img2, upsample=self.upsample_factor)
             shift = cp.array(shift) + padding
             return shift.get(), error
         except Exception as e:
@@ -823,16 +807,14 @@ def ashlar_compute_tile_positions_gpu(
     min_permutation_samples: int = 10,
     max_permutation_tries: int = 100,
     window_size_factor: float = 0.1,
-    filter_sigma: float = 0,
     **kwargs
 ) -> Tuple[np.ndarray, List[Tuple[float, float]]]:
     """
-    Compute tile positions using the complete Ashlar algorithm on GPU - pure position calculation only.
+    Compute tile positions using the Ashlar algorithm on GPU - matches CPU version.
 
-    This function implements the full Ashlar edge-based stitching algorithm but works directly
-    on preprocessed grayscale image arrays using GPU acceleration with CuPy. It performs ONLY
-    position calculation without any file I/O, channel selection, or image preprocessing. All
-    the mathematical sophistication and robustness of the original Ashlar algorithm is preserved.
+    This function implements the Ashlar edge-based stitching algorithm using GPU acceleration.
+    It performs position calculation with minimal preprocessing (windowing only, no whitening)
+    to match the CPU version behavior.
 
     Args:
         image_stack: 3D numpy/cupy array of shape (num_tiles, height, width) containing preprocessed
@@ -970,8 +952,7 @@ def ashlar_compute_tile_positions_gpu(
             permutation_samples=permutation_samples,
             min_permutation_samples=min_permutation_samples,
             max_permutation_tries=max_permutation_tries,
-            window_size_factor=window_size_factor,
-            filter_sigma=filter_sigma
+            window_size_factor=window_size_factor
         )
 
         # Run the complete algorithm
