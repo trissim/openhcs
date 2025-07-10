@@ -16,6 +16,7 @@ class ConfigFormWidget(ScrollableContainer):
 
     field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
 
+
     def __init__(self, dataclass_type: type, instance: Any = None, **kwargs):
         super().__init__(**kwargs)
         self.dataclass_type = dataclass_type
@@ -54,6 +55,22 @@ class ConfigFormWidget(ScrollableContainer):
             yield from self.form_manager.build_form()
         except Exception as e:
             yield Static(f"[red]Error building config form: {e}[/red]")
+
+    def on_mount(self) -> None:
+        """Called when the form is mounted - fix scroll position to top."""
+        # Force scroll to top after mounting to prevent automatic scrolling to bottom
+        self.call_after_refresh(self._fix_scroll_position)
+
+    def _fix_scroll_position(self) -> None:
+        """Fix scroll position to top of form."""
+        try:
+            # Force scroll to top (0, 0)
+            self.scroll_to(0, 0, animate=False)
+        except Exception:
+            # If anything goes wrong, just continue
+            pass
+
+
     
     def _on_field_change(self, field_name: str, value: Any) -> None:
         """Handle field value changes."""
@@ -228,5 +245,3 @@ class ConfigFormWidget(ScrollableContainer):
             if hasattr(self, '_internal_field_values'):
                 return self._internal_field_values.copy()
             return self.field_values.copy()
-
-

@@ -39,6 +39,7 @@ class ConfigWindow(BaseOpenHCSWindow):
             mode="temporary",
             **kwargs
         )
+
         self.config_class = config_class
         self.current_config = current_config
         self.on_save_callback = on_save_callback
@@ -79,6 +80,26 @@ class ConfigWindow(BaseOpenHCSWindow):
         with Horizontal(classes="dialog-buttons"):
             yield Button("Save", id="save", compact=True)
             yield Button("Cancel", id="cancel", compact=True)
+
+    def on_mount(self) -> None:
+        """Called when the window is mounted - prevent automatic scrolling on focus."""
+        # Override the default focus behavior to prevent automatic scrolling
+        # when the first widget in the form gets focus
+        self.call_after_refresh(self._set_initial_focus_without_scroll)
+
+    def _set_initial_focus_without_scroll(self) -> None:
+        """Set focus to the first input without causing scroll."""
+        try:
+            # Find the first focusable widget in the config form
+            first_input = self.config_form.query("Input, Checkbox, RadioSet").first()
+            if first_input:
+                # Focus without scrolling to prevent the window from jumping
+                first_input.focus(scroll_visible=False)
+        except Exception:
+            # If no focusable widgets found, that's fine - no focus needed
+            pass
+
+
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

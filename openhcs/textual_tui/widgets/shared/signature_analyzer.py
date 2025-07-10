@@ -148,19 +148,29 @@ class DocstringExtractor:
                     description_lines.append(original_line) # Keep original indentation
 
             elif current_section == 'parameters':
+                # Enhanced parameter parsing to handle multiple formats
                 param_match_google = re.match(r'^(\w+):\s*(.+)', line)
                 param_match_sphinx = re.match(r'^:param\s+(\w+):\s*(.+)', line)
                 param_match_numpy = re.match(r'^(\w+)\s*:\s*(.+)', line)
+                # New: Handle pyclesperanto-style inline parameters (param_name: type description)
+                param_match_inline = re.match(r'^(\w+):\s*(\w+(?:\[.*?\])?|\w+(?:\s*\|\s*\w+)*)\s+(.+)', line)
+                # New: Handle parameters that start with bullet points or dashes
+                param_match_bullet = re.match(r'^[-•*]\s*(\w+):\s*(.+)', line)
 
-                if param_match_google or param_match_sphinx or param_match_numpy:
+                if param_match_google or param_match_sphinx or param_match_numpy or param_match_inline or param_match_bullet:
                     _finalize_current_param()
 
                     if param_match_google:
                         param_name, param_desc = param_match_google.groups()
                     elif param_match_sphinx:
                         param_name, param_desc = param_match_sphinx.groups()
-                    else: # numpy
+                    elif param_match_numpy:
                         param_name, param_desc = param_match_numpy.groups()
+                    elif param_match_inline:
+                        param_name, param_type, param_desc = param_match_inline.groups()
+                        param_desc = f"{param_type} - {param_desc}"  # Include type in description
+                    elif param_match_bullet:
+                        param_name, param_desc = param_match_bullet.groups()
 
                     current_param = param_name
                     current_param_lines = [param_desc.strip()]
@@ -174,6 +184,12 @@ class DocstringExtractor:
                 elif current_param:
                     # Non-indented continuation line (part of the same block)
                     current_param_lines.append(line)
+                else:
+                    # Try to parse inline parameter definitions in a single block
+                    # This handles cases where parameters are listed without clear separation
+                    inline_params = DocstringExtractor._parse_inline_parameters(line)
+                    for param_name, param_desc in inline_params.items():
+                        parameters[param_name] = param_desc
             
             elif current_section == 'returns':
                 if returns is None:
@@ -200,6 +216,31 @@ class DocstringExtractor:
             returns=returns,
             examples=examples
         )
+
+    @staticmethod
+    def _parse_inline_parameters(line: str) -> Dict[str, str]:
+        """Parse parameters from a single line containing multiple parameter definitions.
+
+        Handles formats like:
+        - "input_image: Image Input image to process. footprint: Image Structuring element..."
+        - "param1: type1 description1. param2: type2 description2."
+        """
+        parameters = {}
+
+        import re
+
+        # Strategy: Use a flexible pattern that works with the pyclesperanto format
+        # Pattern matches: param_name: everything up to the next param_name: or end of string
+        param_pattern = r'(\w+):\s*([^:]*?)(?=\s+\w+:|$)'
+        matches = re.findall(param_pattern, line)
+
+        for param_name, param_desc in matches:
+            if param_desc.strip():
+                # Clean up the description (remove trailing periods, extra whitespace)
+                clean_desc = param_desc.strip().rstrip('.')
+                parameters[param_name] = clean_desc
+
+        return parameters
 
 
 class SignatureAnalyzer:
