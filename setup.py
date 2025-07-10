@@ -5,6 +5,9 @@ from setuptools import setup, find_packages
 # - JAX CUDA plugins must exactly match JAX version for PJRT API compatibility
 # - PyTorch 2.7.x: Compatible with CUDA 12.6 and CuDNN 9.5.x
 # - TensorFlow 2.15-2.19: Stable DLPack support (2.12+ required for DLPack)
+# - CuPy: Use cupy-cuda12x for broad CUDA 12.x compatibility (not cupy-cuda120)
+# - CuCIM: PyPI cucim-cu12 package is incomplete (missing filters), use conda for full version
+# - torbi: Using patched fork that fixes PyTorch 2.6+ CUDA compilation issues (py_limited_api)
 #
 # Installation: pip install -e ".[gpu]" for GPU support
 
@@ -31,7 +34,7 @@ setup(
         "textual-serve>=1.0.0",
         "textual-terminal",
         "textual-universal-directorytree",
-        "textual-window @ git+https://github.com/trissim/textual-window.git",
+        "textual-window",
         "toolong @ git+https://github.com/trissim/toolong.git",
         "plotext>=5.2.0",
         "psutil>=5.9.0",
@@ -39,7 +42,8 @@ setup(
         "textual-plotext",
         "watchdog>=2.0.0",
         "napari",
-        "setuptools"
+        "setuptools",
+        "dill>=0.3.0"
     ],
     extras_require={
         "gpu": [
@@ -55,8 +59,11 @@ setup(
             "jax-cuda12-pjrt>=0.4.38,<0.6.0",
             "jax-cuda12-plugin>=0.4.38,<0.6.0",
 
-            # CuPy - compatible with CUDA 12.x
+            # CuPy - CUDA 12.x optimized version
             "cupy-cuda12x>=13.0.0,<14.0.0",
+
+            # CuCIM - CUDA 12 optimized GPU scikit-image (170 functions, missing filters)
+            "cucim-cu12>=25.0.0,<26.0.0",
 
             # TensorFlow - stable version with DLPack support (2.12+ required)
             "tensorflow>=2.15.0,<2.20.0",
@@ -65,7 +72,10 @@ setup(
             "tensorflow-probability[tf]>=0.25.0",
 
             # pyclesperanto - OpenCL-based GPU image processing
-            "pyclesperanto"
+            "pyclesperanto",
+
+            # torbi - GPU-accelerated Viterbi decoding (patched fork for PyTorch 2.6+ compatibility)
+            "torbi @ git+https://github.com/trissim/torbi.git"
         ]
     }
 )

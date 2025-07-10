@@ -319,6 +319,9 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
     elif memory_type == MemoryType.CUPY:
         from openhcs.processing.backends.analysis.cupy_registry import _create_cupy_dtype_preserving_wrapper
         wrapper_func = _create_cupy_dtype_preserving_wrapper(original_func, func_name)
+    elif memory_type == MemoryType.PYCLESPERANTO:
+        from openhcs.processing.backends.analysis.pyclesperanto_registry import _create_pyclesperanto_array_compliant_wrapper
+        wrapper_func = _create_pyclesperanto_array_compliant_wrapper(original_func, func_name)
     else:
         # For other GPU libraries, use simpler wrapper (they generally preserve dtypes better)
         wrapper_func = original_func

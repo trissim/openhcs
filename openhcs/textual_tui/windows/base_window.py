@@ -12,7 +12,6 @@ class BaseOpenHCSWindow(Window):
 
     Features:
     - Instant window open/close (no fade animations)
-    - 60fps mouse event throttling for smooth dragging/resizing
     - Automatic window position/size caching
     """
     
@@ -26,7 +25,6 @@ class BaseOpenHCSWindow(Window):
             mode: "temporary" or "permanent"
 
         Features:
-            - 60fps mouse throttling for smooth performance
             - Instant window operations (no animations)
             - Automatic position/size caching
         """
@@ -36,7 +34,6 @@ class BaseOpenHCSWindow(Window):
             mode=mode,
             allow_resize=True,
             animated=False,  # Disable fade effects for instant window open/close
-            mouse_update_fps=60,  # Throttle mouse events to 60fps for smooth performance
             **kwargs
         )
     

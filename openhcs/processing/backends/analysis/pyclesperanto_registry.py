@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import inspect
 import textwrap
+import numpy as np
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, Dict, List, Optional
@@ -57,6 +58,32 @@ class Contract(Enum):
     SLICE_SAFE = auto()   # keeps each Z‑slice independent (sigma_z or radius_z can be 0)
     CROSS_Z = auto()      # 3‑D connectivity – fuses neighbouring slices
     DIM_CHANGE = auto()   # output is scalar, table or different shape ➔ excluded
+
+
+class DtypeConversion(Enum):
+    """Data type conversion modes for pyclesperanto functions."""
+
+    PRESERVE_INPUT = "preserve"     # Keep input dtype (default)
+    NATIVE_OUTPUT = "native"        # Use pyclesperanto's native output
+    UINT8 = "uint8"                # Force uint8 (0-255 range)
+    UINT16 = "uint16"              # Force uint16 (microscopy standard)
+    INT16 = "int16"                # Force int16 (signed microscopy data)
+    INT32 = "int32"                # Force int32 (large integer values)
+    FLOAT32 = "float32"            # Force float32 (GPU performance)
+    FLOAT64 = "float64"            # Force float64 (maximum precision)
+
+    @property
+    def numpy_dtype(self):
+        """Get the corresponding numpy dtype."""
+        dtype_map = {
+            self.UINT8: np.uint8,
+            self.UINT16: np.uint16,
+            self.INT16: np.int16,
+            self.INT32: np.int32,
+            self.FLOAT32: np.float32,
+            self.FLOAT64: np.float64,
+        }
+        return dtype_map.get(self, None)
 
 
 @dataclass(frozen=True)
@@ -314,6 +341,14 @@ def _scale_and_convert_pyclesperanto(result, target_dtype):
                 scaled = cle.multiply_image_and_scalar(normalized, scalar=65535.0)
             elif target_dtype == np.uint32:
                 scaled = cle.multiply_image_and_scalar(normalized, scalar=4294967295.0)
+            elif target_dtype == np.int16:
+                # Scale to int16 range: -32768 to 32767
+                scaled = cle.multiply_image_and_scalar(normalized, scalar=65535.0)
+                scaled = cle.subtract_image_from_scalar(scaled, scalar=32768.0)
+            elif target_dtype == np.int32:
+                # Scale to int32 range: -2147483648 to 2147483647
+                scaled = cle.multiply_image_and_scalar(normalized, scalar=4294967295.0)
+                scaled = cle.subtract_image_from_scalar(scaled, scalar=2147483648.0)
             else:
                 scaled = normalized
 
@@ -346,34 +381,235 @@ def _create_pyclesperanto_array_compliant_wrapper(original_func, func_name):
     from functools import wraps
 
     @wraps(original_func)
-    def pyclesperanto_array_compliant_wrapper(image_3d, *args, **kwargs):
-        original_dtype = image_3d.dtype
-        result = original_func(image_3d, *args, **kwargs)
-
-        # Most pyclesperanto functions are pure array functions that should preserve dtype
-        # pyclesperanto doesn't have as many value-returning functions as scikit-image
-
-        # Check if result is a pyclesperanto array
+    def pyclesperanto_dtype_and_slice_preserving_wrapper(image_3d, *args, slice_by_slice: bool = False, dtype_conversion: DtypeConversion = DtypeConversion.PRESERVE_INPUT, **kwargs):
         try:
-            import pyclesperanto as cle
-            if hasattr(result, 'dtype') and hasattr(result, 'shape'):
-                # This is an array result - apply dtype preservation
-                if result.dtype != original_dtype:
-                    return _scale_and_convert_pyclesperanto(result, original_dtype)
-                return result
+            # Store original dtype for preservation
+            original_dtype = image_3d.dtype
+
+            # Handle slice_by_slice processing for 3D arrays using OpenHCS stack utilities
+            if slice_by_slice and hasattr(image_3d, 'ndim') and image_3d.ndim == 3:
+                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices
+
+                # Process each slice individually
+                slices = unstack_slices(image_3d)
+                processed_slices = []
+
+                for slice_2d in slices:
+                    # Apply function to 2D slice
+                    result_slice = original_func(slice_2d, *args, **kwargs)
+                    processed_slices.append(result_slice)
+
+                # Stack results back to 3D
+                result = stack_slices(processed_slices)
             else:
-                # This might be a scalar/value result - return (array, value) tuple
-                return image_3d, result
-        except ImportError:
-            # Fallback if pyclesperanto not available
-            return result
+                # Normal 3D processing
+                result = original_func(image_3d, *args, **kwargs)
 
-    # Preserve function metadata
-    pyclesperanto_array_compliant_wrapper.__name__ = original_func.__name__
-    pyclesperanto_array_compliant_wrapper.__module__ = original_func.__module__
-    pyclesperanto_array_compliant_wrapper.__doc__ = original_func.__doc__
+            # Apply dtype conversion based on enum value
+            if hasattr(result, 'dtype') and hasattr(result, 'shape'):
+                if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
+                    # Preserve input dtype
+                    if result.dtype != original_dtype:
+                        return _scale_and_convert_pyclesperanto(result, original_dtype)
+                    return result
 
-    return pyclesperanto_array_compliant_wrapper
+                elif dtype_conversion == DtypeConversion.NATIVE_OUTPUT:
+                    # Return pyclesperanto's native output dtype
+                    return result
+
+                else:
+                    # Force specific dtype
+                    target_dtype = dtype_conversion.numpy_dtype
+                    if target_dtype is not None and result.dtype != target_dtype:
+                        return _scale_and_convert_pyclesperanto(result, target_dtype)
+                    return result
+            else:
+                # Non-array result, return as-is
+                return result
+
+        except Exception as e:
+            # If anything goes wrong, fall back to original function
+            return original_func(image_3d, *args, **kwargs)
+
+    # Update function signature to include new parameters
+    try:
+        import inspect
+        original_sig = inspect.signature(original_func)
+        new_params = list(original_sig.parameters.values())
+
+        # Add slice_by_slice parameter
+        slice_param = inspect.Parameter(
+            'slice_by_slice',
+            inspect.Parameter.KEYWORD_ONLY,
+            default=False,
+            annotation=bool
+        )
+        new_params.append(slice_param)
+
+        # Add dtype_conversion parameter
+        dtype_param = inspect.Parameter(
+            'dtype_conversion',
+            inspect.Parameter.KEYWORD_ONLY,
+            default=DtypeConversion.PRESERVE_INPUT,
+            annotation=DtypeConversion
+        )
+        new_params.append(dtype_param)
+
+        new_sig = original_sig.replace(parameters=new_params)
+        pyclesperanto_dtype_and_slice_preserving_wrapper.__signature__ = new_sig
+
+        # Set type annotations manually for get_type_hints() compatibility
+        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__ = getattr(original_func, '__annotations__', {}).copy()
+        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__['slice_by_slice'] = bool
+        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__['dtype_conversion'] = DtypeConversion
+
+    except Exception:
+        # If signature modification fails, continue without it
+        pass
+
+    # Update docstring to mention additional parameters - following scikit-image/CuPy pattern
+    original_doc = pyclesperanto_dtype_and_slice_preserving_wrapper.__doc__ or ""
+    additional_doc = """
+
+    Additional OpenHCS Parameters
+    -----------------------------
+    slice_by_slice : bool, optional (default: False)
+        If True, process 3D arrays slice-by-slice to avoid cross-slice contamination.
+        If False, use original 3D behavior. Recommended for edge detection functions
+        on stitched microscopy data to prevent artifacts at field boundaries.
+
+    dtype_conversion : DtypeConversion, optional (default: PRESERVE_INPUT)
+        Controls output data type conversion:
+
+        - PRESERVE_INPUT: Keep input dtype (uint16 → uint16)
+        - NATIVE_OUTPUT: Use pyclesperanto's native output (often float32)
+        - UINT8: Force 8-bit unsigned integer (0-255 range)
+        - UINT16: Force 16-bit unsigned integer (microscopy standard)
+        - INT16: Force 16-bit signed integer
+        - INT32: Force 32-bit signed integer
+        - FLOAT32: Force 32-bit float (GPU performance)
+        - FLOAT64: Force 64-bit float (maximum precision)
+
+        Examples:
+            # Preserve input type
+            result = func(uint16_image, dtype_conversion=DtypeConversion.PRESERVE_INPUT)
+
+            # Force float32 for performance
+            result = func(float64_image, dtype_conversion=DtypeConversion.FLOAT32)
+
+            # Force uint16 for microscopy pipeline
+            result = func(float32_image, dtype_conversion=DtypeConversion.UINT16)
+    """
+    pyclesperanto_dtype_and_slice_preserving_wrapper.__doc__ = original_doc + additional_doc
+
+    return pyclesperanto_dtype_and_slice_preserving_wrapper
+
+
+def _get_z_parameter_guidance(func: Callable) -> str:
+    """
+    Get specific guidance for Z parameters based on their actual types.
+
+    Different pyclesperanto functions use different parameter types:
+    - sigma_z: Set to 0.0 for slice-by-slice processing
+    - radius_z: Set to 0 for slice-by-slice processing
+
+    Args:
+        func: The pyclesperanto function to analyze
+
+    Returns:
+        Specific guidance string for the function's Z parameters
+    """
+    try:
+        import inspect
+
+        sig = inspect.signature(func)
+        z_params = []
+        sigma_params = []
+        radius_params = []
+
+        # Categorize Z parameters by type
+        for param_name, param in sig.parameters.items():
+            if 'z' in param_name.lower():
+                z_params.append(param_name)
+                if 'sigma' in param_name.lower():
+                    sigma_params.append(param_name)
+                elif 'radius' in param_name.lower():
+                    radius_params.append(param_name)
+
+        if not z_params:
+            return ""
+
+        # Build specific guidance based on parameter types
+        guidance_parts = []
+
+        if sigma_params:
+            sigma_list = ", ".join(sigma_params)
+            guidance_parts.append(f"{sigma_list}=0.0 for slice-by-slice")
+
+        if radius_params:
+            radius_list = ", ".join(radius_params)
+            guidance_parts.append(f"{radius_list}=0 for slice-by-slice")
+
+        # Handle any other Z parameters generically
+        other_params = [p for p in z_params if p not in sigma_params and p not in radius_params]
+        if other_params:
+            other_list = ", ".join(other_params)
+            guidance_parts.append(f"{other_list}=0 for slice-by-slice")
+
+        if guidance_parts:
+            guidance = " Has Z-axis parameters: " + ", ".join(guidance_parts) + "."
+        else:
+            # Fallback to generic guidance
+            param_list = ", ".join(z_params)
+            guidance = f" Has Z-axis parameters ({param_list}) - consult function docs for slice-by-slice values."
+
+        return guidance
+
+    except Exception:
+        # Fallback to generic guidance if analysis fails
+        return " Has Z-axis parameters - consult function documentation for slice-by-slice values."
+
+
+def _enhance_docstring_with_contract_info(func: Callable, meta: OpMeta) -> None:
+    """
+    Enhance function docstring with contract information following the OpenHCS pattern.
+
+    This follows the same pattern as CuPy and scikit-image backends for consistency.
+
+    Args:
+        func: The function to enhance
+        meta: OpMeta containing contract information
+    """
+    # Get original docstring
+    original_doc = func.__doc__ or ""
+
+    # Create contract description
+    contract_descriptions = {
+        Contract.SLICE_SAFE: "Processes each Z-slice independently by default. Safe for stitched microscopy data.",
+        Contract.CROSS_Z: "Uses 3D connectivity across Z-slices. May cause artifacts at field boundaries in stitched data.",
+        Contract.DIM_CHANGE: "Changes output dimensionality (e.g., projections, statistics)."
+    }
+
+    contract_desc = contract_descriptions.get(meta.contract, f"Processing behavior: {meta.contract.name.lower()}")
+
+    # Add Z-parameter information if available
+    z_param_info = ""
+    if meta.has_z_kw:
+        z_param_info = _get_z_parameter_guidance(meta.func)
+
+    # Create OpenHCS information section following existing pattern
+    openhcs_doc = f"""
+
+    OpenHCS Processing Information
+    -----------------------------
+    Processing Behavior: {meta.contract.name.lower()}
+        {contract_desc}{z_param_info}
+
+    Backend: pyclesperanto (GPU-accelerated via OpenCL)
+    """
+
+    # Append to original docstring
+    func.__doc__ = original_doc + openhcs_doc
 
 
 def _register_pycle_ops_direct() -> None:
@@ -426,8 +662,11 @@ def _register_pycle_ops_direct() -> None:
                 original_func=meta.func,
                 func_name=meta.name,
                 memory_type=MemoryType.PYCLESPERANTO,
-                create_wrapper=False  # pyclesperanto generally preserves dtypes well
+                create_wrapper=True  # pyclesperanto needs dtype preservation (many functions convert to float32)
             )
+
+            # Enhance docstring with contract information (following CuPy/scikit-image pattern)
+            _enhance_docstring_with_contract_info(wrapper_func, meta)
 
             # Register the function
             _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
