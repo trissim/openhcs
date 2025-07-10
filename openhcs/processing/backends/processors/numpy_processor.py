@@ -190,8 +190,8 @@ def stack_percentile_normalize(stack: np.ndarray,
     _validate_3d_array(stack)
 
     # Calculate global percentiles across the entire stack
-    p_low = np.percentile(stack, low_percentile)
-    p_high = np.percentile(stack, high_percentile)
+    p_low = np.percentile(stack, low_percentile, axis=None)
+    p_high = np.percentile(stack, high_percentile, axis=None)
 
     # Avoid division by zero
     if p_high == p_low:
