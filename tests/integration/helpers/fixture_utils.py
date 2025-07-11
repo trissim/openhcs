@@ -132,8 +132,8 @@ def base_test_dir(microscope_config):
     # Suppress stdout and stderr to avoid microscopy data generator output
     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
         # Ensure the directory exists
-        if base_dir.exists():
-            shutil.rmtree(base_dir)
+        # if base_dir.exists():
+        #     shutil.rmtree(base_dir)  # 🚫 DISABLED: Don't delete existing tests_data
 
         # Create the directory
         base_dir.mkdir(parents=True, exist_ok=True)

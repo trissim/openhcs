@@ -294,6 +294,28 @@ class ZarrStorageBackend(StorageBackend):
             else:  # Already CPU array (NumPy, etc.)
                 cpu_data_list.append(data)
 
+        # Ensure zarr store exists before opening (thread-safe)
+        if not store_path.exists():
+            # Use file locking to prevent race condition during store creation
+            lock_path = store_path.with_suffix('.init.lock')
+            try:
+                with open(lock_path, 'x') as lock_file:
+                    if not store_path.exists():
+                        # Create initial zarr group structure
+                        store = parse_url(str(store_path), mode="w").store
+                        root = zarr.group(store=store)
+                        root.attrs["ome"] = {"version": "0.4"}
+                        logger.debug(f"Created initial zarr store at {store_path}")
+            except FileExistsError:
+                # Another process is creating the store, wait for it
+                import time
+                while not store_path.exists():
+                    time.sleep(0.01)
+                logger.debug(f"Waited for zarr store creation at {store_path}")
+            finally:
+                if lock_path.exists():
+                    lock_path.unlink()
+
         # Initialize ome-zarr store (allow overwriting)
         # Use 'a' mode to allow appending/overwriting individual arrays
         store = parse_url(str(store_path), mode="a").store

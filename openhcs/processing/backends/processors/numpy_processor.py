@@ -225,7 +225,7 @@ def create_composite(
 
     # Default weights if none provided
     if weights is None:
-        # Equal weights for all slices
+        # Equal weights forangeit so that it can only all slices
         weights = [1.0 / n_slices] * n_slices
     elif isinstance(weights, (list, tuple)):
         # Convert tuple to list if needed
