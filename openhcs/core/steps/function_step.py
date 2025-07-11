@@ -474,13 +474,11 @@ def _process_single_pattern_group(
             slice_shapes = [getattr(s, 'shape', 'no shape') for s in raw_slices[:3]]  # First 3 shapes
             logger.debug(f"🔍 STACKING: Sample slice shapes: {slice_shapes}")
 
-
-
         main_data_stack = stack_slices(
             slices=raw_slices, memory_type=input_memory_type_from_plan, gpu_id=device_id
         )
 
-        # �🔍 DEBUG: Log stacked result
+        # 🔍 DEBUG: Log stacked result
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
         stack_type = type(main_data_stack).__name__
         logger.debug(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")

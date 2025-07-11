@@ -405,6 +405,19 @@ def _create_pyclesperanto_array_compliant_wrapper(original_func, func_name):
                 # Normal 3D processing
                 result = original_func(image_3d, *args, **kwargs)
 
+            # Check if result is 2D and needs expansion to 3D (like CuPy wrapper does)
+            if hasattr(result, 'ndim') and result.ndim == 2:
+                # Expand 2D result to 3D single slice
+                # Use pyclesperanto's concatenate_along_z and slice to create single 3D slice
+                try:
+                    # Concatenate with itself to create 3D, then take first slice
+                    temp_3d = cle.concatenate_along_z(result, result)  # Creates (2, Y, X)
+                    result = temp_3d[0:1, :, :]  # Take first slice to get (1, Y, X)
+                except Exception:
+                    # If expansion fails, return original 2D result
+                    # This maintains backward compatibility
+                    pass
+
             # Apply dtype conversion based on enum value
             if hasattr(result, 'dtype') and hasattr(result, 'shape'):
                 if dtype_conversion == DtypeConversion.PRESERVE_INPUT:

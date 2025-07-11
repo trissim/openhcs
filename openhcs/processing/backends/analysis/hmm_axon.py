@@ -214,6 +214,32 @@ def graph_to_length(graph):
         total_distance += data['weight']
     return total_distance
 
+def create_overlay_from_graph(original_image: np.ndarray, graph: nx.Graph) -> np.ndarray:
+    """
+    Create overlay visualization with traces on original image.
+
+    Args:
+        original_image: Original input image (numpy array)
+        graph: NetworkX graph containing trace coordinates as (x, y) tuples
+
+    Returns:
+        Overlay array with traces highlighted on original image
+    """
+    overlay = original_image.copy()
+    # Set trace pixels to maximum intensity for visibility
+    max_val = np.max(original_image) if original_image.size > 0 else 1
+
+    for u, v in graph.edges:
+        x1, y1 = u  # Nodes are stored as (x, y) tuples
+        x2, y2 = v  # Nodes are stored as (x, y) tuples
+        # Bounds checking
+        if (0 <= y1 < original_image.shape[0] and 0 <= x1 < original_image.shape[1]):
+            overlay[y1, x1] = max_val
+        if (0 <= y2 < original_image.shape[0] and 0 <= x2 < original_image.shape[1]):
+            overlay[y2, x2] = max_val
+
+    return overlay
+
 def create_visualization_array(
     original_image: np.ndarray,
     graph: nx.Graph,
@@ -238,8 +264,8 @@ def create_visualization_array(
         # Create binary mask with traced neurites
         trace_mask = np.zeros_like(original_image, dtype=np.uint8)
         for u, v in graph.edges:
-            y1, x1 = u
-            y2, x2 = v
+            x1, y1 = u  # Fix: nodes are stored as (x, y) not (y, x)
+            x2, y2 = v  # Fix: nodes are stored as (x, y) not (y, x)
             # Bounds checking
             if (0 <= y1 < original_image.shape[0] and 0 <= x1 < original_image.shape[1]):
                 trace_mask[y1, x1] = 1
@@ -248,19 +274,8 @@ def create_visualization_array(
         return trace_mask
 
     elif mode == VisualizationMode.OVERLAY:
-        # Create overlay of original image with traces
-        overlay = original_image.copy()
-        # Set trace pixels to maximum intensity for visibility
-        max_val = np.max(original_image) if original_image.size > 0 else 1
-        for u, v in graph.edges:
-            y1, x1 = u
-            y2, x2 = v
-            # Bounds checking
-            if (0 <= y1 < original_image.shape[0] and 0 <= x1 < original_image.shape[1]):
-                overlay[y1, x1] = max_val
-            if (0 <= y2 < original_image.shape[0] and 0 <= x2 < original_image.shape[1]):
-                overlay[y2, x2] = max_val
-        return overlay
+        # Use shared overlay function
+        return create_overlay_from_graph(original_image, graph)
 
     else:
         raise ValueError(f"Unknown visualization mode: {mode}")
@@ -311,47 +326,51 @@ def trace_neurites_rrs_alva(
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D array, got {image_stack.ndim}D")
 
-    # For now, process the first slice (Z=0) - can be extended for 3D later
-    # This follows the original implementation which was 2D
-    im_axon = image_stack[0].astype(np.float64)
-
-    # Optional normalization (removed from default, paper doesn't use)
-    if normalize_image:
-        im_axon = normalize(im_axon, percentile=percentile)
-
-    # Generate seeds using selected method
-    seed_xx, seed_yy = generate_seeds_by_method(
-        im_axon,
-        method=seeding_method,
-        num_seeds=num_seeds,
-        min_sigma=min_sigma,
-        max_sigma=max_sigma,
-        threshold=threshold
-    )
-
-    # Perform RRS tracing with bidirectional HMM chains
-    root_tree_yy, root_tree_xx, root_tip_yy, root_tip_xx = selected_seeding(
-        im_axon,
-        seed_xx,
-        seed_yy,
-        chain_level=chain_level,
-        node_r=node_r,
-        total_node=total_node,
-        line_length_min=line_length_min
-    )
-
-    # Extract graph representation
-    graph = extract_graph(root_tree_xx, root_tree_yy)
-
-    # Create visualization based on selected mode
-    result_2d = create_visualization_array(im_axon, graph, visualization_mode)
-
-    # Convert back to 3D format (same dimensions as input)
+    # Process each slice individually
     Z, Y, X = image_stack.shape
-    result_image = np.zeros((Z, Y, X), dtype=result_2d.dtype)
-    result_image[0] = result_2d
+    result_image = np.zeros((Z, Y, X), dtype=np.uint8)
+    all_graphs = []
 
-    return result_image, graph
+    for z in range(Z):
+        im_axon = image_stack[z].astype(np.float64)
+
+        # Optional normalization (removed from default, paper doesn't use)
+        if normalize_image:
+            im_axon = normalize(im_axon, percentile=percentile)
+
+        # Generate seeds using selected method
+        seed_xx, seed_yy = generate_seeds_by_method(
+            im_axon,
+            method=seeding_method,
+            num_seeds=num_seeds,
+            min_sigma=min_sigma,
+            max_sigma=max_sigma,
+            threshold=threshold
+        )
+
+        # Perform RRS tracing with bidirectional HMM chains
+        root_tree_yy, root_tree_xx, root_tip_yy, root_tip_xx = selected_seeding(
+            im_axon,
+            seed_xx,
+            seed_yy,
+            chain_level=chain_level,
+            node_r=node_r,
+            total_node=total_node,
+            line_length_min=line_length_min
+        )
+
+        # Extract graph representation for this slice
+        graph = extract_graph(root_tree_xx, root_tree_yy)
+        all_graphs.append(graph)
+
+        # Create visualization for this slice
+        result_2d = create_visualization_array(im_axon, graph, visualization_mode)
+        result_image[z] = result_2d
+
+    # Combine all graphs (for compatibility, return the first one)
+    combined_graph = all_graphs[0] if all_graphs else nx.Graph()
+
+    return result_image, combined_graph
 
 
 # Legacy file-based processing function (kept for reference)

@@ -236,40 +236,91 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
         cle = optional_import("pyclesperanto")
         if cle is None:
             raise ValueError(f"pyclesperanto is required for memory type {memory_type}")
-        result = cle.create(stack_shape, dtype=first_slice.dtype)
+        # For pyclesperanto, we'll build the result using concatenate_along_z
+        # Don't pre-allocate here, we'll handle it in the loop below
+        result = None
     else:
         raise ValueError(f"Unsupported memory type: {memory_type}")
 
-    # Convert each slice and assign directly to pre-allocated array
+    # Convert each slice and assign to result array
     conversion_count = 0
-    for i, slice_data in enumerate(slices):
-        # Convert to target memory type using direct convert_memory call
-        # Bypass MemoryWrapper to eliminate object creation overhead
-        source_type = _detect_memory_type(slice_data)
 
-        # Track conversions for batch logging
-        if source_type != memory_type:
-            conversion_count += 1
+    # Special handling for pyclesperanto - build using concatenate_along_z
+    if memory_type == MEMORY_TYPE_PYCLESPERANTO:
+        cle = optional_import("pyclesperanto")
+        converted_slices = []
 
-        # Direct conversion without MemoryWrapper overhead
-        if source_type == memory_type:
-            # No conversion needed - direct assignment
-            converted_data = slice_data
+        for i, slice_data in enumerate(slices):
+            source_type = _detect_memory_type(slice_data)
+
+            # Track conversions for batch logging
+            if source_type != memory_type:
+                conversion_count += 1
+
+            # Convert slice to pyclesperanto
+            if source_type == memory_type:
+                converted_data = slice_data
+            else:
+                from openhcs.core.memory.converters import convert_memory
+                converted_data = convert_memory(
+                    data=slice_data,
+                    source_type=source_type,
+                    target_type=memory_type,
+                    gpu_id=gpu_id,
+                    allow_cpu_roundtrip=False
+                )
+
+            # Ensure slice is 2D, expand to 3D single slice if needed
+            if converted_data.ndim == 2:
+                # Convert 2D slice to 3D single slice using expand_dims equivalent
+                converted_data = cle.push(cle.pull(converted_data)[None, ...])
+
+            converted_slices.append(converted_data)
+
+        # Build 3D result using efficient batch concatenation
+        if len(converted_slices) == 1:
+            result = converted_slices[0]
         else:
-            # Use direct convert_memory call
-            from openhcs.core.memory.converters import convert_memory
-            converted_data = convert_memory(
-                data=slice_data,
-                source_type=source_type,
-                target_type=memory_type,
-                gpu_id=gpu_id,
-                allow_cpu_roundtrip=False
-            )
+            # Use divide-and-conquer approach for better performance
+            # This reduces O(N²) copying to O(N log N)
+            slices_to_concat = converted_slices[:]
+            while len(slices_to_concat) > 1:
+                new_slices = []
+                for i in range(0, len(slices_to_concat), 2):
+                    if i + 1 < len(slices_to_concat):
+                        # Concatenate pair
+                        combined = cle.concatenate_along_z(slices_to_concat[i], slices_to_concat[i + 1])
+                        new_slices.append(combined)
+                    else:
+                        # Odd one out
+                        new_slices.append(slices_to_concat[i])
+                slices_to_concat = new_slices
+            result = slices_to_concat[0]
 
-        # No per-slice logging - will log batch summary below
+    else:
+        # Standard handling for other memory types
+        for i, slice_data in enumerate(slices):
+            source_type = _detect_memory_type(slice_data)
 
-        # Assign converted slice directly to pre-allocated result array
-        result[i] = converted_data
+            # Track conversions for batch logging
+            if source_type != memory_type:
+                conversion_count += 1
+
+            # Direct conversion without MemoryWrapper overhead
+            if source_type == memory_type:
+                converted_data = slice_data
+            else:
+                from openhcs.core.memory.converters import convert_memory
+                converted_data = convert_memory(
+                    data=slice_data,
+                    source_type=source_type,
+                    target_type=memory_type,
+                    gpu_id=gpu_id,
+                    allow_cpu_roundtrip=False
+                )
+
+            # Assign converted slice directly to pre-allocated result array
+            result[i] = converted_data
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:

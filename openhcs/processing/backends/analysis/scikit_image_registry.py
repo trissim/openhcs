@@ -15,6 +15,7 @@ from functools import wraps
 import warnings
 import json
 import os
+import time
 from pathlib import Path
 import logging
 
@@ -43,12 +44,25 @@ def _save_function_metadata(registry: Dict[str, 'SkimageFunction']) -> None:
     """Save minimal function metadata to cache for subprocess workers."""
     cache_path = _get_metadata_cache_path()
 
+    # Store metadata with cache validation info
+    try:
+        import skimage
+        skimage_version = skimage.__version__
+    except:
+        skimage_version = "unknown"
+
+    cache_data = {
+        'cache_version': '1.0',
+        'skimage_version': skimage_version,
+        'timestamp': time.time(),
+        'functions': {}
+    }
+
     # Store only essential data needed for subprocess registration
-    metadata = {}
     for full_name, func_meta in registry.items():
         # Only cache functions that will be decorated (skip UNKNOWN/DIM_CHANGE)
         if func_meta.contract in [ProcessingContract.SLICE_SAFE, ProcessingContract.CROSS_Z]:
-            metadata[full_name] = {
+            cache_data['functions'][full_name] = {
                 'name': func_meta.name,
                 'module': func_meta.func.__module__,  # Actual module where function lives
                 'contract': func_meta.contract.value
@@ -56,16 +70,16 @@ def _save_function_metadata(registry: Dict[str, 'SkimageFunction']) -> None:
 
     try:
         with open(cache_path, 'w') as f:
-            json.dump(metadata, f, indent=2)
+            json.dump(cache_data, f, indent=2)
         logger = logging.getLogger(__name__)
-        logger.info(f"Saved function metadata cache: {len(metadata)} functions")
+        logger.info(f"Saved function metadata cache: {len(cache_data['functions'])} functions")
     except Exception as e:
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to save metadata cache: {e}")
 
 
 def _load_function_metadata() -> Optional[Dict[str, Dict[str, str]]]:
-    """Load minimal function metadata from cache for subprocess workers."""
+    """Load minimal function metadata from cache with validation."""
     cache_path = _get_metadata_cache_path()
 
     if not cache_path.exists():
@@ -73,14 +87,58 @@ def _load_function_metadata() -> Optional[Dict[str, Dict[str, str]]]:
 
     try:
         with open(cache_path, 'r') as f:
-            metadata = json.load(f)
+            cache_data = json.load(f)
+
         logger = logging.getLogger(__name__)
-        logger.info(f"Loaded function metadata cache: {len(metadata)} functions")
-        return metadata
+
+        # Handle old cache format (direct metadata dict)
+        if 'functions' not in cache_data:
+            logger.info("Found old cache format - will rebuild")
+            return None
+
+        # Validate cache version and scikit-image version
+        try:
+            import skimage
+            current_skimage_version = skimage.__version__
+        except:
+            current_skimage_version = "unknown"
+
+        cached_version = cache_data.get('skimage_version', 'unknown')
+        if cached_version != current_skimage_version:
+            logger.info(f"scikit-image version changed ({cached_version} → {current_skimage_version}) - will rebuild cache")
+            return None
+
+        # Check cache age (rebuild if older than 7 days)
+        cache_timestamp = cache_data.get('timestamp', 0)
+        cache_age_days = (time.time() - cache_timestamp) / (24 * 3600)
+        if cache_age_days > 7:
+            logger.info(f"Cache is {cache_age_days:.1f} days old - will rebuild")
+            return None
+
+        functions = cache_data['functions']
+        logger.info(f"Loaded valid function metadata cache: {len(functions)} functions")
+        return functions
+
     except Exception as e:
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to load metadata cache: {e}")
         return None
+
+
+def clear_function_metadata_cache() -> None:
+    """Clear the function metadata cache to force rebuild on next startup."""
+    cache_path = _get_metadata_cache_path()
+    try:
+        if cache_path.exists():
+            cache_path.unlink()
+            logger = logging.getLogger(__name__)
+            logger.info("Function metadata cache cleared")
+        else:
+            logger = logging.getLogger(__name__)
+            logger.info("No function metadata cache to clear")
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to clear metadata cache: {e}")
 
 
 # ===== FUNCTION CATEGORIZATION FOR ARRAY-IN/ARRAY-OUT COMPLIANCE =====
@@ -665,7 +723,15 @@ def _register_skimage_ops_direct() -> None:
         _register_skimage_ops_from_cache()
         return
 
-    logger.info("Registering scikit-image functions as OpenHCS functions")
+    # TUI SPEEDUP: Try to use cached metadata for TUI startup too
+    logger.info("Checking for cached metadata to speed up TUI startup...")
+    cached_metadata = _load_function_metadata()
+    if cached_metadata:
+        logger.info("TUI: Found cached metadata - using fast registration path")
+        _register_skimage_ops_from_cache()
+        return
+
+    logger.info("TUI: No cache found - performing full analysis and building cache")
 
     decorated_count = 0
     skipped_count = 0
