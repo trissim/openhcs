@@ -296,6 +296,8 @@ class ZarrStorageBackend(StorageBackend):
 
         # Ensure zarr store exists before opening (thread-safe)
         if not store_path.exists():
+            # Ensure parent directory exists before creating lock file
+            store_path.parent.mkdir(parents=True, exist_ok=True)
             # Use file locking to prevent race condition during store creation
             lock_path = store_path.with_suffix('.init.lock')
             try:
@@ -522,100 +524,10 @@ class ZarrStorageBackend(StorageBackend):
             name="OpenHCS_Plate"
         )
 
-    def _create_store_with_locking(self, store_path: Path, all_wells: List[str], sample_shape: tuple, sample_dtype: np.dtype, batch_size: int) -> None:
-        """Create zarr store with file locking for multiprocessing safety."""
 
-        if store_path.exists():
-            return
 
-        # Ensure parent directory exists before creating lock file
-        store_path.parent.mkdir(parents=True, exist_ok=True)
 
-        lock_path = store_path.with_suffix('.lock')
 
-        try:
-            with open(lock_path, 'x') as lock_file:
-                if not store_path.exists():
-                    self._create_zarr_array(store_path, all_wells, sample_shape, sample_dtype, batch_size)
-                    logger.info(f"Created zarr array at {store_path}")
-
-        except FileExistsError:
-            logger.debug(f"Another process is creating zarr store at {store_path}, waiting...")
-            self._wait_for_store_creation(store_path)
-
-        finally:
-            if lock_path.exists():
-                lock_path.unlink()
-
-    def _wait_for_store_creation(self, store_path: Path) -> None:
-        """Wait for another process to finish creating the zarr store."""
-        import time
-
-        while not store_path.exists():
-            time.sleep(0.1)
-
-        logger.debug(f"Zarr store creation completed at {store_path}")
-
-    def _create_zarr_array(self, store_path: Path, all_wells: List[str], sample_shape: tuple, sample_dtype: np.dtype, batch_size: int) -> None:
-        """Create single zarr array with filename mapping."""
-
-        # Calculate total array size: num_wells × batch_size
-        total_images = len(all_wells) * batch_size
-        full_shape = (total_images, *sample_shape)
-
-        # Create single zarr array using v3 API
-        compressor = self._get_compressor()
-        if compressor is not None:
-            # Convert v2 compressor to v3 codecs
-            codecs = [compressor]
-        else:
-            # No compression
-            codecs = None
-
-        z = zarr.open(
-            str(store_path),
-            mode='w',
-            shape=full_shape,
-            chunks=None,  # Single chunk for optimal batch I/O
-            dtype=sample_dtype,
-            codecs=codecs
-        )
-
-        # Initialize empty filename mapping
-        z.attrs["filename_map"] = {}
-        z.attrs["next_index"] = 0
-
-        logger.info(f"Created zarr array at {store_path} with shape {full_shape} for {len(all_wells)} wells × {batch_size} images")
-
-    def _get_or_assign_indices(self, zarr_array, output_paths: List[Union[str, Path]]) -> List[int]:
-        """Get or assign indices for filenames in zarr array using filename mapping."""
-
-        # Read current filename mapping
-        filename_map = dict(zarr_array.attrs["filename_map"])
-        next_index = zarr_array.attrs["next_index"]
-
-        indices = []
-        updated = False
-
-        for path in output_paths:
-            filename = Path(path).name
-
-            if filename in filename_map:
-                # Filename already mapped
-                indices.append(filename_map[filename])
-            else:
-                # Assign new index
-                filename_map[filename] = next_index
-                indices.append(next_index)
-                next_index += 1
-                updated = True
-
-        # Update attributes if we assigned new indices
-        if updated:
-            zarr_array.attrs["filename_map"] = filename_map
-            zarr_array.attrs["next_index"] = next_index
-
-        return indices
 
     def load(self, file_path: Union[str, Path], **kwargs) -> Any:
         store, key = self._split_store_and_key(file_path)
