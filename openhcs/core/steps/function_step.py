@@ -273,6 +273,11 @@ def _execute_function_core(
     """
     final_kwargs = base_kwargs.copy()
 
+    # 🐛 DEBUG: Log base_kwargs to find source of 'all' parameter
+    logger.debug(f"🐛 DEBUG base_kwargs for {func_callable.__name__}: {base_kwargs}")
+    if 'all' in base_kwargs:
+        logger.error(f"🚨 FOUND 'all' parameter in base_kwargs: {base_kwargs}")
+
     if special_inputs_plan:
         for arg_name, path_info in special_inputs_plan.items():
             # Extract path string from the path info dictionary

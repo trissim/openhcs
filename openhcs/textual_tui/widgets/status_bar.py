@@ -356,8 +356,17 @@ class StatusBar(Widget):
 
     def _batch_add_log_messages(self, messages: List[str]) -> None:
         """Add multiple log messages at once to reduce reactive watcher triggers."""
+        if not messages:
+            return
+
+        # Add all messages to history without triggering reactive updates
+        timestamp = datetime.now().strftime("%H:%M:%S")
         for message in messages:
-            self.add_log_message(message, "INFO")
+            log_entry = f"[{timestamp}] {message}"
+            self.log_history.append(log_entry)
+
+        # Only trigger ONE reactive update with the latest message
+        self.current_log_message = messages[-1]
 
     def is_subprocess_log(self, line: str) -> bool:
         """Accept ANY log line - show all subprocess output."""
