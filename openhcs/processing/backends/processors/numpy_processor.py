@@ -534,6 +534,74 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
     # FAIL FAST: No fallback projection methods
     raise ValueError(f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection")
 
+
+@numpy_func
+def crop(
+    input_image: np.ndarray,
+    start_x: int = 0,
+    start_y: int = 0,
+    start_z: int = 0,
+    width: int = 1,
+    height: int = 1,
+    depth: int = 1
+) -> np.ndarray:
+    """
+    Crop a given substack out of a given image stack.
+
+    Equivalent to pyclesperanto.crop() but using NumPy operations.
+
+    Parameters
+    ----------
+    input_image: np.ndarray
+        Input 3D image to process of shape (Z, Y, X)
+    start_x: int (= 0)
+        Starting index coordinate x
+    start_y: int (= 0)
+        Starting index coordinate y
+    start_z: int (= 0)
+        Starting index coordinate z
+    width: int (= 1)
+        Width size of the region to crop
+    height: int (= 1)
+        Height size of the region to crop
+    depth: int (= 1)
+        Depth size of the region to crop
+
+    Returns
+    -------
+    np.ndarray
+        Cropped 3D array of shape (depth, height, width)
+    """
+    _validate_3d_array(input_image)
+
+    # Validate crop parameters
+    if width <= 0 or height <= 0 or depth <= 0:
+        raise ValueError(f"Crop dimensions must be positive: width={width}, height={height}, depth={depth}")
+
+    if start_x < 0 or start_y < 0 or start_z < 0:
+        raise ValueError(f"Start coordinates must be non-negative: start_x={start_x}, start_y={start_y}, start_z={start_z}")
+
+    # Get input dimensions
+    input_depth, input_height, input_width = input_image.shape
+
+    # Calculate end coordinates
+    end_x = start_x + width
+    end_y = start_y + height
+    end_z = start_z + depth
+
+    # Validate bounds
+    if end_x > input_width or end_y > input_height or end_z > input_depth:
+        raise ValueError(
+            f"Crop region extends beyond image bounds. "
+            f"Image shape: {input_image.shape}, "
+            f"Crop region: ({start_z}:{end_z}, {start_y}:{end_y}, {start_x}:{end_x})"
+        )
+
+    # Perform the crop using NumPy slicing
+    cropped = input_image[start_z:end_z, start_y:end_y, start_x:end_x]
+
+    return cropped
+
 @numpy_func
 def tophat(
     image: np.ndarray,
