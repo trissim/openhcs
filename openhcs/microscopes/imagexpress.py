@@ -110,6 +110,19 @@ class ImageXpressHandler(MicroscopeHandler):
         if not common_dir_found:
             self._flatten_zsteps(workspace_path, filemanager)
 
+        # Remove thumbnail symlinks after processing
+        # Find all files in workspace recursively
+        _, all_files = filemanager.collect_dirs_and_files(workspace_path, Backend.DISK.value, recursive=True)
+
+        for file_path in all_files:
+            # Check if filename contains "thumb" and if it's a symlink
+            if "thumb" in Path(file_path).name.lower() and filemanager.is_symlink(file_path, Backend.DISK.value):
+                try:
+                    filemanager.delete(file_path, Backend.DISK.value)
+                    logger.debug("Removed thumbnail symlink: %s", file_path)
+                except Exception as e:
+                    logger.warning("Failed to remove thumbnail symlink %s: %s", file_path, e)
+
         # Return the image directory
         return workspace_path
 
