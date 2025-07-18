@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 from openhcs.constants.constants import READ_BACKEND, WRITE_BACKEND
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.pipeline.pipeline_utils import get_core_callable
+from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep
 
@@ -157,6 +158,19 @@ class PipelinePathPlanner:
 
         steps = pipeline_definition
 
+        # Transform dict patterns with special outputs before processing (only once)
+        logger.info(f"🔍 PATH_PLANNER_CALL: Starting path planning for {len(pipeline_definition)} steps")
+        for step in pipeline_definition:
+            if isinstance(step, FunctionStep):
+                logger.info(f"🔍 STEP_CHECK: Step {step.name} is FunctionStep, func type: {type(step.func)}")
+                logger.info(f"🔍 STEP_CHECK: Step {step.name} func value: {step.func}")
+                logger.info(f"🔍 STEP_CHECK: Step {step.name} is dict? {isinstance(step.func, dict)}")
+
+            if isinstance(step, FunctionStep) and isinstance(step.func, dict):
+                # Dict patterns no longer need function transformation
+                # Functions keep their original __special_outputs__
+                logger.info(f"🔍 DICT_PATTERN: Processing dict pattern for step {step.name} (no transformation needed)")
+
         # Modify step_plans in place
 
         # Track available special outputs by key for validation
@@ -175,10 +189,23 @@ class PipelinePathPlanner:
             s_inputs_info: Dict[str, bool] = {}
 
             if isinstance(step, FunctionStep):
-                core_callable = get_core_callable(step.func)
-                if core_callable:
-                    s_outputs_keys = getattr(core_callable, '__special_outputs__', set())
-                    s_inputs_info = getattr(core_callable, '__special_inputs__', {})
+                # For dict patterns, collect special outputs from ALL functions, not just the first
+                if isinstance(step.func, dict):
+                    all_functions = FuncStepContractValidator._extract_functions_from_pattern(step.func, step.name)
+                    s_outputs_keys = set()
+                    s_inputs_info = {}
+                    # Also collect materialization functions from all functions in dict pattern
+                    materialization_functions = {}
+                    for func in all_functions:
+                        s_outputs_keys.update(getattr(func, '__special_outputs__', set()))
+                        s_inputs_info.update(getattr(func, '__special_inputs__', {}))
+                        materialization_functions.update(getattr(func, '__materialization_functions__', {}))
+                else:
+                    # Non-dict pattern - use original logic
+                    core_callable = get_core_callable(step.func)
+                    if core_callable:
+                        s_outputs_keys = getattr(core_callable, '__special_outputs__', set())
+                        s_inputs_info = getattr(core_callable, '__special_inputs__', {})
             else: # For non-FunctionSteps, assume contracts are direct attributes if they exist
                 raw_s_outputs = getattr(step, 'special_outputs', set())
                 if isinstance(raw_s_outputs, str):
@@ -348,9 +375,14 @@ class PipelinePathPlanner:
                 results_base_path = PipelinePathPlanner._resolve_materialization_results_path(path_config, context, final_output_dir)
 
                 # Extract materialization functions from decorator (if FunctionStep)
-                materialization_functions = {}
-                if isinstance(step, FunctionStep) and core_callable:
-                    materialization_functions = getattr(core_callable, '__materialization_functions__', {})
+                # For dict patterns, materialization_functions was already collected above
+                # For non-dict patterns, extract from core_callable
+                if isinstance(step, FunctionStep):
+                    if not isinstance(step.func, dict):  # Non-dict pattern
+                        materialization_functions = {}
+                        if core_callable:
+                            materialization_functions = getattr(core_callable, '__materialization_functions__', {})
+                    # For dict patterns, materialization_functions was already set above
 
                 for key in sorted(list(s_outputs_keys)): # Iterate over sorted keys
                     # Build path using materialization results config
@@ -370,6 +402,15 @@ class PipelinePathPlanner:
                         "position": i,
                         "path": str(output_path)
                     }
+
+            # Apply scope promotion rules for dict patterns
+            if isinstance(step, FunctionStep) and isinstance(step.func, dict):
+                special_outputs, declared_outputs = _apply_scope_promotion_rules(
+                    step.func, special_outputs, declared_outputs, step_id, i
+                )
+
+            # Generate funcplan for execution
+            funcplan = _generate_funcplan(step, special_outputs)
                 
             # Process special inputs
             metadata_injected_steps = {}  # Track steps that need metadata injection
@@ -440,6 +481,7 @@ class PipelinePathPlanner:
                 "follows_chain_breaker": prev_is_chain_breaker,  # Flag for zarr conversion logic
                 "special_inputs": special_inputs,
                 "special_outputs": special_outputs,
+                "funcplan": funcplan,
             })
 
             # Apply chain breaker read backend if needed
@@ -539,3 +581,182 @@ class PipelinePathPlanner:
             return str(base_folder / results_path)
         else:
             return results_path
+
+
+
+
+
+
+
+
+
+
+
+def _has_special_outputs(func_or_tuple):
+    """
+    Check if a function or tuple contains a function with special outputs.
+
+    Follows the pattern from get_core_callable() for extracting functions from patterns.
+    """
+    if isinstance(func_or_tuple, tuple) and len(func_or_tuple) >= 1:
+        # Check the function part of (function, kwargs) tuple
+        func = func_or_tuple[0]
+        return callable(func) and not isinstance(func, type) and hasattr(func, '__special_outputs__')
+    elif callable(func_or_tuple) and not isinstance(func_or_tuple, type):
+        return hasattr(func_or_tuple, '__special_outputs__')
+    else:
+        return False
+
+
+def _apply_scope_promotion_rules(dict_pattern, special_outputs, declared_outputs, step_id, step_position):
+    """
+    Apply scope promotion rules for dict pattern special outputs.
+
+    Rules:
+    - Single-key dict patterns: Promote to global scope (DAPI_0_positions → positions)
+    - Multi-key dict patterns: Keep namespaced (DAPI_0_positions, GFP_0_positions)
+
+    Args:
+        dict_pattern: The dict pattern from the step
+        special_outputs: Current special outputs dict
+        declared_outputs: Global declared outputs dict
+        step_id: Current step ID
+        step_position: Current step position
+
+    Returns:
+        tuple: (updated_special_outputs, updated_declared_outputs)
+    """
+    import copy
+
+    # Only apply promotion for single-key dict patterns
+    if len(dict_pattern) != 1:
+        logger.debug(f"🔍 SCOPE_PROMOTION: Multi-key dict pattern ({len(dict_pattern)} keys), keeping namespaced outputs")
+        return special_outputs, declared_outputs
+
+    # Get the single dict key
+    dict_key = list(dict_pattern.keys())[0]
+    logger.debug(f"🔍 SCOPE_PROMOTION: Single-key dict pattern with key '{dict_key}', applying promotion rules")
+
+    # Create copies to avoid modifying originals
+    promoted_special_outputs = copy.deepcopy(special_outputs)
+    promoted_declared_outputs = copy.deepcopy(declared_outputs)
+
+    # Find namespaced outputs that should be promoted
+    outputs_to_promote = []
+    for output_key in list(special_outputs.keys()):
+        # Check if this is a namespaced output from our dict key
+        if output_key.startswith(f"{dict_key}_0_"):  # Single functions have chain position 0
+            original_key = output_key[len(f"{dict_key}_0_"):]  # Extract original key
+            outputs_to_promote.append((output_key, original_key))
+
+    # Apply promotions
+    for namespaced_key, promoted_key in outputs_to_promote:
+        logger.debug(f"🔍 SCOPE_PROMOTION: Promoting {namespaced_key} → {promoted_key}")
+
+        # Check for collisions with existing promoted outputs
+        if promoted_key in promoted_declared_outputs:
+            existing_step = promoted_declared_outputs[promoted_key]["step_id"]
+            raise PlanError(
+                f"Scope promotion collision: Step '{step_id}' wants to promote '{namespaced_key}' → '{promoted_key}', "
+                f"but step '{existing_step}' already produces '{promoted_key}'. "
+                f"Use explicit special output naming to resolve this conflict."
+            )
+
+        # Add promoted output to special_outputs
+        promoted_special_outputs[promoted_key] = special_outputs[namespaced_key]
+
+        # Add promoted output to declared_outputs
+        promoted_declared_outputs[promoted_key] = {
+            "step_id": step_id,
+            "position": step_position,
+            "path": special_outputs[namespaced_key]["path"]
+        }
+
+        # Keep the namespaced version as well for materialization
+        # (materialization system can handle both)
+
+    logger.debug(f"🔍 SCOPE_PROMOTION: Promoted {len(outputs_to_promote)} outputs for single-key dict pattern")
+    return promoted_special_outputs, promoted_declared_outputs
+
+
+def _generate_funcplan(step, special_outputs):
+    """
+    Generate funcplan mapping for execution.
+
+    Maps function execution contexts to their outputs_to_save.
+
+    Args:
+        step: The step being processed
+        special_outputs: Dict of special outputs for this step
+
+    Returns:
+        Dict mapping execution_key -> outputs_to_save list
+    """
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.pipeline.pipeline_utils import get_core_callable
+
+    funcplan = {}
+
+    if not isinstance(step, FunctionStep):
+        return funcplan
+
+    if not special_outputs:
+        return funcplan
+
+    # Extract all functions from the pattern
+    all_functions = []
+
+    if isinstance(step.func, dict):
+        # Dict pattern: {'DAPI': func, 'GFP': [func1, func2]}
+        for dict_key, func_or_list in step.func.items():
+            if isinstance(func_or_list, list):
+                # Chain in dict pattern
+                for chain_position, func_item in enumerate(func_or_list):
+                    func_callable = get_core_callable(func_item)
+                    if func_callable and hasattr(func_callable, '__special_outputs__'):
+                        execution_key = f"{func_callable.__name__}_{dict_key}_{chain_position}"
+                        func_outputs = func_callable.__special_outputs__
+                        # Find which step outputs this function should save
+                        outputs_to_save = [key for key in special_outputs.keys() if key in func_outputs]
+                        if outputs_to_save:
+                            funcplan[execution_key] = outputs_to_save
+                            logger.debug(f"🔍 FUNCPLAN: {execution_key} -> {outputs_to_save}")
+            else:
+                # Single function in dict pattern
+                func_callable = get_core_callable(func_or_list)
+                if func_callable and hasattr(func_callable, '__special_outputs__'):
+                    execution_key = f"{func_callable.__name__}_{dict_key}_0"
+                    func_outputs = func_callable.__special_outputs__
+                    # Find which step outputs this function should save
+                    outputs_to_save = [key for key in special_outputs.keys() if key in func_outputs]
+                    if outputs_to_save:
+                        funcplan[execution_key] = outputs_to_save
+                        logger.debug(f"🔍 FUNCPLAN: {execution_key} -> {outputs_to_save}")
+
+    elif isinstance(step.func, list):
+        # Chain pattern: [func1, func2]
+        for chain_position, func_item in enumerate(step.func):
+            func_callable = get_core_callable(func_item)
+            if func_callable and hasattr(func_callable, '__special_outputs__'):
+                execution_key = f"{func_callable.__name__}_default_{chain_position}"
+                func_outputs = func_callable.__special_outputs__
+                # Find which step outputs this function should save
+                outputs_to_save = [key for key in special_outputs.keys() if key in func_outputs]
+                if outputs_to_save:
+                    funcplan[execution_key] = outputs_to_save
+                    logger.debug(f"🔍 FUNCPLAN: {execution_key} -> {outputs_to_save}")
+
+    else:
+        # Single function pattern
+        func_callable = get_core_callable(step.func)
+        if func_callable and hasattr(func_callable, '__special_outputs__'):
+            execution_key = f"{func_callable.__name__}_default_0"
+            func_outputs = func_callable.__special_outputs__
+            # Find which step outputs this function should save
+            outputs_to_save = [key for key in special_outputs.keys() if key in func_outputs]
+            if outputs_to_save:
+                funcplan[execution_key] = outputs_to_save
+                logger.debug(f"🔍 FUNCPLAN: {execution_key} -> {outputs_to_save}")
+
+    logger.info(f"🔍 FUNCPLAN: Generated funcplan with {len(funcplan)} entries for step {step.name}")
+    return funcplan

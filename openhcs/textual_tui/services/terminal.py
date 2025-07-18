@@ -322,7 +322,8 @@ RESET_CLASSES = set([
 try:
     unichr(0x10000) # Will throw a ValueError on narrow Python builds
     SPECIAL = 1048576 # U+100000 or unichr(SPECIAL) (start of Plane 16)
-except:
+except (ValueError, NameError):
+    # Narrow Python builds or Python 3 (no unichr function)
     SPECIAL = 63561
 
 def handle_special(e):

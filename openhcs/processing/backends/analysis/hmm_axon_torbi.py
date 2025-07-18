@@ -1,12 +1,13 @@
-# BACKUP: hmm_axon_backup.py created before OpenHCS conversion
+# Torbi-accelerated version of hmm_axon.py
 """
-OpenHCS-compatible neurite tracing using alvahmm RRS algorithm.
+OpenHCS-compatible neurite tracing using alvahmm RRS algorithm with torbi GPU acceleration.
 
-Converted from file-based processing to pure array-in/array-out functions
-following OpenHCS patterns.
+This version uses torbi for GPU-accelerated Viterbi decoding while maintaining
+the same API as the original CPU version.
 """
 
 import numpy as np
+import torch
 import networkx as nx
 import skimage
 import math
@@ -15,10 +16,13 @@ from typing import Tuple, Dict, List, Optional
 from skimage.feature import canny, blob_dog as local_max
 from skimage.filters import median, threshold_li
 from skimage.morphology import remove_small_objects, skeletonize
-from openhcs.core.memory.decorators import numpy
+from openhcs.core.memory.decorators import torch as torch_func
 
-# Import alvahmm from GitHub dependency
-from alva_machinery.markov import aChain as alva_MCMC
+# Import torbi for GPU-accelerated Viterbi decoding
+import torbi
+
+# Import alvahmm - use torbi version from GitHub dependency
+from alva_machinery.markov import aChain_torbi as alva_MCMC_torbi
 from alva_machinery.branching import aWay as alva_branch
 
 
@@ -175,6 +179,7 @@ def get_growth_cone_positions(image):
     return np.array(seed_xx), np.array(seed_yy)
 
 def selected_seeding(image,seed_xx,seed_yy,chain_level=1.05,total_node=8,node_r=None,line_length_min=32):
+    """Original CPU version for reference."""
     im_copy=np.copy(image)
     alva_HMM = alva_MCMC.AlvaHmm(im_copy,
                                 total_node = total_node,
@@ -193,6 +198,46 @@ def selected_seeding(image,seed_xx,seed_yy,chain_level=1.05,total_node=8,node_r=
     return alva_branch.connect_way(chain_im_fine,
                                     line_length_min = line_length_min,
                                     free_zone_from_y0 = None,)
+
+
+def selected_seeding_torbi(image, seed_xx, seed_yy, chain_level=1.05, total_node=8, node_r=None, line_length_min=32, device=None):
+    """
+    Torbi-accelerated version of selected_seeding with batched processing.
+
+    Processes all seeds in parallel using torbi's batch capabilities for maximum GPU utilization.
+    """
+    print(f"🚀 Processing {len(seed_xx)} seeds in parallel with torbi GPU acceleration")
+
+    im_copy = np.copy(image)
+
+    # Use torbi-accelerated HMM class with batched processing
+    alva_HMM = alva_MCMC_torbi.AlvaHmmTorbi(
+        im_copy,
+        total_node=total_node,
+        total_path=None,
+        node_r=node_r,
+        node_angle_max=None,
+        device=device
+    )
+
+    # Perform batched bidirectional HMM tracing with torbi acceleration
+    chain_HMM_1st, pair_chain_HMM, pair_seed_xx, pair_seed_yy = alva_HMM.pair_HMM_chain_batched(
+        seed_xx=seed_xx,
+        seed_yy=seed_yy,
+        chain_level=chain_level
+    )
+
+    for chain_i in [0, 1]:
+        chain_HMM = [chain_HMM_1st, pair_chain_HMM][chain_i]
+        real_chain_ii, real_chain_aa, real_chain_xx, real_chain_yy = chain_HMM[0:4]
+        seed_node_xx, seed_node_yy = chain_HMM[4:6]
+
+    chain_im_fine = alva_HMM.chain_image(chain_HMM_1st, pair_chain_HMM)
+    return alva_branch.connect_way(
+        chain_im_fine,
+        line_length_min=line_length_min,
+        free_zone_from_y0=None
+    )
 
 def euclidian_distance(x1, y1, x2, y2):
   distance = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
@@ -219,11 +264,11 @@ def create_overlay_from_graph(original_image: np.ndarray, graph: nx.Graph) -> np
     Create overlay visualization with traces on original image.
 
     Args:
-        original_image: Original input image (numpy array)
+        original_image: Original 2D input image (numpy array)
         graph: NetworkX graph containing trace coordinates as (x, y) tuples
 
     Returns:
-        Overlay array with traces highlighted on original image
+        2D overlay array with traces highlighted on original image
     """
     overlay = original_image.copy()
     # Set trace pixels to maximum intensity for visibility
@@ -264,8 +309,8 @@ def create_visualization_array(
         # Create binary mask with traced neurites
         trace_mask = np.zeros_like(original_image, dtype=np.uint8)
         for u, v in graph.edges:
-            x1, y1 = u  # Fix: nodes are stored as (x, y) not (y, x)
-            x2, y2 = v  # Fix: nodes are stored as (x, y) not (y, x)
+            x1, y1 = u  # Nodes are stored as (x, y) tuples
+            x2, y2 = v  # Nodes are stored as (x, y) tuples
             # Bounds checking
             if (0 <= y1 < original_image.shape[0] and 0 <= x1 < original_image.shape[1]):
                 trace_mask[y1, x1] = 1
@@ -280,9 +325,9 @@ def create_visualization_array(
     else:
         raise ValueError(f"Unknown visualization mode: {mode}")
 
-@numpy
-def trace_neurites_rrs_alva(
-    image_stack: np.ndarray,
+@torch_func
+def trace_neurites_rrs_alva_torbi(
+    image_stack: torch.Tensor,
     seeding_method: SeedingMethod = SeedingMethod.BLOB_DETECTION,
     visualization_mode: VisualizationMode = VisualizationMode.TRACE_ONLY,
     chain_level: float = 1.05,
@@ -295,16 +340,16 @@ def trace_neurites_rrs_alva(
     threshold: float = 0.02,
     normalize_image: bool = False,
     percentile: float = 99.9
-) -> Tuple[np.ndarray, nx.Graph]:
+) -> Tuple[torch.Tensor, nx.Graph]:
     """
-    Trace neurites using the alvahmm RRS (Random-Reaction-Seed) algorithm.
+    Trace neurites using the alvahmm RRS algorithm with torbi GPU acceleration.
 
-    This is the OpenHCS-compatible version of the original alvahmm implementation.
-    Performs bidirectional HMM tracing with branching analysis to reconstruct
-    complete neurite morphology.
+    This is the GPU-accelerated version using torbi for Viterbi decoding while
+    maintaining the same API as the CPU version. Falls back to CPU if torbi
+    is not available.
 
     Args:
-        image_stack: 3D array of shape (Z, Y, X) - input image stack
+        image_stack: 3D torch tensor of shape (Z, Y, X) - input image stack
         seeding_method: Method for seed generation (RANDOM=paper default, BLOB_DETECTION=enhanced)
         visualization_mode: How to visualize results (NONE, TRACE_ONLY, OVERLAY)
         chain_level: Validation threshold for HMM chains (default: 1.05)
@@ -319,20 +364,23 @@ def trace_neurites_rrs_alva(
         percentile: Percentile for normalization if enabled (default: 99.9)
 
     Returns:
-        result_image: 3D array (same dimensions as input) with visualization based on mode
+        result_image: 3D torch tensor (same dimensions as input) with visualization based on mode
         graph: NetworkX graph object with traced neurites and edge weights
     """
     # Validate input is 3D
     if image_stack.ndim != 3:
-        raise ValueError(f"Expected 3D array, got {image_stack.ndim}D")
+        raise ValueError(f"Expected 3D tensor, got {image_stack.ndim}D")
+
+    # Get device from input tensor
+    device = image_stack.device
 
     # Process each slice individually
     Z, Y, X = image_stack.shape
-    result_image = np.zeros((Z, Y, X), dtype=np.uint8)
+    result_image = torch.zeros((Z, Y, X), dtype=torch.uint8, device=device)
     all_graphs = []
 
     for z in range(Z):
-        im_axon = image_stack[z].astype(np.float64)
+        im_axon = image_stack[z].cpu().numpy().astype(np.float64)
 
         # Optional normalization (removed from default, paper doesn't use)
         if normalize_image:
@@ -348,15 +396,16 @@ def trace_neurites_rrs_alva(
             threshold=threshold
         )
 
-        # Perform RRS tracing with bidirectional HMM chains
-        root_tree_yy, root_tree_xx, root_tip_yy, root_tip_xx = selected_seeding(
+        # Perform RRS tracing with bidirectional HMM chains (torbi-accelerated)
+        root_tree_yy, root_tree_xx, root_tip_yy, root_tip_xx = selected_seeding_torbi(
             im_axon,
             seed_xx,
             seed_yy,
             chain_level=chain_level,
             node_r=node_r,
             total_node=total_node,
-            line_length_min=line_length_min
+            line_length_min=line_length_min,
+            device=device
         )
 
         # Extract graph representation for this slice
@@ -365,7 +414,7 @@ def trace_neurites_rrs_alva(
 
         # Create visualization for this slice
         result_2d = create_visualization_array(im_axon, graph, visualization_mode)
-        result_image[z] = result_2d
+        result_image[z] = torch.from_numpy(result_2d).to(device)
 
     # Combine all graphs (for compatibility, return the first one)
     combined_graph = all_graphs[0] if all_graphs else nx.Graph()

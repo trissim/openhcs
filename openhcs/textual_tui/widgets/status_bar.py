@@ -55,9 +55,11 @@ class TUILogHandler(logging.Handler):
                 self._flush_pending_messages()
                 self.last_update_time = current_time
 
-        except Exception:
-            # Don't let logging errors crash the app
-            pass
+        except (AttributeError, ValueError, TypeError) as e:
+            # Don't let logging errors crash the app, but log the issue
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Status bar emit error (non-critical): {e}")
 
     def _flush_pending_messages(self):
         """Flush all pending messages to the UI."""

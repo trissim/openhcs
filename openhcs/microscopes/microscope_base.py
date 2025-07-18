@@ -17,8 +17,8 @@ from openhcs.constants.constants import Backend
 from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
 from openhcs.io.filemanager import FileManager
 # Import interfaces from the base interfaces module
-from openhcs.microscopes.microscope_interfaces_base import (FilenameParser,
-                                                               MetadataHandler)
+from openhcs.microscopes.microscope_interfaces import (FilenameParser,
+                                                            MetadataHandler)
 
 logger = logging.getLogger(__name__)
 

@@ -36,7 +36,6 @@ from textual.widget import Widget
 from textual.css.query import NoMatches
 from .button_list_widget import ButtonListWidget, ButtonConfig
 from textual import work, on
-from textual.worker import get_current_worker
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
 from openhcs.core.pipeline import Pipeline
@@ -145,13 +144,11 @@ class PlateManagerWidget(ButtonListWidget):
 
         # --- Subprocess Architecture ---
         self.current_process: Optional[subprocess.Popen] = None
-        self.status_file_path: Optional[str] = None
-        self.result_file_path: Optional[str] = None
-        self.data_file_path: Optional[str] = None
-        self.log_file_path: Optional[str] = None
+        self.log_file_path: Optional[str] = None  # Single source of truth
         self.log_file_position: int = 0  # Track position in log file for incremental reading
-        # Textual worker for process status checking
-        self.monitoring_worker = None
+        # Async monitoring using Textual's interval system
+        self.monitoring_interval = None
+        self.monitoring_active = False
         # ---
         
         logger.debug("PlateManagerWidget initialized")
@@ -162,7 +159,11 @@ class PlateManagerWidget(ButtonListWidget):
 
     def on_unmount(self) -> None:
         logger.debug("Unmounting PlateManagerWidget, ensuring worker process is terminated.")
-        self.action_stop_execution()
+        # Schedule async stop execution since on_unmount is sync
+        import asyncio
+        if self.current_process and self.current_process.poll() is None:
+            # Create a task to stop execution asynchronously
+            asyncio.create_task(self.action_stop_execution())
         self._stop_monitoring()
 
     def format_item_for_display(self, plate: Dict) -> Tuple[str, str]:
@@ -204,7 +205,7 @@ class PlateManagerWidget(ButtonListWidget):
                 action()
         elif button_id == "run_plate":
             if self._is_any_plate_running():
-                self.action_stop_execution()
+                await self.action_stop_execution()
             else:
                 await self.action_run_plate()
 
@@ -251,9 +252,16 @@ class PlateManagerWidget(ButtonListWidget):
 
     def watch_orchestrator_state_version(self, version: int) -> None:
         """Automatically refresh UI when orchestrator states change."""
+        # Only update UI if widget is properly mounted
+        if not self.is_mounted:
+            return
+
         # Force SelectionList to update by calling _update_selection_list
         # This re-calls format_item_for_display() for all items
         self._update_selection_list()
+
+        # CRITICAL: Update main button states when orchestrator states change
+        self._update_button_states()
 
         # Also notify PipelineEditor if connected
         if self.pipeline_editor:
@@ -472,9 +480,7 @@ class PlateManagerWidget(ButtonListWidget):
         else:
             return f"{operation.title()} {count} items"
 
-    def _reset_execution_state(self, status_message: str):
-        logger.info(f"🧹 Resetting execution state. Reason: {status_message}")
-        
+    def _reset_execution_state(self, status_message: str, force_fail_executing: bool = True):
         if self.current_process:
             if self.current_process.poll() is None:  # Still running
                 logger.warning("Forcefully terminating subprocess during reset.")
@@ -485,35 +491,31 @@ class PlateManagerWidget(ButtonListWidget):
                     self.current_process.kill()  # Force kill if terminate fails
             self.current_process = None
 
-
-
-        # Clear file references and cleanup temp files (don't delete log file)
-        for file_path in [self.status_file_path, self.result_file_path, self.data_file_path]:
-            if file_path:
-                try:
-                    Path(file_path).unlink(missing_ok=True)
-                except Exception as e:
-                    logger.debug(f"Could not cleanup temp file {file_path}: {e}")
-
-        self.status_file_path = None
-        self.result_file_path = None
-        self.data_file_path = None
+        # Clear log file reference (no temp files - log file is single source of truth)
         self.log_file_path = None
         self.log_file_position = 0
-        
-        if self.monitoring_worker and not self.monitoring_worker.is_finished:
-            self.monitoring_worker.cancel()
-        
-        # Reset any executing orchestrators to execution failed state
-        for plate_path, orchestrator in self.orchestrators.items():
-            if orchestrator.state == OrchestratorState.EXECUTING:
-                orchestrator._state = OrchestratorState.EXEC_FAILED
 
-        # Trigger UI refresh after state changes
+        # Stop async monitoring
+        self._stop_monitoring()
+
+        # Only reset executing orchestrators to failed if this is a forced termination
+        # Natural completion should preserve the states set by the completion handler
+        if force_fail_executing:
+            for plate_path, orchestrator in self.orchestrators.items():
+                if orchestrator.state == OrchestratorState.EXECUTING:
+                    orchestrator._state = OrchestratorState.EXEC_FAILED
+
+        # Trigger UI refresh after state changes - this is essential for button states
         self._trigger_ui_refresh()
-        self._update_button_states()
+
+        # Update button states - but only if widget is properly mounted
+        try:
+            if self.is_mounted and hasattr(self, 'query_one'):
+                self._update_button_states()
+        except Exception as e:
+            logger.error(f"Failed to update button states during reset: {e}")
+
         self.app.current_status = status_message
-        logger.debug("🧹 Execution state reset and UI updated.")
 
     async def action_run_plate(self) -> None:
         selected_items, _ = self.get_selection_state()
@@ -540,19 +542,8 @@ class PlateManagerWidget(ButtonListWidget):
 
             logger.info(f"🔥 Starting subprocess for {len(plate_paths_to_run)} plates")
 
-            # Create temporary files for communication
-            status_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
-            result_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+            # Create data file for subprocess (only file needed besides log)
             data_file = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pkl')
-
-            # Close files so subprocess can write to them
-            status_file.close()
-            result_file.close()
-
-            # Store file paths for monitoring and cleanup
-            self.status_file_path = status_file.name
-            self.result_file_path = result_file.name
-            self.data_file_path = data_file.name
 
             # Generate unique ID for this subprocess
             import time
@@ -587,8 +578,6 @@ class PlateManagerWidget(ButtonListWidget):
             await asyncio.get_event_loop().run_in_executor(None, _write_pickle_data)
 
             logger.debug(f"🔥 Created data file: {data_file.name}")
-            logger.debug(f"🔥 Status file: {status_file.name}")
-            logger.debug(f"🔥 Result file: {result_file.name}")
             # Generate actual log file path that subprocess will create
             actual_log_file_path = f"{log_file_base}_{unique_id}.log"
             logger.debug(f"🔥 Log file base: {log_file_base}")
@@ -598,8 +587,6 @@ class PlateManagerWidget(ButtonListWidget):
             # DEBUGGING: Store subprocess data for manual debugging
             self._last_subprocess_data = subprocess_data
             self._last_data_file_path = data_file.name
-            self._last_status_file_path = status_file.name
-            self._last_result_file_path = result_file.name
             self._last_log_file_path = actual_log_file_path
 
             # Create subprocess (like integration tests)
@@ -609,16 +596,16 @@ class PlateManagerWidget(ButtonListWidget):
             self.log_file_path = actual_log_file_path
             self.log_file_position = self._get_current_log_position()  # Start from current end
 
-            logger.debug(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {status_file.name} {result_file.name} {log_file_base} {unique_id}")
+            logger.debug(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {log_file_base} {unique_id}")
             logger.debug(f"🔥 Subprocess logger will write to: {self.log_file_path}")
             logger.debug(f"🔥 Subprocess stdout will be silenced (logger handles output)")
 
-            # SIMPLE SUBPROCESS: Let subprocess log to its own file
+            # SIMPLE SUBPROCESS: Let subprocess log to its own file (single source of truth)
             # Wrap subprocess creation in executor to avoid blocking UI
             def _create_subprocess():
                 return subprocess.Popen([
                     sys.executable, str(subprocess_script),
-                    data_file.name, status_file.name, result_file.name, log_file_base, unique_id
+                    data_file.name, log_file_base, unique_id  # Only data file and log - no temp files
                 ],
                 stdout=subprocess.DEVNULL,  # Subprocess logs to its own file
                 stderr=subprocess.DEVNULL,  # Subprocess logs to its own file
@@ -646,8 +633,8 @@ class PlateManagerWidget(ButtonListWidget):
             # Start reactive log monitoring
             self._start_log_monitoring()
 
-            # Start background monitoring worker
-            self._start_monitoring()
+            # Start async monitoring
+            await self._start_monitoring()
 
         except Exception as e:
             logger.critical(f"Failed to start subprocess: {e}", exc_info=True)
@@ -711,191 +698,104 @@ class PlateManagerWidget(ButtonListWidget):
             self.file_observer = None
             self.file_watcher = None
 
-    async def _check_process_status(self) -> None:
-        """Check if subprocess is still running (called by timer)."""
-        if not self._is_any_plate_running():
-            logger.debug("🔥 MONITOR: Subprocess finished - investigating...")
-            if self.monitoring_worker and not self.monitoring_worker.is_finished:
-                self.monitoring_worker.cancel()
 
-            # Get subprocess exit code and detailed info
-            if self.current_process:
-                exit_code = self.current_process.poll()
-                logger.info(f"🔥 MONITOR: Subprocess exit code: {exit_code}")
 
-                # Classify the exit
-                if exit_code == 0:
-                    logger.info("🔥 MONITOR: Subprocess completed successfully")
-                elif exit_code is None:
-                    logger.error("🔥 MONITOR: Subprocess still running but poll() returned None - this is weird!")
-                elif exit_code < 0:
-                    logger.error(f"🔥 MONITOR: Subprocess killed by signal {-exit_code}")
-                else:
-                    logger.error(f"🔥 MONITOR: Subprocess failed with exit code {exit_code}")
-
-                # Read any remaining log entries
-                await self._read_log_file_incremental()
-
-            # Check results from files before cleaning up
-            if self.status_file_path:
-                # Wrap all file existence checks in executor to avoid blocking UI
-                def _check_temp_files():
-                    status_exists = Path(self.status_file_path).exists()
-                    result_exists = Path(self.result_file_path).exists() if self.result_file_path else False
-                    data_exists = Path(self.data_file_path).exists() if self.data_file_path else False
-                    log_exists = Path(self.log_file_path).exists() if self.log_file_path else False
-
-                    status_content = ""
-                    if status_exists:
-                        try:
-                            with open(self.status_file_path, 'r') as f:
-                                status_content = f.read()
-                        except Exception as e:
-                            status_content = f"ERROR: {e}"
-
-                    return status_exists, result_exists, data_exists, log_exists, status_content
-
-                status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
-
-                # Debug: Check if temp files exist and have content
-                logger.debug(f"🔥 MONITOR: Checking temp files:")
-                logger.debug(f"🔥 MONITOR: Status file exists: {status_exists}")
-                logger.debug(f"🔥 MONITOR: Result file exists: {result_exists}")
-                logger.debug(f"🔥 MONITOR: Data file exists: {data_exists}")
-                logger.debug(f"🔥 MONITOR: Log file exists: {log_exists}")
-
-                if status_exists:
-                    logger.debug(f"🔥 MONITOR: Status file content: '{status_content}'")
-                    if not status_content.strip():
-                        logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
-
-                # Schedule async execution result processing
-                await self._process_execution_results()
-
-            if self.current_process:
-                # FIXED: Don't wait with timeout - process is already finished!
-                # The poll() check above already confirmed it's done
-                try:
-                    self.current_process.wait()  # NO TIMEOUT! Just clean up the zombie process
-                except Exception as e:
-                    logger.warning(f"🔥 MONITOR: Error during process cleanup: {e}")
-
-            self._reset_execution_state("Execution finished.")
-
-    def _start_monitoring(self) -> None:
-        """Start background monitoring worker for process status."""
+    async def _start_monitoring(self) -> None:
+        """Start async monitoring using Textual's interval system."""
         # Stop any existing monitoring
         self._stop_monitoring()
 
-        # Start Textual worker using @work decorated method
-        self.monitoring_worker = self._monitoring_worker()
-        logger.debug("Started background process monitoring")
+        if self.monitoring_active:
+            return
+
+        self.monitoring_active = True
+        # Use Textual's set_interval for periodic async monitoring
+        self.monitoring_interval = self.set_interval(
+            10.0,  # Check every 10 seconds
+            self._check_process_status_async,
+            pause=False
+        )
+        logger.debug("Started async process monitoring")
 
     def _stop_monitoring(self) -> None:
-        """Stop background monitoring worker."""
-        if self.monitoring_worker and not self.monitoring_worker.is_finished:
-            self.monitoring_worker.cancel()
-        self.monitoring_worker = None
+        """Stop async monitoring."""
+        if self.monitoring_interval:
+            self.monitoring_interval.stop()
+            self.monitoring_interval = None
+        self.monitoring_active = False
 
         # Also stop log monitoring
         self._stop_log_monitoring()
 
-        logger.debug("Stopped background process monitoring")
+        logger.debug("Stopped async process monitoring")
 
-    @work(thread=True, exclusive=True)
-    def _monitoring_worker(self) -> None:
-        """Textual worker that monitors subprocess status."""
-        worker = get_current_worker()
+    async def _check_process_status_async(self) -> None:
+        """Async process status check - replaces worker thread."""
+        if not self.monitoring_active:
+            return
 
-        while not worker.is_cancelled:
+        try:
+            # Simple direct access - no threading, no locks needed
+            if not self._is_any_plate_running():
+                logger.debug("🔥 MONITOR: Subprocess finished")
+
+                # Stop monitoring first
+                self._stop_monitoring()
+
+                # Handle completion directly - no call_from_thread needed
+                await self._handle_process_completion()
+
+        except Exception as e:
+            logger.debug(f"Error in async process monitoring: {e}")
+            # Continue monitoring on error
+
+    async def _handle_process_completion(self) -> None:
+        """Handle subprocess completion - read from log file (single source of truth)."""
+        # Determine success/failure from log file content (single source of truth)
+        success = False
+
+        if self.log_file_path and Path(self.log_file_path).exists():
             try:
-                if not self._is_any_plate_running():
-                    # Process has finished - update UI via call_from_thread
-                    if not worker.is_cancelled:
-                        self.app.call_from_thread(self._handle_process_completion_sync)
-                    break  # Exit monitoring loop
-
-                # Sleep for 10 seconds before next check
-                time.sleep(10.0)
+                # Read log file directly to check for success markers
+                with open(self.log_file_path, 'r') as f:
+                    log_content = f.read()
+                    # Look for success markers in the log
+                    has_execution_success = "🔥 SUBPROCESS: EXECUTION SUCCESS:" in log_content
+                    has_all_completed = "All plates completed successfully" in log_content
+                    if has_execution_success and has_all_completed:
+                        success = True
 
             except Exception as e:
-                logger.debug(f"Error in process monitoring worker: {e}")
-                time.sleep(5.0)  # Sleep on error
+                logger.error(f"Error reading subprocess log file: {e}")
+                success = False
 
-    def _handle_process_completion_sync(self) -> None:
-        """Handle subprocess completion - called from background thread via call_from_thread."""
-        # This needs to be sync since call_from_thread can't handle async
-        # Schedule the async version
-        import asyncio
-        asyncio.create_task(self._handle_process_completion_async())
-
-    async def _handle_process_completion_async(self) -> None:
-        """Handle subprocess completion - async version."""
-        logger.info("🔥 MONITOR: Subprocess finished - investigating...")
-
-        # Get subprocess exit code and detailed info
+        # Clean up the subprocess
+        logger.info("🔥 MONITOR: Starting process cleanup...")
         if self.current_process:
-            exit_code = self.current_process.poll()
-            logger.info(f"🔥 MONITOR: Subprocess exit code: {exit_code}")
-
-            # Classify the exit
-            if exit_code == 0:
-                logger.info("🔥 MONITOR: Subprocess completed successfully")
-            elif exit_code is None:
-                logger.error("🔥 MONITOR: Subprocess still running but poll() returned None - this is weird!")
-            elif exit_code < 0:
-                logger.error(f"🔥 MONITOR: Subprocess killed by signal {-exit_code}")
-            else:
-                logger.error(f"🔥 MONITOR: Subprocess failed with exit code {exit_code}")
-
-            # Read any remaining log entries
-            await self._read_log_file_incremental()
-
-        # Check results from files before cleaning up
-        if self.status_file_path:
-            # Wrap all file existence checks in executor to avoid blocking UI
-            def _check_temp_files():
-                status_exists = Path(self.status_file_path).exists()
-                result_exists = Path(self.result_file_path).exists() if self.result_file_path else False
-                data_exists = Path(self.data_file_path).exists() if self.data_file_path else False
-                log_exists = Path(self.log_file_path).exists() if self.log_file_path else False
-
-                status_content = ""
-                if status_exists:
-                    try:
-                        with open(self.status_file_path, 'r') as f:
-                            status_content = f.read()
-                    except Exception as e:
-                        status_content = f"ERROR: {e}"
-
-                return status_exists, result_exists, data_exists, log_exists, status_content
-
-            status_exists, result_exists, data_exists, log_exists, status_content = await asyncio.get_event_loop().run_in_executor(None, _check_temp_files)
-
-            # Debug: Check if temp files exist and have content
-            logger.debug(f"🔥 MONITOR: Checking temp files:")
-            logger.debug(f"🔥 MONITOR: Status file exists: {status_exists}")
-            logger.debug(f"🔥 MONITOR: Result file exists: {result_exists}")
-            logger.debug(f"🔥 MONITOR: Data file exists: {data_exists}")
-            logger.debug(f"🔥 MONITOR: Log file exists: {log_exists}")
-
-            if status_exists:
-                logger.debug(f"🔥 MONITOR: Status file content: '{status_content}'")
-                if not status_content.strip():
-                    logger.warning("🔥 MONITOR: Status file is empty - subprocess may have crashed before writing anything")
-
-            # Schedule async execution result processing
-            await self._process_execution_results()
-
-        if self.current_process:
-            # FIXED: Don't wait with timeout - process is already finished!
-            # The poll() check above already confirmed it's done
             try:
-                self.current_process.wait()  # NO TIMEOUT! Just clean up the zombie process
+                self.current_process.wait()  # Clean up the zombie process
+                logger.info("🔥 MONITOR: Process cleanup completed")
             except Exception as e:
                 logger.warning(f"🔥 MONITOR: Error during process cleanup: {e}")
 
-        self._reset_execution_state("Execution finished.")
+        # Update orchestrator states based on log file analysis (single source of truth)
+        if success:
+            # Success - update orchestrators to completed
+            for plate_path, orchestrator in self.orchestrators.items():
+                if orchestrator.state == OrchestratorState.EXECUTING:
+                    orchestrator._state = OrchestratorState.COMPLETED
+
+            # Reset execution state (this will trigger UI refresh internally)
+            self._reset_execution_state("Execution completed successfully.", force_fail_executing=False)
+        else:
+            # Failure - update orchestrators to failed
+            for plate_path, orchestrator in self.orchestrators.items():
+                if orchestrator.state == OrchestratorState.EXECUTING:
+                    orchestrator._state = OrchestratorState.EXEC_FAILED
+
+            # Reset execution state (this will trigger UI refresh internally)
+            self._reset_execution_state("Execution failed.", force_fail_executing=False)
+
         self._stop_monitoring()  # Stop monitoring since process is done
 
     async def _read_log_file_incremental(self) -> None:
@@ -946,115 +846,43 @@ class PlateManagerWidget(ButtonListWidget):
         except Exception as e:
             self.app.current_status = f"🔥 LOG READER ERROR: {e}"
 
-    async def _process_execution_results(self) -> None:
-        """Process results from the subprocess files."""
-        if not self.status_file_path:
-            return
 
-        try:
-            # Wrap all file I/O operations in executor to avoid blocking UI
-            def _read_execution_files():
-                status_updates = {}
-                result_updates = {}
 
-                # Read status file (one JSON object per line)
-                if Path(self.status_file_path).exists():
-                    try:
-                        with open(self.status_file_path, 'r') as f:
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    data = json.loads(line)
-                                    plate_path = data['plate_path']
-                                    status = data['status']
-                                    status_updates[plate_path] = status
-                    except Exception as e:
-                        logger.debug(f"Could not read status file: {e}")
-
-                # Read result file (one JSON object per line)
-                if Path(self.result_file_path).exists():
-                    try:
-                        with open(self.result_file_path, 'r') as f:
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    data = json.loads(line)
-                                    plate_path = data['plate_path']
-                                    result = data['result']
-                                    result_updates[plate_path] = result
-                    except Exception as e:
-                        logger.debug(f"Could not read result file: {e}")
-
-                return status_updates, result_updates
-
-            status_updates, result_updates = await asyncio.get_event_loop().run_in_executor(None, _read_execution_files)
-
-            # Update orchestrator states based on results
-            current_plates = list(self.items)
-            for plate in current_plates:
-                plate_path = plate['path']
-
-                if plate_path in status_updates and plate_path in self.orchestrators:
-                    status = status_updates[plate_path]
-                    orchestrator = self.orchestrators[plate_path]
-
-                    if status == "COMPLETED":
-                        orchestrator._state = OrchestratorState.COMPLETED
-                        logger.debug(f"🔥 Plate {plate['name']} completed successfully")
-                    elif status.startswith("ERROR:"):
-                        orchestrator._state = OrchestratorState.EXEC_FAILED
-                        plate['error'] = status[6:]  # Keep error in plate dict for now
-                        logger.error(f"🔥 Plate {plate['name']} failed: {plate['error']}")
-
-                        # Log full error details if available
-                        if plate_path in result_updates:
-                            logger.error(f"🔥 Full error for {plate['name']}:\n{result_updates[plate_path]}")
-
-                    # Log results if available
-                    if plate_path in result_updates and status == "COMPLETED":
-                        logger.info(f"🔥 Results for {plate['name']}: {result_updates[plate_path]}")
-
-            # Trigger UI refresh after orchestrator state changes
-            self._trigger_ui_refresh()
-            # Update the items list
-            self.items = current_plates
-
-        except Exception as e:
-            logger.error(f"Error processing execution results: {e}", exc_info=True)
-
-    def action_stop_execution(self) -> None:
+    async def action_stop_execution(self) -> None:
         logger.info("🛑 Stop button pressed. Terminating subprocess.")
         self.app.current_status = "Terminating execution..."
+
+        # Stop async monitoring first
+        self._stop_monitoring()
 
         if self.current_process and self.current_process.poll() is None:  # Still running
             try:
                 # Kill the entire process group, not just the parent process
                 # The subprocess creates its own process group, so we need to kill that group
                 logger.info(f"🛑 Killing process group for PID {self.current_process.pid}...")
-                
+
                 # Get the process group ID (should be same as PID since subprocess calls os.setpgrp())
                 process_group_id = self.current_process.pid
-                
+
                 # Kill entire process group (negative PID kills process group)
                 os.killpg(process_group_id, signal.SIGTERM)
-                
+
                 # Give processes time to exit gracefully
-                time.sleep(1)
-                
+                await asyncio.sleep(1)
+
                 # Force kill if still alive
                 try:
                     os.killpg(process_group_id, signal.SIGKILL)
                     logger.info(f"🛑 Force killed process group {process_group_id}")
                 except ProcessLookupError:
                     logger.info(f"🛑 Process group {process_group_id} already terminated")
-                    
+
             except Exception as e:
                 logger.warning(f"🛑 Error killing process group: {e}, falling back to single process kill")
                 # Fallback to killing just the main process
                 self.current_process.kill()
 
         self._reset_execution_state("Execution terminated by user.")
-        self._update_button_states()
 
 
 

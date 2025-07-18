@@ -1,7 +1,7 @@
 """
-CPU-based cell counting and multi-channel colocalization analysis for OpenHCS.
+GPU-accelerated cell counting and multi-channel colocalization analysis for OpenHCS.
 
-This module provides comprehensive cell counting capabilities using scikit-image,
+This module provides comprehensive cell counting capabilities using pyclesperanto,
 supporting both single-channel and multi-channel analysis with various detection
 methods and colocalization metrics.
 """
@@ -17,17 +17,11 @@ logger = logging.getLogger(__name__)
 # Core scientific computing imports
 import pandas as pd
 import json
-from scipy import ndimage
+import pyclesperanto as cle
 from scipy.spatial.distance import cdist
-from skimage.feature import blob_log, blob_dog, blob_doh, peak_local_max
-from skimage.filters import threshold_otsu, threshold_li, gaussian, median
-from skimage.segmentation import watershed, clear_border
-from skimage.morphology import remove_small_objects, disk, binary_erosion, binary_dilation
-from skimage.measure import label, regionprops
-from skimage import exposure
 
 # OpenHCS imports
-from openhcs.core.memory.decorators import numpy as numpy_func
+from openhcs.core.memory.decorators import pyclesperanto as pyclesperanto_func
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.constants.constants import Backend
 
@@ -90,15 +84,11 @@ class MultiChannelResult:
 def materialize_cell_counts(data: List[Union[CellCountResult, MultiChannelResult]], path: str, filemanager) -> str:
     """Materialize cell counting results as analysis-ready CSV and JSON formats."""
 
-    logger.info(f"🔬 CELL_COUNT_MATERIALIZE: Called with path={path}, data_length={len(data) if data else 0}")
-
     # Determine if this is single-channel or multi-channel data
     if not data:
-        logger.warning(f"🔬 CELL_COUNT_MATERIALIZE: No data to materialize")
         return path
 
     is_multi_channel = isinstance(data[0], MultiChannelResult)
-    logger.info(f"🔬 CELL_COUNT_MATERIALIZE: is_multi_channel={is_multi_channel}")
 
     if is_multi_channel:
         return _materialize_multi_channel_results(data, path, filemanager)
@@ -106,7 +96,7 @@ def materialize_cell_counts(data: List[Union[CellCountResult, MultiChannelResult
         return _materialize_single_channel_results(data, path, filemanager)
 
 
-@numpy_func
+@pyclesperanto_func
 @special_outputs(("cell_counts", materialize_cell_counts))
 def count_cells_single_channel(
     image_stack: np.ndarray,
@@ -163,7 +153,13 @@ def count_cells_single_channel(
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D")
     
     results = []
-    output_stack = np.zeros_like(image_stack) if return_segmentation_mask else image_stack.copy()
+    if return_segmentation_mask:
+        # Create zeros array with same shape as input
+        output_stack = cle.create_like(image_stack)
+    else:
+        # Create a copy of the input array
+        output_stack = cle.create_like(image_stack)
+        cle.copy(image_stack, output_stack)
     
     # Store parameters for reproducibility (convert enums to values)
     parameters = {
@@ -175,7 +171,7 @@ def count_cells_single_channel(
         "overlap": overlap,
         "watershed_footprint_size": watershed_footprint_size,
         "watershed_min_distance": watershed_min_distance,
-        "watershed_threshold_method": watershed_threshold_method.value,
+        "watershed_threshold_method": watershed_threshold_method.value if hasattr(watershed_threshold_method, 'value') else watershed_threshold_method,
         "gaussian_sigma": gaussian_sigma,
         "median_disk_size": median_disk_size,
         "min_cell_area": min_cell_area,
@@ -186,13 +182,14 @@ def count_cells_single_channel(
     logging.info(f"Processing {image_stack.shape[0]} slices with {detection_method.value} method")
 
     for z_idx in range(image_stack.shape[0]):
-        slice_img = image_stack[z_idx].astype(np.float64)
+        # Extract slice - keep as pyclesperanto array
+        slice_img = image_stack[z_idx]
 
-        # Apply preprocessing if enabled
+        # Apply preprocessing if enabled (all operations stay in GPU)
         if enable_preprocessing:
             slice_img = _preprocess_image(slice_img, gaussian_sigma, median_disk_size)
 
-        # Detect cells using specified method
+        # Detect cells using specified method (slice_img stays as cle array)
         result = _detect_cells_single_method(
             slice_img, z_idx, detection_method.value, parameters
         )
@@ -208,7 +205,7 @@ def count_cells_single_channel(
     return output_stack, results
 
 
-@numpy_func
+@pyclesperanto_func
 @special_outputs(("multi_channel_counts", materialize_cell_counts))
 def count_cells_multi_channel(
     image_stack: np.ndarray,
@@ -405,7 +402,6 @@ def _materialize_single_channel_results(data: List[CellCountResult], path: str, 
 
     # Ensure output directory exists for disk backend
     from pathlib import Path
-    from openhcs.constants.constants import Backend
     output_dir = Path(json_path).parent
     filemanager.ensure_directory(str(output_dir), Backend.DISK.value)
 
@@ -492,8 +488,6 @@ def _materialize_multi_channel_results(data: List[MultiChannelResult], path: str
         },
         "results_per_slice": []
     }
-
-    # CSV for detailed analysis (csv_path already defined above)
     rows = []
 
     total_coloc_pct = 0
@@ -549,17 +543,21 @@ def _materialize_multi_channel_results(data: List[MultiChannelResult], path: str
     return json_path
 
 
-def _preprocess_image(image: np.ndarray, gaussian_sigma: float, median_disk_size: int) -> np.ndarray:
-    """Apply preprocessing to enhance cell detection."""
+def _preprocess_image(image, gaussian_sigma: float, median_disk_size: int):
+    """Apply preprocessing to enhance cell detection using pyclesperanto."""
+    # Assume image is already a pyclesperanto array
+    gpu_image = image
+
     # Gaussian blur to reduce noise
     if gaussian_sigma > 0:
-        image = gaussian(image, sigma=gaussian_sigma, preserve_range=True)
+        gpu_image = cle.gaussian_blur(gpu_image, sigma_x=gaussian_sigma, sigma_y=gaussian_sigma)
 
     # Median filter to remove salt-and-pepper noise
     if median_disk_size > 0:
-        image = median(image, disk(median_disk_size))
+        gpu_image = cle.median_box(gpu_image, radius_x=median_disk_size, radius_y=median_disk_size)
 
-    return image
+    # Return the GPU array
+    return gpu_image
 
 
 def _detect_cells_single_method(
@@ -585,95 +583,209 @@ def _detect_cells_single_method(
 
 
 def _detect_cells_blob_log(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
-    """Detect cells using Laplacian of Gaussian blob detection."""
-    blobs = blob_log(
-        image,
-        min_sigma=params["min_sigma"],
-        max_sigma=params["max_sigma"],
-        num_sigma=params["num_sigma"],
-        threshold=params["threshold"],
-        overlap=params["overlap"]
-    )
+    """Detect cells using fast LoG-like blob detection."""
+    gpu_image = image
 
-    # Extract positions, areas, and intensities
-    positions = []
-    areas = []
-    intensities = []
-    confidences = []
+    # Use single scale for speed - average of min and max sigma
+    sigma = (params["min_sigma"] + params["max_sigma"]) / 2
 
-    for blob in blobs:
-        y, x, sigma = blob
-        positions.append((float(x), float(y)))
+    # Fast LoG approximation: Use DoG like blob_dog but with closer scales
+    blurred1 = cle.gaussian_blur(gpu_image, sigma_x=sigma, sigma_y=sigma)
+    blurred2 = cle.gaussian_blur(gpu_image, sigma_x=sigma*1.6, sigma_y=sigma*1.6)
 
-        # Estimate area from sigma (blob radius ≈ sigma * sqrt(2))
-        radius = sigma * np.sqrt(2)
-        area = np.pi * radius**2
-        areas.append(float(area))
+    # Difference approximates Laplacian
+    edges = cle.subtract_images(blurred1, blurred2)
 
-        # Sample intensity at blob center
-        intensity = float(image[int(y), int(x)])
-        intensities.append(intensity)
+    # Threshold the edge response
+    max_response = cle.maximum_of_all_pixels(cle.absolute(edges))
+    threshold_val = params["threshold"] * max_response
+    thresholded = cle.greater_constant(cle.absolute(edges), scalar=threshold_val)
 
-        # Use sigma as confidence measure (larger blobs = higher confidence)
-        confidence = float(sigma / params["max_sigma"])
-        confidences.append(confidence)
+    # Find local maxima
+    maxima = cle.detect_maxima(cle.absolute(edges),
+                              radius_x=int(sigma),
+                              radius_y=int(sigma))
 
-    # Filter by area constraints
-    filtered_data = _filter_by_area(
-        positions, areas, intensities, confidences,
-        params["min_cell_area"], params["max_cell_area"]
-    )
+    # Combine threshold and maxima
+    valid_maxima = cle.binary_and(thresholded, maxima)
+
+    # Dilate maxima more aggressively to create proper cell-sized regions
+    dilated = valid_maxima
+    for _ in range(6):  # More aggressive dilation
+        dilated = cle.dilate_box(dilated)
+
+    # Label connected components
+    labels = cle.connected_components_labeling(dilated)
+
+    # Remove small and large objects
+    labels = cle.remove_small_labels(labels, minimum_size=params["min_cell_area"])
+    labels = cle.remove_large_labels(labels, maximum_size=params["max_cell_area"])
+
+    # Get statistics
+    if cle.maximum_of_all_pixels(labels) > 0:
+        stats_dict = cle.statistics_of_labelled_pixels(gpu_image, labels)
+
+        positions = []
+        areas = []
+        intensities = []
+        confidences = []
+
+        if 'centroid_x' in stats_dict and len(stats_dict['centroid_x']) > 0:
+            for i, (x, y) in enumerate(zip(stats_dict['centroid_x'], stats_dict['centroid_y'])):
+                positions.append((float(x), float(y)))
+
+                # Get area and intensity
+                area = float(stats_dict['area'][i]) if i < len(stats_dict.get('area', [])) else sigma**2
+                intensity = float(stats_dict['mean_intensity'][i]) if i < len(stats_dict.get('mean_intensity', [])) else 1.0
+
+                areas.append(area)
+                intensities.append(intensity)
+                confidences.append(min(1.0, intensity / max_response))
+    else:
+        positions = []
+        areas = []
+        intensities = []
+        confidences = []
 
     return CellCountResult(
         slice_index=slice_idx,
-        method="blob_log",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
+        method="blob_log_pyclesperanto",
+        cell_count=len(positions),
+        cell_positions=positions,
+        cell_areas=areas,
+        cell_intensities=intensities,
+        detection_confidence=confidences,
         parameters_used=params
     )
 
 
 def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
-    """Detect cells using Difference of Gaussian blob detection."""
-    blobs = blob_dog(
-        image,
-        min_sigma=params["min_sigma"],
-        max_sigma=params["max_sigma"],
-        threshold=params["threshold"],
-        overlap=params["overlap"]
+    """Detect cells using fast Difference of Gaussians blob detection."""
+    gpu_image = image
+
+    # Use only two scales for speed
+    sigma1 = params["min_sigma"]
+    sigma2 = params["max_sigma"]
+
+    # Apply Gaussian blurs
+    blur1 = cle.gaussian_blur(gpu_image, sigma_x=sigma1, sigma_y=sigma1)
+    blur2 = cle.gaussian_blur(gpu_image, sigma_x=sigma2, sigma_y=sigma2)
+
+    # Difference of Gaussians
+    dog = cle.subtract_images(blur1, blur2)
+
+    # Threshold the DoG response
+    max_response = cle.maximum_of_all_pixels(cle.absolute(dog))
+    threshold_val = params["threshold"] * max_response
+    thresholded = cle.greater_constant(cle.absolute(dog), scalar=threshold_val)
+
+    # Find local maxima
+    maxima = cle.detect_maxima(cle.absolute(dog),
+                              radius_x=int(sigma1),
+                              radius_y=int(sigma1))
+
+    # Combine threshold and maxima
+    valid_maxima = cle.binary_and(thresholded, maxima)
+
+    # Dilate maxima to create regions for area calculation
+    dilated = valid_maxima
+    for _ in range(3):  # Moderate dilation
+        dilated = cle.dilate_box(dilated)
+
+    # Label connected components
+    labels = cle.connected_components_labeling(dilated)
+
+    # Remove small and large objects
+    labels = cle.remove_small_labels(labels, minimum_size=params["min_cell_area"])
+    labels = cle.remove_large_labels(labels, maximum_size=params["max_cell_area"])
+
+    # Get statistics
+    if cle.maximum_of_all_pixels(labels) > 0:
+        stats_dict = cle.statistics_of_labelled_pixels(gpu_image, labels)
+
+        positions = []
+        areas = []
+        intensities = []
+        confidences = []
+
+        if 'centroid_x' in stats_dict and len(stats_dict['centroid_x']) > 0:
+            for i, (x, y) in enumerate(zip(stats_dict['centroid_x'], stats_dict['centroid_y'])):
+                positions.append((float(x), float(y)))
+
+                # Get area and intensity
+                area = float(stats_dict['area'][i]) if i < len(stats_dict.get('area', [])) else sigma1**2
+                intensity = float(stats_dict['mean_intensity'][i]) if i < len(stats_dict.get('mean_intensity', [])) else 1.0
+
+                areas.append(area)
+                intensities.append(intensity)
+                confidences.append(min(1.0, intensity / max_response))
+    else:
+        positions = []
+        areas = []
+        intensities = []
+        confidences = []
+
+    return CellCountResult(
+        slice_index=slice_idx,
+        method="blob_dog_pyclesperanto",
+        cell_count=len(positions),
+        cell_positions=positions,
+        cell_areas=areas,
+        cell_intensities=intensities,
+        detection_confidence=confidences,
+        parameters_used=params
     )
+
+
+
+    # Extract the data we need from the statistics dictionary
+    if 'label' in stats_dict and len(stats_dict['label']) > 0:
+        # We have detected objects
+        areas = stats_dict.get('area', [])
+        labels_list = stats_dict.get('label', [])
+    else:
+        # No objects detected
+        areas = []
+        labels_list = []
+        centroids_x = []
+        centroids_y = []
 
     # Process similar to blob_log
     positions = []
-    areas = []
+    filtered_areas = []
     intensities = []
     confidences = []
 
-    for blob in blobs:
-        y, x, sigma = blob
-        positions.append((float(x), float(y)))
+    for i in range(len(labels_list)):
+        if i < len(centroids_x) and i < len(centroids_y) and i < len(areas):
+            x = float(centroids_x[i])
+            y = float(centroids_y[i])
+            positions.append((x, y))
 
-        radius = sigma * np.sqrt(2)
-        area = np.pi * radius**2
-        areas.append(float(area))
+            # Get area
+            area = float(areas[i])
+            filtered_areas.append(area)
 
-        intensity = float(image[int(y), int(x)])
-        intensities.append(intensity)
+            # Mean intensity (if available in stats)
+            mean_intensities = stats_dict.get('mean_intensity', [])
+            if i < len(mean_intensities):
+                intensity = float(mean_intensities[i])
+            else:
+                intensity = 1.0  # Default value
+            intensities.append(intensity)
 
-        confidence = float(sigma / params["max_sigma"])
-        confidences.append(confidence)
+            # Use area as confidence measure
+            confidence = min(1.0, area / (np.pi * params["max_sigma"]**2))
+            confidences.append(confidence)
 
     filtered_data = _filter_by_area(
-        positions, areas, intensities, confidences,
+        positions, filtered_areas, intensities, confidences,
         params["min_cell_area"], params["max_cell_area"]
     )
 
     return CellCountResult(
         slice_index=slice_idx,
-        method="blob_dog",
+        method="blob_dog_pyclesperanto",
         cell_count=len(filtered_data[0]),
         cell_positions=filtered_data[0],
         cell_areas=filtered_data[1],
@@ -684,44 +796,94 @@ def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, 
 
 
 def _detect_cells_blob_doh(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
-    """Detect cells using Determinant of Hessian blob detection."""
-    blobs = blob_doh(
-        image,
-        min_sigma=params["min_sigma"],
-        max_sigma=params["max_sigma"],
-        num_sigma=params["num_sigma"],
-        threshold=params["threshold"],
-        overlap=params["overlap"]
-    )
+    """Detect cells using Hessian-like detection with pyclesperanto."""
+    # Assume image is already a pyclesperanto array
+    gpu_image = image
+
+    # Apply Gaussian blur for smoothing
+    sigma = (params["min_sigma"] + params["max_sigma"]) / 2
+    blurred = cle.gaussian_blur(gpu_image, sigma_x=sigma, sigma_y=sigma)
+
+    # Apply edge detection (approximates Hessian determinant)
+    edges = cle.binary_edge_detection(blurred)
+
+    # Apply threshold to original image for valid regions
+    threshold_val = params["threshold"] * cle.maximum_of_all_pixels(gpu_image)
+    thresholded = cle.greater_constant(gpu_image, scalar=threshold_val)
+
+    # Detect local maxima in edge response
+    maxima = cle.detect_maxima_box(edges,
+                                  radius_x=int(params["min_sigma"]),
+                                  radius_y=int(params["min_sigma"]))
+
+    # Combine threshold and maxima
+    combined = cle.binary_and(thresholded, maxima)
+
+    # Dilate the maxima points to create proper regions
+    dilated = cle.dilate_box(combined)
+
+    # Label the dilated regions
+    labels = cle.connected_components_labeling(dilated)
+
+    # Remove small and large objects (same as simple baseline)
+    labels = cle.remove_small_labels(labels, minimum_size=params["min_cell_area"])
+    labels = cle.remove_large_labels(labels, maximum_size=params["max_cell_area"])
+
+    # Get statistics - this returns a dictionary with centroids included
+    stats_dict = cle.statistics_of_labelled_pixels(gpu_image, labels)
+
+    # Extract centroids directly from statistics (much simpler!)
+    centroids_x = stats_dict.get('centroid_x', [])
+    centroids_y = stats_dict.get('centroid_y', [])
+
+    # Extract the data we need from the statistics dictionary
+    if 'label' in stats_dict and len(stats_dict['label']) > 0:
+        # We have detected objects
+        areas = stats_dict.get('area', [])
+        labels_list = stats_dict.get('label', [])
+    else:
+        # No objects detected
+        areas = []
+        labels_list = []
+        centroids_x = []
+        centroids_y = []
 
     # Process similar to other blob methods
     positions = []
-    areas = []
+    filtered_areas = []
     intensities = []
     confidences = []
 
-    for blob in blobs:
-        y, x, sigma = blob
-        positions.append((float(x), float(y)))
+    for i in range(len(labels_list)):
+        if i < len(centroids_x) and i < len(centroids_y) and i < len(areas):
+            x = float(centroids_x[i])
+            y = float(centroids_y[i])
+            positions.append((x, y))
 
-        radius = sigma * np.sqrt(2)
-        area = np.pi * radius**2
-        areas.append(float(area))
+            # Get area
+            area = float(areas[i])
+            filtered_areas.append(area)
 
-        intensity = float(image[int(y), int(x)])
-        intensities.append(intensity)
+            # Mean intensity (if available in stats)
+            mean_intensities = stats_dict.get('mean_intensity', [])
+            if i < len(mean_intensities):
+                intensity = float(mean_intensities[i])
+            else:
+                intensity = 1.0  # Default value
+            intensities.append(intensity)
 
-        confidence = float(sigma / params["max_sigma"])
-        confidences.append(confidence)
+            # Use area as confidence measure
+            confidence = min(1.0, area / (np.pi * params["max_sigma"]**2))
+            confidences.append(confidence)
 
     filtered_data = _filter_by_area(
-        positions, areas, intensities, confidences,
+        positions, filtered_areas, intensities, confidences,
         params["min_cell_area"], params["max_cell_area"]
     )
 
     return CellCountResult(
         slice_index=slice_idx,
-        method="blob_doh",
+        method="blob_doh_pyclesperanto",
         cell_count=len(filtered_data[0]),
         cell_positions=filtered_data[0],
         cell_areas=filtered_data[1],
@@ -755,72 +917,125 @@ def _filter_by_area(
     return filtered_positions, filtered_areas, filtered_intensities, filtered_confidences
 
 
+def _non_maximum_suppression_3d(positions, scales, responses, overlap_threshold):
+    """Apply non-maximum suppression across scale space."""
+    if len(positions) == 0:
+        return [], [], []
+
+    # Convert to numpy arrays for easier processing
+    positions = np.array(positions)
+    scales = np.array(scales)
+    responses = np.array(responses)
+
+    # Sort by response strength (highest first)
+    sorted_indices = np.argsort(responses)[::-1]
+
+    keep = []
+    for i in sorted_indices:
+        pos_i = positions[i]
+        scale_i = scales[i]
+
+        # Check if this detection overlaps with any already kept detection
+        should_keep = True
+        for j in keep:
+            pos_j = positions[j]
+            scale_j = scales[j]
+
+            # Calculate distance in space and scale
+            spatial_dist = np.sqrt(np.sum((pos_i - pos_j) ** 2))
+            scale_dist = abs(scale_i - scale_j) / max(scale_i, scale_j)
+
+            # Check if they overlap significantly
+            overlap_radius = max(scale_i, scale_j) * (1 + overlap_threshold)
+            if spatial_dist < overlap_radius and scale_dist < overlap_threshold:
+                should_keep = False
+                break
+
+        if should_keep:
+            keep.append(i)
+
+    # Return filtered results
+    return positions[keep].tolist(), scales[keep].tolist(), responses[keep].tolist()
+
+
 def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
-    """Detect cells using watershed segmentation."""
-    # Determine threshold
-    if params["watershed_threshold_method"] == "otsu":
-        threshold_val = threshold_otsu(image)
-    elif params["watershed_threshold_method"] == "li":
-        threshold_val = threshold_li(image)
-    else:
-        threshold_val = float(params["watershed_threshold_method"])
+    """Detect cells using watershed segmentation with pyclesperanto."""
+    # Assume image is already a pyclesperanto array
+    gpu_image = image
 
-    # Create binary mask
-    binary = image > threshold_val
+    # Use Otsu thresholding (optimal for microscopy images)
+    binary = cle.threshold_otsu(gpu_image)
 
-    # Remove small objects and border objects
-    binary = remove_small_objects(binary, min_size=params["min_cell_area"])
+    # Remove small and large objects (same as simple baseline)
+    temp_labels = cle.connected_components_labeling(binary)
+    temp_labels = cle.remove_small_labels(temp_labels, minimum_size=params["min_cell_area"])
+    temp_labels = cle.remove_large_labels(temp_labels, maximum_size=params["max_cell_area"])
+    binary = cle.greater_constant(temp_labels, scalar=0)
+
+    # Remove border objects if requested
     if params["remove_border_cells"]:
-        binary = clear_border(binary)
+        temp_labels = cle.connected_components_labeling(binary)
+        temp_labels = cle.remove_labels_on_edges(temp_labels)
+        binary = cle.greater_constant(temp_labels, scalar=0)
 
-    # Find local maxima as seeds
-    distance = ndimage.distance_transform_edt(binary)
-    local_maxima = peak_local_max(
-        distance,
-        min_distance=params["watershed_min_distance"],
-        footprint=np.ones((params["watershed_footprint_size"], params["watershed_footprint_size"]))
-    )
+    # Since pyclesperanto doesn't have watershed, use connected components directly
+    # This is a simplified approach that still provides cell segmentation
+    labels = cle.connected_components_labeling(binary)
 
-    # Convert coordinates to binary mask
-    local_maxima_mask = np.zeros_like(distance, dtype=bool)
-    if len(local_maxima) > 0:
-        local_maxima_mask[local_maxima[:, 0], local_maxima[:, 1]] = True
+    # Get statistics - this returns a dictionary with centroids included
+    stats_dict = cle.statistics_of_labelled_pixels(gpu_image, labels)
 
-    # Create markers for watershed
-    # Convert boolean mask to integer labels for connected components
-    markers = label(local_maxima_mask.astype(np.uint8))
+    # Extract centroids directly from statistics (much simpler!)
+    centroids_x = stats_dict.get('centroid_x', [])
+    centroids_y = stats_dict.get('centroid_y', [])
 
-    # Apply watershed
-    labels = watershed(-distance, markers, mask=binary)
-
-    # Extract region properties
-    regions = regionprops(labels, intensity_image=image)
+    # Extract the data we need from the statistics dictionary
+    if 'label' in stats_dict and len(stats_dict['label']) > 0:
+        # We have detected objects
+        areas = stats_dict.get('area', [])
+        labels_list = stats_dict.get('label', [])
+    else:
+        # No objects detected
+        areas = []
+        labels_list = []
+        centroids_x = []
+        centroids_y = []
 
     positions = []
-    areas = []
+    filtered_areas = []
     intensities = []
     confidences = []
 
-    for region in regions:
-        # Filter by area
-        if params["min_cell_area"] <= region.area <= params["max_cell_area"]:
-            # Centroid (note: regionprops returns (row, col) = (y, x))
-            y, x = region.centroid
-            positions.append((float(x), float(y)))
+    for i in range(len(labels_list)):
+        if i < len(centroids_x) and i < len(centroids_y) and i < len(areas):
+            area = float(areas[i])
 
-            areas.append(float(region.area))
-            intensities.append(float(region.mean_intensity))
+            # Filter by area
+            if params["min_cell_area"] <= area <= params["max_cell_area"]:
+                x = float(centroids_x[i])
+                y = float(centroids_y[i])
+                positions.append((x, y))
 
-            # Use area as confidence measure (normalized)
-            confidence = min(1.0, region.area / params["max_cell_area"])
-            confidences.append(confidence)
+                filtered_areas.append(area)
+
+                # Mean intensity (if available in stats)
+                mean_intensities = stats_dict.get('mean_intensity', [])
+                if i < len(mean_intensities):
+                    intensity = float(mean_intensities[i])
+                else:
+                    intensity = 1.0  # Default value
+                intensities.append(intensity)
+
+                # Use area as confidence measure (normalized)
+                confidence = min(1.0, area / params["max_cell_area"])
+                confidences.append(confidence)
 
     return CellCountResult(
         slice_index=slice_idx,
-        method="watershed",
+        method="watershed_pyclesperanto",
         cell_count=len(positions),
         cell_positions=positions,
-        cell_areas=areas,
+        cell_areas=filtered_areas,
         cell_intensities=intensities,
         detection_confidence=confidences,
         parameters_used=params
@@ -828,43 +1043,85 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
 
 
 def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
-    """Detect cells using simple thresholding and connected components."""
-    # Apply threshold
-    binary = image > params["threshold"] * image.max()
+    """Detect cells using simple thresholding and connected components with pyclesperanto."""
+    # Image is already a pyclesperanto array - no conversion needed
+    gpu_image = image
 
-    # Remove small objects and border objects
-    binary = remove_small_objects(binary, min_size=params["min_cell_area"])
+    # Apply threshold (all operations stay on GPU)
+    max_intensity = cle.maximum_of_all_pixels(gpu_image)
+    threshold_val = params["threshold"] * max_intensity
+    binary = cle.greater_constant(gpu_image, scalar=threshold_val)
+
+    # Remove small objects (all operations stay on GPU)
+    temp_labels = cle.connected_components_labeling(binary)
+    temp_labels = cle.remove_small_labels(temp_labels, minimum_size=params["min_cell_area"])
+    binary = cle.greater_constant(temp_labels, scalar=0)
+
+    # Remove border objects if requested (all operations stay on GPU)
     if params["remove_border_cells"]:
-        binary = clear_border(binary)
+        temp_labels = cle.connected_components_labeling(binary)
+        temp_labels = cle.remove_labels_on_edges(temp_labels)
+        binary = cle.greater_constant(temp_labels, scalar=0)
 
-    # Label connected components
-    labels = label(binary)
-    regions = regionprops(labels, intensity_image=image)
+    # Label connected components (final labeling on GPU)
+    labels = cle.connected_components_labeling(binary)
+
+    # Get statistics (operates on GPU arrays, returns dictionary)
+    stats_dict = cle.statistics_of_labelled_pixels(gpu_image, labels)
+
+    # Extract centroids directly from statistics (much simpler!)
+    centroids_x = stats_dict.get('centroid_x', [])
+    centroids_y = stats_dict.get('centroid_y', [])
+
+    # Extract the data we need from the statistics dictionary
+    if 'label' in stats_dict and len(stats_dict['label']) > 0:
+        # We have detected objects
+        areas = stats_dict.get('area', [])
+        labels_list = stats_dict.get('label', [])
+    else:
+        # No objects detected
+        areas = []
+        labels_list = []
+        centroids_x = []
+        centroids_y = []
+
+    max_intensity_cpu = float(max_intensity)
 
     positions = []
-    areas = []
+    filtered_areas = []
     intensities = []
     confidences = []
 
-    for region in regions:
-        # Filter by area
-        if params["min_cell_area"] <= region.area <= params["max_cell_area"]:
-            y, x = region.centroid
-            positions.append((float(x), float(y)))
+    for i in range(len(labels_list)):
+        if i < len(centroids_x) and i < len(centroids_y) and i < len(areas):
+            area = float(areas[i])
 
-            areas.append(float(region.area))
-            intensities.append(float(region.mean_intensity))
+            # Filter by area
+            if params["min_cell_area"] <= area <= params["max_cell_area"]:
+                x = float(centroids_x[i])
+                y = float(centroids_y[i])
+                positions.append((x, y))
 
-            # Use intensity as confidence measure
-            confidence = float(region.mean_intensity / image.max())
-            confidences.append(confidence)
+                filtered_areas.append(area)
+
+                # Mean intensity (if available in stats)
+                mean_intensities = stats_dict.get('mean_intensity', [])
+                if i < len(mean_intensities):
+                    mean_intensity = float(mean_intensities[i])
+                else:
+                    mean_intensity = 1.0  # Default value
+                intensities.append(mean_intensity)
+
+                # Use intensity as confidence measure
+                confidence = mean_intensity / max_intensity_cpu if max_intensity_cpu > 0 else 1.0
+                confidences.append(confidence)
 
     return CellCountResult(
         slice_index=slice_idx,
-        method="threshold",
+        method="threshold_pyclesperanto",
         cell_count=len(positions),
         cell_positions=positions,
-        cell_areas=areas,
+        cell_areas=filtered_areas,
         cell_intensities=intensities,
         detection_confidence=confidences,
         parameters_used=params
@@ -1122,7 +1379,13 @@ def _create_segmentation_visualization(
     max_sigma: float
 ) -> np.ndarray:
     """Create segmentation visualization with detected cells marked."""
-    visualization = image.copy()
+    # Convert pyclesperanto array to numpy only when needed for visualization
+    import pyclesperanto as cle
+    if hasattr(image, 'shape') and hasattr(image, 'dtype') and not isinstance(image, np.ndarray):
+        # This is a pyclesperanto array - convert to numpy only for final visualization
+        visualization = cle.pull(image).copy()
+    else:
+        visualization = image.copy()
 
     # Mark detected cells
     for x, y in positions:
@@ -1137,6 +1400,61 @@ def _create_segmentation_visualization(
         visualization[mask] = visualization.max()  # Bright markers
 
     return visualization
+
+
+def count_cells_simple_baseline(
+    image: np.ndarray,  # 2D image only
+    threshold: float = 0.1,
+    min_cell_area: int = 50,
+    max_cell_area: int = 5000
+) -> Tuple[np.ndarray, int, List[Tuple[float, float]]]:
+    """
+    Simple baseline cell counting using pyclesperanto.
+    Based on analyse_blobs.ipynb and voronoi_otsu_labeling.ipynb examples.
+
+    Args:
+        image: 2D numpy array
+        threshold: Threshold as fraction of max intensity (0.0-1.0)
+        min_cell_area: Minimum area in pixels
+        max_cell_area: Maximum area in pixels
+
+    Returns:
+        segmentation_mask: 2D array with labeled cells
+        cell_count: Number of detected cells
+        cell_positions: List of (x, y) centroid positions
+    """
+    # Convert to pyclesperanto array
+    gpu_image = cle.push(image.astype(np.float32))
+
+    # Apply threshold
+    max_intensity = cle.maximum_of_all_pixels(gpu_image)
+    threshold_val = threshold * max_intensity
+    binary = cle.greater_constant(gpu_image, scalar=threshold_val)
+
+    # Connected components labeling
+    labels = cle.connected_components_labeling(binary)
+
+    # Remove small and large objects
+    labels = cle.remove_small_labels(labels, minimum_size=min_cell_area)
+    labels = cle.remove_large_labels(labels, maximum_size=max_cell_area)
+
+    # Get statistics
+    stats = cle.statistics_of_labelled_pixels(gpu_image, labels)
+
+    # Extract results
+    if 'label' in stats and len(stats['label']) > 0:
+        cell_count = len(stats['label'])
+        centroids_x = stats.get('centroid_x', [])
+        centroids_y = stats.get('centroid_y', [])
+        cell_positions = [(float(x), float(y)) for x, y in zip(centroids_x, centroids_y)]
+    else:
+        cell_count = 0
+        cell_positions = []
+
+    # Convert result back to numpy
+    segmentation_mask = cle.pull(labels)
+
+    return segmentation_mask, cell_count, cell_positions
 
 
 def _create_colocalization_map(

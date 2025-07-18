@@ -193,32 +193,8 @@ class FuncStepContractValidator:
                     uses_special_contracts = True
                     break
         
-        # 2. If special contracts are used, validate the func_pattern's overall structure
-        if uses_special_contracts:
-            is_structurally_simple = False
-            # Check for direct callable (and not a class type itself)
-            if callable(func_pattern) and not isinstance(func_pattern, type):
-                is_structurally_simple = True
-            # Check for (callable, kwargs_dict) tuple
-            elif isinstance(func_pattern, tuple):
-                # _extract_functions_from_pattern already validates tuple structure if it contains a callable
-                # We just confirm it's a 2-tuple with callable and dict for this specific rule.
-                if len(func_pattern) == 2 and callable(func_pattern[0]) and \
-                   not isinstance(func_pattern[0], type) and isinstance(func_pattern[1], dict):
-                    is_structurally_simple = True
-            # Check for list containing exactly one simple item
-            elif isinstance(func_pattern, list):
-                if len(func_pattern) == 1:
-                    item = func_pattern[0]
-                    # The single item must itself be a simple pattern (callable or valid tuple)
-                    if (callable(item) and not isinstance(item, type)) or \
-                       (isinstance(item, tuple) and len(item) == 2 and
-                        callable(item[0]) and not isinstance(item[0], type) and
-                        isinstance(item[1], dict)):
-                        is_structurally_simple = True
-            
-            if not is_structurally_simple:
-                raise ValueError(complex_pattern_error(step_name))
+        # 2. Special contracts validation is handled by validate_pattern_structure() below
+        # No additional restrictions needed - all valid patterns support special contracts
 
         # 3. Validate dict pattern keys if orchestrator is available
         if orchestrator is not None and isinstance(func_pattern, dict) and step.group_by is not None:

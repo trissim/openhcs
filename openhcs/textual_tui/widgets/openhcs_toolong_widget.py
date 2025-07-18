@@ -230,7 +230,21 @@ class PersistentTailLogView(LogView):
         yield LinePanel()
         yield FindDialog(log_lines._suggester)
         yield InfoOverlay().data_bind(LogView.tail)
-        yield LogFooter().data_bind(LogView.tail, LogView.can_tail)
+
+        # Create LogFooter with error handling for mount_keys
+        footer = LogFooter().data_bind(LogView.tail, LogView.can_tail)
+
+        # Monkey patch mount_keys to add error handling
+        original_mount_keys = footer.mount_keys
+        async def safe_mount_keys():
+            try:
+                await original_mount_keys()
+            except Exception as e:
+                logger.error(f"LogFooter mount_keys failed: {e}")
+                # Continue without crashing
+        footer.mount_keys = safe_mount_keys
+
+        yield footer
 
     def on_mount(self) -> None:
         """Override to ensure tailing is enabled after mount."""

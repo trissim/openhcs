@@ -219,8 +219,9 @@ async def main_async(args):
                 logger.warning(f"Final cleanup: {len(active_threads)} threads still active, forcing exit")
                 import os
                 os._exit(0)
-        except:
-            pass
+        except (ImportError, AttributeError, OSError) as cleanup_error:
+            # If final cleanup fails, just log it - we're exiting anyway
+            logger.debug(f"Final cleanup failed (non-critical): {cleanup_error}")
 
 
 if __name__ == "__main__":

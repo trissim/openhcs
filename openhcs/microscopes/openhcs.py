@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Type
 from openhcs.constants.constants import Backend
 from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.io.filemanager import FileManager
-from openhcs.microscopes.microscope_interfaces_base import MetadataHandler
+from openhcs.microscopes.microscope_interfaces import MetadataHandler
 from openhcs.microscopes.imagexpress import ImageXpressFilenameParser # Placeholder for dynamic loading
 from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser # Placeholder for dynamic loading
 
@@ -330,7 +330,7 @@ class OpenHCSMetadataHandler(MetadataHandler):
         self._metadata_cache = metadata
         logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from openhcs.microscopes.microscope_interfaces_base import FilenameParser
+from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 
 class OpenHCSMicroscopeHandler(MicroscopeHandler):

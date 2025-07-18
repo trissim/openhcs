@@ -6,7 +6,7 @@ Standalone script that runs OpenHCS plate processing in a clean subprocess envir
 This mimics the integration test pattern from test_main.py but runs independently.
 
 Usage:
-    python subprocess_runner.py <data_file.pkl> <status_file.json> <result_file.json> <log_file.log>
+    python subprocess_runner.py <data_file.pkl> <log_file_base> [unique_id]
 """
 
 import sys
@@ -66,50 +66,10 @@ def setup_subprocess_logging(log_file_path: str):
 
     return logger
 
-def write_status(status_file: str, plate_path: str, status: str):
-    """Write status update to file."""
-    try:
-        # Append status updates to file (one JSON object per line)
-        import time
-        with open(status_file, 'a') as f:
-            json.dump({
-                'plate_path': plate_path,
-                'status': status,
-                'timestamp': time.time(),
-                'pid': os.getpid()
-            }, f)
-            f.write('\n')
-            f.flush()  # Force write to disk immediately
-    except Exception as e:
-        print(f"Failed to write status: {e}")
-
-def write_heartbeat(status_file: str):
-    """Write heartbeat to show subprocess is alive."""
-    try:
-        import time
-        with open(status_file, 'a') as f:
-            json.dump({
-                'heartbeat': True,
-                'timestamp': time.time(),
-                'pid': os.getpid()
-            }, f)
-            f.write('\n')
-            f.flush()
-    except Exception as e:
-        print(f"Failed to write heartbeat: {e}")
-
-def write_result(result_file: str, plate_path: str, result: Any):
-    """Write result to file."""
-    try:
-        # Append results to file (one JSON object per line)
-        with open(result_file, 'a') as f:
-            json.dump({'plate_path': plate_path, 'result': str(result)}, f)
-            f.write('\n')
-    except Exception as e:
-        print(f"Failed to write result: {e}")
+# Status and result files removed - log file is single source of truth
 
 def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
-                    status_file: str, result_file: str, logger, log_file_base: str = None):
+                    logger, log_file_base: str = None):
     """
     Run a single plate using the integration test pattern.
 
@@ -135,19 +95,13 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             logger.info(f"🔥 SUBPROCESS: CALLING {func_name} with args={len(args)}, kwargs={len(kwargs)}")
             print(f"🔥 SUBPROCESS STDOUT: CALLING {func_name}")
 
-            # DEATH DETECTION: Mark entry into function
-            try:
-                write_status(status_file, plate_path, f"ENTERING: {func_name}")
-            except:
-                pass
+            # DEATH DETECTION: Mark entry into function (log file only)
+            logger.info(f"🔥 SUBPROCESS: ENTERING: {func_name}")
 
             result = func(*args, **kwargs)
 
-            # DEATH DETECTION: Mark successful completion
-            try:
-                write_status(status_file, plate_path, f"COMPLETED: {func_name}")
-            except:
-                pass
+            # DEATH DETECTION: Mark successful completion (log file only)
+            logger.info(f"🔥 SUBPROCESS: COMPLETED: {func_name}")
 
             logger.info(f"🔥 SUBPROCESS: {func_name} COMPLETED successfully")
             print(f"🔥 SUBPROCESS STDOUT: {func_name} COMPLETED")
@@ -157,34 +111,22 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             logger.error(error_msg, exc_info=True)
             print(f"🔥 SUBPROCESS STDOUT NUCLEAR ERROR: {error_msg}")
             print(f"🔥 SUBPROCESS STDOUT NUCLEAR TRACEBACK: {traceback.format_exc()}")
-            # Write error immediately to status file
-            try:
-                write_status(status_file, plate_path, f"ERROR in {func_name}: {e}")
-            except:
-                pass
+            # Error logged to log file (single source of truth)
             raise RuntimeError(f"FORCED ERROR DETECTION: {func_name} failed: {e}") from e
         except BaseException as e:
             error_msg = f"🔥 NUCLEAR CRITICAL ERROR in {func_name}: {e}"
             logger.error(error_msg, exc_info=True)
             print(f"🔥 SUBPROCESS STDOUT NUCLEAR CRITICAL: {error_msg}")
             print(f"🔥 SUBPROCESS STDOUT NUCLEAR CRITICAL TRACEBACK: {traceback.format_exc()}")
-            # Write error immediately to status file
-            try:
-                write_status(status_file, plate_path, f"CRITICAL in {func_name}: {e}")
-            except:
-                pass
+            # Error logged to log file (single source of truth)
             raise RuntimeError(f"FORCED CRITICAL ERROR DETECTION: {func_name} failed: {e}") from e
 
     # DEATH DETECTION: Progress markers to find where process dies
     def death_marker(location, details=""):
-        """Mark progress to detect where process dies."""
+        """Mark progress to detect where process dies (log file only)."""
         marker_msg = f"🔥 DEATH_MARKER: {location} - {details}"
         logger.info(marker_msg)
         print(marker_msg)
-        try:
-            write_status(status_file, plate_path, f"PROGRESS: {location}")
-        except:
-            pass
 
     try:
         death_marker("FUNCTION_START", f"plate_path={plate_path}")
@@ -194,7 +136,7 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         logger.info(f"SUBPROCESS: Starting plate {plate_path}")
 
         death_marker("BEFORE_STATUS_WRITE")
-        write_status(status_file, plate_path, "STARTING")
+        logger.info(f"🔥 SUBPROCESS: STARTING plate {plate_path}")
         death_marker("AFTER_STATUS_WRITE")
 
         log_thread_count("after status write")
@@ -202,7 +144,6 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         # Step 1: Initialize GPU registry (like test_main.py)
         death_marker("STEP1_START", "GPU registry initialization")
         logger.info("SUBPROCESS: Initializing GPU registry")
-        write_heartbeat(status_file)
 
         death_marker("BEFORE_GPU_IMPORT")
         log_thread_count("before GPU scheduler import")
@@ -272,11 +213,8 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             logger.warning(f"🔥 SUBPROCESS: Could not set up process streams: {stream_error}")
             # Continue anyway - not critical
 
-        write_heartbeat(status_file)
-        
         # Step 2: Create orchestrator and initialize (like test_main.py)
         logger.info("🔥 SUBPROCESS: Creating orchestrator...")
-        write_heartbeat(status_file)
 
         log_thread_count("before orchestrator import")
 
@@ -321,7 +259,6 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         force_error_detection("orchestrator_initialize", orchestrator.initialize)
         log_thread_count("after orchestrator initialization")
         logger.info("🔥 SUBPROCESS: Orchestrator initialized!")
-        write_heartbeat(status_file)
         
         # Step 3: Get wells and prepare pipeline (like test_main.py)
         # NUCLEAR WRAP: Get wells
@@ -342,8 +279,7 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             raise RuntimeError(error_msg)
 
         logger.info(f"🔥 SUBPROCESS: Pipeline has {len(pipeline_steps)} steps")
-        
-        write_status(status_file, plate_path, "COMPILING")
+        logger.info(f"🔥 SUBPROCESS: COMPILING plate {plate_path}")
         
         # Step 4: Compilation phase (like test_main.py)
         logger.info("🔥 SUBPROCESS: Starting compilation phase...")
@@ -376,8 +312,7 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         if len(compiled_contexts) != len(wells):
             raise RuntimeError(f"🔥 COMPILATION FAILED: Expected {len(wells)} contexts, got {len(compiled_contexts)}")
         logger.info(f"🔥 SUBPROCESS: Compilation SUCCESS: {len(compiled_contexts)} contexts compiled")
-        
-        write_status(status_file, plate_path, "EXECUTING")
+        logger.info(f"🔥 SUBPROCESS: EXECUTING plate {plate_path}")
         
         # Step 5: Execution phase with multiprocessing (like test_main.py but with processes)
         logger.info("🔥 SUBPROCESS: Starting execution phase with multiprocessing...")
@@ -385,11 +320,9 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         # Use global config num_workers setting
         max_workers = global_config.num_workers
         logger.info(f"🔥 SUBPROCESS: Using {max_workers} workers from global config for {len(wells)} wells")
-        write_heartbeat(status_file)
 
         # This is where hangs often occur - add extra monitoring
         logger.info("🔥 SUBPROCESS: About to call execute_compiled_plate...")
-        write_heartbeat(status_file)
 
         # Add GPU memory monitoring before execution
         try:
@@ -407,7 +340,6 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         # Create a custom progress callback to see exactly where it hangs
         def progress_callback(well_id, step_name, status):
             logger.info(f"🔥 SUBPROCESS: PROGRESS - Well {well_id}, Step '{step_name}', Status: {status}")
-            write_heartbeat(status_file)
 
         # Add monitoring without timeout
         import threading
@@ -421,7 +353,6 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             while monitoring_active.is_set():
                 count += 1
                 logger.info(f"🔥 SUBPROCESS: MONITOR #{count} - Still executing, checking GPU memory...")
-                write_heartbeat(status_file)
 
                 try:
                     import torch
@@ -554,7 +485,6 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             monitoring_active.clear()  # Stop monitoring
 
         logger.info("🔥 SUBPROCESS: Execution completed!")
-        write_heartbeat(status_file)
 
         # AGGRESSIVE RESULT VALIDATION: Force errors to surface
         logger.info("🔥 SUBPROCESS: Starting aggressive result validation...")
@@ -624,9 +554,8 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         
         logger.info(f"🔥 SUBPROCESS: EXECUTION SUCCESS: {len(results)} wells executed successfully")
         
-        # Write success status and results
-        write_status(status_file, plate_path, "COMPLETED")
-        write_result(result_file, plate_path, results)
+        # Success logged to log file (single source of truth)
+        logger.info(f"🔥 SUBPROCESS: COMPLETED plate {plate_path} with {len(results)} results")
         
         logger.info(f"🔥 SUBPROCESS: Plate {plate_path} completed successfully")
         
@@ -635,30 +564,26 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
         logger.error(f"🔥 SUBPROCESS: {error_msg}", exc_info=True)
         print(f"🔥 SUBPROCESS STDOUT ERROR: {error_msg}")
         print(f"🔥 SUBPROCESS STDOUT TRACEBACK: {traceback.format_exc()}")
-        write_status(status_file, plate_path, f"ERROR: {e}")
-        write_result(result_file, plate_path, traceback.format_exc())
+        # Error logged to log file (single source of truth)
     except BaseException as e:
         # Catch EVERYTHING including SystemExit, KeyboardInterrupt, etc.
         error_msg = f"CRITICAL failure for plate {plate_path}: {e}"
         logger.error(f"🔥 SUBPROCESS: {error_msg}", exc_info=True)
         print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
         print(f"🔥 SUBPROCESS STDOUT CRITICAL TRACEBACK: {traceback.format_exc()}")
-        write_status(status_file, plate_path, f"CRITICAL: {e}")
-        write_result(result_file, plate_path, traceback.format_exc())
+        # Error logged to log file (single source of truth)
 
 def main():
     """Main entry point for subprocess runner."""
-    if len(sys.argv) < 5 or len(sys.argv) > 6:
-        print("Usage: python subprocess_runner.py <data_file.pkl> <status_file.json> <result_file.json> <log_file_base> [unique_id]")
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
+        print("Usage: python subprocess_runner.py <data_file.pkl> <log_file_base> [unique_id]")
         sys.exit(1)
 
     data_file = sys.argv[1]
-    status_file = sys.argv[2]
-    result_file = sys.argv[3]
-    log_file_base = sys.argv[4]
-    unique_id = sys.argv[5] if len(sys.argv) == 6 else None
+    log_file_base = sys.argv[2]
+    unique_id = sys.argv[3] if len(sys.argv) == 4 else None
 
-    # Generate unique log file path
+    # Generate unique log file path using the unique_id from TUI
     if unique_id:
         log_file = f"{log_file_base}_{unique_id}.log"
     else:
@@ -709,7 +634,7 @@ def main():
     # Set up logging first
     logger = setup_subprocess_logging(log_file)
     logger.info("🔥 SUBPROCESS: Starting OpenHCS subprocess runner")
-    logger.info(f"🔥 SUBPROCESS: Args - data: {data_file}, status: {status_file}, result: {result_file}, log: {log_file}")
+    logger.info(f"🔥 SUBPROCESS: Args - data: {data_file}, log: {log_file}")
 
     # DEATH DETECTION: Set up heartbeat monitoring
     import threading
@@ -725,12 +650,8 @@ def main():
                 logger.info(heartbeat_msg)
                 print(heartbeat_msg)
 
-                # Write heartbeat to status file to detect death
-                try:
-                    write_status(status_file, "HEARTBEAT", f"Alive #{heartbeat_count} at {time.time()}")
-                except Exception as hb_error:
-                    logger.error(f"🔥 SUBPROCESS: Heartbeat write failed: {hb_error}")
-                    print(f"🔥 SUBPROCESS STDOUT: Heartbeat write failed: {hb_error}")
+                # Heartbeat logged to log file (single source of truth)
+                # No separate heartbeat file needed
 
                 time.sleep(2)  # Heartbeat every 2 seconds
             except Exception as monitor_error:
@@ -749,11 +670,7 @@ def main():
         logger.error(crash_msg)
         print(f"🔥 SUBPROCESS STDOUT CRASH: {crash_msg}")
 
-        # Write crash info to status file
-        try:
-            write_status(status_file, "SYSTEM", f"CRASH: Signal {signum}")
-        except:
-            pass
+        # Crash info logged to log file (single source of truth)
 
         # Dump stack trace
         try:
@@ -781,10 +698,7 @@ def main():
     def exit_handler():
         logger.error("🔥 SUBPROCESS: ATEXIT - Process is exiting!")
         print("🔥 SUBPROCESS STDOUT: ATEXIT - Process is exiting!")
-        try:
-            write_status(status_file, "SYSTEM", "ATEXIT: Process exiting")
-        except:
-            pass
+        # Exit info logged to log file (single source of truth)
 
     atexit.register(exit_handler)
 
@@ -828,8 +742,6 @@ def main():
                 plate_path=plate_path,
                 pipeline_steps=pipeline_steps,
                 global_config=global_config,
-                status_file=status_file,
-                result_file=result_file,
                 logger=logger,
                 log_file_base=log_file_base
             )
@@ -840,27 +752,16 @@ def main():
         logger.error(f"🔥 SUBPROCESS: Fatal error: {e}", exc_info=True)
         print(f"🔥 SUBPROCESS STDOUT FATAL: {e}")
         print(f"🔥 SUBPROCESS STDOUT FATAL TRACEBACK: {traceback.format_exc()}")
-        # Write error for all plates if we failed before processing
-        try:
-            with open(data_file, 'rb') as f:
-                data = pickle.load(f)
-            for plate_path in data['plate_paths']:
-                write_status(status_file, plate_path, f"ERROR: Subprocess failed: {e}")
-        except:
-            pass
+        # Error logged to log file (single source of truth)
+        logger.error(f"🔥 SUBPROCESS: Fatal error for all plates: {e}")
         sys.exit(1)
     except BaseException as e:
         # Catch EVERYTHING including SystemExit, KeyboardInterrupt, etc.
         logger.error(f"🔥 SUBPROCESS: CRITICAL SYSTEM ERROR: {e}", exc_info=True)
         print(f"🔥 SUBPROCESS STDOUT CRITICAL SYSTEM: {e}")
         print(f"🔥 SUBPROCESS STDOUT CRITICAL SYSTEM TRACEBACK: {traceback.format_exc()}")
-        try:
-            with open(data_file, 'rb') as f:
-                data = pickle.load(f)
-            for plate_path in data['plate_paths']:
-                write_status(status_file, plate_path, f"CRITICAL: System error: {e}")
-        except:
-            pass
+        # Critical error logged to log file (single source of truth)
+        logger.error(f"🔥 SUBPROCESS: Critical system error for all plates: {e}")
         sys.exit(2)
 
 if __name__ == "__main__":
