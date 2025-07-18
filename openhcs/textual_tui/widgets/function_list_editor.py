@@ -659,9 +659,260 @@ class FunctionListEditorWidget(Container):
             logger.error(f"Failed to save pattern: {e}")
 
     def _edit_in_vim(self) -> None:
-        """Edit function pattern in Vim."""
-        # TODO: Implement Vim editing functionality
-        logger.debug("Edit in Vim button pressed - not implemented yet")
+        """Edit function pattern as Python code in terminal window."""
+        logger.debug("Edit button pressed - opening terminal editor")
+
+        try:
+            # Use debug module's pattern formatting with proper imports
+            from openhcs.debug.pickle_to_python import generate_function_repr
+            from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
+
+            # Update pattern data first
+            self._update_pattern_data()
+
+            # Generate complete Python code with imports (like debug module does)
+            python_code = self._generate_complete_python_code()
+
+            # Create terminal launcher
+            launcher = TerminalLauncher(self.app)
+
+            # Launch editor in terminal window with callback
+            self.app.call_later(
+                launcher.launch_editor_for_file,
+                python_code,
+                '.py',
+                self._handle_edited_pattern
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to launch terminal editor: {e}")
+            self.app.show_error("Edit Error", f"Failed to launch terminal editor: {str(e)}")
+
+    def _handle_edited_pattern(self, edited_code: str) -> None:
+        """Handle the edited pattern code from terminal editor."""
+        try:
+            # Execute the code (it has all necessary imports)
+            namespace = {}
+            exec(edited_code, namespace)
+
+            # Get the pattern from the namespace
+            if 'pattern' in namespace:
+                new_pattern = namespace['pattern']
+                self._apply_edited_pattern(new_pattern)
+            else:
+                self.app.show_error("Parse Error", "No 'pattern = ...' assignment found in edited code")
+
+        except SyntaxError as e:
+            self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
+        except Exception as e:
+            logger.error(f"Failed to parse edited pattern: {e}")
+            self.app.show_error("Edit Error", f"Failed to parse edited pattern: {str(e)}")
+
+    def _generate_complete_python_code(self) -> str:
+        """Generate complete Python code with imports (following debug module approach)."""
+        # Collect function imports
+        function_imports = set()
+        self._extract_function_imports(self.pattern_data, function_imports)
+
+        # Build the complete Python code
+        code_lines = [
+            "# Edit this function pattern and save to apply changes",
+            "",
+        ]
+
+        # Add function imports
+        if function_imports:
+            code_lines.append("# Function imports")
+            code_lines.extend(sorted(function_imports))
+            code_lines.append("")
+
+        # Add enum imports (like debug module does)
+        code_lines.extend([
+            "# Enum imports",
+            "from openhcs.processing.backends.analysis.cell_counting_pyclesperanto import DetectionMethod",
+            "from openhcs.processing.backends.analysis.skan_axon_analysis import AnalysisDimension",
+            "",
+        ])
+
+        # Add the pattern with better formatting
+        pattern_repr = self._generate_readable_function_repr(self.pattern_data)
+        code_lines.append(f"pattern = {pattern_repr}")
+
+        return "\n".join(code_lines)
+
+    def _generate_readable_function_repr(self, func_obj, indent=0):
+        """Generate readable Python representation with newlines for better readability."""
+        from openhcs.debug.pickle_to_python import convert_args_dict
+
+        indent_str = "    " * indent
+        next_indent_str = "    " * (indent + 1)
+
+        if callable(func_obj):
+            return f"{func_obj.__name__}"
+        elif isinstance(func_obj, tuple) and len(func_obj) == 2:
+            func, args = func_obj
+            converted_args = convert_args_dict(args)
+            if not converted_args:
+                args_str = "{}"
+            else:
+                # Always format kwargs with newlines for readability
+                args_items = []
+                for k, v in converted_args.items():
+                    args_items.append(f"{next_indent_str}'{k}': {v}")
+                args_str = "{\n" + ",\n".join(args_items) + f"\n{indent_str}}}"
+            return f"({func.__name__}, {args_str})"
+        elif isinstance(func_obj, list):
+            if not func_obj:
+                return "[]"
+            # Always format lists with newlines for readability
+            items = []
+            for item in func_obj:
+                item_repr = self._generate_readable_function_repr(item, indent + 1)
+                # If item is multi-line, indent it properly
+                if '\n' in item_repr:
+                    indented_item = item_repr.replace('\n', f'\n{next_indent_str}')
+                    items.append(f"{next_indent_str}{indented_item}")
+                else:
+                    items.append(f"{next_indent_str}{item_repr}")
+            return f"[\n{',\n'.join(items)}\n{indent_str}]"
+        elif isinstance(func_obj, dict):
+            if not func_obj:
+                return "{}"
+            # Always format dicts with newlines for readability
+            items = []
+            for key, value in func_obj.items():
+                value_repr = self._generate_readable_function_repr(value, indent + 1)
+                # If value is multi-line, indent it properly
+                if '\n' in value_repr:
+                    indented_value = value_repr.replace('\n', f'\n{next_indent_str}')
+                    items.append(f"{next_indent_str}'{key}': {indented_value}")
+                else:
+                    items.append(f"{next_indent_str}'{key}': {value_repr}")
+            return f"{{\n{',\n'.join(items)}\n{indent_str}}}"
+        else:
+            return repr(func_obj)
+
+    def _extract_function_imports(self, func_obj, imports):
+        """Extract import statements from function objects (following debug module approach)."""
+        if callable(func_obj):
+            if hasattr(func_obj, '__module__') and hasattr(func_obj, '__name__'):
+                imports.add(f"from {func_obj.__module__} import {func_obj.__name__}")
+        elif isinstance(func_obj, tuple) and len(func_obj) > 0:
+            self._extract_function_imports(func_obj[0], imports)
+        elif isinstance(func_obj, list):
+            for item in func_obj:
+                if isinstance(item, tuple) and len(item) > 0:
+                    self._extract_function_imports(item[0], imports)
+                else:
+                    self._extract_function_imports(item, imports)
+        elif isinstance(func_obj, dict):
+            for value in func_obj.values():
+                self._extract_function_imports(value, imports)
+
+    def _apply_edited_pattern(self, new_pattern):
+        """Apply the edited pattern back to the TUI."""
+        try:
+            if self.is_dict_mode:
+                if isinstance(new_pattern, dict):
+                    self.pattern_data = new_pattern
+                    # Update current channel if it exists in new pattern
+                    if self.selected_channel and self.selected_channel in new_pattern:
+                        self.functions = self._normalize_function_list(new_pattern[self.selected_channel])
+                    else:
+                        # Select first channel
+                        if new_pattern:
+                            self.selected_channel = next(iter(new_pattern))
+                            self.functions = self._normalize_function_list(new_pattern[self.selected_channel])
+                        else:
+                            self.functions = []
+                else:
+                    raise ValueError("Expected dict pattern for dict mode")
+            else:
+                if isinstance(new_pattern, list):
+                    self.pattern_data = new_pattern
+                    self.functions = self._normalize_function_list(new_pattern)
+                else:
+                    raise ValueError("Expected list pattern for list mode")
+
+            # Refresh the UI and notify of changes
+            self.refresh()
+            self._commit_and_notify()
+
+        except Exception as e:
+            self.app.show_error("Apply Error", f"Failed to apply edited pattern: {str(e)}")
+
+    def _generate_pattern_python_code(self) -> str:
+        """Generate Python code representation of the current pattern."""
+        # Update pattern data first
+        self._update_pattern_data()
+
+        # Generate imports for all functions in the pattern
+        imports = set()
+        self._collect_function_imports(self.pattern_data, imports)
+
+        # Create the Python code
+        code_lines = [
+            "# Edit this function pattern and save to apply changes",
+            "# The pattern variable will be parsed and applied to the TUI",
+            "",
+        ]
+
+        # Add imports
+        if imports:
+            code_lines.extend(sorted(imports))
+            code_lines.append("")
+
+        # Add the pattern assignment
+        code_lines.append("# Function pattern:")
+        pattern_repr = self._format_pattern_for_code(self.pattern_data)
+        code_lines.append(f"pattern = {pattern_repr}")
+
+        return "\n".join(code_lines)
+
+    def _collect_function_imports(self, pattern, imports):
+        """Recursively collect import statements for all functions in pattern."""
+        if callable(pattern):
+            if hasattr(pattern, '__module__') and hasattr(pattern, '__name__'):
+                imports.add(f"from {pattern.__module__} import {pattern.__name__}")
+        elif isinstance(pattern, tuple) and len(pattern) == 2:
+            func, _ = pattern
+            self._collect_function_imports(func, imports)
+        elif isinstance(pattern, list):
+            for item in pattern:
+                self._collect_function_imports(item, imports)
+        elif isinstance(pattern, dict):
+            for value in pattern.values():
+                self._collect_function_imports(value, imports)
+
+    def _format_pattern_for_code(self, pattern, indent=0) -> str:
+        """Format pattern as readable Python code."""
+        indent_str = "    " * indent
+
+        if callable(pattern):
+            return pattern.__name__
+        elif isinstance(pattern, tuple) and len(pattern) == 2:
+            func, kwargs = pattern
+            func_name = func.__name__ if callable(func) else str(func)
+            kwargs_str = repr(kwargs)
+            return f"({func_name}, {kwargs_str})"
+        elif isinstance(pattern, list):
+            if not pattern:
+                return "[]"
+            items = []
+            for item in pattern:
+                item_str = self._format_pattern_for_code(item, indent + 1)
+                items.append(f"{indent_str}    {item_str}")
+            return "[\n" + ",\n".join(items) + f"\n{indent_str}]"
+        elif isinstance(pattern, dict):
+            if not pattern:
+                return "{}"
+            items = []
+            for key, value in pattern.items():
+                value_str = self._format_pattern_for_code(value, indent + 1)
+                items.append(f"{indent_str}    {repr(key)}: {value_str}")
+            return "{\n" + ",\n".join(items) + f"\n{indent_str}" + "}"
+        else:
+            return repr(pattern)
 
     def _get_component_button_text(self) -> str:
         """Get text for the component selection button based on current group_by setting."""

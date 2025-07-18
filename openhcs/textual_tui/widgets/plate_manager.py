@@ -1007,79 +1007,19 @@ class PlateManagerWidget(ButtonListWidget):
                 return
 
             try:
-                # Save the subprocess data to the selected file
-                import dill as pickle
-                with open(selected_path, 'wb') as f:
-                    pickle.dump(self._last_subprocess_data, f)
+                # Use debug module to export data
+                from openhcs.debug.export import export_debug_data
 
-                # Also create companion files with the paths for easy manual testing
-                base_path = selected_path.with_suffix('')
+                exported_files = export_debug_data(
+                    subprocess_data=self._last_subprocess_data,
+                    output_path=selected_path,
+                    data_file_path=self._last_data_file_path,
+                    log_file_path=self._last_log_file_path
+                )
 
-                # Save executable shell script
-                shell_script = base_path.with_suffix('.sh')
-                subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
-
-                with open(shell_script, 'w') as f:
-                    f.write(f"#!/bin/bash\n")
-                    f.write(f"# OpenHCS Subprocess Debug Script\n")
-                    f.write(f"# Generated: {datetime.now()}\n")
-                    f.write(f"# Plates: {self._last_subprocess_data['plate_paths']}\n\n")
-
-                    f.write(f"echo \"🔥 Starting OpenHCS subprocess debugging...\"\n")
-                    f.write(f"echo \"🔥 Pickle file: {selected_path.name}\"\n")
-                    f.write(f"echo \"🔥 Press Ctrl+C to stop\"\n")
-                    f.write(f"echo \"\"\n\n")
-
-                    # Change to the directory containing the pickle file
-                    f.write(f"cd \"{selected_path.parent}\"\n\n")
-
-                    # Run the subprocess with the exact filenames
-                    f.write(f"python \"{subprocess_script}\" \\\n")
-                    f.write(f"    \"{selected_path.name}\" \\\n")
-                    f.write(f"    \"debug_status.json\" \\\n")
-                    f.write(f"    \"debug_result.json\" \\\n")
-                    f.write(f"    \"debug.log\"\n\n")
-
-                    f.write(f"echo \"\"\n")
-                    f.write(f"echo \"🔥 Subprocess finished. Check the files:\"\n")
-                    f.write(f"echo \"  - debug_status.json (progress/death markers)\"\n")
-                    f.write(f"echo \"  - debug_result.json (final results)\"\n")
-                    f.write(f"echo \"  - debug.log (detailed logs)\"\n")
-
-                # Make shell script executable
-                shell_script.chmod(shell_script.stat().st_mode | stat.S_IEXEC)
-
-                # Save command file for reference
-                command_file = base_path.with_suffix('.cmd')
-                command = f"python {subprocess_script} {selected_path.name} debug_status.json debug_result.json debug.log"
-
-                with open(command_file, 'w') as f:
-                    f.write(f"# Manual subprocess debugging command\n")
-                    f.write(f"# Run this command to execute the subprocess manually:\n\n")
-                    f.write(f"cd \"{selected_path.parent}\"\n")
-                    f.write(f"{command}\n\n")
-                    f.write(f"# Original files from TUI execution:\n")
-                    f.write(f"# Data file: {self._last_data_file_path}\n")
-                    f.write(f"# Log file: {self._last_log_file_path}\n")
-
-                # Save info file
-                info_file = base_path.with_suffix('.info')
-                with open(info_file, 'w') as f:
-                    f.write(f"Debug Subprocess Data\n")
-                    f.write(f"====================\n\n")
-                    f.write(f"Generated: {datetime.now()}\n")
-                    f.write(f"Plates: {len(self._last_subprocess_data['plate_paths'])}\n")
-                    f.write(f"Plate paths: {self._last_subprocess_data['plate_paths']}\n\n")
-                    f.write(f"Pipeline data keys: {list(self._last_subprocess_data['pipeline_data'].keys())}\n\n")
-                    f.write(f"Global config: {self._last_subprocess_data['global_config_dict']}\n\n")
-                    f.write(f"To debug manually:\n")
-                    f.write(f"1. Run: ./{shell_script.name} (executable shell script)\n")
-                    f.write(f"2. Or run: {command}\n")
-                    f.write(f"3. Check debug_status.json for progress/death markers\n")
-                    f.write(f"4. Check debug_result.json for results\n")
-                    f.write(f"5. Check debug.log for detailed logs\n")
-
-                self.app.current_status = f"Debug files saved: {selected_path.name}, {shell_script.name} (executable), {command_file.name}, {info_file.name}"
+                # Create status message with all exported files
+                file_names = [path.name for path in exported_files.values()]
+                self.app.current_status = f"Debug files saved: {', '.join(file_names)}"
                 logger.debug(f"Debug subprocess data saved to {selected_path}")
 
             except Exception as e:
