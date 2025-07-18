@@ -256,7 +256,7 @@ class FunctionListEditorWidget(Container):
                     yield Button("Add", id="add_function_btn", compact=True)
                     yield Button("Load", id="load_func_btn", compact=True)
                     yield Button("Save As", id="save_func_as_btn", compact=True)
-                    yield Button("Edit", id="edit_vim_btn", compact=True)
+                    yield Button("Code", id="edit_vim_btn", compact=True)
 
                     # Component selection button (dynamic based on group_by setting)
                     component_text = self._get_component_button_text()
@@ -735,62 +735,11 @@ class FunctionListEditorWidget(Container):
         ])
 
         # Add the pattern with better formatting
-        pattern_repr = self._generate_readable_function_repr(self.pattern_data)
+        from openhcs.debug.pickle_to_python import generate_readable_function_repr
+        pattern_repr = generate_readable_function_repr(self.pattern_data)
         code_lines.append(f"pattern = {pattern_repr}")
 
         return "\n".join(code_lines)
-
-    def _generate_readable_function_repr(self, func_obj, indent=0):
-        """Generate readable Python representation with newlines for better readability."""
-        from openhcs.debug.pickle_to_python import convert_args_dict
-
-        indent_str = "    " * indent
-        next_indent_str = "    " * (indent + 1)
-
-        if callable(func_obj):
-            return f"{func_obj.__name__}"
-        elif isinstance(func_obj, tuple) and len(func_obj) == 2:
-            func, args = func_obj
-            converted_args = convert_args_dict(args)
-            if not converted_args:
-                args_str = "{}"
-            else:
-                # Always format kwargs with newlines for readability
-                args_items = []
-                for k, v in converted_args.items():
-                    args_items.append(f"{next_indent_str}'{k}': {v}")
-                args_str = "{\n" + ",\n".join(args_items) + f"\n{indent_str}}}"
-            return f"({func.__name__}, {args_str})"
-        elif isinstance(func_obj, list):
-            if not func_obj:
-                return "[]"
-            # Always format lists with newlines for readability
-            items = []
-            for item in func_obj:
-                item_repr = self._generate_readable_function_repr(item, indent + 1)
-                # If item is multi-line, indent it properly
-                if '\n' in item_repr:
-                    indented_item = item_repr.replace('\n', f'\n{next_indent_str}')
-                    items.append(f"{next_indent_str}{indented_item}")
-                else:
-                    items.append(f"{next_indent_str}{item_repr}")
-            return f"[\n{',\n'.join(items)}\n{indent_str}]"
-        elif isinstance(func_obj, dict):
-            if not func_obj:
-                return "{}"
-            # Always format dicts with newlines for readability
-            items = []
-            for key, value in func_obj.items():
-                value_repr = self._generate_readable_function_repr(value, indent + 1)
-                # If value is multi-line, indent it properly
-                if '\n' in value_repr:
-                    indented_value = value_repr.replace('\n', f'\n{next_indent_str}')
-                    items.append(f"{next_indent_str}'{key}': {indented_value}")
-                else:
-                    items.append(f"{next_indent_str}'{key}': {value_repr}")
-            return f"{{\n{',\n'.join(items)}\n{indent_str}}}"
-        else:
-            return repr(func_obj)
 
     def _extract_function_imports(self, func_obj, imports):
         """Extract import statements from function objects (following debug module approach)."""

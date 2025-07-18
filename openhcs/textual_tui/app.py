@@ -76,6 +76,15 @@ class ErrorDialog(BaseOpenHCSWindow):
             self.close_window()
 
     DEFAULT_CSS = """
+    ErrorDialog {
+        width: auto;
+        height: auto;
+        max-width: 120;
+        max-height: 40;
+        min-width: 50;
+        min-height: 15;
+    }
+
     .error-message {
         color: $error;
         text-style: bold;
@@ -85,9 +94,10 @@ class ErrorDialog(BaseOpenHCSWindow):
 
     #error_content {
         height: auto;
+        width: auto;
         margin: 0;
-        max-height: 20;
-        min-height: 10;
+        max-height: 30;
+        min-height: 5;
         border: solid $primary;
     }
     """

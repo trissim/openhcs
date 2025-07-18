@@ -242,16 +242,11 @@ class DualEditorWindow(BaseOpenHCSWindow):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses from child widgets."""
-        # Handle Save/Close buttons
-        if event.button.id == "save_button":
-            self._handle_save()
-        elif event.button.id == "close_button":
-            self._handle_cancel()
-        else:
-            # Handle other button presses from child widgets
-            logger.debug(f"Child widget button pressed: {event.button.id}")
-            self._update_change_tracking()
-            self._update_status("Modified step configuration")
+        # Note: Save/Close buttons are handled by TabbedContentWithButtons.on_button_tab_button_clicked
+        # This method only handles buttons from child widgets like StepParameterEditorWidget
+        logger.debug(f"Child widget button pressed: {event.button.id}")
+        self._update_change_tracking()
+        self._update_status("Modified step configuration")
 
     def on_step_parameter_editor_widget_step_parameter_changed(
         self, event: StepParameterEditorWidget.StepParameterChanged # Listen for the specific message
@@ -290,12 +285,16 @@ class DualEditorWindow(BaseOpenHCSWindow):
         # Update save button state - always enabled
         try:
             # Find the save button tab by looking for button tabs
+            # Use try_query to avoid NoMatches exceptions during widget lifecycle
             tabs = self.query(ButtonTab)
-            for tab in tabs:
-                if tab.button_id == "save":
-                    tab.disabled = False  # Always enabled
-                    logger.debug(f"Save button always enabled (user preference)")
-                    break
+            if tabs:  # Check if any tabs were found
+                for tab in tabs:
+                    if hasattr(tab, 'button_id') and tab.button_id == "save":
+                        tab.disabled = False  # Always enabled
+                        logger.debug(f"Save button always enabled (user preference)")
+                        break
+            else:
+                logger.debug("No ButtonTab widgets found yet (widget still mounting?)")
         except Exception as e:
             logger.debug(f"Error updating save button state: {e}")
 

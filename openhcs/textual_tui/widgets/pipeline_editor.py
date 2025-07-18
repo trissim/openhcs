@@ -57,6 +57,7 @@ class PipelineEditorWidget(ButtonListWidget):
             ButtonConfig("Edit", "edit_step", disabled=True),
             ButtonConfig("Load", "load_pipeline", disabled=True),
             ButtonConfig("Save", "save_pipeline", disabled=True),
+            ButtonConfig("Code", "code_pipeline", disabled=True),
         ]
 
         super().__init__(
@@ -114,6 +115,8 @@ class PipelineEditorWidget(ButtonListWidget):
             await self.action_load_pipeline()
         elif button_id == "save_pipeline":
             await self.action_save_pipeline()
+        elif button_id == "code_pipeline":
+            await self.action_code_pipeline()
 
     def _handle_selection_change(self, selected_values: List[str]) -> None:
         """Handle selection changes from ButtonListWidget."""
@@ -318,6 +321,7 @@ class PipelineEditorWidget(ButtonListWidget):
             self.query_one("#edit_step").disabled = not (has_steps and has_valid_selection)
             self.query_one("#load_pipeline").disabled = not load_enabled
             self.query_one("#save_pipeline").disabled = not has_steps
+            self.query_one("#code_pipeline").disabled = not has_steps
         except Exception:
             # Buttons might not be mounted yet
             pass
@@ -692,3 +696,62 @@ class PipelineEditorWidget(ButtonListWidget):
         except Exception as e:
             logger.error(f"Failed to save pipeline: {e}")
             self.app.current_status = f"Failed to save pipeline: {e}"
+
+    async def action_code_pipeline(self) -> None:
+        """Edit pipeline as Python code in terminal window."""
+        logger.debug("Code button pressed - opening pipeline editor")
+
+        if not self.pipeline_steps:
+            self.app.current_status = "No pipeline steps to edit"
+            return
+
+        if not self.current_plate:
+            self.app.current_status = "No plate selected"
+            return
+
+        try:
+            # Use debug module's pipeline formatting
+            from openhcs.debug.pickle_to_python import generate_pipeline_repr
+            from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
+
+            # Generate Python code representation of the pipeline
+            python_code = generate_pipeline_repr(
+                pipeline_steps=list(self.pipeline_steps),
+                plate_paths=[self.current_plate],
+                global_config=self.app.global_config
+            )
+
+            # Create callback to handle edited code
+            def handle_edited_code(edited_code: str):
+                logger.debug("Pipeline code edited, processing changes...")
+                try:
+                    # Execute the code (it has all necessary imports)
+                    namespace = {}
+                    exec(edited_code, namespace)
+
+                    # Get the pipeline_steps from the namespace
+                    if 'pipeline_steps' in namespace:
+                        new_pipeline_steps = namespace['pipeline_steps']
+                        # Update the pipeline with new steps
+                        self.pipeline_steps = new_pipeline_steps
+                        self.app.current_status = f"Pipeline updated with {len(new_pipeline_steps)} steps"
+                    else:
+                        self.app.show_error("Parse Error", "No 'pipeline_steps = [...]' assignment found in edited code")
+
+                except SyntaxError as e:
+                    self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to parse edited pipeline code: {e}")
+                    self.app.show_error("Edit Error", f"Failed to parse pipeline code: {str(e)}")
+
+            # Launch terminal editor
+            launcher = TerminalLauncher(self.app)
+            await launcher.launch_editor_for_file(
+                file_content=python_code,
+                file_extension='.py',
+                on_save_callback=handle_edited_code
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to open pipeline code editor: {e}")
+            self.app.current_status = f"Failed to open code editor: {e}"

@@ -122,6 +122,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Init", "init_plate", disabled=True),
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
+            ButtonConfig("Code", "code_plate", disabled=True),  # Generate Python code
             # ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR - HIDDEN FROM UI
             ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality
         ]
@@ -194,6 +195,7 @@ class PlateManagerWidget(ButtonListWidget):
             "edit_config": self.action_edit_config,  # Unified edit button
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
+            "code_plate": self.action_code_plate,  # Generate Python code
             # "export_ome_zarr": self.action_export_ome_zarr,  # HIDDEN
             "save_debug_pickle": self.action_save_debug_pickle,
         }
@@ -380,6 +382,14 @@ class PlateManagerWidget(ButtonListWidget):
                 not is_running
             )
             self.query_one("#compile_plate").disabled = not compile_enabled
+
+            # Code button - enabled when plates are selected, initialized, and not running
+            code_enabled = (
+                len(selected_items) > 0 and
+                all(self._is_orchestrator_initialized(item['path']) for item in selected_items) and
+                not is_running
+            )
+            self.query_one("#code_plate").disabled = not code_enabled
 
             # Export button - enabled when plate is initialized and has workspace (HIDDEN FROM UI)
             # export_enabled = (
@@ -1511,3 +1521,108 @@ class PlateManagerWidget(ButtonListWidget):
             logger.info(f"Successfully compiled {success_count} plates")
         else:
             logger.warning(f"Compiled {success_count} plates, {error_count} errors")
+
+    async def action_code_plate(self) -> None:
+        """Generate Python code for selected plates and their pipelines."""
+        logger.debug("Code button pressed - generating Python code for plates")
+
+        selected_items, _ = self.get_selection_state()
+        if not selected_items:
+            self.app.current_status = "No plates selected for code generation"
+            return
+
+        try:
+            # Get pipeline data for selected plates
+            plate_paths = [item['path'] for item in selected_items]
+            pipeline_data = {}
+
+            # Collect pipeline steps for each plate
+            for plate_path in plate_paths:
+                if hasattr(self, 'pipeline_editor') and self.pipeline_editor:
+                    # Get pipeline steps from pipeline editor if available
+                    if plate_path in self.pipeline_editor.plate_pipelines:
+                        pipeline_data[plate_path] = self.pipeline_editor.plate_pipelines[plate_path]
+                    else:
+                        pipeline_data[plate_path] = []
+                else:
+                    pipeline_data[plate_path] = []
+
+            # Use existing pickle_to_python logic to generate complete script
+            from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
+
+            # Create data structure like pickle_to_python expects
+            data = {
+                'plate_paths': plate_paths,
+                'pipeline_data': pipeline_data,
+                'global_config': self.app.global_config
+            }
+
+            # Generate complete Python script using existing logic
+            python_code = self._generate_orchestrator_script(data)
+
+            # Create callback to handle edited code
+            def handle_edited_code(edited_code: str):
+                logger.debug("Orchestrator code edited, processing changes...")
+                try:
+                    # Execute the code (it has all necessary imports)
+                    namespace = {}
+                    exec(edited_code, namespace)
+
+                    # Update pipeline data if present (composition: orchestrator contains pipelines)
+                    if 'pipeline_data' in namespace:
+                        new_pipeline_data = namespace['pipeline_data']
+                        # Update pipeline editor using reactive system (like pipeline code button does)
+                        if hasattr(self, 'pipeline_editor') and self.pipeline_editor:
+                            # Update plate pipelines storage
+                            current_pipelines = dict(self.pipeline_editor.plate_pipelines)
+                            current_pipelines.update(new_pipeline_data)
+                            self.pipeline_editor.plate_pipelines = current_pipelines
+
+                            # If current plate is in the edited data, update the current view too
+                            current_plate = self.pipeline_editor.current_plate
+                            if current_plate and current_plate in new_pipeline_data:
+                                self.pipeline_editor.pipeline_steps = new_pipeline_data[current_plate]
+
+                        self.app.current_status = f"Pipeline data updated for {len(new_pipeline_data)} plates"
+
+                    # Update global config if present
+                    elif 'global_config' in namespace:
+                        new_global_config = namespace['global_config']
+                        import asyncio
+                        for plate_path in plate_paths:
+                            if plate_path in self.orchestrators:
+                                orchestrator = self.orchestrators[plate_path]
+                                asyncio.create_task(orchestrator.apply_new_global_config(new_global_config))
+                        self.app.current_status = f"Global config updated for {len(plate_paths)} plates"
+
+                    # Update orchestrators list if present
+                    elif 'orchestrators' in namespace:
+                        new_orchestrators = namespace['orchestrators']
+                        self.app.current_status = f"Orchestrator list updated with {len(new_orchestrators)} orchestrators"
+
+                    else:
+                        self.app.show_error("Parse Error", "No valid assignments found in edited code")
+
+                except SyntaxError as e:
+                    self.app.show_error("Syntax Error", f"Invalid Python syntax: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to parse edited orchestrator code: {e}")
+                    self.app.show_error("Edit Error", f"Failed to parse orchestrator code: {str(e)}")
+
+            # Launch terminal editor
+            launcher = TerminalLauncher(self.app)
+            await launcher.launch_editor_for_file(
+                file_content=python_code,
+                file_extension='.py',
+                on_save_callback=handle_edited_code
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to generate plate code: {e}")
+            self.app.current_status = f"Failed to generate code: {e}"
+
+    def _generate_orchestrator_script(self, data: Dict) -> str:
+        """Generate orchestrator script using existing pickle_to_python logic."""
+        from openhcs.debug.pickle_to_python import generate_orchestrator_repr
+
+        return generate_orchestrator_repr(data)

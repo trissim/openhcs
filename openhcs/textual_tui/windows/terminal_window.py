@@ -240,7 +240,7 @@ class TerminalWindow(BaseOpenHCSWindow):
     DEFAULT_CSS = """
     TerminalWindow {
         width: 80; height: 24;
-        min-width: 60; min-height: 20;
+        min-width: 80; min-height: 20;
     }
     TerminalWindow #content_pane {
         padding: 0;
