@@ -294,34 +294,18 @@ class ZarrStorageBackend(StorageBackend):
             else:  # Already CPU array (NumPy, etc.)
                 cpu_data_list.append(data)
 
-        # Ensure zarr store exists before opening (thread-safe)
-        if not store_path.exists():
-            # Ensure parent directory exists before creating lock file
-            store_path.parent.mkdir(parents=True, exist_ok=True)
-            # Use file locking to prevent race condition during store creation
-            lock_path = store_path.with_suffix('.init.lock')
-            try:
-                with open(lock_path, 'x') as lock_file:
-                    if not store_path.exists():
-                        # Create initial zarr group structure
-                        store = parse_url(str(store_path), mode="w").store
-                        root = zarr.group(store=store)
-                        root.attrs["ome"] = {"version": "0.4"}
-                        logger.debug(f"Created initial zarr store at {store_path}")
-            except FileExistsError:
-                # Another process is creating the store, wait for it
-                import time
-                while not store_path.exists():
-                    time.sleep(0.01)
-                logger.debug(f"Waited for zarr store creation at {store_path}")
-            finally:
-                if lock_path.exists():
-                    lock_path.unlink()
+        # Ensure parent directory exists
+        store_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Initialize ome-zarr store (allow overwriting)
-        # Use 'a' mode to allow appending/overwriting individual arrays
-        store = parse_url(str(store_path), mode="a").store
-        root = zarr.group(store=store)
+        # Use zarr's open_group with create mode - it handles concurrent access
+        root = zarr.open_group(str(store_path), mode='a')  # 'a' = read/write, create if doesn't exist
+
+        # Set OME metadata if not already present
+        if "ome" not in root.attrs:
+            root.attrs["ome"] = {"version": "0.4"}
+
+        # Get the store for compatibility with existing code
+        store = root.store
 
         # Write plate metadata with locking to prevent concurrent corruption (if enabled)
         should_write_plate_metadata = kwargs.get('write_plate_metadata', self.config.write_plate_metadata)
