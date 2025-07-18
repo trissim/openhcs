@@ -370,7 +370,7 @@ def _execute_function_core(
         # Iterate through special_outputs_plan (which must be ordered by compiler)
         # and match with positionally returned special values.
         for i, (output_key, vfs_path_info) in enumerate(special_outputs_plan.items()):
-            logger.debug(f"Saving special output '{output_key}' to VFS path '{vfs_path_info}' (memory backend)")
+            logger.info(f"Saving special output '{output_key}' to VFS path '{vfs_path_info}' (memory backend)")
             if i < len(returned_special_values_tuple):
                 value_to_save = returned_special_values_tuple[i]
                 # Extract path string from the path info dictionary
@@ -385,11 +385,13 @@ def _execute_function_core(
                # prefixed_filename = f"{well_id}_{vfs_path_obj.name}"
                # prefixed_vfs_path = str(vfs_path_obj.parent / prefixed_filename)
 
-                logger.debug(f"Saving special output '{output_key}' to VFS path '{vfs_path}' (memory backend)")
+                logger.info(f"🔍 SPECIAL_SAVE: Saving '{output_key}' to '{vfs_path}' (memory backend)")
                 # Ensure directory exists for memory backend
                 parent_dir = str(Path(vfs_path).parent)
                 context.filemanager.ensure_directory(parent_dir, Backend.MEMORY.value)
                 context.filemanager.save(value_to_save, vfs_path, Backend.MEMORY.value)
+                logger.info(f"🔍 SPECIAL_SAVE: Successfully saved '{output_key}' to memory")
+                logger.info(f"🔍 SPECIAL_SAVE: Successfully saved '{output_key}' to memory")
             else:
                 # This indicates a mismatch that should ideally be caught by schema/validation
                 logger.error(f"Mismatch: {num_special_outputs} special outputs planned, but fewer values returned by function for key '{output_key}'.")
@@ -451,6 +453,7 @@ def _execute_chain_core(
                 if key in step_special_outputs_plan
             }
             logger.info(f"🔍 FUNCPLAN: {execution_key} -> {outputs_to_save}")
+            logger.info(f"🔍 FUNCPLAN: outputs_plan_for_this_call = {outputs_plan_for_this_call}")
         else:
             # Fallback: no funcplan entry, save nothing
             outputs_plan_for_this_call = {}
@@ -854,9 +857,17 @@ class FunctionStep(AbstractStep):
                 patterns_by_well[well_id], func_from_plan, component=group_by.value if group_by else None
             )
 
+            logger.info(f"🔍 DICT_PATTERN: grouped_patterns keys: {list(grouped_patterns.keys())}")
+            logger.info(f"🔍 DICT_PATTERN: comp_to_funcs keys: {list(comp_to_funcs.keys())}")
+            logger.info(f"🔍 DICT_PATTERN: func_from_plan type: {type(func_from_plan)}")
+            if isinstance(func_from_plan, dict):
+                logger.info(f"🔍 DICT_PATTERN: func_from_plan keys: {list(func_from_plan.keys())}")
+
             for comp_val, current_pattern_list in grouped_patterns.items():
+                logger.info(f"🔍 DICT_PATTERN: Processing component '{comp_val}' with {len(current_pattern_list)} patterns")
                 exec_func_or_chain = comp_to_funcs[comp_val]
                 base_kwargs = comp_to_base_args[comp_val]
+                logger.info(f"🔍 DICT_PATTERN: Component '{comp_val}' exec_func_or_chain: {exec_func_or_chain}")
                 for pattern_item in current_pattern_list:
                     _process_single_pattern_group(
                         context, pattern_item, exec_func_or_chain, base_kwargs,

@@ -296,9 +296,10 @@ class PipelinePathPlanner:
                             chain_breaker_read_backend = step_plans[first_step_id][READ_BACKEND]
                             logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' will use same backend as first step: '{chain_breaker_read_backend}'")
                         else:
-                            from openhcs.constants.constants import Backend
-                            chain_breaker_read_backend = Backend.DISK.value
-                            logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' using fallback disk backend (first step backend not yet determined)")
+                            # Use materialization backend instead of hardcoded disk
+                            vfs_config = context.get_vfs_config()
+                            chain_breaker_read_backend = vfs_config.materialization_backend.value
+                            logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' using materialization backend '{chain_breaker_read_backend}' (first step backend not yet determined)")
 
                         logger.info(f"🔗 CHAINBREAKER: Step '{step_name}' redirected from '{original_step_input_dir}' to first step input '{first_step_input_dir}'")
                     else:

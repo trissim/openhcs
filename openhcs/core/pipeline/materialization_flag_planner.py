@@ -52,8 +52,9 @@ class MaterializationFlagPlanner:
                 step_plan[READ_BACKEND] = read_backend
 
                 # Zarr conversion flag is already set by path planner if needed
-            else:  # Other steps - read from memory
-                step_plan[READ_BACKEND] = Backend.MEMORY.value
+            else:  # Other steps - read from memory (unless already set by chainbreaker logic)
+                if READ_BACKEND not in step_plan:
+                    step_plan[READ_BACKEND] = Backend.MEMORY.value
 
             # === WRITE BACKEND SELECTION ===
             # Check if this step will use zarr (has zarr_config set by compiler)

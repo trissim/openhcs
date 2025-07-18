@@ -123,7 +123,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
             # ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR - HIDDEN FROM UI
-            # ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality - HIDDEN FROM UI
+            ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality
         ]
         super().__init__(
             button_configs=button_configs,
@@ -195,7 +195,7 @@ class PlateManagerWidget(ButtonListWidget):
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
             # "export_ome_zarr": self.action_export_ome_zarr,  # HIDDEN
-            # "save_debug_pickle": self.action_save_debug_pickle,  # HIDDEN
+            "save_debug_pickle": self.action_save_debug_pickle,
         }
         if button_id in action_map:
             action = action_map[button_id]
@@ -392,12 +392,12 @@ class PlateManagerWidget(ButtonListWidget):
             # except:
             #     pass  # Button is hidden from UI
 
-            # Debug button - enabled when subprocess data is available (HIDDEN FROM UI)
-            # has_debug_data = hasattr(self, '_last_subprocess_data')
-            # try:
-            #     self.query_one("#save_debug_pickle").disabled = not has_debug_data
-            # except:
-            #     pass  # Button is hidden from UI
+            # Debug button - enabled when subprocess data is available
+            has_debug_data = hasattr(self, '_last_subprocess_data')
+            try:
+                self.query_one("#save_debug_pickle").disabled = not has_debug_data
+            except:
+                pass  # Button might not be mounted yet
 
         except Exception as e:
             # Only log if it's not a mounting/unmounting issue
@@ -1060,8 +1060,6 @@ class PlateManagerWidget(ButtonListWidget):
                     f.write(f"{command}\n\n")
                     f.write(f"# Original files from TUI execution:\n")
                     f.write(f"# Data file: {self._last_data_file_path}\n")
-                    f.write(f"# Status file: {self._last_status_file_path}\n")
-                    f.write(f"# Result file: {self._last_result_file_path}\n")
                     f.write(f"# Log file: {self._last_log_file_path}\n")
 
                 # Save info file
