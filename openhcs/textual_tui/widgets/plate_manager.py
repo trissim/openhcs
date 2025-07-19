@@ -123,6 +123,7 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Compile", "compile_plate", disabled=True),
             ButtonConfig("Run", "run_plate", disabled=True),
             ButtonConfig("Code", "code_plate", disabled=True),  # Generate Python code
+            ButtonConfig("Save", "save_python_script", disabled=True),  # Save Python script
             # ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR - HIDDEN FROM UI
             ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality
         ]
@@ -196,6 +197,7 @@ class PlateManagerWidget(ButtonListWidget):
             "init_plate": self.action_init_plate,
             "compile_plate": self.action_compile_plate,
             "code_plate": self.action_code_plate,  # Generate Python code
+            "save_python_script": self.action_save_python_script,  # Save Python script
             # "export_ome_zarr": self.action_export_ome_zarr,  # HIDDEN
             "save_debug_pickle": self.action_save_debug_pickle,
         }
@@ -390,6 +392,14 @@ class PlateManagerWidget(ButtonListWidget):
                 not is_running
             )
             self.query_one("#code_plate").disabled = not code_enabled
+
+            # Save Python script button - enabled when plates are selected, initialized, and not running
+            save_enabled = (
+                len(selected_items) > 0 and
+                all(self._is_orchestrator_initialized(item['path']) for item in selected_items) and
+                not is_running
+            )
+            self.query_one("#save_python_script").disabled = not save_enabled
 
             # Export button - enabled when plate is initialized and has workspace (HIDDEN FROM UI)
             # export_enabled = (
@@ -1182,7 +1192,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Use window service to open config window
             await self.window_service.open_config_window(
                 GlobalPipelineConfig,
-                    orchestrator.global_config,
+                orchestrator.global_config,
                 on_save_callback=handle_single_config_save
             )
         else:
@@ -1620,6 +1630,125 @@ class PlateManagerWidget(ButtonListWidget):
         except Exception as e:
             logger.error(f"Failed to generate plate code: {e}")
             self.app.current_status = f"Failed to generate code: {e}"
+
+    async def action_save_python_script(self) -> None:
+        """Save Python script for selected plates (like special_io_pipeline.py)."""
+        logger.debug("Save button pressed - saving Python script for plates")
+
+        selected_items, _ = self.get_selection_state()
+        if not selected_items:
+            self.app.current_status = "No plates selected for script generation"
+            return
+
+        try:
+            # Get pipeline data for selected plates
+            plate_paths = [item['path'] for item in selected_items]
+            pipeline_data = {}
+
+            # Collect pipeline steps for each plate
+            for plate_path in plate_paths:
+                if hasattr(self, 'pipeline_editor') and self.pipeline_editor:
+                    # Get pipeline steps from pipeline editor if available
+                    if plate_path in self.pipeline_editor.plate_pipelines:
+                        pipeline_data[plate_path] = self.pipeline_editor.plate_pipelines[plate_path]
+                    else:
+                        pipeline_data[plate_path] = []
+                else:
+                    pipeline_data[plate_path] = []
+
+            # Create data structure like pickle_to_python expects
+            data = {
+                'plate_paths': plate_paths,
+                'pipeline_data': pipeline_data,
+                'global_config': self.app.global_config
+            }
+
+            # Generate complete executable Python script using pickle_to_python logic
+            python_code = self._generate_executable_script(data)
+
+            # Launch file browser to save the script
+            from openhcs.textual_tui.windows.file_browser_window import open_file_browser_window, BrowserMode
+            from openhcs.textual_tui.services.file_browser_service import SelectionMode
+            from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+            from openhcs.constants.constants import Backend
+
+            def handle_save_result(result):
+                if result:
+                    # Handle both single Path and list of Paths
+                    save_path = None
+                    if isinstance(result, Path):
+                        save_path = result
+                    elif isinstance(result, list) and len(result) > 0:
+                        save_path = result[0]  # Take first path
+
+                    if save_path:
+                        try:
+                            # Write the Python script to the selected file
+                            with open(save_path, 'w') as f:
+                                f.write(python_code)
+
+                            logger.info(f"Python script saved to: {save_path}")
+                            self.app.current_status = f"Python script saved to: {save_path}"
+                        except Exception as e:
+                            logger.error(f"Failed to save Python script: {e}")
+                            self.app.current_status = f"Failed to save script: {e}"
+
+            # Generate default filename based on first plate
+            first_plate_name = Path(plate_paths[0]).name if plate_paths else "pipeline"
+            default_filename = f"{first_plate_name}_pipeline.py"
+
+            await open_file_browser_window(
+                app=self.app,
+                file_manager=self.app.filemanager,
+                initial_path=get_cached_browser_path(PathCacheKey.PIPELINE_FILES),
+                backend=Backend.DISK,
+                title="Save Python Pipeline Script",
+                mode=BrowserMode.SAVE,
+                selection_mode=SelectionMode.FILES_ONLY,
+                filter_extensions=['.py'],
+                default_filename=default_filename,
+                cache_key=PathCacheKey.PIPELINE_FILES,
+                on_result_callback=handle_save_result,
+                caller_id="plate_manager_save_script"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to save Python script: {e}")
+            self.app.current_status = f"Failed to save script: {e}"
+
+    def _generate_executable_script(self, data: Dict) -> str:
+        """Generate fully executable Python script by creating a temp pickle and using existing convert_pickle_to_python."""
+        import tempfile
+        import dill as pickle
+        from openhcs.debug.pickle_to_python import convert_pickle_to_python
+
+        # Create temporary pickle file
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.pkl', delete=False) as temp_pickle:
+            pickle.dump(data, temp_pickle)
+            temp_pickle_path = temp_pickle.name
+
+        # Create temporary output file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_output:
+            temp_output_path = temp_output.name
+
+        try:
+            # Use existing convert_pickle_to_python function
+            convert_pickle_to_python(temp_pickle_path, temp_output_path)
+
+            # Read the generated script
+            with open(temp_output_path, 'r') as f:
+                script_content = f.read()
+
+            return script_content
+
+        finally:
+            # Clean up temp files
+            import os
+            try:
+                os.unlink(temp_pickle_path)
+                os.unlink(temp_output_path)
+            except:
+                pass
 
     def _generate_orchestrator_script(self, data: Dict) -> str:
         """Generate orchestrator script using existing pickle_to_python logic."""
