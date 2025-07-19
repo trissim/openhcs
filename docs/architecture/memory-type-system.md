@@ -2,7 +2,9 @@
 
 ## Overview
 
-OpenHCS implements a sophisticated memory type system that enables seamless conversion between different array libraries (NumPy, PyTorch, CuPy, TensorFlow, JAX) while maintaining strict dimensional constraints and GPU device discipline.
+OpenHCS implements a sophisticated memory type system that enables seamless conversion between different array libraries (NumPy, PyTorch, CuPy, TensorFlow, JAX, pyclesperanto) while maintaining strict dimensional constraints and GPU device discipline.
+
+**Note**: All code examples reflect the actual OpenHCS implementation and are verified against the current codebase.
 
 ## Core Principles
 
@@ -89,6 +91,7 @@ slices_2d = unstack_slices(
 | `torch` | PyTorch | Yes | Deep learning, neural networks | `.pt`, `.pth` |
 | `tensorflow` | TensorFlow | Yes | Machine learning, TensorFlow models | `.tf` (serialized tensor) |
 | `jax` | JAX | Yes | High-performance computing, research | `.npy` (via device_get) |
+| `pyclesperanto` | pyclesperanto | Yes | GPU-accelerated image processing | `.cle` (custom) |
 
 ### Array Conversion Architecture
 

@@ -4,6 +4,8 @@
 
 The OpenHCS Virtual File System (VFS) provides a unified abstraction layer for data storage and retrieval across different backends. It enables location-transparent data access, allowing the same code to work with data stored in memory, on disk, or in other storage systems.
 
+**Note**: This document describes the actual VFS implementation including the evolved special I/O handling and materialization systems.
+
 ## Core Concepts
 
 ### Backend Abstraction
@@ -49,13 +51,14 @@ VFS paths are logical paths that can be mapped to different physical storage loc
   - Unlimited capacity (disk space)
   - Supports standard file formats
 
-#### Zarr Backend (Future)
-- **Purpose**: Chunked array storage
-- **Use Cases**: Large multidimensional arrays
+#### Zarr Backend
+- **Purpose**: Chunked array storage with OME-ZARR support
+- **Use Cases**: Large multidimensional arrays, final outputs
 - **Characteristics**:
   - Efficient for large arrays
-  - Supports compression
+  - Supports compression (ZSTD, LZ4)
   - Cloud storage compatible
+  - OME-ZARR metadata support
   - Parallel access
 
 ## FileManager Architecture
@@ -166,17 +169,20 @@ step_plan = {
 Special I/O uses VFS for data exchange between steps:
 
 ```python
-# Step 1: Generate positions
-@special_outputs("positions")
+# Step 1: Generate positions with materialization
+from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
+
+@special_outputs(("positions", materialize_positions_to_csv))
 def generate_positions(image_stack):
     positions = calculate_positions(image_stack)
-    # Compiler automatically saves to VFS path
+    # Compiler automatically saves to VFS memory backend
+    # Materialization function saves to disk as CSV
     return processed_image, positions
 
 # Step 2: Use positions
 @special_inputs("positions")
 def stitch_images(image_stack, positions):
-    # Compiler automatically loads from VFS path
+    # Compiler automatically loads from VFS memory backend
     return stitch(image_stack, positions)
 ```
 
@@ -303,12 +309,13 @@ def validate_data_integrity(path, backend, expected_type):
 ### VFS Configuration
 
 ```python
+from openhcs.core.config import VFSConfig
+from openhcs.constants.constants import Backend, MaterializationBackend
+
 vfs_config = VFSConfig(
-    default_intermediate_backend="memory",
-    default_materialization_backend="disk",
-    memory_limit_gb=16,
-    disk_cache_size_gb=100,
-    compression_enabled=True
+    intermediate_backend=Backend.MEMORY,
+    materialization_backend=MaterializationBackend.ZARR,
+    persistent_storage_root_path="/workspace/outputs"
 )
 ```
 

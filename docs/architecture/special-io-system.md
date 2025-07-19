@@ -32,10 +32,26 @@ def stitch_images(image_stack, positions, metadata):
 ### Decorator Implementation
 
 ```python
-def special_outputs(*output_names: str) -> Callable[[F], F]:
-    """Mark function as producing special outputs."""
+def special_outputs(*output_specs) -> Callable[[F], F]:
+    """Mark function as producing special outputs with optional materialization."""
     def decorator(func: F) -> F:
-        func.__special_outputs__ = set(output_names)
+        special_outputs_info = {}
+        output_keys = set()
+
+        for spec in output_specs:
+            if isinstance(spec, str):
+                # String only - no materialization function
+                output_keys.add(spec)
+                special_outputs_info[spec] = None
+            elif isinstance(spec, tuple) and len(spec) == 2:
+                # (key, materialization_function) tuple
+                key, mat_func = spec
+                output_keys.add(key)
+                special_outputs_info[key] = mat_func
+
+        # Set both attributes for backward compatibility and new functionality
+        func.__special_outputs__ = output_keys  # For path planner
+        func.__materialization_functions__ = special_outputs_info  # For materialization
         return func
     return decorator
 
@@ -64,11 +80,8 @@ def process_special_outputs(step, step_output_dir, declared_outputs):
     
     special_outputs = {}
     for key in sorted(list(s_outputs_keys)):
-        # Convert to snake_case for file naming
-        snake_case_key = to_snake_case(key)
-        
-        # Generate VFS path: [output_dir]/[snake_case_key].pkl
-        output_path = Path(step_output_dir) / f"{snake_case_key}.pkl"
+        # Use key directly - no unnecessary sanitization!
+        output_path = Path(step_output_dir) / f"{key}.pkl"
         special_outputs[key] = {"path": str(output_path)}
         
         # Register this output globally for linking
@@ -122,17 +135,14 @@ Special I/O paths follow a standardized pattern:
 ```python
 def generate_special_io_path(step_output_dir, key):
     """Generate standardized VFS path for special I/O."""
-    
-    # Convert key to snake_case for filesystem compatibility
-    snake_case_key = to_snake_case(key)
-    
-    # Path format: [step_output_dir]/[snake_case_key].pkl
-    return str(Path(step_output_dir) / f"{snake_case_key}.pkl")
+
+    # Use key directly - predictable and simple!
+    return str(Path(step_output_dir) / f"{key}.pkl")
 
 # Examples:
 # Key "positions" → "positions.pkl"
-# Key "cellMetadata" → "cell_metadata.pkl"
-# Key "stitchingParams" → "stitching_params.pkl"
+# Key "cellMetadata" → "cellMetadata.pkl"
+# Key "stitchingParams" → "stitchingParams.pkl"
 ```
 
 ## Runtime Execution
@@ -353,126 +363,32 @@ context.filemanager.save(positions_array, "/workspace/positions.pkl", "disk")
 
 ## Error Handling
 
-### Common Validation Errors
+### Runtime Validation
+
+The system performs runtime validation during function execution:
 
 ```python
-class SpecialIOError(Exception):
-    """Base class for special I/O errors."""
-    pass
-
-class UnresolvedSpecialInputError(SpecialIOError):
-    """Special input has no corresponding output."""
-    pass
-
-class CircularDependencyError(SpecialIOError):
-    """Circular dependency detected in special I/O."""
-    pass
-
-class SpecialOutputMismatchError(SpecialIOError):
-    """Function output count doesn't match declared special outputs."""
-    pass
+# Validation occurs in _execute_function_core
+# - Special inputs are loaded from VFS memory backend
+# - Function output tuple length is validated against declared special outputs
+# - Missing special output values raise ValueError
+# - Failed special input loading propagates exceptions
 ```
 
-### Runtime Error Handling
+## Current Implementation Status
 
-```python
-def safe_special_io_execution(func, special_outputs_plan, *args, **kwargs):
-    """Execute function with safe special I/O handling."""
-    
-    try:
-        result = func(*args, **kwargs)
-        
-        if special_outputs_plan:
-            if not isinstance(result, tuple):
-                raise SpecialOutputMismatchError(
-                    f"Function {func.__name__} declared special outputs "
-                    f"but returned {type(result)}, expected tuple"
-                )
-            
-            expected_count = len(special_outputs_plan) + 1  # +1 for main output
-            actual_count = len(result)
-            
-            if actual_count != expected_count:
-                raise SpecialOutputMismatchError(
-                    f"Function {func.__name__} returned {actual_count} values "
-                    f"but declared {expected_count} (1 main + {len(special_outputs_plan)} special)"
-                )
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Special I/O execution failed for {func.__name__}: {e}")
-        raise
-```
+### Implemented Features
+- ✅ Declarative decorator system (@special_inputs, @special_outputs)
+- ✅ Materialization function support for special outputs
+- ✅ Compilation-time path resolution and dependency validation
+- ✅ Runtime VFS integration with memory backend
+- ✅ Function execution with automatic special I/O handling
+- ✅ Order validation and dependency graph construction
 
-## Performance Considerations
-
-### Memory Management
-
-```python
-def optimize_special_io_memory(step_plans):
-    """Optimize memory usage for special I/O."""
-    
-    # Identify data lifetime
-    data_lifetime = {}
-    for step_id, step_plan in step_plans.items():
-        for output_key in step_plan.get("special_outputs", {}):
-            data_lifetime[output_key] = {"created": step_id, "last_used": None}
-    
-    for step_id, step_plan in step_plans.items():
-        for input_key in step_plan.get("special_inputs", {}):
-            if input_key in data_lifetime:
-                data_lifetime[input_key]["last_used"] = step_id
-    
-    # Plan cleanup points
-    cleanup_points = {}
-    for key, lifetime in data_lifetime.items():
-        if lifetime["last_used"]:
-            cleanup_step = lifetime["last_used"]
-            if cleanup_step not in cleanup_points:
-                cleanup_points[cleanup_step] = []
-            cleanup_points[cleanup_step].append(key)
-    
-    return cleanup_points
-```
-
-### Caching Strategy
-
-```python
-class SpecialIOCache:
-    """Cache for special I/O data to avoid redundant loading."""
-    
-    def __init__(self):
-        self._cache = {}
-        self._access_count = {}
-    
-    def get(self, path, filemanager):
-        """Get data with caching."""
-        if path not in self._cache:
-            self._cache[path] = filemanager.load(path, "memory")
-            self._access_count[path] = 0
-        
-        self._access_count[path] += 1
-        return self._cache[path]
-    
-    def cleanup_unused(self, threshold=1):
-        """Remove data accessed less than threshold times."""
-        to_remove = [
-            path for path, count in self._access_count.items()
-            if count < threshold
-        ]
-        
-        for path in to_remove:
-            del self._cache[path]
-            del self._access_count[path]
-```
-
-## Future Enhancements
-
-### Planned Features
+### Future Enhancements
 
 1. **Optional Special Inputs**: Support for optional special inputs with default values
 2. **Typed Special I/O**: Type hints and validation for special I/O data
-3. **Streaming Special I/O**: Support for large special I/O data that doesn't fit in memory
-4. **Special I/O Versioning**: Version tracking for special I/O data compatibility
+3. **Performance Optimization**: Caching and memory management for special I/O
+4. **Custom Error Classes**: Specialized exception types for special I/O errors
 5. **Cross-Pipeline Special I/O**: Share special I/O data between different pipeline runs

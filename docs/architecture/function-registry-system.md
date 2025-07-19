@@ -4,6 +4,8 @@
 
 OpenHCS implements a revolutionary function registry system that automatically discovers and unifies 574+ functions from multiple GPU libraries with type-safe contracts. This creates the most comprehensive GPU imaging function ecosystem available in scientific computing.
 
+**Note**: OpenHCS functions are used as function objects in FunctionStep, not string names. Examples show the real API patterns used in production pipelines.
+
 ## The Innovation
 
 **What Makes It Unique**: No other scientific computing platform automatically discovers and unifies this many GPU imaging libraries with unified contracts and type safety.
@@ -35,6 +37,9 @@ def gaussian_filter(image_stack, sigma=1.0):
 @cupy   # CROSS_Z - processes entire 3D volume
 def watershed_3d(image_stack, markers):
     return cucim.skimage.segmentation.watershed(image_stack, markers)
+
+# Real usage in FunctionStep:
+step = FunctionStep(func=[(gaussian_filter, {'sigma': 2.0})])
 ```
 
 ## Architecture
@@ -89,7 +94,7 @@ def registered_function(image_stack, **kwargs):
 ```python
 # Traditional scientific computing - manual setup:
 import scipy.ndimage
-import cucim.skimage.filters  
+import cucim.skimage.filters
 import pyclesperanto as cle
 import cupy as cp
 
@@ -104,15 +109,17 @@ final = cp.asnumpy(result3)  # Manual CPU transfer
 ### OpenHCS Approach (Unified Registry)
 
 ```python
-# OpenHCS - unified access, no imports needed:
-pipeline = [
-    FunctionStep(func="gaussian_filter", sigma=2.0),      # Auto-routes to CuCIM GPU
-    FunctionStep(func="binary_opening", footprint=disk(3)), # Auto-routes to pyclesperanto
-    FunctionStep(func="label", connectivity=2)            # Auto-routes to CuCIM GPU
+# OpenHCS - unified access with function objects:
+from openhcs.processing.backends.processors.cupy_processor import tophat
+from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+
+steps = [
+    FunctionStep(func=[(tophat, {'selem_radius': 50})]),                    # GPU-accelerated processing
+    FunctionStep(func=[(count_cells_single_channel, {'min_sigma': 1.0})]), # Unified function interface
 ]
 
 # Benefits:
-✅ No manual imports or setup
+✅ Direct function object imports (type-safe)
 ✅ Automatic GPU memory management
 ✅ Unified parameter interface
 ✅ Type-safe conversions between libraries

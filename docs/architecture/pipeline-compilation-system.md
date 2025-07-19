@@ -4,6 +4,8 @@
 
 OpenHCS implements a **declarative, compile-time pipeline system** that treats configuration as a first-class compilation target. This architecture separates pipeline definition from execution, enabling compile-time validation, resource optimization, and reproducible execution.
 
+**Note**: Function patterns shown use real OpenHCS API with function objects and parameter tuples, matching TUI-generated script patterns.
+
 ## Core Philosophy
 
 The system is designed around three fundamental principles:
@@ -78,31 +80,36 @@ OpenHCS supports four fundamental function execution patterns that provide unifi
 
 #### 1. Single Function Pattern
 ```python
-FunctionStep(func=my_function)
+from openhcs.processing.backends.processors.cupy_processor import tophat
+FunctionStep(func=[(tophat, {'selem_radius': 50})])
 ```
-- **Use Case**: Apply same function to all data
-- **Execution**: `my_function(image_stack)` for each pattern group
+- **Use Case**: Apply function with parameters to all data
+- **Execution**: `tophat(image_stack, selem_radius=50)` for each pattern group
 
-#### 2. Parameterized Function Pattern
+#### 2. Sequential Function Chain
 ```python
-FunctionStep(func=(my_function, {'param': value}))
-```
-- **Use Case**: Apply function with specific parameters
-- **Execution**: `my_function(image_stack, param=value)` for each pattern group
-
-#### 3. Sequential Function Chain
-```python
-FunctionStep(func=[func1, func2, func3])
+from openhcs.processing.backends.processors.cupy_processor import stack_percentile_normalize, tophat
+FunctionStep(func=[(stack_percentile_normalize, {'low_percentile': 1.0}), (tophat, {'selem_radius': 50})])
 ```
 - **Use Case**: Apply multiple functions in sequence
-- **Execution**: `func3(func2(func1(image_stack)))` for each pattern group
+- **Execution**: `tophat(stack_percentile_normalize(image_stack, low_percentile=1.0), selem_radius=50)` for each pattern group
 
-#### 4. Component-Specific Functions
+#### 3. Component-Specific Functions (Dict Pattern)
 ```python
-FunctionStep(func={'channel_1': func_dapi, 'channel_2': func_gfp}, group_by='channel')
+from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze
+FunctionStep(func={'1': [(count_cells_single_channel, {'min_sigma': 1.0})], '2': [(skan_axon_skeletonize_and_analyze, {})]})
 ```
 - **Use Case**: Different processing per component (channel, site, etc.)
-- **Execution**: `func_dapi` for channel_1 data, `func_gfp` for channel_2 data
+- **Execution**: `count_cells_single_channel` for channel 1 data, `skan_axon_skeletonize_and_analyze` for channel 2 data
+
+#### 4. Bare Function Pattern (Simple Cases)
+```python
+from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
+FunctionStep(func=assemble_stack_cupy)
+```
+- **Use Case**: Function with no parameters
+- **Execution**: `assemble_stack_cupy(image_stack)` for each pattern group
 
 ### Pattern Resolution Flow
 

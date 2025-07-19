@@ -2,49 +2,41 @@
 
 ## Overview
 
-OpenHCS provides a sophisticated Virtual File System (VFS) with smart backend switching and memory overlay capabilities, specifically designed for 100GB+ scientific datasets. This system enables intelligent data management that scales from small experiments to massive high-content screening datasets.
+OpenHCS provides a Virtual File System (VFS) with multiple storage backends designed for scientific datasets. This system enables unified data access across memory, disk, and OME-ZARR storage backends through a common interface.
 
-## The Innovation
+**Note**: This document describes the actual VFS implementation. Advanced features like automatic memory pressure detection and intelligent backend selection are planned for future development.
 
-**What Makes It Unique**: Traditional scientific tools either load everything into RAM (crashes on large datasets) or process from disk (extremely slow). OpenHCS provides **automatic, intelligent data management** that scales seamlessly.
+## VFS Backend Architecture
 
-## Memory Overlay Architecture
-
-### Intelligent Backend Selection
+### Storage Backend Registry
 
 ```python
-# Automatic backend selection based on data characteristics:
-┌─ VFS Backend Selection ──────────────────────────────┐
-│                                                      │
-│ Small Data (< 1GB)     → Memory Backend (RAM)        │
-│ Medium Data (1-10GB)   → Memory + Disk Overlay       │
-│ Large Data (> 10GB)    → OME-ZARR with LZ4          │
-│                                                      │
-│ Processing: Always in memory for speed               │
-│ Storage: Automatic materialization to persistent    │
-└──────────────────────────────────────────────────────┘
+# Three storage backends available through unified interface:
+from openhcs.io.base import storage_registry
+from openhcs.io.filemanager import FileManager
+
+# Backend registry with three implementations:
+storage_registry = {
+    "memory": MemoryStorageBackend(),    # In-memory object store
+    "disk": DiskStorageBackend(),        # File system storage
+    "zarr": ZarrStorageBackend()         # OME-ZARR compressed storage
+}
+
+filemanager = FileManager(storage_registry)
 ```
 
-### Smart Memory Management
+### Manual Backend Selection
 
 ```python
-# Automatic memory pressure handling:
-class MemoryOverlayBackend:
-    def save(self, data, path, backend="auto"):
-        if self.memory_pressure_detected():
-            # Automatically materialize to disk
-            self.materialize_to_disk(data, path)
-            logger.info(f"Materialized {path} to disk due to memory pressure")
-        else:
-            # Keep in memory for fast access
-            self.memory_store[path] = data
-            logger.debug(f"Stored {path} in memory")
-    
-    def memory_pressure_detected(self):
-        """Detect when system is under memory pressure."""
-        available_ram = psutil.virtual_memory().available
-        used_memory = len(self.memory_store) * self.avg_object_size
-        return (used_memory / available_ram) > 0.8  # 80% threshold
+# Explicit backend selection for different use cases:
+# Fast processing - use memory backend
+filemanager.save(data, "intermediate/step1_output", "memory")
+
+# Persistent storage - use disk backend
+filemanager.save(data, "results/final_output.tif", "disk")
+
+# Large datasets - use zarr backend with compression
+filemanager.save(data, "results/large_dataset", "zarr")
 ```
 
 ## Unified API Across Backends
@@ -237,21 +229,27 @@ Dataset Characteristics:
 ✅ Streaming processing for datasets larger than RAM
 ```
 
-### Performance Benchmarks
+### Performance Characteristics
 
 ```python
-# Comparative performance (100GB dataset):
-Traditional Approach:
-├── Load time: 45+ minutes (if successful)
-├── Processing: 8-12 hours
-├── Memory usage: Crashes or swaps heavily
-└── Success rate: <50% (frequent crashes)
+# VFS backend performance characteristics:
+Memory Backend:
+├── Access time: Fastest (direct object access)
+├── Memory usage: High (stores objects in RAM)
+├── Persistence: None (lost on process exit)
+└── Use case: Intermediate processing steps
 
-OpenHCS Memory Backend:
-├── Load time: 2-3 minutes (streaming)
-├── Processing: 1-2 hours (GPU acceleration)
-├── Memory usage: Intelligent management, no crashes
-└── Success rate: >99% (robust error handling)
+Disk Backend:
+├── Access time: Moderate (file I/O)
+├── Memory usage: Low (minimal caching)
+├── Persistence: Full (survives process restart)
+└── Use case: Input/output and persistent storage
+
+Zarr Backend:
+├── Access time: Moderate (compressed I/O)
+├── Memory usage: Low (chunked access)
+├── Persistence: Full (OME-ZARR format)
+└── Use case: Large datasets and final results
 ```
 
 ## Integration with Processing Pipeline
@@ -274,11 +272,11 @@ pipeline = [
     # VFS: memory → numpy → numpy → zarr(compressed)
 ]
 
-# Memory management handled automatically:
-✅ Minimal memory footprint during processing
-✅ Automatic cleanup of intermediate results
-✅ Smart caching of frequently accessed data
-✅ Pressure-based materialization to disk
+# Memory management characteristics:
+✅ Explicit backend selection for different use cases
+✅ Memory backend for fast intermediate processing
+✅ Zarr backend for compressed large dataset storage
+✅ Unified interface across all storage backends
 ```
 
 ### Cross-Step Communication
@@ -327,28 +325,23 @@ class SpecialIOStep(AbstractStep):
 | **Google Cloud** | ❌ Network only | ⚠️ Limited | ⚠️ Generic | 💰 High |
 | **OpenHCS VFS** | ✅ **Local first** | ✅ **Native** | ✅ **Optimized** | ✅ **Free** |
 
-## Future Enhancements
+## Current Implementation Status
 
-### Planned Features
+### Implemented Features
+- ✅ Three storage backends (memory, disk, zarr) with unified interface
+- ✅ MemoryStorageBackend for fast in-memory processing
+- ✅ ZarrStorageBackend with OME-ZARR support and configurable compression
+- ✅ DiskStorageBackend for persistent file system storage
+- ✅ Type-aware serialization based on data type and backend
+- ✅ Storage registry pattern for backend management
 
-```python
-# Roadmap for memory backend improvements:
-├── Distributed Storage
-│   ├── Multi-node memory sharing
-│   ├── Network-attached storage integration
-│   └── Cloud storage backends
-├── Advanced Compression
-│   ├── Context-aware compression selection
-│   ├── GPU-accelerated compression
-│   └── Custom scientific data codecs
-├── Intelligent Caching
-│   ├── LRU cache with scientific data awareness
-│   ├── Predictive prefetching
-│   └── Multi-level cache hierarchy
-└── Monitoring and Analytics
-    ├── Real-time performance metrics
-    ├── Storage usage optimization
-    └── Automatic tuning recommendations
-```
+### Future Enhancements
 
-This memory backend system represents a fundamental advancement in scientific data management - providing automatic, intelligent scaling from small experiments to massive datasets without requiring manual memory management or complex configuration.
+1. **Automatic Memory Pressure Detection**: Monitor system memory and trigger materialization
+2. **Intelligent Backend Selection**: Automatic backend choice based on data size and access patterns
+3. **Memory Overlay System**: Transparent materialization between memory and persistent storage
+4. **Advanced Compression**: Context-aware compression selection and GPU-accelerated compression
+5. **Distributed Storage**: Multi-node memory sharing and network-attached storage integration
+6. **Performance Monitoring**: Real-time metrics and automatic tuning recommendations
+
+This VFS system provides a solid foundation for scientific data management with room for intelligent automation features in future releases.

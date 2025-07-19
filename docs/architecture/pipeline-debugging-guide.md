@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides systematic approaches to debugging pipeline compilation issues in OpenHCS. The multi-phase compilation system is designed to fail fast and provide clear error messages, but understanding the compilation flow is essential for effective debugging.
+This guide provides systematic approaches to debugging pipeline compilation issues in OpenHCS. The 5-phase compilation system is designed to fail fast and provide clear error messages, but understanding the compilation flow is essential for effective debugging.
 
 ## Common Error Patterns
 
@@ -33,7 +33,13 @@ This guide provides systematic approaches to debugging pipeline compilation issu
 3. Check microscope handler is correctly detecting file patterns
 4. Verify file extensions match `DEFAULT_IMAGE_EXTENSIONS`
 
-### Phase 2 Errors: Materialization Planning
+### Phase 2 Errors: Zarr Store Declaration
+
+#### Zarr Configuration Issues
+
+**Root Cause**: Problems with zarr store setup for steps requiring zarr backend.
+
+### Phase 3 Errors: Materialization Planning
 
 #### `"step_plans is empty in context for materialization planning"`
 
@@ -54,7 +60,7 @@ This guide provides systematic approaches to debugging pipeline compilation issu
 3. Check `force_disk_output` flag
 4. Verify VFS configuration in global_config
 
-### Phase 3 Errors: Memory Contract Validation
+### Phase 4 Errors: Memory Contract Validation
 
 #### `"Function '{func}' does not have explicit memory type declarations"`
 
@@ -74,7 +80,7 @@ This guide provides systematic approaches to debugging pipeline compilation issu
 2. Check memory type declarations for each function
 3. Ensure all functions use same input/output memory types
 
-### Phase 4 Errors: GPU Resource Assignment
+### Phase 5 Errors: GPU Resource Assignment
 
 #### GPU Memory Type Validation Failures
 
@@ -91,7 +97,8 @@ This guide provides systematic approaches to debugging pipeline compilation issu
 
 Look at the error message to determine which phase failed:
 - Path planning: Mentions directories, patterns, or special I/O
-- Materialization: Mentions backends or disk requirements  
+- Zarr store declaration: Mentions zarr configuration or store setup
+- Materialization: Mentions backends or disk requirements
 - Memory validation: Mentions memory types or function contracts
 - GPU assignment: Mentions GPU devices or memory types
 

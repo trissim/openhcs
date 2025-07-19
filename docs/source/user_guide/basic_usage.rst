@@ -2,30 +2,31 @@
 Basic Usage
 ===========
 
-This page provides an overview of how to use EZStitcher for basic image stitching tasks. If you're looking for a quick start guide, see :doc:`/getting_started/getting_started`.
+This page provides an overview of how to use OpenHCS for bioimage analysis tasks. If you're looking for a quick start guide, see :doc:`/getting_started/getting_started`.
 
-Three-Tier Approach
-------------------
+Two-Tier Approach
+-----------------
 
-EZStitcher offers three main approaches for creating stitching pipelines, each designed for a different level of user experience and need for control:
+OpenHCS offers two main approaches for creating analysis pipelines, each designed for a different level of user experience and need for control:
 
-1. **EZ Module (Beginner Level)**
-   
-   A simplified, one-liner interface for beginners and non-coders:
+1. **Terminal Interface (Recommended)**
 
-   * "I just want to stitch my images quickly"
-   * Uses sensible defaults and auto-detection
-   * Handles common use cases with a single function call
-   * Example: ``stitch_plate("path/to/plate")``
+   A user-friendly, interactive interface for all users:
+
+   * "I want a professional interface that works over SSH"
+   * Real-time pipeline configuration and monitoring
+   * Professional log streaming and resource monitoring
+   * Works anywhere a terminal works - no desktop required
+   * Example: ``openhcs-tui``
 
 
-2. **Custom Pipelines with Steps (Intermediate Level)**
-   
-   More flexibility and control using pre-defined steps:
+2. **Python API (Advanced Users)**
 
-   * "I need more control over the processing steps"
-   * Uses pre-defined steps that provide a clean interface for common operations
-   * Allows customization of processing steps and parameters
+   Programmatic control for custom workflows:
+
+   * "I need to integrate OpenHCS into my own scripts"
+   * Uses FunctionStep components for flexible pipeline creation
+   * Allows full customization of processing steps and parameters
    * See :doc:`intermediate_usage` for details
    
 

@@ -1,12 +1,12 @@
-Getting Started with EZStitcher
-===========================
+Getting Started with OpenHCS
+============================
 
 Installation
 -----------
 
 .. code-block:: bash
 
-    pip install ezstitcher  # Requires Python 3.11
+    pip install openhcs  # Requires Python 3.8+
 
 For `pyenv <https://github.com/pyenv/pyenv>`_ users:
 
@@ -16,20 +16,38 @@ For `pyenv <https://github.com/pyenv/pyenv>`_ users:
     pyenv local 3.11
     python -m venv .venv
     source .venv/bin/activate
-    pip install ezstitcher
+    pip install openhcs
 
 Quick Start
 ----------
 
-The fastest way to get started is with the EZ module:
+The fastest way to get started is with the terminal interface:
+
+.. code-block:: bash
+
+    # Launch the interactive TUI
+    openhcs-tui
+
+    # Select your plate directory and configure pipeline
+    # Real-time monitoring and professional log streaming
+    # Works over SSH - no desktop required
+
+For Python API usage:
 
 .. code-block:: python
 
-    from ezstitcher import stitch_plate
+    from openhcs import Pipeline, FunctionStep
     from pathlib import Path
 
-    # Stitch a plate with default settings
-    stitch_plate("path/to/microscopy/data")
+    # Create a simple processing pipeline
+    pipeline = Pipeline([
+        FunctionStep(func="gaussian_filter", sigma=2.0),
+        FunctionStep(func="binary_opening", footprint=disk(3)),
+        FunctionStep(func="label", connectivity=2)
+    ])
+
+    # Process your data
+    pipeline.run("path/to/microscopy/data")
 
 This will:
 - Detect plate format automatically

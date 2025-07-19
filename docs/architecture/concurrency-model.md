@@ -2,7 +2,9 @@
 
 ## Overview
 
-OpenHCS implements a sophisticated **well-level parallelism** model with **strict thread isolation** and **immutable compilation artifacts**. This design provides excellent performance while maintaining thread safety through architectural constraints rather than complex locking mechanisms.
+OpenHCS implements a **well-level parallelism** model with **thread isolation** and **immutable compilation artifacts**. This design provides excellent performance while maintaining thread safety through architectural constraints rather than complex locking mechanisms.
+
+**Note**: This document describes the actual concurrency implementation. Some advanced features like runtime GPU slot management are planned for future development.
 
 ## **🎯 Core Concurrency Philosophy**
 
@@ -35,17 +37,24 @@ results = orchestrator.execute_compiled_plate(pipeline_definition, compiled_cont
 ```python
 def execute_compiled_plate(self, pipeline_definition, compiled_contexts, max_workers=None):
     """Execute with configurable parallelism."""
-    
+
     actual_max_workers = max_workers or self.global_config.num_workers
-    
+
     if actual_max_workers > 1 and len(compiled_contexts) > 1:
-        # Parallel execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+        # Choose executor type based on global config
+        if self.global_config.use_threading:
+            # ThreadPoolExecutor for debugging
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=actual_max_workers)
+        else:
+            # ProcessPoolExecutor for true parallelism
+            executor = concurrent.futures.ProcessPoolExecutor(max_workers=actual_max_workers)
+
+        with executor:
             future_to_well_id = {
                 executor.submit(self._execute_single_well, pipeline_definition, context, visualizer): well_id
                 for well_id, context in compiled_contexts.items()
             }
-            
+
             for future in concurrent.futures.as_completed(future_to_well_id):
                 well_id = future_to_well_id[future]
                 try:
@@ -82,20 +91,19 @@ class ProcessingContext:
 
 **Thread Safety Guarantee**: Frozen contexts cannot be modified, eliminating race conditions.
 
-#### **Stateless Step Objects**
+#### **Stateless Step Design**
 ```python
-# After compilation, step objects are stripped of mutable state
-def strip_step_attributes(pipeline_definition):
-    """Remove mutable attributes from step objects."""
-    for step in pipeline_definition:
-        # Remove compilation-time attributes
-        delattr(step, 'input_dir')
-        delattr(step, 'output_dir') 
-        delattr(step, 'variable_components')
-        # Step becomes stateless, safe for concurrent access
+# Step objects are designed to be stateless after compilation
+# They read configuration from immutable step_plans in ProcessingContext
+# No mutable state is stored in step objects during execution
+class FunctionStep(AbstractStep):
+    def process(self, context):
+        # Read configuration from immutable context
+        step_plan = context.step_plans[self.step_id]
+        # All execution state comes from context, not step object
 ```
 
-**Thread Safety Guarantee**: Stateless objects can be safely shared across threads.
+**Thread Safety Guarantee**: Step objects with no mutable state can be safely shared across threads.
 
 ### **2. Thread-Local Resource Isolation**
 
@@ -134,28 +142,16 @@ def _get_backend(self, backend_name):
 ### **3. Global Resource Coordination**
 
 #### **Thread-Safe GPU Registry**
-```python
-# Global GPU registry with thread-safe access
-GPU_REGISTRY: Dict[int, Dict[str, int]] = {}
-_registry_lock = threading.Lock()
 
-def acquire_gpu_slot() -> Optional[int]:
-    """Thread-safe GPU slot acquisition."""
-    with _registry_lock:
-        # Find first available GPU
-        for gpu_id, info in GPU_REGISTRY.items():
-            if info["active"] < info["max_pipelines"]:
-                info["active"] += 1  # Atomic increment
-                return gpu_id
-        return None
+**See**: [GPU Resource Management](gpu-resource-management.md) for comprehensive GPU coordination details.
 
-def release_gpu_slot(gpu_id: int):
-    """Thread-safe GPU slot release."""
-    with _registry_lock:
-        GPU_REGISTRY[gpu_id]["active"] -= 1  # Atomic decrement
-```
+**Concurrency Aspects**:
+- GPU registry access is thread-safe with atomic operations
+- GPU assignment happens at compilation time, not runtime
+- No runtime slot acquisition/release needed in current implementation
+- Registry status queries are protected by locks for consistency
 
-**Thread Safety Guarantee**: GPU resource allocation is atomic and consistent across threads.
+**Thread Safety Guarantee**: GPU registry access is atomic and consistent across threads.
 
 #### **Memory Backend Isolation**
 ```python
@@ -175,27 +171,26 @@ class MemoryStorageBackend(StorageBackend):
 ```python
 def _execute_single_well(self, pipeline_definition, context, visualizer):
     """Execute pipeline for single well - thread-safe by design."""
-    
+
     # 1. Context is frozen (immutable)
     assert context.is_frozen()
-    
+
     # 2. Each thread has its own FileManager
     filemanager = context.filemanager  # Thread-local instance
-    
-    # 3. GPU slot acquisition (thread-safe)
-    gpu_id = acquire_gpu_slot() if requires_gpu else None
-    
+
+    # 3. GPU assignment handled at compilation time
+    # No runtime GPU slot management needed
+
     try:
         # 4. Sequential step execution within thread
         for step in pipeline_definition:
             step.process(context)  # Step is stateless, context is immutable
-        
+
         return {"status": "success", "well_id": context.well_id}
-        
-    finally:
-        # 5. GPU slot release (thread-safe)
-        if gpu_id is not None:
-            release_gpu_slot(gpu_id)
+
+    except Exception as e:
+        logger.error(f"Pipeline execution failed for well {context.well_id}: {e}")
+        return {"status": "error", "well_id": context.well_id, "error": str(e)}
 ```
 
 ### **FunctionStep Thread Safety**
@@ -243,9 +238,13 @@ def process(self, context):
 ### **What Requires Coordination:**
 
 #### **🔒 GPU Resource Management**
-- **Slot Acquisition/Release**: Thread-safe with locks
-- **Registry Status**: Atomic reads with locks
-- **Capacity Management**: Thread-safe updates
+
+**See**: [GPU Resource Management](gpu-resource-management.md) for complete GPU coordination architecture.
+
+**Concurrency Considerations**:
+- Registry status queries use atomic reads with locks
+- GPU assignment during compilation phase (thread-safe)
+- Registry initialization is one-time with thread-safe checks
 
 #### **🔒 Global Configuration Updates**
 - **Live Config Changes**: Coordinated through orchestrator
@@ -295,18 +294,18 @@ for future in concurrent.futures.as_completed(future_to_well_id):
 ```python
 def _execute_single_well(self, pipeline_definition, context, visualizer):
     """Guaranteed resource cleanup per thread."""
-    acquired_gpu = None
-    
+
     try:
-        if requires_gpu:
-            acquired_gpu = acquire_gpu_slot()
-        
-        # Execute pipeline...
-        
-    finally:
-        # Always cleanup, even on exception
-        if acquired_gpu is not None:
-            release_gpu_slot(acquired_gpu)
+        # Execute pipeline steps
+        for step in pipeline_definition:
+            step.process(context)
+
+        return {"status": "success", "well_id": context.well_id}
+
+    except Exception as e:
+        # Exception handling and cleanup
+        logger.error(f"Pipeline execution failed for well {context.well_id}: {e}")
+        return {"status": "error", "well_id": context.well_id, "error": str(e)}
 ```
 
 ### **Graceful Degradation**
@@ -340,13 +339,24 @@ if actual_max_workers <= 1 or len(compiled_contexts) <= 1:
 - **Debugging Friendly**: Clear thread boundaries and isolated state
 - **Maintainable**: No complex synchronization logic
 
-## **🔮 Future Enhancements**
+## **Current Implementation Status**
 
-### **Planned Concurrency Features**
-1. **Work Stealing**: Dynamic load balancing between threads
-2. **Pipeline Parallelism**: Parallel execution of steps within a well
-3. **Distributed Processing**: Multi-node execution coordination
-4. **Adaptive Threading**: Dynamic thread pool sizing based on workload
-5. **Memory Pool Management**: Shared memory pools for large datasets
+### **Implemented Features**
+- ✅ Two-phase execution model (compilation + execution)
+- ✅ Well-level parallelism with ThreadPoolExecutor/ProcessPoolExecutor
+- ✅ ProcessingContext freezing for immutability
+- ✅ Thread-safe GPU registry with compilation-time assignment
+- ✅ FileManager thread isolation with per-instance backend cache
+- ✅ Exception isolation with per-well error handling
+- ✅ Graceful degradation to sequential execution
 
-This concurrency model represents **production-grade parallel processing architecture** that achieves excellent performance while maintaining simplicity and thread safety through careful design rather than complex synchronization.
+### **Future Enhancements**
+
+1. **Runtime GPU Slot Management**: Dynamic GPU slot acquisition/release during execution (see [GPU Resource Management](gpu-resource-management.md))
+2. **Work Stealing**: Dynamic load balancing between threads
+3. **Pipeline Parallelism**: Parallel execution of steps within a well
+4. **Distributed Processing**: Multi-node execution coordination
+5. **Adaptive Threading**: Dynamic thread pool sizing based on workload
+6. **Memory Pool Management**: Shared memory pools for large datasets
+
+This concurrency model provides **solid parallel processing architecture** that achieves good performance while maintaining simplicity and thread safety through careful design rather than complex synchronization.

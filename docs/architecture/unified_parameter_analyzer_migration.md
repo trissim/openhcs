@@ -238,7 +238,11 @@ nested_form = ParameterFormManager(nested_params, nested_types, nested_id, neste
 Run the unified analyzer tests to ensure everything works:
 
 ```bash
-python -m pytest tests/textual_tui/test_unified_parameter_analyzer.py -v
+# Test the unified parameter analyzer implementation
+python -m pytest tests/textual_tui/ -k "parameter" -v
+
+# Or test the entire TUI system
+python -m pytest tests/textual_tui/ -v
 ```
 
 ## Next Steps

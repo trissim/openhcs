@@ -228,8 +228,10 @@ All parameter forms in OpenHCS TUI now use the same unified analysis system:
 - **Step parameters**: ✅ Help buttons with docstring descriptions
 - **Nested parameters**: ✅ Help buttons with docstring descriptions
 
-## Files Requiring Changes
-- `openhcs/textual_tui/widgets/step_parameter_editor.py` (line 49)
-- `openhcs/textual_tui/widgets/shared/parameter_form_manager.py` (nested form creation)
-- `openhcs/textual_tui/screens/config_form.py` (manual form creation)
-- `openhcs/textual_tui/services/config_reflection_service.py` (FieldIntrospector elimination)
+## Implementation Status
+
+### ✅ Files Successfully Updated
+- `openhcs/textual_tui/widgets/step_parameter_editor.py` (line 49) - ✅ FIXED: Now passes param_info to ParameterFormManager
+- `openhcs/textual_tui/widgets/shared/parameter_form_manager.py` (nested form creation) - ✅ FIXED: Nested forms now analyze and pass param_info
+- `openhcs/textual_tui/widgets/config_form.py` (manual form creation) - ✅ FIXED: Now uses ParameterFormManager with SignatureAnalyzer
+- `openhcs/textual_tui/services/config_reflection_service.py` - ✅ MAINTAINED: FieldIntrospector kept for backward compatibility alongside unified system

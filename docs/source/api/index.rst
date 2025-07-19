@@ -1,7 +1,7 @@
 API Reference
 =============
 
-This section provides detailed API documentation for EZStitcher.
+This section provides detailed API documentation for OpenHCS.
 
 Core Components
 --------------
@@ -9,29 +9,39 @@ Core Components
 .. toctree::
    :maxdepth: 2
 
-   ez
-   pipeline_orchestrator
    pipeline
-   pipeline_factory
-   steps
-   stitcher
-   focus_analyzer
-   image_processor
-   file_system_manager
+   function_step
+   processing
+   memory_management
+   function_registry
+   tui_system
 
-Interfaces and Configuration
----------------------------
+Storage and I/O
+--------------
+
+.. toctree::
+   :maxdepth: 2
+
+   file_manager
+   backends
+   zarr_storage
+
+Microscope Support
+-----------------
 
 .. toctree::
    :maxdepth: 2
 
    microscope_interfaces
-   config
+   imagexpress
+   opera_phenix
 
-Microscope Implementations
--------------------------
+Analysis Functions
+-----------------
 
 .. toctree::
    :maxdepth: 2
 
-   microscopes
+   cell_counting
+   neurite_tracing
+   image_processing

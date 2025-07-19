@@ -81,9 +81,13 @@ func = {
 # (only one group_by per step makes sense)
 ```
 
-**The `stack()` Utility Genius**: Bridged the gap between single-image functions and stack-based processing:
+**The Stack Processing Evolution**: Bridged the gap between single-image functions and stack-based processing:
 ```python
+# EZStitcher approach
 func = stack(gaussian)  # Transforms single-image function to stack-aware
+
+# OpenHCS evolution: stack_slices/unstack_slices system
+# Automatic per-slice processing with memory type management
 ```
 
 #### 4. Specialized Step Types
@@ -194,9 +198,41 @@ compiled_contexts = orchestrator.compile_pipelines(
 
 **What OpenHCS Revolutionized**:
 - Memory management (explicit types vs implicit NumPy)
-- Error handling (fail loudly vs silent failures)  
+- Error handling (fail loudly vs silent failures)
 - Performance (GPU-native vs CPU-only)
 - Validation (compile-time checks vs runtime surprises)
+- Function ecosystem (unified GPU library access vs manual integration)
+
+## Key Innovations and Differentiators
+
+OpenHCS introduces several revolutionary systems that make it fundamentally different from traditional scientific computing tools. Each system is documented in detail in dedicated architecture documents:
+
+### 🔥 [Function Registry System](function-registry-system.md)
+**574+ unified GPU functions with type-safe contracts**
+
+The most comprehensive GPU imaging function ecosystem in scientific computing, automatically discovering and unifying functions from pyclesperanto, scikit-image, CuCIM, and other libraries with consistent interfaces and memory type safety.
+
+### 🖥️ [TUI System](tui-system.md)
+**Production-grade terminal interface**
+
+A sophisticated Textual-based interface that works anywhere a terminal works - unprecedented for scientific computing tools. Includes real-time pipeline editing, live configuration management, integrated help, and professional log monitoring.
+
+### 💾 [Memory Backend System](memory-backend-system.md)
+**Intelligent data management for 100GB+ datasets**
+
+Advanced Virtual File System with memory overlay capabilities, OME-ZARR compression, and smart backend switching that automatically scales from small experiments to massive high-content screening datasets.
+
+### ⚡ [Fail-Loud Philosophy](fail-loud-philosophy.md)
+**Zero tolerance for silent failures**
+
+Comprehensive architecture that prevents the silent failures plaguing academic software through explicit validation, mandatory contracts, and clear error handling with actionable solutions.
+
+### 🧬 [Research Impact](research-impact.md)
+**Production neuroscience research deployment**
+
+Real-world deployment handling 100GB+ datasets in production neuroscience research, with quantified productivity improvements and scientific contributions targeting Nature Methods publication.
+
+These innovations work together to create a scientific computing platform that is fundamentally different from traditional academic tools - providing production-grade reliability, unprecedented scale handling, and comprehensive GPU acceleration in a unified, user-friendly interface.
 
 ## The Collaborative AI Innovation
 

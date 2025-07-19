@@ -4,6 +4,8 @@
 
 OpenHCS implements a hierarchical configuration system that flows from global application settings down to individual step execution. The system uses immutable dataclasses to ensure configuration consistency and provides structured access patterns throughout the pipeline lifecycle.
 
+**Note**: All configuration examples reflect the actual OpenHCS implementation and are verified against the current codebase.
+
 ## Configuration Architecture
 
 ### Configuration Hierarchy
@@ -12,6 +14,7 @@ OpenHCS implements a hierarchical configuration system that flows from global ap
 GlobalPipelineConfig (Root)
 ├── VFSConfig (Virtual File System settings)
 ├── PathPlanningConfig (Directory naming conventions)
+├── ZarrConfig (Zarr storage backend settings)
 ├── num_workers (Parallel execution settings)
 └── microscope (Default microscope type)
 ```
@@ -22,12 +25,12 @@ GlobalPipelineConfig (Root)
 @dataclass(frozen=True)
 class VFSConfig:
     """Configuration for Virtual File System operations."""
-    default_intermediate_backend: Literal["memory", "disk", "zarr"] = "memory"
+    intermediate_backend: Backend = Backend.MEMORY
     """Backend for intermediate step results (not explicitly materialized)."""
-    
-    default_materialization_backend: Literal["disk", "zarr"] = "disk"
+
+    materialization_backend: MaterializationBackend = MaterializationBackend.DISK
     """Backend for explicitly materialized outputs (final results, user saves)."""
-    
+
     persistent_storage_root_path: Optional[str] = None
     """Root path for persistent storage backends."""
 

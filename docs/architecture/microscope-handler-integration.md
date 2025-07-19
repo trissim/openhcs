@@ -9,36 +9,48 @@ The microscope handler system provides format-specific processing for different 
 ### Base Handler Interface
 
 ```python
-class MicroscopeHandler(ABC):
+class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
     """Base class for all microscope handlers."""
-    
-    def __init__(self, parser: FilenameParser, metadata_handler: MetadataHandler):
-        self.parser = parser                    # Format-specific filename parsing
-        self.metadata_handler = metadata_handler # Metadata extraction
-        self.plate_folder = None               # Workspace path storage
-    
-    @abstractmethod
-    def _prepare_workspace(self, workspace_path, filemanager):
-        """Format-specific workspace preparation."""
-        pass
-    
+
+    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
+        # Handler creates parser and metadata handler internally
+        # Actual implementation uses dependency injection pattern
+        self.plate_folder: Optional[Path] = None
+
     @property
     @abstractmethod
-    def common_dirs(self) -> str:
-        """Common directory name for this format."""
+    def parser(self) -> FilenameParser:
+        """Format-specific filename parser."""
         pass
-    
-    def post_workspace(self, workspace_path, filemanager):
+
+    @property
+    @abstractmethod
+    def metadata_handler(self) -> MetadataHandler:
+        """Metadata extraction handler."""
+        pass
+
+    @abstractmethod
+    def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
+        """Format-specific workspace preparation."""
+        pass
+
+    @property
+    @abstractmethod
+    def common_dirs(self) -> List[str]:
+        """Common directory names for this format."""
+        pass
+
+    def post_workspace(self, workspace_path: Union[str, Path], filemanager: FileManager, width: int = 3):
         """Unified post-processing workflow."""
         # 1. Apply format-specific preparation
         prepared_dir = self._prepare_workspace(workspace_path, filemanager)
-        
+
         # 2. Find image directory based on common_dirs
         image_dir = self._find_image_directory(workspace_path, filemanager)
-        
+
         # 3. Apply filename padding
-        self._apply_filename_padding(image_dir, filemanager)
-        
+        self._apply_filename_padding(image_dir, filemanager, width)
+
         return image_dir
 ```
 
@@ -63,8 +75,8 @@ class ImageXpressHandler(MicroscopeHandler):
     """Handler for ImageXpress microscope format."""
     
     @property
-    def common_dirs(self) -> str:
-        return 'TimePoint_1'
+    def common_dirs(self) -> List[str]:
+        return ['TimePoint_1']
     
     def _prepare_workspace(self, workspace_path, filemanager):
         """Flatten ImageXpress Z-step directory structure."""
@@ -144,8 +156,8 @@ class OperaPhenixHandler(MicroscopeHandler):
     """Handler for Opera Phenix microscope format."""
     
     @property
-    def common_dirs(self) -> str:
-        return 'Images'
+    def common_dirs(self) -> List[str]:
+        return ['Images']
     
     def _prepare_workspace(self, workspace_path, filemanager):
         """Rename Opera Phenix images based on spatial layout."""
@@ -278,34 +290,56 @@ def _apply_filename_padding(self, directory, filemanager, width=3):
 The factory system automatically detects microscope formats:
 
 ```python
-def create_microscope_handler(microscope_type='auto', plate_folder=None, 
-                             filemanager=None, pattern_format=None):
+def create_microscope_handler(microscope_type: str = 'auto',
+                              plate_folder: Optional[Union[str, Path]] = None,
+                              filemanager: Optional[FileManager] = None,
+                              pattern_format: Optional[str] = None,
+                              allowed_auto_types: Optional[List[str]] = None) -> MicroscopeHandler:
     """Factory function to create appropriate microscope handler."""
-    
+
+    if filemanager is None:
+        raise ValueError("FileManager must be provided to create_microscope_handler")
+
     if microscope_type == 'auto':
-        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager)
-    
+        microscope_type = _auto_detect_microscope_type(plate_folder, filemanager, allowed_auto_types)
+
     # Get handler class from registry
     handler_class = MICROSCOPE_HANDLERS.get(microscope_type.lower())
     if not handler_class:
         raise ValueError(f"Unsupported microscope type: {microscope_type}")
-    
-    # Create handler instance
-    return handler_class(filemanager, pattern_format=pattern_format)
 
-def _auto_detect_microscope_type(plate_folder, filemanager):
-    """Auto-detect microscope type based on directory contents."""
-    
-    # Check for Opera Phenix (Index.xml files)
-    if filemanager.find_file_recursive(plate_folder, "disk", filename="Index.xml"):
-        return 'opera_phenix'
-    
-    # Check for ImageXpress (.htd files)
-    if filemanager.list_files(plate_folder, extensions={'.htd', '.HTD'}, 
-                             recursive=True, backend="disk"):
-        return 'imagexpress'
-    
-    # No known format detected
+    # Create handler instance with dependency injection
+    handler = handler_class(filemanager, pattern_format=pattern_format)
+
+    # Set plate_folder for handlers that need it (e.g., OpenHCS)
+    if plate_folder and hasattr(handler, 'plate_folder'):
+        handler.plate_folder = Path(plate_folder) if isinstance(plate_folder, str) else plate_folder
+
+    return handler
+
+def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
+                                allowed_types: Optional[List[str]] = None) -> str:
+    """Auto-detect microscope type using metadata handler registry."""
+
+    # Build detection order: openhcsdata first, then filtered/ordered list
+    detection_order = ['openhcsdata']  # Always first, always included
+
+    if allowed_types is None:
+        # Use all registered handlers in registration order
+        detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcsdata'])
+    else:
+        # Use filtered list, but ensure openhcsdata is first
+        filtered_types = [name for name in allowed_types if name != 'openhcsdata' and name in METADATA_HANDLERS]
+        detection_order.extend(filtered_types)
+
+    # Try detection in order using metadata handlers
+    for handler_name in detection_order:
+        handler_class = METADATA_HANDLERS.get(handler_name)
+        if handler_class and _try_metadata_detection(handler_class, filemanager, plate_folder):
+            logger.info(f"Auto-detected {handler_name} microscope type")
+            return handler_name
+
+    # No handler succeeded
     raise ValueError(f"Could not auto-detect microscope type in {plate_folder}")
 ```
 

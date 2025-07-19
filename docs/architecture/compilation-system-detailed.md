@@ -11,7 +11,7 @@ The OpenHCS compilation system transforms stateless pipeline definitions into ex
 ## Compilation Flow Summary
 
 ```
-Pipeline Definition → Context Creation → 4-Phase Compilation → Frozen Context → Execution
+Pipeline Definition → Context Creation → 5-Phase Compilation → Frozen Context → Execution
 ```
 
 **Key Insight**: Function patterns are modified during compilation (metadata injection) and stored in `step_plans['func']` by the FuncStepContractValidator, then retrieved during execution.
@@ -23,13 +23,14 @@ Pipeline Definition → Context Creation → 4-Phase Compilation → Frozen Cont
 ```python
 for well_id in wells_to_process:
     context = self.create_context(well_id)
-    
-    # 4-Phase Compilation
-    PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition)
-    PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition)  
-    PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition)
+
+    # 5-Phase Compilation (actual implementation)
+    PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible, plate_path=self.plate_path)
+    PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
+    PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
+    PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
     PipelineCompiler.assign_gpu_resources_for_context(context)
-    
+
     context.freeze()
     compiled_contexts[well_id] = context
 ```
@@ -82,13 +83,19 @@ if metadata_injected_steps and isinstance(step, FunctionStep):
 
 **Key Point**: After this phase, `step.func` contains the modified function pattern with injected metadata, but it's not yet in `step_plans`.
 
-### Phase 2: Materialization Flag Planning
+### Phase 2: Zarr Store Declaration
 
-**File**: `openhcs/core/pipeline/materialization_flag_planner.py:50-172`
+**File**: `openhcs/core/pipeline/compiler.py:204-224`
 
-This phase only sets backend flags (`read_backend`, `write_backend`, etc.) in `step_plans`. It does NOT touch function patterns.
+This phase declares zarr stores for steps that will use zarr backend, setting up zarr_config in step_plans.
 
-### Phase 3: Memory Contract Validation (THE CRITICAL PHASE)
+### Phase 3: Materialization Flag Planning
+
+**File**: `openhcs/core/pipeline/materialization_flag_planner.py:34-91`
+
+This phase sets backend flags (`read_backend`, `write_backend`, etc.) in `step_plans`. It does NOT touch function patterns.
+
+### Phase 4: Memory Contract Validation (THE CRITICAL PHASE)
 
 **File**: `openhcs/core/pipeline/compiler.py:194-221`
 
@@ -127,7 +134,7 @@ def validate_funcstep(step: FunctionStep) -> Dict[str, str]:
 
 **Critical Understanding**: The validator returns the function pattern (potentially modified by the path planner) as part of the memory types dictionary. When the compiler calls `step_plans[step_id].update(memory_types)`, the `'func'` key gets stored in the step plan.
 
-### Phase 4: GPU Resource Assignment
+### Phase 5: GPU Resource Assignment
 
 This phase only assigns GPU IDs and doesn't affect function patterns.
 

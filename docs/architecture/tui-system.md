@@ -4,6 +4,8 @@
 
 OpenHCS provides a sophisticated terminal user interface (TUI) built with the Textual framework - unprecedented for scientific computing tools. This production-grade interface works anywhere a terminal works, including remote servers, containers, and SSH connections.
 
+**Note**: This document describes the actual TUI implementation. Some features are aspirational and marked as "Future Enhancements".
+
 ## The Innovation
 
 **What Makes It Unique**: Most scientific tools are either command-line only or have basic desktop GUIs. OpenHCS provides a **production-grade terminal interface** that maintains full functionality in any terminal environment.
@@ -30,8 +32,8 @@ OpenHCS provides a sophisticated terminal user interface (TUI) built with the Te
 - **Live validation**: Steps validated as you type
 - **Visual feedback**: Color-coded status indicators
 - **Resource monitoring**: Real-time GPU memory usage
-- **Drag-and-drop reordering**: Intuitive step management
-- **Undo/redo support**: Safe editing with history
+- **Button-based management**: Add, Delete, Edit, Load, Save operations
+- **Per-plate pipeline storage**: Separate pipelines for each plate
 
 ### Live Configuration Management
 
@@ -105,68 +107,75 @@ OpenHCS provides a sophisticated terminal user interface (TUI) built with the Te
 ### Textual Framework Integration
 
 ```python
-# Modern reactive architecture:
+# Actual TUI architecture (window-based):
 class OpenHCSTUIApp(App):
     """Main OpenHCS Textual TUI Application."""
-    
-    # Reactive state management
-    current_pipeline = reactive([])
-    global_config = reactive(None)
-    selected_plate = reactive("")
-    
+
+    def __init__(self, global_config: Optional[GlobalPipelineConfig] = None):
+        super().__init__()
+        self.global_config = global_config or get_default_global_config()
+        self.storage_registry = storage_registry
+        self.filemanager = FileManager(self.storage_registry)
+
     def compose(self) -> ComposeResult:
         """Compose the main application layout."""
-        yield Header()
-        with Horizontal():
-            yield PlateManager(classes="sidebar")
-            with Vertical():
-                yield PipelineEditor()
-                yield ConfigurationPanel()
-        yield Footer()
+        # Custom window bar for window management
+        yield CustomWindowBar(dock="bottom", start_open=True)
+
+        # Status bar for messages
+        yield StatusBar()
+
+        # Main content with system monitor background
+        yield MainContent(
+            filemanager=self.filemanager,
+            global_config=self.global_config
+        )
 ```
 
 ### Component Architecture
 
 ```python
-# Modular widget system:
+# Actual TUI component architecture:
 TUI Components:
 ├── Core Application (OpenHCSTUIApp)
-├── Layout Managers
-│   ├── Header/Footer
-│   ├── Sidebar (PlateManager)
-│   └── Main Content Area
-├── Interactive Widgets
-│   ├── PipelineEditor
-│   ├── ConfigurationPanel
-│   ├── LogViewer
-│   └── HelpSystem
-├── Dialog Windows
-│   ├── FunctionStepEditor
-│   ├── ConfigurationWindow
-│   ├── HelpWindows
-│   └── ErrorDialogs
+├── Main Layout
+│   ├── CustomWindowBar (window management)
+│   ├── StatusBar (status messages)
+│   └── MainContent (SystemMonitor background)
+├── Floating Windows (textual-window)
+│   ├── PipelinePlateWindow (PlateManagerWidget + PipelineEditorWidget)
+│   ├── ConfigWindow (configuration editing)
+│   ├── HelpWindow (help system)
+│   ├── DualEditorWindow (function step editing)
+│   └── ErrorDialog (error display)
+├── Core Widgets
+│   ├── PlateManagerWidget (plate management)
+│   ├── PipelineEditorWidget (pipeline editing)
+│   ├── OpenHCSToolongWidget (log viewing)
+│   ├── FunctionListEditorWidget (function editing)
+│   └── ConfigFormWidget (configuration forms)
 └── Services
-    ├── FunctionRegistryService
-    ├── ConfigurationService
-    ├── ValidationService
-    └── FileManagementService
+    ├── ValidationService (form validation)
+    ├── TerminalLauncher (external editor)
+    └── GlobalConfigCache (configuration caching)
 ```
 
 ### State Management
 
 ```python
-# Reactive state with automatic UI updates:
-class PipelineEditor(Widget):
-    # Reactive properties automatically update UI
+# Actual reactive state implementation:
+class PipelineEditorWidget(ButtonListWidget):
+    # Real reactive properties from implementation
     pipeline_steps = reactive([])
+    current_plate = reactive("")
     selected_step = reactive("")
-    validation_status = reactive({})
-    
+    plate_pipelines = reactive({})  # Per-plate pipeline storage
+
     def watch_pipeline_steps(self, old_steps, new_steps):
         """Automatically called when pipeline_steps changes."""
-        self.validate_pipeline()
-        self.update_ui()
-        self.save_state()
+        logger.debug(f"Pipeline steps changed: {len(new_steps)} steps")
+        self._update_button_states()
+        self._update_display()
 ```
 
 ## Remote Access Capabilities
@@ -235,11 +244,11 @@ kubectl run openhcs-tui --image=openhcs/openhcs --stdin --tty \
 ### Resource Usage
 
 ```python
-# Lightweight terminal interface:
-Memory Usage: ~50MB (vs 500MB+ for desktop GUIs)
-CPU Usage: <1% idle, <5% during updates
+# Terminal interface characteristics:
+Memory Usage: Lightweight compared to desktop GUIs
+CPU Usage: Low idle, moderate during updates
 Network: Minimal (text-based updates only)
-Latency: <10ms response time over SSH
+Latency: Responsive over SSH connections
 ```
 
 ### Scalability

@@ -53,7 +53,9 @@ Dataset Scale:
 | **ImageJ** | ~10GB | Crashes | <10% | OutOfMemoryError |
 | **CellProfiler** | ~20GB | 45+ minutes | <50% | Swaps heavily |
 | **napari** | ~50GB | 30+ minutes | ~70% | Very slow |
-| **OpenHCS** | **100GB+** | **2-3 minutes** | **>99%** | **Intelligent** |
+| **OpenHCS** | **100GB+** | **2-3 minutes*** | **>99%*** | **Intelligent** |
+
+*Performance varies by hardware configuration and dataset characteristics
 
 ```python
 # OpenHCS handles what others can't:
@@ -184,9 +186,9 @@ Results:
 ### Production Environment
 
 ```python
-# McGill University Neuroscience Lab Deployment:
+# Example Production Research Lab Deployment:
 Hardware Configuration:
-├── Workstations: 4x Dell Precision 7000 series
+├── Workstations: High-end research workstations
 ├── GPUs: NVIDIA RTX 4090 (24GB VRAM) × 2 per workstation
 ├── RAM: 128GB DDR5 per workstation
 ├── Storage: 10TB NVMe SSD + 50TB network storage

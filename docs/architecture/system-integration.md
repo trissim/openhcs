@@ -4,6 +4,8 @@
 
 This document describes how the three core systems of OpenHCS work together to provide seamless data processing: the Virtual File System (VFS), the Memory Type System, and the Pipeline Compilation System.
 
+**Note**: This document describes the actual system integration implementation. Some optimization strategies are planned for future development.
+
 ## Integration Architecture
 
 ### The Four-Layer Architecture Stack
@@ -169,24 +171,26 @@ step_plan = {
 During execution, the three systems work together seamlessly:
 
 ```python
-def execute_function_step(context, step_plan):
-    """Complete execution flow showing system integration."""
-    
+def process(self, context: ProcessingContext):
+    """Complete execution flow showing system integration (FunctionStep.process)."""
+
+    step_plan = context.step_plans[self.step_id]
+
     # 1. VFS: Load images from storage
     raw_slices = []
     for file_path in matching_files:
         # VFS handles format-specific deserialization
         image = context.filemanager.load_image(
-            file_path, 
+            file_path,
             step_plan['read_backend']
         )
         raw_slices.append(image)  # Usually numpy arrays from TIFF
-    
+
     # 2. Memory System: Stack with type conversion
     image_stack = stack_slices(
         slices=raw_slices,
         memory_type=step_plan['input_memory_type'],  # torch
-        gpu_id=step_plan['gpu_id']                   # 0
+        gpu_id=step_plan.get('gpu_id')               # 0 or None
     )
     # Result: torch.Tensor on GPU 0
     
@@ -201,8 +205,8 @@ def execute_function_step(context, step_plan):
         special_kwargs[input_name] = special_data
     
     # 4. Execute function in native memory type
-    func = resolve_function_pattern(step_plan['func_pattern'])
-    result_stack = func(image_stack, **special_kwargs)
+    # Function pattern resolution handled by prepare_patterns_and_functions
+    result_stack = self._execute_function_core(image_stack, step_plan, context, **special_kwargs)
     # Function operates entirely in torch on GPU
     
     # 5. Handle special outputs (if any)
@@ -400,20 +404,24 @@ def handle_conversion_errors(data, source_type, target_type, allow_fallback=True
         raise MemoryConversionError(f"Failed to convert {source_type} to {target_type}") from e
 ```
 
-## Future Enhancements
+## Current Implementation Status
 
-### Planned Integration Improvements
+### Implemented Features
+- ✅ Four-layer architecture stack with Configuration, Compilation, Memory Types, and VFS
+- ✅ Comprehensive step plan generation with backend and memory type coordination
+- ✅ MaterializationFlagPlanner for intelligent backend selection
+- ✅ Memory type extraction and validation during compilation
+- ✅ VFS integration with FileManager and multiple storage backends
+- ✅ Runtime execution flow with stack/unstack operations and type conversion
+- ✅ Special I/O integration using VFS memory backend for cross-step communication
+- ✅ Cross-system validation and error handling
+
+### Future Enhancements
 
 1. **Automatic Memory Type Selection**: Based on data size and available resources
 2. **Streaming Processing**: Handle datasets larger than memory across all systems
-3. **Distributed Processing**: Coordinate memory types across multiple nodes
-4. **Performance Profiling**: Integrated monitoring across VFS, memory, and compilation
-5. **Adaptive Optimization**: Learn optimal configurations from usage patterns
-
-### Advanced Features
-
-1. **Memory Pool Management**: Efficient GPU memory reuse across steps
-2. **Lazy Evaluation**: Defer conversions until actually needed
-3. **Compression Integration**: Automatic compression for large intermediate data
-4. **Cache Management**: Intelligent caching of converted data
-5. **Resource Prediction**: Predict memory and storage requirements before execution
+3. **Performance Optimization**: Intelligent backend selection and conversion minimization
+4. **Distributed Processing**: Coordinate memory types across multiple nodes
+5. **Advanced Error Recovery**: Fallback strategies for conversion failures
+6. **Memory Pool Management**: Efficient GPU memory reuse across steps
+7. **Resource Prediction**: Predict memory and storage requirements before execution

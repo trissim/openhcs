@@ -1,46 +1,59 @@
-Welcome to EZStitcher's Documentation
-=====================================
+Welcome to OpenHCS Documentation
+=================================
 
-EZStitcher is a Python package for stitching microscopy images with support for Z-stacks, multi-channel fluorescence, and advanced focus detection.
-
-.. image:: _static/ezstitcher_logo.png
-   :width: 400
-   :alt: EZStitcher Logo
+OpenHCS is a production-grade bioimage analysis platform designed for high-content screening datasets that break traditional tools. Built from the ground up for 100GB+ datasets, GPU acceleration, and remote computing environments.
 
 Getting Started Quickly
---------------------
+-----------------------
 
-The fastest way to get started with EZStitcher is to use ``stitch_plate``:
+The fastest way to get started with OpenHCS is through the terminal interface:
+
+.. code-block:: bash
+
+    # Install OpenHCS
+    pip install openhcs
+
+    # Launch the interactive TUI
+    openhcs-tui
+
+For Python API usage:
 
 .. code-block:: python
 
-    from ezstitcher import stitch_plate
+    from openhcs import Pipeline, FunctionStep
 
-    # Stitch a plate with a single function call
-    stitch_plate("path/to/microscopy/data")
+    # Create a simple processing pipeline
+    pipeline = Pipeline([
+        FunctionStep(func="gaussian_filter", sigma=2.0),
+        FunctionStep(func="binary_opening", footprint=disk(3)),
+        FunctionStep(func="label", connectivity=2)
+    ])
+
+    # Process your data
+    pipeline.run("path/to/microscopy/data")
 
 For a complete guide including installation and examples, see :doc:`getting_started/getting_started`.
 
 Key Features
 ------------
 
-- **Simplified Interface for Non-Coders**: Process and stitch images with minimal code using stitch_plate
-- **Multi-channel fluorescence support**: Process and stitch multiple fluorescence channels
-- **Z-stack handling**: Process 3D image stacks with various projection methods
-- **Advanced focus detection**: Find the best focused plane in Z-stacks
-- **Flexible preprocessing**: Apply custom preprocessing to images
-- **Multiple microscope support**: Works with ImageXpress and Opera Phenix microscopes
-- **Automatic detection**: Automatically detect microscope type and image organization
-- **Object-oriented API**: Clean, modular design for easy customization
+- **Unified GPU Function Registry**: 574+ functions from pyclesperanto, CuCIM, scikit-image with unified interfaces
+- **Automatic Memory Management**: Memory type conversion between NumPy ↔ CuPy ↔ PyTorch ↔ TensorFlow
+- **SSH-Native Terminal Interface**: Production-grade TUI that works over SSH without X11 forwarding
+- **Intelligent Storage**: Memory overlay VFS with automatic backend selection (memory, disk, zarr)
+- **GPU Acceleration**: Thread-safe GPU resource management with OOM recovery
+- **Advanced Analysis**: HMM-based neurite tracing, cell counting, skeleton analysis
+- **Multiple Microscope Support**: Works with ImageXpress and Opera Phenix microscopes
+- **Production Architecture**: Handles 100GB+ datasets with comprehensive error handling
 
 Key Resources
 -----------
 
-* :doc:`getting_started/getting_started` - Install EZStitcher and run your first pipeline in minutes
-* :doc:`user_guide/basic_usage` - Learn about the simplified interface for non-coders
-* :doc:`concepts/architecture_overview` - Learn about EZStitcher's architecture
-* :doc:`user_guide/intermediate_usage` - Create custom pipelines with steps
-* :doc:`user_guide/best_practices` - Learn best practices for using EZStitcher
+* :doc:`getting_started/getting_started` - Install OpenHCS and run your first pipeline in minutes
+* :doc:`user_guide/basic_usage` - Learn about the terminal interface and Python API
+* :doc:`concepts/architecture_overview` - Learn about OpenHCS's architecture
+* :doc:`user_guide/intermediate_usage` - Create custom pipelines with FunctionSteps
+* :doc:`user_guide/best_practices` - Learn best practices for using OpenHCS
 
 .. toctree::
    :maxdepth: 2

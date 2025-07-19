@@ -125,32 +125,37 @@ def _prepare_workspace(self, workspace_path, filemanager):
 The PatternDiscoveryEngine analyzes the flattened directory structure:
 
 ```python
-def auto_detect_patterns(self, folder_path, well_filter, extensions, 
-                        group_by, variable_components, backend):
+def auto_detect_patterns(
+    self,
+    folder_path: Union[str, Path],
+    well_filter: List[str],
+    extensions: List[str],
+    group_by: Optional[str],
+    variable_components: List[str],
+    backend: str
+) -> Dict[str, Any]:
     """Automatically detect image patterns in a folder."""
-    
+
     # 1. Find and filter images by well
     files_by_well = self._find_and_filter_images(
         folder_path, well_filter, extensions, True, backend
     )
-    
+
+    if not files_by_well:
+        return {}
+
     # 2. Generate patterns for each well
     result = {}
     for well, files in files_by_well.items():
         # Generate patterns from file list
         patterns = self._generate_patterns_for_files(files, variable_components)
-        
-        # Validate patterns are fully instantiated
-        for pattern in patterns:
-            if not pattern.is_fully_instantiated():
-                raise ValueError(f"Pattern contains uninstantiated fields: {pattern}")
-        
+
         # Group patterns by component if requested
         result[well] = (
             self.group_patterns_by_component(patterns, component=group_by)
             if group_by else patterns
         )
-    
+
     return result
 
 def _find_and_filter_images(self, folder_path, well_filter, extensions, 
@@ -454,54 +459,42 @@ def validate_directory_structure(workspace_path, microscope_type):
 
 ## Performance Considerations
 
-### Caching Strategy
+### Performance Characteristics
 
 ```python
+# Pattern detection performance considerations:
 class PatternDiscoveryEngine:
-    """Pattern discovery with caching for performance."""
-    
-    def __init__(self, parser, filemanager):
+    """Pattern discovery engine with performance optimizations."""
+
+    def __init__(self, parser: FilenameParser, filemanager: FileManager):
         self.parser = parser
         self.filemanager = filemanager
-        self._pattern_cache = {}
-    
+
     def auto_detect_patterns(self, folder_path, **kwargs):
-        """Auto-detect patterns with caching."""
-        
-        # Create cache key
-        cache_key = (str(folder_path), tuple(sorted(kwargs.items())))
-        
-        # Check cache
-        if cache_key in self._pattern_cache:
-            return self._pattern_cache[cache_key]
-        
-        # Detect patterns
-        patterns = self._detect_patterns_uncached(folder_path, **kwargs)
-        
-        # Cache result
-        self._pattern_cache[cache_key] = patterns
-        
-        return patterns
+        """Auto-detect patterns with efficient file operations."""
+
+        # Use FileManager for efficient directory listing
+        # Breadth-first traversal for consistent ordering
+        # Filter files by extension early to reduce parsing overhead
+
+        return self._detect_patterns_optimized(folder_path, **kwargs)
 ```
 
-### Lazy Loading
+## Current Implementation Status
 
-```python
-def lazy_pattern_detection(self, folder_path, well_filter):
-    """Lazy pattern detection for large datasets."""
-    
-    for well in well_filter:
-        # Detect patterns only for requested wells
-        well_patterns = self._detect_patterns_for_well(folder_path, well)
-        yield well, well_patterns
-```
+### Implemented Features
+- ✅ MicroscopeHandler architecture with format-specific processing
+- ✅ PatternDiscoveryEngine for automatic pattern detection
+- ✅ FilenameParser interface with ImageXpress and Opera Phenix implementations
+- ✅ Directory structure flattening (ImageXpress Z-steps, Opera Phenix spatial remapping)
+- ✅ Pattern grouping by components (channel, site, z_index)
+- ✅ Integration with pipeline orchestrator and FunctionStep execution
+- ✅ post_workspace workflow for microscope-specific preprocessing
 
-## Future Enhancements
+### Future Enhancements
 
-### Planned Features
-
-1. **Dynamic Parser Registration**: Runtime registration of new microscope formats
-2. **Pattern Optimization**: Intelligent pattern merging and optimization
+1. **Pattern Caching**: Cache pattern detection results for performance
+2. **Dynamic Parser Registration**: Runtime registration of new microscope formats
 3. **Parallel Pattern Detection**: Multi-threaded pattern discovery for large datasets
-4. **Pattern Validation**: Advanced validation of pattern consistency
-5. **Metadata Integration**: Deeper integration with microscope metadata files
+4. **Advanced Pattern Validation**: Enhanced validation of pattern consistency
+5. **Lazy Pattern Loading**: On-demand pattern detection for large datasets
