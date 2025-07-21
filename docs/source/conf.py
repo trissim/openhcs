@@ -51,7 +51,7 @@ if on_rtd:
 
 # -- Project information -----------------------------------------------------
 
-project = 'EZStitcher'
+project = 'OpenHCS'
 copyright = '2024, trissim'
 author = 'trissim'
 

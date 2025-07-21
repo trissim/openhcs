@@ -72,7 +72,7 @@ Common Options
 Next Steps
 ---------
 
-- Read :doc:`../user_guide/introduction` for an overview of EZStitcher concepts
-- See :doc:`../user_guide/basic_usage` for detailed EZ module usage
+- Read :doc:`../user_guide/introduction` for an overview of OpenHCS concepts
+- See :doc:`../user_guide/basic_usage` for detailed API usage
 - Explore :doc:`../user_guide/intermediate_usage` for custom pipelines
 - Check :doc:`../concepts/architecture_overview` for technical details

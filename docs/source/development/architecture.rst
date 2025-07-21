@@ -1,7 +1,7 @@
 Architecture Overview
 =====================
 
-EZStitcher is built on a modular, object-oriented architecture that separates concerns and enables flexible workflows.
+OpenHCS is built on a modular, object-oriented architecture that separates concerns and enables flexible bioimage analysis workflows.
 
 Core Components
 ---------------
@@ -80,7 +80,7 @@ Manages file operations and directory structure. It:
 Design Principles
 -----------------
 
-EZStitcher follows these design principles:
+OpenHCS follows these design principles:
 
 1. **Separation of Concerns**: Each component has a specific responsibility
 2. **Composition over Inheritance**: Components are composed rather than inherited
@@ -106,7 +106,7 @@ The data flow through the pipeline is as follows:
 Directory Structure
 -------------------
 
-The directory structure of the EZStitcher codebase is as follows:
+The directory structure of the OpenHCS codebase is as follows:
 
 .. code-block:: text
 
@@ -131,7 +131,7 @@ The directory structure of the EZStitcher codebase is as follows:
 Extension Points
 ----------------
 
-EZStitcher is designed to be extended in several ways:
+OpenHCS is designed to be extended in several ways:
 
 1. **New Microscope Types**: Add new microscope types by implementing the FilenameParser and MetadataHandler interfaces
 2. **New Preprocessing Functions**: Add new preprocessing functions to the ImagePreprocessor class

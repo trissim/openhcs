@@ -9,14 +9,14 @@ Module Structure
 Overview
 --------
 
-EZStitcher uses a carefully designed module structure that enforces clean architectural boundaries, prevents circular dependencies, and ensures doctrinal compliance. This document explains the organization of modules in EZStitcher and the principles behind this structure.
+OpenHCS uses a carefully designed module structure that enforces clean architectural boundaries, prevents circular dependencies, and ensures doctrinal compliance. This document explains the organization of modules in OpenHCS and the principles behind this structure.
 
 .. _module-basic-concepts:
 
 Basic Module Concepts
 --------------------
 
-In EZStitcher, modules are organized according to these key principles:
+In OpenHCS, modules are organized according to these key principles:
 
 * **Interface-Implementation Separation**: Interfaces are defined separately from their implementations
 * **Schema-First Design**: Data structures are defined in schemas before they are used
@@ -32,8 +32,8 @@ EZStitcher's module structure follows this organization:
 
 .. code-block:: text
 
-    ezstitcher/
-    ├── __init__.py                 # Minimal; re-exports public API from ez.api
+    openhcs/
+    ├── __init__.py                 # Minimal; re-exports public API from openhcs.api
     ├── __main__.py                 # CLI entry point; calls initialize_foo() from registries
     ├── interfaces/                 # Abstract Base Classes and Interface definitions
     │   ├── __init__.py
@@ -154,23 +154,23 @@ EZStitcher provides a stable public API through the ``ezstitcher`` package. This
 .. code-block:: python
 
     # Safe to import - no side effects
-    import ezstitcher
+    import openhcs
 
-    # Initialize ezstitcher before using
-    ezstitcher.initialize()
+    # Initialize openhcs before using
+    openhcs.initialize()
 
     # Now use the API
-    config = ezstitcher.create_config(input_dir="path/to/images")
-    results = ezstitcher.run_pipeline(config)
+    config = openhcs.create_config(input_dir="path/to/images")
+    results = openhcs.run_pipeline(config)
 
-The public API is defined in ``ezstitcher/ez/api.py`` and re-exported by ``ezstitcher/__init__.py``. This ensures that ``import ezstitcher`` is safe and does not trigger backend registrations or other internal initializations.
+The public API is defined in ``openhcs/api.py`` and re-exported by ``openhcs/__init__.py``. This ensures that ``import openhcs`` is safe and does not trigger backend registrations or other internal initializations.
 
 .. _module-doctrinal-compliance:
 
 Doctrinal Compliance
 -------------------
 
-EZStitcher's module structure is designed to comply with the following doctrinal clauses:
+OpenHCS's module structure is designed to comply with the following doctrinal clauses:
 
 - **Clause 3 (Statelessness)**: Explicit initialization of registries and clear separation of concerns help in designing components that are individually stateless or whose state is managed explicitly.
 

@@ -2,7 +2,7 @@
 Overview and Key Components
 ==========================
 
-This section explains the core concepts of microscopy image stitching and how EZStitcher handles them.
+This section explains the core concepts of bioimage analysis and how OpenHCS handles them.
 
 .. toctree::
    :maxdepth: 2

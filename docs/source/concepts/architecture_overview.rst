@@ -5,7 +5,7 @@ Architecture Overview
 Pipeline Architecture
 --------------------
 
-EZStitcher is built around a flexible pipeline architecture that allows you to create custom image processing workflows. The architecture consists of three main components:
+OpenHCS is built around a flexible pipeline architecture that allows you to create custom bioimage analysis workflows. The architecture consists of three main components:
 
 .. note::
    The EZ module provides a simplified interface that wraps this architecture.
@@ -92,7 +92,7 @@ The relationship between the main components is hierarchical:
 Workflow Composition and Modularity
 -----------------------------
 
-EZStitcher's architecture is designed around a modular, composable API that allows for flexible workflow creation:
+OpenHCS's architecture is designed around a modular, composable API that allows for flexible workflow creation:
 
 **Component Roles**
 
@@ -100,7 +100,7 @@ EZStitcher's architecture is designed around a modular, composable API that allo
 
 - :doc:`**Step** <step>`: Represents a single processing operation with well-defined inputs and outputs. Steps are highly configurable through parameters like `variable_components` and `group_by`, allowing for flexible function handling patterns.
 
-**Step Types**: EZStitcher provides various step types for common tasks:
+**Step Types**: OpenHCS provides various step types for common tasks:
   - **PositionGenerationStep**: Analyzes images to generate position files describing how tiles fit together
   - **ImageStitchingStep**: Assembles processed images into a single stitched image using position files
   - **ZFlatStep**: Handles Z-stack flattening with pre-configured projection methods

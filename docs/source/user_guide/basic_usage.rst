@@ -154,15 +154,15 @@ These steps are organized into two standard pipelines:
 
 The EZ module handles all these steps automatically, so you don't need to worry about them unless you need more control.
 
-For more detailed information about EZStitcher's architecture and concepts, see :doc:`../concepts/architecture_overview` and the :doc:`../concepts/index` section.
+For more detailed information about OpenHCS's architecture and concepts, see :doc:`../concepts/architecture_overview` and the :doc:`../concepts/index` section.
 
 When You Need More Control
 ------------------------
 
-If you need more flexibility than the EZ module provides:
+If you need more flexibility than the basic API provides:
 
-1. First, explore all the options available in the EZ module (see the Key Parameters section above)
+1. First, explore all the options available in the basic API (see the Key Parameters section above)
 2. If you still need more control, see :doc:`intermediate_usage` to learn how to create custom pipelines with steps
 3. For even more advanced usage, see :doc:`advanced_usage` for understanding implementation details
 
-For detailed API documentation of the EZ module, see :doc:`../api/ez`.
+For detailed API documentation, see :doc:`../api/index`.

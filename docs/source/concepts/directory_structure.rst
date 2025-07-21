@@ -61,7 +61,7 @@ For detailed API documentation, see:
 * :doc:`../api/pipeline`
 * :doc:`../api/steps`
 
-EZStitcher automatically resolves directories for steps in a pipeline, minimizing the need for manual directory management. Here's how it works:
+OpenHCS automatically resolves directories for steps in a pipeline, minimizing the need for manual directory management. Here's how it works:
 
 1. **Basic Resolution Logic**:
 
