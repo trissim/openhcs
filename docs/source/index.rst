@@ -68,6 +68,7 @@ Key Resources
    user_guide/introduction
    user_guide/basic_usage
    user_guide/intermediate_usage
+   user_guide/production_examples
    user_guide/advanced_usage
    user_guide/best_practices
    user_guide/integration
@@ -85,6 +86,12 @@ Key Resources
    concepts/function_handling
    concepts/processing_context
    concepts/directory_structure
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Architecture Reference
+
+   architecture/index
 
 .. toctree::
    :maxdepth: 2
