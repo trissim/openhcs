@@ -2,63 +2,56 @@
 Core Concepts
 ==========================
 
-This section explains the fundamental concepts of OpenHCS in user-friendly terms. Start here to understand what OpenHCS is and how it works before diving into technical details.
+This section provides a high-level, user-friendly guide to the core concepts of OpenHCS. It's the best place to start if you want to understand what OpenHCS does and how its major components fit together, without getting lost in deep technical details. The pages are designed to be read in order to build a strong foundational understanding.
 
-**Learning Path**: Read these concepts in order for the best understanding, then explore the :doc:`../architecture/index` for technical implementation details.
+Core Architecture
+=================
 
-Fundamental Concepts
-====================
-
-Start with these core concepts to understand OpenHCS:
-
+Before you can build a pipeline, it's important to understand the main architectural ideas that make OpenHCS powerful and efficient. This section covers the "what" and "why" of the system's design.
 .. toctree::
    :maxdepth: 2
 
-   basic_microscopy
    architecture_overview
+   basic_microscopy
 
-**Basic Microscopy**: Understanding high-content screening and bioimage analysis fundamentals.
+**Architecture Overview**: A 30,000-foot view of the system. Start here to see how all the pieces, from the user interface to the processing backends, connect to one another.
 
-**Architecture Overview**: High-level overview of how OpenHCS components work together.
+**Core Concepts of OpenHCS**: Dives one level deeper, explaining the main conceptual pillars of the system: the `PipelineOrchestrator` that runs everything, the `FunctionStep` that defines the work, and the Virtual File System (VFS) that manages data.
 
-Pipeline Concepts
-=================
 
-Learn how to build and execute bioimage analysis workflows:
+Building Pipelines
+==================
+
+Once you understand the architecture, this section shows you how to use it. These pages focus on the practical details of defining and running a data processing workflow.
 
 .. toctree::
    :maxdepth: 2
 
    pipeline_orchestrator
-   pipeline
-   step
    function_handling
 
-**Pipeline Orchestrator**: The main execution engine that coordinates processing across plates and wells.
+**Pipeline Orchestrator**: The "brain" of the operation. This document explains how the orchestrator discovers your data, compiles your requested steps into an executable plan, and manages the entire process from start to finish.
 
-**Pipeline**: Sequences of processing steps that transform microscopy data.
+**Function Handling**: The "muscle" of the operation. A `FunctionStep` is where the actual work happens, and this page details the powerful "function patterns" you can use to define everything from a single calculation to a complex, multi-stage processing chain.
 
-**Step**: Individual processing operations within pipelines.
 
-**Function Handling**: How OpenHCS supports flexible function patterns for different processing needs.
+Data and System Management
+==========================
 
-System Concepts
-===============
-
-Understand how OpenHCS manages data and resources:
+This final section covers the essential background components that make the pipeline work smoothly. You'll learn how OpenHCS handles files, memory, and its own internal state.
 
 .. toctree::
    :maxdepth: 2
 
-   processing_context
    directory_structure
-   module_structure
    storage_adapter
+   processing_context
+   module_structure
 
-**Processing Context**: How OpenHCS manages execution state and configuration.
+**Directory Structure**: Explains how OpenHCS uses a Virtual File System (VFS) and symbolic links to create safe, efficient, in-memory workspaces, and how it handles final output to disk.
 
-**Directory Structure**: How OpenHCS organizes input and output data.
+**Storage Adapter**: Details the seamless integration of different storage backends, allowing you to use memory, disk, or Zarr for your data without changing your pipeline code.
 
-**Module Structure**: How OpenHCS code is organized and how to import components.
+**Processing Context**: A look at the object that holds the "state" of a pipeline run. It's how configuration and data are made available to each step.
 
-**Storage Adapter**: How OpenHCS handles different storage backends and file formats.
+**Module Structure**: An overview of how the OpenHCS Python source code is organized, which is useful for advanced users who want to import specific components or extend the system.
