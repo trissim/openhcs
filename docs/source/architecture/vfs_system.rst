@@ -361,8 +361,7 @@ VFS Configuration
 
    vfs_config = VFSConfig(
        intermediate_backend=Backend.MEMORY,
-       materialization_backend=MaterializationBackend.ZARR,
-       persistent_storage_root_path="/workspace/outputs"
+       materialization_backend=MaterializationBackend.ZARR
    )
 
 Backend-Specific Settings

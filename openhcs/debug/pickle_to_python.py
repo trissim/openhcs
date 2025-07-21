@@ -47,7 +47,8 @@ def convert_pickle_to_python(pickle_path, output_path=None):
             f.write('from openhcs.constants.constants import VariableComponents\n\n')
             
             # Import all the functions used in the pipeline
-            function_imports = set()
+            from collections import defaultdict
+            function_imports = defaultdict(set)
             
             def extract_function_imports(func_obj):
                 """Extract import statements for functions."""
@@ -55,7 +56,7 @@ def convert_pickle_to_python(pickle_path, output_path=None):
                     module = getattr(func_obj, '__module__', None)
                     name = getattr(func_obj, '__name__', None)
                     if module and name and module.startswith('openhcs'):
-                        function_imports.add(f"from {module} import {name}")
+                        function_imports[module].add(name)
                 elif isinstance(func_obj, (list, tuple)):
                     for item in func_obj:
                         if isinstance(item, tuple) and len(item) > 0:
@@ -75,8 +76,8 @@ def convert_pickle_to_python(pickle_path, output_path=None):
             
             # Write function imports
             f.write('# Function imports\n')
-            for import_stmt in sorted(function_imports):
-                f.write(f'{import_stmt}\n')
+            for module, names in sorted(function_imports.items()):
+                f.write(f"from {module} import {', '.join(sorted(names))}\n")
             f.write('\n')
             
             # Write enum imports
