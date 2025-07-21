@@ -3,84 +3,200 @@ Configuration
 
 .. module:: openhcs.core.config
 
-This module contains configuration classes for OpenHCS.
+OpenHCS uses a hierarchical configuration system with immutable dataclasses. The main configuration object is ``GlobalPipelineConfig``, which contains specialized sub-configurations for different system components.
 
-PipelineConfig
+GlobalPipelineConfig
+--------------------
+
+.. autoclass:: GlobalPipelineConfig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+The root configuration object for OpenHCS pipeline sessions. This object is intended to be instantiated at application startup and treated as immutable.
+
+**Key Features**:
+
+- **Immutable Design**: All configuration objects are frozen dataclasses
+- **Hierarchical Structure**: Specialized sub-configurations for different components
+- **Sensible Defaults**: Works out-of-the-box with minimal configuration
+- **Environment Integration**: Reads from environment variables where appropriate
+
+VFSConfig
+---------
+
+.. autoclass:: VFSConfig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Configuration for Virtual File System (VFS) operations, controlling how intermediate and final results are stored.
+
+PathPlanningConfig
+------------------
+
+.. autoclass:: PathPlanningConfig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Configuration for pipeline path planning, defining directory suffixes and output locations.
+
+ZarrConfig
+----------
+
+.. autoclass:: ZarrConfig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Configuration for ZARR storage backend, including compression and chunking strategies.
+
+Usage Examples
 --------------
 
-.. py:class:: PipelineConfig
+Basic Configuration
+^^^^^^^^^^^^^^^^^^^
 
-   Configuration for the pipeline orchestrator.
+.. code-block:: python
 
-   .. py:attribute:: out_dir_suffix
-      :type: str
-      :value: "_out"
+    from openhcs.core.config import GlobalPipelineConfig
 
-      Suffix for processing steps output directories.
+    # Use default configuration
+    config = GlobalPipelineConfig()
 
-   .. py:attribute:: positions_dir_suffix
-      :type: str
-      :value: "_positions"
+    # Or get the default instance
+    from openhcs.core.config import get_default_global_config
+    config = get_default_global_config()
 
-      Suffix for position generation step output directories.
+Custom Configuration
+^^^^^^^^^^^^^^^^^^^^
 
-   .. py:attribute:: stitched_dir_suffix
-      :type: str
-      :value: "_stitched"
+.. code-block:: python
 
-      Suffix for stitching step output directories.
+    from openhcs.core.config import (
+        GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig,
+        MaterializationBackend, ZarrCompressor, ZarrChunkStrategy
+    )
+    from openhcs.constants.constants import Backend, Microscope
 
-   .. py:attribute:: num_workers
-      :type: int
-      :value: 1
+    # Custom configuration for large-scale processing
+    config = GlobalPipelineConfig(
+        num_workers=8,
+        path_planning=PathPlanningConfig(
+            output_dir_suffix="_processed",
+            global_output_folder="/data/hcs_results",
+            materialization_results_path="analysis"
+        ),
+        vfs=VFSConfig(
+            intermediate_backend=Backend.MEMORY,
+            materialization_backend=MaterializationBackend.ZARR
+        ),
+        zarr=ZarrConfig(
+            store_name="images.zarr",
+            compressor=ZarrCompressor.ZSTD,
+            compression_level=3,
+            shuffle=True,
+            chunk_strategy=ZarrChunkStrategy.SINGLE,
+            ome_zarr_metadata=True,
+            write_plate_metadata=True
+        ),
+        microscope=Microscope.IMAGEXPRESS
+    )
 
-      Number of worker threads for parallel processing.
+Production Example
+^^^^^^^^^^^^^^^^^^
 
-   .. py:attribute:: well_filter
-      :type: list or None
-      :value: None
+Complete configuration from gold standard script:
 
-      Optional list of wells to process.
+.. code-block:: python
 
-   .. py:attribute:: stitcher
-      :type: StitcherConfig
-      :value: StitcherConfig()
+    from openhcs.core.config import (
+        GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig,
+        MaterializationBackend, ZarrCompressor, ZarrChunkStrategy
+    )
+    from openhcs.constants.constants import Backend, Microscope
 
-      Configuration for the Stitcher class.
+    # Production configuration for neurite analysis
+    production_config = GlobalPipelineConfig(
+        num_workers=5,
+        path_planning=PathPlanningConfig(
+            output_dir_suffix="_stitched",
+            global_output_folder="/home/ts/nvme_usb/OpenHCS/",
+            materialization_results_path="results"
+        ),
+        vfs=VFSConfig(
+            intermediate_backend=Backend.MEMORY,
+            materialization_backend=MaterializationBackend.ZARR
+        ),
+        zarr=ZarrConfig(
+            store_name="images.zarr",
+            compressor=ZarrCompressor.ZSTD,
+            compression_level=1,
+            shuffle=True,
+            chunk_strategy=ZarrChunkStrategy.SINGLE,
+            ome_zarr_metadata=True,
+            write_plate_metadata=True
+        ),
+        microscope=Microscope.AUTO,
+        use_threading=False  # Use multiprocessing for better performance
+    )
 
+    # Use with orchestrator
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
+    orchestrator = PipelineOrchestrator(
+        plate_path="/path/to/plate",
+        global_config=production_config
+    )
 
-StitcherConfig
---------------
+Configuration Enums
+-------------------
 
-.. py:class:: StitcherConfig
+MaterializationBackend
+^^^^^^^^^^^^^^^^^^^^^^
 
-   Configuration for the Stitcher class.
+.. autoclass:: MaterializationBackend
+   :members:
+   :undoc-members:
 
-   .. py:attribute:: tile_overlap
-      :type: float
-      :value: 10.0
+Available backends for persistent storage:
 
-      Percentage overlap between tiles.
+- ``ZARR``: Compressed, chunked storage with OME-ZARR metadata
+- ``DISK``: Traditional file-based storage
 
-   .. py:attribute:: max_shift
-      :type: int
-      :value: 50
+ZarrCompressor
+^^^^^^^^^^^^^^
 
-      Maximum allowed shift in pixels.
+.. autoclass:: ZarrCompressor
+   :members:
+   :undoc-members:
 
-   .. py:attribute:: margin_ratio
-      :type: float
-      :value: 0.1
+Available compression algorithms for ZARR storage:
 
-      Ratio of image size to use as margin for blending.
+- ``BLOSC``: Fast compression with good ratio
+- ``ZLIB``: Standard compression
+- ``LZ4``: Very fast compression
+- ``ZSTD``: High compression ratio
+- ``NONE``: No compression
 
-   .. py:attribute:: pixel_size
-      :type: float
-      :value: 1.0
+ZarrChunkStrategy
+^^^^^^^^^^^^^^^^^
 
-      Pixel size in micrometers.
+.. autoclass:: ZarrChunkStrategy
+   :members:
+   :undoc-members:
 
+Chunking strategies for ZARR arrays:
 
+- ``SINGLE``: Single chunk per array (optimal for batch I/O)
+- ``AUTO``: Let ZARR decide chunk size
+- ``CUSTOM``: User-defined chunk sizes
 
+See Also
+--------
 
+- :doc:`../concepts/pipeline_orchestrator` - Using configuration with orchestrator
+- :doc:`../architecture/vfs_system` - VFS configuration details
+- :doc:`../concepts/storage_adapter` - ZARR configuration examples
+- :doc:`orchestrator` - Orchestrator API reference
