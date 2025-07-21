@@ -5,138 +5,150 @@ Storage Adapter
 Overview
 --------
 
-The ``StorageAdapter`` is an abstraction layer for storing and retrieving pipeline artifacts (primarily NumPy arrays).
-It provides a key-value storage interface that can be implemented by different backends, such as in-memory dictionaries
-or Zarr stores on disk.
+OpenHCS uses a Virtual File System (VFS) approach to storage that provides unified file operations across multiple backend types. The VFS system abstracts storage operations through the ``FileManager`` interface, enabling seamless switching between memory, disk, and ZARR backends.
 
-Storage Modes
-------------
+**Key Features**:
 
-EZStitcher supports three storage modes:
+* **Backend Abstraction**: Unified API for memory, disk, and ZARR storage
+* **Automatic Optimization**: Different backends for intermediate vs. final results
+* **Large Dataset Support**: ZARR backend handles datasets from MB to 100GB+
+* **Memory Efficiency**: Memory backend for fast intermediate processing
 
-1. ``legacy``: Uses the existing in-memory dictionary within Pipeline (default)
-2. ``memory``: Uses MemoryStorageAdapter (persists .npy files on completion)
-3. ``zarr``: Uses ZarrStorageAdapter (persists to disk immediately)
+VFS Backend Configuration
+-------------------------
 
-You can specify the storage mode when creating a PipelineOrchestrator:
+OpenHCS supports three primary storage backends configured through the VFS system:
+
+**Real-World Configuration** (from TUI-generated scripts):
 
 .. code-block:: python
 
-    from ezstitcher.core.pipeline_orchestrator import PipelineOrchestrator
+    from openhcs.core.config import VFSConfig, ZarrConfig
+    from openhcs.constants.constants import Backend, MaterializationBackend
 
-    # Use memory storage
-    orchestrator = PipelineOrchestrator(
-        plate_path="path/to/plate",
-        storage_mode="memory"
+    # VFS backend configuration
+    vfs_config = VFSConfig(
+        intermediate_backend=Backend.MEMORY,              # Fast memory for intermediate steps
+        materialization_backend=MaterializationBackend.ZARR  # ZARR for final results
     )
 
-    # Use Zarr storage with a specific root directory
-    orchestrator = PipelineOrchestrator(
-        plate_path="path/to/plate",
-        storage_mode="zarr",
-        storage_root=Path("/path/to/zarr/root")
+    # ZARR-specific configuration
+    zarr_config = ZarrConfig(
+        store_name="images.zarr",                         # ZARR store filename
+        compressor=ZarrCompressor.ZSTD,                   # Compression algorithm
+        compression_level=1,                              # Compression level
+        shuffle=True,                                     # Enable shuffle filter
+        chunk_strategy=ZarrChunkStrategy.SINGLE,          # Chunking strategy
+        ome_zarr_metadata=True,                           # OME-ZARR metadata
+        write_plate_metadata=True                         # Plate-level metadata
     )
 
-Storage Adapter Interface
-------------------------
+    # Integration with global configuration
+    global_config = GlobalPipelineConfig(
+        vfs=vfs_config,
+        zarr=zarr_config,
+        # ... other configuration
+    )
 
-The ``StorageAdapter`` interface defines the following methods:
+Backend Types and Use Cases
+---------------------------
 
-.. code-block:: python
+**Memory Backend** (``Backend.MEMORY``):
+- **Use Case**: Intermediate processing steps within pipelines
+- **Performance**: Fastest access, no disk I/O overhead
+- **Limitations**: Limited by system RAM, temporary storage
+- **Best For**: Function chains, preprocessing steps
 
-    class StorageAdapter(ABC):
-        @abstractmethod
-        def write(self, key: str, data: np.ndarray) -> None:
-            """Store data associated with a key."""
-            pass
+**Disk Backend** (``Backend.DISK``):
+- **Use Case**: Traditional file system storage
+- **Performance**: Standard disk I/O performance
+- **Limitations**: No compression, individual file management
+- **Best For**: Small to medium datasets, debugging
 
-        @abstractmethod
-        def read(self, key: str) -> np.ndarray:
-            """Retrieve data associated with a key."""
-            pass
+**ZARR Backend** (``MaterializationBackend.ZARR``):
+- **Use Case**: Large dataset storage with compression
+- **Performance**: Optimized for large arrays, chunked access
+- **Features**: Compression, metadata, OME-ZARR compatibility
+- **Best For**: Final results, datasets >1GB, long-term storage
 
-        @abstractmethod
-        def exists(self, key: str) -> bool:
-            """Check if a key exists in the storage."""
-            pass
+FileManager Interface
+---------------------
 
-        @abstractmethod
-        def delete(self, key: str) -> None:
-            """Delete the data associated with a key."""
-            pass
-
-        @abstractmethod
-        def list_keys(self) -> List[str]:
-            """List all keys currently stored."""
-            pass
-
-        @abstractmethod
-        def persist(self, output_dir: Path) -> None:
-            """
-            Persist the contents of the storage to a specified directory.
-            Behavior depends on the implementation (e.g., write files, no-op).
-            """
-            pass
-
-Using StorageAdapter in Steps
-----------------------------
-
-Pipeline steps automatically use the StorageAdapter when available. The Step._save_images method checks for a
-StorageAdapter in the context and uses it if available, falling back to FileManager only when necessary.
-
-You can also use the StorageAdapter directly in your custom steps:
+All storage operations go through the ``FileManager`` interface, providing unified access:
 
 .. code-block:: python
 
-    def process(self, context: 'ProcessingContext') -> 'ProcessingContext':
-        # Process images...
-        
-        # Store results using the storage adapter if available
-        if context.orchestrator and context.orchestrator.storage_adapter:
-            # Generate a key for the data
-            from ezstitcher.io.storage_adapter import generate_storage_key
-            key = generate_storage_key(self.name, well, component)
-            
-            # Store the data
-            context.orchestrator.storage_adapter.write(key, data)
-        else:
-            # Fall back to FileManager
-            file_manager = context.orchestrator.file_manager
-            file_manager.save_image(data, output_path)
-            
-        return context
+    # FileManager operations (accessed through ProcessingContext)
+    context.filemanager.exists("path/to/file")           # Check file existence
+    context.filemanager.save_array(array, "output/path") # Save array to VFS
+    context.filemanager.load_array("input/path")         # Load array from VFS
+    context.filemanager.delete("path/to/file")           # Delete file from VFS
 
-Helper Method in ProcessingContext
----------------------------------
+    # Backend selection is automatic based on VFS configuration
+    # - Intermediate results → Memory backend (fast, temporary)
+    # - Final results → ZARR backend (compressed, persistent)
 
-For convenience, ProcessingContext provides a helper method for storing arrays:
+VFS Integration with FunctionSteps
+-----------------------------------
+
+OpenHCS FunctionSteps automatically use the VFS system through the ProcessingContext:
 
 .. code-block:: python
 
-    def process(self, context: 'ProcessingContext') -> 'ProcessingContext':
-        # Process images...
-        
-        # Store results using the context helper method
-        key = generate_storage_key(self.name, well, component)
-        context.store_array(key, data)
-            
-        return context
+    # FunctionSteps automatically handle VFS operations
+    step = FunctionStep(
+        func=[(processing_function, {})],
+        name="processing_step",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False  # Uses memory backend for intermediate results
+    )
 
-Key Generation
-------------
+    # When force_disk_output=True, results are materialized to final backend
+    final_step = FunctionStep(
+        func=[(final_function, {})],
+        name="final_step",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=True   # Forces materialization to ZARR/disk backend
+    )
 
-To ensure consistent key naming across all steps, use the generate_storage_key utility function:
+**Automatic Backend Selection**:
 
-.. code-block:: python
+- **Intermediate Steps** (``force_disk_output=False``): Use memory backend for speed
+- **Final Steps** (``force_disk_output=True``): Use materialization backend for persistence
+- **Cross-Step Data Flow**: Automatic conversion between backends as needed
 
-    from ezstitcher.io.storage_adapter import generate_storage_key
-    
-    # Generate a key for a step's output
-    key = generate_storage_key(step_name, well, component)
-    
-    # Examples:
-    # generate_storage_key("Z-Stack Flattening", "A01", "channel_1")
-    # -> "z-stack_flattening_A01_channel_1"
-    # 
-    # generate_storage_key("Normalization", "B02")
-    # -> "normalization_B02"
+Performance Considerations
+--------------------------
+
+**Memory Backend**:
+- **Pros**: Fastest access, no I/O overhead, ideal for function chains
+- **Cons**: Limited by RAM, temporary storage only
+- **Use When**: Intermediate processing, function chains, small datasets
+
+**ZARR Backend**:
+- **Pros**: Compression, chunking, OME-ZARR compatibility, handles large datasets
+- **Cons**: Slower than memory, compression overhead
+- **Use When**: Final results, large datasets (>1GB), long-term storage
+
+**Optimization Tips**:
+- Use memory backend for intermediate steps in function chains
+- Use ZARR backend only for final materialization
+- Configure appropriate ZARR chunk sizes for your data access patterns
+
+See Also
+--------
+
+**Technical Details**:
+
+- :doc:`../architecture/vfs_system` - Complete VFS system architecture
+- :doc:`../architecture/memory_backend_system` - Memory backend implementation
+
+**Configuration**:
+
+- :doc:`../api/config` - VFSConfig and ZarrConfig documentation
+- :doc:`directory_structure` - Directory organization with VFS
+
+**Related Concepts**:
+
+- :doc:`processing_context` - How context integrates with VFS
+- :doc:`step` - How FunctionSteps use VFS backends

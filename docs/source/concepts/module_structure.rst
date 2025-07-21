@@ -25,76 +25,106 @@ In OpenHCS, modules are organized according to these key principles:
 
 .. _module-directory-structure:
 
-Module Directory Structure
--------------------------
+OpenHCS Module Structure
+------------------------
 
-EZStitcher's module structure follows this organization:
+OpenHCS follows a clean, hierarchical module organization optimized for GPU-accelerated bioimage analysis:
+
+**Real Import Patterns** (from TUI-generated scripts):
+
+.. code-block:: python
+
+    # Core orchestration and pipeline components
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import GlobalPipelineConfig
+
+    # Constants and enums
+    from openhcs.constants.constants import VariableComponents, Backend, Microscope
+
+    # Processing functions by computational backend
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+    from openhcs.processing.backends.processors.cupy_processor import tophat, create_composite
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+    from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
+
+    # Configuration classes
+    from openhcs.core.config import PathPlanningConfig, VFSConfig, ZarrConfig
+    from openhcs.core.config import MaterializationBackend, ZarrCompressor, ZarrChunkStrategy
+
+**Module Organization**:
 
 .. code-block:: text
 
     openhcs/
-    ├── __init__.py                 # Minimal; re-exports public API from openhcs.api
-    ├── __main__.py                 # CLI entry point; calls initialize_foo() from registries
-    ├── interfaces/                 # Abstract Base Classes and Interface definitions
-    │   ├── __init__.py
-    │   ├── compute.py              # Defines ComputeBackend, ImageAssembler interfaces
-    │   ├── storage.py              # Defines StorageInterface
-    │   ├── pipeline.py             # Defines PipelineStepInterface, PipelineInterface
-    │   └── handlers.py             # Defines HandlerInterface
-    ├── schemas/                    # All Pydantic/JSON schema definitions
-    │   ├── __init__.py
-    │   ├── config_schemas.py       # General application/pipeline config schemas
-    │   ├── context_schemas.py      # ProcessingContext schema, StepState schemas
-    │   └── backend_schemas.py      # Schemas for backend configurations
-    ├── core/                       # Core orchestration, business logic, context management
-    │   ├── __init__.py
-    │   ├── pipeline_executor.py    # Orchestrates pipeline step execution
-    │   ├── processing_context.py   # Manages processing state
-    │   └── ...                     # Other core components
-    ├── engine/                     # Low-level execution mechanics for pipeline steps
-    │   ├── __init__.py
-    │   └── step_execution.py       # Logic for executing individual steps
-    ├── backends/                   # Concrete implementations of interfaces
-    │   ├── __init__.py             # EMPTY or minimal; DOES NOT import specific backends
-    │   └── mist/                   # MIST backend implementation
-    │       ├── __init__.py
-    │       ├── implementation.py   # Implements interfaces.compute.ComputeBackend
-    │       ├── config.py           # MIST specific config logic
-    │       └── ...                 # Other MIST-specific files
-    ├── io/                         # Input/Output operations, VFS, data loading
-    │   ├── __init__.py
-    │   ├── file_manager.py         # VFS interactions (Clause 17)
-    │   ├── image_io.py             # Image reading/writing utilities
-    │   ├── ...                     # Other I/O utilities
-    │   └── storage_adapters/       # Concrete storage implementations
-    │       ├── __init__.py
-    │       └── local_fs_adapter.py # Implements interfaces.storage.StorageInterface
-    ├── registries/                 # Modules for registering and discovering components
-    │   ├── __init__.py             # EMPTY or minimal
-    │   ├── compute_backends.py     # Manages ComputeBackend registry
-    │   ├── image_assemblers.py     # Manages ImageAssembler registry
-    │   ├── storage_providers.py    # Manages StorageInterface registry
-    │   └── pipeline_steps.py       # Manages PipelineStepInterface registry
-    ├── microscopes/                # Microscope-specific data adapters/parsers
-    │   ├── __init__.py
-    │   └── ...                     # Microscope-specific implementations
-    ├── materialization/            # Materialization logic
-    │   ├── __init__.py
-    │   └── ...                     # Materialization-specific implementations
-    └── ez/                         # Public-facing simplified API layer
-        ├── __init__.py
-        ├── api.py                  # Consolidates user-facing functions and classes
-        └── utils.py                # Publicly exposed utilities
+    ├── core/                       # Core orchestration and pipeline management
+    │   ├── orchestrator/           # PipelineOrchestrator and execution engine
+    │   ├── steps/                  # FunctionStep and step implementations
+    │   ├── config/                 # Configuration classes and management
+    │   └── context/                # ProcessingContext and state management
+    ├── processing/                 # 574+ GPU-accelerated processing functions
+    │   └── backends/               # Organized by computational backend
+    │       ├── processors/         # Image processing functions
+    │       ├── analysis/           # Analysis and measurement functions
+    │       ├── assemblers/         # Image assembly and stitching
+    │       └── pos_gen/            # Position generation algorithms
+    ├── constants/                  # Enums and constant definitions
+    └── utils/                      # Utility functions and helpers
+
+**Import Patterns by Use Case**:
+
+.. code-block:: python
+
+    # Basic pipeline creation (most common)
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.constants.constants import VariableComponents
+
+    # GPU processing functions
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+    from openhcs.processing.backends.processors.cupy_processor import tophat
+
+    # Analysis functions
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+
+    # Configuration and enums
+    from openhcs.core.config import PathPlanningConfig, VFSConfig, ZarrConfig
+    from openhcs.constants.constants import Backend, Microscope
 
 .. _module-key-directories:
 
-Key Directories and Their Purpose
---------------------------------
+Key Modules and Their Purpose
+-----------------------------
 
-interfaces/
-^^^^^^^^^^^
+core/
+^^^^^
 
-The ``interfaces/`` directory contains abstract base classes (ABCs) and protocol definitions that define the contracts for various components. These interfaces are the foundation of the system's architecture and ensure that implementations adhere to a consistent API.
+The ``core/`` module contains the fundamental orchestration and pipeline management components:
+
+- **orchestrator/**: PipelineOrchestrator for multi-well execution
+- **steps/**: FunctionStep implementation with GPU support
+- **config/**: Configuration classes for system-wide settings
+- **context/**: ProcessingContext for execution state management
+
+processing/backends/
+^^^^^^^^^^^^^^^^^^^^
+
+The ``processing/backends/`` module contains 574+ GPU-accelerated processing functions organized by computational backend:
+
+- **processors/**: Image processing functions (torch, cupy, numpy)
+- **analysis/**: Analysis and measurement functions
+- **assemblers/**: Image assembly and stitching algorithms
+- **pos_gen/**: Position generation for stitching
+
+constants/
+^^^^^^^^^^
+
+The ``constants/`` module defines enums and constants used throughout OpenHCS:
+
+- **VariableComponents**: SITE, CHANNEL, TIME processing dimensions
+- **Backend**: Memory backend types (MEMORY, DISK, ZARR)
+- **Microscope**: Supported microscope types and detection
 
 **Doctrinal Motivation**: Enforces clear separation of concerns, facilitates polymorphism, and is crucial for breaking import cycles. Implementations depend on these interfaces, not on each other directly. Supports ``Clause 21`` (Frontloaded Validation) by making dependencies explicit.
 

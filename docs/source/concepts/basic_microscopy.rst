@@ -11,12 +11,13 @@ Microscopy image stitching is the process of combining multiple overlapping imag
 2. High-resolution imaging often requires capturing multiple tiles
 3. Stitching allows visualization and analysis of larger areas
 
-EZStitcher addresses these challenges by:
+OpenHCS addresses these challenges by:
 
-- Automatically detecting tile positions
-- Aligning tiles with subpixel precision
-- Blending overlapping regions smoothly
-- Handling multi-channel fluorescence and Z-stacks
+- GPU-accelerated position detection and alignment
+- Subpixel precision alignment with automatic optimization
+- Advanced blending algorithms for smooth overlapping regions
+- Multi-channel fluorescence and Z-stack processing
+- Scalable processing for datasets from MB to 100GB+
 
 Key Microscopy Concepts
 -----------------------
@@ -37,7 +38,7 @@ Key concepts:
 - **Site**: A specific location within a well where an image is captured
 - **Grid**: The arrangement of sites within a well (e.g., 3×3 grid)
 
-EZStitcher processes images on a per-well basis, stitching together all sites within each well.
+OpenHCS processes images on a per-well basis with parallel processing, stitching together all sites within each well using GPU acceleration.
 
 Multi-Channel Fluorescence
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -53,11 +54,12 @@ Key concepts:
 - **Channel**: A specific wavelength or color used for imaging
 - **Composite**: A combined image created from multiple channels
 
-EZStitcher can:
+OpenHCS can:
 
-- Process each channel independently
+- Process each channel independently with GPU acceleration
 - Create composite images from multiple channels
 - Use one channel as a reference for stitching all channels
+- Apply channel-specific processing algorithms using dictionary patterns
 
 Z-Stacks
 ~~~~~~~~
