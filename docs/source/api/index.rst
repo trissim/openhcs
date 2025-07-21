@@ -18,6 +18,14 @@ Core Pipeline Components
    function_step
    steps
 
+Processing and Analysis
+----------------------
+
+.. toctree::
+   :maxdepth: 2
+
+   processing_backends
+
 Configuration and Management
 ----------------------------
 
@@ -25,7 +33,7 @@ Configuration and Management
    :maxdepth: 2
 
    config
-   file_system_manager
+   io_storage
 
 Image Processing
 ----------------

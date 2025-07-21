@@ -89,6 +89,12 @@ Key Resources
 
 .. toctree::
    :maxdepth: 2
+   :caption: Integration Guides
+
+   guides/index
+
+.. toctree::
+   :maxdepth: 2
    :caption: Architecture Reference
 
    architecture/index
