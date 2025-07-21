@@ -297,3 +297,30 @@ The ``AutoPipelineFactory`` creates two pipelines:
 2. **Image Assembly Pipeline**: Stitches images using the position files
 
 For more information on pipeline factories, see :doc:`pipeline_factory`.
+
+See Also
+--------
+
+**Next Steps**:
+
+- :doc:`step` - Understanding individual pipeline steps
+- :doc:`function_handling` - Function patterns and processing options
+- :doc:`pipeline_orchestrator` - Running pipelines with the orchestrator
+
+**Technical Details**:
+
+- :doc:`../architecture/pipeline_compilation_system` - How pipelines are compiled and optimized
+- :doc:`../architecture/function_pattern_system` - Advanced function pattern system
+- :doc:`../architecture/memory_type_system` - Memory type handling in pipelines
+
+**API Reference**:
+
+- :doc:`../api/orchestrator` - PipelineOrchestrator API documentation
+- :doc:`../api/function_step` - FunctionStep API documentation
+- :doc:`../api/config` - Pipeline configuration options
+
+**Practical Guides**:
+
+- :doc:`../guides/pipeline_compilation_workflow` - Complete pipeline creation workflow
+- :doc:`../user_guide/intermediate_usage` - Building custom pipelines
+- :doc:`../user_guide/best_practices` - Pipeline development best practices

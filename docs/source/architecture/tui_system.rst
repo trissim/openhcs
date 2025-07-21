@@ -405,3 +405,24 @@ This TUI system represents a paradigm shift in scientific computing
 interfaces - providing production-grade functionality in a
 terminal-native environment that works anywhere researchers need to
 process data.
+
+See Also
+--------
+
+**Core Integration**:
+
+- :doc:`pipeline_compilation_system` - TUI integration with pipeline compilation
+- :doc:`function_registry_system` - TUI function discovery and help system
+- :doc:`configuration_management_system` - TUI configuration management
+
+**Practical Usage**:
+
+- :doc:`../user_guide/basic_usage` - Getting started with the TUI
+- :doc:`../guides/pipeline_compilation_workflow` - TUI workflow for pipeline creation
+- :doc:`../api/config` - Configuration options for TUI system
+
+**Advanced Topics**:
+
+- :doc:`system_integration` - TUI integration with other OpenHCS systems
+- :doc:`concurrency_model` - TUI coordination with multi-processing
+- :doc:`vfs_system` - TUI integration with VFS backends

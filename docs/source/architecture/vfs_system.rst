@@ -446,3 +446,24 @@ Monitoring and Analytics
 -  Performance profiling
 -  Storage optimization recommendations
 -  Automated cleanup policies
+
+See Also
+--------
+
+**Core Integration**:
+
+- :doc:`memory_backend_system` - Backend implementation details
+- :doc:`special_io_system` - Cross-step communication using VFS
+- :doc:`pipeline_compilation_system` - VFS integration with compilation
+
+**Practical Usage**:
+
+- :doc:`../api/io_storage` - FileManager and storage backend API
+- :doc:`../guides/memory_type_integration` - VFS with memory type system
+- :doc:`../api/config` - VFS configuration options
+
+**Advanced Topics**:
+
+- :doc:`system_integration` - VFS integration with other OpenHCS systems
+- :doc:`compilation_system_detailed` - Backend selection during compilation
+- :doc:`function_pattern_system` - Function patterns with VFS storage
