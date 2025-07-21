@@ -123,7 +123,7 @@ When to Use Each Pattern
     # )
 
 - **Z-stack flattening**: Can be implemented with a `FunctionStep` that takes a 3D stack and outputs a new 3D stack with a single Z-slice (e.g., via maximum intensity projection).
-- **Channel-specific processing**: Use the **Dictionary Pattern**. By setting ``variable_components=[VariableComponents.CHANNEL]``, you can define different processing pipelines for each channel index.
+- **Channel-specific processing**: Use the **Dictionary Pattern**. This requires setting ``group_by=GroupBy.CHANNEL`` so the system knows to group files by channel, and then providing a dictionary where keys are channel indices.
 - **Custom processing chains**: The **List of Functions** pattern is ideal for creating complex, multi-stage processing workflows.
 
 For detailed information about pre-defined steps, see :ref:`variable-components` in :doc:`step`.
@@ -187,7 +187,7 @@ Best Practices from TUI-Generated Scripts
 -----------------------------------------
 
 - **Use descriptive step names** for pipeline debugging and monitoring
-- **Set force_disk_output=False** for intermediate steps to use memory backend
+- **Use `force_disk_output=True`** only when you need to inspect the output of an intermediate step on disk. This flag saves an *extra copy* to the disk backend for debugging; the primary pipeline continues to use the efficient memory backend.
 - **Use appropriate variable_components** (SITE for parallel processing, CHANNEL for channel-specific operations)
 - **Chain related operations** in single steps to minimize I/O overhead
 - **Use dictionary patterns** when different components need different processing logic

@@ -25,10 +25,10 @@ The TUI is launched through the main application class:
 
 .. code-block:: python
 
-    from openhcs.textual_tui.main import OpenHCSTUI
+    from openhcs.textual_tui.app import OpenHCSTUIApp
 
     # Launch TUI
-    app = OpenHCSTUI()
+    app = OpenHCSTUIApp()
     app.run()
 
     # Or from command line
