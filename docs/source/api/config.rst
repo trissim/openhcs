@@ -198,5 +198,5 @@ See Also
 
 - :doc:`../concepts/pipeline_orchestrator` - Using configuration with orchestrator
 - :doc:`../architecture/vfs_system` - VFS configuration details
-- :doc:`../concepts/storage_adapter` - ZARR configuration examples
+- :doc:`../concepts/storage_backends` - ZARR configuration examples
 - :doc:`orchestrator` - Orchestrator API reference

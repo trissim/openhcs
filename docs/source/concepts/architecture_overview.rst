@@ -70,7 +70,7 @@ Core Components
 
 * **VFS System**: Virtual file system with memory, disk, and ZARR backends
 * **FileManager**: Unified file operations with automatic backend selection
-* :doc:`**Storage Adapters** <storage_adapter>`: Backend-specific storage implementations
+* :doc:`**Storage Backends** <storage_backends>`: Backend-specific storage implementations
 
 **Configuration and Management:**
 

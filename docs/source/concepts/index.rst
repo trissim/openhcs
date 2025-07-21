@@ -44,13 +44,13 @@ This final section covers the essential background components that make the pipe
    :maxdepth: 2
 
    directory_structure
-   storage_adapter
+   storage_backends
    processing_context
    module_structure
 
 **Directory Structure**: Explains how OpenHCS uses a Virtual File System (VFS) and symbolic links to create safe, efficient, in-memory workspaces, and how it handles final output to disk.
 
-**Storage Adapter**: Details the seamless integration of different storage backends, allowing you to use memory, disk, or Zarr for your data without changing your pipeline code.
+**Storage Backends**: Details the seamless integration of different storage backends, allowing you to use memory, disk, or Zarr for your data without changing your pipeline code.
 
 **Processing Context**: A look at the object that holds the "state" of a pipeline run. It's how configuration and data are made available to each step.
 

@@ -149,10 +149,10 @@ The ``backends/`` directory contains concrete implementations of interfaces defi
 
 **Doctrinal Motivation**: Clear separation of implementation from interface. ``__init__.py`` in this directory and its subdirectories are minimal to prevent accidental registration on import.
 
-io/storage_adapters/
-^^^^^^^^^^^^^^^^^^^
+io/backends/
+^^^^^^^^^^^^
 
-The ``io/storage_adapters/`` directory contains concrete implementations of the ``StorageInterface`` defined in ``interfaces/storage.py``.
+The ``io/backends/`` directory could contain different storage backend implementations.
 
 **Doctrinal Motivation**: Similar to ``backends/``, separates storage interface implementations from their definition.
 

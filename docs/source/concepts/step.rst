@@ -376,7 +376,7 @@ StorageAdapter instead of being written directly to disk. This provides several 
 2. **Persistence**: Zarr storage provides immediate persistence to disk
 3. **Flexibility**: Different storage backends can be used without changing step code
 
-For detailed information about storage adapters, see :doc:`storage_adapter`.
+For detailed information about storage backends, see :doc:`storage_backends`.
 
 .. code-block:: python
 
