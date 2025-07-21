@@ -210,7 +210,7 @@ Functions declare their memory interface using decorators:
        return result
 
 **Supported Memory Types**: ``numpy``, ``cupy``, ``torch``,
-``tensorflow``, ``jax``
+``tensorflow``, ``jax``, ``pyclesperanto``
 
 **Benefits**: - No runtime overhead - pure metadata - Enables
 compile-time memory type checking - Supports automatic memory type

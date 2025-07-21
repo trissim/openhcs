@@ -314,36 +314,28 @@ def generate_readable_function_repr(func_obj, indent=0):
             # Always format kwargs with newlines for readability
             args_items = []
             for k, v in converted_args.items():
-                args_items.append(f"{next_indent_str}'{k}': {v}")
-            args_str = "{\n" + ",\n".join(args_items) + f"\n{indent_str}}}"
+                # Recursively format complex values like nested lists/dicts
+                v_repr = generate_readable_function_repr(v, indent + 2)
+                args_items.append(f"{next_indent_str}    '{k}': {v_repr}")
+            args_str = "{\n" + ",\n".join(args_items) + f"\n{next_indent_str}}}"
         return f"({func.__name__}, {args_str})"
     elif isinstance(func_obj, list):
         if not func_obj:
             return "[]"
-        # Always format lists with newlines for readability
         items = []
         for item in func_obj:
-            item_repr = generate_readable_function_repr(item, indent + 1)
-            # If item is multi-line, indent it properly
-            if '\n' in item_repr:
-                indented_item = item_repr.replace('\n', f'\n{next_indent_str}')
-                items.append(f"{next_indent_str}{indented_item}")
-            else:
-                items.append(f"{next_indent_str}{item_repr}")
-        return f"[{',\n'.join(items)}\n{indent_str}]"
+            # Pass the *same* indent level for items in the list
+            item_repr = generate_readable_function_repr(item, indent)
+            items.append(f"{next_indent_str}{item_repr}")
+        return f"[\n{',\n'.join(items)}\n{indent_str}]"
     elif isinstance(func_obj, dict):
         if not func_obj:
             return "{}"
-        # Always format dicts with newlines for readability
         items = []
         for key, value in func_obj.items():
-            value_repr = generate_readable_function_repr(value, indent + 1)
-            # If value is multi-line, indent it properly
-            if '\n' in value_repr:
-                indented_value = value_repr.replace('\n', f'\n{next_indent_str}')
-                items.append(f"{next_indent_str}'{key}': {indented_value}")
-            else:
-                items.append(f"{next_indent_str}'{key}': {value_repr}")
+            # Pass the *same* indent level for items in the dict
+            value_repr = generate_readable_function_repr(value, indent)
+            items.append(f"{next_indent_str}'{key}': {value_repr}")
         return f"{{{',\n'.join(items)}\n{indent_str}}}"
     else:
         return repr(func_obj)
