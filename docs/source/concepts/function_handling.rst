@@ -23,58 +23,104 @@ The ``func`` parameter of the ``FunctionStep`` class can accept several types of
 3. **List of Functions**: A sequence of functions applied one after another (function chains)
 4. **Dictionary of Functions**: A mapping from component values to functions, used with ``variable_components``
 
+**Real-World Examples** (from TUI-generated scripts):
+
 .. code-block:: python
 
-    from ezstitcher.core.steps import Step
-    from ezstitcher.core.image_processor import ImageProcessor as IP
-    from ezstitcher.core.utils import stack
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.constants.constants import VariableComponents
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+    from openhcs.processing.backends.processors.cupy_processor import tophat, create_composite
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
 
-    # 1. Single function
-    step = Step(
-        func=IP.stack_percentile_normalize,
-        name="Normalize Images"
+    # 1. Single function with parameters
+    step = FunctionStep(
+        func=[(create_composite, {})],
+        name="composite",
+        variable_components=[VariableComponents.CHANNEL],
+        force_disk_output=False
     )
 
-    # 2. Function with arguments
-    step = Step(
-        func=(IP.stack_percentile_normalize, {
-            'low_percentile': 0.1,
-            'high_percentile': 99.9
-        }),
-        name="Normalize Images"
+    # 2. Function with complex parameters
+    step = FunctionStep(
+        func=[(stack_percentile_normalize, {
+            'low_percentile': 1.0,
+            'high_percentile': 99.0,
+            'target_max': 65535.0
+        })],
+        name="normalize",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False
     )
 
-    # 3. List of functions
-    step = Step(
+    # 3. Function chain (list of functions applied in sequence)
+    step = FunctionStep(
         func=[
-            stack(IP.sharpen),              # First sharpen the images
-            IP.stack_percentile_normalize   # Then normalize the intensities
+            (stack_percentile_normalize, {
+                'low_percentile': 1.0,
+                'high_percentile': 99.0,
+                'target_max': 65535.0
+            }),
+            (tophat, {
+                'selem_radius': 50,
+                'downsample_factor': 4
+            })
         ],
-        name="Enhance Images"
+        name="preprocess",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False
     )
 
-    # 4. Dictionary of functions (with group_by)
-    step = Step(
+    # 4. Dictionary pattern (component-specific processing)
+    step = FunctionStep(
         func={
-            "1": process_dapi,      # Apply process_dapi to channel 1
-            "2": process_calcein    # Apply process_calcein to channel 2
+            '1': [(count_cells_single_channel, {
+                'min_sigma': 1.0,
+                'max_sigma': 10.0,
+                'detection_method': DetectionMethod.WATERSHED
+            })],
+            '2': [(skan_axon_skeletonize_and_analyze, {
+                'voxel_spacing': (1.0, 1.0, 1.0),
+                'min_branch_length': 10.0,
+                'analysis_dimension': AnalysisDimension.TWO_D
+            })]
         },
-        name="Channel-Specific Processing",
-        group_by='channel'  # Specifies that keys "1" and "2" refer to channel values
+        name="channel_specific_analysis",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False
     )
 
 .. _function-when-to-use:
 
 When to Use Each Pattern
-----------------------
+------------------------
 
-**Pre-defined Steps vs. Raw Step**
+**Single Function Pattern**:
+- Simple operations with minimal parameters
+- Creating composite images, basic transformations
+- When you need one function applied uniformly
 
-For common operations, use the pre-defined step classes instead of raw Step with func parameter:
+**Function Chain Pattern**:
+- Multi-step preprocessing workflows
+- When operations must be applied in sequence
+- Common pattern: normalize → filter → enhance
+
+**Dictionary Pattern**:
+- Channel-specific or component-specific processing
+- Different analysis methods for different channels
+- When processing logic varies by microscopy component
+
+**Best Practices**:
 
 .. code-block:: python
 
-    from ezstitcher.core.steps import ZFlatStep, CompositeStep
+    # Use meaningful step names for debugging
+    step = FunctionStep(
+        func=[(normalize_function, {})],
+        name="descriptive_step_name",  # Helps with pipeline debugging
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False  # Memory backend for intermediate steps
+    )
 
     # RECOMMENDED: Use ZFlatStep for Z-stack flattening
     step = ZFlatStep(method="max")  # Much cleaner than raw Step with variable_components=['z_index']
@@ -101,50 +147,69 @@ For detailed information about pre-defined steps, see :ref:`variable-components`
 
 .. _function-stack-utility:
 
-The stack() Utility Function
---------------------------
+Memory Type Integration
+-----------------------
 
-The ``stack()`` utility function adapts single-image functions to work with stacks of images:
+OpenHCS automatically handles memory type conversion between different computational backends:
 
 .. code-block:: python
 
-    from ezstitcher.core.utils import stack
-    from skimage.filters import gaussian
+    # Functions can use different memory types - OpenHCS handles conversion
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize  # PyTorch
+    from openhcs.processing.backends.processors.cupy_processor import tophat  # CuPy
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel  # NumPy
 
-    # Use stack() to adapt a single-image function to work with a stack
-    step = Step(
-        func=stack(gaussian),  # Apply gaussian blur to each image in the stack
-        name="Gaussian Blur"
+    # Chain functions with different memory types - automatic conversion
+    step = FunctionStep(
+        func=[
+            (stack_percentile_normalize, {}),  # PyTorch function
+            (tophat, {})                       # CuPy function
+        ],
+        name="mixed_backend_processing",
+        variable_components=[VariableComponents.SITE]
     )
 
-**How stack() works**: It takes a function that operates on a single image and returns a new function that applies the original function to each image in a stack.
+**Automatic Conversion**: OpenHCS automatically converts between NumPy, CuPy, PyTorch, JAX, and pyclesperanto arrays based on function requirements.
 
 .. _function-advanced-patterns:
 
 Advanced Patterns
---------------
+-----------------
 
-For advanced use cases, you can combine the basic patterns in various ways:
+**Complex Dictionary Patterns**:
 
-- Mix functions and function tuples in lists
-- Use dictionaries of function tuples
-- Create dictionaries of function lists
-- Nest stack() calls within tuples or lists
+.. code-block:: python
 
-For examples of these advanced patterns, see :doc:`../user_guide/advanced_usage`.
+    # Multi-function chains per component
+    step = FunctionStep(
+        func={
+            '1': [
+                (normalize_function, {}),
+                (analysis_function_1, {})
+            ],
+            '2': [
+                (normalize_function, {}),
+                (analysis_function_2, {})
+            ]
+        },
+        name="complex_component_processing",
+        variable_components=[VariableComponents.SITE]
+    )
+
+**GPU Resource Management**: OpenHCS automatically manages GPU memory and device assignment for optimal performance.
 
 .. _function-best-practices:
 
-Best Practices
-------------
+Best Practices from TUI-Generated Scripts
+-----------------------------------------
 
-- Use pre-defined steps (ZFlatStep, CompositeStep, etc.) for common operations
-- Only use raw Step with func parameter when you need custom processing
-- Use the simplest pattern that meets your needs
-- When using dictionaries, always specify the group_by parameter
-- Use descriptive names for your steps to make your code more readable
+- **Use descriptive step names** for pipeline debugging and monitoring
+- **Set force_disk_output=False** for intermediate steps to use memory backend
+- **Use appropriate variable_components** (SITE for parallel processing, CHANNEL for channel-specific operations)
+- **Chain related operations** in single steps to minimize I/O overhead
+- **Use dictionary patterns** when different components need different processing logic
 
-For comprehensive best practices for function handling, see :ref:`best-practices-function-handling` in the :doc:`../user_guide/best_practices` guide.
+For comprehensive best practices, see :doc:`../user_guide/best_practices`.
 
 See Also
 --------

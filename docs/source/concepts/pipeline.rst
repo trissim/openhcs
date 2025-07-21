@@ -26,57 +26,87 @@ A ``Pipeline`` provides:
 Creating a Pipeline
 -------------------
 
-In OpenHCS, pipelines are typically created using the ``PipelineOrchestrator`` with ``FunctionStep`` objects:
+In OpenHCS, pipelines are created as lists of ``FunctionStep`` objects and executed by the ``PipelineOrchestrator``:
+
+**Real Pipeline Example** (from TUI-generated scripts):
 
 .. code-block:: python
 
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.steps.function_step import FunctionStep
     from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.constants.constants import VariableComponents
     from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
-    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+    from openhcs.processing.backends.processors.cupy_processor import tophat, create_composite
+    from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
 
     # Define pipeline steps
-    steps = [
-        FunctionStep(
-            func=stack_percentile_normalize,
-            low_percentile=1.0,
-            high_percentile=99.0,
-            name="normalize"
-        ),
-        FunctionStep(
-            func=count_cells_single_channel,
-            detection_method="blob_log",
-            name="count_cells"
-        )
-    ]
+    steps = []
 
-    # Create orchestrator with pipeline
-    orchestrator = PipelineOrchestrator(
-        plate_paths=['/path/to/microscopy/data'],
-        steps=steps,
-        global_config=GlobalPipelineConfig(num_workers=4)
-    )
+    # Step 1: Preprocessing chain
+    steps.append(FunctionStep(
+        func=[
+            (stack_percentile_normalize, {
+                'low_percentile': 1.0,
+                'high_percentile': 99.0,
+                'target_max': 65535.0
+            }),
+            (tophat, {
+                'selem_radius': 50,
+                'downsample_factor': 4
+            })
+        ],
+        name="preprocess",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False
+    ))
 
-Alternatively, you can add steps one by one using the ``add_step()`` method:
+    # Step 2: Create composite
+    steps.append(FunctionStep(
+        func=[(create_composite, {})],
+        name="composite",
+        variable_components=[VariableComponents.CHANNEL],
+        force_disk_output=False
+    ))
+
+    # Step 3: Assembly
+    steps.append(FunctionStep(
+        func=[(assemble_stack_cupy, {
+            'blend_method': 'fixed',
+            'fixed_margin_ratio': 0.1
+        })],
+        name="assemble",
+        variable_components=[VariableComponents.SITE],
+        force_disk_output=False
+    ))
+
+**Pipeline Execution** (three-phase workflow):
 
 .. code-block:: python
 
-    # Create an empty pipeline
-    pipeline = Pipeline(name="My Processing Pipeline")
+    # Create orchestrator for the plate
+    orchestrator = PipelineOrchestrator(plate_path, global_config=global_config)
 
-    # Add steps one by one
-    pipeline.add_step(Step(name="Z-Stack Flattening",
-                          func=(IP.create_projection, {'method': 'max_projection'}),
-                          variable_components=['z_index'],
-                          input_dir=orchestrator.workspace_path))
+    # Phase 1: Initialize
+    orchestrator.initialize()
 
-    pipeline.add_step(Step(name="Image Enhancement",
-                          func=IP.stack_percentile_normalize))
+    # Phase 2: Compile pipeline (validation, optimization, GPU assignment)
+    compiled_contexts = orchestrator.compile_pipelines(steps)
 
-    pipeline.add_step(PositionGenerationStep(name="Generate Positions"))
+    # Phase 3: Execute with parallel processing
+    results = orchestrator.execute_compiled_plate(
+        pipeline_definition=steps,
+        compiled_contexts=compiled_contexts,
+        max_workers=global_config.num_workers
+    )
 
-The first approach (providing all steps at once) is recommended for most use cases as it's more concise and easier to understand. The second approach (adding steps one by one) is useful for dynamic scenarios where steps need to be added conditionally or configured based on the output of previous steps.
+**Pipeline Structure**:
+
+- **Steps are executed sequentially** within each well
+- **Wells are processed in parallel** across multiple worker threads
+- **Each step processes all images** before moving to the next step
+- **Memory backend** is used for intermediate results (unless force_disk_output=True)
+- **GPU resources** are automatically managed and assigned during compilation
 
 .. _pipeline-parameters:
 
