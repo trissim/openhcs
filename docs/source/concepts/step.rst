@@ -3,62 +3,149 @@ Step
 ====
 
 Overview
--------
+--------
 
-A ``Step`` is a single processing operation that can be applied to images. It is a key component of the EZStitcher architecture.
+A ``FunctionStep`` is the primary building block for OpenHCS bioimage analysis pipelines. Each step represents a single processing operation that can be applied to microscopy images with automatic GPU acceleration, memory type conversion, and parallel execution.
+
 For an overview of the complete architecture, see :doc:`architecture_overview`.
 
-EZStitcher provides several types of steps:
+OpenHCS uses ``FunctionStep`` as the unified step type that supports:
 
-1. **Base Step**: The foundation for all step types, providing core functionality
-2. **Pre-defined Steps**: Steps for common operations (ZFlatStep, FocusStep, CompositeStep)
-3. **Task-specific Steps**: Steps for specific tasks (PositionGenerationStep, ImageStitchingStep)
+1. **Function Patterns**: Single functions, function chains, and component-specific processing
+2. **Memory Type Integration**: Automatic conversion between NumPy, CuPy, PyTorch, JAX, pyclesperanto
+3. **GPU Acceleration**: Automatic GPU resource management and optimization
+4. **Variable Components**: Processing by site, channel, or other microscopy dimensions
 
-The base ``Step`` class provides:
-
-* Image loading and saving
-* Processing function application
-* Variable component handling (e.g., channels, z-indices)
-* Group-by functionality for processing related images together
-
-Step Architecture
-----------------
-
-Steps in EZStitcher follow a stateless architecture:
-
-- Steps must be stateless and should NOT modify the context directly
-- Steps must return a StepResult object containing:
-  - Output path
-  - Context updates
-  - Metadata
-  - Normal processing results
-  - Storage operations
-- Pipeline.run() is responsible for applying these changes
-
-Statelessness Requirements:
-
-- Steps must not maintain mutable state between process() calls
-- All configuration should be immutable after initialization
-- Any state needed during processing should be stored in the context
-- Steps should be safe to reuse across multiple pipeline executions
-
-Creating a Basic Step
--------------------
+**Real-World Examples** (from TUI-generated scripts):
 
 .. code-block:: python
 
-    from ezstitcher.core.steps import Step
-    from ezstitcher.core.image_processor import ImageProcessor as IP
+   from openhcs.core.steps.function_step import FunctionStep
+   from openhcs.constants.constants import VariableComponents
+   from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+   from openhcs.processing.backends.processors.cupy_processor import tophat
 
-    # Create a basic processing step
-    step = Step(
-        func=IP.stack_percentile_normalize,
-        name="Image Enhancement",
-        variable_components=['channel'],
-        group_by='channel',
-        input_dir=orchestrator.workspace_path,  # Specify input_dir for the first step
-        # output_dir is automatically determined
-    )
+   # Single function step
+   normalize_step = FunctionStep(
+       func=[(stack_percentile_normalize, {
+           'low_percentile': 1.0,
+           'high_percentile': 99.0,
+           'target_max': 65535.0
+       })],
+       name="normalize",
+       variable_components=[VariableComponents.SITE]
+   )
+
+   # Function chain step (multiple operations in sequence)
+   preprocess_step = FunctionStep(
+       func=[
+           (stack_percentile_normalize, {
+               'low_percentile': 1.0,
+               'high_percentile': 99.0,
+               'target_max': 65535.0
+           }),
+           (tophat, {
+               'selem_radius': 50,
+               'downsample_factor': 4
+           })
+       ],
+       name="preprocess",
+       variable_components=[VariableComponents.SITE]
+   )
+
+FunctionStep Architecture
+-------------------------
+
+OpenHCS FunctionSteps follow a functional, stateless architecture with automatic resource management:
+
+**Core Principles**:
+
+- **Stateless Processing**: Steps are pure functions that don't maintain state between executions
+- **Memory Type Agnostic**: Functions work with any memory type (NumPy, CuPy, PyTorch, JAX, pyclesperanto)
+- **GPU Resource Management**: Automatic GPU allocation and memory optimization
+- **VFS Integration**: All I/O operations go through the Virtual File System
+
+**Processing Flow**:
+
+1. **Input Loading**: Images loaded as 3D arrays (ZYX format) from VFS backends
+2. **Memory Type Conversion**: Automatic conversion to function's required memory type
+3. **Function Execution**: Processing with GPU acceleration when available
+4. **Output Conversion**: Results converted back to storage format
+5. **VFS Storage**: Results saved through VFS with backend optimization
+
+**Function Pattern Examples** (from TUI-generated scripts):
+
+.. code-block:: python
+
+   # Single function with parameters
+   step_1 = FunctionStep(
+       func=[(create_composite, {})],
+       name="composite",
+       variable_components=[VariableComponents.CHANNEL],
+       force_disk_output=False
+   )
+
+   # Function chain (multiple operations in sequence)
+   step_2 = FunctionStep(
+       func=[
+           (stack_percentile_normalize, {
+               'low_percentile': 1.0,
+               'high_percentile': 99.0,
+               'target_max': 65535.0
+           }),
+           (tophat, {
+               'selem_radius': 50,
+               'downsample_factor': 4
+           })
+       ],
+       name="preprocess",
+       variable_components=[VariableComponents.SITE],
+       force_disk_output=False
+   )
+
+   # Dictionary pattern (component-specific processing)
+   step_3 = FunctionStep(
+       func={
+           '1': [(count_cells_single_channel, {
+               'min_sigma': 1.0,
+               'max_sigma': 10.0,
+               'detection_method': DetectionMethod.WATERSHED
+           })],
+           '2': [(skan_axon_skeletonize_and_analyze, {
+               'voxel_spacing': (1.0, 1.0, 1.0),
+               'min_branch_length': 10.0
+           })]
+       },
+       name="analysis",
+       variable_components=[VariableComponents.SITE],
+       force_disk_output=False
+   )
+
+Variable Components
+-------------------
+
+Variable components define how OpenHCS processes images across different microscopy dimensions:
+
+.. code-block:: python
+
+   from openhcs.constants.constants import VariableComponents
+
+   # Process each site independently (most common)
+   variable_components=[VariableComponents.SITE]
+
+   # Process each channel independently
+   variable_components=[VariableComponents.CHANNEL]
+
+   # Process each timepoint independently
+   variable_components=[VariableComponents.TIME]
+
+**Processing Behavior**:
+
+- **SITE**: Each microscopy site processed separately (parallel processing across sites)
+- **CHANNEL**: Each channel processed separately (useful for channel-specific operations)
+- **TIME**: Each timepoint processed separately (for time-series analysis)
+
+The orchestrator automatically handles parallel execution across the specified variable components.
 
 .. _step-parameters:
 

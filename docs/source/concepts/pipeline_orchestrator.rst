@@ -7,10 +7,35 @@ PipelineOrchestrator
 Role and Responsibilities
 ------------------------
 
-The PipelineOrchestrator is a key component of the EZStitcher architecture.
+The PipelineOrchestrator is the central execution engine of OpenHCS that coordinates bioimage analysis workflows across entire microscopy plates.
 For an overview of the complete architecture, see :doc:`architecture_overview`.
 
-The ``PipelineOrchestrator`` is the top-level component that manages all plate-specific operations and coordinates the execution of pipelines. It serves as an abstraction layer between the plate-specific details and the pipeline steps.
+The ``PipelineOrchestrator`` manages the complete lifecycle of pipeline execution: from compilation and validation to multi-well parallel processing. It abstracts plate-specific details and provides a unified interface for executing complex bioimage analysis workflows.
+
+**Real-World Usage** (from TUI-generated scripts):
+
+.. code-block:: python
+
+   from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+   from openhcs.core.config import GlobalPipelineConfig
+
+   # Create orchestrator for a microscopy plate
+   orchestrator = PipelineOrchestrator(plate_path, global_config=global_config)
+
+   # Three-phase execution workflow:
+
+   # 1. Initialize orchestrator
+   orchestrator.initialize()
+
+   # 2. Compile pipelines (validation, optimization, GPU assignment)
+   compiled_contexts = orchestrator.compile_pipelines(steps)
+
+   # 3. Execute compiled pipelines with parallel processing
+   results = orchestrator.execute_compiled_plate(
+       pipeline_definition=steps,
+       compiled_contexts=compiled_contexts,
+       max_workers=global_config.num_workers
+   )
 
 .. figure:: ../_static/orchestrator_pipeline_relationship.png
    :alt: Orchestrator and Pipeline Relationship
@@ -21,51 +46,81 @@ The ``PipelineOrchestrator`` is the top-level component that manages all plate-s
 
 Key responsibilities:
 
-* **Plate Management**:
-  - Plate and well detection
-  - Microscope handler initialization (specific to each plate type)
-  - Image locator configuration
+* **Pipeline Compilation**:
+  - 4-phase compilation system: path planning → materialization → contract validation → GPU assignment
+  - Memory type validation and GPU resource allocation
+  - VFS backend selection and optimization
 
-* **Workspace Initialization**:
-  - Creates a workspace by mirroring the plate folder path structure
-  - Creates symlinks to the original images in this workspace
-  - Ensures that modifications happen on workspace copies, not original data
-  - Provides this workspace as the input for pipelines
+* **Multi-Well Execution**:
+  - Parallel processing across wells with configurable worker threads
+  - GPU resource coordination and memory management
+  - Error handling and process cleanup
 
-For detailed information about directory structure, see :doc:`directory_structure`.
+* **Configuration Management**:
+  - Global pipeline configuration (workers, GPU settings, VFS backends)
+  - ZARR storage configuration for large datasets
+  - Microscope-specific handling and pattern detection
 
-* **Pipeline Execution**:
-  - Multithreaded execution across wells
-  - Error handling and logging
-
-* **Specialized Services**:
-  - Provides configured `Stitcher` instances suitable for the plate
-  - Manages position generation specific to the plate format
-  - Abstracts plate-specific operations that depend on the microscope handler
-
-The orchestrator acts as a "plate manager" that knows how to handle the specific details of different plate formats, allowing the pipeline steps to focus on their image processing tasks without needing to know about the underlying plate structure.
-
-.. note::
-   While a :ref:`pipeline <pipeline-concept>` defines *what* processing to perform, the orchestrator controls *how* and *where* that processing is applied across a plate.
-
-Creating an Orchestrator
------------------------
+**Complete Configuration Example** (from TUI-generated scripts):
 
 .. code-block:: python
 
-    from ezstitcher.core.config import PipelineConfig
-    from ezstitcher.core.processing_pipeline import PipelineOrchestrator
+   from openhcs.core.config import (
+       GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig,
+       MaterializationBackend, ZarrCompressor, ZarrChunkStrategy
+   )
+   from openhcs.constants.constants import Backend, Microscope
 
-    # Create configuration
-    config = PipelineConfig(
-        num_workers=2  # Use 2 worker threads
-    )
+   global_config = GlobalPipelineConfig(
+       num_workers=5,
+       path_planning=PathPlanningConfig(
+           output_dir_suffix="_stitched",
+           global_output_folder="/path/to/outputs/",
+           materialization_results_path="results"
+       ),
+       vfs=VFSConfig(
+           intermediate_backend=Backend.MEMORY,
+           materialization_backend=MaterializationBackend.ZARR
+       ),
+       zarr=ZarrConfig(
+           store_name="images.zarr",
+           compressor=ZarrCompressor.ZSTD,
+           compression_level=1,
+           shuffle=True,
+           chunk_strategy=ZarrChunkStrategy.SINGLE,
+           ome_zarr_metadata=True,
+           write_plate_metadata=True
+       ),
+       microscope=Microscope.AUTO,
+       use_threading=None
+   )
 
-    # Create orchestrator
-    orchestrator = PipelineOrchestrator(
-        config=config,
-        plate_path="path/to/plate"
-    )
+The orchestrator abstracts the complexity of multi-well parallel processing, GPU resource management, and VFS backend coordination, allowing pipeline steps to focus purely on image processing logic.
+
+.. note::
+   While :doc:`pipeline` defines *what* processing to perform, the orchestrator controls *how* and *where* that processing is applied across a plate with automatic optimization.
+
+Orchestrator Lifecycle
+-----------------------
+
+The PipelineOrchestrator follows a strict three-phase lifecycle that ensures proper resource management and error handling:
+
+**Phase 1: Initialization**
+  - Microscope detection and handler setup
+  - VFS backend configuration
+  - GPU resource discovery and allocation
+
+**Phase 2: Compilation**
+  - Pipeline validation and optimization
+  - Memory type contract verification
+  - Path planning and materialization setup
+  - GPU assignment and resource scheduling
+
+**Phase 3: Execution**
+  - Multi-well parallel processing
+  - Real-time GPU memory management
+  - Error handling and cleanup
+  - Results aggregation and storage
 
 Plate-Specific Services
 ----------------------
