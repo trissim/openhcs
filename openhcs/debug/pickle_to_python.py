@@ -330,7 +330,7 @@ def generate_readable_function_repr(func_obj, indent=0):
                 items.append(f"{next_indent_str}{indented_item}")
             else:
                 items.append(f"{next_indent_str}{item_repr}")
-        return f"[\n{',\n'.join(items)}\n{indent_str}]"
+        return f"[{',\n'.join(items)}\n{indent_str}]"
     elif isinstance(func_obj, dict):
         if not func_obj:
             return "{}"
@@ -344,7 +344,7 @@ def generate_readable_function_repr(func_obj, indent=0):
                 items.append(f"{next_indent_str}'{key}': {indented_value}")
             else:
                 items.append(f"{next_indent_str}'{key}': {value_repr}")
-        return f"{{\n{',\n'.join(items)}\n{indent_str}}}"
+        return f"{{{',\n'.join(items)}\n{indent_str}}}"
     else:
         return repr(func_obj)
 

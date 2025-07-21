@@ -44,18 +44,18 @@ memory type:
 
 .. code:: python
 
+   # Actual stack_slices signature from openhcs/core/memory/stack_utils.py
    stack_3d = stack_slices(
        slices=[img1_2d, img2_2d, img3_2d],  # List of 2D arrays (any memory type)
        memory_type="torch",                  # Target memory type
-       gpu_id=0,                            # GPU device ID
-       allow_single_slice=False             # Prevent accidental single-slice stacking
+       gpu_id=0                             # GPU device ID
    )
+   # Returns: torch.Tensor of shape [3, Y, X] on GPU 0
 
-**Input Requirements**: - ``slices``: List of 2D arrays (any supported
-memory type) - ``memory_type``: Target memory type (``numpy``, ``cupy``,
-``torch``, ``tensorflow``, ``jax``) - ``gpu_id``: GPU device ID
-(required, validated for GPU memory types) - ``allow_single_slice``:
-Safety flag to prevent accidental single-slice operations
+**Input Requirements**:
+- ``slices``: List of 2D arrays (any supported memory type)
+- ``memory_type``: Target memory type (``numpy``, ``cupy``, ``torch``, ``tensorflow``, ``jax``, ``pyclesperanto``)
+- ``gpu_id``: GPU device ID (required, validated for GPU memory types)
 
 **Output Guarantees**: - Always returns 3D array of shape ``[Z, Y, X]``
 - All slices converted to target memory type - GPU placement enforced
@@ -602,6 +602,37 @@ GPU Device Errors
 
    ValueError: Invalid GPU device ID: -1. Must be a non-negative integer.
    MemoryConversionError: Failed to move tensor to device 5: device not available
+
+Real-World Examples
+~~~~~~~~~~~~~~~~~~~
+
+**Actual OpenHCS Functions** (from current codebase):
+
+.. code:: python
+
+   # NumPy CPU processing (from openhcs/processing/backends/processors/numpy_processor.py)
+   @numpy_func
+   def max_projection(stack: np.ndarray) -> np.ndarray:
+       """Create a maximum intensity projection from a Z-stack."""
+       _validate_3d_array(stack)
+       projection_2d = np.max(stack, axis=0)
+       return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
+
+   # CuPy GPU processing (from openhcs/processing/backends/processors/cupy_processor.py)
+   @cupy_func
+   def tophat(image: "cp.ndarray", selem_radius: int = 50) -> "cp.ndarray":
+       """Apply morphological top-hat filter using CuPy GPU acceleration."""
+       # GPU-accelerated morphological operations
+       return processed_image
+
+   # PyTorch GPU processing (from openhcs/processing/backends/processors/torch_processor.py)
+   @torch_func
+   def stack_percentile_normalize(stack: "torch.Tensor",
+                                  low_percentile: float = 1.0,
+                                  high_percentile: float = 99.0) -> "torch.Tensor":
+       """Normalize image stack using percentile-based scaling."""
+       # PyTorch GPU tensor operations
+       return normalized_stack
 
 Best Practices
 ~~~~~~~~~~~~~~
