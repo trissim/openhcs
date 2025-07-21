@@ -2,7 +2,11 @@
 Architecture Reference
 ====================
 
-This section provides detailed architectural documentation for OpenHCS's advanced systems that distinguish it from traditional bioimage analysis tools.
+This section provides detailed technical documentation of OpenHCS's architecture and design decisions. These documents are intended for developers who need to understand the internal implementation details.
+
+**Prerequisites**: Familiarity with :doc:`../concepts/index` is recommended before reading these technical documents.
+
+**For Integration**: See :doc:`../guides/index` for practical integration guides that combine these architectural concepts.
 
 OpenHCS evolved from EZStitcher while preserving core architectural patterns and adding revolutionary new capabilities for GPU-native scientific computing.
 

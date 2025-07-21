@@ -46,14 +46,18 @@ Key Features
 - **Multiple Microscope Support**: Works with ImageXpress and Opera Phenix microscopes
 - **Production Architecture**: Handles 100GB+ datasets with comprehensive error handling
 
-Key Resources
------------
+Quick Start Guide
+=================
 
-* :doc:`getting_started/getting_started` - Install OpenHCS and run your first pipeline in minutes
-* :doc:`user_guide/basic_usage` - Learn about the terminal interface and Python API
-* :doc:`concepts/architecture_overview` - Learn about OpenHCS's architecture
-* :doc:`user_guide/intermediate_usage` - Create custom pipelines with FunctionSteps
-* :doc:`user_guide/best_practices` - Learn best practices for using OpenHCS
+**New to OpenHCS?** Follow this learning path:
+
+1. **🚀 Get Started**: :doc:`getting_started/getting_started` - Install and run your first pipeline (5 minutes)
+2. **📖 Learn Basics**: :doc:`user_guide/basic_usage` - Terminal interface and Python API
+3. **🧠 Understand Concepts**: :doc:`concepts/architecture_overview` - Core architecture and design
+4. **⚡ Build Pipelines**: :doc:`user_guide/intermediate_usage` - Create custom workflows with FunctionSteps
+5. **🎯 Best Practices**: :doc:`user_guide/best_practices` - Production-ready development patterns
+
+**Advanced Users**: Jump to :doc:`guides/index` for system integration guides or :doc:`api/index` for complete API reference.
 
 .. toctree::
    :maxdepth: 2
