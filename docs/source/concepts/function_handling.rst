@@ -18,8 +18,8 @@ Function Patterns Overview
 
 The ``func`` parameter of the ``FunctionStep`` class can accept several types of values:
 
-1. **Single Function**: A callable that processes 3D image arrays
-2. **Function with Arguments**: A tuple of ``(function, kwargs)`` where kwargs is a dictionary of arguments
+1. **Single Function**: A callable that processes 3D image arrays. If no arguments are needed, the function can be provided directly without a tuple (e.g., ``func=my_function``).
+2. **Function with Arguments**: A tuple of ``(function, kwargs)`` where kwargs is a dictionary of arguments. If no arguments are needed, an empty dictionary can be provided (e.g., ``func=(my_function, {})``), or simply the function itself (as in "Single Function").
 3. **List of Functions**: A sequence of functions applied one after another (function chains)
 4. **Dictionary of Functions**: A mapping from component values to functions, used with ``variable_components``
 
@@ -35,7 +35,7 @@ The ``func`` parameter of the ``FunctionStep`` class can accept several types of
 
     # 1. Single function with parameters
     step = FunctionStep(
-        func=[(create_composite, {})],
+        func=[create_composite],
         name="composite",
         variable_components=[VariableComponents.CHANNEL],
         force_disk_output=False
@@ -56,7 +56,7 @@ The ``func`` parameter of the ``FunctionStep`` class can accept several types of
     # 3. Function chain (list of functions applied in sequence)
     step = FunctionStep(
         func=[
-            (stack_percentile_normalize, {
+            stack_percentile_normalize, {
                 'low_percentile': 1.0,
                 'high_percentile': 99.0,
                 'target_max': 65535.0
@@ -112,21 +112,14 @@ When to Use Each Pattern
 
 **Best Practices**:
 
-.. code-block:: python
-
-    # Use meaningful step names for debugging
-    step = FunctionStep(
-        func=[(normalize_function, {})],
-        name="descriptive_step_name",  # Helps with pipeline debugging
-        variable_components=[VariableComponents.SITE],
-        force_disk_output=False  # Memory backend for intermediate steps
-    )
-
-    # RECOMMENDED: Use ZFlatStep for Z-stack flattening
-    step = ZFlatStep(method="max")  # Much cleaner than raw Step with variable_components=['z_index']
-
-    # RECOMMENDED: Use CompositeStep for channel compositing
-    step = CompositeStep(weights=[0.7, 0.3])  # Much cleaner than raw Step with variable_components=['channel']
+    # Use meaningful step names for debugging and monitoring, especially for FunctionSteps.
+    # Example:
+    # step = FunctionStep(
+    #    func=[(my_processing_function, {})],
+    #    name="descriptive_step_name",
+    #    variable_components=[VariableComponents.SITE],
+    #    force_disk_output=False # Use memory backend for intermediate steps
+    # )
 
 **When to use each function pattern:**
 
@@ -137,9 +130,9 @@ When to Use Each Pattern
 
 **Key Guidelines:**
 
-- For Z-stack flattening, use ``ZFlatStep`` instead of raw Step with variable_components=['z_index']
-- For channel compositing, use ``CompositeStep`` instead of raw Step with variable_components=['channel']
-- For focus detection, use ``FocusStep`` instead of manually implementing focus detection
+- For Z-stack flattening, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that operates on the 'z_index' component.
+- For channel compositing, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that operates on the 'channel' component.
+- For focus detection, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that performs focus detection.
 - For channel-specific processing, use a dictionary of functions with ``group_by='channel'``
 - For custom processing chains, use lists of functions
 
@@ -162,8 +155,8 @@ OpenHCS automatically handles memory type conversion between different computati
     # Chain functions with different memory types - automatic conversion
     step = FunctionStep(
         func=[
-            (stack_percentile_normalize, {}),  # PyTorch function
-            (tophat, {})                       # CuPy function
+            stack_percentile_normalize,  # PyTorch function
+            tophat                       # CuPy function
         ],
         name="mixed_backend_processing",
         variable_components=[VariableComponents.SITE]

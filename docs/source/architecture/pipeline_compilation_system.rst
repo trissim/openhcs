@@ -29,7 +29,7 @@ data processing pipelines.
 Multi-Pass Compiler Architecture
 --------------------------------
 
-The pipeline compiler operates in four sequential phases, each building
+The pipeline compiler operates in **five sequential phases**, each building
 upon the previous:
 
 Phase 1: Path Planning (``PipelinePathPlanner``)
@@ -52,12 +52,26 @@ Phase 1: Path Planning (``PipelinePathPlanner``)
 Indicates this phase failed to properly initialize the step_plans
 structure
 
-Phase 2: Materialization Planning (``MaterializationFlagPlanner``)
+Phase 2: ZARR Store Declaration (``declare_zarr_stores_for_context``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Purpose**: Declares ZARR stores for steps that will use ZARR backend
+
+-  **Input**: ``step_plans`` from Phase 1 with path information
+-  **Output**: ZARR store declarations in step plans
+-  **Responsibilities**:
+
+   -  Identifies steps that will use ZARR materialization backend
+   -  Declares ZARR stores with appropriate configuration
+   -  Sets up OME-ZARR metadata structures
+   -  Configures compression and chunking strategies
+
+Phase 3: Materialization Planning (``MaterializationFlagPlanner``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Decides where data lives (VFS backend strategy)
 
--  **Input**: ``step_plans`` from Phase 1
+-  **Input**: ``step_plans`` from Phase 2 with ZARR store declarations
 -  **Output**: Backend selection (disk vs memory) for each step
 -  **Strategy**:
 
@@ -67,7 +81,7 @@ Phase 2: Materialization Planning (``MaterializationFlagPlanner``)
    -  FunctionSteps: Can use intermediate backends
    -  Non-FunctionSteps: Must use persistent backends
 
-Phase 3: Memory Contract Validation (``FuncStepContractValidator``)
+Phase 4: Memory Contract Validation (``FuncStepContractValidator``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Ensures memory type compatibility across the pipeline AND
@@ -88,7 +102,7 @@ stores function patterns
 -  **Storage**: Returns
    ``{'input_memory_type': ..., 'output_memory_type': ..., 'func': func_pattern}``
 
-Phase 4: GPU Resource Assignment (``GPUMemoryTypeValidator``)
+Phase 5: GPU Resource Assignment (``GPUMemoryTypeValidator``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Resource allocation for GPU-accelerated steps
@@ -116,7 +130,7 @@ provide unified handling of different processing strategies:
 .. code:: python
 
    from openhcs.processing.backends.processors.cupy_processor import tophat
-   FunctionStep(func=[(tophat, {'selem_radius': 50})])
+   FunctionStep(func=(tophat, {'selem_radius': 50}))
 
 -  **Use Case**: Apply function with parameters to all data
 -  **Execution**: ``tophat(image_stack, selem_radius=50)`` for each
@@ -128,7 +142,10 @@ provide unified handling of different processing strategies:
 .. code:: python
 
    from openhcs.processing.backends.processors.cupy_processor import stack_percentile_normalize, tophat
-   FunctionStep(func=[(stack_percentile_normalize, {'low_percentile': 1.0}), (tophat, {'selem_radius': 50})])
+   FunctionStep(func=[
+       (stack_percentile_normalize, {'low_percentile': 1.0}),
+       (tophat, {'selem_radius': 50})
+   ])
 
 -  **Use Case**: Apply multiple functions in sequence
 -  **Execution**:
@@ -142,7 +159,10 @@ provide unified handling of different processing strategies:
 
    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
    from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze
-   FunctionStep(func={'1': [(count_cells_single_channel, {'min_sigma': 1.0})], '2': [(skan_axon_skeletonize_and_analyze, {})]})
+   FunctionStep(func={
+       '1': (count_cells_single_channel, {'min_sigma': 1.0}),
+       '2': skan_axon_skeletonize_and_analyze  # No parameters needed
+   })
 
 -  **Use Case**: Different processing per component (channel, site,
    etc.)

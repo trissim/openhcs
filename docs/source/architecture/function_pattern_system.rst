@@ -44,21 +44,19 @@ The Four Sacred Patterns
 
 **Use Case**: Apply the same function to all data groups
 
-**Example**:
+**Real-World Example** (from TUI-generated scripts):
 
 .. code:: python
 
-   from openhcs.core.memory.decorators import numpy
+   from openhcs.core.steps.function_step import FunctionStep
+   from openhcs.constants.constants import VariableComponents
+   from openhcs.processing.backends.processors.cupy_processor import create_composite
 
-   @numpy
-   def gaussian_blur(image_stack, sigma=1.0):
-       """Apply Gaussian blur to entire stack."""
-       return scipy.ndimage.gaussian_filter(image_stack, sigma=(0, sigma, sigma))
-
-   # Create step
+   # Single function - clean and simple
    step = FunctionStep(
-       func=gaussian_blur,
-       name="Gaussian Blur"
+       func=create_composite,
+       name="composite",
+       variable_components=[VariableComponents.CHANNEL]
    )
 
 **Execution Flow**: - Function called once per pattern group - Same
@@ -76,20 +74,17 @@ function defaults or global configuration
 
 .. code:: python
 
-   @numpy_func
-   def threshold_image(image_stack, threshold=0.5, method='otsu'):
-       """Threshold image stack."""
-       if method == 'otsu':
-           threshold = skimage.filters.threshold_otsu(image_stack)
-       return image_stack > threshold
+   from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
 
-   # Create step with parameters
+   # Function with parameters
    step = FunctionStep(
-       func=(threshold_image, {
-           'method': 'otsu',
-           'threshold': 0.3
+       func=(stack_percentile_normalize, {
+           'low_percentile': 1.0,
+           'high_percentile': 99.0,
+           'target_max': 65535.0
        }),
-       name="Threshold"
+       name="normalize",
+       variable_components=[VariableComponents.SITE]
    )
 
 **Execution Flow**: - Tuple unpacked: ``(function, kwargs)`` - Function
@@ -107,14 +102,24 @@ applied to all pattern groups
 
 .. code:: python
 
+   from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+   from openhcs.processing.backends.processors.cupy_processor import tophat
+
    # Sequential processing pipeline
    step = FunctionStep(
        func=[
-           gaussian_blur,                           # First: blur
-           (threshold_image, {'method': 'otsu'}),   # Then: threshold with params
-           binary_opening                           # Finally: morphological opening
+           (stack_percentile_normalize, {
+               'low_percentile': 1.0,
+               'high_percentile': 99.0,
+               'target_max': 65535.0
+           }),
+           (tophat, {
+               'selem_radius': 50,
+               'downsample_factor': 4
+           })
        ],
-       name="Sequential Processing"
+       name="preprocess",
+       variable_components=[VariableComponents.SITE]
    )
 
 **Execution Flow**: - Functions applied in order:
@@ -134,15 +139,27 @@ sites, etc.)
 
 .. code:: python
 
+   from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+   from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze
+   from openhcs.processing.backends.analysis.cell_counting_pyclesperanto import DetectionMethod
+   from openhcs.processing.backends.analysis.skan_axon_analysis import AnalysisDimension
+
    # Channel-specific processing
    step = FunctionStep(
        func={
-           "1": process_dapi,           # Channel 1: DAPI processing
-           "2": process_calcein,        # Channel 2: calcein processing  
-           "3": process_brightfield     # Channel 3: brightfield processing
+           '1': (count_cells_single_channel, {
+               'min_sigma': 1.0,
+               'max_sigma': 10.0,
+               'detection_method': DetectionMethod.WATERSHED
+           }),
+           '2': (skan_axon_skeletonize_and_analyze, {
+               'voxel_spacing': (1.0, 1.0, 1.0),
+               'min_branch_length': 10.0,
+               'analysis_dimension': AnalysisDimension.TWO_D
+           })
        },
-       group_by=GroupBy.CHANNEL,
-       name="Channel-Specific Processing"
+       name="channel_specific_analysis",
+       variable_components=[VariableComponents.SITE]
    )
 
 **Execution Flow**: - Pattern groups routed by component value - Each
