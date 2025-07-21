@@ -23,10 +23,10 @@ The core of the system is a thread-safe global GPU registry:
 
 .. code:: python
 
-   # Global GPU registry structure
+   # Global GPU registry structure (simplified - no runtime coordination)
    GPU_REGISTRY: Dict[int, Dict[str, int]] = {
-       0: {"max_pipelines": 2, "active": 0},  # GPU 0 can handle 2 concurrent pipelines
-       1: {"max_pipelines": 2, "active": 0},  # GPU 1 can handle 2 concurrent pipelines
+       0: {"max_pipelines": 2},  # GPU 0 can handle 2 concurrent pipelines
+       1: {"max_pipelines": 2},  # GPU 1 can handle 2 concurrent pipelines
        # ... more GPUs
    }
 
