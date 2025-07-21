@@ -21,35 +21,33 @@ Storage Backend Registry
 
 .. code:: python
 
-   # VFS backends configured through GlobalPipelineConfig
-   from openhcs.core.config import VFSConfig, ZarrConfig
-   from openhcs.constants.constants import Backend, MaterializationBackend
+   # Three storage backends available through unified interface:
+   from openhcs.io.base import storage_registry
+   from openhcs.io.filemanager import FileManager
 
-   # Backend configuration (not direct instantiation)
-   vfs_config = VFSConfig(
-       intermediate_backend=Backend.MEMORY,              # Fast in-memory processing
-       materialization_backend=MaterializationBackend.ZARR  # Compressed final storage
-   )
+   # Backend registry with three implementations:
+   storage_registry = {
+       "memory": MemoryStorageBackend(),    # In-memory object store
+       "disk": DiskStorageBackend(),        # File system storage
+       "zarr": ZarrStorageBackend()         # OME-ZARR compressed storage
+   }
 
-   # FileManager accessed through ProcessingContext
-   # context.filemanager provides unified interface
+   filemanager = FileManager(storage_registry)
 
-Automatic Backend Selection
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Manual Backend Selection
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: python
 
-   # Backend selection is automatic based on VFS configuration
-   # Intermediate steps automatically use memory backend
-   context.filemanager.save_array(data, "intermediate/step1_output")
+   # Explicit backend selection for different use cases:
+   # Fast processing - use memory backend
+   filemanager.save(data, "intermediate/step1_output", "memory")
 
-   # Final steps automatically use materialization backend (ZARR)
-   # when force_disk_output=True in FunctionStep
-   context.filemanager.save_array(data, "results/final_output")
+   # Persistent storage - use disk backend
+   filemanager.save(data, "results/final_output.tif", "disk")
 
-   # Manual operations through context
-   context.filemanager.exists("path/to/data")
-   context.filemanager.delete("path/to/data")
+   # Large datasets - use zarr backend with compression
+   filemanager.save(data, "results/large_dataset", "zarr")
 
 Unified API Across Backends
 ---------------------------
@@ -59,13 +57,14 @@ Location Transparency
 
 .. code:: python
 
-   # Unified API with automatic backend selection:
-   context.filemanager.save_array(data, "processed/image")    # Backend chosen automatically
-   context.filemanager.save_image(image, "processed/image")   # Image-specific handling
+   # Same code works with any backend - location transparency:
+   filemanager.save(data, "processed/image.tif", "memory")    # RAM storage
+   filemanager.save(data, "processed/image.tif", "disk")      # File system
+   filemanager.save(data, "processed/image.tif", "zarr")      # OME-ZARR
 
-   # Load with automatic type handling:
-   data = context.filemanager.load_array("processed/image")   # Returns appropriate array type
-   exists = context.filemanager.exists("processed/image")     # Check existence
+   # Load from any backend with automatic type conversion:
+   data = filemanager.load("processed/image.tif", "memory")   # Returns numpy array
+   data = filemanager.load("processed/image.tif", "zarr")     # Returns zarr array
 
    # Backend switching is transparent:
    # Same logical path, different physical storage

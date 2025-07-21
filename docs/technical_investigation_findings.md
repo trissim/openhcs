@@ -292,6 +292,51 @@ This investigation revealed significant gaps in my understanding that would have
 4. **Identified performance optimizations** that should be highlighted
 5. **Clarified the relationship** between TUI and script generation
 
+### Investigation 6: ZARR Store Declaration Usage Verification
+
+**Area**: Phase 2 Compilation - ZARR Store Declaration Integration
+**Key Discoveries**:
+
+1. **ZARR Store Declaration IS Used During Execution**:
+   - `declare_zarr_stores_for_context()` stores `zarr_config` in `step_plan["zarr_config"]`
+   - FunctionStep execution accesses this via `step_plan.get('zarr_config', context.global_config.zarr)`
+   - Used in multiple execution paths: materialization write, ZARR conversion, batch saving
+
+2. **Specific Usage Points in FunctionStep**:
+   - **Line 802**: `zarr_config = step_plan.get('zarr_config', context.global_config.zarr)`
+   - **Line 892**: `zarr_config=step_plan["zarr_config"]` for materialization write
+   - **Lines 204-216**: ZARR batch saving with zarr_config parameters
+   - **Lines 821-824**: ZARR conversion using zarr_config
+
+3. **ZARR Configuration Content**:
+   - `store_name`: "images.zarr" - ZARR store filename
+   - `all_wells`: List of all wells for shared store creation
+   - `needs_initialization`: Boolean flag for store setup
+   - Falls back to `context.global_config.zarr` if step-specific config not available
+
+4. **Integration with VFS System**:
+   - ZARR store declarations enable proper OME-ZARR metadata structure
+   - Supports multi-well shared stores for efficiency
+   - Provides step-specific ZARR configuration overrides
+   - Enables proper chunking and compression strategies
+
+5. **Execution Flow Validation**:
+   - Phase 2 declares ZARR stores → stored in `context.step_plans[step_id]["zarr_config"]`
+   - FunctionStep execution → accesses `zarr_config` from step_plan
+   - FileManager ZARR backend → uses zarr_config for store creation and data saving
+   - OME-ZARR compliance → proper metadata and structure creation
+
+**Code References**:
+- `openhcs/core/pipeline/compiler.py:182-223` - ZARR store declaration implementation
+- `openhcs/core/steps/function_step.py:802,892` - ZARR config usage in execution
+- `openhcs/io/zarr.py:241-398` - ZARR backend implementation using config
+
+**Documentation Implications**:
+- Phase 2 documentation is ACCURATE - ZARR store declarations are actively used
+- Should emphasize the connection between compilation and execution phases
+- Need to document the fallback mechanism to global_config.zarr
+- Should explain the shared store efficiency benefits
+
 ### Next Steps
 
 With this comprehensive understanding, I can now:
@@ -299,8 +344,10 @@ With this comprehensive understanding, I can now:
 - Proceed with architecture documentation integration with confidence
 - Provide accurate performance characteristics and optimization guidance
 - Document error handling and recovery mechanisms properly
+- **CONFIRMED**: Phase 2 ZARR store declaration documentation is technically accurate
 
 ---
 
 *Investigation completed: 2025-01-21*
+*ZARR store usage verification completed: 2025-01-21*
 *Ready to proceed with enhanced technical understanding*

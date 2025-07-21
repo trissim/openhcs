@@ -78,13 +78,13 @@ All storage operations go through the ``FileManager`` interface, providing unifi
 
 .. code-block:: python
 
-    # FileManager operations (accessed through ProcessingContext)
-    context.filemanager.exists("path/to/file")           # Check file existence
-    context.filemanager.save_array(array, "output/path") # Save array to VFS
-    context.filemanager.load_array("input/path")         # Load array from VFS
-    context.filemanager.delete("path/to/file")           # Delete file from VFS
+    # FileManager operations with explicit backend selection
+    filemanager.exists("path/to/file", "memory")         # Check file existence
+    filemanager.save(array, "output/path", "disk")       # Save array to disk
+    filemanager.load("input/path", "zarr")               # Load array from ZARR
+    filemanager.delete("path/to/file", "memory")         # Delete file from memory
 
-    # Backend selection is automatic based on VFS configuration
+    # Backend selection based on use case
     # - Intermediate results → Memory backend (fast, temporary)
     # - Final results → ZARR backend (compressed, persistent)
 

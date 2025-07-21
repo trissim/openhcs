@@ -23,14 +23,14 @@ interface:
 
 .. code:: python
 
-   # FileManager accessed through ProcessingContext
-   context.filemanager.save_array(data, "path/to/data")
-   context.filemanager.exists("path/to/data")
-   context.filemanager.delete("path/to/data")
+   # Same API regardless of where data is stored
+   filemanager.save(data, "path/to/data", "memory")
+   filemanager.save(data, "path/to/data", "disk")
+   filemanager.save(data, "path/to/data", "zarr")
 
-   # Backend selection is automatic based on VFS configuration
-   # - Intermediate steps use memory backend
-   # - Final steps use materialization backend (ZARR/disk)
+   # Load from any backend
+   data = filemanager.load("path/to/data", "memory")
+   data = filemanager.load("path/to/data", "disk")
 
 Path Virtualization
 ~~~~~~~~~~~~~~~~~~~
@@ -130,12 +130,16 @@ backend:
 
 .. code:: python
 
-   # Arrays (automatic backend selection)
-   context.filemanager.save_array(numpy_array, "data/output")
-   context.filemanager.save_array(torch_tensor, "tensors/model")
+   # Numpy arrays
+   filemanager.save(numpy_array, "data.npy", "disk")  # Saves as .npy file
+   filemanager.save(numpy_array, "data", "memory")    # Stores object directly
 
-   # Images with VFS integration
-   context.filemanager.save_image(image_array, "images/processed")
+   # PyTorch tensors
+   filemanager.save(torch_tensor, "model.pt", "disk") # Saves as .pt file
+   filemanager.save(torch_tensor, "tensor", "memory") # Stores object directly
+
+   # Images
+   filemanager.save_image(image_array, "image.tif", "disk") # Saves as TIFF
 
 Integration with Pipeline System
 --------------------------------
@@ -308,11 +312,11 @@ Backend Failures
 
 .. code:: python
 
-   # VFS handles backend selection automatically
-   if context.filemanager.exists("path/to/data"):
-       data = context.filemanager.load_array("path/to/data")
-   else:
-       raise FileNotFoundError("Data not found in VFS")
+   try:
+       data = filemanager.load("path", "memory")
+   except BackendError as e:
+       # Fallback to disk backend
+       data = filemanager.load("path", "disk")
 
 Path Resolution
 ~~~~~~~~~~~~~~~
@@ -333,12 +337,12 @@ Data Validation
 
 .. code:: python
 
-   def validate_data_integrity(context, path, expected_type):
+   def validate_data_integrity(path, backend, expected_type):
        """Validate loaded data matches expectations."""
-       if not context.filemanager.exists(path):
-           raise FileNotFoundError(f"Data not found: {path}")
+       if not filemanager.exists(path, backend):
+           raise FileNotFoundError(f"Data not found: {path} in {backend}")
 
-       data = context.filemanager.load_array(path)
+       data = filemanager.load(path, backend)
        if not isinstance(data, expected_type):
            raise TypeError(f"Expected {expected_type}, got {type(data)}")
            
