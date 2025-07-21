@@ -81,7 +81,6 @@ Key Resources
    concepts/architecture_overview
    concepts/pipeline_orchestrator
    concepts/pipeline
-   concepts/pipeline_factory
    concepts/step
    concepts/function_handling
    concepts/processing_context

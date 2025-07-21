@@ -574,6 +574,27 @@ OpenHCS Function Patterns
    }
    # Automatic GPU support, memory management, validation
 
+See Also
+--------
+
+**Core Integration**:
+
+- :doc:`memory_type_system` - Memory type decorators and automatic conversion
+- :doc:`function_registry_system` - Function discovery and registration
+- :doc:`pipeline_compilation_system` - How patterns are compiled and executed
+
+**Practical Usage**:
+
+- :doc:`../api/function_step` - FunctionStep API reference
+- :doc:`../guides/memory_type_integration` - Memory type integration guide
+- :doc:`../concepts/function_handling` - Basic function handling concepts
+
+**Advanced Topics**:
+
+- :doc:`dict_pattern_case_study` - Advanced dict pattern examples
+- :doc:`special_io_system` - Cross-step communication patterns
+- :doc:`compilation_system_detailed` - Deep dive into pattern compilation
+
 --------------
 
 **The function pattern system represents a fundamental breakthrough in
