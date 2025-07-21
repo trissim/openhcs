@@ -5,80 +5,86 @@ Architecture Overview
 Pipeline Architecture
 --------------------
 
-OpenHCS is built around a flexible pipeline architecture that allows you to create custom bioimage analysis workflows. The architecture consists of three main components:
+OpenHCS is built around a modern, GPU-accelerated pipeline architecture designed for high-content screening and large-scale bioimage analysis. The architecture consists of four main layers:
 
 .. note::
-   The EZ module provides a simplified interface that wraps this architecture.
-   See :doc:`../user_guide/basic_usage` for details.
+   OpenHCS is primarily used through the TUI (Terminal User Interface) which generates production-ready scripts.
+   See :doc:`../user_guide/basic_usage` for the complete TUI workflow.
 
-1. **PipelineOrchestrator**: Coordinates the execution of pipelines across wells
-2. **Pipeline**: A sequence of processing steps
-3. **Step**: A single processing operation
+1. **PipelineOrchestrator**: Multi-well execution engine with GPU resource management
+2. **FunctionStep**: Processing operations with automatic memory type conversion
+3. **Function Registry**: 574+ GPU-accelerated processing functions
+4. **VFS System**: Virtual file system with multiple storage backends
 
 Key components:
 
-* :doc:`PipelineOrchestrator <pipeline_orchestrator>`
-* :doc:`Pipeline <pipeline>`
-* :doc:`Step <step>`
+* :doc:`PipelineOrchestrator <pipeline_orchestrator>` - Multi-well execution engine
+* :doc:`FunctionStep <step>` - GPU-accelerated processing operations
+* :doc:`Function Handling <function_handling>` - Flexible function patterns
+* :doc:`Processing Context <processing_context>` - Execution state management
 
-This hierarchical design allows complex workflows to be built from simple, reusable components:
+**Modern Architecture Design**:
 
 .. code-block:: text
 
-    ┌─────────────────────────────────────────┐
-    │            PipelineOrchestrator         │
-    │                                         │
-    │  ┌─────────┐    ┌─────────┐             │
-    │  │ Pipeline│    │ Pipeline│    ...      │
-    │  │         │    │         │             │
-    │  │ ┌─────┐ │    │ ┌─────┐ │             │
-    │  │ │Step │ │    │ │Step │ │             │
-    │  │ └─────┘ │    │ └─────┘ │             │
-    │  │ ┌─────┐ │    │ ┌─────┐ │             │
-    │  │ │Step │ │    │ │Step │ │             │
-    │  │ └─────┘ │    │ └─────┘ │             │
-    │  │   ...   │    │   ...   │             │
-    │  └─────────┘    └─────────┘             │
-    └─────────────────────────────────────────┘
+    ┌─────────────────────────────────────────────────────────┐
+    │                PipelineOrchestrator                     │
+    │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
+    │  │    Well 1   │  │    Well 2   │  │    Well N   │     │
+    │  │             │  │             │  │             │     │
+    │  │ FunctionStep│  │ FunctionStep│  │ FunctionStep│     │
+    │  │      ↓      │  │      ↓      │  │      ↓      │     │
+    │  │ FunctionStep│  │ FunctionStep│  │ FunctionStep│     │
+    │  │      ↓      │  │      ↓      │  │      ↓      │     │
+    │  │ FunctionStep│  │ FunctionStep│  │ FunctionStep│     │
+    │  └─────────────┘  └─────────────┘  └─────────────┘     │
+    └─────────────────────────────────────────────────────────┘
+                              │
+                    ┌─────────────────────┐
+                    │    VFS Backends     │
+                    │  Memory │ Disk │ZARR│
+                    └─────────────────────┘
 
-When you run a pipeline, data flows through the steps in sequence. Each step processes the images and passes the results to the next step through a shared context object.
+**Execution Model**:
+- **Parallel Wells**: Each well processed independently across worker threads
+- **Sequential Steps**: Within each well, steps execute in sequence
+- **GPU Coordination**: Automatic GPU resource management and memory optimization
+- **VFS Integration**: All I/O operations go through the Virtual File System
 
 Core Components
---------------
+---------------
 
-**Pipeline Management:**
+**Execution Engine:**
 
-* :doc:`**PipelineOrchestrator** <pipeline_orchestrator>`: Coordinates the entire workflow and manages plate-specific operations
-* :doc:`**Pipeline** <pipeline>`: A sequence of processing steps that are executed in order
-* **ProcessingContext**: Maintains state during pipeline execution
+* :doc:`**PipelineOrchestrator** <pipeline_orchestrator>`: Multi-well execution engine with GPU resource management and parallel processing
+* :doc:`**FunctionStep** <step>`: GPU-accelerated processing operations with automatic memory type conversion
+* :doc:`**Processing Context** <processing_context>`: Execution state management and configuration
 
-**Pipeline Factories:**
+**Function System:**
 
-* :doc:`Pipeline factories <pipeline_factory>` provide a convenient way to create common pipeline configurations
+* **Function Registry**: 574+ GPU-accelerated functions across multiple computational backends
+* :doc:`**Function Patterns** <function_handling>`: Single functions, chains, and component-specific processing
+* **Memory Type System**: Automatic conversion between NumPy, CuPy, PyTorch, JAX, pyclesperanto
 
-**Step Components:**
+**Storage and I/O:**
 
-* :doc:`**Step** <step>`: A single processing operation that can be applied to images
-* **Pre-defined Steps**: Provides optimized implementations for common operations (ZFlatStep, CompositeStep, etc.)
+* **VFS System**: Virtual file system with memory, disk, and ZARR backends
+* **FileManager**: Unified file operations with automatic backend selection
+* :doc:`**Storage Adapters** <storage_adapter>`: Backend-specific storage implementations
 
-**Image Processing:**
+**Configuration and Management:**
 
-* **ImageProcessor**: Provides static image processing functions
-* **FocusAnalyzer**: Provides static focus detection methods for Z-stacks
-* **Stitcher**: Performs image stitching
+* **GlobalPipelineConfig**: System-wide configuration for workers, GPU, and storage
+* **Microscope Detection**: Automatic microscope type detection and handling
+* **Resource Management**: GPU allocation, memory optimization, and cleanup
 
-**Infrastructure:**
+**Modern Architecture Principles**:
 
-* **MicroscopeHandler**: Handles microscope-specific functionality
-* **FileSystemManager**: Handles file system operations and image loading
-* **Config**: Manages configuration settings for various components
-
-These components work together to process microscopy images in a flexible and extensible way. The organization follows the typical workflow:
-
-1. Pipeline setup and management
-2. Step definition and execution
-3. Image processing operations
-4. Supporting infrastructure
+1. **GPU-First Design**: All processing functions support GPU acceleration
+2. **Memory Type Agnostic**: Automatic conversion between computational backends
+3. **Parallel Execution**: Multi-well processing with configurable worker threads
+4. **VFS Abstraction**: All I/O operations go through the virtual file system
+5. **Compilation System**: 4-phase pipeline compilation for optimization and validation
 
 Key Component Relationships
 ------------------------

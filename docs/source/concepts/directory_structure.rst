@@ -9,45 +9,83 @@ Directory Structure
 Overview
 --------
 
-EZStitcher uses a structured approach to directory management that balances automation with flexibility. This document explains how directories are managed, resolved, and customized in EZStitcher.
+OpenHCS uses a Virtual File System (VFS) approach to directory management that provides flexible backend storage while maintaining consistent path semantics. This document explains how directories are organized and managed in OpenHCS.
 
-For information about how pipelines handle directories, see :doc:`pipeline`.
-For information about how steps handle directories, see :doc:`step`.
+For information about VFS backends, see :doc:`storage_adapter`.
+For information about configuration, see :doc:`../api/config`.
 
 .. _directory-basic-concepts:
 
 Basic Directory Concepts
------------------------
+------------------------
 
-In EZStitcher, several key directories are used during processing:
+OpenHCS organizes data through several key directory concepts:
 
-* **Plate Path**: The original directory containing microscopy images
-* **Workspace Path**: A copy of the plate path with symlinks to protect original data
-* **Input Directory**: Where a step reads images from
-* **Output Directory**: Where a step saves processed images
-* **Positions Directory**: Where position files for stitching are saved
-* **Stitched Directory**: Where final stitched images are saved
+* **Plate Path**: The original directory containing microscopy images (read-only)
+* **Global Output Folder**: Centralized location for all processed results
+* **Output Directory**: Plate-specific output directory with configurable suffix
+* **Materialization Path**: Where final results are saved (ZARR, disk, etc.)
+* **VFS Backends**: Memory, disk, and ZARR storage systems
+
+**Real-World Configuration** (from TUI-generated scripts):
+
+.. code-block:: python
+
+    from openhcs.core.config import PathPlanningConfig, VFSConfig, ZarrConfig
+    from openhcs.constants.constants import Backend, MaterializationBackend
+
+    # Path planning configuration
+    path_planning = PathPlanningConfig(
+        output_dir_suffix="_stitched",                    # Suffix for output directories
+        global_output_folder="/path/to/outputs/",         # Centralized output location
+        materialization_results_path="results"           # Final results subdirectory
+    )
+
+    # VFS backend configuration
+    vfs = VFSConfig(
+        intermediate_backend=Backend.MEMORY,              # Memory for intermediate steps
+        materialization_backend=MaterializationBackend.ZARR  # ZARR for final results
+    )
 
 .. _directory-default-structure:
 
-Default Directory Structure
--------------------------
+OpenHCS Directory Structure
+---------------------------
 
-When you run a pipeline, EZStitcher creates a directory structure as steps are executed:
+OpenHCS creates a clean, organized directory structure without workspace copies or symlinks:
+
+**Example Directory Layout**:
 
 .. code-block:: text
 
-    /path/to/plate/                  # Original plate path
-    /path/to/plate_workspace/        # Workspace with symlinks to original images
-    /path/to/plate_workspace_out/    # Processed images (configurable suffix)
-    /path/to/plate_workspace_positions/  # Position files for stitching (configurable suffix)
-    /path/to/plate_workspace_stitched/   # Stitched images (configurable suffix)
+    # Input (original microscopy data - read-only)
+    /path/to/microscopy/plate/
+    ├── Images/
+    │   ├── r01c01f01p01-ch1sk1fk1fl1.tiff
+    │   ├── r01c01f01p01-ch2sk1fk1fl1.tiff
+    │   └── ...
+    └── PlateLayout.xml
 
-This structure ensures that:
+    # Output (processed results)
+    /global/output/folder/
+    └── plate_stitched/              # plate + output_dir_suffix
+        └── results/                 # materialization_results_path
+            ├── images.zarr/         # ZARR store for large datasets
+            ├── metadata.json        # Processing metadata
+            └── analysis_results.csv # Analysis outputs
 
-1. Original data is protected (via the workspace)
-2. Processed images are kept separate from original images
-3. Position files are stored in a dedicated directory
+**VFS Backend Organization**:
+
+- **Memory Backend**: Intermediate processing results (fast, temporary)
+- **Disk Backend**: Traditional file system storage
+- **ZARR Backend**: Compressed, chunked storage for large datasets
+
+**Key Advantages**:
+
+1. **Original data protection**: Input directories are never modified
+2. **Centralized outputs**: All results go to configurable global output folder
+3. **Scalable storage**: ZARR backend handles datasets from MB to 100GB+
+4. **Clean organization**: No workspace copies or symlink management
 4. Stitched images are stored separately from individual processed tiles
 
 .. _directory-resolution:

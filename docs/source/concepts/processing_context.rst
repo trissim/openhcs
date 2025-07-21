@@ -5,106 +5,147 @@ ProcessingContext
 Overview
 --------
 
-The ``ProcessingContext`` is a crucial component that maintains state during pipeline execution. It:
+The ``ProcessingContext`` is the canonical state manager for OpenHCS pipeline execution. It maintains immutable execution state after compilation and provides structured access to configuration and resources.
 
-* Holds input/output directories, well filter, and configuration
-* Stores processing results
-* Serves as a communication mechanism between steps
+**Key Characteristics**:
 
-Creating a Context
-----------------
+* **Immutable After Compilation**: Context is frozen after compilation to ensure thread-safe execution
+* **VFS Integration**: All file operations go through the FileManager instance
+* **Configuration Management**: Provides access to GlobalPipelineConfig and step-specific plans
+* **Well-Specific State**: Each well gets its own context instance for parallel processing
 
-The context is typically created by the pipeline, but you can create it manually for advanced usage:
+**Real-World Usage** (from TUI-generated scripts):
 
 .. code-block:: python
 
-    from ezstitcher.core.pipeline import ProcessingContext
+    # Context creation is handled by PipelineOrchestrator
+    orchestrator = PipelineOrchestrator(plate_path, global_config=global_config)
+    orchestrator.initialize()
 
-    # Create a processing context
+    # Compilation creates frozen contexts for each well
+    compiled_contexts = orchestrator.compile_pipelines(steps)
+
+    # Each context is well-specific and immutable
+    for well_id, context in compiled_contexts.items():
+        print(f"Well {well_id}: {context.well_id}")
+        print(f"Frozen: {context.is_frozen()}")
+        print(f"Step plans: {len(context.step_plans)}")
+
+**Context Ownership**:
+
+.. note::
+   ProcessingContext instances may ONLY be created by PipelineOrchestrator. All other components must receive a context instance, never create one directly.
+
+Context Attributes and Structure
+---------------------------------
+
+The ProcessingContext contains several key attributes for pipeline execution:
+
+.. code-block:: python
+
+    from openhcs.core.context.processing_context import ProcessingContext
+
+    # Context attributes (read-only after freezing)
+    context.well_id              # Well identifier (e.g., "A01")
+    context.global_config        # GlobalPipelineConfig instance
+    context.filemanager          # FileManager for VFS operations
+    context.step_plans           # Dict mapping step IDs to execution plans
+    context.outputs              # Step outputs (VFS-centric model)
+    context.intermediates        # Intermediate results
+    context.current_step         # Currently executing step ID
+
+**Step Plan Access**:
+
+.. code-block:: python
+
+    # Access step-specific execution plans
+    for step_id, plan in context.step_plans.items():
+        print(f"Step {step_id}: {plan}")
+
+    # Check if context is frozen (immutable)
+    if context.is_frozen():
+        print("Context is immutable - safe for parallel execution")
+
+**Configuration Access**:
+
+.. code-block:: python
+
+    # Access global configuration through context
+    num_workers = context.global_config.num_workers
+    vfs_config = context.global_config.vfs
+    zarr_config = context.global_config.zarr
+
+    # Access VFS operations through filemanager
+    context.filemanager.exists("path/to/file")
+    context.filemanager.save_array(array, "output/path")
+
+Context Lifecycle and Immutability
+-----------------------------------
+
+OpenHCS ProcessingContext follows a strict lifecycle to ensure thread-safe parallel execution:
+
+**Phase 1: Creation and Configuration**:
+
+.. code-block:: python
+
+    # Created by PipelineOrchestrator during compilation
     context = ProcessingContext(
-        input_dir="path/to/input",
-        output_dir="path/to/output",
-        well_filter=["A01", "B02"],
-        orchestrator=orchestrator,  # Reference to the PipelineOrchestrator
-        # Additional attributes can be added as kwargs
-        positions_file="path/to/positions.csv",
-        custom_parameter=42
+        global_config=global_config,
+        well_id="A01",
+        filemanager=filemanager
     )
 
-Accessing Context Attributes
---------------------------
+    # Step plans are injected during compilation
+    context.inject_plan("step_1", {
+        "func": normalize_function,
+        "parameters": {"low_percentile": 1.0},
+        "variable_components": ["site"]
+    })
 
-Context attributes can be accessed directly:
-
-.. code-block:: python
-
-    # Access standard attributes
-    print(context.input_dir)
-    print(context.well_filter)
-
-    # Access custom attributes
-    print(context.positions_file)
-    print(context.custom_parameter)
-
-Accessing the Orchestrator
-------------------------
-
-The context provides access to the orchestrator, allowing steps to use plate-specific services. Here's how it's done in the actual Step class:
+**Phase 2: Freezing for Execution**:
 
 .. code-block:: python
 
-    # From ezstitcher/core/steps.py - Step.process method
-    def process(self, context: 'ProcessingContext') -> 'ProcessingContext':
-        """
-        Process the step with the given context.
-        """
-        logger.info("Processing step: %s", self.name)
+    # Context is frozen after compilation
+    context.freeze()
 
-        # Get directories and microscope handler
-        input_dir = self.input_dir
-        output_dir = self.output_dir
-        well_filter = self.well_filter or context.well_filter
-        orchestrator = context.orchestrator  # Required, will raise AttributeError if missing
-        microscope_handler = orchestrator.microscope_handler
+    # After freezing, context becomes immutable
+    try:
+        context.well_id = "B01"  # This will raise AttributeError
+    except AttributeError:
+        print("Cannot modify frozen context")
 
-        if not input_dir:
-            raise ValueError("Input directory must be specified")
-
-        # ... rest of the method ...
-
-Steps use the orchestrator's high-level methods for specialized operations:
+**Phase 3: Execution Access**:
 
 .. code-block:: python
 
-    # From ezstitcher/core/steps.py - PositionGenerationStep.process method
-    def process(self, context):
-        # Get required objects from context
-        well = context.well_filter[0] if context.well_filter else None
-        orchestrator = context.orchestrator  # Required, will raise AttributeError if missing
-        input_dir = self.input_dir or context.input_dir
-        positions_dir = self.output_dir or context.output_dir
+    # During execution, functions access context read-only
+    def processing_function(images, context):
+        # Access configuration
+        config = context.global_config
 
-        # Call the generate_positions method
-        positions_file, reference_pattern = orchestrator.generate_positions(well, input_dir, positions_dir)
+        # Access step-specific plans
+        current_plan = context.step_plans.get("current_step_id")
 
-        # Store in context
-        context.positions_dir = positions_dir
-        context.reference_pattern = reference_pattern
-        return context
+        # Use filemanager for VFS operations
+        context.filemanager.save_array(processed_images, "output/path")
 
-    # From ezstitcher/core/steps.py - ImageStitchingStep.process method
-    def process(self, context):
-        # Get orchestrator from context
-        orchestrator = getattr(context, 'orchestrator', None)
-        if not orchestrator:
-            raise ValueError("ImageStitchingStep requires an orchestrator in the context")
+        return processed_images
 
-        # Call the stitch_images method
-        orchestrator.stitch_images(
-            well=context.well,
-            input_dir=context.input_dir,
-            output_dir=context.output_dir,
-            positions_file=positions_file
-        )
+**Thread Safety**:
 
-        return context
+The frozen context ensures that multiple worker threads can safely access the same context instance without race conditions or data corruption.
+
+See Also
+--------
+
+**Technical Details**:
+
+- :doc:`../architecture/pipeline_compilation_system` - How contexts are compiled and frozen
+- :doc:`../architecture/vfs_system` - VFS integration through FileManager
+
+**Related Concepts**:
+
+- :doc:`pipeline_orchestrator` - Context creation and management
+- :doc:`step` - How FunctionSteps use context during execution
+- :doc:`../api/config` - GlobalPipelineConfig structure and options
