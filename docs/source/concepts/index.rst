@@ -11,7 +11,6 @@ This section explains the core concepts of bioimage analysis and how OpenHCS han
    architecture_overview
    pipeline_orchestrator
    pipeline
-   pipeline_factory
    step
    function_handling
    processing_context

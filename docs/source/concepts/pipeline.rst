@@ -1,55 +1,61 @@
 .. _pipeline-concept:
 
-=======
+========
 Pipeline
-=======
+========
 
 .. _pipeline-overview:
 
 Overview
--------
+--------
 
-The Pipeline is a key component of the EZStitcher architecture.
-For an overview of the complete architecture, see :doc:`architecture_overview`.
+A Pipeline in OpenHCS is a sequence of processing steps that are executed in order on microscopy data. Pipelines provide the foundation for creating reproducible bioimage analysis workflows.
 
-A ``Pipeline`` is a sequence of processing steps that are executed in order. It provides:
+For detailed technical information about how pipelines work internally, see :doc:`../architecture/pipeline_compilation_system`.
 
-* Step management (adding, removing, reordering)
-* Context passing between steps
-* Input/output directory management
-* Automatic directory resolution between steps
+A ``Pipeline`` provides:
+
+* Sequential step execution with automatic data flow
+* Flexible function pattern support (single functions, chains, channel-specific processing)
+* Automatic memory type conversion between NumPy, CuPy, PyTorch, etc.
+* GPU resource management and optimization
+* Integration with OpenHCS's compilation system
 
 .. _pipeline-creation:
 
 Creating a Pipeline
------------------
+-------------------
 
-The recommended way to create a pipeline is to provide all steps at once during initialization:
+In OpenHCS, pipelines are typically created using the ``PipelineOrchestrator`` with ``FunctionStep`` objects:
 
 .. code-block:: python
 
-    from ezstitcher.core.pipeline import Pipeline
-    from ezstitcher.core.steps import Step, PositionGenerationStep
-    from ezstitcher.core.image_processor import ImageProcessor as IP
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.core.config import GlobalPipelineConfig
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
 
-    # Create a pipeline with all steps at once (recommended approach)
-    pipeline = Pipeline(
-        input_dir=orchestrator.workspace_path,    # Pipeline input directory
-        output_dir=orchestrator.plate_path.parent / f"{orchestrator.plate_path.name}_stitched", # Pipeline output directory
-        steps=[
-            Step(
-                func=(IP.create_projection, {'method': 'max_projection'}),
-                variable_components=['z_index'],
-                input_dir=orchestrator.workspace_path
-            ),
+    # Define pipeline steps
+    steps = [
+        FunctionStep(
+            func=stack_percentile_normalize,
+            low_percentile=1.0,
+            high_percentile=99.0,
+            name="normalize"
+        ),
+        FunctionStep(
+            func=count_cells_single_channel,
+            detection_method="blob_log",
+            name="count_cells"
+        )
+    ]
 
-            Step(
-                func=IP.stack_percentile_normalize
-            ),
-
-            PositionGenerationStep()
-        ],
-        name="My Processing Pipeline"
+    # Create orchestrator with pipeline
+    orchestrator = PipelineOrchestrator(
+        plate_paths=['/path/to/microscopy/data'],
+        steps=steps,
+        global_config=GlobalPipelineConfig(num_workers=4)
     )
 
 Alternatively, you can add steps one by one using the ``add_step()`` method:

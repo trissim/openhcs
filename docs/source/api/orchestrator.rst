@@ -1,5 +1,5 @@
 Pipeline Orchestrator
-===================
+=====================
 
 .. module:: openhcs.core.orchestrator.orchestrator
 
@@ -8,12 +8,19 @@ The PipelineOrchestrator is the main execution engine for OpenHCS pipelines. It 
 PipelineOrchestrator Class
 --------------------------
 
-.. autoclass:: PipelineOrchestrator
-   :members:
-   :undoc-members:
-   :show-inheritance:
+The PipelineOrchestrator is the main execution engine for OpenHCS pipelines.
 
-   .. automethod:: __init__
+.. code-block:: python
+
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.config import GlobalPipelineConfig
+
+    # Create orchestrator
+    orchestrator = PipelineOrchestrator(
+        plate_paths=['/path/to/plate1', '/path/to/plate2'],
+        steps=steps,
+        global_config=GlobalPipelineConfig(num_workers=4)
+    )
 
 Key Features
 ------------

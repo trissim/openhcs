@@ -8,12 +8,15 @@ OpenHCS provides a unified I/O system with multiple storage backends for handlin
 FileManager Class
 -----------------
 
-.. autoclass:: openhcs.io.filemanager.FileManager
-   :members:
-   :undoc-members:
-   :show-inheritance:
+The FileManager is the primary interface for all file operations in OpenHCS. It provides backend-agnostic file operations with automatic backend selection.
 
-   .. automethod:: __init__
+.. code-block:: python
+
+    from openhcs.io.filemanager import FileManager
+    from openhcs.io.base import storage_registry
+
+    # Create FileManager with global registry
+    filemanager = FileManager(storage_registry)
 
 The FileManager is the primary interface for all file operations in OpenHCS. It provides backend-agnostic file operations with automatic backend selection.
 
@@ -163,10 +166,7 @@ Directory Operations
 Backend Registry
 ----------------
 
-.. autoclass:: openhcs.io.base.StorageBackend
-   :members:
-   :undoc-members:
-   :show-inheritance:
+The storage registry provides centralized backend management:
 
 The storage registry provides centralized backend management:
 

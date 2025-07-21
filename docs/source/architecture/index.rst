@@ -52,6 +52,16 @@ Advanced Topics
    dict_pattern_case_study
    ezstitcher_to_openhcs_evolution
 
+Development and Research
+========================
+
+.. toctree::
+   :maxdepth: 2
+
+   parameter_analysis_audit
+   unified_parameter_analyzer_migration
+   research_impact
+
 System Overview
 ===============
 

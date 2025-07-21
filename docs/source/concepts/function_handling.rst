@@ -4,22 +4,24 @@
 Function Handling
 =================
 
-Function handling is a key aspect of step configuration.
-For detailed information about step configuration, see :doc:`step`.
+Function handling is a key aspect of OpenHCS pipeline configuration. OpenHCS supports flexible function patterns that allow you to compose complex bioimage analysis workflows.
 
-The Step class supports several patterns for processing functions, providing flexibility in how images are processed. This page provides a concise overview of the available patterns.
+For detailed technical information about the function pattern system, see :doc:`../architecture/function_pattern_system`.
+For step configuration details, see :doc:`step`.
+
+The ``FunctionStep`` class supports several patterns for processing functions, providing flexibility in how images are processed. This page provides a concise overview of the available patterns.
 
 .. _function-patterns-overview:
 
 Function Patterns Overview
-------------------------
+--------------------------
 
-The ``func`` parameter of the Step class can accept several types of values:
+The ``func`` parameter of the ``FunctionStep`` class can accept several types of values:
 
-1. **Single Function**: A callable that takes a list of images and returns a list of processed images
+1. **Single Function**: A callable that processes 3D image arrays
 2. **Function with Arguments**: A tuple of ``(function, kwargs)`` where kwargs is a dictionary of arguments
-3. **List of Functions**: A sequence of functions applied one after another
-4. **Dictionary of Functions**: A mapping from component values to functions, used with ``group_by``
+3. **List of Functions**: A sequence of functions applied one after another (function chains)
+4. **Dictionary of Functions**: A mapping from component values to functions, used with ``variable_components``
 
 .. code-block:: python
 

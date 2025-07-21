@@ -34,6 +34,7 @@ Configuration and Management
 
    config
    io_storage
+   file_system_manager
 
 Image Processing
 ----------------
@@ -53,3 +54,11 @@ Microscope Support
 
    microscope_interfaces
    microscopes
+
+User Interface
+-------------
+
+.. toctree::
+   :maxdepth: 2
+
+   tui_system
