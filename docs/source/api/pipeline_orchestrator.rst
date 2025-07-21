@@ -1,7 +1,7 @@
 PipelineOrchestrator
 ==================
 
-.. module:: ezstitcher.core.pipeline_orchestrator
+.. module:: openhcs.core.orchestrator.orchestrator
 
 The PipelineOrchestrator is the central coordinator that manages the execution of multiple pipelines across wells.
 
@@ -21,13 +21,13 @@ For information about directory structure, see :doc:`../concepts/directory_struc
    :param workspace_path: Path to the workspace folder (optional, defaults to plate_path.parent/plate_path.name_workspace)
    :type workspace_path: str or Path
    :param config: Configuration for the pipeline orchestrator
-   :type config: :class:`~ezstitcher.core.config.PipelineConfig`
+   :type config: :class:`~openhcs.core.config.PipelineConfig`
    :param fs_manager: File system manager (optional, a new instance will be created if not provided)
-   :type fs_manager: :class:`~ezstitcher.core.file_system_manager.FileSystemManager`
+   :type fs_manager: :class:`~openhcs.io.filemanager.FileSystemManager`
    :param image_processor: Image processor (optional, a new instance will be created if not provided)
-   :type image_processor: :class:`~ezstitcher.core.image_processor.ImageProcessor`
+   :type image_processor: :class:`~openhcs.processing.backends.processors.ImageProcessor`
    :param focus_analyzer: Focus analyzer (optional, a new instance will be created if not provided)
-   :type focus_analyzer: :class:`~ezstitcher.core.focus_analyzer.FocusAnalyzer`
+   :type focus_analyzer: :class:`~openhcs.processing.backends.analysis.FocusAnalyzer`
 
    .. py:method:: run(plate_path=None, pipelines=None)
 
@@ -36,7 +36,7 @@ For information about directory structure, see :doc:`../concepts/directory_struc
       :param plate_path: Path to the plate folder (optional if provided in __init__)
       :type plate_path: str or Path
       :param pipelines: List of pipelines to run
-      :type pipelines: list of :class:`~ezstitcher.core.pipeline.Pipeline`
+      :type pipelines: list of :class:`~openhcs.core.pipeline.Pipeline`
       :return: True if successful, False otherwise
       :rtype: bool
 
@@ -47,7 +47,7 @@ For information about directory structure, see :doc:`../concepts/directory_struc
       :param well: Well identifier
       :type well: str
       :param pipelines: List of pipelines to run
-      :type pipelines: list of :class:`~ezstitcher.core.pipeline.Pipeline`
+      :type pipelines: list of :class:`~openhcs.core.pipeline.Pipeline`
       :return: True if successful, False otherwise
       :rtype: bool
 

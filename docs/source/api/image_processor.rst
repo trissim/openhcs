@@ -1,7 +1,7 @@
 Image Processor
 ==============
 
-.. module:: ezstitcher.core.image_processor
+.. module:: openhcs.processing.backends.processors
 
 This module contains the ImageProcessor class for handling image normalization, filtering, and compositing.
 

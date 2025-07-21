@@ -1,7 +1,7 @@
 Stitcher
 ========
 
-.. module:: ezstitcher.core.stitcher
+.. module:: openhcs.processing.backends.assemblers
 
 This module contains the Stitcher class for handling image stitching operations.
 
@@ -22,9 +22,9 @@ Stitcher
    Class for handling image stitching operations.
 
    :param config: Configuration for stitching
-   :type config: :class:`~ezstitcher.core.config.StitcherConfig`, optional
+   :type config: :class:`~openhcs.core.config.StitcherConfig`, optional
    :param filename_parser: Parser for microscopy filenames
-   :type filename_parser: :class:`~ezstitcher.core.microscope_interfaces.FilenameParser`, optional
+   :type filename_parser: :class:`~openhcs.microscopes.microscope_interfaces.FilenameParser`, optional
 
    .. py:method:: generate_positions(image_dir, image_pattern, positions_path, grid_size_x, grid_size_y)
 

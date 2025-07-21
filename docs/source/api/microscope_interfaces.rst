@@ -1,7 +1,7 @@
 Microscope Interfaces
 =====================
 
-.. module:: ezstitcher.core.microscope_interfaces
+.. module:: openhcs.microscopes.microscope_interfaces
 
 This module provides abstract base classes for handling microscope-specific functionality, including filename parsing and metadata handling.
 

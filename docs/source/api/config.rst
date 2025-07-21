@@ -1,9 +1,9 @@
 Configuration
 =============
 
-.. module:: ezstitcher.core.config
+.. module:: openhcs.core.config
 
-This module contains configuration classes for ezstitcher.
+This module contains configuration classes for OpenHCS.
 
 PipelineConfig
 --------------

@@ -1,7 +1,7 @@
 File System Manager
 ==================
 
-.. module:: ezstitcher.core.file_system_manager
+.. module:: openhcs.io.filemanager
 
 This module provides a class for managing file system operations.
 

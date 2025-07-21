@@ -1,0 +1,31 @@
+=== API DOCUMENTATION AUDIT ===
+
+Files referenced in api/index.rst but missing:
+- function_step.rst
+- processing.rst
+- memory_management.rst
+- function_registry.rst
+- tui_system.rst
+- file_manager.rst
+- backends.rst
+- zarr_storage.rst
+- imagexpress.rst
+- opera_phenix.rst
+- cell_counting.rst
+- neurite_tracing.rst
+- image_processing.rst
+
+Existing files (likely EZStitcher legacy):
+docs/source/api/config.rst
+docs/source/api/ez.rst
+docs/source/api/file_system_manager.rst
+docs/source/api/focus_analyzer.rst
+docs/source/api/image_processor.rst
+docs/source/api/index.rst
+docs/source/api/microscope_interfaces.rst
+docs/source/api/microscopes.rst
+docs/source/api/pipeline_factory.rst
+docs/source/api/pipeline_orchestrator.rst
+docs/source/api/pipeline.rst
+docs/source/api/steps.rst
+docs/source/api/stitcher.rst

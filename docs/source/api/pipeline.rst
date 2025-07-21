@@ -1,9 +1,9 @@
 Pipeline
 =======
 
-.. module:: ezstitcher.core.pipeline
+.. module:: openhcs.core.pipeline
 
-This module contains the Pipeline class and related components for the EZStitcher pipeline architecture.
+This module contains the Pipeline class and related components for the OpenHCS pipeline architecture.
 
 For conceptual explanation, see :doc:`../concepts/pipeline`.
 For information about directory structure, see :doc:`../concepts/directory_structure`.
@@ -19,7 +19,7 @@ Pipeline
    see :doc:`../concepts/pipeline`.
 
    :param steps: Initial list of steps
-   :type steps: list of :class:`~ezstitcher.core.steps.Step`
+   :type steps: list of :class:`~openhcs.core.steps.Step`
    :param name: Human-readable name for the pipeline
    :type name: str
 
@@ -29,7 +29,7 @@ Pipeline
       versus providing all steps during initialization.
 
       :param step: The step to add
-      :type step: :class:`~ezstitcher.core.steps.Step`
+      :type step: :class:`~openhcs.core.steps.Step`
       :return: Self, for method chaining
       :rtype: :class:`Pipeline`
 
@@ -51,9 +51,9 @@ Pipeline
       :param well_filter: Optional well filter override
       :type well_filter: list
       :param microscope_handler: Optional microscope handler override
-      :type microscope_handler: :class:`~ezstitcher.core.microscope_interfaces.MicroscopeHandler`
+      :type microscope_handler: :class:`~openhcs.microscopes.microscope_interfaces.MicroscopeHandler`
       :param orchestrator: PipelineOrchestrator instance (required)
-      :type orchestrator: :class:`~ezstitcher.core.processing_pipeline.PipelineOrchestrator`
+      :type orchestrator: :class:`~openhcs.core.orchestrator.orchestrator.PipelineOrchestrator`
       :param positions_file: Optional positions file to use for stitching
       :type positions_file: str or Path
       :return: The results of the pipeline execution

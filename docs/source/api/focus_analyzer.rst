@@ -1,7 +1,7 @@
 Focus Analyzer
 ==============
 
-.. module:: ezstitcher.core.focus_analyzer
+.. module:: openhcs.processing.backends.analysis
 
 This module contains the FocusAnalyzer class for analyzing focus quality in microscopy images.
 

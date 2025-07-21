@@ -1,7 +1,7 @@
 Steps
 =====
 
-.. module:: ezstitcher.core.steps
+.. module:: openhcs.core.steps
 
 This module contains the Step class and all step implementations for the EZStitcher pipeline architecture,
 including the base Step class and various step types like ZFlatStep, FocusStep, CompositeStep, PositionGenerationStep, and ImageStitchingStep.
@@ -45,9 +45,9 @@ Step
       Process the step with the given context.
 
       :param context: The processing context
-      :type context: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :type context: :class:`~openhcs.core.pipeline.ProcessingContext`
       :return: The updated processing context
-      :rtype: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :rtype: :class:`~openhcs.core.pipeline.ProcessingContext`
 
 PositionGenerationStep
 ---------------------
@@ -71,9 +71,9 @@ PositionGenerationStep
       Generate positions for stitching and store them in the context.
 
       :param context: The processing context
-      :type context: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :type context: :class:`~openhcs.core.pipeline.ProcessingContext`
       :return: The updated processing context
-      :rtype: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :rtype: :class:`~openhcs.core.pipeline.ProcessingContext`
 
 ImageStitchingStep
 ----------------
@@ -105,9 +105,9 @@ ImageStitchingStep
       4. Saves the stitched image to the output directory
 
       :param context: The processing context
-      :type context: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :type context: :class:`~openhcs.core.pipeline.ProcessingContext`
       :return: The updated processing context
-      :rtype: :class:`~ezstitcher.core.pipeline.ProcessingContext`
+      :rtype: :class:`~openhcs.core.pipeline.ProcessingContext`
 
 ZFlatStep
 --------

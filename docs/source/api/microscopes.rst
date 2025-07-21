@@ -6,7 +6,7 @@ This module contains implementations of microscope-specific functionality.
 ImageXpress
 ----------
 
-.. module:: ezstitcher.microscopes.imagexpress
+.. module:: openhcs.microscopes.imagexpress
 
 .. py:class:: ImageXpressFilenameParser
 
@@ -85,7 +85,7 @@ ImageXpress
 Opera Phenix
 -----------
 
-.. module:: ezstitcher.microscopes.opera_phenix
+.. module:: openhcs.microscopes.opera_phenix
 
 .. py:class:: OperaPhenixFilenameParser
 
