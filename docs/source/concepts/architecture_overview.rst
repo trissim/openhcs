@@ -84,7 +84,7 @@ Core Components
 2. **Memory Type Agnostic**: Automatic conversion between computational backends
 3. **Parallel Execution**: Multi-well processing with configurable worker threads
 4. **VFS Abstraction**: All I/O operations go through the virtual file system
-5. **Compilation System**: 4-phase pipeline compilation for optimization and validation
+5. **Compilation System**: 5-phase pipeline compilation for optimization and validation
 
 Key Component Relationships
 ------------------------

@@ -1,110 +1,97 @@
-=============================
-Basic Microscopy Concepts
-=============================
+============================
+Core Concepts of OpenHCS
+============================
 
-Introduction to Microscopy Image Stitching
-------------------------------------------
+Introduction to Pipeline Processing
+-----------------------------------
 
-Microscopy image stitching is the process of combining multiple overlapping images (tiles) into a single larger image. This is necessary because:
+OpenHCS is a powerful, flexible, and scalable pipeline processing system designed for complex, multi-step data workflows, with a primary focus on high-content screening (HCS) microscopy data. While its origins are in image stitching and analysis, its architecture is fundamentally general-purpose.
 
-1. The field of view of a microscope is limited
-2. High-resolution imaging often requires capturing multiple tiles
-3. Stitching allows visualization and analysis of larger areas
+At its core, OpenHCS allows you to define a series of processing **steps**, which are organized into a **pipeline**. This pipeline can be executed on large, distributed datasets with features like:
 
-OpenHCS addresses these challenges by:
+-  **Virtual File System (VFS):** An abstraction layer that allows seamless switching between in-memory processing and on-disk materialization, optimizing for speed and resource usage.
+-  **GPU Acceleration:** Many core functions are GPU-accelerated, enabling high-throughput processing of large images and datasets.
+-  **Asynchronous Execution:** A modern `asyncio`-based engine manages concurrent operations, maximizing efficiency.
+-  **Flexible Function Patterns:** A sophisticated system for defining processing logic, from simple function calls to complex, parallel workflows.
 
-- GPU-accelerated position detection and alignment
-- Subpixel precision alignment with automatic optimization
-- Advanced blending algorithms for smooth overlapping regions
-- Multi-channel fluorescence and Z-stack processing
-- Scalable processing for datasets from MB to 100GB+
+While OpenHCS can be adapted for many domains, this guide will use microscopy to illustrate its core concepts.
 
-Key Microscopy Concepts
------------------------
+Key OpenHCS Concepts Illustrated with Microscopy
+-----------------------------------------------
 
-Plate-Based Experiments
-~~~~~~~~~~~~~~~~~~~~~~~
+### The Pipeline: Organizing Workflows
 
-In high-content screening, samples are typically organized in plates:
+In OpenHCS, all work is organized into a ``PipelineOrchestrator`` that manages a sequence of ``FunctionStep`` objects. This is the heart of the system.
 
-.. image:: ../_static/plate_diagram.png
-   :width: 400
-   :alt: Plate Diagram
+-  **PipelineOrchestrator:** The main engine that manages data, executes steps, and handles the VFS. It is initialized with a path to the data (e.g., a microscopy plate) and a global configuration.
+-  **FunctionStep:** A single unit of work in the pipeline. Each step encapsulates a Python function or a more complex "function pattern" and has its own configuration, such as a name and the data components it operates on.
 
-Key concepts:
+### The Data Hierarchy: From Plates to Sites
 
-- **Plate**: A container with multiple wells (e.g., 96-well plate)
-- **Well**: A single compartment in a plate, identified by a row letter and column number (e.g., A01, B02)
-- **Site**: A specific location within a well where an image is captured
-- **Grid**: The arrangement of sites within a well (e.g., 3×3 grid)
+In HCS, experimental data is structured hierarchically. OpenHCS understands this hierarchy, allowing you to execute steps at different levels.
 
-OpenHCS processes images on a per-well basis with parallel processing, stitching together all sites within each well using GPU acceleration.
+-  **Plate:** The top-level container, representing, for example, a 96-well plate. The ``PipelineOrchestrator`` is typically associated with a single plate.
+-  **Well:** A single compartment within a plate (e.g., A01, B02).
+-  **Site (or Tile):** A specific imaging location within a well. In a tiled acquisition, a well may contain a grid of many sites (e.g., a 3x3 grid).
 
-Multi-Channel Fluorescence
-~~~~~~~~~~~~~~~~~~~~~~~~~
+OpenHCS uses the ``variable_components`` parameter in a ``FunctionStep`` to determine which axis of the data to iterate over. For example, setting it to `[VariableComponents.SITE]` means the step's function will be called for each site in a well, receiving that site's corresponding image data. This allows for fine-grained control over how data is processed through the pipeline.
 
-Fluorescence microscopy captures images at different wavelengths to visualize different structures:
+### Function Patterns: Defining the Work
 
-.. image:: ../_static/multichannel_diagram.png
-   :width: 400
-   :alt: Multi-Channel Diagram
+The ``func`` parameter of a ``FunctionStep`` is its most important attribute. It defines what the step actually *does*. The power of OpenHCS comes from the flexibility of this parameter.
 
-Key concepts:
+**1. Single Function Call:**
+The simplest pattern is a single Python function. When combined with `variable_components=[VariableComponents.SITE]`, for example, this step will execute `my_function` on the image data from each site individually.
 
-- **Channel**: A specific wavelength or color used for imaging
-- **Composite**: A combined image created from multiple channels
+.. code-block:: python
 
-OpenHCS can:
+   from openhcs.core.steps import FunctionStep
+   from my_package import my_function
 
-- Process each channel independently with GPU acceleration
-- Create composite images from multiple channels
-- Use one channel as a reference for stitching all channels
-- Apply channel-specific processing algorithms using dictionary patterns
+   step = FunctionStep(func=my_function, name="my_step")
 
-Z-Stacks
-~~~~~~~~
+**2. A Chain of Functions (List):**
+You can provide a list of functions. OpenHCS will execute them sequentially, with the output of one function becoming the input to the next.
 
-Z-stacks are 3D image stacks captured at different focal planes:
+.. code-block:: python
 
-.. image:: ../_static/zstack_diagram.png
-   :width: 400
-   :alt: Z-Stack Diagram
+   step = FunctionStep(func=[normalize_image, apply_filter], name="preprocess")
 
-Key concepts:
+**3. Functions with Arguments (Tuple):**
+To pass specific arguments to a function, use a tuple of `(function, kwargs_dict)`.
 
-- **Z-Stack**: A series of images captured at different focal planes
-- **Z-Plane**: A single image at a specific focal depth
-- **Projection**: A 2D representation of a 3D stack (e.g., maximum intensity projection)
-- **Best Focus**: The plane with the highest focus quality
+.. code-block:: python
 
-EZStitcher provides several options for handling Z-stacks:
+   step = FunctionStep(
+       func=[
+           (normalize_image, {'low_percentile': 1.0, 'high_percentile': 99.0}),
+           (tophat_filter, {'radius': 50})
+       ],
+       name="advanced_preprocess"
+   )
 
-- Maximum intensity projection
-- Mean projection
-- Best focus selection
-- Per-plane stitching
+**4. Channel-Specific Logic (Dictionary):**
+For multi-channel imaging, you can define different processing chains for different channels using a dictionary, where keys correspond to channel indices. This allows for powerful, targeted workflows.
 
-For detailed information about Z-stack processing, see the :doc:`../user_guide/intermediate_usage` guide.
+.. code-block:: python
 
-Tiled Images
-~~~~~~~~~~~
+   step = FunctionStep(
+       func={
+           '0': [(count_nuclei, {'threshold': 0.8})],  # DAPI channel
+           '1': [(analyze_neurites, {'min_length': 10})] # Tubulin channel
+       },
+       name="channel_analysis"
+   )
 
-Tiled images are multiple overlapping images that cover a larger area:
+### Application to Microscopy Workflows
 
-.. image:: ../_static/tiling_diagram.png
-   :width: 400
-   :alt: Tiling Diagram
+**Z-Stacks (3D Imaging):**
+Z-stacks are handled within functions. For example, a `FunctionStep` could take a 3D Z-stack as input and perform a **maximum intensity projection** to convert it to a 2D image before further processing. OpenHCS provides several built-in functions for these common operations.
 
-Key concepts:
+**Image Stitching:**
+Stitching is a multi-step process in OpenHCS:
+1.  A `FunctionStep` runs on each **Site** to calculate tile positions (e.g., using `ashlar_compute_tile_positions_gpu`).
+2.  The calculated positions are stored by the `PipelineOrchestrator`.
+3.  Another `FunctionStep` uses these positions to assemble the final stitched image for each well (e.g., using `assemble_stack_cupy`).
 
-- **Tile**: A single image captured at a specific position
-- **Overlap**: The region where adjacent tiles overlap
-- **Grid Size**: The number of tiles in X and Y directions
-- **Position**: The coordinates of a tile in the final stitched image
-
-EZStitcher handles tiled images by:
-
-1. Determining the relative positions of tiles
-2. Aligning tiles with subpixel precision
-3. Blending overlapping regions
-4. Assembling the final stitched image
+This modular, step-based approach makes complex workflows like stitching manageable, debuggable, and highly customizable.

@@ -47,7 +47,7 @@ The ``PipelineOrchestrator`` manages the complete lifecycle of pipeline executio
 Key responsibilities:
 
 * **Pipeline Compilation**:
-  - 4-phase compilation system: path planning → materialization → contract validation → GPU assignment
+  - 5-phase compilation system: step plan initialization → ZARR store declaration → materialization → memory validation → GPU assignment
   - Memory type validation and GPU resource allocation
   - VFS backend selection and optimization
 

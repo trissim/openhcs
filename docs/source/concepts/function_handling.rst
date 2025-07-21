@@ -31,7 +31,8 @@ The ``func`` parameter of the ``FunctionStep`` class can accept several types of
     from openhcs.constants.constants import VariableComponents
     from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
     from openhcs.processing.backends.processors.cupy_processor import tophat, create_composite
-    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel, DetectionMethod
+    from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze, AnalysisDimension
 
     # 1. Single function with parameters
     step = FunctionStep(
@@ -56,7 +57,7 @@ The ``func`` parameter of the ``FunctionStep`` class can accept several types of
     # 3. Function chain (list of functions applied in sequence)
     step = FunctionStep(
         func=[
-            stack_percentile_normalize, {
+            (stack_percentile_normalize, {
                 'low_percentile': 1.0,
                 'high_percentile': 99.0,
                 'target_max': 65535.0
@@ -121,20 +122,9 @@ When to Use Each Pattern
     #    force_disk_output=False # Use memory backend for intermediate steps
     # )
 
-**When to use each function pattern:**
-
-1. **Single Function**: Use for simple operations that don't require arguments
-2. **Function with Arguments**: Use when you need to customize function behavior with parameters
-3. **List of Functions**: Use when you need to apply multiple processing steps in sequence
-4. **Dictionary of Functions**: Use for component-specific processing (e.g., different functions for different channels)
-
-**Key Guidelines:**
-
-- For Z-stack flattening, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that operates on the 'z_index' component.
-- For channel compositing, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that operates on the 'channel' component.
-- For focus detection, implement with a :py:class:`~openhcs.core.steps.function_step.FunctionStep` using a suitable function that performs focus detection.
-- For channel-specific processing, use a dictionary of functions with ``group_by='channel'``
-- For custom processing chains, use lists of functions
+- **Z-stack flattening**: Can be implemented with a `FunctionStep` that takes a 3D stack and outputs a new 3D stack with a single Z-slice (e.g., via maximum intensity projection).
+- **Channel-specific processing**: Use the **Dictionary Pattern**. By setting ``variable_components=[VariableComponents.CHANNEL]``, you can define different processing pipelines for each channel index.
+- **Custom processing chains**: The **List of Functions** pattern is ideal for creating complex, multi-stage processing workflows.
 
 For detailed information about pre-defined steps, see :ref:`variable-components` in :doc:`step`.
 

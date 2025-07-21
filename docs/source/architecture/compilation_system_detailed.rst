@@ -11,7 +11,7 @@ Overview
 --------
 
 The OpenHCS compilation system transforms stateless pipeline definitions
-into executable contexts through a 4-phase process. This document traces
+into executable contexts through a 5-phase process. This document traces
 the complete flow from function patterns to execution, solving the
 mystery of where and how function patterns (including metadata-injected
 patterns) are stored and retrieved.

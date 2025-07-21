@@ -1751,7 +1751,35 @@ class PlateManagerWidget(ButtonListWidget):
                 pass
 
     def _generate_orchestrator_script(self, data: Dict) -> str:
-        """Generate orchestrator script using existing pickle_to_python logic."""
-        from openhcs.debug.pickle_to_python import generate_orchestrator_repr
+        """Generate orchestrator script using the main converter to ensure consistency."""
+        import tempfile
+        import dill as pickle
+        from openhcs.debug.pickle_to_python import convert_pickle_to_python
 
-        return generate_orchestrator_repr(data)
+        # Create temporary pickle file
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.pkl', delete=False) as temp_pickle:
+            pickle.dump(data, temp_pickle)
+            temp_pickle_path = temp_pickle.name
+
+        # Create temporary output file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_output:
+            temp_output_path = temp_output.name
+
+        try:
+            # Use the main convert function, enabling clean mode for better readability
+            convert_pickle_to_python(temp_pickle_path, temp_output_path, clean_mode=True)
+
+            # Read the generated script
+            with open(temp_output_path, 'r') as f:
+                script_content = f.read()
+
+            return script_content
+
+        finally:
+            # Clean up temp files
+            import os
+            try:
+                os.unlink(temp_pickle_path)
+                os.unlink(temp_output_path)
+            except:
+                pass

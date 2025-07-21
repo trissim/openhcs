@@ -76,7 +76,7 @@ OpenHCS Architecture Innovations
 
 **Function Registry**: Auto-discovery of 574+ GPU functions from pyclesperanto, scikit-image, CuCIM with decorator-based contracts.
 
-**4-Phase Compilation**: Path planning → Materialization → Contract validation → GPU assignment for immutable execution contexts.
+**5-Phase Compilation**: Step plan initialization → ZARR store declaration → Materialization → Memory validation → GPU assignment for immutable execution contexts.
 
 **Special I/O System**: Cross-step communication for analysis results (cell counts, measurements) using declarative decorators.
 

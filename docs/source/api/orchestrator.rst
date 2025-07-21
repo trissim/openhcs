@@ -143,7 +143,7 @@ Execution Flow
 --------------
 
 1. **Initialization**: Validate plate paths and pipeline configuration
-2. **Compilation**: 4-phase compilation for each well in each plate
+2. **Compilation**: 5-phase compilation for each well in each plate
 3. **Resource Allocation**: Assign GPU resources and worker processes  
 4. **Execution**: Execute compiled pipelines with progress monitoring
 5. **Materialization**: Save results to configured storage backends

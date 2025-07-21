@@ -18,7 +18,7 @@ This approach is analogous to a programming language compiler, but for data proc
 
 ## Multi-Pass Compiler Architecture
 
-The pipeline compiler operates in four sequential phases, each building upon the previous:
+The pipeline compiler operates in five sequential phases, each building upon the previous:
 
 ### Phase 1: Path Planning (`PipelinePathPlanner`)
 

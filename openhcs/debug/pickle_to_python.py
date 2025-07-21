@@ -104,34 +104,46 @@ def convert_pickle_to_python(pickle_path, output_path=None, clean_mode=False):
             
             # Import all the functions used in the pipeline
             function_imports = defaultdict(set)
-            
-            def extract_function_imports(func_obj):
-                """Extract import statements for functions."""
-                if callable(func_obj):
-                    module = getattr(func_obj, '__module__', None)
-                    name = getattr(func_obj, '__name__', None)
+            enum_imports = defaultdict(set)
+
+            def find_and_register_imports(obj):
+                """Recursively find and register all function and enum imports."""
+                if isinstance(obj, Enum):
+                    module = obj.__class__.__module__
+                    name = obj.__class__.__name__
+                    if module and name and module.startswith('openhcs'):
+                        enum_imports[module].add(name)
+                elif callable(obj):
+                    module = getattr(obj, '__module__', None)
+                    name = getattr(obj, '__name__', None)
                     if module and name and module.startswith('openhcs'):
                         function_imports[module].add(name)
-                elif isinstance(func_obj, (list, tuple)):
-                    for item in func_obj:
-                        if isinstance(item, tuple) and len(item) > 0:
-                            extract_function_imports(item[0])
-                        else:
-                            extract_function_imports(item)
-                elif isinstance(func_obj, dict):
-                    for value in func_obj.values():
-                        extract_function_imports(value)
-            
-            # Extract imports from pipeline
+                elif isinstance(obj, (list, tuple)):
+                    for item in obj:
+                        find_and_register_imports(item)
+                elif isinstance(obj, dict):
+                    for value in obj.values():
+                        find_and_register_imports(value)
+
+            # Extract all imports by traversing the data structure
             if 'pipeline_data' in data:
-                for plate_path, steps in data['pipeline_data'].items():
+                for steps in data['pipeline_data'].values():
                     for step in steps:
                         if hasattr(step, 'func'):
-                            extract_function_imports(step.func)
-            
-            # Write function imports
-            f.write('# Function imports\n')
-            for module, names in sorted(function_imports.items()):
+                            find_and_register_imports(step.func)
+                        if hasattr(step, 'variable_components'):
+                            find_and_register_imports(step.variable_components)
+            # Traverse global_config too
+            find_and_register_imports(data.get('global_config'))
+
+
+            # Write function and enum imports
+            f.write('# Function and Enum imports\n')
+            all_imports = function_imports
+            for module, names in enum_imports.items():
+                all_imports[module].update(names)
+
+            for module, names in sorted(all_imports.items()):
                 f.write(f"from {module} import {', '.join(sorted(names))}\n")
             f.write('\n')
 
@@ -160,7 +172,7 @@ def convert_pickle_to_python(pickle_path, output_path=None, clean_mode=False):
                 
                 for i, step in enumerate(steps):
                     f.write(f'    # Step {i+1}: {step.name}\n')
-                    func_repr = generate_readable_function_repr(step.func, indent=2)
+                    func_repr = generate_readable_function_repr(step.func, indent=2, clean_mode=clean_mode)
                     
                     # Generate arguments for FunctionStep, respecting clean_mode
                     step_args = [f'func={func_repr}']
@@ -227,56 +239,71 @@ def convert_pickle_to_python(pickle_path, output_path=None, clean_mode=False):
         import traceback
         traceback.print_exc()
 
-def convert_enum_value(value):
-    """Convert enum values to proper Python representation."""
-    if hasattr(value, '__class__') and hasattr(value.__class__, '__name__') and isinstance(value, Enum):
-        return f"{value.__class__.__name__}.{value.name}"
-    return repr(value)
 
-def convert_args_dict(args_dict):
-    """Convert arguments dictionary, handling enum values properly."""
-    converted = {}
-    for key, value in args_dict.items():
-        converted[key] = convert_enum_value(value)
-    return converted
-
-def generate_readable_function_repr(func_obj, indent=0):
-    """Generate readable Python representation with newlines for better readability."""
+def generate_readable_function_repr(func_obj, indent=0, clean_mode=False):
+    """
+    Generate a readable and optionally clean Python representation of a function pattern.
+    - Strips default kwargs from function tuples.
+    - Simplifies `(func, {})` to `func`.
+    - Simplifies `[func]` to `func`.
+    """
     indent_str = "    " * indent
     next_indent_str = "    " * (indent + 1)
 
     if callable(func_obj):
         return f"{func_obj.__name__}"
-    elif isinstance(func_obj, tuple) and len(func_obj) == 2:
+    
+    elif isinstance(func_obj, tuple) and len(func_obj) == 2 and callable(func_obj[0]):
         func, args = func_obj
-        converted_args = convert_args_dict(args)
-        if not converted_args:
-            args_str = "{}"
-        else:
-            args_items = []
-            for k, v in converted_args.items():
-                v_repr = generate_readable_function_repr(v, indent + 2)
-                args_items.append(f"{next_indent_str}    '{k}': {v_repr}")
-            args_str = "{\n" + ",\n".join(args_items) + f"\n{next_indent_str}}}"
+        
+        if not args and clean_mode:
+            return f"{func.__name__}"
+
+        # Get function signature to find default values
+        try:
+            sig = inspect.signature(func)
+            default_params = {
+                k: v.default for k, v in sig.parameters.items()
+                if v.default is not inspect.Parameter.empty
+            }
+        except (ValueError, TypeError): # Handle built-ins or other un-inspectables
+            default_params = {}
+
+        # Filter out default values in clean_mode
+        final_args = {}
+        for k, v in args.items():
+            if not clean_mode or k not in default_params or v != default_params[k]:
+                final_args[k] = v
+        
+        if not final_args:
+             return f"{func.__name__}" if clean_mode else f"({func.__name__}, {{}})"
+        
+        args_items = []
+        for k, v in final_args.items():
+            v_repr = generate_readable_function_repr(v, indent + 2, clean_mode)
+            args_items.append(f"{next_indent_str}    '{k}': {v_repr}")
+        args_str = "{\n" + ",\n".join(args_items) + f"\n{next_indent_str}}}"
         return f"({func.__name__}, {args_str})"
+
     elif isinstance(func_obj, list):
+        if clean_mode and len(func_obj) == 1:
+            return generate_readable_function_repr(func_obj[0], indent, clean_mode)
         if not func_obj:
             return "[]"
-        items = []
-        for item in func_obj:
-            item_repr = generate_readable_function_repr(item, indent)
-            items.append(f"{next_indent_str}{item_repr}")
-        return f"[\n{',\n'.join(items)}\n{indent_str}]"
+        items = [generate_readable_function_repr(item, indent, clean_mode) for item in func_obj]
+        return f"[\n{next_indent_str}{f',\n{next_indent_str}'.join(items)}\n{indent_str}]"
+    
     elif isinstance(func_obj, dict):
         if not func_obj:
             return "{}"
         items = []
         for key, value in func_obj.items():
-            value_repr = generate_readable_function_repr(value, indent)
+            value_repr = generate_readable_function_repr(value, indent, clean_mode)
             items.append(f"{next_indent_str}'{key}': {value_repr}")
         return f"{{{',\n'.join(items)}\n{indent_str}}}"
+        
     else:
-        return repr(func_obj)
+        return _value_to_repr(func_obj)
 
 
 def main():
