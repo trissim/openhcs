@@ -130,14 +130,19 @@ The TUI generates complete, executable Python scripts:
     def main():
         """Main execution function."""
         plate_paths, steps, global_config = create_pipeline()
-        
-        orchestrator = PipelineOrchestrator(
-            plate_paths=plate_paths,
-            steps=steps,
-            global_config=global_config
-        )
-        
-        orchestrator.run()
+
+        # Process each plate separately
+        for plate_path in plate_paths:
+            orchestrator = PipelineOrchestrator(
+                plate_path=plate_path,
+                global_config=global_config
+            )
+            orchestrator.initialize()
+            compiled_contexts = orchestrator.compile_pipelines(steps)
+            results = orchestrator.execute_compiled_plate(
+                pipeline_definition=steps,
+                compiled_contexts=compiled_contexts
+            )
     
     if __name__ == "__main__":
         main()

@@ -15,10 +15,9 @@ The PipelineOrchestrator is the main execution engine for OpenHCS pipelines.
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.config import GlobalPipelineConfig
 
-    # Create orchestrator
+    # Create orchestrator for single plate
     orchestrator = PipelineOrchestrator(
-        plate_paths=['/path/to/plate1', '/path/to/plate2'],
-        steps=steps,
+        plate_path='/path/to/plate1',
         global_config=GlobalPipelineConfig(num_workers=4)
     )
 
@@ -53,15 +52,22 @@ Basic Pipeline Execution
         FunctionStep(func=segment_cells, name="segment")
     ]
 
-    # Create orchestrator
+    # Create orchestrator for single plate
     orchestrator = PipelineOrchestrator(
-        plate_paths=['/path/to/plate1', '/path/to/plate2'],
-        steps=steps,
+        plate_path='/path/to/plate1',
         global_config=GlobalPipelineConfig(num_workers=4)
     )
 
+    # Initialize and compile
+    orchestrator.initialize()
+    compiled_contexts = orchestrator.compile_pipelines(steps)
+
     # Execute pipeline
-    orchestrator.run()
+    results = orchestrator.execute_compiled_plate(
+        pipeline_definition=steps,
+        compiled_contexts=compiled_contexts,
+        max_workers=4
+    )
 
 Production Configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -90,8 +96,7 @@ Production Configuration
     )
 
     orchestrator = PipelineOrchestrator(
-        plate_paths=plate_paths,
-        steps=steps,
+        plate_path='/path/to/plate1',
         global_config=global_config
     )
 
@@ -106,26 +111,33 @@ Per-Plate Pipeline Configuration
         '/path/to/plate2': steps_for_plate2
     }
 
-    orchestrator = PipelineOrchestrator(
-        plate_paths=list(pipeline_data.keys()),
-        pipeline_data=pipeline_data,
-        global_config=global_config
-    )
+    # Process each plate separately
+    for plate_path, steps in pipeline_data.items():
+        orchestrator = PipelineOrchestrator(
+            plate_path=plate_path,
+            global_config=global_config
+        )
+        orchestrator.initialize()
+        compiled_contexts = orchestrator.compile_pipelines(steps)
+        results = orchestrator.execute_compiled_plate(
+            pipeline_definition=steps,
+            compiled_contexts=compiled_contexts
+        )
 
 Parameters
 ----------
 
-plate_paths : list of str
-    List of paths to microscopy plate directories to process.
+plate_path : str or Path
+    Path to microscopy plate directory to process.
 
-steps : list of AbstractStep, optional
-    Default pipeline steps to apply to all plates. Can be overridden by pipeline_data.
+workspace_path : str or Path, optional
+    Path to workspace directory. If None, defaults to plate_path parent with _workspace suffix.
 
-pipeline_data : dict, optional
-    Per-plate pipeline configuration. Keys are plate paths, values are step lists.
+global_config : GlobalPipelineConfig, optional
+    Global configuration for execution, resource management, and storage. If None, uses default configuration.
 
-global_config : GlobalPipelineConfig
-    Global configuration for execution, resource management, and storage.
+storage_registry : optional
+    Optional StorageRegistry instance for custom storage backends.
 
 Execution Flow
 --------------

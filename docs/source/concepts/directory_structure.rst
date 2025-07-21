@@ -336,7 +336,7 @@ EZStitcher allows you to configure the directory suffixes used for different typ
     )
 
     # Create an orchestrator with the custom configuration
-    orchestrator = PipelineOrchestrator(config=config, plate_path=plate_path)
+    orchestrator = PipelineOrchestrator(plate_path=plate_path, global_config=config)
 
     # Now all pipelines run with this orchestrator will use the custom suffixes
     pipeline = Pipeline(

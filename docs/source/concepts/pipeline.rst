@@ -211,10 +211,10 @@ Pipelines can be run in a multithreaded environment through the orchestrator:
         stitched_dir_suffix="_stitched"     # For stitching
     )
 
-    # Create orchestrator with multithreading
+    # Create orchestrator with custom configuration
     orchestrator = PipelineOrchestrator(
-        config=config,
-        plate_path=plate_path
+        plate_path=plate_path,
+        global_config=config
     )
 
     # Run the pipeline with multithreading

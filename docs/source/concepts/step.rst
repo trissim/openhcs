@@ -380,10 +380,18 @@ For detailed information about storage adapters, see :doc:`storage_adapter`.
 
 .. code-block:: python
 
-    # Create an orchestrator with a storage adapter
+    # Create an orchestrator with ZARR storage configuration
+    from openhcs.core.config import VFSConfig, ZarrConfig
+    from openhcs.constants.constants import MaterializationBackend
+
+    global_config = GlobalPipelineConfig(
+        vfs=VFSConfig(materialization_backend=MaterializationBackend.ZARR),
+        zarr=ZarrConfig()
+    )
+
     orchestrator = PipelineOrchestrator(
         plate_path="path/to/plate",
-        storage_mode="zarr"  # Use Zarr storage
+        global_config=global_config
     )
 
     # Create a pipeline with steps
