@@ -14,7 +14,8 @@ Core Pipeline Components
    :maxdepth: 2
 
    pipeline
-   pipeline_orchestrator
+   orchestrator
+   function_step
    steps
 
 Configuration and Management

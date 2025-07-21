@@ -27,6 +27,31 @@ Advanced Features
    tui_system
    vfs_system
 
+Core Infrastructure
+===================
+
+.. toctree::
+   :maxdepth: 2
+
+   gpu_resource_management
+   memory_backend_system
+   microscope_handler_integration
+   configuration_management_system
+   concurrency_model
+   system_integration
+
+Advanced Topics
+===============
+
+.. toctree::
+   :maxdepth: 2
+
+   compilation_system_detailed
+   pattern_detection_system
+   pipeline_debugging_guide
+   dict_pattern_case_study
+   ezstitcher_to_openhcs_evolution
+
 System Overview
 ===============
 

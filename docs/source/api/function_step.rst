@@ -35,12 +35,13 @@ Basic Function Step
 .. code-block:: python
 
     from openhcs.core.steps.function_step import FunctionStep
-    from openhcs.processing.backends.processors.torch_processor import gaussian_filter_torch
+    from openhcs.processing.backends.processors.torch_processor import stack_percentile_normalize
 
     step = FunctionStep(
-        func=gaussian_filter_torch,
-        sigma=2.0,
-        name="gaussian_blur"
+        func=stack_percentile_normalize,
+        low_percentile=1.0,
+        high_percentile=99.0,
+        name="normalize"
     )
 
 Variable Components
@@ -50,12 +51,28 @@ Variable Components
 
     from openhcs.constants.constants import VariableComponents
 
-    # Process each channel separately
+    # Process each site separately
     step = FunctionStep(
-        func=normalize_channel,
-        variable_components=[VariableComponents.CHANNEL],
-        percentile_low=1.0,
-        percentile_high=99.0
+        func=stack_percentile_normalize,
+        variable_components=[VariableComponents.SITE],
+        low_percentile=1.0,
+        high_percentile=99.0
+    )
+
+Function Chains
+^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from openhcs.processing.backends.processors.cupy_processor import tophat
+
+    # Chain multiple functions together
+    step = FunctionStep(
+        func=[
+            (stack_percentile_normalize, {'low_percentile': 1.0, 'high_percentile': 99.0}),
+            (tophat, {'selem_radius': 50})
+        ],
+        name="preprocess"
     )
 
 Dict Patterns
@@ -63,28 +80,50 @@ Dict Patterns
 
 .. code-block:: python
 
+    from openhcs.processing.backends.analysis.cell_counting_cpu import count_cells_single_channel
+    from openhcs.processing.backends.analysis.skan_axon_analysis import skan_axon_skeletonize_and_analyze
+
     # Different functions for different channels
     step = FunctionStep(
         func={
-            '1': count_cells_dapi,      # DAPI channel
-            '2': trace_neurites_gfp     # GFP channel
+            '1': count_cells_single_channel,      # DAPI channel
+            '2': skan_axon_skeletonize_and_analyze # GFP channel
         },
         variable_components=[VariableComponents.CHANNEL]
     )
 
-Special Outputs
-^^^^^^^^^^^^^^^
+Parameters
+----------
 
-.. code-block:: python
+func : callable, tuple, list, or dict
+    The function(s) to execute. Can be:
 
-    from openhcs.core.pipeline.function_contracts import special_outputs
+    - Single function: ``my_function``
+    - Function with parameters: ``(my_function, {'param': value})``
+    - Function chain: ``[(func1, params1), (func2, params2)]``
+    - Dict pattern: ``{'1': func1, '2': func2}`` for different channels/components
 
-    @special_outputs("cell_counts", "measurements")
-    def analyze_cells(image):
-        # Analysis logic here
-        return processed_image, cell_count_data, measurement_data
+name : str, optional
+    Human-readable name for the step. Defaults to function name.
 
-    step = FunctionStep(func=analyze_cells)
+variable_components : list of VariableComponents, optional
+    Dimensions to process separately. Default: ``[VariableComponents.SITE]``
+
+    - ``VariableComponents.SITE``: Process each imaging site separately
+    - ``VariableComponents.CHANNEL``: Process each channel separately
+    - ``VariableComponents.Z``: Process each z-slice separately
+
+group_by : GroupBy, optional
+    How to group processing. Default: ``GroupBy.CHANNEL``
+
+force_disk_output : bool, optional
+    Force output to disk backend. Default: ``False``
+
+input_dir : str or Path, optional
+    Override input directory for this step.
+
+output_dir : str or Path, optional
+    Override output directory for this step.
 
 See Also
 --------
@@ -92,3 +131,4 @@ See Also
 - :doc:`../architecture/function_pattern_system` - Detailed function pattern documentation
 - :doc:`../architecture/memory_type_system` - Memory type conversion system
 - :doc:`../architecture/special_io_system` - Special I/O system documentation
+- :doc:`../user_guide/production_examples` - Real-world usage examples
