@@ -377,11 +377,11 @@ The VFS automatically handles serialization for special I/O data:
 .. code:: python
 
    # Memory backend stores Python objects directly
-   context.filemanager.save(positions_array, "/vfs/positions.pkl", "memory")
+   filemanager.save(positions_array, "/vfs/positions.pkl", "memory")
    # → Stored as Python object in memory
 
    # Disk backend would serialize to pickle format
-   context.filemanager.save(positions_array, "/workspace/positions.pkl", "disk")
+   filemanager.save(positions_array, "/workspace/positions.pkl", "disk")
    # → Serialized to .pkl file on disk
 
 Error Handling
