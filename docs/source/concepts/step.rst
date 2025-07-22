@@ -221,25 +221,25 @@ For practical examples of how to use variable_components in different scenarios,
 
 .. code-block:: python
 
-    # IMPORTANT: For Z-stack flattening, use ZFlatStep instead of raw Step with variable_components
-    # This is the recommended approach for Z-stack flattening
-    from ezstitcher.core.steps import ZFlatStep
+    # For Z-stack flattening, use FunctionStep with projection functions
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.processing.backends.processors.cupy_processor import max_projection, mean_projection
 
-    # Maximum intensity projection (default)
-    step = ZFlatStep()  # Uses max_projection by default
+    # Maximum intensity projection
+    step = FunctionStep(func=max_projection, name="max_projection")
 
-    # With specific projection method
-    step = ZFlatStep(method="mean")  # Uses mean_projection
+    # Mean intensity projection
+    step = FunctionStep(func=mean_projection, name="mean_projection")
 
-    # IMPORTANT: For channel compositing, use CompositeStep instead of raw Step with variable_components
-    # This is the recommended approach for channel compositing
-    from ezstitcher.core.steps import CompositeStep
+    # For channel compositing, use FunctionStep with create_composite
+    from openhcs.processing.backends.processors.cupy_processor import create_composite
 
-    # Without weights (equal weighting for all channels)
-    step = CompositeStep()  # Equal weights for all channels
-
-    # With custom weights (70% channel 1, 30% channel 2)
-    step = CompositeStep(weights=[0.7, 0.3])  # Custom channel weights
+    # Create composite from multiple channels
+    step = FunctionStep(
+        func=create_composite,
+        name="composite",
+        variable_components=[VariableComponents.CHANNEL]
+    )  # Custom channel weights
 
     # For most other operations, the default 'site' is appropriate
     # This groups images with the same channel, z_index, etc. but different site values
@@ -326,22 +326,20 @@ In this example:
 
 .. _step-best-practices:
 
-StepResult
----------
+Step Execution
+--------------
 
-The StepResult class is the canonical interface for step outputs in EZStitcher. It provides
-a clear structure for step results, separating normal processing results from context updates
-and storage operations.
+OpenHCS steps execute through the ProcessingContext system, which provides a clear structure for step execution and data flow between steps.
 
 .. code-block:: python
 
-    from ezstitcher.core.step_result import StepResult
-    from ezstitcher.io.virtual_path import PhysicalPath
+    from openhcs.core.context.processing_context import ProcessingContext
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
-    # Create a StepResult with an output path and context updates
-    result = StepResult(
-        output_path=PhysicalPath("/path/to/output"),
-        context_update={"key": "value"},
+    # Steps execute through the orchestrator with ProcessingContext
+    orchestrator = PipelineOrchestrator(plate_path="/path/to/plate")
+    orchestrator.initialize()
+    compiled_contexts = orchestrator.compile_pipelines(pipeline_steps)
         metadata={"execution_time": 1.23},
         results={"image": image_array},
         storage_operations=[("storage_key", data)]

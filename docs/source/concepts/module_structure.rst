@@ -161,25 +161,25 @@ The ``io/backends/`` directory could contain different storage backend implement
 Initialization Discipline
 ------------------------
 
-EZStitcher follows a strict initialization discipline to prevent side-effects on import and ensure explicit control over component registration:
+OpenHCS follows a strict initialization discipline to prevent side-effects on import and ensure explicit control over component registration:
 
-1. **No Registration at Module Load**: Backends, handlers, plugins, and pipeline steps are not registered when their respective modules are imported.
+1. **No Registration at Module Load**: Processing backends, GPU schedulers, and pipeline components are not registered when their respective modules are imported.
 
-2. **initialize_foo() Pattern**: All registries provide an explicit initialization function (e.g., ``initialize_compute_backends()``) that performs the actual registration of available implementations.
+2. **Explicit Setup Pattern**: All registries provide explicit setup functions that perform the actual registration of available implementations.
 
 3. **Import-Safe Initialization Points**:
-   - CLI (``ezstitcher/__main__.py``): The main CLI entry point calls all necessary ``initialize_foo()`` functions at startup.
-   - Test Bootstraps (``tests/conftest.py`` or specific test setups): Tests explicitly call ``initialize_foo()`` to set up the required components for a given test scenario.
-   - Orchestrators/Application Entry Points: Any other application using ``ezstitcher`` as a library is responsible for calling these initialization functions.
+   - TUI Application: The TUI calls necessary setup functions during application startup.
+   - Script Generation: Generated scripts include proper initialization code.
+   - Orchestrator Usage: Applications using OpenHCS as a library must call setup functions explicitly.
 
-**Doctrinal Motivation**: Ensures that the application state (which components are available) is explicitly managed and not a side-effect of imports. This improves predictability, testability, and helps avoid ``Clause 74`` (Runtime Flexibility Forbidden) by making the set of available components deterministic at initialization.
+**Doctrinal Motivation**: Ensures that the application state (which components are available) is explicitly managed and not a side-effect of imports. This improves predictability, testability, and makes the set of available components deterministic at initialization.
 
 .. _module-public-api:
 
 Public API
 ---------
 
-EZStitcher provides a stable public API through the ``ezstitcher`` package. This API is carefully designed to be safe to import without triggering side-effects:
+OpenHCS provides a stable public API through the ``openhcs`` package. This API is carefully designed to be safe to import without triggering side-effects:
 
 .. code-block:: python
 
@@ -206,13 +206,13 @@ OpenHCS's module structure is designed to comply with the following doctrinal cl
 
 - **Clause 12 (Smell Intolerance)**: When fetching from a registry, if an item is not found, a deterministic error is raised. No trying alternative names or default fallbacks.
 
-- **Clause 17 (VFS Exclusivity)**: The ``ezstitcher/io/file_manager.py`` module is the primary interaction point for file system operations, using ``VirtualPath``. Other modules depend on this for I/O.
+- **Clause 17 (VFS Exclusivity)**: The ``openhcs/core/io/file_manager.py`` module is the primary interaction point for file system operations, using the VFS system. Other modules depend on this for I/O.
 
-- **Clause 21 (Frontloaded Validation)**: Interfaces define explicit contracts. Schemas define data dependencies. Registries make component availability explicit rather than implicit through imports.
+- **Clause 21 (Frontloaded Validation)**: Interfaces define explicit contracts. Configuration classes define data dependencies. Registries make component availability explicit rather than implicit through imports.
 
 - **Clause 65 (Absolute Execution)**: Clear interfaces and explicit registration reduce the need for ``hasattr`` or ``try-except`` blocks for probing capabilities.
 
-- **Clause 66 (Context Immunity)**: Centralizing schemas in ``ezstitcher/schemas/`` (especially ``context_schemas.py``) and having ``ezstitcher/core/processing_context.py`` manage context explicitly helps. Components declare their context needs via these schemas.
+- **Clause 66 (Context Immunity)**: The ``openhcs/core/context/processing_context.py`` manages context explicitly. Components declare their context needs via configuration classes.
 
 - **Clause 77 (Rot Intolerance)**: The refactor provides an opportunity to identify and prune unused modules or consolidate overly fragmented ones. Clearer directory responsibilities make rot more apparent.
 
@@ -221,20 +221,20 @@ OpenHCS's module structure is designed to comply with the following doctrinal cl
 Best Practices
 ------------
 
-When working with EZStitcher's module structure, follow these best practices:
+When working with OpenHCS's module structure, follow these best practices:
 
-1. **Import Interfaces, Not Implementations**: Import from ``ezstitcher.interfaces`` rather than directly from implementation modules.
+1. **Import from Public API**: Import from ``openhcs.core`` and ``openhcs.processing`` rather than directly from implementation modules.
 
-2. **Use Schemas for Data Validation**: Define data structures using schemas in ``ezstitcher.schemas`` before using them.
+2. **Use Configuration Classes**: Define data structures using configuration classes in ``openhcs.core.config`` before using them.
 
-3. **Register Components Explicitly**: Register components using the appropriate registry's registration function, not implicitly on import.
+3. **Setup Components Explicitly**: Setup GPU registries and processing backends explicitly, not implicitly on import.
 
-4. **Initialize Before Use**: Call ``ezstitcher.initialize()`` before using any other functions in the API.
+4. **Initialize Before Use**: Call appropriate setup functions before using GPU-accelerated components.
 
 5. **Respect Unidirectional Dependencies**: Ensure dependencies flow in one direction to prevent cycles:
-   - Interfaces should not depend on implementations
-   - Schemas should not depend on implementations
-   - Implementations should depend on interfaces and schemas
+   - Abstract classes should not depend on implementations
+   - Configuration should not depend on implementations
+   - Implementations should depend on abstract classes and configuration
    - Registries should depend on interfaces, not implementations
 
 6. **Use VirtualPath for I/O**: Always use ``VirtualPath`` for file system operations, not ``Path`` or ``str``.
