@@ -33,8 +33,14 @@ Discover the 574+ available processing functions organized by computational back
    :maxdepth: 2
 
    processing_backends
+   image_processing_functions
+   stitching_functions
 
 **Processing Backends**: GPU-accelerated functions for image processing, analysis, and assembly. Includes automatic memory type conversion between NumPy, CuPy, PyTorch, JAX, and pyclesperanto.
+
+**Image Processing Functions**: Core image processing functions across 6 computational backends (NumPy, CuPy, PyTorch, TensorFlow, JAX, pyclesperanto) for filtering, normalization, morphology, and composition.
+
+**Stitching Functions**: Complete stitching workflow with GPU-accelerated position generation and image assembly using Ashlar and MIST algorithms.
 
 Data Management
 ===============
@@ -51,14 +57,38 @@ Handle file I/O, storage backends, and configuration for datasets from MB to 100
 
 **Configuration**: Global pipeline configuration, GPU resource management, and system settings.
 
-Legacy Components
-=================
+Pipeline Architecture
+=====================
 
-These components are preserved for compatibility but may be deprecated in future versions.
+Core pipeline components for building and executing OpenHCS workflows.
 
 .. toctree::
    :maxdepth: 2
 
+   step_system
    pipeline
-   steps
+   tui_system
+
+**Step System**: Complete step architecture including AbstractStep base class and FunctionStep implementation. Covers function patterns, variable components, and GPU integration.
+
+**Pipeline**: Core pipeline execution and compilation system.
+
+**TUI System**: Terminal User Interface for interactive pipeline building and execution.
+
+Advanced Components
+===================
+
+Specialized components for advanced usage and system integration.
+
+.. toctree::
+   :maxdepth: 2
+
    file_system_manager
+   microscope_interfaces
+   microscopes
+
+**File System Manager**: Low-level file operations and VFS backend management.
+
+**Microscope Interfaces**: Interfaces for different microscopy platforms and file formats.
+
+**Microscopes**: Specific microscope implementations and format parsers.
