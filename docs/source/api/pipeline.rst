@@ -128,4 +128,4 @@ ProcessingContext
 Step Classes
 -----------
 
-For documentation on step classes like ``ImageStitchingStep``, see :doc:`steps`.
+For documentation on the step system including ``FunctionStep``, see :doc:`step_system`.

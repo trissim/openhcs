@@ -116,7 +116,7 @@ This modular design allows you to combine diverse operations, creating comprehen
 
 This modular design allows you to:
 
-1. **Mix and match processing steps**: Combine regular Steps with specialized PositionGenerationStep and ImageStitchingStep in a single pipeline, creating complete workflows from image processing to stitching.
+1. **Mix and match processing steps**: Combine FunctionSteps with different processing functions in a single pipeline, creating complete workflows from image processing to stitching.
 2. **Create end-to-end workflows**: Build pipelines that take raw microscopy images all the way through processing, position generation, and final stitched image assembly.
 3. **Reuse common workflows**: Create standard pipelines for common tasks and reuse them across projects.
 4. **Customize processing per channel**: Apply different processing to different channels using function dictionaries.
