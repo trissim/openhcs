@@ -93,24 +93,32 @@ For interactive pipeline building, use the TUI:
     # Real-time monitoring and professional log streaming
     # Works over SSH - no desktop required
 
-Common Options
-------------
+🚧 **More Documentation Coming** 🚧
+------------------------------------
 
-.. code-block:: python
+**Current Status**: Getting started documentation is being expanded with comprehensive TUI workflows and practical examples.
 
-    stitch_plate(
-        "path/to/plate",
-        output_path="path/to/output",    # Custom output location
-        normalize=True,                  # Enhance contrast
-        flatten_z=True,                  # Convert Z-stacks to 2D
-        z_method="max",                  # Z projection method
-        well_filter=["A01", "B02"]       # Process specific wells
-    )
+**For complete guidance right now**:
+
+📁 **Use the complete example**: `openhcs/debug/example_export.py <https://github.com/trissim/toolong/blob/openhcs/openhcs/debug/example_export.py>`_
+
+📚 **Check the API documentation**: :doc:`../api/index` - All examples are tested and working
+
+🏗️ **Understand the architecture**: :doc:`../concepts/index` - Core concepts and design principles
+
+**What's Coming**:
+- Complete TUI workflow tutorial
+- Step-by-step pipeline building guide
+- Real-world integration examples
+- Performance optimization guide
 
 Next Steps
----------
+----------
 
-- Read :doc:`../user_guide/introduction` for an overview of OpenHCS concepts
-- See :doc:`../user_guide/basic_usage` for detailed API usage
-- Explore :doc:`../user_guide/intermediate_usage` for custom pipelines
-- Check :doc:`../concepts/architecture_overview` for technical details
+- **Start with**: :doc:`../guides/complete_examples` - Complete working examples
+- **Learn concepts**: :doc:`../concepts/architecture_overview` - Technical architecture
+- **API reference**: :doc:`../api/index` - Detailed API documentation
+- **Integration**: :doc:`../guides/index` - System integration guides
+
+.. note::
+   OpenHCS is designed for large-scale bioimage analysis (100GB+ datasets) with GPU acceleration. The example script demonstrates production-grade workflows.

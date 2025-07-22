@@ -77,13 +77,7 @@ Quick Start Guide
    :maxdepth: 2
    :caption: User Guide
 
-   user_guide/introduction
-   user_guide/basic_usage
-   user_guide/intermediate_usage
-   user_guide/production_examples
-   user_guide/advanced_usage
-   user_guide/best_practices
-   user_guide/integration
+   user_guide/index
 
 .. toctree::
    :maxdepth: 2
