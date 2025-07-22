@@ -3,6 +3,15 @@ API Reference
 
 This section provides comprehensive API documentation for OpenHCS. Use this reference to understand the classes, functions, and modules available for building bioimage analysis workflows.
 
+🚀 **Complete Working Example**
+-------------------------------
+
+**Before diving into the API, see our complete production example:**
+
+📁 **Gold Standard Script**: `openhcs/debug/example_export.py <https://github.com/trissim/toolong/blob/openhcs/openhcs/debug/example_export.py>`_
+
+This script shows **every API component in action** with real parameters and working code. Perfect for agents and developers to understand practical usage patterns.
+
 **Quick Navigation**:
 - **New to OpenHCS?** Start with :doc:`orchestrator` and :doc:`function_step`
 - **Building pipelines?** See :doc:`processing_backends` for available functions

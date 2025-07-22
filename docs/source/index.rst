@@ -3,10 +3,31 @@ Welcome to OpenHCS Documentation
 
 OpenHCS is a production-grade bioimage analysis platform designed for high-content screening datasets that break traditional tools. Built from the ground up for 100GB+ datasets, GPU acceleration, and remote computing environments.
 
+🚀 **Complete Production Example**
+----------------------------------
+
+**The best way to understand OpenHCS is through our complete, working example:**
+
+📁 **Gold Standard Script**: `openhcs/debug/example_export.py <https://github.com/trissim/toolong/blob/openhcs/openhcs/debug/example_export.py>`_
+
+This production script demonstrates **every major OpenHCS feature**:
+
+✅ **Complete neurite analysis pipeline** (preprocessing → stitching → analysis)
+✅ **All function patterns** (chains, dictionaries, single functions)
+✅ **GPU acceleration** (CuPy, PyTorch, GPU stitching)
+✅ **100GB+ dataset handling** (ZARR compression, memory backends)
+✅ **Production configuration** (parallel processing, GPU scheduling)
+
+.. code-block:: bash
+
+    # View the complete example
+    git clone https://github.com/trissim/toolong.git
+    cat toolong/openhcs/debug/example_export.py
+
 Getting Started Quickly
 -----------------------
 
-The fastest way to get started with OpenHCS is through the terminal interface:
+**Interactive Development**:
 
 .. code-block:: bash
 
@@ -15,19 +36,6 @@ The fastest way to get started with OpenHCS is through the terminal interface:
 
     # Launch the interactive TUI
     openhcs-tui
-
-For Python API usage:
-
-.. code-block:: python
-
-    from openhcs import Pipeline, FunctionStep
-
-    # Create a simple processing pipeline
-    pipeline = Pipeline([
-        FunctionStep(func="gaussian_filter", sigma=2.0),
-        FunctionStep(func="binary_opening", footprint=disk(3)),
-        FunctionStep(func="label", connectivity=2)
-    ])
 
     # Process your data
     pipeline.run("path/to/microscopy/data")
@@ -89,6 +97,12 @@ Quick Start Guide
    concepts/function_handling
    concepts/processing_context
    concepts/directory_structure
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Complete Examples
+
+   guides/complete_examples
 
 .. toctree::
    :maxdepth: 2

@@ -1,6 +1,46 @@
 Getting Started with OpenHCS
 ============================
 
+🚀 **Complete Production Example**
+----------------------------------
+
+**The best way to understand OpenHCS is through a complete, working example.**
+
+We provide a **gold standard production script** that demonstrates every major OpenHCS feature:
+
+📁 **Complete Example Script**: `openhcs/debug/example_export.py <https://github.com/trissim/toolong/blob/openhcs/openhcs/debug/example_export.py>`_
+
+This script shows:
+
+✅ **Complete Configuration**: GlobalPipelineConfig, VFS, ZARR, GPU settings
+✅ **All Function Patterns**: List chains, dictionary patterns, single functions
+✅ **Real Workflow**: Preprocessing → Stitching → Analysis (100GB+ datasets)
+✅ **GPU Integration**: CuPy, PyTorch, GPU stitching algorithms
+✅ **Production Settings**: Memory backends, compression, parallel processing
+
+**Key Features Demonstrated**:
+
+.. code-block:: python
+
+    # Complete configuration system
+    global_config = GlobalPipelineConfig(
+        num_workers=5,
+        vfs=VFSConfig(intermediate_backend=Backend.MEMORY),
+        zarr=ZarrConfig(compressor=ZarrCompressor.ZSTD)
+    )
+
+    # Function chain pattern
+    FunctionStep(func=[
+        (stack_percentile_normalize, {'low_percentile': 1.0}),
+        (tophat, {'selem_radius': 50})
+    ])
+
+    # Dictionary pattern for channel-specific analysis
+    FunctionStep(func={
+        '1': [count_cells_single_channel],      # DAPI channel
+        '2': [skan_axon_skeletonize_and_analyze] # GFP channel
+    })
+
 Installation
 -----------
 
@@ -8,20 +48,41 @@ Installation
 
     pip install openhcs  # Requires Python 3.8+
 
-For `pyenv <https://github.com/pyenv/pyenv>`_ users:
+Running the Complete Example
+---------------------------
+
+**Download and run the production example**:
 
 .. code-block:: bash
 
-    pyenv install 3.11
-    pyenv local 3.11
-    python -m venv .venv
-    source .venv/bin/activate
-    pip install openhcs
+    # Clone the repository to access the example
+    git clone https://github.com/trissim/toolong.git
+    cd toolong
 
-Quick Start
-----------
+    # View the complete example script
+    cat openhcs/debug/example_export.py
 
-The fastest way to get started is with the terminal interface:
+    # Run it (requires microscopy data)
+    python openhcs/debug/example_export.py
+
+**What the example demonstrates**:
+
+🔬 **Complete Neurite Analysis Pipeline**:
+1. **Preprocessing**: Percentile normalization + top-hat filtering
+2. **Composition**: Multi-channel composite creation
+3. **Stitching**: GPU-accelerated position finding + assembly
+4. **Analysis**: Cell counting (DAPI) + neurite tracing (GFP)
+
+🚀 **Production Features**:
+- **100GB+ Dataset Handling**: ZARR compression with memory overlay
+- **GPU Acceleration**: CuPy, PyTorch, GPU stitching algorithms
+- **Multi-Backend Processing**: Automatic memory type conversion
+- **Parallel Execution**: 5 workers with GPU scheduling
+
+Interactive Development
+----------------------
+
+For interactive pipeline building, use the TUI:
 
 .. code-block:: bash
 
@@ -31,29 +92,6 @@ The fastest way to get started is with the terminal interface:
     # Select your plate directory and configure pipeline
     # Real-time monitoring and professional log streaming
     # Works over SSH - no desktop required
-
-For Python API usage:
-
-.. code-block:: python
-
-    from openhcs import Pipeline, FunctionStep
-    from pathlib import Path
-
-    # Create a simple processing pipeline
-    pipeline = Pipeline([
-        FunctionStep(func="gaussian_filter", sigma=2.0),
-        FunctionStep(func="binary_opening", footprint=disk(3)),
-        FunctionStep(func="label", connectivity=2)
-    ])
-
-    # Process your data
-    pipeline.run("path/to/microscopy/data")
-
-This will:
-- Detect plate format automatically
-- Process channels and Z-stacks
-- Generate and stitch images
-- Save output to "*_stitched" directory
 
 Common Options
 ------------

@@ -3,6 +3,18 @@ Integration Guides
 
 These guides explain how OpenHCS systems work together to provide seamless bioimage analysis workflows. Each guide focuses on the integration between major system components.
 
+🚀 **Complete Examples**
+------------------------
+
+.. toctree::
+   :maxdepth: 2
+
+   complete_examples
+
+**Complete Working Examples**: Production-ready scripts demonstrating every major OpenHCS feature. Perfect for agents, developers, and users who want to understand practical usage patterns.
+
+:doc:`complete_examples`
+
 System Integration Guides
 --------------------------
 
