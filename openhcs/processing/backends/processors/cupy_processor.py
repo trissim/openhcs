@@ -25,6 +25,9 @@ if cp is not None:
     if cupyx_scipy is not None:
         ndimage = cupyx_scipy.ndimage
 
+# Import CuCIM for edge detection
+cucim_filters = optional_import("cucim.skimage.filters")
+
 logger = logging.getLogger(__name__)
 
 
@@ -954,3 +957,43 @@ def edge_magnitude(image: "cp.ndarray", method: str = "2d", mode: str = "reflect
     else:
         # FAIL FAST: No fallback edge detection methods
         raise ValueError(f"Unknown edge detection method: {method}. Valid methods: 2d, 3d")
+
+
+@cupy_func
+def sobel(image: "cp.ndarray", mask: Optional["cp.ndarray"] = None, *,
+          axis: Optional[int] = None, mode: str = "reflect", cval: float = 0.0) -> "cp.ndarray":
+    """
+    Find edges in an image using the Sobel filter (CuCIM backend).
+
+    This function wraps CuCIM's sobel filter to provide a manual, pickleable
+    sobel function with full OpenHCS features (slice_by_slice, dtype_conversion, etc.).
+
+    The @cupy_func decorator automatically provides slice_by_slice processing,
+    so this function can handle both 2D and 3D inputs depending on the setting.
+
+    Args:
+        image: CuPy array (2D when slice_by_slice=True, 3D when slice_by_slice=False)
+        mask: Optional mask array to clip the output (values where mask=0 will be set to 0)
+        axis: Compute the edge filter along this axis. If not provided, edge magnitude is computed
+        mode: Boundary handling mode ('reflect', 'constant', 'nearest', 'wrap')
+        cval: Constant value for 'constant' mode
+
+    Returns:
+        Edge-filtered CuPy array (same shape as input)
+
+    Note:
+        This is a manual wrapper around CuCIM's sobel function that provides
+        the same functionality as auto-discovered functions but is pickleable
+        for subprocess execution.
+    """
+    if cucim_filters is None:
+        raise ImportError("CuCIM is required for sobel edge detection but is not available")
+
+    # Let the decorator handle slice processing - just call CuCIM sobel directly
+    return cucim_filters.sobel(
+        image,
+        mask=mask,
+        axis=axis,
+        mode=mode,
+        cval=cval
+    )

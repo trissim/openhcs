@@ -415,7 +415,7 @@ class DualEditorWindow(BaseOpenHCSWindow):
         self._update_status("Saved successfully")
         if self.on_save_callback:
             self.on_save_callback(self.editing_step)
-        self.close_window()
+        # Window remains open after save (user preference)
 
     def _validate_and_convert_function_parameters(self) -> List[str]:
         """

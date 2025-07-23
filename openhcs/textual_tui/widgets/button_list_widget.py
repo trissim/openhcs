@@ -445,7 +445,6 @@ class ButtonListWidget(Widget):
 
             # Get container width
             container_width = self.button_container.size.width
-            logger.info(f"Container width: {container_width}")
             if container_width <= 0:
                 # Fallback: create single row
                 self._create_single_row()
@@ -500,7 +499,7 @@ class ButtonListWidget(Widget):
                     )
                     row.mount(button)
 
-            logger.debug(f"Created {len(rows)} button rows using CSS-based width calculations")
+
 
         except Exception as e:
             logger.error(f"Failed to create button rows: {e}", exc_info=True)
@@ -538,7 +537,7 @@ class ButtonListWidget(Widget):
 
         Subclasses should override this method to implement specific button logic.
         """
-        logger.info("_update_button_states called")
+
         # Default implementation - subclasses should override
         has_items = len(self.items) > 0
         has_selection = bool(self.selected_item)
@@ -556,7 +555,7 @@ class ButtonListWidget(Widget):
                     button.disabled = not has_selection  # Others need selection
             except Exception as e:
                 # Button might not be mounted yet
-                logger.debug(f"Button {config.button_id} not found: {e}")
+
                 pass
 
-        logger.info(f"Updated {buttons_found}/{len(self.button_configs)} button states")
+

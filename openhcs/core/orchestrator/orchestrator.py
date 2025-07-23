@@ -626,6 +626,52 @@ class PipelineOrchestrator:
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup GPU memory after plate execution: {cleanup_error}")
 
+
+
+            logger.info(f"🔥 ORCHESTRATOR: Plate execution completed, checking for analysis consolidation")
+            # Run automatic analysis consolidation if enabled
+            if self.global_config.analysis_consolidation.enabled:
+                try:
+                    from openhcs.processing.backends.analysis.consolidate_analysis_results import consolidate_analysis_results
+
+                    # Get results directory from compiled contexts (Option 2: use existing paths)
+                    results_dir = None
+                    for well_id, context in compiled_contexts.items():
+                        # Look for any step that has an output_dir - this is where materialization happens
+                        for step_id, step_plan in context.step_plans.items():
+                            if 'output_dir' in step_plan:
+                                # Found an output directory, check if it has a results subdirectory
+                                potential_results_dir = Path(step_plan['output_dir']) / self.global_config.path_planning.materialization_results_path
+                                if potential_results_dir.exists():
+                                    results_dir = potential_results_dir
+                                    logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_id}: {results_dir}")
+                                    break
+                        if results_dir:
+                            break
+
+                    if results_dir and results_dir.exists():
+                        # Check if there are actually CSV files (materialized results)
+                        csv_files = list(results_dir.glob("*.csv"))
+                        if csv_files:
+                            logger.info(f"🔄 CONSOLIDATION: Found {len(csv_files)} CSV files, running consolidation")
+                            # Get well IDs from compiled contexts
+                            well_ids = list(compiled_contexts.keys())
+                            logger.info(f"🔄 CONSOLIDATION: Using well IDs: {well_ids}")
+
+                            consolidate_analysis_results(
+                                results_directory=str(results_dir),
+                                well_ids=well_ids,
+                                consolidation_config=self.global_config.analysis_consolidation,
+                                plate_metadata_config=self.global_config.plate_metadata
+                            )
+                            logger.info("✅ CONSOLIDATION: Completed successfully")
+                        else:
+                            logger.info(f"⏭️ CONSOLIDATION: No CSV files found in {results_dir}, skipping")
+                    else:
+                        logger.info(f"⏭️ CONSOLIDATION: No results directory found in compiled contexts")
+                except Exception as e:
+                    logger.error(f"❌ CONSOLIDATION: Failed: {e}")
+            
             # Update state based on execution results
             if all(result.get("status") == "success" for result in execution_results.values()):
                 self._state = OrchestratorState.COMPLETED
@@ -633,13 +679,12 @@ class PipelineOrchestrator:
                 self._state = OrchestratorState.EXEC_FAILED
 
             logger.info(f"🔥 ORCHESTRATOR: Plate execution finished. Results: {execution_results}")
+
             return execution_results
         except Exception as e:
             self._state = OrchestratorState.EXEC_FAILED
             logger.error(f"Failed to execute compiled plate: {e}")
             raise
-
-
 
     def get_component_keys(self, group_by: GroupBy, component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
         """

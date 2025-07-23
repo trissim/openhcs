@@ -98,6 +98,50 @@ class VFSConfig:
     """Backend for explicitly materialized outputs (e.g., final results, user-requested saves)."""
 
 @dataclass(frozen=True)
+class AnalysisConsolidationConfig:
+    """Configuration for automatic analysis results consolidation."""
+    enabled: bool = True
+    """Whether to automatically run analysis consolidation after pipeline completion."""
+
+    metaxpress_style: bool = True
+    """Whether to generate MetaXpress-compatible output format with headers."""
+
+    well_pattern: str = r"([A-Z]\d{2})"
+    """Regex pattern for extracting well IDs from filenames."""
+
+    file_extensions: tuple[str, ...] = (".csv",)
+    """File extensions to include in consolidation."""
+
+    exclude_patterns: tuple[str, ...] = (r".*consolidated.*", r".*metaxpress.*", r".*summary.*")
+    """Filename patterns to exclude from consolidation."""
+
+    output_filename: str = "metaxpress_style_summary.csv"
+    """Name of the consolidated output file."""
+
+
+@dataclass(frozen=True)
+class PlateMetadataConfig:
+    """Configuration for plate metadata in MetaXpress-style output."""
+    barcode: Optional[str] = None
+    """Plate barcode. If None, will be auto-generated from plate name."""
+
+    plate_name: Optional[str] = None
+    """Plate name. If None, will be derived from plate path."""
+
+    plate_id: Optional[str] = None
+    """Plate ID. If None, will be auto-generated."""
+
+    description: Optional[str] = None
+    """Experiment description. If None, will be auto-generated."""
+
+    acquisition_user: str = "OpenHCS"
+    """User who acquired the data."""
+
+    z_step: str = "1"
+    """Z-step information for MetaXpress compatibility."""
+
+
+@dataclass(frozen=True)
 class PathPlanningConfig:
     """Configuration for pipeline path planning, defining directory suffixes."""
     output_dir_suffix: str = "_outputs"
@@ -139,6 +183,12 @@ class GlobalPipelineConfig:
     zarr: ZarrConfig = field(default_factory=ZarrConfig)
     """Configuration for Zarr storage backend."""
 
+    analysis_consolidation: AnalysisConsolidationConfig = field(default_factory=AnalysisConsolidationConfig)
+    """Configuration for automatic analysis results consolidation."""
+
+    plate_metadata: PlateMetadataConfig = field(default_factory=PlateMetadataConfig)
+    """Configuration for plate metadata in consolidated outputs."""
+
 
 
     microscope: Microscope = Microscope.AUTO
@@ -161,11 +211,13 @@ _DEFAULT_VFS_CONFIG = VFSConfig(
     # persistent_storage_root_path="./openhcs_output_data"
 )
 _DEFAULT_ZARR_CONFIG = ZarrConfig()
+_DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG = AnalysisConsolidationConfig()
+_DEFAULT_PLATE_METADATA_CONFIG = PlateMetadataConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
     """
     Provides a default instance of GlobalPipelineConfig.
-    
+
     This function is called if no specific configuration is provided to the
     PipelineOrchestrator, ensuring the application can run with sensible defaults.
     """
@@ -174,5 +226,7 @@ def get_default_global_config() -> GlobalPipelineConfig:
         # num_workers is already handled by field(default_factory) in GlobalPipelineConfig
         path_planning=_DEFAULT_PATH_PLANNING_CONFIG,
         vfs=_DEFAULT_VFS_CONFIG,
-        zarr=_DEFAULT_ZARR_CONFIG
+        zarr=_DEFAULT_ZARR_CONFIG,
+        analysis_consolidation=_DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG,
+        plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG
     )

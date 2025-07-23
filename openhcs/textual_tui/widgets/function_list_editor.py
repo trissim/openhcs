@@ -664,7 +664,7 @@ class FunctionListEditorWidget(Container):
 
         try:
             # Use debug module's pattern formatting with proper imports
-            from openhcs.debug.pickle_to_python import generate_function_repr
+            from openhcs.debug.pickle_to_python import generate_readable_function_repr
             from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
 
             # Update pattern data first

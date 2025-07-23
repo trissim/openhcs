@@ -55,81 +55,10 @@ _registry_initialized = False
 _registry_initializing = False
 
 
-def _install_import_hook() -> None:
-    """
-    Install import hook to auto-decorate external library functions on import.
-
-    This makes functions self-contained and eliminates the need for registry
-    initialization in subprocess environments.
-    """
-    global _import_hook_installed
-
-    if _import_hook_installed:
-        return
-
-    def _decorating_import(name, *args, **kwargs):
-        """Import hook that auto-decorates external libraries."""
-        module = _original_import(name, *args, **kwargs)
-
-        # Only decorate once per module
-        if name not in _decoration_applied:
-            try:
-                if name == 'pyclesperanto':
-                    _decorate_pyclesperanto_on_import(module)
-                    _decoration_applied.add(name)
-                    logger.debug(f"Auto-decorated pyclesperanto functions on import")
-                elif name.startswith('skimage'):
-                    _decorate_skimage_on_import(module)
-                    _decoration_applied.add(name)
-                    logger.debug(f"Auto-decorated skimage functions on import: {name}")
-            except Exception as e:
-                logger.warning(f"Failed to auto-decorate {name}: {e}")
-
-        return module
-
-    # Install the hook
-    __builtins__['__import__'] = _decorating_import
-    _import_hook_installed = True
-    logger.debug("Import hook installed for auto-decorating external libraries")
+# Import hook system removed - using existing comprehensive registries with clean decoration
 
 
-def _decorate_pyclesperanto_on_import(cle_module) -> None:
-    """Auto-decorate pyclesperanto functions when module is imported."""
-    try:
-        # Use direct decoration to avoid circular imports
-        # This is a simplified version that decorates common functions
-        common_functions = [
-            'sobel', 'gaussian_blur', 'threshold_otsu', 'erode_sphere', 'dilate_sphere',
-            'opening_sphere', 'closing_sphere', 'subtract_images', 'add_images',
-            'multiply_images', 'divide_images', 'maximum_images', 'minimum_images',
-            'absolute_difference', 'mean_filter', 'median_filter', 'variance_filter',
-            'standard_deviation_filter', 'entropy_filter', 'laplacian_filter'
-        ]
-
-        decorated_count = 0
-        for func_name in common_functions:
-            if hasattr(cle_module, func_name):
-                func = getattr(cle_module, func_name)
-                if callable(func) and not hasattr(func, 'input_memory_type'):
-                    func.input_memory_type = "pyclesperanto"
-                    func.output_memory_type = "pyclesperanto"
-                    decorated_count += 1
-
-        logger.debug(f"Auto-decorated {decorated_count} common pyclesperanto functions")
-
-    except Exception as e:
-        logger.warning(f"Failed to auto-decorate pyclesperanto: {e}")
-
-
-def _decorate_skimage_on_import(skimage_module) -> None:
-    """Auto-decorate scikit-image functions when module is imported."""
-    try:
-        # For now, just mark that we've seen this module
-        # Full scikit-image decoration can be added later if needed
-        logger.debug(f"Skimage module imported: {skimage_module.__name__}")
-
-    except Exception as e:
-        logger.warning(f"Failed to auto-decorate skimage: {e}")
+# Import hook decoration functions removed - using existing registries
 
 
 def _auto_initialize_registry() -> None:
@@ -306,7 +235,6 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
         The function to register (decorated if create_wrapper=True, original if not)
     """
     from openhcs.constants import MemoryType
-    from openhcs.core.memory.decorators import numpy, cupy, torch, tensorflow, jax, pyclesperanto
     import sys
 
     # Step 1: Direct decoration (for subprocess compatibility)
@@ -317,6 +245,8 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
         return original_func
 
     # Step 2: Apply memory type decorator (includes dtype preservation, streams, OOM recovery)
+    from openhcs.core.memory.decorators import numpy, cupy, torch, tensorflow, jax, pyclesperanto
+
     if memory_type == MemoryType.NUMPY:
         wrapper_func = numpy(original_func)
     elif memory_type == MemoryType.CUPY:
@@ -334,17 +264,6 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
         wrapper_func = original_func
         wrapper_func.input_memory_type = memory_type.value
         wrapper_func.output_memory_type = memory_type.value
-
-    # Step 3: Module replacement (for best user experience)
-    # Skip module replacement to avoid interfering with internal library usage
-    # OpenHCS wrapped functions should only be used through the pipeline system
-    # Internal code should use original library functions directly
-    # module_name = original_func.__module__
-    # if module_name in sys.modules:
-    #     target_module = sys.modules[module_name]
-    #     if hasattr(target_module, func_name):
-    #         setattr(target_module, func_name, wrapper_func)
-    #         logger.debug(f"Replaced {module_name}.{func_name} with enhanced function")
 
     return wrapper_func
 
@@ -545,9 +464,7 @@ def get_valid_memory_types() -> Set[str]:
     return VALID_MEMORY_TYPES.copy()
 
 
-# Install import hook when this module is imported
-# This ensures external library functions are auto-decorated everywhere
-_install_import_hook()
+# Import hook system removed - using existing comprehensive registries
 
 
 def get_function_by_name(function_name: str, memory_type: str) -> Optional[Callable]:
