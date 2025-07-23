@@ -46,32 +46,16 @@ MASK_RETURNING_FUNCTIONS = {
 }
 
 
-def _scale_and_convert_cupy(result, target_dtype):
-    """
-    Scale CuPy results to target integer range and convert dtype.
-    
-    CuPy functions generally preserve dtypes better than scikit-image,
-    but we still need this for edge cases.
-    """
-    if not hasattr(result, 'dtype'):
-        return result
-        
-    # If result is floating point and target is integer, scale appropriately
-    if cp.issubdtype(result.dtype, cp.floating) and not cp.issubdtype(target_dtype, cp.floating):
-        # Clip to [0, 1] range and scale to integer range
-        clipped = cp.clip(result, 0, 1)
-        if target_dtype == cp.uint8:
-            return (clipped * 255).astype(target_dtype)
-        elif target_dtype == cp.uint16:
-            return (clipped * 65535).astype(target_dtype)
-        elif target_dtype == cp.uint32:
-            return (clipped * 4294967295).astype(target_dtype)
-        else:
-            # For other integer types, just convert without scaling
-            return result.astype(target_dtype)
-    
-    # Direct conversion for same numeric type families
-    return result.astype(target_dtype)
+# Import centralized scaling function
+try:
+    from openhcs.core.memory.decorators import _scale_and_convert_cupy
+except ImportError:
+    # Fallback for standalone usage
+    def _scale_and_convert_cupy(result, target_dtype):
+        """Fallback scaling function."""
+        if not hasattr(result, 'dtype'):
+            return result
+        return result.astype(target_dtype)
 
 
 def _auto_detect_cupy_array_compliance(result, original_image, original_dtype):
@@ -105,7 +89,8 @@ class ProcessingContract(Enum):
     UNKNOWN = "unknown"        # Could not determine
 
 
-def _create_cupy_dtype_preserving_wrapper(original_func, func_name):
+# CuPy dtype preserving wrapper moved to centralized decorators module
+def _create_cupy_dtype_preserving_wrapper_DEPRECATED(original_func, func_name):
     """
     Create a wrapper that preserves input data type and adds slice_by_slice parameter for CuPy functions.
 

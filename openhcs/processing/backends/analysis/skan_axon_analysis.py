@@ -128,7 +128,51 @@ def materialize_axon_analysis(
     return json_path
 
 
-@special_outputs(("axon_analysis", materialize_axon_analysis))
+def materialize_skeleton_visualizations(data: List[np.ndarray], path: str, filemanager) -> str:
+    """Materialize skeleton visualizations as individual TIFF files."""
+
+    if not data:
+        # Create empty summary file to indicate no visualizations were generated
+        summary_path = path.replace('.pkl', '_skeleton_summary.txt')
+        summary_content = "No skeleton visualizations generated (return_skeleton_visualizations=False)\n"
+        from openhcs.constants.constants import Backend
+        filemanager.save(summary_content, summary_path, Backend.DISK.value)
+        return summary_path
+
+    # Generate output file paths based on the input path
+    base_path = path.replace('.pkl', '')
+
+    # Save each visualization as a separate TIFF file
+    for i, visualization in enumerate(data):
+        viz_filename = f"{base_path}_slice_{i:03d}.tif"
+
+        # Convert visualization to appropriate dtype for saving (uint16 to match input images)
+        if visualization.dtype != np.uint16:
+            # Normalize to uint16 range if needed
+            if visualization.max() <= 1.0:
+                viz_uint16 = (visualization * 65535).astype(np.uint16)
+            else:
+                viz_uint16 = visualization.astype(np.uint16)
+        else:
+            viz_uint16 = visualization
+
+        # Save using filemanager
+        from openhcs.constants.constants import Backend
+        filemanager.save(viz_uint16, viz_filename, Backend.DISK.value)
+
+    # Return summary path
+    summary_path = f"{base_path}_skeleton_summary.txt"
+    summary_content = f"Skeleton visualizations saved: {len(data)} files\n"
+    summary_content += f"Base filename pattern: {base_path}_slice_XXX.tif\n"
+    summary_content += f"Visualization dtype: {data[0].dtype}\n"
+    summary_content += f"Visualization shape: {data[0].shape}\n"
+
+    filemanager.save(summary_content, summary_path, Backend.DISK.value)
+
+    return summary_path
+
+
+@special_outputs(("axon_analysis", materialize_axon_analysis), ("skeleton_visualizations", materialize_skeleton_visualizations))
 @numpy_func
 def skan_axon_skeletonize_and_analyze(
     image_stack: np.ndarray,
@@ -137,14 +181,15 @@ def skan_axon_skeletonize_and_analyze(
     threshold_value: Optional[float] = None,
     min_object_size: int = 100,
     min_branch_length: float = 0.0,
-    output_mode: OutputMode = OutputMode.SKELETON_OVERLAY,
+    return_skeleton_visualizations: bool = False,
+    skeleton_visualization_mode: OutputMode = OutputMode.SKELETON_OVERLAY,
     analysis_dimension: AnalysisDimension = AnalysisDimension.THREE_D
-) -> Tuple[np.ndarray, Dict[str, Any]]:
+) -> Tuple[np.ndarray, Dict[str, Any], List[np.ndarray]]:
     """
     Skeletonize axon images and perform comprehensive skeleton analysis.
-    
+
     Complete workflow: segmentation → skeletonization → analysis
-    
+
     Args:
         image_stack: 3D grayscale image to skeletonize (Z, Y, X format)
         voxel_spacing: Physical voxel spacing (z, y, x) in micrometers
@@ -152,13 +197,15 @@ def skan_axon_skeletonize_and_analyze(
         threshold_value: Manual threshold value (if threshold_method=MANUAL)
         min_object_size: Minimum object size for noise removal (voxels)
         min_branch_length: Minimum branch length threshold (micrometers)
-        output_mode: Return array type (SKELETON, SKELETON_OVERLAY, ORIGINAL, COMPOSITE)
+        return_skeleton_visualizations: Whether to generate skeleton visualizations as special output
+        skeleton_visualization_mode: Type of visualization (SKELETON, SKELETON_OVERLAY, ORIGINAL, COMPOSITE)
         analysis_dimension: Analysis mode (TWO_D or THREE_D)
-    
+
     Returns:
         Tuple containing:
-        - Output array: Based on output_mode parameter
+        - Original image stack: Input image unchanged (Z, Y, X)
         - Axon analysis results: Complete analysis data structure
+        - Skeleton visualizations: (Special output) List of visualization arrays if return_skeleton_visualizations=True
     """
     # Validate input
     if len(image_stack.shape) != 3:
@@ -169,7 +216,7 @@ def skan_axon_skeletonize_and_analyze(
     
     logger.info(f"Starting skan axon analysis: {image_stack.shape} image")
     logger.info(f"Parameters: threshold={threshold_method.value}, "
-                f"analysis={analysis_dimension.value}, output={output_mode.value}")
+                f"analysis={analysis_dimension.value}, visualizations={return_skeleton_visualizations}")
     
     # Step 1: Segmentation/Thresholding
     binary_stack = _segment_axons(image_stack, threshold_method, threshold_value)
@@ -194,21 +241,32 @@ def skan_axon_skeletonize_and_analyze(
     # Step 5: Filter results
     if min_branch_length > 0:
         branch_data = branch_data[branch_data['branch_distance'] >= min_branch_length]
-    
-    # Step 6: Generate output array based on mode
-    output_array = _create_output_array(
-        image_stack, binary_stack, skeleton_stack, branch_data, output_mode
-    )
-    
+
+    # Step 6: Generate skeleton visualizations if requested
+    skeleton_visualizations = []
+    if return_skeleton_visualizations:
+        # Generate visualization for each slice
+        for z in range(image_stack.shape[0]):
+            slice_image = image_stack[z]
+            slice_binary = binary_stack[z]
+            slice_skeleton = skeleton_stack[z]
+
+            # Create visualization for this slice
+            visualization = _create_output_array_2d(
+                slice_image, slice_binary, slice_skeleton, skeleton_visualization_mode
+            )
+            skeleton_visualizations.append(visualization)
+
     # Step 7: Compile comprehensive results
     results = _compile_analysis_results(
         branch_data, skeleton_stack, binary_stack, image_stack,
         voxel_spacing, analysis_type, threshold_method, min_object_size, min_branch_length
     )
-    
+
     logger.info(f"Analysis complete: {len(branch_data)} branches found")
-    
-    return output_array, results
+
+    # Always return original image, analysis results, and skeleton visualizations
+    return image_stack, results, skeleton_visualizations
 
 
 # Helper functions for segmentation and preprocessing
@@ -337,8 +395,49 @@ def _analyze_2d_slices(skeleton_stack, voxel_spacing):
         return pd.DataFrame()
 
 
+def _create_output_array_2d(slice_image, slice_binary, slice_skeleton, output_mode):
+    """Generate 2D output array based on specified mode."""
+
+    if output_mode == OutputMode.SKELETON:
+        # Return binary skeleton
+        return slice_skeleton.astype(np.uint8) * 255
+
+    elif output_mode == OutputMode.SKELETON_OVERLAY:
+        # Overlay skeleton on original image
+        output = slice_image.copy()
+        # Highlight skeleton pixels with maximum intensity
+        if slice_skeleton.any():
+            output[slice_skeleton] = slice_image.max()
+        return output
+
+    elif output_mode == OutputMode.ORIGINAL:
+        # Return original unchanged
+        return slice_image.copy()
+
+    elif output_mode == OutputMode.COMPOSITE:
+        # Side-by-side: original | binary | skeleton
+        y, x = slice_image.shape
+        composite = np.zeros((y, x * 3), dtype=slice_image.dtype)
+
+        # Original image
+        composite[:, :x] = slice_image
+
+        # Binary segmentation (scaled to match original intensity range)
+        binary_scaled = (slice_binary.astype(np.float32) * slice_image.max()).astype(slice_image.dtype)
+        composite[:, x:2*x] = binary_scaled
+
+        # Skeleton (scaled to match original intensity range)
+        skeleton_scaled = (slice_skeleton.astype(np.float32) * slice_image.max()).astype(slice_image.dtype)
+        composite[:, 2*x:3*x] = skeleton_scaled
+
+        return composite
+
+    else:
+        raise ValueError(f"Unknown output_mode: {output_mode}")
+
+
 def _create_output_array(image_stack, binary_stack, skeleton_stack, branch_data, output_mode):
-    """Generate output array based on specified mode."""
+    """Generate output array based on specified mode (legacy function, kept for compatibility)."""
 
     if output_mode == OutputMode.SKELETON:
         # Return binary skeleton

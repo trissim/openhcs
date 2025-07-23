@@ -96,8 +96,50 @@ def materialize_cell_counts(data: List[Union[CellCountResult, MultiChannelResult
         return _materialize_single_channel_results(data, path, filemanager)
 
 
+def materialize_segmentation_masks(data: List[np.ndarray], path: str, filemanager) -> str:
+    """Materialize segmentation masks as individual TIFF files."""
+
+    if not data:
+        # Create empty summary file to indicate no masks were generated
+        summary_path = path.replace('.pkl', '_segmentation_summary.txt')
+        summary_content = "No segmentation masks generated (return_segmentation_mask=False)\n"
+        from openhcs.constants.constants import Backend
+        filemanager.save(summary_content, summary_path, Backend.DISK.value)
+        return summary_path
+
+    # Generate output file paths based on the input path
+    base_path = path.replace('.pkl', '')
+
+    # Save each mask as a separate TIFF file
+    for i, mask in enumerate(data):
+        mask_filename = f"{base_path}_slice_{i:03d}.tif"
+
+        # Convert mask to appropriate dtype for saving (uint16 to match input images)
+        if mask.dtype != np.uint16:
+            # Normalize to uint16 range if needed
+            if mask.max() <= 1.0:
+                mask_uint16 = (mask * 65535).astype(np.uint16)
+            else:
+                mask_uint16 = mask.astype(np.uint16)
+        else:
+            mask_uint16 = mask
+
+        # Save using filemanager
+        from openhcs.constants.constants import Backend
+        filemanager.save(mask_uint16, mask_filename, Backend.DISK.value)
+
+    # Return summary path
+    summary_path = f"{base_path}_segmentation_summary.txt"
+    summary_content = f"Segmentation masks saved: {len(data)} files\n"
+    summary_content += f"Base filename pattern: {base_path}_slice_XXX.tif\n"
+
+    filemanager.save(summary_content, summary_path, Backend.DISK.value)
+
+    return summary_path
+
+
 @pyclesperanto_func
-@special_outputs(("cell_counts", materialize_cell_counts))
+@special_outputs(("cell_counts", materialize_cell_counts), ("segmentation_masks", materialize_segmentation_masks))
 def count_cells_single_channel(
     image_stack: np.ndarray,
     # Detection method and parameters
@@ -146,21 +188,16 @@ def count_cells_single_channel(
         return_segmentation_mask: Return segmentation masks in output
         
     Returns:
-        output_stack: Original image or segmentation masks (if return_segmentation_mask=True)
+        output_stack: Original image stack unchanged (Z, Y, X)
         cell_count_results: List of CellCountResult objects for each slice
+        segmentation_masks: (Special output) List of segmentation mask arrays if return_segmentation_mask=True
     """
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D")
     
     results = []
-    if return_segmentation_mask:
-        # Create zeros array with same shape as input
-        output_stack = cle.create_like(image_stack)
-    else:
-        # Create a copy of the input array
-        output_stack = cle.create_like(image_stack)
-        cle.copy(image_stack, output_stack)
-    
+    segmentation_masks = []
+
     # Store parameters for reproducibility (convert enums to values)
     parameters = {
         "detection_method": detection_method.value,
@@ -178,7 +215,7 @@ def count_cells_single_channel(
         "max_cell_area": max_cell_area,
         "remove_border_cells": remove_border_cells
     }
-    
+
     logging.info(f"Processing {image_stack.shape[0]} slices with {detection_method.value} method")
 
     for z_idx in range(image_stack.shape[0]):
@@ -193,16 +230,19 @@ def count_cells_single_channel(
         result = _detect_cells_single_method(
             slice_img, z_idx, detection_method.value, parameters
         )
-        
+
         results.append(result)
-        
-        # Create output based on return_segmentation_mask flag
+
+        # Create segmentation mask if requested
         if return_segmentation_mask:
-            output_stack[z_idx] = _create_segmentation_visualization(
+            segmentation_mask = _create_segmentation_visualization(
                 slice_img, result.cell_positions, max_sigma
             )
-    
-    return output_stack, results
+            segmentation_masks.append(segmentation_mask)
+
+    # Always return segmentation masks (empty list if not requested)
+    # This ensures consistent return signature for special outputs system
+    return image_stack, results, segmentation_masks
 
 
 @pyclesperanto_func

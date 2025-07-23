@@ -168,40 +168,25 @@ VALUE_RETURNING_FUNCTIONS = {
 MASK_RETURNING_FUNCTIONS = {
     'threshold_local', 'binary_erosion', 'binary_dilation', 'binary_opening',
     'binary_closing', 'binary_fill_holes', 'remove_small_objects',
-    'remove_small_holes', 'label'
+    'remove_small_holes'
+}
+
+# Category 4: Label-returning functions - take boolean input, return integer labels
+LABEL_RETURNING_FUNCTIONS = {
+    'label'
 }
 
 
-def _scale_and_convert(result, target_dtype):
-    """
-    Scale float results to target integer range and convert dtype.
-
-    Args:
-        result: Function output array
-        target_dtype: Target data type (input image dtype)
-
-    Returns:
-        Array converted to target dtype with proper scaling
-    """
-    if not hasattr(result, 'dtype'):
-        return result
-
-    # If result is floating point and target is integer, scale appropriately
-    if np.issubdtype(result.dtype, np.floating) and not np.issubdtype(target_dtype, np.floating):
-        # Clip to [0, 1] range and scale to integer range
-        clipped = np.clip(result, 0, 1)
-        if target_dtype == np.uint8:
-            return (clipped * 255).astype(target_dtype)
-        elif target_dtype == np.uint16:
-            return (clipped * 65535).astype(target_dtype)
-        elif target_dtype == np.uint32:
-            return (clipped * 4294967295).astype(target_dtype)
-        else:
-            # For other integer types, just convert without scaling
-            return result.astype(target_dtype)
-
-    # Direct conversion for same numeric type families
-    return result.astype(target_dtype)
+# Import centralized scaling function
+try:
+    from openhcs.core.memory.decorators import _scale_and_convert_numpy as _scale_and_convert
+except ImportError:
+    # Fallback for standalone usage
+    def _scale_and_convert(result, target_dtype):
+        """Fallback scaling function."""
+        if not hasattr(result, 'dtype'):
+            return result
+        return result.astype(target_dtype)
 
 
 def _auto_detect_array_compliance(result, original_image, original_dtype):
@@ -589,7 +574,8 @@ if __name__ == "__main__":
         print(f"  {meta.module}.{meta.name}: {meta.slice_by_slice_param}")
 
 
-def _create_dtype_preserving_wrapper(original_func, func_name):
+# Dtype preserving wrapper moved to centralized decorators module
+def _create_dtype_preserving_wrapper_DEPRECATED(original_func, func_name):
     """
     Create a wrapper that preserves input data type and adds slice_by_slice parameter.
 

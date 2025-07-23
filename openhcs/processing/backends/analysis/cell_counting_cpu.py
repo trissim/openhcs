@@ -70,6 +70,7 @@ class CellCountResult:
     cell_intensities: List[float]
     detection_confidence: List[float]
     parameters_used: Dict[str, Any]
+    binary_mask: Optional[np.ndarray] = None  # Actual binary mask for segmentation methods
 
 
 @dataclass
@@ -106,8 +107,55 @@ def materialize_cell_counts(data: List[Union[CellCountResult, MultiChannelResult
         return _materialize_single_channel_results(data, path, filemanager)
 
 
+def materialize_segmentation_masks(data: List[np.ndarray], path: str, filemanager) -> str:
+    """Materialize segmentation masks as individual TIFF files."""
+
+    logger.info(f"🔬 SEGMENTATION_MATERIALIZE: Called with path={path}, masks_count={len(data) if data else 0}")
+
+    if not data:
+        logger.info(f"🔬 SEGMENTATION_MATERIALIZE: No segmentation masks to materialize (return_segmentation_mask=False)")
+        # Create empty summary file to indicate no masks were generated
+        summary_path = path.replace('.pkl', '_segmentation_summary.txt')
+        summary_content = "No segmentation masks generated (return_segmentation_mask=False)\n"
+        filemanager.save(summary_content, summary_path, Backend.DISK.value)
+        return summary_path
+
+    # Generate output file paths based on the input path
+    base_path = path.replace('.pkl', '')
+
+    # Save each mask as a separate TIFF file
+    for i, mask in enumerate(data):
+        mask_filename = f"{base_path}_slice_{i:03d}.tif"
+
+        # Convert mask to appropriate dtype for saving (uint16 to match input images)
+        if mask.dtype != np.uint16:
+            # Normalize to uint16 range if needed
+            if mask.max() <= 1.0:
+                mask_uint16 = (mask * 65535).astype(np.uint16)
+            else:
+                mask_uint16 = mask.astype(np.uint16)
+        else:
+            mask_uint16 = mask
+
+        # Save using filemanager
+        filemanager.save(mask_uint16, mask_filename, Backend.DISK.value)
+        logger.debug(f"🔬 SEGMENTATION_MATERIALIZE: Saved mask {i} to {mask_filename}")
+
+    # Return summary path
+    summary_path = f"{base_path}_segmentation_summary.txt"
+    summary_content = f"Segmentation masks saved: {len(data)} files\n"
+    summary_content += f"Base filename pattern: {base_path}_slice_XXX.tif\n"
+    summary_content += f"Mask dtype: {data[0].dtype}\n"
+    summary_content += f"Mask shape: {data[0].shape}\n"
+
+    filemanager.save(summary_content, summary_path, Backend.DISK.value)
+    logger.info(f"🔬 SEGMENTATION_MATERIALIZE: Completed, saved {len(data)} masks")
+
+    return summary_path
+
+
 @numpy_func
-@special_outputs(("cell_counts", materialize_cell_counts))
+@special_outputs(("cell_counts", materialize_cell_counts), ("segmentation_masks", materialize_segmentation_masks))
 def count_cells_single_channel(
     image_stack: np.ndarray,
     # Detection method and parameters
@@ -156,15 +204,16 @@ def count_cells_single_channel(
         return_segmentation_mask: Return segmentation masks in output
         
     Returns:
-        output_stack: Original image or segmentation masks (if return_segmentation_mask=True)
+        output_stack: Original image stack unchanged (Z, Y, X)
         cell_count_results: List of CellCountResult objects for each slice
+        segmentation_masks: (Special output) List of segmentation mask arrays if return_segmentation_mask=True
     """
     if image_stack.ndim != 3:
         raise ValueError(f"Expected 3D image stack, got {image_stack.ndim}D")
     
     results = []
-    output_stack = np.zeros_like(image_stack) if return_segmentation_mask else image_stack.copy()
-    
+    segmentation_masks = []
+
     # Store parameters for reproducibility (convert enums to values)
     parameters = {
         "detection_method": detection_method.value,
@@ -182,7 +231,7 @@ def count_cells_single_channel(
         "max_cell_area": max_cell_area,
         "remove_border_cells": remove_border_cells
     }
-    
+
     logging.info(f"Processing {image_stack.shape[0]} slices with {detection_method.value} method")
 
     for z_idx in range(image_stack.shape[0]):
@@ -196,16 +245,19 @@ def count_cells_single_channel(
         result = _detect_cells_single_method(
             slice_img, z_idx, detection_method.value, parameters
         )
-        
+
         results.append(result)
-        
-        # Create output based on return_segmentation_mask flag
+
+        # Create segmentation mask if requested
         if return_segmentation_mask:
-            output_stack[z_idx] = _create_segmentation_visualization(
-                slice_img, result.cell_positions, max_sigma
+            segmentation_mask = _create_segmentation_visualization(
+                slice_img, result.cell_positions, max_sigma, result.cell_areas, result.binary_mask
             )
-    
-    return output_stack, results
+            segmentation_masks.append(segmentation_mask)
+
+    # Always return segmentation masks (empty list if not requested)
+    # This ensures consistent return signature for special outputs system
+    return image_stack, results, segmentation_masks
 
 
 @numpy_func
@@ -800,6 +852,7 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
     areas = []
     intensities = []
     confidences = []
+    valid_labels = []  # Track which labels pass the size filter
 
     for region in regions:
         # Filter by area
@@ -815,6 +868,12 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
             confidence = min(1.0, region.area / params["max_cell_area"])
             confidences.append(confidence)
 
+            # Track this label as valid
+            valid_labels.append(region.label)
+
+    # Create filtered binary mask with only cells that passed size filter
+    filtered_binary_mask = np.isin(labels, valid_labels)
+
     return CellCountResult(
         slice_index=slice_idx,
         method="watershed",
@@ -823,7 +882,8 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
         cell_areas=areas,
         cell_intensities=intensities,
         detection_confidence=confidences,
-        parameters_used=params
+        parameters_used=params,
+        binary_mask=filtered_binary_mask  # Only cells that passed all filters
     )
 
 
@@ -845,6 +905,7 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
     areas = []
     intensities = []
     confidences = []
+    valid_labels = []  # Track which labels pass the size filter
 
     for region in regions:
         # Filter by area
@@ -859,6 +920,12 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
             confidence = float(region.mean_intensity / image.max())
             confidences.append(confidence)
 
+            # Track this label as valid
+            valid_labels.append(region.label)
+
+    # Create filtered binary mask with only cells that passed size filter
+    filtered_binary_mask = np.isin(labels, valid_labels)
+
     return CellCountResult(
         slice_index=slice_idx,
         method="threshold",
@@ -867,7 +934,8 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
         cell_areas=areas,
         cell_intensities=intensities,
         detection_confidence=confidences,
-        parameters_used=params
+        parameters_used=params,
+        binary_mask=filtered_binary_mask  # Only cells that passed all filters
     )
 
 
@@ -1119,16 +1187,35 @@ def _colocalization_manders(
 def _create_segmentation_visualization(
     image: np.ndarray,
     positions: List[Tuple[float, float]],
-    max_sigma: float
+    max_sigma: float,
+    cell_areas: List[float] = None,
+    binary_mask: np.ndarray = None
 ) -> np.ndarray:
-    """Create segmentation visualization with detected cells marked."""
+    """Create segmentation visualization using actual binary mask if available."""
+
+    # If we have the actual binary mask from detection, use it directly
+    if binary_mask is not None:
+        # Convert boolean mask to uint16 to match input image dtype
+        # Use max intensity for detected cells, 0 for background
+        max_intensity = image.max() if image.max() > 0 else 65535
+        return (binary_mask * max_intensity).astype(image.dtype)
+
+    # Fallback to original circular marker approach for blob methods
     visualization = image.copy()
 
-    # Mark detected cells
-    for x, y in positions:
-        # Create small circular markers
+    # Mark detected cells with their actual sizes
+    for i, (x, y) in enumerate(positions):
+        # Use actual cell area if available, otherwise fall back to max_sigma
+        if cell_areas and i < len(cell_areas):
+            # Convert area to radius (assuming circular cells)
+            radius = np.sqrt(cell_areas[i] / np.pi)
+        else:
+            # Fallback to max_sigma for backward compatibility
+            radius = max_sigma * 2
+
+        # Create circular markers with actual cell size
         rr, cc = np.ogrid[:image.shape[0], :image.shape[1]]
-        mask = (rr - y)**2 + (cc - x)**2 <= (max_sigma * 2)**2
+        mask = (rr - y)**2 + (cc - x)**2 <= radius**2
 
         # Ensure indices are within bounds
         valid_mask = (rr >= 0) & (rr < image.shape[0]) & (cc >= 0) & (cc < image.shape[1])

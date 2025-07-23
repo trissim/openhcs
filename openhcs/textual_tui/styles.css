@@ -464,4 +464,13 @@ StartMenuWidget {
 
 /* WindowBar customization removed - show both buttons */
 
+/* === TABBED CONTENT ALIGNMENT === */
+
+/* Spacer tab takes remaining space to push action buttons to the right */
+.spacer-tab {
+    width: 1fr;
+    background: transparent;
+    border: none;
+}
+
 

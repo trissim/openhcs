@@ -288,21 +288,25 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
     """
     Unified decoration pattern for all external library functions.
 
+    NOTE: Dtype preservation is now handled at the decorator level in decorators.py.
+    This function now only applies memory type attributes and module replacement.
+
     This applies the same hybrid approach across all registries:
     1. Direct decoration (for subprocess compatibility)
-    2. Optional enhanced wrapper (for dtype preservation)
+    2. Memory type decorator application (for dtype preservation and other features)
     3. Module replacement (for best user experience)
 
     Args:
         original_func: The original external library function
         func_name: Function name for wrapper creation
-        memory_type: MemoryType enum value (NUMPY, CUPY, PYCLESPERANTO)
-        create_wrapper: Whether to create dtype-preserving wrapper
+        memory_type: MemoryType enum value (NUMPY, CUPY, PYCLESPERANTO, TORCH, TENSORFLOW, JAX)
+        create_wrapper: Whether to apply memory type decorator (default: True)
 
     Returns:
-        The function to register (wrapper if created, original if not)
+        The function to register (decorated if create_wrapper=True, original if not)
     """
     from openhcs.constants import MemoryType
+    from openhcs.core.memory.decorators import numpy, cupy, torch, tensorflow, jax, pyclesperanto
     import sys
 
     # Step 1: Direct decoration (for subprocess compatibility)
@@ -312,30 +316,35 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
     if not create_wrapper:
         return original_func
 
-    # Step 2: Create enhanced wrapper (for dtype preservation)
+    # Step 2: Apply memory type decorator (includes dtype preservation, streams, OOM recovery)
     if memory_type == MemoryType.NUMPY:
-        from openhcs.processing.backends.analysis.scikit_image_registry import _create_dtype_preserving_wrapper
-        wrapper_func = _create_dtype_preserving_wrapper(original_func, func_name)
+        wrapper_func = numpy(original_func)
     elif memory_type == MemoryType.CUPY:
-        from openhcs.processing.backends.analysis.cupy_registry import _create_cupy_dtype_preserving_wrapper
-        wrapper_func = _create_cupy_dtype_preserving_wrapper(original_func, func_name)
+        wrapper_func = cupy(original_func)
+    elif memory_type == MemoryType.TORCH:
+        wrapper_func = torch(original_func)
+    elif memory_type == MemoryType.TENSORFLOW:
+        wrapper_func = tensorflow(original_func)
+    elif memory_type == MemoryType.JAX:
+        wrapper_func = jax(original_func)
     elif memory_type == MemoryType.PYCLESPERANTO:
-        from openhcs.processing.backends.analysis.pyclesperanto_registry import _create_pyclesperanto_array_compliant_wrapper
-        wrapper_func = _create_pyclesperanto_array_compliant_wrapper(original_func, func_name)
+        wrapper_func = pyclesperanto(original_func)
     else:
-        # For other GPU libraries, use simpler wrapper (they generally preserve dtypes better)
+        # Fallback for unknown memory types
         wrapper_func = original_func
-
-    wrapper_func.input_memory_type = memory_type.value
-    wrapper_func.output_memory_type = memory_type.value
+        wrapper_func.input_memory_type = memory_type.value
+        wrapper_func.output_memory_type = memory_type.value
 
     # Step 3: Module replacement (for best user experience)
-    module_name = original_func.__module__
-    if module_name in sys.modules:
-        target_module = sys.modules[module_name]
-        if hasattr(target_module, func_name):
-            setattr(target_module, func_name, wrapper_func)
-            logger.debug(f"Replaced {module_name}.{func_name} with enhanced function")
+    # Skip module replacement to avoid interfering with internal library usage
+    # OpenHCS wrapped functions should only be used through the pipeline system
+    # Internal code should use original library functions directly
+    # module_name = original_func.__module__
+    # if module_name in sys.modules:
+    #     target_module = sys.modules[module_name]
+    #     if hasattr(target_module, func_name):
+    #         setattr(target_module, func_name, wrapper_func)
+    #         logger.debug(f"Replaced {module_name}.{func_name} with enhanced function")
 
     return wrapper_func
 

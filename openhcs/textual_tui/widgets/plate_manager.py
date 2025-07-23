@@ -125,7 +125,6 @@ class PlateManagerWidget(ButtonListWidget):
             ButtonConfig("Code", "code_plate", disabled=True),  # Generate Python code
             ButtonConfig("Save", "save_python_script", disabled=True),  # Save Python script
             # ButtonConfig("Export", "export_ome_zarr", disabled=True),  # Export to OME-ZARR - HIDDEN FROM UI
-            ButtonConfig("Debug", "save_debug_pickle", disabled=True),  # Debug functionality
         ]
         super().__init__(
             button_configs=button_configs,
@@ -199,7 +198,6 @@ class PlateManagerWidget(ButtonListWidget):
             "code_plate": self.action_code_plate,  # Generate Python code
             "save_python_script": self.action_save_python_script,  # Save Python script
             # "export_ome_zarr": self.action_export_ome_zarr,  # HIDDEN
-            "save_debug_pickle": self.action_save_debug_pickle,
         }
         if button_id in action_map:
             action = action_map[button_id]
@@ -412,12 +410,7 @@ class PlateManagerWidget(ButtonListWidget):
             # except:
             #     pass  # Button is hidden from UI
 
-            # Debug button - enabled when subprocess data is available
-            has_debug_data = hasattr(self, '_last_subprocess_data')
-            try:
-                self.query_one("#save_debug_pickle").disabled = not has_debug_data
-            except:
-                pass  # Button might not be mounted yet
+            # Debug button removed - no longer needed
 
         except Exception as e:
             # Only log if it's not a mounting/unmounting issue
@@ -604,10 +597,7 @@ class PlateManagerWidget(ButtonListWidget):
             logger.debug(f"🔥 Unique ID: {unique_id}")
             logger.debug(f"🔥 Actual log file: {actual_log_file_path}")
 
-            # DEBUGGING: Store subprocess data for manual debugging
-            self._last_subprocess_data = subprocess_data
-            self._last_data_file_path = data_file.name
-            self._last_log_file_path = actual_log_file_path
+            # Debug data storage removed - no longer needed
 
             # Create subprocess (like integration tests)
             subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
@@ -1009,58 +999,7 @@ class PlateManagerWidget(ButtonListWidget):
         # Run export in background
         asyncio.create_task(run_export())
 
-    async def action_save_debug_pickle(self) -> None:
-        """Save the last subprocess pickle file for manual debugging."""
-        if not hasattr(self, '_last_subprocess_data'):
-            self.app.show_error("No Debug Data", "No subprocess data available. Run execution first.")
-            return
-
-        # Enhanced file browser import removed - now using window system
-        # Generate default filename with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_filename = f"debug_subprocess_data_{timestamp}.pkl"
-
-        def handle_save_result(selected_path):
-            """Handle the file save result."""
-            if selected_path is None:
-                self.app.current_status = "Debug pickle save cancelled"
-                return
-
-            try:
-                # Use debug module to export data
-                from openhcs.debug.export import export_debug_data
-
-                exported_files = export_debug_data(
-                    subprocess_data=self._last_subprocess_data,
-                    output_path=selected_path,
-                    data_file_path=self._last_data_file_path,
-                    log_file_path=self._last_log_file_path
-                )
-
-                # Create status message with all exported files
-                file_names = [path.name for path in exported_files.values()]
-                self.app.current_status = f"Debug files saved: {', '.join(file_names)}"
-                logger.debug(f"Debug subprocess data saved to {selected_path}")
-
-            except Exception as e:
-                error_msg = f"Failed to save debug pickle: {e}"
-                logger.error(error_msg, exc_info=True)
-                self.app.show_error("Save Failed", error_msg)
-
-        # Open textual-window file browser for saving
-        await self.window_service.open_file_browser(
-            file_manager=self.filemanager,
-            initial_path=get_cached_browser_path(PathCacheKey.DEBUG_FILES),
-            backend=Backend.DISK,
-            title="Save Debug Subprocess Data",
-            mode="save",
-            selection_mode=SelectionMode.FILES_ONLY,
-            filter_extensions=['.pkl'],
-            default_filename=default_filename,
-            cache_key=PathCacheKey.DEBUG_FILES,
-            on_result_callback=handle_save_result,
-            caller_id="plate_manager"
-        )
+    # Debug functionality removed - no longer needed
 
     async def _open_plate_directory_browser(self):
         """Open textual-window file browser for plate directory selection."""

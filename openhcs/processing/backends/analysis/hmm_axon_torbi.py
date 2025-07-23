@@ -12,14 +12,131 @@ import networkx as nx
 import skimage
 import math
 from enum import Enum
-from typing import Tuple, Dict, List, Optional
+from typing import Tuple, Dict, List, Optional, Any
 from skimage.feature import canny, blob_dog as local_max
 from skimage.filters import median, threshold_li
 from skimage.morphology import remove_small_objects, skeletonize
 from openhcs.core.memory.decorators import torch as torch_func
+from openhcs.core.pipeline.function_contracts import special_outputs
 
 # Import torbi for GPU-accelerated Viterbi decoding
 import torbi
+
+
+def materialize_hmm_analysis(
+    hmm_analysis_data: Dict[str, Any],
+    path: str,
+    filemanager,
+    **kwargs
+) -> str:
+    """
+    Materialize HMM neurite tracing analysis results to disk.
+
+    Creates multiple output files:
+    - JSON file with graph data and summary metrics
+    - GraphML file with the NetworkX graph
+    - CSV file with edge data
+
+    Args:
+        hmm_analysis_data: The HMM analysis results dictionary
+        path: Base path for output files (from special output path)
+        filemanager: FileManager instance for consistent I/O
+        **kwargs: Additional materialization options
+
+    Returns:
+        str: Path to the primary output file (JSON summary)
+    """
+    import json
+    import networkx as nx
+    from pathlib import Path
+    from openhcs.constants.constants import Backend
+
+    # Generate output file paths
+    base_path = path.replace('.pkl', '')
+    json_path = f"{base_path}.json"
+    graphml_path = f"{base_path}_graph.graphml"
+    csv_path = f"{base_path}_edges.csv"
+
+    # Ensure output directory exists
+    output_dir = Path(json_path).parent
+    filemanager.ensure_directory(str(output_dir), Backend.DISK.value)
+
+    # 1. Save summary and metadata as JSON (primary output)
+    summary_data = {
+        'analysis_type': 'hmm_neurite_tracing_torbi',
+        'summary': hmm_analysis_data['summary'],
+        'metadata': hmm_analysis_data['metadata']
+    }
+    json_content = json.dumps(summary_data, indent=2, default=str)
+    filemanager.save(json_content, json_path, Backend.DISK.value)
+
+    # 2. Save NetworkX graph as GraphML
+    graph = hmm_analysis_data['graph']
+    if graph and graph.number_of_nodes() > 0:
+        # Use direct file I/O for GraphML (NetworkX doesn't support string I/O)
+        nx.write_graphml(graph, graphml_path)
+
+        # 3. Save edge data as CSV
+        if graph.number_of_edges() > 0:
+            import pandas as pd
+            edge_data = []
+            for u, v, data in graph.edges(data=True):
+                edge_info = {
+                    'source_x': u[0], 'source_y': u[1],
+                    'target_x': v[0], 'target_y': v[1],
+                    **data  # Include any edge attributes
+                }
+                edge_data.append(edge_info)
+
+            edge_df = pd.DataFrame(edge_data)
+            csv_content = edge_df.to_csv(index=False)
+            filemanager.save(csv_content, csv_path, Backend.DISK.value)
+
+    return json_path
+
+
+def materialize_trace_visualizations(data: List[np.ndarray], path: str, filemanager) -> str:
+    """Materialize trace visualizations as individual TIFF files."""
+
+    if not data:
+        # Create empty summary file to indicate no visualizations were generated
+        summary_path = path.replace('.pkl', '_trace_summary.txt')
+        summary_content = "No trace visualizations generated (return_trace_visualizations=False)\n"
+        from openhcs.constants.constants import Backend
+        filemanager.save(summary_content, summary_path, Backend.DISK.value)
+        return summary_path
+
+    # Generate output file paths based on the input path
+    base_path = path.replace('.pkl', '')
+
+    # Save each visualization as a separate TIFF file
+    for i, visualization in enumerate(data):
+        viz_filename = f"{base_path}_slice_{i:03d}.tif"
+
+        # Convert visualization to appropriate dtype for saving (uint16 to match input images)
+        if visualization.dtype != np.uint16:
+            # Normalize to uint16 range if needed
+            if visualization.max() <= 1.0:
+                viz_uint16 = (visualization * 65535).astype(np.uint16)
+            else:
+                viz_uint16 = visualization.astype(np.uint16)
+        else:
+            viz_uint16 = visualization
+
+        # Save using filemanager
+        from openhcs.constants.constants import Backend
+        filemanager.save(viz_uint16, viz_filename, Backend.DISK.value)
+
+    # Return summary path
+    summary_path = f"{base_path}_trace_summary.txt"
+    summary_content = f"Trace visualizations saved: {len(data)} files\n"
+    summary_content += f"Base filename pattern: {base_path}_slice_XXX.tif\n"
+    summary_content += f"Visualization dtype: {data[0].dtype}\n"
+    summary_content += f"Visualization shape: {data[0].shape}\n"
+
+    filemanager.save(summary_content, summary_path, Backend.DISK.value)
+
+    return summary_path
 
 # Import alvahmm - use torbi version from GitHub dependency
 from alva_machinery.markov import aChain_torbi as alva_MCMC_torbi
@@ -325,11 +442,13 @@ def create_visualization_array(
     else:
         raise ValueError(f"Unknown visualization mode: {mode}")
 
+@special_outputs(("hmm_analysis", materialize_hmm_analysis), ("trace_visualizations", materialize_trace_visualizations))
 @torch_func
 def trace_neurites_rrs_alva_torbi(
     image_stack: torch.Tensor,
     seeding_method: SeedingMethod = SeedingMethod.BLOB_DETECTION,
-    visualization_mode: VisualizationMode = VisualizationMode.TRACE_ONLY,
+    return_trace_visualizations: bool = False,
+    trace_visualization_mode: VisualizationMode = VisualizationMode.TRACE_ONLY,
     chain_level: float = 1.05,
     node_r: Optional[int] = None,
     total_node: Optional[int] = None,
@@ -340,7 +459,7 @@ def trace_neurites_rrs_alva_torbi(
     threshold: float = 0.02,
     normalize_image: bool = False,
     percentile: float = 99.9
-) -> Tuple[torch.Tensor, nx.Graph]:
+) -> Tuple[torch.Tensor, Dict[str, Any], List[np.ndarray]]:
     """
     Trace neurites using the alvahmm RRS algorithm with torbi GPU acceleration.
 
@@ -351,7 +470,8 @@ def trace_neurites_rrs_alva_torbi(
     Args:
         image_stack: 3D torch tensor of shape (Z, Y, X) - input image stack
         seeding_method: Method for seed generation (RANDOM=paper default, BLOB_DETECTION=enhanced)
-        visualization_mode: How to visualize results (NONE, TRACE_ONLY, OVERLAY)
+        return_trace_visualizations: Whether to generate trace visualizations as special output
+        trace_visualization_mode: How to visualize results (NONE, TRACE_ONLY, OVERLAY)
         chain_level: Validation threshold for HMM chains (default: 1.05)
         node_r: Path length between adjacent nodes (default: None, uses alvahmm default)
         total_node: Number of HMM nodes in chain (default: None, uses alvahmm default)
@@ -364,8 +484,9 @@ def trace_neurites_rrs_alva_torbi(
         percentile: Percentile for normalization if enabled (default: 99.9)
 
     Returns:
-        result_image: 3D torch tensor (same dimensions as input) with visualization based on mode
-        graph: NetworkX graph object with traced neurites and edge weights
+        result_image: Original image stack unchanged (Z, Y, X)
+        analysis_results: HMM analysis data structure with graph and metrics
+        trace_visualizations: (Special output) List of visualization arrays if return_trace_visualizations=True
     """
     # Validate input is 3D
     if image_stack.ndim != 3:
@@ -376,8 +497,8 @@ def trace_neurites_rrs_alva_torbi(
 
     # Process each slice individually
     Z, Y, X = image_stack.shape
-    result_image = torch.zeros((Z, Y, X), dtype=torch.uint8, device=device)
     all_graphs = []
+    trace_visualizations = []
 
     for z in range(Z):
         im_axon = image_stack[z].cpu().numpy().astype(np.float64)
@@ -412,14 +533,85 @@ def trace_neurites_rrs_alva_torbi(
         graph = extract_graph(root_tree_xx, root_tree_yy)
         all_graphs.append(graph)
 
-        # Create visualization for this slice
-        result_2d = create_visualization_array(im_axon, graph, visualization_mode)
-        result_image[z] = torch.from_numpy(result_2d).to(device)
+        # Create visualization for this slice if requested
+        if return_trace_visualizations:
+            visualization = create_visualization_array(im_axon, graph, trace_visualization_mode)
+            trace_visualizations.append(visualization)
 
     # Combine all graphs (for compatibility, return the first one)
     combined_graph = all_graphs[0] if all_graphs else nx.Graph()
 
-    return result_image, combined_graph
+    # Compile analysis results
+    analysis_results = _compile_hmm_analysis_results(
+        combined_graph, all_graphs, image_stack.shape,
+        seeding_method, trace_visualization_mode, chain_level,
+        node_r, total_node, line_length_min
+    )
+
+    # Always return original image, analysis results, and trace visualizations
+    return image_stack, analysis_results, trace_visualizations
+
+
+def _compile_hmm_analysis_results(
+    combined_graph: nx.Graph,
+    all_graphs: List[nx.Graph],
+    image_shape: Tuple[int, int, int],
+    seeding_method,  # SeedingMethod enum
+    visualization_mode,  # VisualizationMode enum
+    chain_level: float,
+    node_r: Optional[int],
+    total_node: Optional[int],
+    line_length_min: int
+) -> Dict[str, Any]:
+    """Compile comprehensive HMM analysis results for torbi version."""
+    from datetime import datetime
+
+    # Compute summary metrics from the graph
+    num_nodes = combined_graph.number_of_nodes()
+    num_edges = combined_graph.number_of_edges()
+
+    # Calculate total trace length
+    total_length = 0.0
+    edge_lengths = []
+    for u, v, data in combined_graph.edges(data=True):
+        # Calculate Euclidean distance between nodes
+        x1, y1 = u
+        x2, y2 = v
+        length = ((x2 - x1)**2 + (y2 - y1)**2)**0.5
+        edge_lengths.append(length)
+        total_length += length
+
+    # Summary metrics
+    summary = {
+        'total_trace_length': float(total_length),
+        'num_nodes': int(num_nodes),
+        'num_edges': int(num_edges),
+        'num_slices_processed': len(all_graphs),
+        'mean_edge_length': float(sum(edge_lengths) / len(edge_lengths)) if edge_lengths else 0.0,
+        'max_edge_length': float(max(edge_lengths)) if edge_lengths else 0.0,
+        'graph_density': float(nx.density(combined_graph)) if num_nodes > 1 else 0.0,
+        'num_connected_components': int(nx.number_connected_components(combined_graph)),
+    }
+
+    # Metadata
+    metadata = {
+        'algorithm': 'alvahmm_rrs_torbi',
+        'seeding_method': seeding_method.value,
+        'visualization_mode': visualization_mode.value,
+        'chain_level': chain_level,
+        'node_r': node_r,
+        'total_node': total_node,
+        'line_length_min': line_length_min,
+        'image_shape': image_shape,
+        'processing_timestamp': datetime.now().isoformat(),
+        'gpu_accelerated': True,
+    }
+
+    return {
+        'summary': summary,
+        'graph': combined_graph,
+        'metadata': metadata
+    }
 
 
 # Legacy file-based processing function (kept for reference)

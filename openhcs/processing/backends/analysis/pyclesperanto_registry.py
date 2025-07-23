@@ -60,30 +60,40 @@ class Contract(Enum):
     DIM_CHANGE = auto()   # output is scalar, table or different shape ➔ excluded
 
 
-class DtypeConversion(Enum):
-    """Data type conversion modes for pyclesperanto functions."""
+# Import DtypeConversion from centralized location
+try:
+    from openhcs.core.memory.decorators import DtypeConversion, _scale_and_convert_pyclesperanto
+except ImportError:
+    # Fallback for standalone usage
+    from enum import Enum
+    import numpy as np
 
-    PRESERVE_INPUT = "preserve"     # Keep input dtype (default)
-    NATIVE_OUTPUT = "native"        # Use pyclesperanto's native output
-    UINT8 = "uint8"                # Force uint8 (0-255 range)
-    UINT16 = "uint16"              # Force uint16 (microscopy standard)
-    INT16 = "int16"                # Force int16 (signed microscopy data)
-    INT32 = "int32"                # Force int32 (large integer values)
-    FLOAT32 = "float32"            # Force float32 (GPU performance)
-    FLOAT64 = "float64"            # Force float64 (maximum precision)
+    class DtypeConversion(Enum):
+        """Data type conversion modes for pyclesperanto functions."""
+        PRESERVE_INPUT = "preserve"
+        NATIVE_OUTPUT = "native"
+        UINT8 = "uint8"
+        UINT16 = "uint16"
+        INT16 = "int16"
+        INT32 = "int32"
+        FLOAT32 = "float32"
+        FLOAT64 = "float64"
 
-    @property
-    def numpy_dtype(self):
-        """Get the corresponding numpy dtype."""
-        dtype_map = {
-            self.UINT8: np.uint8,
-            self.UINT16: np.uint16,
-            self.INT16: np.int16,
-            self.INT32: np.int32,
-            self.FLOAT32: np.float32,
-            self.FLOAT64: np.float64,
-        }
-        return dtype_map.get(self, None)
+        @property
+        def numpy_dtype(self):
+            dtype_map = {
+                self.UINT8: np.uint8,
+                self.UINT16: np.uint16,
+                self.INT16: np.int16,
+                self.INT32: np.int32,
+                self.FLOAT32: np.float32,
+                self.FLOAT64: np.float64,
+            }
+            return dtype_map.get(self, None)
+
+    def _scale_and_convert_pyclesperanto(result, target_dtype):
+        """Fallback scaling function."""
+        return result.astype(target_dtype)
 
 
 @dataclass(frozen=True)
@@ -298,74 +308,7 @@ if __name__ == "__main__":  # pragma: no cover – manual use
     pprint({k: len(v) for k, v in summary.items()})
 
 
-def _scale_and_convert_pyclesperanto(result, target_dtype):
-    """
-    Scale pyclesperanto results to target integer range and convert dtype.
-
-    pyclesperanto functions often return float32 regardless of input type,
-    similar to scikit-image behavior.
-    """
-    try:
-        import pyclesperanto as cle
-        import numpy as np
-    except ImportError:
-        return result
-
-    if not hasattr(result, 'dtype'):
-        return result
-
-    # Check if result is floating point and target is integer
-    result_is_float = np.issubdtype(result.dtype, np.floating)
-    target_is_int = target_dtype in [np.uint8, np.uint16, np.uint32, np.int8, np.int16, np.int32]
-
-    if result_is_float and target_is_int:
-        # For pyclesperanto, we need to handle the scaling differently
-        # pyclesperanto functions often return values in a different range than input
-
-        # Get min/max of result for proper scaling
-        result_min = float(cle.minimum_of_all_pixels(result))
-        result_max = float(cle.maximum_of_all_pixels(result))
-
-        if result_max > result_min:  # Avoid division by zero
-            # Normalize to [0, 1] range
-            # Step 1: subtract minimum (result - min)
-            normalized = cle.subtract_image_from_scalar(result, scalar=result_min)
-            # Step 2: divide by range (result - min) / (max - min) = multiply by 1/(max-min)
-            range_val = result_max - result_min
-            normalized = cle.multiply_image_and_scalar(normalized, scalar=1.0/range_val)
-
-            # Scale to target dtype range
-            if target_dtype == np.uint8:
-                scaled = cle.multiply_image_and_scalar(normalized, scalar=255.0)
-            elif target_dtype == np.uint16:
-                scaled = cle.multiply_image_and_scalar(normalized, scalar=65535.0)
-            elif target_dtype == np.uint32:
-                scaled = cle.multiply_image_and_scalar(normalized, scalar=4294967295.0)
-            elif target_dtype == np.int16:
-                # Scale to int16 range: -32768 to 32767
-                scaled = cle.multiply_image_and_scalar(normalized, scalar=65535.0)
-                scaled = cle.subtract_image_from_scalar(scaled, scalar=32768.0)
-            elif target_dtype == np.int32:
-                # Scale to int32 range: -2147483648 to 2147483647
-                scaled = cle.multiply_image_and_scalar(normalized, scalar=4294967295.0)
-                scaled = cle.subtract_image_from_scalar(scaled, scalar=2147483648.0)
-            else:
-                scaled = normalized
-
-            # Convert to target dtype using push/pull method
-            scaled_cpu = cle.pull(scaled).astype(target_dtype)
-            return cle.push(scaled_cpu)
-        else:
-            # Constant image, just convert dtype
-            result_cpu = cle.pull(result).astype(target_dtype)
-            return cle.push(result_cpu)
-
-    # Direct conversion for same numeric type families or if no conversion needed
-    if result.dtype != target_dtype:
-        result_cpu = cle.pull(result).astype(target_dtype)
-        return cle.push(result_cpu)
-    else:
-        return result
+# _scale_and_convert_pyclesperanto is now imported from decorators module
 
 
 def _create_pyclesperanto_array_compliant_wrapper(original_func, func_name):

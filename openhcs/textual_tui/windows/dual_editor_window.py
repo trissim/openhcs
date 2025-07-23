@@ -58,6 +58,29 @@ class TabbedContentWithButtons(TabbedContent):
         self.save_callback = None
         self.close_callback = None
 
+    def _get_content_switcher(self) -> Optional[ContentSwitcher]:
+        """Safely get the content switcher."""
+        try:
+            return self.query_one(ContentSwitcher)
+        except:
+            return None
+
+    def _safe_switch_content(self, content_id: str) -> bool:
+        """Safely switch content, returning True if successful."""
+        switcher = self._get_content_switcher()
+        if not switcher:
+            return False
+
+        try:
+            # Check if the content actually exists before switching
+            switcher.get_child_by_id(content_id)
+            switcher.current = content_id
+            return True
+        except:
+            # Content doesn't exist (probably a button tab), ignore silently
+            logger.debug(f"Ignoring switch to non-existent content: {content_id}")
+            return False
+
     def set_callbacks(self, save_callback: Optional[Callable] = None, close_callback: Optional[Callable] = None):
         """Set the callbacks for save and close buttons."""
         self.save_callback = save_callback
@@ -98,10 +121,18 @@ class TabbedContentWithButtons(TabbedContent):
         spacer = Tab("", id="spacer_tab", disabled=True)        # visual gap
         spacer.add_class("spacer-tab")
 
+        # Create button tabs with explicit styling to distinguish them
+        save_button = ButtonTab("Save", "save", disabled=False)  # Always enabled
+        close_button = ButtonTab("Close", "close")
+
+        # Add additional classes for safety
+        save_button.add_class("action-button")
+        close_button.add_class("action-button")
+
         tabs.extend([
             spacer,
-            ButtonTab("Save", "save", disabled=False),  # Always enabled
-            ButtonTab("Close", "close"),
+            save_button,
+            close_button,
         ])
 
         # yield the single ContentTabs row (must be an immediate child)
@@ -116,14 +147,22 @@ class TabbedContentWithButtons(TabbedContent):
     def _on_tabs_tab_activated(
         self, event: Tabs.TabActivated
     ) -> None:
-        """Override to prevent button tabs from being activated as content tabs."""
-        # Check if the activated tab is a button tab by ID (more reliable than isinstance)
+        """Override to safely handle tab activation, including button tabs."""
+        # Check if the activated tab is a button tab by ID
         if hasattr(event, 'tab') and event.tab.id and event.tab.id.startswith('button-'):
             # Don't activate button tabs as content tabs
             event.stop()
             return
 
-        # For regular tabs, use the normal behavior
+        # For regular tabs, use safe switching instead of the default behavior
+        if hasattr(event, 'tab') and event.tab.id:
+            content_id = ContentTab.sans_prefix(event.tab.id)
+            if self._safe_switch_content(content_id):
+                # Successfully switched, stop the event to prevent default handling
+                event.stop()
+                return
+
+        # If we get here, let the default behavior handle it
         super()._on_tabs_tab_activated(event)
 
     def on_button_tab_button_clicked(self, event: ButtonTab.ButtonClicked) -> None:
@@ -132,6 +171,15 @@ class TabbedContentWithButtons(TabbedContent):
             self.save_callback()
         elif event.button_id == "close" and self.close_callback:
             self.close_callback()
+
+    def on_resize(self, event) -> None:
+        """Handle window resize to readjust tab layout."""
+        # Refresh the tabs to recalculate their layout
+        try:
+            tabs = self.query_one(ContentTabs)
+            tabs.refresh()
+        except:
+            pass  # Tabs not ready yet
 
 
 
