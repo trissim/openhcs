@@ -16,7 +16,7 @@ from textual.widgets import Button, SelectionList, Static
 from textual.widgets._selection_list import Selection
 from textual.reactive import reactive
 from textual.strip import Strip
-from textual.events import Click
+from textual.events import Click, Resize
 from rich.segment import Segment
 from rich.style import Style
 
@@ -64,6 +64,24 @@ class InlineButtonSelectionList(SelectionList):
             max_width = max(max_width, content_width)
 
         return max_width
+
+    def _calculate_option_height(self, text: str, available_width: int) -> int:
+        """Calculate the height needed for an option based on text length and available width."""
+        if not text or available_width <= 7:  # Need space for buttons
+            return 1
+
+        # Account for button space (7 chars) and padding
+        text_width = available_width - 7 - 2  # buttons + padding
+
+        if text_width <= 0:
+            return 1
+
+        # Calculate how many lines needed for the text
+        text_length = len(text)
+        lines_needed = max(1, (text_length + text_width - 1) // text_width)  # Ceiling division
+
+        # Cap at 3 lines maximum to prevent excessive height
+        return min(lines_needed, 3)
 
 
 
@@ -155,6 +173,9 @@ class ButtonListWidget(Widget):
     selected_item: reactive[str] = reactive("")  # First selected item (for backward compatibility)
     highlighted_item: reactive[str] = reactive("")  # Currently highlighted item (blue highlight)
     selected_items: reactive[List[str]] = reactive([])  # All selected items (checkmarks)
+
+    # Button width calculation constants
+    BUTTON_MARGIN_WIDTH = 4  # Total horizontal margin/padding for button width calculation
     
     def __init__(
         self,
@@ -188,17 +209,14 @@ class ButtonListWidget(Widget):
     def compose(self) -> ComposeResult:
         """Compose the button-list layout."""
         with Vertical():
-            # Button row - takes minimal height needed for buttons
-            with Horizontal() as button_row:
-                button_row.styles.height = "auto"  # CRITICAL: Take only needed height
+            # Button rows - natural wrapping based on content width
+            from textual.containers import Container
+            with Container(classes="button-rows") as button_container:
+                button_container.styles.height = "auto"  # CRITICAL: Take only needed height
+                self.button_container = button_container  # Store reference for dynamic sizing
 
-                for config in self.button_configs:
-                    yield Button(
-                        config.label,
-                        id=config.button_id,
-                        disabled=config.disabled,
-                        compact=config.compact
-                    )
+                # We'll add button rows dynamically in on_mount
+                pass
 
             # Use SelectionList with overlaid buttons wrapped in ScrollableContainer for horizontal scrolling
             from textual.containers import ScrollableContainer
@@ -216,6 +234,8 @@ class ButtonListWidget(Widget):
         # Update the SelectionList when mounted
         if self.items:
             self.call_later(self._update_selection_list)
+        # Set up button rows
+        self.call_later(self._create_button_rows)
     
     def watch_items(self, items: List[Dict]) -> None:
         """Automatically update UI when items reactive property changes."""
@@ -414,25 +434,129 @@ class ButtonListWidget(Widget):
         # This is a no-op since the InlineButtonSelectionList handles button rendering
         pass
     
+    def _create_button_rows(self) -> None:
+        """Create button rows by calculating width from text length + CSS margins."""
+        if not hasattr(self, 'button_container') or not self.is_mounted:
+            return
+
+        try:
+            # Clear existing content
+            self.button_container.remove_children()
+
+            # Get container width
+            container_width = self.button_container.size.width
+            logger.info(f"Container width: {container_width}")
+            if container_width <= 0:
+                # Fallback: create single row
+                self._create_single_row()
+                return
+
+            # Calculate button widths from text length + margin/padding
+            # Uses class constant for consistent width calculation
+            button_widths = []
+            for config in self.button_configs:
+                text_width = len(config.label)
+                total_width = text_width + self.BUTTON_MARGIN_WIDTH
+                button_widths.append((config, total_width))
+
+            # Calculate minimum rows needed and distribute evenly
+            import math
+
+            total_width = sum(width for _, width in button_widths)
+            min_rows_needed = math.ceil(total_width / container_width) if container_width > 0 else 1
+
+            # Ensure we have at least 1 row
+            min_rows_needed = max(1, min_rows_needed)
+
+            # Create empty rows
+            rows = [[] for _ in range(min_rows_needed)]
+            row_widths = [0] * min_rows_needed
+
+            # Distribute buttons to balance width across rows
+            for config, width in button_widths:
+                # Find row with smallest current width
+                lightest_row_idx = min(range(min_rows_needed), key=lambda i: row_widths[i])
+
+                # Add button to that row
+                rows[lightest_row_idx].append(config)
+                row_widths[lightest_row_idx] += width
+
+            # Create the final button rows
+            for row_configs in rows:
+                row = Horizontal()
+                row.styles.height = "auto"
+                row.styles.width = "100%"
+
+                # Mount the row first
+                self.button_container.mount(row)
+
+                # Then mount buttons to the row
+                for config in row_configs:
+                    button = Button(
+                        config.label,
+                        id=config.button_id,
+                        disabled=config.disabled,
+                        compact=config.compact
+                    )
+                    row.mount(button)
+
+            logger.debug(f"Created {len(rows)} button rows using CSS-based width calculations")
+
+        except Exception as e:
+            logger.error(f"Failed to create button rows: {e}", exc_info=True)
+            # Fallback to single row
+            self._create_single_row()
+
+    def _create_single_row(self) -> None:
+        """Fallback: create a single row with all buttons."""
+        row = Horizontal()
+        row.styles.height = "auto"
+        row.styles.width = "100%"
+
+        # Mount the row first
+        self.button_container.mount(row)
+
+        # Then mount buttons to the row
+        for config in self.button_configs:
+            button = Button(
+                config.label,
+                id=config.button_id,
+                disabled=config.disabled,
+                compact=config.compact
+            )
+            row.mount(button)
+
+    @on(Resize)
+    def handle_resize(self, event: Resize) -> None:
+        """Handle container resize to update button layout."""
+        # Recreate button rows when container is resized
+        self.call_later(self._create_button_rows)
+
     def _update_button_states(self) -> None:
         """
         Update button enabled/disabled states.
-        
+
         Subclasses should override this method to implement specific button logic.
         """
+        logger.info("_update_button_states called")
         # Default implementation - subclasses should override
         has_items = len(self.items) > 0
         has_selection = bool(self.selected_item)
-        
+
         # Basic logic - enable buttons based on data availability
+        buttons_found = 0
         for config in self.button_configs:
             try:
                 button = self.query_one(f"#{config.button_id}", Button)
+                buttons_found += 1
                 # Default: disable if no items, enable if has selection
                 if "add" in config.button_id.lower():
                     button.disabled = False  # Add always enabled
                 else:
                     button.disabled = not has_selection  # Others need selection
-            except Exception:
+            except Exception as e:
                 # Button might not be mounted yet
+                logger.debug(f"Button {config.button_id} not found: {e}")
                 pass
+
+        logger.info(f"Updated {buttons_found}/{len(self.button_configs)} button states")

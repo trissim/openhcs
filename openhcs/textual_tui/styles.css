@@ -73,6 +73,25 @@ ButtonListWidget SelectionList > .selection-list--option {
     margin: 0;
 }
 
+/* Button rows wrapping in ButtonListWidget */
+ButtonListWidget .button-rows {
+    height: auto;  /* Allow height to grow with wrapped buttons */
+    layout: vertical;  /* Stack rows vertically */
+}
+
+/* Button rows - horizontal layout with auto-sized buttons */
+ButtonListWidget .button-rows Horizontal {
+    height: auto;
+    width: 100%;
+    layout: horizontal;
+}
+
+/* Buttons in rows - size to content with small margins */
+ButtonListWidget .button-rows Button {
+    width: auto;  /* Size to content */
+    margin: 0 1;  /* Small horizontal spacing */
+}
+
 
 
 /* MenuBar */
@@ -81,11 +100,21 @@ MenuBar {
     border: solid white;
 }
 
-/* All buttons - uniform height and styling */
+/* All buttons - uniform height and styling with darker tone */
 Button {
     height: 1;
     min-height: 1;
     padding: 0;
+    background: $surface-darken-1;
+    color: $text;
+}
+
+Button:hover {
+    background: $surface;
+}
+
+Button:focus {
+    background: $surface-lighten-1;
 }
 
 /* MenuBar buttons - content-based width */
