@@ -34,7 +34,7 @@ setup(
         "textual-serve>=1.0.0",
         "textual-terminal",
         "textual-universal-directorytree",
-        "textual-window",
+        "textual-window @ git+https://github.com/trissim/textual-window.git",
         "toolong @ git+https://github.com/trissim/toolong.git",
         "plotext>=5.2.0",
         "psutil>=5.9.0",
