@@ -50,6 +50,38 @@ def get_shared_watcher():
     return _shared_watcher
 
 
+def clear_all_subprocess_logs_from_ui(app):
+    """Clear all subprocess logs from UI viewers, keeping only the main TUI log. Can be called from anywhere."""
+    try:
+        # Try to find any existing toolong widgets and clear them
+        from openhcs.textual_tui.widgets.openhcs_toolong_widget import OpenHCSToolongWidget
+        toolong_widgets = app.query(OpenHCSToolongWidget)
+        logger.info(f"Found {len(toolong_widgets)} toolong widgets")
+
+        for widget in toolong_widgets:
+            logger.info("Calling clear logs on toolong widget")
+            widget._clear_all_logs_except_tui()
+            logger.info("Clear logs completed")
+
+        # Also try to find toolong windows
+        from openhcs.textual_tui.windows.toolong_window import ToolongWindow
+        toolong_windows = app.query(ToolongWindow)
+        logger.info(f"Found {len(toolong_windows)} toolong windows")
+
+        for window in toolong_windows:
+            # Find the widget inside the window
+            widgets = window.query(OpenHCSToolongWidget)
+            for widget in widgets:
+                logger.info("Calling clear logs on toolong widget in window")
+                widget._clear_all_logs_except_tui()
+                logger.info("Clear logs completed")
+
+    except Exception as e:
+        logger.error(f"Failed to clear logs from UI: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
 
 class LogFileHandler(FileSystemEventHandler):
     """File system event handler for detecting new log files."""
@@ -611,20 +643,25 @@ class OpenHCSToolongWidget(Widget):
 
         # Fallback to active tab if current file not found
         if len(tab_panes) > 0:
-            active_tab = tabbed_content.active_pane
-            if active_tab:
-                try:
-                    active_index = list(tab_panes).index(active_tab)
-                    select.value = active_index
-                    logger.debug(f"Set dropdown to active tab index: {active_index}")
-                except ValueError:
-                    # Active tab not found in list, default to first option
+            try:
+                active_tab = tabbed_content.active_pane
+                if active_tab:
+                    try:
+                        active_index = list(tab_panes).index(active_tab)
+                        select.value = active_index
+                        logger.debug(f"Set dropdown to active tab index: {active_index}")
+                    except ValueError:
+                        # Active tab not found in list, default to first option
+                        select.value = 0
+                        logger.debug("Active tab not found, defaulting to first option")
+                else:
+                    # No active tab, select first option
                     select.value = 0
-                    logger.debug("Active tab not found, defaulting to first option")
-            else:
-                # No active tab, select first option
+                    logger.debug("No active tab, selecting first option")
+            except Exception as e:
+                # Tab access failed (probably due to tabs being removed), default to first option
+                logger.debug(f"Tab access failed during update: {e}, defaulting to first option")
                 select.value = 0
-                logger.debug("No active tab, selecting first option")
         else:
             logger.warning("No tab panes available for dropdown")
 
@@ -949,6 +986,17 @@ class OpenHCSToolongWidget(Widget):
 
         logger.info(f"Keeping TUI log: {Path(tui_log_to_keep).name}")
         logger.info(f"Removing {len(logs_to_remove)} logs: {[Path(p).name for p in logs_to_remove]}")
+
+        # Set active tab to first one (TUI main) BEFORE clearing to avoid race conditions
+        try:
+            tabbed_content = self.query_one("#main_tabs", HiddenTabsTabbedContent)
+            tab_panes = list(tabbed_content.query(TabPane))
+            if tab_panes:
+                # Set active tab to first one (should be TUI main)
+                tabbed_content.active = tab_panes[0].id
+                logger.info("Set active tab to first tab (TUI main) before clearing")
+        except Exception as e:
+            logger.warning(f"Could not set active tab before clearing: {e}")
 
         # Clean up resources for logs being removed
         self._cleanup_removed_logs(logs_to_remove)

@@ -297,6 +297,19 @@ class OpenHCSTUIApp(App):
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
 
+        # Mount singleton toolong window at startup
+        try:
+            from openhcs.textual_tui.windows.toolong_window import ToolongWindow
+            toolong_window = ToolongWindow()
+            await self.mount(toolong_window)
+            # Start minimized so it doesn't interfere with main UI
+            toolong_window.open_state = False
+            logger.info("Singleton toolong window mounted at startup")
+        except Exception as e:
+            logger.error(f"Failed to mount toolong window at startup: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
 
 
         # Status bar will automatically show this log message

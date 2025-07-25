@@ -531,6 +531,17 @@ class PlateManagerWidget(ButtonListWidget):
         self.app.current_status = status_message
 
     async def action_run_plate(self) -> None:
+        # Clear logs from singleton toolong window before starting new run
+        try:
+            from openhcs.textual_tui.windows.toolong_window import clear_toolong_logs
+            logger.info("Clearing logs from singleton toolong window before new run")
+            clear_toolong_logs(self.app)
+            logger.info("Toolong logs cleared")
+        except Exception as e:
+            logger.error(f"Failed to clear toolong logs: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
         selected_items, _ = self.get_selection_state()
         if not selected_items:
             self.app.show_error("No plates selected to run.")

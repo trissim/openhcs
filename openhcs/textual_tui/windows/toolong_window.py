@@ -63,7 +63,7 @@ class ToolongWindow(BaseOpenHCSWindow):
         super().__init__(
             window_id="toolong_viewer",
             title="Log Viewer",
-            mode="temporary",
+            mode="permanent",  # Make it permanent so it can't be closed, only minimized
             **kwargs
         )
 
@@ -193,3 +193,23 @@ class ToolongWindow(BaseOpenHCSWindow):
             logger.debug(f"Could not find ReactiveLogMonitor to stop: {e}")
 
         logger.debug("Toolong window closed")
+
+
+def clear_toolong_logs(app):
+    """Clear subprocess logs from the singleton toolong window (mounted at startup)."""
+    try:
+        # Find the singleton toolong window (should always exist)
+        window = app.query_one(ToolongWindow)
+        logger.info("Found singleton toolong window")
+
+        # Find the widget inside the window
+        from openhcs.textual_tui.widgets.openhcs_toolong_widget import OpenHCSToolongWidget
+        widgets = window.query(OpenHCSToolongWidget)
+        for widget in widgets:
+            logger.info("Clearing logs from singleton toolong window")
+            widget._clear_all_logs_except_tui()
+            logger.info("Logs cleared from singleton toolong window")
+    except Exception as e:
+        logger.error(f"Failed to clear logs from singleton toolong window: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
