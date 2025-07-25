@@ -39,6 +39,9 @@ logger = logging.getLogger(__name__)
 _shared_watcher = None
 
 
+
+
+
 def get_shared_watcher():
     """Get or create a shared watcher instance to prevent conflicts."""
     global _shared_watcher
@@ -339,6 +342,7 @@ class OpenHCSToolongWidget(Widget):
                 yield Button("Auto-Scroll", id="toggle_auto_tail", compact=True)
                 yield Button("Pause", id="toggle_manual_tail", compact=True)
                 yield Button("Bottom", id="scroll_to_bottom", compact=True)
+                yield Button("Clear All", id="clear_all_logs", compact=True)
 
         # Conditionally add dropdown selector
         if self.show_dropdown:
@@ -421,6 +425,12 @@ class OpenHCSToolongWidget(Widget):
             tab_name = Path(path).stem
 
         return tab_name
+
+    def _is_tui_main_log(self, path: str) -> bool:
+        """Check if a log file is the main TUI log (not subprocess or worker)."""
+        log_name = Path(path).name
+        # TUI main logs don't contain "subprocess" or "worker" in the name
+        return "_subprocess_" not in log_name and "_worker_" not in log_name
 
 
 
@@ -690,6 +700,10 @@ class OpenHCSToolongWidget(Widget):
             self.scroll_to_bottom_and_tail()
             logger.debug("Scrolled to bottom and enabled tailing")
 
+        elif event.button.id == "clear_all_logs":
+            self._show_clear_confirmation()
+            logger.debug("Showing clear confirmation dialog")
+
 
 
     def update_file_paths(self, new_file_paths: List[str], old_file_paths: List[str] = None) -> None:
@@ -858,6 +872,145 @@ class OpenHCSToolongWidget(Widget):
             if len(self.file_paths) != len(old_file_paths):
                 logger.debug(f"Batch updating UI: {len(old_file_paths)} → {len(self.file_paths)} files")
                 self.call_after_refresh(self.update_file_paths, self.file_paths, old_file_paths)
+
+    def _show_clear_confirmation(self) -> None:
+        """Show confirmation dialog before clearing logs."""
+        # Find the TUI main log(s) to keep
+        tui_logs = [path for path in self.file_paths if self._is_tui_main_log(path)]
+
+        if not tui_logs:
+            logger.warning("No TUI main log found, cannot clear logs safely")
+            return
+
+        # Keep only the most recent TUI log
+        tui_log_to_keep = max(tui_logs, key=lambda p: os.path.getmtime(p))
+        logs_to_remove = [path for path in self.file_paths if path != tui_log_to_keep]
+
+        if not logs_to_remove:
+            logger.info("No logs to remove")
+            return
+
+        # Show confirmation window
+        from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
+        from textual.widgets import Static, Button
+        from textual.containers import Horizontal
+        from textual.app import ComposeResult
+
+        tui_log_name = Path(tui_log_to_keep).name
+
+        class ClearLogsConfirmationWindow(BaseOpenHCSWindow):
+            def __init__(self, tui_log_name: str, logs_to_remove_count: int, on_result_callback):
+                super().__init__(
+                    window_id="clear_logs_confirmation",
+                    title="Clear All Logs",
+                    mode="temporary"
+                )
+                self.tui_log_name = tui_log_name
+                self.logs_to_remove_count = logs_to_remove_count
+                self.on_result_callback = on_result_callback
+
+            def compose(self) -> ComposeResult:
+                message = f"This will remove {self.logs_to_remove_count} log entries.\nOnly '{self.tui_log_name}' will remain.\nThis action cannot be undone."
+                yield Static(message, classes="dialog-content")
+
+                with Horizontal(classes="dialog-buttons"):
+                    yield Button("Cancel", id="cancel", compact=True)
+                    yield Button("Clear All", id="clear", compact=True)
+
+            def on_button_pressed(self, event: Button.Pressed) -> None:
+                result = event.button.id == "clear"
+                if self.on_result_callback:
+                    self.on_result_callback(result)
+                self.close_window()
+
+        def handle_confirmation(result):
+            if result:
+                self._clear_all_logs_except_tui()
+
+        # Create and mount confirmation window
+        confirmation = ClearLogsConfirmationWindow(tui_log_name, len(logs_to_remove), handle_confirmation)
+        self.app.mount(confirmation)
+        confirmation.open_state = True
+
+    def _clear_all_logs_except_tui(self) -> None:
+        """Clear all log entries except the main TUI log and properly clean up resources."""
+        logger.info("Clearing all logs except TUI main...")
+
+        # Find the TUI main log(s) to keep
+        tui_logs = [path for path in self.file_paths if self._is_tui_main_log(path)]
+
+        if not tui_logs:
+            logger.warning("No TUI main log found, keeping all logs")
+            return
+
+        # Keep only the most recent TUI log
+        tui_log_to_keep = max(tui_logs, key=lambda p: os.path.getmtime(p))
+        logs_to_remove = [path for path in self.file_paths if path != tui_log_to_keep]
+
+        logger.info(f"Keeping TUI log: {Path(tui_log_to_keep).name}")
+        logger.info(f"Removing {len(logs_to_remove)} logs: {[Path(p).name for p in logs_to_remove]}")
+
+        # Clean up resources for logs being removed
+        self._cleanup_removed_logs(logs_to_remove)
+
+        # Update file paths to only include the TUI log
+        old_file_paths = self.file_paths.copy()
+        self.file_paths = [tui_log_to_keep]
+
+        # Update UI
+        self.call_after_refresh(self.update_file_paths, self.file_paths, old_file_paths)
+
+        logger.info("Log clearing completed")
+
+    def _cleanup_removed_logs(self, logs_to_remove: List[str]) -> None:
+        """Clean up resources (watchers, threads) for removed log files."""
+        try:
+            # Get all TabPanes and their associated LogViews
+            tabbed_content = self.query_one("#main_tabs", HiddenTabsTabbedContent)
+            tab_panes = list(tabbed_content.query(TabPane))
+
+            # Find tabs corresponding to logs being removed
+            tabs_to_remove = []
+            for i, path in enumerate(self.file_paths):
+                if path in logs_to_remove and i < len(tab_panes):
+                    tabs_to_remove.append(tab_panes[i])
+
+            # Clean up each tab's resources
+            for tab_pane in tabs_to_remove:
+                try:
+                    # Find LogView in this tab
+                    log_views = tab_pane.query("PersistentTailLogView")
+                    for log_view in log_views:
+                        # Clean up LogLines and their watchers
+                        log_lines_widgets = log_view.query("LogLines")
+                        for log_lines in log_lines_widgets:
+                            # Stop the watcher for this LogLines
+                            if hasattr(log_lines, 'watcher') and log_lines.watcher:
+                                try:
+                                    log_lines.watcher.close()
+                                    logger.debug(f"Closed watcher for {getattr(log_lines, 'log_files', 'unknown')}")
+                                except Exception as e:
+                                    logger.warning(f"Error closing watcher: {e}")
+
+                            # Stop line reader thread if it exists
+                            if hasattr(log_lines, '_line_reader') and log_lines._line_reader:
+                                try:
+                                    log_lines._line_reader.exit_event.set()
+                                    logger.debug("Stopped line reader thread")
+                                except Exception as e:
+                                    logger.warning(f"Error stopping line reader: {e}")
+
+                    # Remove the tab pane
+                    tab_pane.remove()
+                    logger.debug(f"Removed tab pane")
+
+                except Exception as e:
+                    logger.warning(f"Error cleaning up tab resources: {e}")
+
+            logger.debug(f"Cleaned up resources for {len(tabs_to_remove)} tabs")
+
+        except Exception as e:
+            logger.error(f"Error during resource cleanup: {e}")
 
 
 

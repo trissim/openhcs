@@ -1,0 +1,274 @@
+"""
+Persistent Subprocess Manager for OpenHCS
+
+Manages a long-running subprocess that can handle multiple plate processing runs
+without restarting, improving performance by avoiding initialization overhead.
+"""
+
+import asyncio
+import json
+import logging
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+class PersistentSubprocessManager:
+    """Manages a persistent subprocess for multiple plate runs."""
+    
+    def __init__(self):
+        self.process: Optional[subprocess.Popen] = None
+        self.is_ready = False
+        self.is_running = False
+        
+    async def start_subprocess(self) -> bool:
+        """Start the persistent subprocess if not already running."""
+        if self.process and self.process.poll() is None:
+            return True  # Already running
+        
+        try:
+            subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
+            
+            # Start subprocess in persistent mode
+            self.process = subprocess.Popen([
+                sys.executable, str(subprocess_script), "--persistent"
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=0  # Unbuffered for immediate communication
+            )
+            
+            logger.info(f"🔥 Started persistent subprocess with PID: {self.process.pid}")
+            
+            # Wait for ready status
+            await self._wait_for_ready()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start persistent subprocess: {e}")
+            return False
+    
+    async def _wait_for_ready(self, timeout: float = 30.0) -> bool:
+        """Wait for subprocess to send ready status."""
+        try:
+            # Read status message with timeout
+            ready_task = asyncio.create_task(self._read_status())
+            status = await asyncio.wait_for(ready_task, timeout=timeout)
+            
+            if status and status.get("status") == "ready":
+                self.is_ready = True
+                logger.info("🔥 Persistent subprocess is ready")
+                return True
+            else:
+                logger.error(f"Unexpected status from subprocess: {status}")
+                return False
+                
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for subprocess ready status")
+            return False
+        except Exception as e:
+            logger.error(f"Error waiting for subprocess ready: {e}")
+            return False
+    
+    async def _read_status(self) -> Optional[Dict]:
+        """Read status message from subprocess stdout, skipping non-JSON lines."""
+        if not self.process or not self.process.stdout:
+            return None
+
+        # Keep reading lines until we get a valid JSON status message
+        max_attempts = 100  # Prevent infinite loop
+        attempts = 0
+
+        while attempts < max_attempts:
+            try:
+                # Read line from subprocess stdout
+                line = await asyncio.get_event_loop().run_in_executor(
+                    None, self.process.stdout.readline
+                )
+
+                if not line:
+                    return None
+
+                line = line.strip()
+                if not line:
+                    attempts += 1
+                    continue
+
+                # Try to parse as JSON
+                try:
+                    data = json.loads(line)
+                    # Check if it's a status message (has "status" key)
+                    if isinstance(data, dict) and "status" in data:
+                        return data
+                    else:
+                        # Not a status message, continue reading
+                        attempts += 1
+                        continue
+                except json.JSONDecodeError:
+                    # Not JSON, skip this line (probably a log message)
+                    attempts += 1
+                    continue
+
+            except Exception as e:
+                logger.error(f"Error reading subprocess status: {e}")
+                return None
+
+        logger.warning(f"Failed to read valid JSON status after {max_attempts} attempts")
+        return None
+    
+    async def send_run_command(self, data_file: str, log_base: str, unique_id: str) -> bool:
+        """Send run command to persistent subprocess."""
+        if not self.process or not self.process.stdin:
+            logger.error("No subprocess available for run command")
+            return False
+        
+        command = {
+            "command": "run",
+            "data_file": data_file,
+            "log_base": log_base,
+            "unique_id": unique_id
+        }
+        
+        try:
+            # Send command to subprocess
+            command_json = json.dumps(command) + "\n"
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.process.stdin.write, command_json
+            )
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.process.stdin.flush
+            )
+            
+            # Wait for running status
+            status = await self._read_status()
+            if status and status.get("status") == "running":
+                self.is_running = True
+                self.is_ready = False
+                logger.info("🔥 Subprocess started running")
+                return True
+            else:
+                logger.error(f"Unexpected response to run command: {status}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to send run command: {e}")
+            return False
+    
+    async def wait_for_completion(self) -> Tuple[bool, str]:
+        """Wait for subprocess to complete and return success status and message."""
+        try:
+            while True:
+                status = await self._read_status()
+                if not status:
+                    continue
+                
+                status_type = status.get("status")
+                if status_type == "completed":
+                    self.is_running = False
+                    self.is_ready = True
+                    success = status.get("success", False)
+                    message = status.get("message", "Completed")
+                    logger.info(f"🔥 Subprocess completed: success={success}, message={message}")
+                    return success, message
+                
+                elif status_type == "error":
+                    self.is_running = False
+                    self.is_ready = True
+                    success = status.get("success", False)
+                    message = status.get("message", "Unknown error")
+                    logger.error(f"🔥 Subprocess error: {message}")
+                    return success, message
+                
+                elif status_type == "ready":
+                    # Subprocess is ready for next command
+                    self.is_running = False
+                    self.is_ready = True
+                    logger.info("🔥 Subprocess ready for next command")
+                    # Continue waiting for completion status
+                    
+        except Exception as e:
+            logger.error(f"Error waiting for subprocess completion: {e}")
+            self.is_running = False
+            return False, f"Communication error: {e}"
+
+    async def send_cancel_command(self) -> bool:
+        """Send cancel command to persistent subprocess."""
+        if not self.process or not self.process.stdin:
+            logger.error("No subprocess available for cancel command")
+            return False
+
+        try:
+            # Send cancel command
+            cancel_command = json.dumps({"command": "cancel"}) + "\n"
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.process.stdin.write, cancel_command
+            )
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.process.stdin.flush
+            )
+
+            logger.info("🔥 Cancel command sent to subprocess")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to send cancel command: {e}")
+            return False
+
+    async def shutdown(self):
+        """Shutdown the persistent subprocess."""
+        if not self.process:
+            return
+        
+        try:
+            # Send shutdown command
+            shutdown_command = json.dumps({"command": "shutdown"}) + "\n"
+            if self.process.stdin:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.process.stdin.write, shutdown_command
+                )
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.process.stdin.flush
+                )
+            
+            # Wait for process to exit gracefully
+            try:
+                await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(None, self.process.wait),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                # Force kill if it doesn't exit gracefully
+                self.process.kill()
+                await asyncio.get_event_loop().run_in_executor(None, self.process.wait)
+            
+            logger.info("🔥 Persistent subprocess shutdown complete")
+            
+        except Exception as e:
+            logger.error(f"Error shutting down subprocess: {e}")
+            if self.process:
+                self.process.kill()
+        
+        finally:
+            self.process = None
+            self.is_ready = False
+            self.is_running = False
+    
+    def is_alive(self) -> bool:
+        """Check if subprocess is alive."""
+        return self.process is not None and self.process.poll() is None
+    
+    def get_status(self) -> str:
+        """Get current status string for UI display."""
+        if not self.is_alive():
+            return "stopped"
+        elif self.is_running:
+            return "running"
+        elif self.is_ready:
+            return "ready"
+        else:
+            return "starting"
