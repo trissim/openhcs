@@ -34,6 +34,8 @@ from openhcs.textual_tui.widgets.custom_window_bar import CustomWindowBar
 from openhcs.textual_tui.windows import HelpWindow, ConfigWindow, DualEditorWindow, PipelinePlateWindow
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
 
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -231,8 +233,7 @@ class OpenHCSTUIApp(App):
 #    """
     
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
-        ("q", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Previous"),
         ("f1", "toggle_window_switcher", "Switch Windows"),
@@ -295,6 +296,8 @@ class OpenHCSTUIApp(App):
         """Called when the app is mounted."""
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
+
+
 
         # Status bar will automatically show this log message
         # No need to manually update it anymore

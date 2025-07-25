@@ -218,12 +218,12 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
     Unified decoration pattern for all external library functions.
 
     NOTE: Dtype preservation is now handled at the decorator level in decorators.py.
-    This function now only applies memory type attributes and module replacement.
+    This function applies memory type attributes, decorator wrappers, and module replacement.
 
     This applies the same hybrid approach across all registries:
     1. Direct decoration (for subprocess compatibility)
     2. Memory type decorator application (for dtype preservation and other features)
-    3. Module replacement (for best user experience)
+    3. Module replacement (for best user experience and pickling compatibility)
 
     Args:
         original_func: The original external library function
@@ -264,6 +264,14 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
         wrapper_func = original_func
         wrapper_func.input_memory_type = memory_type.value
         wrapper_func.output_memory_type = memory_type.value
+
+    # Step 3: Module replacement (for best user experience and pickling compatibility)
+    module_name = original_func.__module__
+    if module_name in sys.modules:
+        target_module = sys.modules[module_name]
+        if hasattr(target_module, func_name):
+            setattr(target_module, func_name, wrapper_func)
+            logger.debug(f"Replaced {module_name}.{func_name} with enhanced function")
 
     return wrapper_func
 
