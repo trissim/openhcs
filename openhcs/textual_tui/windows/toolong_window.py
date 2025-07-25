@@ -64,6 +64,7 @@ class ToolongWindow(BaseOpenHCSWindow):
             window_id="toolong_viewer",
             title="Log Viewer",
             mode="permanent",  # Make it permanent so it can't be closed, only minimized
+            allow_maximize=True,
             **kwargs
         )
 

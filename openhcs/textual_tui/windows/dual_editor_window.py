@@ -211,7 +211,8 @@ class DualEditorWindow(BaseOpenHCSWindow):
         super().__init__(
             window_id="dual_editor",
             title="Dual Editor",
-            mode="temporary"
+            mode="temporary",
+            allow_maximize=True
         )
         self.step_data = step_data
         self.is_new = is_new

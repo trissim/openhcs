@@ -29,7 +29,7 @@ from .widgets.main_content import MainContent
 from .widgets.status_bar import StatusBar
 
 # Textual-window imports
-from textual_window import Window, WindowSwitcher
+from textual_window import Window, WindowSwitcher, window_manager, TilingLayout
 from openhcs.textual_tui.widgets.custom_window_bar import CustomWindowBar
 from openhcs.textual_tui.windows import HelpWindow, ConfigWindow, DualEditorWindow, PipelinePlateWindow
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
@@ -237,6 +237,13 @@ class OpenHCSTUIApp(App):
         ("tab", "focus_next", "Next"),
         ("shift+tab", "focus_previous", "Previous"),
         ("f1", "toggle_window_switcher", "Switch Windows"),
+        # Tiling window manager shortcuts
+        ("ctrl+shift+f", "toggle_tiling", "Toggle Tiling"),
+        ("ctrl+shift+h", "set_horizontal_split", "Horizontal Split"),
+        ("ctrl+shift+v", "set_vertical_split", "Vertical Split"),
+        ("ctrl+shift+g", "set_grid_layout", "Grid Layout"),
+        ("ctrl+shift+m", "set_master_detail", "Master Detail"),
+        ("ctrl+shift+t", "cycle_tiling_mode", "Cycle Tiling Mode"),
     ]
     
     # App-level reactive state
@@ -365,6 +372,55 @@ class OpenHCSTUIApp(App):
         """Toggle the window switcher."""
         switcher = self.query_one(WindowSwitcher)
         switcher.action_toggle()  # Correct textual-window API method
+
+    # Tiling window manager actions
+    def action_toggle_tiling(self) -> None:
+        """Toggle between floating and horizontal split tiling."""
+        logger.info("🔧 TILING: Toggle tiling action triggered")
+        if window_manager.tiling_layout == TilingLayout.FLOATING:
+            window_manager.set_tiling_layout(TilingLayout.HORIZONTAL_SPLIT)
+            self.notify("Tiling: Horizontal Split")
+            logger.info("🔧 TILING: Set to horizontal split")
+        else:
+            window_manager.set_tiling_layout(TilingLayout.FLOATING)
+            self.notify("Tiling: Floating")
+            logger.info("🔧 TILING: Set to floating")
+
+    def action_set_horizontal_split(self) -> None:
+        """Set horizontal split tiling."""
+        logger.info("🔧 TILING: Horizontal split action triggered")
+        window_manager.set_tiling_layout(TilingLayout.HORIZONTAL_SPLIT)
+        self.notify("Tiling: Horizontal Split")
+
+    def action_set_vertical_split(self) -> None:
+        """Set vertical split tiling."""
+        window_manager.set_tiling_layout(TilingLayout.VERTICAL_SPLIT)
+        self.notify("Tiling: Vertical Split")
+
+    def action_set_grid_layout(self) -> None:
+        """Set grid tiling."""
+        window_manager.set_tiling_layout(TilingLayout.GRID)
+        self.notify("Tiling: Grid Layout")
+
+    def action_set_master_detail(self) -> None:
+        """Set master-detail tiling."""
+        window_manager.set_tiling_layout(TilingLayout.MASTER_DETAIL)
+        self.notify("Tiling: Master-Detail")
+
+    def action_cycle_tiling_mode(self) -> None:
+        """Cycle through all tiling modes."""
+        modes = [
+            TilingLayout.FLOATING,
+            TilingLayout.HORIZONTAL_SPLIT,
+            TilingLayout.VERTICAL_SPLIT,
+            TilingLayout.GRID,
+            TilingLayout.MASTER_DETAIL,
+        ]
+        current_index = modes.index(window_manager.tiling_layout)
+        next_index = (current_index + 1) % len(modes)
+        new_mode = modes[next_index]
+        window_manager.set_tiling_layout(new_mode)
+        self.notify(f"Tiling: {new_mode.value.replace('_', ' ').title()}")
 
     async def _add_start_menu_button(self):
         """Add our start menu button to the WindowBar at the leftmost position."""
