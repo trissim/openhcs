@@ -304,6 +304,15 @@ class OpenHCSTUIApp(App):
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
 
+        # Configure default window manager settings for OpenHCS
+        logger.info("Configuring default window manager settings...")
+        window_manager.set_tiling_layout(TilingLayout.MASTER_DETAIL)
+        window_manager.set_window_gap(1)
+        logger.info("Window manager configured: Master-Detail layout with gap=1")
+
+        # Notify user about default tiling mode
+        self.notify("Window Manager: Master-Detail tiling enabled (gap=1)", severity="information")
+
         # Mount singleton toolong window at startup
         try:
             from openhcs.textual_tui.windows.toolong_window import ToolongWindow

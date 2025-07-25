@@ -41,6 +41,7 @@ class CustomWindowBar(WindowBar):
     WindowBarButton {
         height: 1; width: auto;
         padding: 0 1;
+        border-left: solid $panel-lighten-2;
         &:hover { background: $panel-lighten-1; }
         &.pressed { background: $primary; color: $text; }
         &.right_pressed { background: $accent-darken-3; color: $text; }
@@ -48,6 +49,7 @@ class CustomWindowBar(WindowBar):
     WindowBarAllButton {
         height: 1; width: 1fr;  /* Keep 1fr to fill remaining space */
         padding: 0 1;
+        border-left: solid $panel-lighten-2;
         &:hover { background: $boost; }
         &.pressed { background: $panel-lighten-1; }
     }
