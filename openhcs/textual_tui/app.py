@@ -304,27 +304,28 @@ class OpenHCSTUIApp(App):
         logger.info("OpenHCS TUI mounted and ready")
         self.current_status = "OpenHCS TUI Ready"
 
-        # Configure default window manager settings for OpenHCS
-        logger.info("Configuring default window manager settings...")
-        window_manager.set_tiling_layout(TilingLayout.MASTER_DETAIL)
-        window_manager.set_window_gap(1)
-        logger.info("Window manager configured: Master-Detail layout with gap=1")
-
-        # Notify user about default tiling mode
-        self.notify("Window Manager: Master-Detail tiling enabled (gap=1)", severity="information")
-
-        # Mount singleton toolong window at startup
+        # Mount singleton toolong window BEFORE configuring tiling
+        # This prevents it from being affected by the tiling system
         try:
             from openhcs.textual_tui.windows.toolong_window import ToolongWindow
             toolong_window = ToolongWindow()
             await self.mount(toolong_window)
             # Start minimized so it doesn't interfere with main UI
             toolong_window.open_state = False
-            logger.info("Singleton toolong window mounted at startup")
         except Exception as e:
             logger.error(f"Failed to mount toolong window at startup: {e}")
             import traceback
             logger.error(traceback.format_exc())
+
+        # Configure default window manager settings from config
+        tui_config = self.global_config.tui
+        window_manager.set_tiling_layout(tui_config.default_tiling_layout)
+        window_manager.set_window_gap(tui_config.default_window_gap)
+
+        # Notify user about tiling mode if enabled in config
+        if tui_config.enable_startup_notification:
+            layout_name = tui_config.default_tiling_layout.value.replace('_', ' ').title()
+            self.notify(f"Window Manager: {layout_name} tiling enabled (gap={tui_config.default_window_gap})", severity="information")
 
 
 

@@ -15,6 +15,16 @@ from enum import Enum
 from openhcs.constants import Microscope
 from openhcs.constants.constants import Backend
 
+# Import TilingLayout for TUI configuration
+try:
+    from textual_window import TilingLayout
+except ImportError:
+    # Fallback for when textual-window is not available
+    from enum import Enum
+    class TilingLayout(Enum):
+        FLOATING = "floating"
+        MASTER_DETAIL = "master_detail"
+
 logger = logging.getLogger(__name__)
 
 
@@ -166,6 +176,19 @@ class PathPlanningConfig:
 
 
 @dataclass(frozen=True)
+class TUIConfig:
+    """Configuration for OpenHCS Textual User Interface."""
+    default_tiling_layout: TilingLayout = TilingLayout.MASTER_DETAIL
+    """Default tiling layout for window manager on startup."""
+
+    default_window_gap: int = 1
+    """Default gap between windows in tiling mode (in characters)."""
+
+    enable_startup_notification: bool = True
+    """Whether to show notification about tiling mode on startup."""
+
+
+@dataclass(frozen=True)
 class GlobalPipelineConfig:
     """
     Root configuration object for an OpenHCS pipeline session.
@@ -189,7 +212,8 @@ class GlobalPipelineConfig:
     plate_metadata: PlateMetadataConfig = field(default_factory=PlateMetadataConfig)
     """Configuration for plate metadata in consolidated outputs."""
 
-
+    tui: TUIConfig = field(default_factory=TUIConfig)
+    """Configuration for Textual User Interface."""
 
     microscope: Microscope = Microscope.AUTO
     """Default microscope type for auto-detection."""
@@ -213,6 +237,7 @@ _DEFAULT_VFS_CONFIG = VFSConfig(
 _DEFAULT_ZARR_CONFIG = ZarrConfig()
 _DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG = AnalysisConsolidationConfig()
 _DEFAULT_PLATE_METADATA_CONFIG = PlateMetadataConfig()
+_DEFAULT_TUI_CONFIG = TUIConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
     """
@@ -228,5 +253,6 @@ def get_default_global_config() -> GlobalPipelineConfig:
         vfs=_DEFAULT_VFS_CONFIG,
         zarr=_DEFAULT_ZARR_CONFIG,
         analysis_consolidation=_DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG,
-        plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG
+        plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG,
+        tui=_DEFAULT_TUI_CONFIG
     )
