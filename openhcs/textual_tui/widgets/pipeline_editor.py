@@ -710,15 +710,14 @@ class PipelineEditorWidget(ButtonListWidget):
             return
 
         try:
-            # Use debug module's pipeline formatting
-            from openhcs.debug.pickle_to_python import generate_pipeline_repr
+            # Use complete pipeline steps code generation
+            from openhcs.debug.pickle_to_python import generate_complete_pipeline_steps_code
             from openhcs.textual_tui.services.terminal_launcher import TerminalLauncher
 
-            # Generate Python code representation of the pipeline
-            python_code = generate_pipeline_repr(
+            # Generate complete pipeline steps code with imports
+            python_code = generate_complete_pipeline_steps_code(
                 pipeline_steps=list(self.pipeline_steps),
-                plate_paths=[self.current_plate],
-                global_config=self.app.global_config
+                clean_mode=False
             )
 
             # Create callback to handle edited code

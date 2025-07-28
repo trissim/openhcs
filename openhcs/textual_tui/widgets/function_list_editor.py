@@ -710,53 +710,12 @@ class FunctionListEditorWidget(Container):
 
     def _generate_complete_python_code(self) -> str:
         """Generate complete Python code with imports (following debug module approach)."""
-        # Collect function imports
-        function_imports = set()
-        self._extract_function_imports(self.pattern_data, function_imports)
+        # Use complete function pattern code generation from pickle_to_python
+        from openhcs.debug.pickle_to_python import generate_complete_function_pattern_code
 
-        # Build the complete Python code
-        code_lines = [
-            "# Edit this function pattern and save to apply changes",
-            "",
-        ]
+        return generate_complete_function_pattern_code(self.pattern_data, clean_mode=False)
 
-        # Add function imports
-        if function_imports:
-            code_lines.append("# Function imports")
-            code_lines.extend(sorted(function_imports))
-            code_lines.append("")
 
-        # Add enum imports (like debug module does)
-        code_lines.extend([
-            "# Enum imports",
-            "from openhcs.processing.backends.analysis.cell_counting_pyclesperanto import DetectionMethod",
-            "from openhcs.processing.backends.analysis.skan_axon_analysis import AnalysisDimension",
-            "",
-        ])
-
-        # Add the pattern with better formatting
-        from openhcs.debug.pickle_to_python import generate_readable_function_repr
-        pattern_repr = generate_readable_function_repr(self.pattern_data)
-        code_lines.append(f"pattern = {pattern_repr}")
-
-        return "\n".join(code_lines)
-
-    def _extract_function_imports(self, func_obj, imports):
-        """Extract import statements from function objects (following debug module approach)."""
-        if callable(func_obj):
-            if hasattr(func_obj, '__module__') and hasattr(func_obj, '__name__'):
-                imports.add(f"from {func_obj.__module__} import {func_obj.__name__}")
-        elif isinstance(func_obj, tuple) and len(func_obj) > 0:
-            self._extract_function_imports(func_obj[0], imports)
-        elif isinstance(func_obj, list):
-            for item in func_obj:
-                if isinstance(item, tuple) and len(item) > 0:
-                    self._extract_function_imports(item[0], imports)
-                else:
-                    self._extract_function_imports(item, imports)
-        elif isinstance(func_obj, dict):
-            for value in func_obj.values():
-                self._extract_function_imports(value, imports)
 
     def _apply_edited_pattern(self, new_pattern):
         """Apply the edited pattern back to the TUI."""

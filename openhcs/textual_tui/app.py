@@ -232,19 +232,26 @@ class OpenHCSTUIApp(App):
 #
 #    """
     
-    BINDINGS = [
-        ("ctrl+q", "quit", "Quit"),
-        ("tab", "focus_next", "Next"),
-        ("shift+tab", "focus_previous", "Previous"),
-        ("f1", "toggle_window_switcher", "Switch Windows"),
-        # Tiling window manager shortcuts
-        ("ctrl+shift+f", "toggle_tiling", "Toggle Tiling"),
-        ("ctrl+shift+h", "set_horizontal_split", "Horizontal Split"),
-        ("ctrl+shift+v", "set_vertical_split", "Vertical Split"),
-        ("ctrl+shift+g", "set_grid_layout", "Grid Layout"),
-        ("ctrl+shift+m", "set_master_detail", "Master Detail"),
-        ("ctrl+shift+t", "cycle_tiling_mode", "Cycle Tiling Mode"),
-    ]
+    def _generate_bindings():
+        from openhcs.core.config import TilingKeybindings
+
+        keybindings = TilingKeybindings()
+
+        app_bindings = [
+            ("ctrl+q", "quit", "Quit"),
+            ("tab", "focus_next", "Next"),
+            ("shift+tab", "focus_previous", "Previous"),
+            ("f1", "toggle_window_switcher", "Switch Windows"),
+        ]
+
+        # Add all tiling keybindings from config
+        for field_name in keybindings.__dataclass_fields__:
+            binding = getattr(keybindings, field_name)
+            app_bindings.append((binding.key, binding.action, binding.description))
+
+        return app_bindings
+
+    BINDINGS = _generate_bindings()
     
     # App-level reactive state
     current_status = reactive("Ready")
@@ -317,8 +324,9 @@ class OpenHCSTUIApp(App):
             import traceback
             logger.error(traceback.format_exc())
 
-        # Configure default window manager settings from config
-        tui_config = self.global_config.tui
+        # Configure default window manager settings from separate TUI config
+        from openhcs.core.config import TUIConfig
+        tui_config = TUIConfig()  # Use default TUI configuration
         window_manager.set_tiling_layout(tui_config.default_tiling_layout)
         window_manager.set_window_gap(tui_config.default_window_gap)
 
@@ -383,22 +391,18 @@ class OpenHCSTUIApp(App):
         switcher = self.query_one(WindowSwitcher)
         switcher.action_toggle()  # Correct textual-window API method
 
-    # Tiling window manager actions
-    def action_toggle_tiling(self) -> None:
-        """Toggle between floating and horizontal split tiling."""
-        logger.info("🔧 TILING: Toggle tiling action triggered")
-        if window_manager.tiling_layout == TilingLayout.FLOATING:
-            window_manager.set_tiling_layout(TilingLayout.HORIZONTAL_SPLIT)
-            self.notify("Tiling: Horizontal Split")
-            logger.info("🔧 TILING: Set to horizontal split")
-        else:
-            window_manager.set_tiling_layout(TilingLayout.FLOATING)
-            self.notify("Tiling: Floating")
-            logger.info("🔧 TILING: Set to floating")
+    # Focus navigation actions - call existing window manager methods
+    def action_focus_next_window(self) -> None:
+        """Focus next window."""
+        window_manager.focus_next_window()
 
+    def action_focus_previous_window(self) -> None:
+        """Focus previous window."""
+        window_manager.focus_previous_window()
+
+    # Layout control wrapper methods
     def action_set_horizontal_split(self) -> None:
         """Set horizontal split tiling."""
-        logger.info("🔧 TILING: Horizontal split action triggered")
         window_manager.set_tiling_layout(TilingLayout.HORIZONTAL_SPLIT)
         self.notify("Tiling: Horizontal Split")
 
@@ -408,29 +412,58 @@ class OpenHCSTUIApp(App):
         self.notify("Tiling: Vertical Split")
 
     def action_set_grid_layout(self) -> None:
-        """Set grid tiling."""
+        """Set grid layout tiling."""
         window_manager.set_tiling_layout(TilingLayout.GRID)
         self.notify("Tiling: Grid Layout")
 
     def action_set_master_detail(self) -> None:
         """Set master-detail tiling."""
         window_manager.set_tiling_layout(TilingLayout.MASTER_DETAIL)
-        self.notify("Tiling: Master-Detail")
+        self.notify("Tiling: Master Detail")
 
-    def action_cycle_tiling_mode(self) -> None:
-        """Cycle through all tiling modes."""
-        modes = [
-            TilingLayout.FLOATING,
-            TilingLayout.HORIZONTAL_SPLIT,
-            TilingLayout.VERTICAL_SPLIT,
-            TilingLayout.GRID,
-            TilingLayout.MASTER_DETAIL,
-        ]
-        current_index = modes.index(window_manager.tiling_layout)
-        next_index = (current_index + 1) % len(modes)
-        new_mode = modes[next_index]
-        window_manager.set_tiling_layout(new_mode)
-        self.notify(f"Tiling: {new_mode.value.replace('_', ' ').title()}")
+    def action_toggle_floating(self) -> None:
+        """Toggle floating mode."""
+        current = window_manager.tiling_layout
+        new_layout = TilingLayout.HORIZONTAL_SPLIT if current == TilingLayout.FLOATING else TilingLayout.FLOATING
+        window_manager.set_tiling_layout(new_layout)
+        self.notify("Tiling: Toggled Floating")
+
+    # Window movement actions - call extracted window manager methods
+    def action_move_focused_window_prev(self) -> None:
+        """Move current window to previous position."""
+        window_manager.move_focused_window_prev()
+
+    def action_move_focused_window_next(self) -> None:
+        """Move current window to next position."""
+        window_manager.move_focused_window_next()
+
+    def action_rotate_window_order_left(self) -> None:
+        """Rotate all windows left."""
+        window_manager.rotate_window_order_left()
+
+    def action_rotate_window_order_right(self) -> None:
+        """Rotate all windows right."""
+        window_manager.rotate_window_order_right()
+
+    # Gap control actions
+    def action_gap_increase(self) -> None:
+        """Increase gap between windows."""
+        window_manager.adjust_window_gap(1)
+
+    def action_gap_decrease(self) -> None:
+        """Decrease gap between windows."""
+        window_manager.adjust_window_gap(-1)
+
+    # Bulk operation actions - call existing window manager methods
+    def action_minimize_all_windows(self) -> None:
+        """Minimize all windows."""
+        window_manager.minimize_all_windows()
+        self.notify("Minimized all windows")
+
+    def action_open_all_windows(self) -> None:
+        """Open all windows."""
+        window_manager.open_all_windows()
+        self.notify("Opened all windows")
 
     async def _add_start_menu_button(self):
         """Add our start menu button to the WindowBar at the leftmost position."""

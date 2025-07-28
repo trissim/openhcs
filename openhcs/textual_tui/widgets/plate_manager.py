@@ -1517,8 +1517,19 @@ class PlateManagerWidget(ButtonListWidget):
                 'global_config': self.app.global_config
             }
 
-            # Generate complete Python script using existing logic
-            python_code = self._generate_orchestrator_script(data)
+            # Extract variables from data dict
+            plate_paths = data['plate_paths']
+            pipeline_data = data['pipeline_data']
+
+            # Generate just the orchestrator configuration (no execution wrapper)
+            from openhcs.debug.pickle_to_python import generate_complete_orchestrator_code
+
+            python_code = generate_complete_orchestrator_code(
+                plate_paths=plate_paths,
+                pipeline_data=pipeline_data,
+                global_config=self.app.global_config,
+                clean_mode=False
+            )
 
             # Create callback to handle edited code
             def handle_edited_code(edited_code: str):
@@ -1700,36 +1711,4 @@ class PlateManagerWidget(ButtonListWidget):
             except:
                 pass
 
-    def _generate_orchestrator_script(self, data: Dict) -> str:
-        """Generate orchestrator script using the main converter to ensure consistency."""
-        import tempfile
-        import dill as pickle
-        from openhcs.debug.pickle_to_python import convert_pickle_to_python
 
-        # Create temporary pickle file
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.pkl', delete=False) as temp_pickle:
-            pickle.dump(data, temp_pickle)
-            temp_pickle_path = temp_pickle.name
-
-        # Create temporary output file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_output:
-            temp_output_path = temp_output.name
-
-        try:
-            # Use the main convert function, enabling clean mode for better readability
-            convert_pickle_to_python(temp_pickle_path, temp_output_path, clean_mode=True)
-
-            # Read the generated script
-            with open(temp_output_path, 'r') as f:
-                script_content = f.read()
-
-            return script_content
-
-        finally:
-            # Clean up temp files
-            import os
-            try:
-                os.unlink(temp_pickle_path)
-                os.unlink(temp_output_path)
-            except:
-                pass

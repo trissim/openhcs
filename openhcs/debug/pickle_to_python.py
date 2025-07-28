@@ -16,14 +16,73 @@ from enum import Enum
 from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig
 from openhcs.core.steps.function_step import FunctionStep
 
+def collect_imports_from_data(data_obj):
+    """Extract function and enum imports by traversing data structure."""
+    function_imports = defaultdict(set)
+    enum_imports = defaultdict(set)
+
+    def find_and_register_imports(obj):
+        # Extract exact logic from lines 111-126
+        if isinstance(obj, Enum):
+            module = obj.__class__.__module__
+            name = obj.__class__.__name__
+            if module and name and module.startswith('openhcs'):
+                enum_imports[module].add(name)
+        elif callable(obj):
+            module = getattr(obj, '__module__', None)
+            name = getattr(obj, '__name__', None)
+            if module and name and module.startswith('openhcs'):
+                function_imports[module].add(name)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                find_and_register_imports(item)
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                find_and_register_imports(value)
+
+    find_and_register_imports(data_obj)
+    return function_imports, enum_imports
+
+def format_imports_as_strings(function_imports, enum_imports):
+    """Convert import dictionaries to list of import strings."""
+    import_lines = []
+    all_imports = function_imports.copy()
+    for module, names in enum_imports.items():
+        all_imports[module].update(names)
+
+    for module, names in sorted(all_imports.items()):
+        import_lines.append(f"from {module} import {', '.join(sorted(names))}")
+
+    return import_lines
+
+def generate_complete_function_pattern_code(func_obj, indent=0, clean_mode=False):
+    """Generate complete Python code for function pattern with imports."""
+    # Generate pattern representation
+    pattern_repr = generate_readable_function_repr(func_obj, indent, clean_mode)
+
+    # Collect imports from this pattern
+    function_imports, enum_imports = collect_imports_from_data(func_obj)
+    import_lines = format_imports_as_strings(function_imports, enum_imports)
+
+    # Build complete code
+    code_lines = ["# Edit this function pattern and save to apply changes", ""]
+    if import_lines:
+        code_lines.append("# Dynamic imports")
+        code_lines.extend(import_lines)
+        code_lines.append("")
+    code_lines.append(f"pattern = {pattern_repr}")
+
+    return "\n".join(code_lines)
+
 def _value_to_repr(value):
     """Converts a value to its Python representation string."""
     if isinstance(value, Enum):
         return f"{value.__class__.__name__}.{value.name}"
     elif isinstance(value, str):
-        return f'"{value}"'
+        # Use repr() for strings to properly escape newlines and special characters
+        return repr(value)
     elif isinstance(value, Path):
-        return f'Path("{value}")'
+        return f'Path({repr(str(value))})'
     return repr(value)
 
 def generate_clean_dataclass_repr(instance, indent_level=0, clean_mode=False):
@@ -38,7 +97,7 @@ def generate_clean_dataclass_repr(instance, indent_level=0, clean_mode=False):
     lines = []
     indent_str = "    " * indent_level
     child_indent_str = "    " * (indent_level + 1)
-    
+
     # Get a default instance of the same class for comparison
     default_instance = instance.__class__()
 
@@ -102,102 +161,14 @@ def convert_pickle_to_python(pickle_path, output_path=None, clean_mode=False):
                     '                         MaterializationBackend, ZarrCompressor, ZarrChunkStrategy)\n')
             f.write('from openhcs.constants.constants import VariableComponents, Backend, Microscope\n\n')
             
-            # Import all the functions used in the pipeline
-            function_imports = defaultdict(set)
-            enum_imports = defaultdict(set)
+            # Use extracted function for orchestrator generation
+            orchestrator_code = generate_complete_orchestrator_code(
+                data["plate_paths"], data["pipeline_data"], data['global_config'], clean_mode
+            )
 
-            def find_and_register_imports(obj):
-                """Recursively find and register all function and enum imports."""
-                if isinstance(obj, Enum):
-                    module = obj.__class__.__module__
-                    name = obj.__class__.__name__
-                    if module and name and module.startswith('openhcs'):
-                        enum_imports[module].add(name)
-                elif callable(obj):
-                    module = getattr(obj, '__module__', None)
-                    name = getattr(obj, '__name__', None)
-                    if module and name and module.startswith('openhcs'):
-                        function_imports[module].add(name)
-                elif isinstance(obj, (list, tuple)):
-                    for item in obj:
-                        find_and_register_imports(item)
-                elif isinstance(obj, dict):
-                    for value in obj.values():
-                        find_and_register_imports(value)
-
-            # Extract all imports by traversing the data structure
-            if 'pipeline_data' in data:
-                for steps in data['pipeline_data'].values():
-                    for step in steps:
-                        if hasattr(step, 'func'):
-                            find_and_register_imports(step.func)
-                        if hasattr(step, 'variable_components'):
-                            find_and_register_imports(step.variable_components)
-            # Traverse global_config too
-            find_and_register_imports(data.get('global_config'))
-
-
-            # Write function and enum imports
-            f.write('# Function and Enum imports\n')
-            all_imports = function_imports
-            for module, names in enum_imports.items():
-                all_imports[module].update(names)
-
-            for module, names in sorted(all_imports.items()):
-                f.write(f"from {module} import {', '.join(sorted(names))}\n")
-            f.write('\n')
-
-            # Write the main function
-            f.write('def create_pipeline():\n')
-            f.write('    """Create and return the pipeline configuration."""\n\n')
-            
-            # Write plate paths
-            f.write('    # Plate paths\n')
-            f.write(f'    plate_paths = {repr(data["plate_paths"])}\n\n')
-            
-            # Write global config using the new generic generator
-            f.write('    # Global configuration\n')
-            config_repr = generate_clean_dataclass_repr(data['global_config'], indent_level=1, clean_mode=clean_mode)
-            f.write(f'    global_config = GlobalPipelineConfig(\n{config_repr}\n    )\n\n')
-            
-            # Write pipeline steps
-            f.write('    # Pipeline steps\n')
-            f.write('    pipeline_data = {}\n\n')
-            
-            default_step = FunctionStep(func=lambda: None) # For comparing default values
-            
-            for plate_path, steps in data['pipeline_data'].items():
-                f.write(f'    # Steps for plate: {Path(plate_path).name}\n')
-                f.write(f'    steps = []\n\n')
-                
-                for i, step in enumerate(steps):
-                    f.write(f'    # Step {i+1}: {step.name}\n')
-                    func_repr = generate_readable_function_repr(step.func, indent=2, clean_mode=clean_mode)
-                    
-                    # Generate arguments for FunctionStep, respecting clean_mode
-                    step_args = [f'func={func_repr}']
-                    
-                    params_to_check = {
-                        "name": (f'name="{step.name}"', step.name, default_step.name),
-                        "variable_components": (
-                            f'variable_components=[VariableComponents.{step.variable_components[0].name}]',
-                            step.variable_components,
-                            default_step.variable_components
-                        ),
-                        "force_disk_output": (f'force_disk_output={step.force_disk_output}', step.force_disk_output, default_step.force_disk_output)
-                    }
-
-                    for name, (repr_str, current_val, default_val) in params_to_check.items():
-                        if not clean_mode or current_val != default_val:
-                            step_args.append(repr_str)
-                    
-                    args_str = ",\n        ".join(step_args)
-                    f.write(f'    step_{i+1} = FunctionStep(\n        {args_str}\n    )\n')
-                    f.write(f'    steps.append(step_{i+1})\n\n')
-                
-                f.write(f'    pipeline_data["{plate_path}"] = steps\n\n')
-            
-            f.write('    return plate_paths, pipeline_data, global_config\n\n')
+            # Write orchestrator code (already includes dynamic imports)
+            f.write(orchestrator_code)
+            f.write('\n\n')
             
             # ... (rest of the file remains the same for now) ...
             f.write('def setup_signal_handlers():\n')
@@ -304,6 +275,162 @@ def generate_readable_function_repr(func_obj, indent=0, clean_mode=False):
         
     else:
         return _value_to_repr(func_obj)
+
+
+def generate_complete_pipeline_steps_code(pipeline_steps, clean_mode=False):
+    """Generate complete Python code for pipeline steps with imports."""
+    # Build code with imports and steps
+    code_lines = ["# Edit this pipeline and save to apply changes", ""]
+
+    # Add required imports for FunctionStep and VariableComponents
+    code_lines.extend([
+        "# Required imports",
+        "from openhcs.core.steps.function_step import FunctionStep",
+        "from openhcs.constants.constants import VariableComponents",
+        ""
+    ])
+
+    # Collect imports from all function patterns in the pipeline steps (encapsulation)
+    all_function_imports = defaultdict(set)
+    all_enum_imports = defaultdict(set)
+
+    for step in pipeline_steps:
+        # Get imports from each function pattern
+        func_imports, enum_imports = collect_imports_from_data(step.func)
+        # Merge into pipeline-level imports
+        for module, names in func_imports.items():
+            all_function_imports[module].update(names)
+        for module, names in enum_imports.items():
+            all_enum_imports[module].update(names)
+
+    # Format and add function pattern imports
+    import_lines = format_imports_as_strings(all_function_imports, all_enum_imports)
+    if import_lines:
+        code_lines.append("# Function and Enum imports from encapsulated patterns")
+        code_lines.extend(import_lines)
+        code_lines.append("")
+
+    # Generate pipeline steps (extract exact logic from lines 164-198)
+    code_lines.append("# Pipeline steps")
+    code_lines.append("pipeline_steps = []")
+    code_lines.append("")
+
+    default_step = FunctionStep(func=lambda: None)
+    for i, step in enumerate(pipeline_steps):
+        code_lines.append(f"# Step {i+1}: {step.name}")
+        func_repr = generate_readable_function_repr(step.func, indent=1, clean_mode=clean_mode)
+
+        # Generate FunctionStep arguments (exact logic from lines 178-192)
+        step_args = [f"func={func_repr}"]
+
+        params_to_check = {
+            "name": (f'name="{step.name}"', step.name, default_step.name),
+            "variable_components": (
+                f'variable_components=[VariableComponents.{step.variable_components[0].name}]',
+                step.variable_components,
+                default_step.variable_components
+            ),
+            "force_disk_output": (f'force_disk_output={step.force_disk_output}', step.force_disk_output, default_step.force_disk_output)
+        }
+
+        for name, (repr_str, current_val, default_val) in params_to_check.items():
+            if not clean_mode or current_val != default_val:
+                step_args.append(repr_str)
+
+        args_str = ",\n    ".join(step_args)
+        code_lines.append(f"step_{i+1} = FunctionStep(\n    {args_str}\n)")
+        code_lines.append(f"pipeline_steps.append(step_{i+1})")
+        code_lines.append("")
+
+    return "\n".join(code_lines)
+
+
+def generate_complete_orchestrator_code(plate_paths, pipeline_data, global_config, clean_mode=False):
+    """Generate complete Python code for orchestrator config with imports."""
+    # Build complete code (extract exact logic from lines 150-200)
+    code_lines = ["# Edit this orchestrator configuration and save to apply changes", ""]
+
+    # Add required imports for orchestrator
+    code_lines.extend([
+        "# Required imports",
+        "from openhcs.core.steps.function_step import FunctionStep",
+        "from openhcs.constants.constants import VariableComponents",
+        "from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig",
+        "from openhcs.core.config import AnalysisConsolidationConfig, PlateMetadataConfig",
+        "from openhcs.constants.constants import Backend, Microscope",
+        "from openhcs.core.config import MaterializationBackend, ZarrCompressor, ZarrChunkStrategy",
+        ""
+    ])
+
+    # Collect imports from ALL encapsulated pipeline steps (encapsulation)
+    all_function_imports = defaultdict(set)
+    all_enum_imports = defaultdict(set)
+
+    for plate_path, steps in pipeline_data.items():
+        for step in steps:
+            # Get imports from each function pattern in each pipeline
+            func_imports, enum_imports = collect_imports_from_data(step.func)
+            # Merge into orchestrator-level imports
+            for module, names in func_imports.items():
+                all_function_imports[module].update(names)
+            for module, names in enum_imports.items():
+                all_enum_imports[module].update(names)
+
+    # Format and add function pattern imports
+    import_lines = format_imports_as_strings(all_function_imports, all_enum_imports)
+    if import_lines:
+        code_lines.append("# Function and Enum imports from encapsulated pipelines")
+        code_lines.extend(import_lines)
+        code_lines.append("")
+
+    code_lines.extend([
+        "# Plate paths",
+        f"plate_paths = {repr(plate_paths)}",
+        "",
+        "# Global configuration",
+    ])
+
+    config_repr = generate_clean_dataclass_repr(global_config, indent_level=0, clean_mode=clean_mode)
+    code_lines.append(f"global_config = GlobalPipelineConfig(\n{config_repr}\n)")
+    code_lines.append("")
+
+    # Generate pipeline data (exact logic from lines 164-198)
+    code_lines.extend(["# Pipeline steps", "pipeline_data = {}", ""])
+
+    default_step = FunctionStep(func=lambda: None)
+    for plate_path, steps in pipeline_data.items():
+        code_lines.append(f'# Steps for plate: {Path(plate_path).name}')
+        code_lines.append("steps = []")
+        code_lines.append("")
+
+        for i, step in enumerate(steps):
+            code_lines.append(f"# Step {i+1}: {step.name}")
+            func_repr = generate_readable_function_repr(step.func, indent=1, clean_mode=clean_mode)
+
+            step_args = [f"func={func_repr}"]
+            params_to_check = {
+                "name": (f'name="{step.name}"', step.name, default_step.name),
+                "variable_components": (
+                    f'variable_components=[VariableComponents.{step.variable_components[0].name}]',
+                    step.variable_components,
+                    default_step.variable_components
+                ),
+                "force_disk_output": (f'force_disk_output={step.force_disk_output}', step.force_disk_output, default_step.force_disk_output)
+            }
+
+            for name, (repr_str, current_val, default_val) in params_to_check.items():
+                if not clean_mode or current_val != default_val:
+                    step_args.append(repr_str)
+
+            args_str = ",\n    ".join(step_args)
+            code_lines.append(f"step_{i+1} = FunctionStep(\n    {args_str}\n)")
+            code_lines.append(f"steps.append(step_{i+1})")
+            code_lines.append("")
+
+        code_lines.append(f'pipeline_data["{plate_path}"] = steps')
+        code_lines.append("")
+
+    return "\n".join(code_lines)
 
 
 def main():
