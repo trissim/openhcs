@@ -28,11 +28,12 @@ from openhcs.io.filemanager import FileManager
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator, OrchestratorState
 from openhcs.core.pipeline import Pipeline
 from openhcs.constants.constants import VariableComponents, GroupBy
+from openhcs.pyqt_gui.widgets.mixins import SelectionPreservationMixin
 
 logger = logging.getLogger(__name__)
 
 
-class PlateManagerWidget(QWidget):
+class PlateManagerWidget(SelectionPreservationMixin, QWidget):
     """
     PyQt6 Plate Manager Widget.
     
@@ -64,7 +65,7 @@ class PlateManagerWidget(QWidget):
             service_adapter: PyQt service adapter for dialogs and operations
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(list_widget_attr="plate_list", parent=parent)
 
         # Core dependencies
         self.file_manager = file_manager
@@ -95,7 +96,21 @@ class PlateManagerWidget(QWidget):
         self.update_button_states()
         
         logger.debug("Plate manager widget initialized")
-    
+
+    # ========== Selection Preservation Mixin Implementation ==========
+
+    def get_item_identifier(self, item_data) -> str:
+        """Extract unique identifier from plate item data."""
+        if isinstance(item_data, dict) and 'path' in item_data:
+            return item_data['path']
+        return str(item_data)
+
+    def should_preserve_selection(self) -> bool:
+        """Preserve selection when orchestrators exist."""
+        return bool(self.orchestrators)
+
+    # ========== UI Setup ==========
+
     def setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
@@ -778,12 +793,10 @@ class PlateManagerWidget(QWidget):
     # ========== UI Helper Methods ==========
     
     def update_plate_list(self):
-        """Update the plate list widget."""
-        self.plate_list.clear()
-
-        for plate in self.plates:
-            item = QListWidgetItem(f"{plate['name']} ({plate['path']})")
-            item.setData(Qt.ItemDataRole.UserRole, plate)
+        """Update the plate list widget using selection preservation mixin."""
+        def format_plate_item(plate):
+            """Format plate item for display."""
+            display_text = f"{plate['name']} ({plate['path']})"
 
             # Add status indicators
             status_indicators = []
@@ -803,16 +816,32 @@ class PlateManagerWidget(QWidget):
                     status_indicators.append("❌ Exec Failed")
 
             if status_indicators:
-                item.setText(f"[{', '.join(status_indicators)}] {item.text()}")
-                item.setToolTip(f"Status: {', '.join(status_indicators)}")
+                display_text = f"[{', '.join(status_indicators)}] {display_text}"
 
-            self.plate_list.addItem(item)
+            return display_text, plate
 
-        # Auto-select first plate if none is selected and plates exist
-        if self.plates and not self.selected_plate_path:
-            self.plate_list.setCurrentRow(0)
-            # This will trigger on_selection_changed automatically
+        def update_func():
+            """Update function that clears and rebuilds the list."""
+            self.plate_list.clear()
 
+            for plate in self.plates:
+                display_text, plate_data = format_plate_item(plate)
+                item = QListWidgetItem(display_text)
+                item.setData(Qt.ItemDataRole.UserRole, plate_data)
+
+                # Add tooltip
+                if plate['path'] in self.orchestrators:
+                    orchestrator = self.orchestrators[plate['path']]
+                    item.setToolTip(f"Status: {orchestrator.state.value}")
+
+                self.plate_list.addItem(item)
+
+            # Auto-select first plate if no selection and plates exist
+            if self.plates and not self.selected_plate_path:
+                self.plate_list.setCurrentRow(0)
+
+        # Use mixin to preserve selection during update
+        self.preserve_selection_during_update(update_func)
         self.update_button_states()
     
     def get_selected_plates(self) -> List[Dict]:
@@ -872,38 +901,26 @@ class PlateManagerWidget(QWidget):
         self.status_label.setText(message)
     
     def on_selection_changed(self):
-        """Handle plate list selection changes."""
-        selected_plates = self.get_selected_plates()
-
-        if selected_plates:
+        """Handle plate list selection changes using mixin."""
+        def on_selected(selected_plates):
             self.selected_plate_path = selected_plates[0]['path']
             self.plate_selected.emit(self.selected_plate_path)
-        else:
-            # Prevent deselection if orchestrators exist - keep at least one selected
-            if self.orchestrators and self.selected_plate_path:
-                # Re-select the previously selected plate
-                self._reselect_current_plate()
-                return
 
-            # No orchestrators available, allow clearing selection
+        def on_cleared():
             self.selected_plate_path = ""
+
+        # Use mixin to handle selection with prevention
+        self.handle_selection_change_with_prevention(
+            self.get_selected_plates,
+            on_selected,
+            on_cleared
+        )
 
         self.update_button_states()
 
-    def _reselect_current_plate(self):
-        """
-        Re-select the currently selected plate to prevent deselection.
-        """
-        # Find the current plate in the list and re-select it
-        for i in range(self.plate_list.count()):
-            item = self.plate_list.item(i)
-            plate_data = item.data(Qt.ItemDataRole.UserRole)
-            if plate_data and plate_data['path'] == self.selected_plate_path:
-                # Temporarily block signals to avoid recursion
-                self.plate_list.blockSignals(True)
-                self.plate_list.setCurrentRow(i)
-                self.plate_list.blockSignals(False)
-                break
+
+
+
 
     def on_item_double_clicked(self, item: QListWidgetItem):
         """Handle double-click on plate item."""

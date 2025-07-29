@@ -22,11 +22,12 @@ from PyQt6.QtGui import QFont, QDrag
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
+from openhcs.pyqt_gui.widgets.mixins import SelectionPreservationMixin
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineEditorWidget(QWidget):
+class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
     """
     PyQt6 Pipeline Editor Widget.
     
@@ -48,7 +49,7 @@ class PipelineEditorWidget(QWidget):
             service_adapter: PyQt service adapter for dialogs and operations
             parent: Parent widget
         """
-        super().__init__(parent)
+        super().__init__(list_widget_attr="step_list", parent=parent)
         
         # Core dependencies
         self.file_manager = file_manager
@@ -75,7 +76,21 @@ class PipelineEditorWidget(QWidget):
         self.update_button_states()
         
         logger.debug("Pipeline editor widget initialized")
-    
+
+    # ========== Selection Preservation Mixin Implementation ==========
+
+    def get_item_identifier(self, item_data) -> str:
+        """Extract unique identifier from step item data."""
+        if hasattr(item_data, 'name'):
+            return item_data.name
+        return str(item_data)
+
+    def should_preserve_selection(self) -> bool:
+        """Preserve selection when steps exist."""
+        return bool(self.pipeline_steps)
+
+    # ========== UI Setup ==========
+
     def setup_ui(self):
         """Setup the user interface."""
         layout = QVBoxLayout(self)
@@ -497,16 +512,25 @@ class PipelineEditorWidget(QWidget):
     # ========== UI Helper Methods ==========
     
     def update_step_list(self):
-        """Update the step list widget."""
-        self.step_list.clear()
-        
-        for step in self.pipeline_steps:
+        """Update the step list widget using selection preservation mixin."""
+        def format_step_item(step):
+            """Format step item for display."""
             display_text, step_name = self.format_item_for_display(step)
-            item = QListWidgetItem(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, step)
-            item.setToolTip(f"Step: {step_name}")
-            self.step_list.addItem(item)
-        
+            return display_text, step
+
+        def update_func():
+            """Update function that clears and rebuilds the list."""
+            self.step_list.clear()
+
+            for step in self.pipeline_steps:
+                display_text, step_data = format_step_item(step)
+                item = QListWidgetItem(display_text)
+                item.setData(Qt.ItemDataRole.UserRole, step_data)
+                item.setToolTip(f"Step: {getattr(step, 'name', 'Unknown')}")
+                self.step_list.addItem(item)
+
+        # Use mixin to preserve selection during update
+        self.preserve_selection_during_update(update_func)
         self.update_button_states()
     
     def get_selected_steps(self) -> List[FunctionStep]:
@@ -547,17 +571,23 @@ class PipelineEditorWidget(QWidget):
         self.status_label.setText(message)
     
     def on_selection_changed(self):
-        """Handle step list selection changes."""
-        selected_steps = self.get_selected_steps()
-        
-        if selected_steps:
+        """Handle step list selection changes using mixin."""
+        def on_selected(selected_steps):
             self.selected_step = getattr(selected_steps[0], 'name', '')
             self.step_selected.emit(selected_steps[0])
-        else:
+
+        def on_cleared():
             self.selected_step = ""
-        
+
+        # Use mixin to handle selection with prevention
+        self.handle_selection_change_with_prevention(
+            self.get_selected_steps,
+            on_selected,
+            on_cleared
+        )
+
         self.update_button_states()
-    
+
     def on_item_double_clicked(self, item: QListWidgetItem):
         """Handle double-click on step item."""
         step_data = item.data(Qt.ItemDataRole.UserRole)
