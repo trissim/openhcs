@@ -874,15 +874,37 @@ class PlateManagerWidget(QWidget):
     def on_selection_changed(self):
         """Handle plate list selection changes."""
         selected_plates = self.get_selected_plates()
-        
+
         if selected_plates:
             self.selected_plate_path = selected_plates[0]['path']
             self.plate_selected.emit(self.selected_plate_path)
         else:
+            # Prevent deselection if orchestrators exist - keep at least one selected
+            if self.orchestrators and self.selected_plate_path:
+                # Re-select the previously selected plate
+                self._reselect_current_plate()
+                return
+
+            # No orchestrators available, allow clearing selection
             self.selected_plate_path = ""
-        
+
         self.update_button_states()
-    
+
+    def _reselect_current_plate(self):
+        """
+        Re-select the currently selected plate to prevent deselection.
+        """
+        # Find the current plate in the list and re-select it
+        for i in range(self.plate_list.count()):
+            item = self.plate_list.item(i)
+            plate_data = item.data(Qt.ItemDataRole.UserRole)
+            if plate_data and plate_data['path'] == self.selected_plate_path:
+                # Temporarily block signals to avoid recursion
+                self.plate_list.blockSignals(True)
+                self.plate_list.setCurrentRow(i)
+                self.plate_list.blockSignals(False)
+                break
+
     def on_item_double_clicked(self, item: QListWidgetItem):
         """Handle double-click on plate item."""
         plate_data = item.data(Qt.ItemDataRole.UserRole)
