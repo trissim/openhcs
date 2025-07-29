@@ -28,12 +28,15 @@ from openhcs.io.filemanager import FileManager
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator, OrchestratorState
 from openhcs.core.pipeline import Pipeline
 from openhcs.constants.constants import VariableComponents, GroupBy
-from openhcs.pyqt_gui.widgets.mixins import SelectionPreservationMixin
+from openhcs.pyqt_gui.widgets.mixins import (
+    preserve_selection_during_update,
+    handle_selection_change_with_prevention
+)
 
 logger = logging.getLogger(__name__)
 
 
-class PlateManagerWidget(SelectionPreservationMixin, QWidget):
+class PlateManagerWidget(QWidget):
     """
     PyQt6 Plate Manager Widget.
     
@@ -65,7 +68,7 @@ class PlateManagerWidget(SelectionPreservationMixin, QWidget):
             service_adapter: PyQt service adapter for dialogs and operations
             parent: Parent widget
         """
-        super().__init__(list_widget_attr="plate_list", parent=parent)
+        super().__init__(parent)
 
         # Core dependencies
         self.file_manager = file_manager
@@ -96,18 +99,6 @@ class PlateManagerWidget(SelectionPreservationMixin, QWidget):
         self.update_button_states()
         
         logger.debug("Plate manager widget initialized")
-
-    # ========== Selection Preservation Mixin Implementation ==========
-
-    def get_item_identifier(self, item_data) -> str:
-        """Extract unique identifier from plate item data."""
-        if isinstance(item_data, dict) and 'path' in item_data:
-            return item_data['path']
-        return str(item_data)
-
-    def should_preserve_selection(self) -> bool:
-        """Preserve selection when orchestrators exist."""
-        return bool(self.orchestrators)
 
     # ========== UI Setup ==========
 
@@ -840,8 +831,13 @@ class PlateManagerWidget(SelectionPreservationMixin, QWidget):
             if self.plates and not self.selected_plate_path:
                 self.plate_list.setCurrentRow(0)
 
-        # Use mixin to preserve selection during update
-        self.preserve_selection_during_update(update_func)
+        # Use utility to preserve selection during update
+        preserve_selection_during_update(
+            self.plate_list,
+            lambda item_data: item_data['path'] if isinstance(item_data, dict) and 'path' in item_data else str(item_data),
+            lambda: bool(self.orchestrators),
+            update_func
+        )
         self.update_button_states()
     
     def get_selected_plates(self) -> List[Dict]:
@@ -901,7 +897,7 @@ class PlateManagerWidget(SelectionPreservationMixin, QWidget):
         self.status_label.setText(message)
     
     def on_selection_changed(self):
-        """Handle plate list selection changes using mixin."""
+        """Handle plate list selection changes using utility."""
         def on_selected(selected_plates):
             self.selected_plate_path = selected_plates[0]['path']
             self.plate_selected.emit(self.selected_plate_path)
@@ -909,9 +905,13 @@ class PlateManagerWidget(SelectionPreservationMixin, QWidget):
         def on_cleared():
             self.selected_plate_path = ""
 
-        # Use mixin to handle selection with prevention
-        self.handle_selection_change_with_prevention(
+        # Use utility to handle selection with prevention
+        handle_selection_change_with_prevention(
+            self.plate_list,
             self.get_selected_plates,
+            lambda item_data: item_data['path'] if isinstance(item_data, dict) and 'path' in item_data else str(item_data),
+            lambda: bool(self.orchestrators),
+            lambda: self.selected_plate_path,
             on_selected,
             on_cleared
         )

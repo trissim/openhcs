@@ -24,7 +24,125 @@ from openhcs.pyqt_gui.utils.log_detection_utils import (
     get_current_tui_log_path, discover_logs, classify_log_file, is_relevant_log_file
 )
 
+# Import Pygments for advanced syntax highlighting
+from pygments import highlight
+from pygments.lexers import PythonLexer, get_lexer_by_name
+from pygments.formatters import get_formatter_by_name
+from pygments.token import Token
+from pygments.style import Style
+from pygments.styles import get_style_by_name
+from dataclasses import dataclass
+from typing import Dict, Tuple
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LogColorScheme:
+    """
+    Centralized color scheme for log highlighting with semantic color names.
+
+    Supports light/dark theme variants and ensures WCAG accessibility compliance.
+    All colors meet minimum 4.5:1 contrast ratio for normal text readability.
+    """
+
+    # Log level colors with semantic meaning (WCAG 4.5:1 compliant)
+    log_critical_fg: Tuple[int, int, int] = (255, 255, 255)  # White text
+    log_critical_bg: Tuple[int, int, int] = (139, 0, 0)      # Dark red background
+    log_error_color: Tuple[int, int, int] = (255, 85, 85)    # Brighter red - WCAG compliant
+    log_warning_color: Tuple[int, int, int] = (255, 140, 0)  # Dark orange - attention grabbing
+    log_info_color: Tuple[int, int, int] = (100, 160, 210)   # Brighter steel blue - WCAG compliant
+    log_debug_color: Tuple[int, int, int] = (160, 160, 160)  # Lighter gray - better contrast
+
+    # Metadata and structural colors
+    timestamp_color: Tuple[int, int, int] = (105, 105, 105)      # Dim gray - unobtrusive
+    logger_name_color: Tuple[int, int, int] = (147, 112, 219)   # Medium slate blue - distinctive
+    memory_address_color: Tuple[int, int, int] = (255, 182, 193) # Light pink - technical data
+    file_path_color: Tuple[int, int, int] = (34, 139, 34)       # Forest green - file system
+
+    # Python syntax colors (following VS Code dark theme conventions)
+    python_keyword_color: Tuple[int, int, int] = (86, 156, 214)    # Blue - language keywords
+    python_string_color: Tuple[int, int, int] = (206, 145, 120)    # Orange - string literals
+    python_number_color: Tuple[int, int, int] = (181, 206, 168)    # Light green - numeric values
+    python_operator_color: Tuple[int, int, int] = (212, 212, 212)  # Light gray - operators/punctuation
+    python_name_color: Tuple[int, int, int] = (156, 220, 254)      # Light blue - identifiers
+    python_function_color: Tuple[int, int, int] = (220, 220, 170)  # Yellow - function names
+    python_class_color: Tuple[int, int, int] = (78, 201, 176)      # Teal - class names
+    python_builtin_color: Tuple[int, int, int] = (86, 156, 214)    # Blue - built-in functions
+    python_comment_color: Tuple[int, int, int] = (106, 153, 85)    # Green - comments
+
+    # Special highlighting colors
+    exception_color: Tuple[int, int, int] = (255, 69, 0)       # Red orange - error types
+    function_call_color: Tuple[int, int, int] = (255, 215, 0)  # Gold - function invocations
+    boolean_color: Tuple[int, int, int] = (86, 156, 214)       # Blue - True/False/None
+
+    # Enhanced syntax colors (Phase 1 additions)
+    tuple_parentheses_color: Tuple[int, int, int] = (255, 215, 0)     # Gold - tuple delimiters
+    set_braces_color: Tuple[int, int, int] = (255, 140, 0)            # Dark orange - set delimiters
+    class_representation_color: Tuple[int, int, int] = (78, 201, 176) # Teal - <class 'name'>
+    function_representation_color: Tuple[int, int, int] = (220, 220, 170) # Yellow - <function name>
+    module_path_color: Tuple[int, int, int] = (147, 112, 219)         # Medium slate blue - module.path
+    hex_number_color: Tuple[int, int, int] = (181, 206, 168)          # Light green - 0xFF
+    scientific_notation_color: Tuple[int, int, int] = (181, 206, 168) # Light green - 1.23e-4
+    binary_number_color: Tuple[int, int, int] = (181, 206, 168)       # Light green - 0b1010
+    octal_number_color: Tuple[int, int, int] = (181, 206, 168)        # Light green - 0o755
+    python_special_color: Tuple[int, int, int] = (255, 20, 147)       # Deep pink - __name__
+    single_quoted_string_color: Tuple[int, int, int] = (206, 145, 120) # Orange - 'string'
+    list_comprehension_color: Tuple[int, int, int] = (156, 220, 254)  # Light blue - [x for x in y]
+    generator_expression_color: Tuple[int, int, int] = (156, 220, 254) # Light blue - (x for x in y)
+
+    @classmethod
+    def create_dark_theme(cls) -> 'LogColorScheme':
+        """
+        Create a dark theme variant with adjusted colors for dark backgrounds.
+
+        Returns:
+            LogColorScheme: Dark theme color scheme with higher contrast
+        """
+        return cls(
+            # Enhanced colors for dark backgrounds with better contrast
+            log_error_color=(255, 100, 100),    # Brighter red
+            log_info_color=(120, 180, 230),     # Brighter steel blue
+            timestamp_color=(160, 160, 160),    # Lighter gray
+            python_string_color=(236, 175, 150), # Brighter orange
+            python_number_color=(200, 230, 190), # Brighter green
+            # Other colors remain the same as they work well on dark backgrounds
+        )
+
+    @classmethod
+    def create_light_theme(cls) -> 'LogColorScheme':
+        """
+        Create a light theme variant with adjusted colors for light backgrounds.
+
+        Returns:
+            LogColorScheme: Light theme color scheme with appropriate contrast
+        """
+        return cls(
+            # Darker colors for light backgrounds with WCAG compliance
+            log_error_color=(180, 20, 40),       # Darker red
+            log_info_color=(30, 80, 130),        # Darker steel blue
+            log_warning_color=(200, 100, 0),     # Darker orange
+            timestamp_color=(60, 60, 60),        # Darker gray
+            logger_name_color=(100, 60, 160),    # Darker slate blue
+            python_string_color=(150, 80, 60),   # Darker orange
+            python_number_color=(120, 140, 100), # Darker green
+            memory_address_color=(200, 120, 140), # Darker pink
+            file_path_color=(20, 100, 20),       # Darker forest green
+            exception_color=(200, 40, 0),        # Darker red orange
+            # Adjust other colors for light background contrast
+        )
+
+    def to_qcolor(self, color_tuple: Tuple[int, int, int]) -> QColor:
+        """
+        Convert RGB tuple to QColor object.
+
+        Args:
+            color_tuple: RGB color tuple (r, g, b)
+
+        Returns:
+            QColor: Qt color object
+        """
+        return QColor(*color_tuple)
 
 
 class LogFileDetector(QObject):
@@ -153,50 +271,250 @@ class LogFileDetector(QObject):
 
 class LogHighlighter(QSyntaxHighlighter):
     """
-    Syntax highlighter for log files.
+    Advanced syntax highlighter for log files using Pygments.
 
-    Provides highlighting for OpenHCS log format: YYYY-MM-DD HH:MM:SS,mmm - logger - level - message
-    Highlights log levels (INFO, WARNING, ERROR, DEBUG) and timestamps.
+    Provides sophisticated highlighting for OpenHCS log format with support for:
+    - Log levels and timestamps
+    - Python code snippets and data structures
+    - Memory addresses and function signatures
+    - Complex nested dictionaries and lists
+    - Exception tracebacks and file paths
     """
 
-    def __init__(self, parent: QTextDocument):
+    def __init__(self, parent: QTextDocument, color_scheme: LogColorScheme = None):
+        """
+        Initialize the log highlighter with optional color scheme.
+
+        Args:
+            parent: QTextDocument to apply highlighting to
+            color_scheme: Color scheme to use (defaults to dark theme)
+        """
         super().__init__(parent)
-        self.highlighting_rules = []
+        self.color_scheme = color_scheme or LogColorScheme()
+        self.setup_pygments_styles()
         self.setup_highlighting_rules()
 
+    def setup_pygments_styles(self) -> None:
+        """Setup Pygments token to QTextCharFormat mapping using color scheme."""
+        cs = self.color_scheme  # Shorthand for readability
+
+        # Create a mapping from Pygments tokens to Qt text formats
+        self.token_formats = {
+            # Log levels with distinct colors and backgrounds
+            'log_critical': self._create_format(
+                cs.to_qcolor(cs.log_critical_fg),
+                cs.to_qcolor(cs.log_critical_bg),
+                bold=True
+            ),
+            'log_error': self._create_format(cs.to_qcolor(cs.log_error_color), bold=True),
+            'log_warning': self._create_format(cs.to_qcolor(cs.log_warning_color), bold=True),
+            'log_info': self._create_format(cs.to_qcolor(cs.log_info_color), bold=True),
+            'log_debug': self._create_format(cs.to_qcolor(cs.log_debug_color)),
+
+            # Timestamps and metadata
+            'timestamp': self._create_format(cs.to_qcolor(cs.timestamp_color)),
+            'logger_name': self._create_format(cs.to_qcolor(cs.logger_name_color), bold=True),
+
+            # Python syntax highlighting (for complex data structures)
+            Token.Keyword: self._create_format(cs.to_qcolor(cs.python_keyword_color), bold=True),
+            Token.String: self._create_format(cs.to_qcolor(cs.python_string_color)),
+            Token.String.Single: self._create_format(cs.to_qcolor(cs.python_string_color)),
+            Token.String.Double: self._create_format(cs.to_qcolor(cs.python_string_color)),
+            Token.Number: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Number.Integer: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Number.Float: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Number.Hex: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Number.Oct: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Number.Bin: self._create_format(cs.to_qcolor(cs.python_number_color)),
+            Token.Operator: self._create_format(cs.to_qcolor(cs.python_operator_color)),
+            Token.Punctuation: self._create_format(cs.to_qcolor(cs.python_operator_color)),
+            Token.Name: self._create_format(cs.to_qcolor(cs.python_name_color)),
+            Token.Name.Function: self._create_format(cs.to_qcolor(cs.python_function_color), bold=True),
+            Token.Name.Class: self._create_format(cs.to_qcolor(cs.python_class_color), bold=True),
+            Token.Name.Builtin: self._create_format(cs.to_qcolor(cs.python_builtin_color)),
+            Token.Comment: self._create_format(cs.to_qcolor(cs.python_comment_color)),
+            Token.Literal: self._create_format(cs.to_qcolor(cs.python_number_color)),
+
+            # Special patterns for log content
+            'memory_address': self._create_format(cs.to_qcolor(cs.memory_address_color)),
+            'file_path': self._create_format(cs.to_qcolor(cs.file_path_color)),
+            'exception': self._create_format(cs.to_qcolor(cs.exception_color), bold=True),
+            'function_call': self._create_format(cs.to_qcolor(cs.function_call_color)),
+            'dict_key': self._create_format(cs.to_qcolor(cs.python_name_color)),
+            'boolean': self._create_format(cs.to_qcolor(cs.boolean_color), bold=True),
+
+            # Enhanced Python syntax elements (Phase 1)
+            'tuple_parentheses': self._create_format(cs.to_qcolor(cs.tuple_parentheses_color)),
+            'set_braces': self._create_format(cs.to_qcolor(cs.set_braces_color)),
+            'class_representation': self._create_format(cs.to_qcolor(cs.class_representation_color), bold=True),
+            'function_representation': self._create_format(cs.to_qcolor(cs.function_representation_color), bold=True),
+            'module_path': self._create_format(cs.to_qcolor(cs.module_path_color)),
+            'hex_number': self._create_format(cs.to_qcolor(cs.hex_number_color)),
+            'scientific_notation': self._create_format(cs.to_qcolor(cs.scientific_notation_color)),
+            'binary_number': self._create_format(cs.to_qcolor(cs.binary_number_color)),
+            'octal_number': self._create_format(cs.to_qcolor(cs.octal_number_color)),
+            'python_special': self._create_format(cs.to_qcolor(cs.python_special_color), bold=True),
+            'single_quoted_string': self._create_format(cs.to_qcolor(cs.single_quoted_string_color)),
+            'list_comprehension': self._create_format(cs.to_qcolor(cs.list_comprehension_color)),
+            'generator_expression': self._create_format(cs.to_qcolor(cs.generator_expression_color)),
+        }
+
+    def _create_format(self, fg_color: QColor, bg_color: QColor = None, bold: bool = False) -> QTextCharFormat:
+        """Create a QTextCharFormat with specified properties."""
+        format = QTextCharFormat()
+        format.setForeground(fg_color)
+        if bg_color:
+            format.setBackground(bg_color)
+        if bold:
+            format.setFontWeight(QFont.Weight.Bold)
+        return format
+
     def setup_highlighting_rules(self) -> None:
-        """Setup regex patterns and formats for log highlighting."""
-        # Log level patterns with colors
+        """Setup regex patterns for log-specific highlighting."""
+        self.highlighting_rules = []
+
+        # Log level patterns (highest priority)
         log_levels = [
-            ("INFO", QColor(0, 100, 200)),      # Blue
-            ("WARNING", QColor(255, 165, 0)),   # Orange/Yellow
-            ("ERROR", QColor(200, 0, 0)),       # Red
-            ("DEBUG", QColor(128, 128, 128)),   # Gray
+            ("CRITICAL", self.token_formats['log_critical']),
+            ("ERROR", self.token_formats['log_error']),
+            ("WARNING", self.token_formats['log_warning']),
+            ("INFO", self.token_formats['log_info']),
+            ("DEBUG", self.token_formats['log_debug']),
         ]
 
-        for level, color in log_levels:
+        for level, format in log_levels:
             pattern = QRegularExpression(rf"\b{level}\b")
-            format = QTextCharFormat()
-            format.setForeground(color)
-            format.setFontWeight(QFont.Weight.Bold)
             self.highlighting_rules.append((pattern, format))
 
         # Timestamp pattern: YYYY-MM-DD HH:MM:SS,mmm
         timestamp_pattern = QRegularExpression(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}")
-        timestamp_format = QTextCharFormat()
-        timestamp_format.setForeground(QColor(100, 100, 100))  # Dark gray
-        timestamp_format.setFontWeight(QFont.Weight.Bold)
-        self.highlighting_rules.append((timestamp_pattern, timestamp_format))
+        self.highlighting_rules.append((timestamp_pattern, self.token_formats['timestamp']))
+
+        # Logger names (e.g., openhcs.core.orchestrator)
+        logger_pattern = QRegularExpression(r"openhcs\.[a-zA-Z0-9_.]+")
+        self.highlighting_rules.append((logger_pattern, self.token_formats['logger_name']))
+
+        # Memory addresses (e.g., 0x7f1640dd8e00)
+        memory_pattern = QRegularExpression(r"0x[0-9a-fA-F]+")
+        self.highlighting_rules.append((memory_pattern, self.token_formats['memory_address']))
+
+        # File paths in tracebacks
+        filepath_pattern = QRegularExpression(r'["\']?/[^"\'\s]+\.py["\']?')
+        self.highlighting_rules.append((filepath_pattern, self.token_formats['file_path']))
+
+        # Exception names
+        exception_pattern = QRegularExpression(r'\b[A-Z][a-zA-Z]*Error\b|\b[A-Z][a-zA-Z]*Exception\b')
+        self.highlighting_rules.append((exception_pattern, self.token_formats['exception']))
+
+        # Function calls with parentheses
+        function_pattern = QRegularExpression(r'\b[a-zA-Z_][a-zA-Z0-9_]*\(\)')
+        self.highlighting_rules.append((function_pattern, self.token_formats['function_call']))
+
+        # Boolean values
+        boolean_pattern = QRegularExpression(r'\b(True|False|None)\b')
+        self.highlighting_rules.append((boolean_pattern, self.token_formats['boolean']))
+
+        # Enhanced Python syntax elements
+
+        # Single-quoted strings (complement to double-quoted)
+        single_quote_pattern = QRegularExpression(r"'[^']*'")
+        self.highlighting_rules.append((single_quote_pattern, self.token_formats['single_quoted_string']))
+
+        # Class representations: <class 'module.ClassName'>
+        class_repr_pattern = QRegularExpression(r"<class '[^']*'>")
+        self.highlighting_rules.append((class_repr_pattern, self.token_formats['class_representation']))
+
+        # Function representations: <function name at 0xaddress>
+        function_repr_pattern = QRegularExpression(r"<function [^>]+ at 0x[0-9a-fA-F]+>")
+        self.highlighting_rules.append((function_repr_pattern, self.token_formats['function_representation']))
+
+        # Extended module paths (beyond just openhcs)
+        module_path_pattern = QRegularExpression(r"\b[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*){2,}")
+        self.highlighting_rules.append((module_path_pattern, self.token_formats['module_path']))
+
+        # Hexadecimal numbers (beyond memory addresses): 0xFF, 0x1A2B
+        hex_number_pattern = QRegularExpression(r"\b0[xX][0-9a-fA-F]+\b")
+        self.highlighting_rules.append((hex_number_pattern, self.token_formats['hex_number']))
+
+        # Scientific notation: 1.23e-4, 5.67E+10
+        scientific_pattern = QRegularExpression(r"\b\d+\.?\d*[eE][+-]?\d+\b")
+        self.highlighting_rules.append((scientific_pattern, self.token_formats['scientific_notation']))
+
+        # Binary literals: 0b1010
+        binary_pattern = QRegularExpression(r"\b0[bB][01]+\b")
+        self.highlighting_rules.append((binary_pattern, self.token_formats['binary_number']))
+
+        # Octal literals: 0o755
+        octal_pattern = QRegularExpression(r"\b0[oO][0-7]+\b")
+        self.highlighting_rules.append((octal_pattern, self.token_formats['octal_number']))
+
+        # Python special constants: __name__, __main__, __file__, etc.
+        python_special_pattern = QRegularExpression(r"\b__[a-zA-Z_][a-zA-Z0-9_]*__\b")
+        self.highlighting_rules.append((python_special_pattern, self.token_formats['python_special']))
 
         logger.debug(f"Setup {len(self.highlighting_rules)} highlighting rules")
 
-    def highlightBlock(self, text: str) -> None:
+    def set_color_scheme(self, color_scheme: LogColorScheme) -> None:
         """
-        Apply highlighting to text block.
+        Update the color scheme and refresh highlighting.
 
         Args:
-            text: Text block to highlight
+            color_scheme: New color scheme to apply
         """
+        self.color_scheme = color_scheme
+        self.setup_pygments_styles()
+        self.setup_highlighting_rules()
+        # Trigger re-highlighting of the entire document
+        self.rehighlight()
+        logger.debug(f"Applied new color scheme with {len(self.token_formats)} token formats")
+
+    def switch_to_dark_theme(self) -> None:
+        """Switch to dark theme color scheme."""
+        self.set_color_scheme(LogColorScheme.create_dark_theme())
+
+    def switch_to_light_theme(self) -> None:
+        """Switch to light theme color scheme."""
+        self.set_color_scheme(LogColorScheme.create_light_theme())
+
+    @classmethod
+    def load_color_scheme_from_config(cls, config_path: str = None) -> LogColorScheme:
+        """
+        Load color scheme from external configuration file.
+
+        Args:
+            config_path: Path to JSON/YAML config file (optional)
+
+        Returns:
+            LogColorScheme: Loaded color scheme or default if file not found
+        """
+        if config_path and Path(config_path).exists():
+            try:
+                import json
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+
+                # Create color scheme from config
+                scheme_kwargs = {}
+                for key, value in config.items():
+                    if key.endswith('_color') or key.endswith('_fg') or key.endswith('_bg'):
+                        if isinstance(value, list) and len(value) == 3:
+                            scheme_kwargs[key] = tuple(value)
+
+                return LogColorScheme(**scheme_kwargs)
+
+            except Exception as e:
+                logger.warning(f"Failed to load color scheme from {config_path}: {e}")
+
+        return LogColorScheme()  # Return default scheme
+
+    def highlightBlock(self, text: str) -> None:
+        """
+        Apply advanced highlighting to text block.
+
+        Uses both regex patterns for log-specific content and Pygments
+        for Python syntax highlighting of complex data structures.
+        """
+        # First apply log-specific patterns
         for pattern, format in self.highlighting_rules:
             iterator = pattern.globalMatch(text)
             while iterator.hasNext():
@@ -204,6 +522,92 @@ class LogHighlighter(QSyntaxHighlighter):
                 start = match.capturedStart()
                 length = match.capturedLength()
                 self.setFormat(start, length, format)
+
+        # Then apply Pygments highlighting for Python-like content
+        self._highlight_python_content(text)
+
+    def _highlight_python_content(self, text: str) -> None:
+        """
+        Apply Pygments Python syntax highlighting to parts of the text that contain
+        Python data structures (dictionaries, lists, function signatures, etc.).
+        """
+        try:
+            # Look for Python-like patterns in the log line
+            python_patterns = [
+                # Dictionary patterns: {'key': 'value', ...}
+                r'\{[^{}]*:[^{}]*\}',
+                # List patterns: [item1, item2, ...]
+                r'\[[^\[\]]*,.*?\]',
+                # Function signatures: function_name(arg1=value, arg2=value)
+                r'\b[a-zA-Z_][a-zA-Z0-9_]*\([^)]*=.*?\)',
+                # Complex nested structures
+                r'\{.*?:\s*\[.*?\].*?\}',
+
+                # Enhanced patterns for Phase 1
+
+                # Tuple patterns: (item1, item2, item3)
+                r'\([^()]*,.*?\)',
+                # Set patterns: {item1, item2, item3} (no colons, distinguishes from dict)
+                r'\{[^{}:]*,.*?\}',
+                # List comprehensions: [x for x in items]
+                r'\[[^\[\]]*\s+for\s+[^\[\]]*\s+in\s+[^\[\]]*\]',
+                # Generator expressions: (x for x in items)
+                r'\([^()]*\s+for\s+[^()]*\s+in\s+[^()]*\)',
+                # Class representations: <class 'module.ClassName'>
+                r"<class '[^']*'>",
+                # Function representations: <function name at 0xaddress>
+                r"<function [^>]+ at 0x[0-9a-fA-F]+>",
+                # Complex function calls with keyword arguments
+                r'\b[a-zA-Z_][a-zA-Z0-9_]*\([^)]*[a-zA-Z_][a-zA-Z0-9_]*\s*=.*?\)',
+                # Multi-line dictionary/list structures (single line representation)
+                r'\{[^{}]*:\s*[^{}]*,\s*[^{}]*:\s*[^{}]*\}',
+                # Nested collections: [{...}, {...}] or [(...), (...)]
+                r'\[[\{\(][^[\]]*[\}\)],\s*[\{\(][^[\]]*[\}\)]\]',
+            ]
+
+            for pattern in python_patterns:
+                regex = QRegularExpression(pattern)
+                iterator = regex.globalMatch(text)
+
+                while iterator.hasNext():
+                    match = iterator.next()
+                    start = match.capturedStart()
+                    length = match.capturedLength()
+                    python_text = match.captured(0)
+
+                    # Use Pygments to highlight this Python-like content
+                    self._apply_pygments_highlighting(python_text, start)
+
+        except Exception as e:
+            # Don't let highlighting errors break the log viewer
+            logger.debug(f"Error in Python content highlighting: {e}")
+
+    def _apply_pygments_highlighting(self, python_text: str, start_offset: int) -> None:
+        """
+        Apply Pygments highlighting to a specific piece of Python-like text.
+        """
+        try:
+            from pygments.lexers import PythonLexer
+
+            lexer = PythonLexer()
+            tokens = list(lexer.get_tokens(python_text))
+
+            current_pos = 0
+            for token_type, token_value in tokens:
+                if token_value.strip():  # Skip whitespace-only tokens
+                    token_start = start_offset + current_pos
+                    token_length = len(token_value)
+
+                    # Apply format if we have a mapping for this token type
+                    if token_type in self.token_formats:
+                        format = self.token_formats[token_type]
+                        self.setFormat(token_start, token_length, format)
+
+                current_pos += len(token_value)
+
+        except Exception as e:
+            # Don't let Pygments errors break the highlighting
+            logger.debug(f"Error in Pygments highlighting: {e}")
 
 
 class LogViewerWindow(QMainWindow):

@@ -22,12 +22,15 @@ from PyQt6.QtGui import QFont, QDrag
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.io.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
-from openhcs.pyqt_gui.widgets.mixins import SelectionPreservationMixin
+from openhcs.pyqt_gui.widgets.mixins import (
+    preserve_selection_during_update,
+    handle_selection_change_with_prevention
+)
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
+class PipelineEditorWidget(QWidget):
     """
     PyQt6 Pipeline Editor Widget.
     
@@ -49,7 +52,7 @@ class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
             service_adapter: PyQt service adapter for dialogs and operations
             parent: Parent widget
         """
-        super().__init__(list_widget_attr="step_list", parent=parent)
+        super().__init__(parent)
         
         # Core dependencies
         self.file_manager = file_manager
@@ -76,18 +79,6 @@ class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
         self.update_button_states()
         
         logger.debug("Pipeline editor widget initialized")
-
-    # ========== Selection Preservation Mixin Implementation ==========
-
-    def get_item_identifier(self, item_data) -> str:
-        """Extract unique identifier from step item data."""
-        if hasattr(item_data, 'name'):
-            return item_data.name
-        return str(item_data)
-
-    def should_preserve_selection(self) -> bool:
-        """Preserve selection when steps exist."""
-        return bool(self.pipeline_steps)
 
     # ========== UI Setup ==========
 
@@ -529,8 +520,13 @@ class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
                 item.setToolTip(f"Step: {getattr(step, 'name', 'Unknown')}")
                 self.step_list.addItem(item)
 
-        # Use mixin to preserve selection during update
-        self.preserve_selection_during_update(update_func)
+        # Use utility to preserve selection during update
+        preserve_selection_during_update(
+            self.step_list,
+            lambda item_data: getattr(item_data, 'name', str(item_data)),
+            lambda: bool(self.pipeline_steps),
+            update_func
+        )
         self.update_button_states()
     
     def get_selected_steps(self) -> List[FunctionStep]:
@@ -571,7 +567,7 @@ class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
         self.status_label.setText(message)
     
     def on_selection_changed(self):
-        """Handle step list selection changes using mixin."""
+        """Handle step list selection changes using utility."""
         def on_selected(selected_steps):
             self.selected_step = getattr(selected_steps[0], 'name', '')
             self.step_selected.emit(selected_steps[0])
@@ -579,9 +575,13 @@ class PipelineEditorWidget(SelectionPreservationMixin, QWidget):
         def on_cleared():
             self.selected_step = ""
 
-        # Use mixin to handle selection with prevention
-        self.handle_selection_change_with_prevention(
+        # Use utility to handle selection with prevention
+        handle_selection_change_with_prevention(
+            self.step_list,
             self.get_selected_steps,
+            lambda item_data: getattr(item_data, 'name', str(item_data)),
+            lambda: bool(self.pipeline_steps),
+            lambda: self.selected_step,
             on_selected,
             on_cleared
         )
