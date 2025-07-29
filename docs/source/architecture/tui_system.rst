@@ -423,6 +423,7 @@ See Also
 
 **Advanced Topics**:
 
+- :doc:`code_ui_interconversion` - Bidirectional code/UI editing system
 - :doc:`system_integration` - TUI integration with other OpenHCS systems
 - :doc:`concurrency_model` - TUI coordination with multi-processing
 - :doc:`vfs_system` - TUI integration with VFS backends

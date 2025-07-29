@@ -91,42 +91,66 @@ Interactive Pipeline Creation
     # Or with specific configuration
     python -m openhcs.textual_tui --config /path/to/config.yaml
 
-Code Generation
-^^^^^^^^^^^^^^^
+Bidirectional Code Editing
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The TUI generates complete, executable Python scripts:
+The TUI provides **bidirectional editing** between interface and code:
+
+**Code Generation**: Every TUI widget with a "Code" button generates complete, executable Python code with all required imports:
+
+.. code-block:: python
+
+    # Generated from Function Pattern Editor
+    from openhcs.processing.backends.filters.gaussian_filter import gaussian_filter
+
+    pattern = gaussian_filter(sigma=2.0, preserve_dtype=True)
+
+**Code Editing**: Click "Code" → Edit in your preferred editor → Save → TUI updates automatically
+
+**Three-Tier System**:
+
+- **Function Patterns**: Individual function configurations with parameters
+- **Pipeline Steps**: Complete pipeline definitions with all function imports
+- **Orchestrator Config**: Full system configuration with global settings
+
+**Encapsulation Pattern**: Each tier includes all imports from lower tiers, ensuring complete executability.
+
+**Script Generation**: The "Save" button generates complete, executable Python scripts:
 
 .. code-block:: python
 
     #!/usr/bin/env python3
     """
     OpenHCS Pipeline Script - Generated from TUI
-    Generated: 2025-07-21 01:27:14
+    Generated: 2025-07-28 13:48:48
     """
-    
+
     import sys
     from pathlib import Path
-    
+
     # Add OpenHCS to path
     sys.path.insert(0, "/path/to/openhcs")
-    
+
     from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
     from openhcs.core.steps.function_step import FunctionStep
     from openhcs.core.config import GlobalPipelineConfig
-    
+    # All function imports from pipeline steps
+    from openhcs.processing.backends.filters.gaussian_filter import gaussian_filter
+    from openhcs.processing.backends.analysis.cell_counting import count_cells
+
     def create_pipeline():
         """Create and return the pipeline configuration."""
-        
+
         # Generated configuration and steps
         plate_paths = ['/path/to/microscopy/data']
         steps = [
-            FunctionStep(func=normalize_images, name="normalize"),
-            FunctionStep(func=segment_cells, name="segment")
+            FunctionStep(func=gaussian_filter(sigma=2.0), name="blur"),
+            FunctionStep(func=count_cells(method="watershed"), name="count")
         ]
-        global_config = GlobalPipelineConfig(num_workers=4)
-        
+        global_config = GlobalPipelineConfig(num_workers=16)
+
         return plate_paths, steps, global_config
-    
+
     def main():
         """Main execution function."""
         plate_paths, steps, global_config = create_pipeline()
@@ -143,7 +167,7 @@ The TUI generates complete, executable Python scripts:
                 pipeline_definition=steps,
                 compiled_contexts=compiled_contexts
             )
-    
+
     if __name__ == "__main__":
         main()
 
@@ -235,5 +259,6 @@ See Also
 --------
 
 - :doc:`../architecture/tui_system` - TUI architecture and design
+- :doc:`../architecture/code_ui_interconversion` - Code generation architecture
 - :doc:`../user_guide/production_examples` - Generated script examples
 - :doc:`../architecture/configuration_management_system` - Configuration system

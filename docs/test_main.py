@@ -22,7 +22,7 @@ from openhcs.processing.backends.processors.torch_processor import (
 from openhcs.processing.backends.pos_gen.ashlar_processor_cupy import gpu_ashlar_align_cupy
 from openhcs.processing.backends.pos_gen.mist_processor_cupy import mist_compute_tile_positions
 from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
-from openhcs.processing.backends.enhance.basic_processor_cupy import basic_flatfield_correction_cupy
+from openhcs.processing.backends.enhance.basic_processor_jax import basic_flatfield_correction_jax
 from openhcs.processing.backends.enhance.n2v2_processor_torch import n2v2_denoise_torch
 from openhcs.processing.backends.enhance.self_supervised_3d_deconvolution import self_supervised_3d_deconvolution
 
@@ -77,7 +77,7 @@ def get_pipeline(input_dir):
             ),
             Step(func=n2v2_denoise_torch,
             ),
-            Step(func=basic_flatfield_correction_cupy,
+            Step(func=basic_flatfield_correction_jax,
             ),
             Step(func=self_supervised_3d_deconvolution,
             ),

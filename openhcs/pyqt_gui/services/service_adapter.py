@@ -36,7 +36,6 @@ class PyQtServiceAdapter:
         """
         self.main_window = main_window
         self.app = QApplication.instance()
-        self.active_threads = []  # Track async operation threads
         logger.debug("PyQt6 service adapter initialized")
 
     def execute_async_operation(self, async_func, *args, **kwargs):
@@ -54,8 +53,6 @@ class PyQtServiceAdapter:
         def run_async_in_thread():
             """Run async function in thread with its own event loop."""
             try:
-                logger.info(f"Starting async operation in thread: {async_func}")  # Debug
-
                 # Create new event loop for this thread (like TUI executor)
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -66,32 +63,18 @@ class PyQtServiceAdapter:
                 # Clean up
                 loop.close()
 
-                logger.info(f"Async operation completed successfully: {async_func}")  # Debug
                 return result
 
             except Exception as e:
                 logger.error(f"Async operation failed: {e}", exc_info=True)
-                # Show error in main thread
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self.show_error_dialog(f"Operation failed: {e}"))
                 raise
 
         # Use ThreadPoolExecutor (simpler than Qt threading)
-        logger.info(f"Submitting async operation to thread pool: {async_func}")  # Debug
-
         if not hasattr(self, '_thread_pool'):
             self._thread_pool = ThreadPoolExecutor(max_workers=4)
 
         # Submit to thread pool (non-blocking like TUI executor)
         future = self._thread_pool.submit(run_async_in_thread)
-
-        logger.info("Async operation submitted to thread pool")  # Debug
-
-    def _cleanup_thread(self, thread):
-        """Clean up finished thread."""
-        if thread in self.active_threads:
-            self.active_threads.remove(thread)
-        thread.deleteLater()
 
     def show_dialog(self, content: str, title: str = "OpenHCS") -> bool:
         """
@@ -193,7 +176,7 @@ class PyQtServiceAdapter:
 
         except Exception as e:
             logger.error(f"File dialog failed: {e}")
-            return None
+            raise
 
     def show_cached_directory_dialog(
         self,
@@ -232,7 +215,7 @@ class PyQtServiceAdapter:
 
         except Exception as e:
             logger.error(f"Directory dialog failed: {e}")
-            return None
+            raise
 
     def run_system_command(self, command: str, wait_for_finish: bool = True) -> bool:
         """
@@ -394,7 +377,4 @@ class AsyncOperationThread(QThread):
             self.error_occurred.emit(str(e))
         finally:
             # Clean up event loop
-            try:
-                loop.close()
-            except:
-                pass
+            loop.close()

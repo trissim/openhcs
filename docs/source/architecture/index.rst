@@ -29,6 +29,7 @@ Advanced Features
    special_io_system
    function_registry_system
    tui_system
+   code_ui_interconversion
    vfs_system
 
 Core Infrastructure

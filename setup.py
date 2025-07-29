@@ -36,6 +36,7 @@ setup(
         "textual-universal-directorytree",
         "textual-window @ git+https://github.com/trissim/textual-window.git",
         "toolong @ git+https://github.com/trissim/toolong.git",
+        "basicpy @ git+https://github.com/trissim/BaSiCPy.git",
         "plotext>=5.2.0",
         "psutil>=5.9.0",
         "GPUtil>=1.4.0",
@@ -56,8 +57,8 @@ setup(
             "jaxlib>=0.4.38,<0.6.0",
 
             # JAX CUDA plugins - compatible range for CUDA 12.x
-            "jax-cuda12-pjrt>=0.4.38,<0.6.0",
-            "jax-cuda12-plugin>=0.4.38,<0.6.0",
+            "jax-cuda12-pjrt>=0.5.0,<0.6.0",
+            "jax-cuda12-plugin>=0.5.0,<0.6.0",
 
             # CuPy - CUDA 12.x optimized version
             "cupy-cuda12x>=13.0.0,<14.0.0",

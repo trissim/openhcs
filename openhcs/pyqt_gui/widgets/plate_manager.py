@@ -289,8 +289,6 @@ class PlateManagerWidget(QWidget):
         Args:
             action: Action identifier
         """
-        logger.info(f"Button clicked: {action}")  # Debug
-
         # Action mapping (preserved from Textual version)
         action_map = {
             "add_plate": self.action_add_plate,
@@ -304,15 +302,11 @@ class PlateManagerWidget(QWidget):
 
         if action in action_map:
             action_func = action_map[action]
-            logger.info(f"Found action function: {action_func}, is_coroutine: {inspect.iscoroutinefunction(action_func)}")  # Debug
 
             # Handle async actions
             if inspect.iscoroutinefunction(action_func):
-                # Run async action in thread
-                logger.info(f"Running async action: {action}")  # Debug
                 self.run_async_action(action_func)
             else:
-                logger.info(f"Running sync action: {action}")  # Debug
                 action_func()
         elif action == "run_plate":
             if self.is_any_plate_running():
@@ -320,7 +314,7 @@ class PlateManagerWidget(QWidget):
             else:
                 self.run_async_action(self.action_run_plate)
         else:
-            logger.warning(f"Unknown action: {action}")  # Debug
+            logger.warning(f"Unknown action: {action}")
     
     def run_async_action(self, async_func: Callable):
         """
@@ -329,12 +323,7 @@ class PlateManagerWidget(QWidget):
         Args:
             async_func: Async function to execute
         """
-        logger.info(f"run_async_action called with: {async_func}")  # Debug
-        try:
-            self.service_adapter.execute_async_operation(async_func)
-            logger.info("service_adapter.execute_async_operation called")  # Debug
-        except Exception as e:
-            logger.error(f"Error in run_async_action: {e}", exc_info=True)  # Debug
+        self.service_adapter.execute_async_operation(async_func)
     
     # ========== Business Logic Methods (Extracted from Textual) ==========
     
@@ -410,13 +399,9 @@ class PlateManagerWidget(QWidget):
     
     async def action_init_plate(self):
         """Handle Initialize Plate button (extracted from Textual version)."""
-        logger.info("action_init_plate called")  # Debug
-
         selected_items = self.get_selected_plates()
-        logger.info(f"Selected items: {len(selected_items)}")  # Debug
 
         if not selected_items:
-            logger.warning("No plates selected for initialization")  # Debug
             self.service_adapter.show_error_dialog("No plates selected for initialization.")
             return
         

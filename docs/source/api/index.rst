@@ -61,10 +61,13 @@ Handle file I/O, storage backends, and configuration for datasets from MB to 100
 
    io_storage
    config
+   code_generation
 
 **I/O and Storage**: Unified file operations with automatic backend selection (disk, memory, ZARR). Handles large dataset compression and VFS abstraction.
 
 **Configuration**: Global pipeline configuration, GPU resource management, and system settings.
+
+**Code Generation**: Bidirectional code/UI editing APIs for converting between TUI state and executable Python code.
 
 Pipeline Architecture
 =====================

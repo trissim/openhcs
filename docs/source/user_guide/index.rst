@@ -19,6 +19,16 @@ This production script demonstrates every major OpenHCS feature with real parame
 - :doc:`../concepts/index` - Core concepts and architecture
 - :doc:`../getting_started/getting_started` - Basic installation and setup
 
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+
+   code_ui_editing
+
+**Available Guides**:
+
+- :doc:`code_ui_editing` - Bidirectional editing between TUI and Python code
+
 **What's Coming**:
 
 - **TUI Workflow Guide** - Complete tutorial for the interactive interface
