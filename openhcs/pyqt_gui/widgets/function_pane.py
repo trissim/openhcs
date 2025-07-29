@@ -137,8 +137,8 @@ class FunctionPaneWidget(QWidget):
         
         # Function name with help functionality (reuses Textual TUI help logic)
         if self.func:
-            func_name = getattr(self.func, '__name__', 'Unknown Function')
-            func_module = getattr(self.func, '__module__', '')
+            func_name = self.func.__name__
+            func_module = self.func.__module__
 
             # Function name with help
             name_label = QLabel(f"🔧 {func_name}")
@@ -265,7 +265,7 @@ class FunctionPaneWidget(QWidget):
                 parameters=self.form_manager.parameters,
                 parameter_types=self.form_manager.parameter_types,
                 field_id=f"func_{self.index}",
-                parameter_info=getattr(self.form_manager, 'parameter_info', {}),
+                parameter_info=self.form_manager.parameter_info,
                 use_scroll_area=False,  # Don't use scroll area in function panes
                 function_target=self.func  # Pass function for docstring fallback
             )
@@ -336,7 +336,7 @@ class FunctionPaneWidget(QWidget):
                 return widget
 
             # Enum parameters
-            elif hasattr(param_type, '__bases__') and any(base.__name__ == 'Enum' for base in param_type.__bases__):
+            elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
                 widget = NoScrollComboBox()
                 for enum_value in param_type:
                     widget.addItem(str(enum_value.value), enum_value)

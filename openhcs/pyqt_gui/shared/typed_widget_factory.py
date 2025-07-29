@@ -221,12 +221,7 @@ class TypedWidgetFactory:
     
     def _is_enum_type(self, param_type: Type) -> bool:
         """Check if type is an enum."""
-        try:
-            return hasattr(param_type, '__bases__') and any(
-                base.__name__ == 'Enum' for base in param_type.__bases__
-            )
-        except:
-            return False
+        return any(base.__name__ == 'Enum' for base in param_type.__bases__)
     
     def _create_bool_widget(self, param_name: str, current_value: Any) -> QCheckBox:
         """Create checkbox widget for boolean parameters."""

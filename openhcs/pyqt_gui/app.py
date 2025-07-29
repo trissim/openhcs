@@ -67,19 +67,13 @@ class OpenHCSPyQtApp(QApplication):
     def setup_application(self):
         """Setup application-wide configuration."""
         # Setup GPU registry
-        try:
-            setup_global_gpu_registry(global_config=self.global_config)
-            logger.info("GPU registry setup completed")
-        except Exception as e:
-            logger.warning(f"GPU registry setup failed: {e}")
-        
+        setup_global_gpu_registry(global_config=self.global_config)
+        logger.info("GPU registry setup completed")
+
         # Set application icon (if available)
-        try:
-            icon_path = Path(__file__).parent / "resources" / "openhcs_icon.png"
-            if icon_path.exists():
-                self.setWindowIcon(QIcon(str(icon_path)))
-        except Exception as e:
-            logger.debug(f"Could not load application icon: {e}")
+        icon_path = Path(__file__).parent / "resources" / "openhcs_icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         
         # Setup exception handling
         sys.excepthook = self.handle_exception
@@ -148,12 +142,8 @@ class OpenHCSPyQtApp(QApplication):
                 error_msg
             )
         else:
-            # Fallback if no main window
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Icon.Critical)
-            msg.setWindowTitle("Unexpected Error")
-            msg.setText(error_msg)
-            msg.exec()
+            # No main window - application is in invalid state
+            raise RuntimeError("Uncaught exception occurred but no main window available for error dialog")
     
     def run(self) -> int:
         """
@@ -162,16 +152,11 @@ class OpenHCSPyQtApp(QApplication):
         Returns:
             Application exit code
         """
-        try:
-            # Show main window
-            self.show_main_window()
-            
-            # Start event loop
-            return self.exec()
-            
-        except Exception as e:
-            logger.critical(f"Failed to run application: {e}")
-            return 1
+        # Show main window
+        self.show_main_window()
+
+        # Start event loop
+        return self.exec()
 
 
 if __name__ == "__main__":

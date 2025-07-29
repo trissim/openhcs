@@ -67,6 +67,7 @@ class ClickableHelpLabel(QLabel):
 
             except Exception as e:
                 logger.error(f"Failed to show help: {e}")
+                raise
 
         super().mousePressEvent(event)
 
@@ -169,6 +170,7 @@ class HelpIndicator(QLabel):
 
             except Exception as e:
                 logger.error(f"Failed to show help: {e}")
+                raise
 
         super().mousePressEvent(event)
 
@@ -224,6 +226,7 @@ class HelpButton(QPushButton):
 
         except Exception as e:
             logger.error(f"Failed to show help: {e}")
+            raise
 
 
 class LabelWithHelp(QWidget):

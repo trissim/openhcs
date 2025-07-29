@@ -50,7 +50,7 @@ class StepParameterEditorWidget(QScrollArea):
         for name, info in param_info.items():
             if name in ('func',):  # Skip func parameter
                 continue
-            current_value = getattr(self.step, name, info.default_value)
+            current_value = getattr(self.step, name)
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value

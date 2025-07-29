@@ -285,7 +285,7 @@ class ConfigWindow(QDialog):
                 return widget
             
             # Enum parameters
-            elif hasattr(param_type, '__bases__') and any(base.__name__ == 'Enum' for base in param_type.__bases__):
+            elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
                 widget = QComboBox()
                 for enum_value in param_type:
                     widget.addItem(str(enum_value.value), enum_value)
