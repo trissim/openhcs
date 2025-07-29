@@ -31,46 +31,6 @@ from openhcs.textual_tui.services.system_monitor import SystemMonitor
 logger = logging.getLogger(__name__)
 
 
-class SystemMetricsWorker(QThread):
-    """Background worker thread for collecting system metrics."""
-
-    metrics_ready = pyqtSignal(dict)  # Emitted when metrics are collected
-
-    def __init__(self, monitor, update_interval=1.0):
-        super().__init__()
-        self.monitor = monitor
-        self.update_interval = update_interval
-        self.running = False
-
-    def run(self):
-        """Run the metrics collection loop in background thread."""
-        self.running = True
-        import time
-
-        while self.running:
-            try:
-                # Collect metrics in background thread (blocking operations)
-                self.monitor.update_metrics()
-
-                # Get cached metrics (non-blocking)
-                metrics = self.monitor.get_metrics_dict()
-
-                # Emit signal to update UI on main thread
-                self.metrics_ready.emit(metrics)
-
-                # Sleep for update interval
-                time.sleep(self.update_interval)
-
-            except Exception as e:
-                logger.warning(f"Error in metrics worker: {e}")
-                time.sleep(2.0)  # Longer sleep on error
-
-    def stop(self):
-        """Stop the worker thread."""
-        self.running = False
-        self.wait()  # Wait for thread to finish
-
-
 class SystemMonitorWidget(QWidget):
     """
     PyQt6 System Monitor Widget.
@@ -93,14 +53,8 @@ class SystemMonitorWidget(QWidget):
         
         # Core monitoring
         self.monitor = SystemMonitor()
-        self.metrics_worker = SystemMetricsWorker(self.monitor, update_interval=1.0)
-        self.update_interval = 1000  # 1 second in milliseconds (for UI updates)
-
-        # Non-blocking update management
-        self.pending_metrics = None
-        self.plot_update_timer = QTimer()
-        self.plot_update_timer.setSingleShot(True)
-        self.plot_update_timer.timeout.connect(self._deferred_plot_update)
+        self.update_timer = QTimer()
+        self.update_interval = 1000  # 1 second in milliseconds
         
         # Setup UI
         self.setup_ui()
@@ -110,16 +64,6 @@ class SystemMonitorWidget(QWidget):
         self.start_monitoring()
         
         logger.debug("System monitor widget initialized")
-
-    def closeEvent(self, event):
-        """Handle widget close event."""
-        self.stop_monitoring()
-        event.accept()
-
-    def __del__(self):
-        """Cleanup when widget is destroyed."""
-        if hasattr(self, 'metrics_worker'):
-            self.stop_monitoring()
     
     def setup_ui(self):
         """Setup the user interface."""
@@ -252,142 +196,105 @@ class SystemMonitorWidget(QWidget):
     
     def setup_connections(self):
         """Setup signal/slot connections."""
-        # Connect worker signals to UI updates
-        self.metrics_worker.metrics_ready.connect(self.update_display)
+        self.update_timer.timeout.connect(self.update_metrics)
+        self.metrics_updated.connect(self.update_display)
     
     def start_monitoring(self):
-        """Start the background metrics worker."""
-        self.metrics_worker.start()
+        """Start the monitoring timer."""
+        self.update_timer.start(self.update_interval)
         logger.debug("System monitoring started")
 
     def stop_monitoring(self):
-        """Stop the background metrics worker."""
-        self.metrics_worker.stop()
+        """Stop the monitoring timer."""
+        self.update_timer.stop()
         logger.debug("System monitoring stopped")
     
+    def update_metrics(self):
+        """Update system metrics (called by timer)."""
+        try:
+            # Update metrics using the SystemMonitor service
+            self.monitor.update_metrics()
+
+            # Get current metrics
+            metrics = self.monitor.get_metrics_dict()
+
+            # Emit signal with updated metrics
+            self.metrics_updated.emit(metrics)
+
+        except Exception as e:
+            logger.warning(f"Failed to update system metrics: {e}")
+
     def update_display(self, metrics: dict):
         """
-        Update the display with new metrics (called from worker thread signal).
-        Non-blocking approach using deferred updates.
+        Update the display with new metrics.
 
         Args:
-            metrics: Dictionary of system metrics from background worker
+            metrics: Dictionary of system metrics
         """
         try:
-            # Store metrics for deferred update
-            self.pending_metrics = metrics
-
-            # Update system info immediately (lightweight)
+            # Update system info
             self.update_system_info(metrics)
 
-            # Schedule deferred plot update (non-blocking)
-            if not self.plot_update_timer.isActive():
-                self.plot_update_timer.start(10)  # 10ms delay for non-blocking update
+            # Update plots or fallback display
+            if MATPLOTLIB_AVAILABLE:
+                self.update_matplotlib_plots()
+            else:
+                self.update_fallback_display(metrics)
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
-
-    def _deferred_plot_update(self):
-        """Deferred plot update to avoid blocking UI thread."""
-        if self.pending_metrics is None:
-            return
-
-        try:
-            # Update plots or fallback display
-            if MATPLOTLIB_AVAILABLE:
-                self._update_matplotlib_plots_nonblocking()
-            else:
-                self.update_fallback_display(self.pending_metrics)
-
-        except Exception as e:
-            logger.warning(f"Failed to update plots: {e}")
-        finally:
-            self.pending_metrics = None
     
-    def _update_matplotlib_plots_nonblocking(self):
-        """Update matplotlib plots with non-blocking approach using incremental updates."""
+    def update_matplotlib_plots(self):
+        """Update matplotlib plots with current data."""
         try:
             # Get data for plotting
             x_range = list(range(len(self.monitor.cpu_history)))
 
-            # Use QTimer.singleShot to break up the plotting work
-            self._update_single_plot(0, x_range)
+            # Clear and update CPU plot
+            self.cpu_ax.clear()
+            self.cpu_ax.plot(x_range, list(self.monitor.cpu_history), 'cyan', linewidth=2)
+            self.cpu_ax.set_title(f'CPU Usage: {self.monitor.cpu_history[-1]:.1f}%', color='white')
+            self.cpu_ax.set_ylim(0, 100)
+            self.cpu_ax.set_facecolor('#1e1e1e')
+
+            # Clear and update RAM plot
+            self.ram_ax.clear()
+            self.ram_ax.plot(x_range, list(self.monitor.ram_history), 'lime', linewidth=2)
+            self.ram_ax.set_title(f'RAM Usage: {self.monitor.ram_history[-1]:.1f}%', color='white')
+            self.ram_ax.set_ylim(0, 100)
+            self.ram_ax.set_facecolor('#1e1e1e')
+
+            # Clear and update GPU plot
+            self.gpu_ax.clear()
+            if any(self.monitor.gpu_history):
+                self.gpu_ax.plot(x_range, list(self.monitor.gpu_history), 'orange', linewidth=2)
+                self.gpu_ax.set_title(f'GPU Usage: {self.monitor.gpu_history[-1]:.1f}%', color='white')
+            else:
+                self.gpu_ax.set_title('GPU: Not Available', color='white')
+            self.gpu_ax.set_ylim(0, 100)
+            self.gpu_ax.set_facecolor('#1e1e1e')
+
+            # Clear and update VRAM plot
+            self.vram_ax.clear()
+            if any(self.monitor.vram_history):
+                self.vram_ax.plot(x_range, list(self.monitor.vram_history), 'magenta', linewidth=2)
+                self.vram_ax.set_title(f'VRAM Usage: {self.monitor.vram_history[-1]:.1f}%', color='white')
+            else:
+                self.vram_ax.set_title('VRAM: Not Available', color='white')
+            self.vram_ax.set_ylim(0, 100)
+            self.vram_ax.set_facecolor('#1e1e1e')
+
+            # Style all axes
+            for ax in [self.cpu_ax, self.ram_ax, self.gpu_ax, self.vram_ax]:
+                ax.tick_params(colors='white', labelsize=8)
+                for spine in ax.spines.values():
+                    spine.set_color('white')
+
+            # Refresh canvas
+            self.canvas.draw()
 
         except Exception as e:
             logger.warning(f"Failed to update matplotlib plots: {e}")
-
-    def _update_single_plot(self, plot_index: int, x_range: list):
-        """Update a single plot to avoid blocking UI thread."""
-        try:
-            if plot_index == 0:
-                # Update CPU plot
-                self.cpu_ax.clear()
-                self.cpu_ax.plot(x_range, list(self.monitor.cpu_history), 'cyan', linewidth=1)
-                self.cpu_ax.set_title(f'CPU: {self.monitor.cpu_history[-1]:.1f}%', color='white', fontsize=10)
-                self.cpu_ax.set_ylim(0, 100)
-                self.cpu_ax.set_facecolor('#1e1e1e')
-                self._style_axis(self.cpu_ax)
-
-                # Schedule next plot update
-                QTimer.singleShot(5, lambda: self._update_single_plot(1, x_range))
-
-            elif plot_index == 1:
-                # Update RAM plot
-                self.ram_ax.clear()
-                self.ram_ax.plot(x_range, list(self.monitor.ram_history), 'lime', linewidth=1)
-                self.ram_ax.set_title(f'RAM: {self.monitor.ram_history[-1]:.1f}%', color='white', fontsize=10)
-                self.ram_ax.set_ylim(0, 100)
-                self.ram_ax.set_facecolor('#1e1e1e')
-                self._style_axis(self.ram_ax)
-
-                # Schedule next plot update
-                QTimer.singleShot(5, lambda: self._update_single_plot(2, x_range))
-
-            elif plot_index == 2:
-                # Update GPU plot
-                self.gpu_ax.clear()
-                if any(self.monitor.gpu_history):
-                    self.gpu_ax.plot(x_range, list(self.monitor.gpu_history), 'orange', linewidth=1)
-                    self.gpu_ax.set_title(f'GPU: {self.monitor.gpu_history[-1]:.1f}%', color='white', fontsize=10)
-                else:
-                    self.gpu_ax.set_title('GPU: N/A', color='white', fontsize=10)
-                self.gpu_ax.set_ylim(0, 100)
-                self.gpu_ax.set_facecolor('#1e1e1e')
-                self._style_axis(self.gpu_ax)
-
-                # Schedule next plot update
-                QTimer.singleShot(5, lambda: self._update_single_plot(3, x_range))
-
-            elif plot_index == 3:
-                # Update VRAM plot
-                self.vram_ax.clear()
-                if any(self.monitor.vram_history):
-                    self.vram_ax.plot(x_range, list(self.monitor.vram_history), 'magenta', linewidth=1)
-                    self.vram_ax.set_title(f'VRAM: {self.monitor.vram_history[-1]:.1f}%', color='white', fontsize=10)
-                else:
-                    self.vram_ax.set_title('VRAM: N/A', color='white', fontsize=10)
-                self.vram_ax.set_ylim(0, 100)
-                self.vram_ax.set_facecolor('#1e1e1e')
-                self._style_axis(self.vram_ax)
-
-                # Final canvas draw - schedule this too to avoid blocking
-                QTimer.singleShot(5, self._final_canvas_draw)
-
-        except Exception as e:
-            logger.warning(f"Failed to update plot {plot_index}: {e}")
-
-    def _style_axis(self, ax):
-        """Apply styling to a single axis (lightweight operation)."""
-        ax.tick_params(colors='white', labelsize=6)
-        for spine in ax.spines.values():
-            spine.set_color('white')
-
-    def _final_canvas_draw(self):
-        """Final canvas draw operation, deferred to avoid blocking."""
-        try:
-            self.canvas.draw_idle()  # Use draw_idle instead of draw for better performance
-        except Exception as e:
-            logger.warning(f"Failed to draw canvas: {e}")
     
     def update_fallback_display(self, metrics: dict):
         """
@@ -468,23 +375,17 @@ Total RAM: {metrics.get('ram_total_gb', 0):.1f} GB | Used RAM: {metrics.get('ram
  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝
         """
     
-    def set_update_interval(self, interval_seconds: float):
+    def set_update_interval(self, interval_ms: int):
         """
         Set the update interval for monitoring.
 
         Args:
-            interval_seconds: Update interval in seconds
+            interval_ms: Update interval in milliseconds
         """
-        # Stop current worker
-        if self.metrics_worker.isRunning():
-            self.stop_monitoring()
-
-        # Create new worker with updated interval
-        self.metrics_worker = SystemMetricsWorker(self.monitor, update_interval=interval_seconds)
-        self.setup_connections()
-
-        # Restart monitoring
-        self.start_monitoring()
+        self.update_interval = interval_ms
+        if self.update_timer.isActive():
+            self.update_timer.stop()
+            self.update_timer.start(self.update_interval)
     
     def closeEvent(self, event):
         """Handle widget close event."""
