@@ -395,21 +395,11 @@ class FunctionListEditorWidget(QWidget):
 
     def _get_component_display_name(self, component_key: str) -> str:
         """Get display name for component key, using metadata if available (mirrors Textual TUI)."""
-        # Try to get metadata name from orchestrator (gracefully handle missing orchestrator)
-        try:
-            orchestrator = self._get_current_orchestrator()
-            if orchestrator and self.current_group_by:
-                try:
-                    metadata_name = orchestrator.get_component_metadata(self.current_group_by, component_key)
-                    if metadata_name:
-                        return metadata_name
-                except Exception as e:
-                    logger.debug(f"Could not get metadata for {self.current_group_by.value} {component_key}: {e}")
-        except RuntimeError:
-            # No orchestrator available - this is OK during initialization
-            logger.debug("No orchestrator available for component display name")
-
-        # Fallback to component key
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator and self.current_group_by:
+            metadata_name = orchestrator.get_component_metadata(self.current_group_by, component_key)
+            if metadata_name:
+                return metadata_name
         return component_key
 
     def _is_component_button_disabled(self) -> bool:
@@ -430,84 +420,48 @@ class FunctionListEditorWidget(QWidget):
             logger.debug("Component selection is disabled")
             return
 
-        try:
-            # Get available components from orchestrator using current group_by - MUST exist, no fallbacks
-            orchestrator = self._get_current_orchestrator()
+        # Get available components from orchestrator using current group_by - MUST exist, no fallbacks
+        orchestrator = self._get_current_orchestrator()
 
-            available_components = orchestrator.get_component_keys(self.current_group_by)
-            if not available_components:
-                component_type = self.current_group_by.value
-                raise RuntimeError(f"No {component_type} values found in current plate - orchestrator may not be properly initialized")
+        available_components = orchestrator.get_component_keys(self.current_group_by)
+        assert available_components, f"No {self.current_group_by.value} values found in current plate"
 
-            # Get current selection from pattern data (mirrors Textual TUI logic)
-            selected_components = self._get_current_component_selection()
+        # Get current selection from pattern data (mirrors Textual TUI logic)
+        selected_components = self._get_current_component_selection()
 
-            # Show group by selector dialog (reuses Textual TUI logic)
-            result = GroupBySelectorDialog.select_components(
-                available_components=available_components,
-                selected_components=selected_components,
-                component_type=self.current_group_by.value,
-                orchestrator=orchestrator,
-                parent=self
-            )
+        # Show group by selector dialog (reuses Textual TUI logic)
+        result = GroupBySelectorDialog.select_components(
+            available_components=available_components,
+            selected_components=selected_components,
+            component_type=self.current_group_by.value,
+            orchestrator=orchestrator,
+            parent=self
+        )
 
-            if result is not None:
-                self._handle_component_selection(result)
-
-        except RuntimeError as e:
-            # Show error dialog instead of silent failure
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(
-                self,
-                "Orchestrator Required",
-                f"Cannot open component selection:\n\n{str(e)}\n\nPlease select and initialize a plate first."
-            )
+        if result is not None:
+            self._handle_component_selection(result)
 
     def _get_current_orchestrator(self):
         """Get current orchestrator instance - MUST exist, no fallbacks allowed."""
-        try:
-            # Use stored main window reference to get plate manager
-            main_window = getattr(self, 'main_window', None)
-            if not main_window:
-                raise RuntimeError("No main window reference available - function list editor requires orchestrator context")
+        # Use stored main window reference to get plate manager
+        main_window = self.main_window
+        plate_manager_window = main_window.floating_windows['plate_manager']
 
-            # Get plate manager from main window
-            if not (hasattr(main_window, 'floating_windows') and 'plate_manager' in main_window.floating_windows):
-                raise RuntimeError("Plate manager not found - function list editor requires orchestrator context")
+        # Find the actual plate manager widget
+        plate_manager_widget = None
+        for child in plate_manager_window.findChildren(QWidget):
+            if hasattr(child, 'orchestrators') and hasattr(child, 'selected_plate_path'):
+                plate_manager_widget = child
+                break
 
-            plate_manager_window = main_window.floating_windows['plate_manager']
+        # Get current plate from plate manager's selection
+        current_plate = plate_manager_widget.selected_plate_path
+        orchestrator = plate_manager_widget.orchestrators[current_plate]
 
-            # Find the actual plate manager widget
-            plate_manager_widget = None
-            for child in plate_manager_window.findChildren(QWidget):
-                if hasattr(child, 'orchestrators') and hasattr(child, 'selected_plate_path'):
-                    plate_manager_widget = child
-                    break
+        # Orchestrator must be initialized
+        assert orchestrator.is_initialized(), f"Orchestrator for plate {current_plate} is not initialized"
 
-            if not plate_manager_widget:
-                raise RuntimeError("Could not find plate manager widget - function list editor requires orchestrator context")
-
-            # Get current plate from plate manager's selection
-            current_plate = plate_manager_widget.selected_plate_path
-            if not current_plate:
-                raise RuntimeError("No plate selected in plate manager - function list editor requires selected orchestrator")
-
-            if not (hasattr(plate_manager_widget, 'orchestrators') and current_plate in plate_manager_widget.orchestrators):
-                available_keys = list(plate_manager_widget.orchestrators.keys()) if hasattr(plate_manager_widget, 'orchestrators') else []
-                raise RuntimeError(f"No orchestrator found for plate: {current_plate}. Available: {available_keys}")
-
-            orchestrator = plate_manager_widget.orchestrators[current_plate]
-
-            # Check if orchestrator is properly initialized
-            if not (hasattr(orchestrator, 'is_initialized') and orchestrator.is_initialized()):
-                raise RuntimeError(f"Orchestrator for plate {current_plate} is not initialized - cannot use function list editor")
-
-            logger.debug(f"Found initialized orchestrator for plate: {current_plate}")
-            return orchestrator
-
-        except Exception as e:
-            logger.error(f"Failed to get orchestrator: {e}")
-            raise  # Re-raise the error instead of returning None
+        return orchestrator
 
     def _get_current_component_selection(self):
         """Get current component selection from pattern data (mirrors Textual TUI logic)."""
