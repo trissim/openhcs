@@ -25,6 +25,12 @@ try:
 except ImportError:
     pass
 
+try:
+    from openhcs.processing.backends.enhance.basic_processor_jax import (
+        basic_flatfield_correction_batch_jax, basic_flatfield_correction_jax)
+except ImportError:
+    pass
+
 # Import N2V2 processor implementation
 try:
     from openhcs.processing.backends.enhance.n2v2_processor_torch import \
@@ -51,6 +57,8 @@ __all__ = [
     "basic_flatfield_correction_batch_numpy",
     "basic_flatfield_correction_cupy",
     "basic_flatfield_correction_batch_cupy",
+    "basic_flatfield_correction_jax",
+    "basic_flatfield_correction_batch_jax",
 
     # N2V2 processor implementation
     "n2v2_denoise_torch",

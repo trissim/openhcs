@@ -116,6 +116,7 @@ class DocstringExtractor:
             original_line = line
             line = line.strip()
 
+            # Handle both Google/Sphinx style (with colons) and NumPy style (without colons)
             if line.lower() in ('args:', 'arguments:', 'parameters:'):
                 _finalize_current_param()
                 current_param = None
@@ -123,6 +124,13 @@ class DocstringExtractor:
                 current_section = 'parameters'
                 if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
                     continue
+                continue
+            elif line.lower() in ('args', 'arguments', 'parameters') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
+                # NumPy-style section headers (without colons, followed by dashes)
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
+                current_section = 'parameters'
                 continue
             elif line.lower() in ('returns:', 'return:'):
                 _finalize_current_param()
@@ -132,6 +140,13 @@ class DocstringExtractor:
                 if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
                     continue
                 continue
+            elif line.lower() in ('returns', 'return') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
+                # NumPy-style returns section
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
+                current_section = 'returns'
+                continue
             elif line.lower() in ('examples:', 'example:'):
                 _finalize_current_param()
                 current_param = None
@@ -139,6 +154,13 @@ class DocstringExtractor:
                 current_section = 'examples'
                 if i + 1 < len(lines) and lines[i+1].strip().startswith('---'): # Skip NumPy style separator
                     continue
+                continue
+            elif line.lower() in ('examples', 'example') and i + 1 < len(lines) and lines[i+1].strip().startswith('-'):
+                # NumPy-style examples section
+                _finalize_current_param()
+                current_param = None
+                current_param_lines = []
+                current_section = 'examples'
                 continue
 
             if current_section == 'description':
