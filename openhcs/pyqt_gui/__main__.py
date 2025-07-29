@@ -12,12 +12,7 @@ import sys
 from pathlib import Path
 
 # Import the main function from launch script
-try:
-    from openhcs.pyqt_gui.launch import main
-except ImportError:
-    # Handle case where package isn't properly installed
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-    from openhcs.pyqt_gui.launch import main
+from openhcs.pyqt_gui.launch import main
 
 if __name__ == "__main__":
     sys.exit(main())

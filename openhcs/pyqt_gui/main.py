@@ -492,10 +492,8 @@ class OpenHCSMainWindow(QMainWindow):
         for window in self.floating_windows.values():
             # Get the widget from the window's layout
             layout = window.layout()
-            if layout and layout.count() > 0:
-                widget = layout.itemAt(0).widget()
-                if hasattr(widget, 'on_config_changed'):
-                    widget.on_config_changed(new_config)
+            widget = layout.itemAt(0).widget()
+            widget.on_config_changed(new_config)
 
     def _save_config_to_cache(self, config):
         """Save config to cache asynchronously (matches TUI pattern)."""

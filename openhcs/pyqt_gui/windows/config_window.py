@@ -230,7 +230,7 @@ class ConfigWindow(QDialog):
             if widget:
                 # Parameter label with help functionality
                 label_text = param_name.replace('_', ' ').title()
-                param_description = getattr(param_info, 'description', f"Parameter: {param_name}")
+                param_description = param_info.description
 
                 # Use LabelWithHelp for parameter help
                 label_with_help = LabelWithHelp(
@@ -409,12 +409,8 @@ class ConfigWindow(QDialog):
     def load_current_values(self):
         """Load current configuration values into widgets."""
         for param_name, widget in self.parameter_widgets.items():
-            try:
-                current_value = getattr(self.current_config, param_name, None)
-                if current_value is not None:
-                    self.update_widget_value(widget, current_value)
-            except Exception as e:
-                logger.warning(f"Failed to load value for {param_name}: {e}")
+            current_value = getattr(self.current_config, param_name)
+            self.update_widget_value(widget, current_value)
     
     def handle_parameter_change(self, param_name: str, value: Any):
         """

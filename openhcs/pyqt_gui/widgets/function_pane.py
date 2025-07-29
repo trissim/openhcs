@@ -310,9 +310,8 @@ class FunctionPaneWidget(QWidget):
             def wheelEvent(self, event: QWheelEvent):
                 event.ignore()
         
-        try:
-            # Boolean parameters
-            if param_type == bool:
+        # Boolean parameters
+        if param_type == bool:
                 widget = QCheckBox()
                 widget.setChecked(bool(current_value))
                 widget.toggled.connect(lambda checked: self.handle_parameter_change(param_name, checked))
@@ -359,10 +358,6 @@ class FunctionPaneWidget(QWidget):
                 widget.setText(str(current_value) if current_value is not None else "")
                 widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
                 return widget
-                
-        except Exception as e:
-            logger.warning(f"Failed to create widget for parameter {param_name}: {e}")
-            return None
     
     def setup_connections(self):
         """Setup signal/slot connections."""
@@ -411,8 +406,6 @@ class FunctionPaneWidget(QWidget):
     
     def reset_all_parameters(self):
         """Reset all parameters to default values (extracted from Textual version)."""
-        if not self.param_defaults:
-            return
         
         for param_name, default_value in self.param_defaults.items():
             # Update internal kwargs

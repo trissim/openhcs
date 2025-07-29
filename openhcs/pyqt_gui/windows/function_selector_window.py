@@ -369,8 +369,7 @@ class FunctionSelectorWindow(QDialog):
                 func_item.setData(0, Qt.ItemDataRole.UserRole, func_info)
                 
                 # Add icon or styling based on function type
-                if hasattr(func_info.get('function'), '__doc__'):
-                    func_item.setToolTip(0, func_info['function'].__doc__ or "No description available")
+                func_item.setToolTip(0, func_info['function'].__doc__ or "No description available")
     
     def update_count_label(self):
         """Update the function count label."""
@@ -474,7 +473,7 @@ class FunctionSelectorWindow(QDialog):
             preview_text += "Description: No documentation available\n\n"
         
         # Additional info
-        if hasattr(func, '__file__'):
+        if func.__file__:
             preview_text += f"Source: {func.__file__}\n"
         
         self.preview_text.setPlainText(preview_text)

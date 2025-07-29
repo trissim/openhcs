@@ -485,7 +485,7 @@ class LogViewerWindow(QMainWindow):
 
         except Exception as e:
             logger.error(f"Error switching to log {log_path}: {e}")
-            self.log_display.setText(f"Error loading log file: {e}")
+            raise
 
     # Search Functionality Methods
     def toggle_search_toolbar(self) -> None:
@@ -703,6 +703,7 @@ class LogViewerWindow(QMainWindow):
                 QTimer.singleShot(1000, self._attempt_reconnection)
         except Exception as e:
             logger.error(f"Unexpected error in log tailing: {e}")
+            raise
 
     def _attempt_reconnection(self) -> None:
         """Attempt to reconnect to log file after deletion."""
