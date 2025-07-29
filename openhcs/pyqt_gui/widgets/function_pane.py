@@ -312,52 +312,52 @@ class FunctionPaneWidget(QWidget):
         
         # Boolean parameters
         if param_type == bool:
-                widget = QCheckBox()
-                widget.setChecked(bool(current_value))
-                widget.toggled.connect(lambda checked: self.handle_parameter_change(param_name, checked))
-                return widget
-            
-            # Integer parameters
-            elif param_type == int:
-                widget = NoScrollSpinBox()
-                widget.setRange(-999999, 999999)
-                widget.setValue(int(current_value) if current_value is not None else 0)
-                widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
-                return widget
+            widget = QCheckBox()
+            widget.setChecked(bool(current_value))
+            widget.toggled.connect(lambda checked: self.handle_parameter_change(param_name, checked))
+            return widget
 
-            # Float parameters
-            elif param_type == float:
-                widget = NoScrollDoubleSpinBox()
-                widget.setRange(-999999.0, 999999.0)
-                widget.setDecimals(6)
-                widget.setValue(float(current_value) if current_value is not None else 0.0)
-                widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
-                return widget
+        # Integer parameters
+        elif param_type == int:
+            widget = NoScrollSpinBox()
+            widget.setRange(-999999, 999999)
+            widget.setValue(int(current_value) if current_value is not None else 0)
+            widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
+            return widget
 
-            # Enum parameters
-            elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
-                widget = NoScrollComboBox()
-                for enum_value in param_type:
-                    widget.addItem(str(enum_value.value), enum_value)
-                
-                # Set current value
-                if current_value is not None:
-                    for i in range(widget.count()):
-                        if widget.itemData(i) == current_value:
-                            widget.setCurrentIndex(i)
-                            break
-                
-                widget.currentIndexChanged.connect(
-                    lambda index: self.handle_parameter_change(param_name, widget.itemData(index))
-                )
-                return widget
-            
-            # String and other parameters
-            else:
-                widget = QLineEdit()
-                widget.setText(str(current_value) if current_value is not None else "")
-                widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
-                return widget
+        # Float parameters
+        elif param_type == float:
+            widget = NoScrollDoubleSpinBox()
+            widget.setRange(-999999.0, 999999.0)
+            widget.setDecimals(6)
+            widget.setValue(float(current_value) if current_value is not None else 0.0)
+            widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
+            return widget
+
+        # Enum parameters
+        elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
+            widget = NoScrollComboBox()
+            for enum_value in param_type:
+                widget.addItem(str(enum_value.value), enum_value)
+
+            # Set current value
+            if current_value is not None:
+                for i in range(widget.count()):
+                    if widget.itemData(i) == current_value:
+                        widget.setCurrentIndex(i)
+                        break
+
+            widget.currentIndexChanged.connect(
+                lambda index: self.handle_parameter_change(param_name, widget.itemData(index))
+            )
+            return widget
+
+        # String and other parameters
+        else:
+            widget = QLineEdit()
+            widget.setText(str(current_value) if current_value is not None else "")
+            widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
+            return widget
     
     def setup_connections(self):
         """Setup signal/slot connections."""
