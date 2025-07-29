@@ -355,9 +355,7 @@ class FunctionListEditorWidget(QWidget):
             self._update_pattern_data()
             self.function_pattern_changed.emit()
     
-    def _update_pattern_data(self):
-        """Update pattern data from functions list."""
-        self.pattern_data = self.functions.copy()
+
     
     def _load_function_pattern_from_file(self, file_path):
         """Load function pattern from file."""
@@ -372,6 +370,22 @@ class FunctionListEditorWidget(QWidget):
     def get_current_functions(self):
         """Get current function list."""
         return self.functions.copy()
+
+    @property
+    def current_pattern(self):
+        """Get the current pattern data (for parent widgets to access)."""
+        self._update_pattern_data()  # Ensure it's up to date
+
+        # Migration fix: Convert any integer keys to string keys for compatibility
+        # with pattern detection system which always uses string component values
+        if isinstance(self.pattern_data, dict):
+            migrated_pattern = {}
+            for key, value in self.pattern_data.items():
+                str_key = str(key)
+                migrated_pattern[str_key] = value
+            return migrated_pattern
+
+        return self.pattern_data
     
     def set_functions(self, functions):
         """Set function list and refresh display."""

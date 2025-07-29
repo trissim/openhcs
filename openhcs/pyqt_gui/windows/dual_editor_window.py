@@ -181,31 +181,13 @@ class DualEditorWindow(QDialog):
 
     def _on_function_pattern_changed(self):
         """Handle function pattern changes from function editor."""
-        # Update step func from function editor
-        current_functions = self.func_editor.get_current_functions()
-        self.editing_step.func = self._convert_function_list_to_step_func(current_functions)
+        # Update step func from function editor - use current_pattern to get full pattern data
+        current_pattern = self.func_editor.current_pattern
+        self.editing_step.func = current_pattern
         self.detect_changes()
-        logger.debug(f"Function pattern changed: {len(current_functions)} functions")
+        logger.debug(f"Function pattern changed: {current_pattern}")
 
-    def _convert_function_list_to_step_func(self, functions):
-        """Convert function list back to step func format (reuse Textual TUI logic)."""
-        try:
-            if not functions:
-                return None
-            elif len(functions) == 1:
-                # Single function - can be bare callable or tuple
-                func, kwargs = functions[0]
-                if not kwargs:
-                    return func  # Bare callable
-                else:
-                    return (func, kwargs)  # Tuple format
-            else:
-                # Multiple functions - always list format
-                return functions.copy()
 
-        except Exception as e:
-            logger.warning(f"Failed to convert function list to step func: {e}")
-            return None
 
     def create_button_panel(self) -> QWidget:
         """
@@ -387,40 +369,14 @@ class DualEditorWindow(QDialog):
                 self.function_layout.addWidget(pane)
 
     def _convert_step_func_to_list(self):
-        """Convert step func to function list format (reuse Textual TUI logic)."""
+        """Convert step func to initial pattern format for function list editor."""
         if not hasattr(self.editing_step, 'func') or not self.editing_step.func:
             return []
 
-        # Use the actual PatternDataManager methods that exist
-        try:
-            step_func = self.editing_step.func
+        # Return the step func directly - the function list editor will handle the conversion
+        return self.editing_step.func
 
-            # Handle different step func formats
-            if isinstance(step_func, list):
-                # Already a list - normalize it
-                return self._normalize_function_list(step_func)
-            elif isinstance(step_func, dict):
-                # Dict pattern - convert to list using PatternDataManager
-                return self.pattern_manager.convert_dict_to_list(step_func)
-            elif callable(step_func):
-                # Single function - wrap in list
-                return [(step_func, {})]
-            else:
-                logger.warning(f"Unknown step func format: {type(step_func)}")
-                return []
 
-        except Exception as e:
-            logger.warning(f"Failed to convert step func to list: {e}")
-            return []
-
-    def _normalize_function_list(self, func_list):
-        """Normalize function list to (func, kwargs) tuples."""
-        normalized = []
-        for item in func_list:
-            func, kwargs = self.pattern_manager.extract_func_and_kwargs(item)
-            if func:
-                normalized.append((func, kwargs))
-        return normalized
 
     def _find_main_window(self):
         """Find the main window through the parent chain."""
@@ -661,72 +617,7 @@ class DualEditorWindow(QDialog):
         self.reject()
         logger.debug("Step editing cancelled")
 
-    def convert_step_func_to_list(self, step_func):
-        """
-        Convert FunctionStep.func to function list format.
 
-        Args:
-            step_func: FunctionStep.func (can be callable, tuple, or list)
-
-        Returns:
-            List of (function, kwargs) tuples
-        """
-        functions = []
-
-        if callable(step_func):
-            # Single function
-            functions.append((step_func, {}))
-        elif isinstance(step_func, tuple) and len(step_func) == 2:
-            # Single function with kwargs
-            func, kwargs = step_func
-            functions.append((func, kwargs))
-        elif isinstance(step_func, list):
-            # List of functions
-            for item in step_func:
-                if callable(item):
-                    functions.append((item, {}))
-                elif isinstance(item, tuple) and len(item) == 2:
-                    func, kwargs = item
-                    functions.append((func, kwargs))
-
-        return functions
-
-    def convert_function_list_to_step_func(self, functions):
-        """
-        Convert function list back to FunctionStep.func format.
-
-        Args:
-            functions: List of (function, kwargs) tuples
-
-        Returns:
-            FunctionStep.func format
-        """
-        if not functions:
-            return []
-
-        if len(functions) == 1:
-            # Single function
-            func, kwargs = functions[0]
-            if kwargs:
-                return (func, kwargs)
-            else:
-                return func
-        else:
-            # Multiple functions
-            result = []
-            for func, kwargs in functions:
-                if kwargs:
-                    result.append((func, kwargs))
-                else:
-                    result.append(func)
-            return result
-
-    def on_function_pattern_changed(self, functions):
-        """Handle function pattern changes from function list widget."""
-        # Convert back to step func format
-        self.editing_step.func = self.convert_function_list_to_step_func(functions)
-        self.detect_changes()
-        logger.debug(f"Function pattern changed: {len(functions)} functions")
 
     def closeEvent(self, event):
         """Handle dialog close event."""
