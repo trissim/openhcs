@@ -162,34 +162,7 @@ class OpenHCSMainWindow(QMainWindow):
         self.floating_windows["pipeline_editor"].raise_()
         self.floating_windows["pipeline_editor"].activateWindow()
 
-    def show_function_library(self):
-        """Show function library window (mirrors Textual TUI pattern)."""
-        if "function_library" not in self.floating_windows:
-            from openhcs.pyqt_gui.widgets.function_pane import FunctionListWidget
 
-            # Create floating window
-            window = QDialog(self)
-            window.setWindowTitle("Function Library")
-            window.setModal(False)
-            window.resize(700, 500)
-
-            # Add widget to window
-            layout = QVBoxLayout(window)
-            function_widget = FunctionListWidget(self.service_adapter)
-            layout.addWidget(function_widget)
-
-            self.floating_windows["function_library"] = window
-
-            # Connect to pipeline editor if it exists (mirrors Textual TUI)
-            # Note: Function library doesn't need plate manager connection
-            # self._connect_plate_to_pipeline_manager(function_widget)
-
-        # Show the window
-        self.floating_windows["function_library"].show()
-        self.floating_windows["function_library"].raise_()
-        self.floating_windows["function_library"].activateWindow()
-        
-        # Floating windows are created on-demand
 
     def show_log_viewer(self):
         """Show log viewer window (mirrors Textual TUI pattern)."""
@@ -273,11 +246,7 @@ class OpenHCSMainWindow(QMainWindow):
         pipeline_action.triggered.connect(self.show_pipeline_editor)
         view_menu.addAction(pipeline_action)
 
-        # Function Library window
-        function_action = QAction("&Function Library", self)
-        function_action.setShortcut("Ctrl+F")
-        function_action.triggered.connect(self.show_function_library)
-        view_menu.addAction(function_action)
+
 
         # Log Viewer window
         log_action = QAction("&Log Viewer", self)
