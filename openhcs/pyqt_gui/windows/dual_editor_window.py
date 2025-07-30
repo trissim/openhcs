@@ -48,6 +48,9 @@ class DualEditorWindow(QDialog):
         """
         super().__init__(parent)
 
+        # Make window non-modal (like plate manager and pipeline editor)
+        self.setModal(False)
+
         # Initialize color scheme
         self.color_scheme = color_scheme or PyQt6ColorScheme()
         
@@ -85,7 +88,7 @@ class DualEditorWindow(QDialog):
         """Setup the user interface."""
         title = "New Step" if self.is_new else f"Edit Step: {getattr(self.editing_step, 'name', 'Unknown')}"
         self.setWindowTitle(title)
-        self.setModal(True)
+        # Keep non-modal (already set in __init__)
         self.setMinimumSize(800, 600)
         self.resize(1000, 700)
         

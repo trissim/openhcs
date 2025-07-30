@@ -614,8 +614,10 @@ class PipelineEditorWidget(QWidget):
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """
         Handle global configuration changes.
-        
+
         Args:
             new_config: New global configuration
         """
         self.global_config = new_config
+
+

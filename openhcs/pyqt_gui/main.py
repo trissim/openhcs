@@ -76,7 +76,10 @@ class OpenHCSMainWindow(QMainWindow):
 
         # Restore window state
         self.restore_window_state()
-        
+
+        # Show default windows (plate manager and pipeline editor visible by default)
+        self.show_default_windows()
+
         logger.info("OpenHCS PyQt6 main window initialized")
     
     def setup_ui(self):
@@ -136,6 +139,14 @@ class OpenHCSMainWindow(QMainWindow):
         # Windows are created on-demand when menu items are clicked
         # This mirrors the Textual TUI pattern where windows are mounted dynamically
         self.floating_windows = {}  # Track created windows
+
+    def show_default_windows(self):
+        """Show plate manager and pipeline editor by default (like Textual TUI)."""
+        # Show plate manager by default
+        self.show_plate_manager()
+
+        # Show pipeline editor by default
+        self.show_pipeline_editor()
 
     def show_plate_manager(self):
         """Show plate manager window (mirrors Textual TUI pattern)."""
@@ -432,7 +443,10 @@ class OpenHCSMainWindow(QMainWindow):
             self.service_adapter.get_current_color_scheme(),  # color_scheme
             self                   # parent
         )
-        config_window.exec()
+        # Show as non-modal window (like plate manager and pipeline editor)
+        config_window.show()
+        config_window.raise_()
+        config_window.activateWindow()
 
     def _connect_pipeline_to_plate_manager(self, pipeline_widget):
         """Connect pipeline editor to plate manager (mirrors Textual TUI pattern)."""
@@ -525,7 +539,9 @@ class OpenHCSMainWindow(QMainWindow):
             # Get the widget from the window's layout
             layout = window.layout()
             widget = layout.itemAt(0).widget()
-            widget.on_config_changed(new_config)
+            # Only call on_config_changed if the widget has this method
+            if hasattr(widget, 'on_config_changed'):
+                widget.on_config_changed(new_config)
 
     def _save_config_to_cache(self, config):
         """Save config to cache asynchronously (matches TUI pattern)."""
@@ -539,17 +555,22 @@ class OpenHCSMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle application close event."""
-        # Stop system monitor first
-        if hasattr(self, 'system_monitor'):
-            self.system_monitor.stop_monitoring()
+        logger.info("Starting application shutdown...")
+
+        # Stop system monitor
+        self.system_monitor.stop_monitoring()
+
+        # Close floating windows and cleanup their resources
+        for window in self.floating_windows.values():
+            layout = window.layout()
+            if layout and layout.count() > 0:
+                widget = layout.itemAt(0).widget()
+                if hasattr(widget, 'cleanup'):
+                    widget.cleanup()
+            window.close()
 
         # Save window state
         self.save_window_state()
-
-        # Close any floating windows
-        for window in self.floating_windows.values():
-            if window.isVisible():
-                window.close()
 
         # Accept close event
         event.accept()

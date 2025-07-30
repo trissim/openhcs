@@ -148,7 +148,7 @@ class OpenHCSPyQtApp(QApplication):
     def run(self) -> int:
         """
         Run the application.
-        
+
         Returns:
             Application exit code
         """

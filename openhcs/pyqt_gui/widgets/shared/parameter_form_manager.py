@@ -122,7 +122,8 @@ class ParameterFormManager(QWidget):
         # Use GroupBoxWithHelp to show dataclass documentation
         group_box = GroupBoxWithHelp(
             title=f"{param_name.replace('_', ' ').title()}",
-            help_target=param_type  # Show help for the dataclass type
+            help_target=param_type,  # Show help for the dataclass type
+            color_scheme=self.color_scheme
         )
 
         # Use the content layout from GroupBoxWithHelp

@@ -15,7 +15,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,19 +71,22 @@ and the online documentation at https://openhcs.org
 Version: PyQt6 GUI 1.0.0
 """
     
-    def __init__(self, content: Optional[str] = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
+    def __init__(self, content: Optional[str] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the help window.
-        
+
         Args:
             content: Custom help content (uses default if None)
+            color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
 
-        # Initialize color scheme
+        # Initialize color scheme and style generator
         self.color_scheme = color_scheme or PyQt6ColorScheme()
-        
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
+
         # Business logic state
         self.content = content or self.HELP_TEXT
         
@@ -113,24 +118,17 @@ Version: PyQt6 GUI 1.0.0
         button_panel = self.create_button_panel()
         layout.addWidget(button_panel)
         
-        # Set styling
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
-                color: white;
-            }}
+        # Apply centralized styling
+        self.setStyleSheet(self.style_generator.generate_dialog_style() + f"""
             QTextEdit {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
-                color: white;
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
                 border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 padding: 10px;
                 font-family: 'Courier New', monospace;
                 font-size: 11px;
                 line-height: 1.4;
-            }}
-            QLabel {{
-                color: white;
             }}
         """)
     
@@ -213,21 +211,21 @@ Version: PyQt6 GUI 1.0.0
         close_button.setMinimumWidth(100)
         close_button.setMinimumHeight(35)
         close_button.clicked.connect(self.accept)
-        close_button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+        close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
                 color: white;
-                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                border: 1px solid #106ebe;
                 border-radius: 5px;
                 padding: 8px;
                 font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-            }}
-            QPushButton:pressed {{
-                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
-            }}
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
         """)
         layout.addWidget(close_button)
         
@@ -268,17 +266,19 @@ Version: PyQt6 GUI 1.0.0
         
         # Format headers (lines starting with uppercase words followed by colon)
         import re
+        accent_color = self.color_scheme.to_hex(self.color_scheme.text_accent)
         html_content = re.sub(
             r'^([A-Z][A-Za-z\s]+:)$',
-            r'<h3 style="color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; margin-top: 20px; margin-bottom: 10px;">\1</h3>',
+            rf'<h3 style="color: {accent_color}; margin-top: 20px; margin-bottom: 10px;">\1</h3>',
             html_content,
             flags=re.MULTILINE
         )
         
         # Format bullet points
+        secondary_color = self.color_scheme.to_hex(self.color_scheme.text_secondary)
         html_content = re.sub(
             r'^• (.+)$',
-            r'<li style="margin-left: 20px; color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};">\1</li>',
+            rf'<li style="margin-left: 20px; color: {secondary_color};">\1</li>',
             html_content,
             flags=re.MULTILINE
         )
@@ -286,22 +286,25 @@ Version: PyQt6 GUI 1.0.0
         # Format numbered lists
         html_content = re.sub(
             r'^(\d+\.) (.+)$',
-            r'<div style="margin-left: 20px; color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};"><strong style="color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};">\1</strong> \2</div>',
+            rf'<div style="margin-left: 20px; color: {secondary_color};"><strong style="color: {accent_color};">\1</strong> \2</div>',
             html_content,
             flags=re.MULTILINE
         )
         
         # Format keyboard shortcuts
+        input_bg_color = self.color_scheme.to_hex(self.color_scheme.input_bg)
+        text_accent_color = self.color_scheme.to_hex(self.color_scheme.text_accent)
         html_content = re.sub(
             r'(Ctrl\+[A-Z]|F\d+|Esc)',
-            r'<code style="background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)}; padding: 2px 4px; border-radius: 3px; color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};">\1</code>',
+            rf'<code style="background-color: {input_bg_color}; padding: 2px 4px; border-radius: 3px; color: {text_accent_color};">\1</code>',
             html_content
         )
         
         # Wrap in HTML structure
+        primary_text_color = self.color_scheme.to_hex(self.color_scheme.text_primary)
         html_content = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};">
+        <body style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; color: {primary_text_color};">
         {html_content}
         </body>
         </html>

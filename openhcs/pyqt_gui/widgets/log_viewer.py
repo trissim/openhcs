@@ -1140,6 +1140,15 @@ class LogViewerWindow(QMainWindow):
             self.file_detector = None
         logger.info("Stopped monitoring for new logs")
 
+    def cleanup(self) -> None:
+        """Cleanup all resources and background processes."""
+        # Stop tailing timer
+        if self.tail_timer and self.tail_timer.isActive():
+            self.tail_timer.stop()
+
+        # Stop file monitoring
+        self.stop_monitoring()
+
     def closeEvent(self, event) -> None:
         """Handle window close event."""
         if self.file_detector:

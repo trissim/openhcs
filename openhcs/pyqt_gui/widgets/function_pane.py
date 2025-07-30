@@ -152,7 +152,7 @@ class FunctionPaneWidget(QWidget):
 
             # Help indicator for function (import locally to avoid circular imports)
             from openhcs.pyqt_gui.widgets.shared.clickable_help_components import HelpIndicator
-            help_indicator = HelpIndicator(help_target=self.func)
+            help_indicator = HelpIndicator(help_target=self.func, color_scheme=self.color_scheme)
             layout.addWidget(help_indicator)
 
             # Module info

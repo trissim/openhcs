@@ -103,7 +103,7 @@ class ConfigWindow(QDialog):
     def setup_ui(self):
         """Setup the user interface."""
         self.setWindowTitle(f"Configuration - {self.config_class.__name__}")
-        self.setModal(True)
+        self.setModal(False)  # Non-modal like plate manager and pipeline editor
         self.setMinimumSize(600, 400)
         self.resize(800, 600)
         
@@ -123,7 +123,7 @@ class ConfigWindow(QDialog):
         # Add help button for the dataclass itself
         if dataclasses.is_dataclass(self.config_class):
             from openhcs.pyqt_gui.widgets.shared.clickable_help_components import HelpButton
-            help_btn = HelpButton(help_target=self.config_class, text="Help")
+            help_btn = HelpButton(help_target=self.config_class, text="Help", color_scheme=self.color_scheme)
             help_btn.setMaximumWidth(80)
             header_layout.addWidget(help_btn)
 

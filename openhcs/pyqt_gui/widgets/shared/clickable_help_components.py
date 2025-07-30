@@ -182,20 +182,24 @@ class HelpIndicator(QLabel):
 
 class HelpButton(QPushButton):
     """PyQt6 help button for adding help functionality to any widget - mirrors Textual TUI."""
-    
+
     def __init__(self, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
-                 param_type: type = None, text: str = "Help", parent=None):
+                 param_type: type = None, text: str = "Help",
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(text, parent)
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         self.help_target = help_target
         self.param_name = param_name
         self.param_description = param_description
         self.param_type = param_type
-        
+
         # Connect click to help display
         self.clicked.connect(self.show_help)
-        
+
         # Style as help button
         self.setMaximumWidth(60)
         self.setStyleSheet(f"""
@@ -268,43 +272,50 @@ class LabelWithHelp(QWidget):
 
 class FunctionTitleWithHelp(QWidget):
     """PyQt6 function title with integrated help - mirrors Textual TUI ClickableFunctionTitle."""
-    
-    def __init__(self, func: Callable, index: int = None, parent=None):
+
+    def __init__(self, func: Callable, index: int = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        
+
         # Function title
         func_name = getattr(func, '__name__', 'Unknown Function')
         module_name = getattr(func, '__module__', '').split('.')[-1] if func else ''
-        
+
         title = f"{index + 1}: {func_name}" if index is not None else func_name
         if module_name:
             title += f" ({module_name})"
-            
+
         title_label = QLabel(title)
         title_font = QFont()
         title_font.setBold(True)
         title_label.setFont(title_font)
         layout.addWidget(title_label)
-        
+
         # Help button
-        help_btn = HelpButton(help_target=func, text="?")
+        help_btn = HelpButton(help_target=func, text="?", color_scheme=self.color_scheme)
         help_btn.setMaximumWidth(25)
         help_btn.setMaximumHeight(20)
         layout.addWidget(help_btn)
-        
+
         layout.addStretch()
 
 
 class GroupBoxWithHelp(QGroupBox):
     """PyQt6 group box with integrated help for dataclass titles - mirrors Textual TUI pattern."""
 
-    def __init__(self, title: str, help_target: Union[Callable, type] = None, parent=None):
+    def __init__(self, title: str, help_target: Union[Callable, type] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
 
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         self.help_target = help_target
 
         # Create custom title widget with help
@@ -322,7 +333,7 @@ class GroupBoxWithHelp(QGroupBox):
 
         # Help button for dataclass
         if help_target:
-            help_btn = HelpButton(help_target=help_target, text="?")
+            help_btn = HelpButton(help_target=help_target, text="?", color_scheme=self.color_scheme)
             help_btn.setMaximumWidth(25)
             help_btn.setMaximumHeight(20)
             title_layout.addWidget(help_btn)
