@@ -290,8 +290,8 @@ class PipelineEditorWidget(QWidget):
     
     def action_add_step(self):
         """Handle Add Step button (adapted from Textual version)."""
-        # Validate orchestrator is selected before allowing step creation
-        if not self._validate_orchestrator_selected():
+        # Validate orchestrator is initialized before allowing step creation
+        if not self._validate_orchestrator_initialized():
             return
 
         from openhcs.core.steps.function_step import FunctionStep
@@ -382,8 +382,8 @@ class PipelineEditorWidget(QWidget):
     
     def action_load_pipeline(self):
         """Handle Load Pipeline button (adapted from Textual version)."""
-        # Validate orchestrator is selected before allowing pipeline load
-        if not self._validate_orchestrator_selected():
+        # Validate orchestrator is initialized before allowing pipeline load
+        if not self._validate_orchestrator_initialized():
             return
 
         from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
@@ -602,18 +602,71 @@ class PipelineEditorWidget(QWidget):
         
         logger.debug(f"Pipeline changed: {len(steps)} steps")
 
-    def _validate_orchestrator_selected(self) -> bool:
-        """Validate that an orchestrator is selected before allowing pipeline operations."""
+    def _is_current_plate_initialized(self) -> bool:
+        """Check if current plate has an initialized orchestrator (mirrors Textual TUI)."""
+        if not self.current_plate:
+            return False
+
+        # Get plate manager from main window
+        main_window = self._find_main_window()
+        if not main_window:
+            return False
+
+        # Get plate manager widget from floating windows
+        plate_manager_window = main_window.floating_windows.get("plate_manager")
+        if not plate_manager_window:
+            return False
+
+        layout = plate_manager_window.layout()
+        if not layout or layout.count() == 0:
+            return False
+
+        plate_manager_widget = layout.itemAt(0).widget()
+        if not hasattr(plate_manager_widget, 'orchestrators'):
+            return False
+
+        orchestrator = plate_manager_widget.orchestrators.get(self.current_plate)
+        if orchestrator is None:
+            return False
+
+        # Check if orchestrator is in an initialized state (mirrors Textual TUI logic)
+        from openhcs.constants.constants import OrchestratorState
+        return orchestrator.state in [OrchestratorState.READY, OrchestratorState.COMPILED,
+                                     OrchestratorState.COMPLETED, OrchestratorState.COMPILE_FAILED,
+                                     OrchestratorState.EXEC_FAILED]
+
+    def _validate_orchestrator_initialized(self) -> bool:
+        """Validate that an orchestrator is initialized before allowing pipeline operations."""
         if not self.current_plate:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self,
                 "No Orchestrator Selected",
-                "Please select and initialize a plate in the Plate Manager before editing pipelines.\n\n"
+                "Please select a plate in the Plate Manager before editing pipelines.\n\n"
                 "Pipeline editing requires an active orchestrator to provide component information."
             )
             return False
+
+        if not self._is_current_plate_initialized():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                "Orchestrator Not Initialized",
+                "Please initialize the selected plate in the Plate Manager before editing pipelines.\n\n"
+                "Click the 'Init' button in the Plate Manager to initialize the orchestrator."
+            )
+            return False
+
         return True
+
+    def _find_main_window(self):
+        """Find the main window by traversing parent hierarchy."""
+        widget = self
+        while widget:
+            if hasattr(widget, 'floating_windows'):
+                return widget
+            widget = widget.parent()
+        return None
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """
