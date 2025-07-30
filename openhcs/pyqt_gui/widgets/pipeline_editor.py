@@ -318,7 +318,9 @@ class PipelineEditorWidget(QWidget):
             on_save_callback=handle_save,
             parent=self
         )
-        editor.exec()
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
     
     def action_delete_step(self):
         """Handle Delete Step button (extracted from Textual version)."""
@@ -374,7 +376,9 @@ class PipelineEditorWidget(QWidget):
             on_save_callback=handle_save,
             parent=self
         )
-        editor.exec()
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
     
     def action_load_pipeline(self):
         """Handle Load Pipeline button (adapted from Textual version)."""
