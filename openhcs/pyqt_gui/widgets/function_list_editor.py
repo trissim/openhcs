@@ -19,6 +19,7 @@ from openhcs.textual_tui.services.function_registry_service import FunctionRegis
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
 from openhcs.pyqt_gui.widgets.function_pane import FunctionPaneWidget
 from openhcs.constants.constants import GroupBy, VariableComponents
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,11 @@ class FunctionListEditorWidget(QWidget):
     function_pattern_changed = pyqtSignal()
     
     def __init__(self, initial_functions: Union[List, Dict, callable, None] = None, 
-                 step_identifier: str = None, service_adapter=None, parent=None):
+                 step_identifier: str = None, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         # Initialize services (reuse existing business logic)
         self.registry_service = FunctionRegistryService()
@@ -123,7 +127,7 @@ class FunctionListEditorWidget(QWidget):
         header_layout = QHBoxLayout()
         
         functions_label = QLabel("Functions")
-        functions_label.setStyleSheet("color: #4a9eff; font-weight: bold; font-size: 14px;")
+        functions_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
         header_layout.addWidget(functions_label)
         
         header_layout.addStretch()
@@ -184,12 +188,12 @@ class FunctionListEditorWidget(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: #2d2d2d;
-                border: 1px solid #555;
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 4px;
-            }
+            }}
         """)
         
         # Function list container
@@ -208,18 +212,18 @@ class FunctionListEditorWidget(QWidget):
         """Get consistent button styling."""
         return """
             QPushButton {
-                background-color: #404040;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 6px 12px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
             }
             QPushButton:pressed {
-                background-color: #303030;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
             }
         """
     
@@ -240,12 +244,12 @@ class FunctionListEditorWidget(QWidget):
             # Show empty state
             empty_label = QLabel("No functions defined. Click 'Add' to begin.")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_label.setStyleSheet("color: #888; font-style: italic; padding: 20px;")
+            empty_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; font-style: italic; padding: 20px;")
             self.function_layout.addWidget(empty_label)
         else:
             # Create function panes
             for i, func_item in enumerate(self.functions):
-                pane = FunctionPaneWidget(func_item, i, self.service_adapter)
+                pane = FunctionPaneWidget(func_item, i, self.service_adapter, color_scheme=self.color_scheme)
                 
                 # Connect signals (using actual FunctionPaneWidget signal names)
                 pane.move_function.connect(self._move_function)

@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from openhcs.textual_tui.services.function_registry_service import FunctionRegistryService
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +36,25 @@ class FunctionSelectorWindow(QDialog):
     function_selected = pyqtSignal(object)  # Selected function
     selection_cancelled = pyqtSignal()
     
-    def __init__(self, on_result_callback: Optional[Callable] = None, parent=None):
+    def __init__(self, on_result_callback: Optional[Callable] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the function selector window.
-        
+
         Args:
             on_result_callback: Callback for function selection result
+            color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
-        
+
         # Business logic state (extracted from Textual version)
         self.on_result_callback = on_result_callback
         self.function_registry = FunctionRegistryService()
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
         
         # Current state
         self.available_functions: Dict[str, Any] = {}
@@ -79,7 +87,7 @@ class FunctionSelectorWindow(QDialog):
         # Header
         header_label = QLabel("Function Library")
         header_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        header_label.setStyleSheet("color: #00aaff; padding: 10px;")
+        header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; padding: 10px;")
         layout.addWidget(header_label)
         
         # Search section
@@ -94,34 +102,9 @@ class FunctionSelectorWindow(QDialog):
         button_panel = self.create_button_panel()
         layout.addWidget(button_panel)
         
-        # Set styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
-                color: white;
-            }
-            QTreeWidget {
-                background-color: #1e1e1e;
-                color: white;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                selection-background-color: #0078d4;
-            }
-            QTreeWidget::item {
-                padding: 4px;
-                border-bottom: 1px solid #333333;
-            }
-            QTreeWidget::item:hover {
-                background-color: #333333;
-            }
-            QLineEdit, QTextEdit {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
-                border-radius: 3px;
-                padding: 5px;
-            }
-        """)
+        # Apply centralized styling
+        self.setStyleSheet(self.style_generator.generate_dialog_style() + "\n" +
+                          self.style_generator.generate_tree_widget_style())
     
     def create_search_section(self) -> QWidget:
         """
@@ -132,20 +115,20 @@ class FunctionSelectorWindow(QDialog):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 8px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(frame)
         
         # Search label
         search_label = QLabel("Search:")
-        search_label.setStyleSheet("color: #cccccc; font-weight: bold;")
+        search_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: bold;")
         layout.addWidget(search_label)
         
         # Search edit
@@ -158,17 +141,17 @@ class FunctionSelectorWindow(QDialog):
         clear_button = QPushButton("Clear")
         clear_button.setMaximumWidth(60)
         clear_button.clicked.connect(self.clear_search)
-        clear_button.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
+        clear_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+            }}
         """)
         layout.addWidget(clear_button)
         
@@ -185,22 +168,22 @@ class FunctionSelectorWindow(QDialog):
         
         # Function tree
         function_group = QGroupBox("Available Functions")
-        function_group.setStyleSheet("""
-            QGroupBox {
+        function_group.setStyleSheet(f"""
+            QGroupBox {{
                 font-weight: bold;
-                border: 1px solid #555555;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 margin-top: 10px;
                 padding-top: 10px;
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QGroupBox::title {
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
-                color: #00aaff;
-            }
+                color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};
+            }}
         """)
         
         function_layout = QVBoxLayout(function_group)
@@ -216,22 +199,22 @@ class FunctionSelectorWindow(QDialog):
         
         # Preview panel
         preview_group = QGroupBox("Function Preview")
-        preview_group.setStyleSheet("""
-            QGroupBox {
+        preview_group.setStyleSheet(f"""
+            QGroupBox {{
                 font-weight: bold;
-                border: 1px solid #555555;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 margin-top: 10px;
                 padding-top: 10px;
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QGroupBox::title {
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
-                color: #00aaff;
-            }
+                color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};
+            }}
         """)
         
         preview_layout = QVBoxLayout(preview_group)
@@ -258,20 +241,20 @@ class FunctionSelectorWindow(QDialog):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(panel)
         
         # Function count label
         self.count_label = QLabel("")
-        self.count_label.setStyleSheet("color: #888888; font-style: italic;")
+        self.count_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; font-style: italic;")
         layout.addWidget(self.count_label)
         
         layout.addStretch()
@@ -280,17 +263,17 @@ class FunctionSelectorWindow(QDialog):
         cancel_button = QPushButton("Cancel")
         cancel_button.setMinimumWidth(80)
         cancel_button.clicked.connect(self.cancel_selection)
-        cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #cc0000;
+        cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 color: white;
-                border: 1px solid #ff0000;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #dd0000;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
+            }}
         """)
         layout.addWidget(cancel_button)
         
@@ -299,21 +282,21 @@ class FunctionSelectorWindow(QDialog):
         self.select_button.setMinimumWidth(80)
         self.select_button.setEnabled(False)
         self.select_button.clicked.connect(self.confirm_selection)
-        self.select_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        self.select_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
-                border: 1px solid #106ebe;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:disabled {
-                background-color: #2a2a2a;
-                color: #666666;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QPushButton:disabled {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
+            }}
         """)
         layout.addWidget(self.select_button)
         

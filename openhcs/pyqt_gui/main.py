@@ -70,7 +70,10 @@ class OpenHCSMainWindow(QMainWindow):
         self.setup_menu_bar()
         self.setup_status_bar()
         self.setup_connections()
-        
+
+        # Apply initial theme
+        self.apply_initial_theme()
+
         # Restore window state
         self.restore_window_state()
         
@@ -96,6 +99,30 @@ class OpenHCSMainWindow(QMainWindow):
         central_layout.addWidget(self.system_monitor)
         
         self.setCentralWidget(central_widget)
+
+    def apply_initial_theme(self):
+        """Apply initial color scheme to the main window."""
+        # Get theme manager from service adapter
+        theme_manager = self.service_adapter.get_theme_manager()
+
+        # Apply theme to the application
+        theme_manager.apply_color_scheme(theme_manager.color_scheme)
+
+        # Register for theme change notifications
+        theme_manager.register_theme_change_callback(self.on_theme_changed)
+
+        logger.debug("Applied initial theme to main window")
+
+    def on_theme_changed(self, color_scheme):
+        """
+        Handle theme change notifications.
+
+        Args:
+            color_scheme: New color scheme that was applied
+        """
+        # Update any main window specific styling if needed
+        # Most styling is handled automatically by the theme manager
+        logger.debug("Main window received theme change notification")
     
     def setup_dock_system(self):
         """Setup window system mirroring Textual TUI floating windows."""
@@ -123,7 +150,11 @@ class OpenHCSMainWindow(QMainWindow):
 
             # Add widget to window
             layout = QVBoxLayout(window)
-            plate_widget = PlateManagerWidget(self.file_manager, self.service_adapter)
+            plate_widget = PlateManagerWidget(
+                self.file_manager,
+                self.service_adapter,
+                self.service_adapter.get_current_color_scheme()
+            )
             layout.addWidget(plate_widget)
 
             self.floating_windows["plate_manager"] = window
@@ -149,7 +180,11 @@ class OpenHCSMainWindow(QMainWindow):
 
             # Add widget to window
             layout = QVBoxLayout(window)
-            pipeline_widget = PipelineEditorWidget(self.file_manager, self.service_adapter)
+            pipeline_widget = PipelineEditorWidget(
+                self.file_manager,
+                self.service_adapter,
+                self.service_adapter.get_current_color_scheme()
+            )
             layout.addWidget(pipeline_widget)
 
             self.floating_windows["pipeline_editor"] = window
@@ -256,11 +291,38 @@ class OpenHCSMainWindow(QMainWindow):
         
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
-        
+
         # Configuration action
         config_action = QAction("&Configuration", self)
         config_action.triggered.connect(self.show_configuration)
         tools_menu.addAction(config_action)
+
+        tools_menu.addSeparator()
+
+        # Theme submenu
+        theme_menu = tools_menu.addMenu("&Theme")
+
+        # Dark theme action
+        dark_theme_action = QAction("&Dark Theme", self)
+        dark_theme_action.triggered.connect(self.switch_to_dark_theme)
+        theme_menu.addAction(dark_theme_action)
+
+        # Light theme action
+        light_theme_action = QAction("&Light Theme", self)
+        light_theme_action.triggered.connect(self.switch_to_light_theme)
+        theme_menu.addAction(light_theme_action)
+
+        theme_menu.addSeparator()
+
+        # Load theme from file action
+        load_theme_action = QAction("&Load Theme from File...", self)
+        load_theme_action.triggered.connect(self.load_theme_from_file)
+        theme_menu.addAction(load_theme_action)
+
+        # Save theme to file action
+        save_theme_action = QAction("&Save Theme to File...", self)
+        save_theme_action.triggered.connect(self.save_theme_to_file)
+        theme_menu.addAction(save_theme_action)
         
         # Help menu
         help_menu = menubar.addMenu("&Help")
@@ -367,6 +429,7 @@ class OpenHCSMainWindow(QMainWindow):
             GlobalPipelineConfig,  # config_class
             self.global_config,    # current_config
             handle_config_save,    # on_save_callback
+            self.service_adapter.get_current_color_scheme(),  # color_scheme
             self                   # parent
         )
         config_window.exec()
@@ -491,3 +554,55 @@ class OpenHCSMainWindow(QMainWindow):
         # Accept close event
         event.accept()
         logger.info("OpenHCS PyQt6 application closed")
+
+    # ========== THEME MANAGEMENT METHODS ==========
+
+    def switch_to_dark_theme(self):
+        """Switch to dark theme variant."""
+        self.service_adapter.switch_to_dark_theme()
+        self.status_message.emit("Switched to dark theme")
+
+    def switch_to_light_theme(self):
+        """Switch to light theme variant."""
+        self.service_adapter.switch_to_light_theme()
+        self.status_message.emit("Switched to light theme")
+
+    def load_theme_from_file(self):
+        """Load theme from JSON configuration file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Theme Configuration",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+
+        if file_path:
+            success = self.service_adapter.load_theme_from_config(file_path)
+            if success:
+                self.status_message.emit(f"Loaded theme from {Path(file_path).name}")
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Theme Load Error",
+                    f"Failed to load theme from {Path(file_path).name}"
+                )
+
+    def save_theme_to_file(self):
+        """Save current theme to JSON configuration file."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Theme Configuration",
+            "pyqt6_color_scheme.json",
+            "JSON Files (*.json);;All Files (*)"
+        )
+
+        if file_path:
+            success = self.service_adapter.save_current_theme(file_path)
+            if success:
+                self.status_message.emit(f"Saved theme to {Path(file_path).name}")
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Theme Save Error",
+                    f"Failed to save theme to {Path(file_path).name}"
+                )

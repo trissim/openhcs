@@ -15,6 +15,8 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtCore import QUrl
 
 from openhcs.pyqt_gui.utils.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
+from openhcs.pyqt_gui.shared.palette_manager import ThemeManager
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,10 @@ class PyQtServiceAdapter:
         """
         self.main_window = main_window
         self.app = QApplication.instance()
+
+        # Initialize theme manager for centralized color management
+        self.theme_manager = ThemeManager()
+
         logger.debug("PyQt6 service adapter initialized")
 
     def execute_async_operation(self, async_func, *args, **kwargs):
@@ -289,6 +295,85 @@ class PyQtServiceAdapter:
         else:
             # Set as application property
             setattr(self.app, 'global_config', config)
+
+    # ========== THEME MANAGEMENT METHODS ==========
+
+    def get_theme_manager(self) -> ThemeManager:
+        """
+        Get the theme manager for color scheme management.
+
+        Returns:
+            ThemeManager: Current theme manager instance
+        """
+        return self.theme_manager
+
+    def get_current_color_scheme(self) -> PyQt6ColorScheme:
+        """
+        Get the current color scheme.
+
+        Returns:
+            PyQt6ColorScheme: Current color scheme
+        """
+        return self.theme_manager.color_scheme
+
+    def apply_color_scheme(self, color_scheme: PyQt6ColorScheme):
+        """
+        Apply a new color scheme to the entire application.
+
+        Args:
+            color_scheme: New color scheme to apply
+        """
+        self.theme_manager.apply_color_scheme(color_scheme)
+
+    def switch_to_dark_theme(self):
+        """Switch to dark theme variant."""
+        self.theme_manager.switch_to_dark_theme()
+
+    def switch_to_light_theme(self):
+        """Switch to light theme variant."""
+        self.theme_manager.switch_to_light_theme()
+
+    def load_theme_from_config(self, config_path: str) -> bool:
+        """
+        Load and apply theme from configuration file.
+
+        Args:
+            config_path: Path to JSON configuration file
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return self.theme_manager.load_theme_from_config(config_path)
+
+    def save_current_theme(self, config_path: str) -> bool:
+        """
+        Save current theme to configuration file.
+
+        Args:
+            config_path: Path to save JSON configuration file
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        return self.theme_manager.save_current_theme(config_path)
+
+    def get_current_style_sheet(self) -> str:
+        """
+        Get the current complete application style sheet.
+
+        Returns:
+            str: Complete QStyleSheet for current theme
+        """
+        return self.theme_manager.get_current_style_sheet()
+
+    def register_theme_change_callback(self, callback):
+        """
+        Register a callback to be called when theme changes.
+
+        Args:
+            callback: Function to call with new color scheme
+        """
+        self.theme_manager.register_theme_change_callback(callback)
     
     def get_file_manager(self):
         """

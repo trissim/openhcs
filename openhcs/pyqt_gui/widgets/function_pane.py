@@ -22,6 +22,7 @@ from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnaly
 
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from openhcs.pyqt_gui.widgets.shared.clickable_help_components import HelpIndicator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class FunctionPaneWidget(QWidget):
     move_function = pyqtSignal(int, int)  # index, direction
     reset_parameters = pyqtSignal(int)  # index
     
-    def __init__(self, func_item: Tuple[Callable, Dict], index: int, service_adapter, parent=None):
+    def __init__(self, func_item: Tuple[Callable, Dict], index: int, service_adapter, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the function pane widget.
         
@@ -53,6 +54,9 @@ class FunctionPaneWidget(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         # Core dependencies
         self.service_adapter = service_adapter
@@ -106,13 +110,13 @@ class FunctionPaneWidget(QWidget):
             layout.addWidget(parameter_frame)
         
         # Set styling
-        self.setStyleSheet("""
-            FunctionPaneWidget {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
+        self.setStyleSheet(f"""
+            FunctionPaneWidget {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 margin: 2px;
-            }
+            }}
         """)
     
     def create_function_header(self) -> QWidget:
@@ -124,13 +128,13 @@ class FunctionPaneWidget(QWidget):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #444444;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.separator_color)};
                 border-radius: 3px;
                 padding: 5px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(frame)
@@ -143,7 +147,7 @@ class FunctionPaneWidget(QWidget):
             # Function name with help
             name_label = QLabel(f"🔧 {func_name}")
             name_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            name_label.setStyleSheet("color: #00aaff;")
+            name_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
             layout.addWidget(name_label)
 
             # Help indicator for function (import locally to avoid circular imports)
@@ -155,11 +159,11 @@ class FunctionPaneWidget(QWidget):
             if func_module:
                 module_label = QLabel(f"({func_module})")
                 module_label.setFont(QFont("Arial", 8))
-                module_label.setStyleSheet("color: #888888;")
+                module_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)};")
                 layout.addWidget(module_label)
         else:
             name_label = QLabel("No Function Selected")
-            name_label.setStyleSheet("color: #ff6666;")
+            name_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_error)};")
             layout.addWidget(name_label)
 
         layout.addStretch()
@@ -175,13 +179,13 @@ class FunctionPaneWidget(QWidget):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 3px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(frame)
@@ -201,21 +205,21 @@ class FunctionPaneWidget(QWidget):
             button.setToolTip(tooltip)
             button.setMaximumWidth(60)
             button.setMaximumHeight(25)
-            button.setStyleSheet("""
-                QPushButton {
-                    background-color: #404040;
+            button.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                     color: white;
-                    border: 1px solid #666666;
+                    border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                     border-radius: 2px;
                     padding: 2px;
                     font-size: 10px;
-                }
-                QPushButton:hover {
-                    background-color: #505050;
-                }
-                QPushButton:pressed {
-                    background-color: #303030;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+                }}
+                QPushButton:pressed {{
+                    background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
+                }}
             """)
             
             # Connect button to action
@@ -235,22 +239,22 @@ class FunctionPaneWidget(QWidget):
             Widget containing parameter form
         """
         group_box = QGroupBox("Parameters")
-        group_box.setStyleSheet("""
-            QGroupBox {
+        group_box.setStyleSheet(f"""
+            QGroupBox {{
                 font-weight: bold;
-                border: 1px solid #555555;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 margin-top: 10px;
                 padding-top: 10px;
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QGroupBox::title {
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+            }}
+            QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
-                color: #00aaff;
-            }
+                color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};
+            }}
         """)
         
         layout = QVBoxLayout(group_box)
@@ -267,7 +271,8 @@ class FunctionPaneWidget(QWidget):
                 field_id=f"func_{self.index}",
                 parameter_info=self.form_manager.parameter_info,
                 use_scroll_area=False,  # Don't use scroll area in function panes
-                function_target=self.func  # Pass function for docstring fallback
+                function_target=self.func,  # Pass function for docstring fallback
+                color_scheme=self.color_scheme
             )
 
             # Connect parameter changes
@@ -509,7 +514,7 @@ class FunctionListWidget(QWidget):
     # Signals
     functions_changed = pyqtSignal(list)  # List of function items
     
-    def __init__(self, service_adapter, parent=None):
+    def __init__(self, service_adapter, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the function list widget.
         
@@ -518,6 +523,9 @@ class FunctionListWidget(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         self.service_adapter = service_adapter
         self.functions: List[Tuple[Callable, Dict]] = []
@@ -558,7 +566,7 @@ class FunctionListWidget(QWidget):
         
         # Create new panes
         for i, func_item in enumerate(self.functions):
-            pane = FunctionPaneWidget(func_item, i, self.service_adapter)
+            pane = FunctionPaneWidget(func_item, i, self.service_adapter, color_scheme=self.color_scheme)
             
             # Connect signals
             pane.parameter_changed.connect(self.on_parameter_changed)

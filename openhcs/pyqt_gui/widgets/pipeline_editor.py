@@ -26,6 +26,8 @@ from openhcs.pyqt_gui.widgets.mixins import (
     preserve_selection_during_update,
     handle_selection_change_with_prevention
 )
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -43,21 +45,27 @@ class PipelineEditorWidget(QWidget):
     step_selected = pyqtSignal(object)  # FunctionStep
     status_message = pyqtSignal(str)  # status message
     
-    def __init__(self, file_manager: FileManager, service_adapter, parent=None):
+    def __init__(self, file_manager: FileManager, service_adapter,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the pipeline editor widget.
-        
+
         Args:
             file_manager: FileManager instance for file operations
             service_adapter: PyQt service adapter for dialogs and operations
+            color_scheme: Color scheme for styling (optional, uses service adapter if None)
             parent: Parent widget
         """
         super().__init__(parent)
-        
+
         # Core dependencies
         self.file_manager = file_manager
         self.service_adapter = service_adapter
         self.global_config = service_adapter.get_global_config()
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or service_adapter.get_current_color_scheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
         
         # Business logic state (extracted from Textual version)
         self.pipeline_steps: List[FunctionStep] = []
@@ -91,7 +99,7 @@ class PipelineEditorWidget(QWidget):
         # Title
         title_label = QLabel("Pipeline Editor")
         title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #00aaff; padding: 5px;")
+        title_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; padding: 5px;")
         layout.addWidget(title_label)
         
         # Main content splitter
@@ -102,26 +110,26 @@ class PipelineEditorWidget(QWidget):
         self.step_list = QListWidget()
         self.step_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.step_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.step_list.setStyleSheet("""
-            QListWidget {
-                background-color: #1e1e1e;
-                color: white;
-                border: 1px solid #555555;
+        self.step_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 padding: 8px;
-                border-bottom: 1px solid #333333;
+                border-bottom: 1px solid {self.color_scheme.to_hex(self.color_scheme.separator_color)};
                 border-radius: 3px;
                 margin: 2px;
-            }
-            QListWidget::item:selected {
-                background-color: #0078d4;
-            }
-            QListWidget::item:hover {
-                background-color: #333333;
-            }
+            }}
+            QListWidget::item:selected {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QListWidget::item:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.hover_bg)};
+            }}
         """)
         splitter.addWidget(self.step_list)
         
@@ -145,13 +153,13 @@ class PipelineEditorWidget(QWidget):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.frame_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 5px;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(panel)
@@ -177,25 +185,7 @@ class PipelineEditorWidget(QWidget):
                     button = QPushButton(name)
                     button.setToolTip(tooltip)
                     button.setMinimumHeight(30)
-                    button.setStyleSheet("""
-                        QPushButton {
-                            background-color: #404040;
-                            color: white;
-                            border: 1px solid #666666;
-                            border-radius: 3px;
-                            padding: 5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #505050;
-                        }
-                        QPushButton:pressed {
-                            background-color: #303030;
-                        }
-                        QPushButton:disabled {
-                            background-color: #2a2a2a;
-                            color: #666666;
-                        }
-                    """)
+                    button.setStyleSheet(self.style_generator.generate_button_style())
                     
                     # Connect button to action
                     button.clicked.connect(lambda checked, a=action: self.handle_button_action(a))
@@ -218,20 +208,20 @@ class PipelineEditorWidget(QWidget):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.frame_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 5px;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(frame)
         
         # Status label
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
+        self.status_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; font-weight: bold;")
         layout.addWidget(self.status_label)
         
         return frame

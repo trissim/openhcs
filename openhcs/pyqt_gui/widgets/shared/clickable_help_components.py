@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import QLabel, QPushButton, QWidget, QHBoxLayout, QGroupBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QCursor
 
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,14 +39,14 @@ class ClickableHelpLabel(QLabel):
         
         # Style as clickable
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setStyleSheet("""
-            QLabel {
-                color: #0078d4;
+        self.setStyleSheet(f"""
+            QLabel {{
+                color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 text-decoration: underline;
-            }
-            QLabel:hover {
-                color: #106ebe;
-            }
+            }}
+            QLabel:hover {{
+                color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         
     def mousePressEvent(self, event):
@@ -120,9 +122,12 @@ class HelpIndicator(QLabel):
     
     def __init__(self, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
-                 param_type: type = None, parent=None):
+                 param_type: type = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__("(?)", parent)
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         self.help_target = help_target
         self.param_name = param_name
         self.param_description = param_description
@@ -130,20 +135,20 @@ class HelpIndicator(QLabel):
         
         # Style as clickable help indicator
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setStyleSheet("""
-            QLabel {
-                color: #666666;
+        self.setStyleSheet(f"""
+            QLabel {{
+                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 font-size: 10px;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 8px;
                 padding: 2px 4px;
-                background-color: #f0f0f0;
-            }
-            QLabel:hover {
-                color: #0078d4;
-                border-color: #0078d4;
-                background-color: #e6f3ff;
-            }
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
+            }}
+            QLabel:hover {{
+                color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                border-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         
         # Set fixed size for consistent appearance
@@ -193,20 +198,20 @@ class HelpButton(QPushButton):
         
         # Style as help button
         self.setMaximumWidth(60)
-        self.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        self.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
                 border: none;
                 padding: 4px 8px;
                 border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         
     def show_help(self):
@@ -234,23 +239,27 @@ class LabelWithHelp(QWidget):
     
     def __init__(self, text: str, help_target: Union[Callable, type] = None,
                  param_name: str = None, param_description: str = None,
-                 param_type: type = None, parent=None):
+                 param_type: type = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
-        
+
         # Main label
         label = QLabel(text)
         layout.addWidget(label)
-        
+
         # Help indicator
         help_indicator = HelpIndicator(
             help_target=help_target,
             param_name=param_name,
             param_description=param_description,
-            param_type=param_type
+            param_type=param_type,
+            color_scheme=self.color_scheme
         )
         layout.addWidget(help_indicator)
         

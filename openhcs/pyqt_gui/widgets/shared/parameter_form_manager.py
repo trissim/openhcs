@@ -17,6 +17,9 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame
 )
 from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtCore import Qt, pyqtSignal
+
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 # No-scroll widget classes to prevent accidental value changes
 class NoScrollSpinBox(QSpinBox):
@@ -30,7 +33,6 @@ class NoScrollDoubleSpinBox(QDoubleSpinBox):
 class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event: QWheelEvent):
         event.ignore()
-from PyQt6.QtCore import Qt, pyqtSignal
 
 # REUSE the actual working Textual TUI services
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
@@ -55,8 +57,11 @@ class ParameterFormManager(QWidget):
 
     def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type],
                  field_id: str, parameter_info: Dict = None, parent=None, use_scroll_area: bool = True,
-                 function_target=None):
+                 function_target=None, color_scheme: Optional[PyQt6ColorScheme] = None):
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
 
         # Store function target for docstring fallback
         self._function_target = function_target
@@ -168,7 +173,8 @@ class ParameterFormManager(QWidget):
             text=f"{param_name.replace('_', ' ').title()}:",
             param_name=param_name,
             param_description=param_description,
-            param_type=param_type
+            param_type=param_type,
+            color_scheme=self.color_scheme
         )
         label_with_help.setMinimumWidth(150)
         layout.addWidget(label_with_help)

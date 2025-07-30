@@ -32,6 +32,8 @@ from openhcs.pyqt_gui.widgets.mixins import (
     preserve_selection_during_update,
     handle_selection_change_with_prevention
 )
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +61,15 @@ class PlateManagerWidget(QWidget):
     progress_updated = pyqtSignal(int)  # current_value
     progress_finished = pyqtSignal()
     
-    def __init__(self, file_manager: FileManager, service_adapter, parent=None):
+    def __init__(self, file_manager: FileManager, service_adapter,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the plate manager widget.
 
         Args:
             file_manager: FileManager instance for file operations
             service_adapter: PyQt service adapter for dialogs and operations
+            color_scheme: Color scheme for styling (optional, uses service adapter if None)
             parent: Parent widget
         """
         super().__init__(parent)
@@ -75,6 +79,10 @@ class PlateManagerWidget(QWidget):
         self.service_adapter = service_adapter
         self.global_config = service_adapter.get_global_config()
         self.pipeline_editor = None  # Will be set by main window
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or service_adapter.get_current_color_scheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
         
         # Business logic state (extracted from Textual version)
         self.plates: List[Dict] = []  # List of plate dictionaries
@@ -111,7 +119,7 @@ class PlateManagerWidget(QWidget):
         # Title
         title_label = QLabel("Plate Manager")
         title_label.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #00aaff; padding: 5px;")
+        title_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; padding: 5px;")
         layout.addWidget(title_label)
         
         # Main content splitter
@@ -121,25 +129,8 @@ class PlateManagerWidget(QWidget):
         # Plate list
         self.plate_list = QListWidget()
         self.plate_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.plate_list.setStyleSheet("""
-            QListWidget {
-                background-color: #1e1e1e;
-                color: white;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 5px;
-            }
-            QListWidget::item {
-                padding: 5px;
-                border-bottom: 1px solid #333333;
-            }
-            QListWidget::item:selected {
-                background-color: #0078d4;
-            }
-            QListWidget::item:hover {
-                background-color: #333333;
-            }
-        """)
+        # Apply centralized styling to plate list
+        self.setStyleSheet(self.style_generator.generate_plate_manager_style())
         splitter.addWidget(self.plate_list)
         
         # Button panel
@@ -162,14 +153,7 @@ class PlateManagerWidget(QWidget):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 5px;
-            }
-        """)
+        # Frame styling is handled by the main widget stylesheet
         
         layout = QVBoxLayout(panel)
         
@@ -196,25 +180,7 @@ class PlateManagerWidget(QWidget):
                     button = QPushButton(name)
                     button.setToolTip(tooltip)
                     button.setMinimumHeight(30)
-                    button.setStyleSheet("""
-                        QPushButton {
-                            background-color: #404040;
-                            color: white;
-                            border: 1px solid #666666;
-                            border-radius: 3px;
-                            padding: 5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #505050;
-                        }
-                        QPushButton:pressed {
-                            background-color: #303030;
-                        }
-                        QPushButton:disabled {
-                            background-color: #2a2a2a;
-                            color: #666666;
-                        }
-                    """)
+                    # Button styling is handled by the main widget stylesheet
                     
                     # Connect button to action
                     button.clicked.connect(lambda checked, a=action: self.handle_button_action(a))
@@ -237,38 +203,19 @@ class PlateManagerWidget(QWidget):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #2b2b2b;
-                border: 1px solid #555555;
-                border-radius: 3px;
-                padding: 5px;
-            }
-        """)
+        # Frame styling is handled by the main widget stylesheet
         
         layout = QVBoxLayout(frame)
         
         # Status label
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #00ff00; font-weight: bold;")
+        self.status_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; font-weight: bold;")
         layout.addWidget(self.status_label)
         
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #555555;
-                border-radius: 3px;
-                background-color: #1e1e1e;
-                color: white;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #0078d4;
-                border-radius: 2px;
-            }
-        """)
+        # Progress bar styling is handled by the main widget stylesheet
         layout.addWidget(self.progress_bar)
         
         return frame

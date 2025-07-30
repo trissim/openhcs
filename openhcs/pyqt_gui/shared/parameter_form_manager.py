@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal, QObject
 
 from openhcs.textual_tui.widgets.shared.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.shared.typed_widget_factory import TypedWidgetFactory
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +30,30 @@ class PyQtParameterFormManager(QObject):
     parameter_changed = pyqtSignal(str, object)  # param_name, value
     form_updated = pyqtSignal()
     
-    def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, Type], 
-                 form_id: str, param_info: Optional[Dict] = None):
+    def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, Type],
+                 form_id: str, param_info: Optional[Dict] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None):
         """
         Initialize the PyQt6 parameter form manager.
-        
+
         Args:
             parameters: Dictionary of parameter names to values
             parameter_types: Dictionary of parameter names to types
             form_id: Unique identifier for this form
             param_info: Additional parameter information
+            color_scheme: Color scheme for styling (optional, uses default if None)
         """
         super().__init__()
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         # Use the original ParameterFormManager for business logic
         self.core_manager = ParameterFormManager(parameters, parameter_types, form_id, param_info)
-        
+
         # PyQt6 specific state
         self.parameter_widgets: Dict[str, QWidget] = {}
-        self.widget_factory = TypedWidgetFactory()
+        self.widget_factory = TypedWidgetFactory(self.color_scheme)
         
         logger.debug(f"PyQt6 parameter form manager initialized: {form_id}")
     
@@ -76,7 +82,7 @@ class PyQtParameterFormManager(QObject):
                 
                 # Create label
                 label = QLabel(param_name.replace('_', ' ').title())
-                label.setStyleSheet("color: #cccccc; font-weight: normal;")
+                label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: normal;")
                 
                 # Add to form
                 layout.addRow(label, widget)

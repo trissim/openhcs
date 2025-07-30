@@ -7,8 +7,17 @@ Migrated from Textual TUI with full feature parity.
 
 from openhcs.pyqt_gui.shared.parameter_form_manager import PyQtParameterFormManager
 from openhcs.pyqt_gui.shared.typed_widget_factory import TypedWidgetFactory
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.palette_manager import PaletteManager, ThemeManager
+from openhcs.pyqt_gui.shared.config_validator import ColorSchemeValidator
 
 __all__ = [
     "PyQtParameterFormManager",
-    "TypedWidgetFactory"
+    "TypedWidgetFactory",
+    "PyQt6ColorScheme",
+    "StyleSheetGenerator",
+    "PaletteManager",
+    "ThemeManager",
+    "ColorSchemeValidator"
 ]

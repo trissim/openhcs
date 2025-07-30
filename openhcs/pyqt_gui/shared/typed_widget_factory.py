@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, QTime
 from PyQt6.QtGui import QIntValidator, QDoubleValidator, QWheelEvent
 
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,8 +54,14 @@ class TypedWidgetFactory:
     similar to the Textual TUI TypedWidgetFactory.
     """
     
-    def __init__(self):
-        """Initialize the widget factory."""
+    def __init__(self, color_scheme: Optional[PyQt6ColorScheme] = None):
+        """
+        Initialize the widget factory.
+
+        Args:
+            color_scheme: Color scheme for styling (optional, uses default if None)
+        """
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         self.widget_creators = {
             bool: self._create_bool_widget,
             int: self._create_int_widget,
@@ -227,25 +235,25 @@ class TypedWidgetFactory:
         """Create checkbox widget for boolean parameters."""
         widget = QCheckBox()
         widget.setChecked(bool(current_value))
-        widget.setStyleSheet("""
-            QCheckBox {
-                color: white;
+        widget.setStyleSheet(f"""
+            QCheckBox {{
+                color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
                 spacing: 5px;
-            }
-            QCheckBox::indicator {
+            }}
+            QCheckBox::indicator {{
                 width: 16px;
                 height: 16px;
-            }
-            QCheckBox::indicator:unchecked {
-                background-color: #404040;
-                border: 1px solid #666666;
+            }}
+            QCheckBox::indicator:unchecked {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #0078d4;
-                border: 1px solid #106ebe;
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 3px;
-            }
+            }}
         """)
         return widget
     
@@ -254,18 +262,18 @@ class TypedWidgetFactory:
         widget = NoScrollSpinBox()
         widget.setRange(-999999, 999999)
         widget.setValue(int(current_value) if current_value is not None else 0)
-        widget.setStyleSheet("""
-            QSpinBox {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                background-color: #505050;
-                border: 1px solid #666666;
-            }
+            }}
+            QSpinBox::up-button, QSpinBox::down-button {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
+            }}
         """)
         return widget
     
@@ -275,18 +283,18 @@ class TypedWidgetFactory:
         widget.setRange(-999999.0, 999999.0)
         widget.setDecimals(6)
         widget.setValue(float(current_value) if current_value is not None else 0.0)
-        widget.setStyleSheet("""
-            QDoubleSpinBox {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-                background-color: #505050;
-                border: 1px solid #666666;
-            }
+            }}
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
+            }}
         """)
         return widget
     
@@ -294,17 +302,17 @@ class TypedWidgetFactory:
         """Create line edit widget for string parameters."""
         widget = QLineEdit()
         widget.setText(str(current_value) if current_value is not None else "")
-        widget.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #0078d4;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_focus_border)};
+            }}
         """)
         return widget
     
@@ -320,18 +328,18 @@ class TypedWidgetFactory:
             text = str(current_value) if current_value is not None else ""
         
         widget.setPlainText(text)
-        widget.setStyleSheet("""
-            QTextEdit {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
                 font-family: 'Courier New', monospace;
-            }
-            QTextEdit:focus {
-                border: 1px solid #0078d4;
-            }
+            }}
+            QTextEdit:focus {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_focus_border)};
+            }}
         """)
         return widget
 
@@ -347,18 +355,18 @@ class TypedWidgetFactory:
 
         widget.setText(text)
         widget.setPlaceholderText("Enter file or directory path...")
-        widget.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
                 font-family: 'Courier New', monospace;
-            }
-            QLineEdit:focus {
-                border: 1px solid #0078d4;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_focus_border)};
+            }}
         """)
         return widget
 
@@ -374,18 +382,18 @@ class TypedWidgetFactory:
         
         widget.setText(text)
         widget.setPlaceholderText("Enter comma-separated values...")
-        widget.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
                 font-family: 'Courier New', monospace;
-            }
-            QLineEdit:focus {
-                border: 1px solid #0078d4;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_focus_border)};
+            }}
         """)
         return widget
     
@@ -404,26 +412,26 @@ class TypedWidgetFactory:
                     widget.setCurrentIndex(i)
                     break
         
-        widget.setStyleSheet("""
-            QComboBox {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
                 border: none;
-                background-color: #505050;
-            }
-            QComboBox::down-arrow {
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+            }}
+            QComboBox::down-arrow {{
                 border: none;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #404040;
-                color: white;
-                selection-background-color: #0078d4;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                selection-background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         return widget
     
@@ -432,14 +440,14 @@ class TypedWidgetFactory:
         widget = QLineEdit()
         widget.setText(str(current_value) if current_value is not None else "None")
         widget.setPlaceholderText("None")
-        widget.setStyleSheet("""
-            QLineEdit {
-                background-color: #404040;
-                color: #888888;
-                border: 1px solid #666666;
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
                 border-radius: 3px;
                 padding: 5px;
                 font-style: italic;
-            }
+            }}
         """)
         return widget

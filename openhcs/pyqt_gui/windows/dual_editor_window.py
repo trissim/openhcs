@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFont
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
 
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 logger = logging.getLogger(__name__)
 
 
@@ -35,7 +36,7 @@ class DualEditorWindow(QDialog):
     changes_detected = pyqtSignal(bool)  # has_changes
     
     def __init__(self, step_data: Optional[FunctionStep] = None, is_new: bool = False,
-                 on_save_callback: Optional[Callable] = None, parent=None):
+                 on_save_callback: Optional[Callable] = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the dual editor window.
         
@@ -46,6 +47,9 @@ class DualEditorWindow(QDialog):
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         # Business logic state (extracted from Textual version)
         self.is_new = is_new
@@ -91,30 +95,30 @@ class DualEditorWindow(QDialog):
         # Header
         header_label = QLabel(title)
         header_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        header_label.setStyleSheet("color: #00aaff; padding: 10px;")
+        header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; padding: 10px;")
         layout.addWidget(header_label)
         
         # Tabbed content
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #555555;
-                background-color: #1e1e1e;
-            }
-            QTabBar::tab {
-                background-color: #404040;
+        self.tab_widget.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+            }}
+            QTabBar::tab {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
                 padding: 8px 16px;
                 margin-right: 2px;
                 border-top-left-radius: 4px;
                 border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #0078d4;
-            }
-            QTabBar::tab:hover {
-                background-color: #505050;
-            }
+            }}
+            QTabBar::tab:selected {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QTabBar::tab:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+            }}
         """)
         
         # Create tabs
@@ -128,11 +132,11 @@ class DualEditorWindow(QDialog):
         layout.addWidget(button_panel)
         
         # Set styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
                 color: white;
-            }
+            }}
         """)
     
     def create_step_tab(self):
@@ -140,7 +144,7 @@ class DualEditorWindow(QDialog):
         from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
 
         # Create step parameter editor widget (mirrors Textual TUI)
-        self.step_editor = StepParameterEditorWidget(self.editing_step, service_adapter=None)
+        self.step_editor = StepParameterEditorWidget(self.editing_step, service_adapter=None, color_scheme=self.color_scheme)
 
         # Connect parameter changes
         self.step_editor.step_parameter_changed.connect(self.detect_changes)
@@ -198,20 +202,20 @@ class DualEditorWindow(QDialog):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
 
         layout = QHBoxLayout(panel)
 
         # Changes indicator
         self.changes_label = QLabel("")
-        self.changes_label.setStyleSheet("color: #ffaa00; font-style: italic;")
+        self.changes_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_warning)}; font-style: italic;")
         layout.addWidget(self.changes_label)
 
         layout.addStretch()
@@ -220,17 +224,17 @@ class DualEditorWindow(QDialog):
         cancel_button = QPushButton("Cancel")
         cancel_button.setMinimumWidth(80)
         cancel_button.clicked.connect(self.cancel_edit)
-        cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #cc0000;
+        cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 color: white;
-                border: 1px solid #ff0000;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #dd0000;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
+            }}
         """)
         layout.addWidget(cancel_button)
 
@@ -239,22 +243,22 @@ class DualEditorWindow(QDialog):
         self.save_button.setMinimumWidth(80)
         self.save_button.setEnabled(False)  # Initially disabled
         self.save_button.clicked.connect(self.save_edit)
-        self.save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        self.save_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
-                border: 1px solid #106ebe;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:disabled {
-                background-color: #2a2a2a;
-                color: #666666;
-                border: 1px solid #444444;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QPushButton:disabled {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.border_light)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.separator_color)};
+            }}
         """)
         layout.addWidget(self.save_button)
 
@@ -267,7 +271,7 @@ class DualEditorWindow(QDialog):
 
         # Change detection
         self.changes_detected.connect(self.on_changes_detected)
-        func_label.setStyleSheet("color: #4a9eff; font-weight: bold; font-size: 14px;")
+        func_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
         header_layout.addWidget(func_label)
 
         header_layout.addStretch()
@@ -303,12 +307,12 @@ class DualEditorWindow(QDialog):
         self.function_scroll = QScrollArea()
         self.function_scroll.setWidgetResizable(True)
         self.function_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.function_scroll.setStyleSheet("""
-            QScrollArea {
-                background-color: #2d2d2d;
-                border: 1px solid #555;
+        self.function_scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 4px;
-            }
+            }}
         """)
 
         # Function list container
@@ -330,18 +334,18 @@ class DualEditorWindow(QDialog):
         """Get consistent button styling."""
         return """
             QPushButton {
-                background-color: #404040;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 6px 12px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
             }
             QPushButton:pressed {
-                background-color: #303030;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
             }
         """
 
@@ -359,7 +363,7 @@ class DualEditorWindow(QDialog):
             # Show empty state
             empty_label = QLabel("No functions defined. Click 'Add' to begin.")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty_label.setStyleSheet("color: #888; font-style: italic; padding: 20px;")
+            empty_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; font-style: italic; padding: 20px;")
             self.function_layout.addWidget(empty_label)
         else:
             # Create function panes
@@ -438,20 +442,20 @@ class DualEditorWindow(QDialog):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(panel)
         
         # Changes indicator
         self.changes_label = QLabel("")
-        self.changes_label.setStyleSheet("color: #ffaa00; font-style: italic;")
+        self.changes_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_warning)}; font-style: italic;")
         layout.addWidget(self.changes_label)
         
         layout.addStretch()
@@ -460,17 +464,17 @@ class DualEditorWindow(QDialog):
         cancel_button = QPushButton("Cancel")
         cancel_button.setMinimumWidth(80)
         cancel_button.clicked.connect(self.cancel_edit)
-        cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #cc0000;
+        cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 color: white;
-                border: 1px solid #ff0000;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #dd0000;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
+            }}
         """)
         layout.addWidget(cancel_button)
         
@@ -478,17 +482,17 @@ class DualEditorWindow(QDialog):
         self.save_button = QPushButton("Save")
         self.save_button.setMinimumWidth(80)
         self.save_button.clicked.connect(self.save_step)
-        self.save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        self.save_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
-                border: 1px solid #106ebe;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         layout.addWidget(self.save_button)
         

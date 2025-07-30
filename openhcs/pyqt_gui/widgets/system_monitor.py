@@ -27,6 +27,8 @@ except ImportError:
 
 # Import the SystemMonitor service
 from openhcs.textual_tui.services.system_monitor import SystemMonitor
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +44,20 @@ class SystemMonitorWidget(QWidget):
     # Signals
     metrics_updated = pyqtSignal(dict)  # Emitted when metrics are updated
     
-    def __init__(self, parent=None):
+    def __init__(self, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the system monitor widget.
-        
+
         Args:
+            color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
-        
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
+
         # Core monitoring
         self.monitor = SystemMonitor()
         self.update_timer = QTimer()
@@ -83,27 +90,8 @@ class SystemMonitorWidget(QWidget):
         
         layout.addWidget(monitoring_widget)
         
-        # Set background styling
-        self.setStyleSheet("""
-            SystemMonitorWidget {
-                background-color: #2b2b2b;
-                color: #ffffff;
-                border: 1px solid #555555;
-                border-radius: 5px;
-            }
-            QLabel {
-                color: #ffffff;
-            }
-            #header_label {
-                color: #00aaff;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            #info_label {
-                color: #cccccc;
-                font-size: 10px;
-            }
-        """)
+        # Apply centralized styling
+        self.setStyleSheet(self.style_generator.generate_system_monitor_style())
     
     def create_header_section(self) -> QHBoxLayout:
         """
@@ -142,9 +130,9 @@ class SystemMonitorWidget(QWidget):
         layout = QGridLayout(widget)
         
         # Create matplotlib figure
-        self.figure = Figure(figsize=(12, 8), facecolor='#2b2b2b')
+        self.figure = Figure(figsize=(12, 8), facecolor=self.color_scheme.to_hex(self.color_scheme.window_bg))
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet("background-color: #2b2b2b;")
+        self.canvas.setStyleSheet(f"background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};")
         
         # Create subplots
         self.cpu_ax = self.figure.add_subplot(2, 2, 1)
@@ -154,7 +142,7 @@ class SystemMonitorWidget(QWidget):
         
         # Style subplots
         for ax in [self.cpu_ax, self.ram_ax, self.gpu_ax, self.vram_ax]:
-            ax.set_facecolor('#1e1e1e')
+            ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
             ax.tick_params(colors='white')
             ax.spines['bottom'].set_color('white')
             ax.spines['top'].set_color('white')
@@ -176,20 +164,20 @@ class SystemMonitorWidget(QWidget):
         """
         widget = QFrame()
         widget.setFrameStyle(QFrame.Shape.Box)
-        widget.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        widget.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(widget)
         
         self.fallback_label = QLabel("")
         self.fallback_label.setFont(QFont("Courier", 10))
-        self.fallback_label.setStyleSheet("color: #00aaff;")
+        self.fallback_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
         layout.addWidget(self.fallback_label)
         
         return widget
@@ -255,14 +243,14 @@ class SystemMonitorWidget(QWidget):
             self.cpu_ax.plot(x_range, list(self.monitor.cpu_history), 'cyan', linewidth=2)
             self.cpu_ax.set_title(f'CPU Usage: {self.monitor.cpu_history[-1]:.1f}%', color='white')
             self.cpu_ax.set_ylim(0, 100)
-            self.cpu_ax.set_facecolor('#1e1e1e')
+            self.cpu_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
 
             # Clear and update RAM plot
             self.ram_ax.clear()
             self.ram_ax.plot(x_range, list(self.monitor.ram_history), 'lime', linewidth=2)
             self.ram_ax.set_title(f'RAM Usage: {self.monitor.ram_history[-1]:.1f}%', color='white')
             self.ram_ax.set_ylim(0, 100)
-            self.ram_ax.set_facecolor('#1e1e1e')
+            self.ram_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
 
             # Clear and update GPU plot
             self.gpu_ax.clear()
@@ -272,7 +260,7 @@ class SystemMonitorWidget(QWidget):
             else:
                 self.gpu_ax.set_title('GPU: Not Available', color='white')
             self.gpu_ax.set_ylim(0, 100)
-            self.gpu_ax.set_facecolor('#1e1e1e')
+            self.gpu_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
 
             # Clear and update VRAM plot
             self.vram_ax.clear()
@@ -282,7 +270,7 @@ class SystemMonitorWidget(QWidget):
             else:
                 self.vram_ax.set_title('VRAM: Not Available', color='white')
             self.vram_ax.set_ylim(0, 100)
-            self.vram_ax.set_facecolor('#1e1e1e')
+            self.vram_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
 
             # Style all axes
             for ax in [self.cpu_ax, self.ram_ax, self.gpu_ax, self.vram_ax]:

@@ -6,7 +6,7 @@ Handles FunctionStep parameter editing with nested dataclass support.
 """
 
 import logging
-from typing import Any
+from typing import Any, Optional
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -18,6 +18,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +35,11 @@ class StepParameterEditorWidget(QScrollArea):
     # Signals
     step_parameter_changed = pyqtSignal()
     
-    def __init__(self, step: FunctionStep, service_adapter=None, parent=None):
+    def __init__(self, step: FunctionStep, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         self.step = step
         self.service_adapter = service_adapter
@@ -57,7 +62,8 @@ class StepParameterEditorWidget(QScrollArea):
         
         # Create parameter form manager (reuses Textual TUI logic)
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "step", param_info
+            parameters, parameter_types, "step", param_info,
+            color_scheme=self.color_scheme
         )
         self.param_defaults = param_defaults
         
@@ -80,19 +86,19 @@ class StepParameterEditorWidget(QScrollArea):
         
         # Header
         header_label = QLabel("Step Parameters")
-        header_label.setStyleSheet("color: #4a9eff; font-weight: bold; font-size: 14px;")
+        header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
         layout.addWidget(header_label)
         
         # Parameter form (using shared form manager)
         form_frame = QFrame()
         form_frame.setFrameStyle(QFrame.Shape.Box)
-        form_frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        form_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 padding: 10px;
-            }
+            }}
         """)
         
         form_layout = QVBoxLayout(form_frame)
@@ -128,18 +134,18 @@ class StepParameterEditorWidget(QScrollArea):
         """Get consistent button styling."""
         return """
             QPushButton {
-                background-color: #404040;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 6px 12px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background-color: #505050;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
             }
             QPushButton:pressed {
-                background-color: #303030;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_pressed_bg)};
             }
         """
     

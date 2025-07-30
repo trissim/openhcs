@@ -15,6 +15,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,15 +32,20 @@ class StatusBarWidget(QWidget):
     # Signals
     status_updated = pyqtSignal(str)  # status message
     
-    def __init__(self, parent=None):
+    def __init__(self, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the status bar widget.
-        
+
         Args:
+            color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
-        
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
+
         # Business logic state
         self.current_status = "Ready"
         self.current_operation = ""
@@ -82,12 +90,12 @@ class StatusBarWidget(QWidget):
         layout.addWidget(time_frame)
         
         # Set styling
-        self.setStyleSheet("""
-            StatusBarWidget {
-                background-color: #1e1e1e;
-                border-top: 1px solid #555555;
+        self.setStyleSheet(f"""
+            StatusBarWidget {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border-top: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 color: white;
-            }
+            }}
         """)
         
         # Set fixed height
@@ -106,13 +114,13 @@ class StatusBarWidget(QWidget):
         
         # Status icon
         status_icon = QLabel("●")
-        status_icon.setStyleSheet("color: #00ff00; font-weight: bold;")
+        status_icon.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.status_success)}; font-weight: bold;")
         layout.addWidget(status_icon)
         
         # Status label
         self.status_label = QLabel(self.current_status)
         self.status_label.setFont(QFont("Arial", 9))
-        self.status_label.setStyleSheet("color: #ffffff;")
+        self.status_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};")
         layout.addWidget(self.status_label)
         
         return frame
@@ -131,7 +139,7 @@ class StatusBarWidget(QWidget):
         # Operation label
         self.operation_label = QLabel("")
         self.operation_label.setFont(QFont("Arial", 8))
-        self.operation_label.setStyleSheet("color: #cccccc;")
+        self.operation_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};")
         layout.addWidget(self.operation_label)
         
         # Progress bar
@@ -139,19 +147,19 @@ class StatusBarWidget(QWidget):
         self.progress_bar.setMaximumWidth(200)
         self.progress_bar.setMaximumHeight(16)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #555555;
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 2px;
-                background-color: #2b2b2b;
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
                 color: white;
                 text-align: center;
                 font-size: 8px;
-            }
-            QProgressBar::chunk {
-                background-color: #0078d4;
+            }}
+            QProgressBar::chunk {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 1px;
-            }
+            }}
         """)
         layout.addWidget(self.progress_bar)
         
@@ -171,7 +179,7 @@ class StatusBarWidget(QWidget):
         # Time label
         self.time_label = QLabel("")
         self.time_label.setFont(QFont("Arial", 8))
-        self.time_label.setStyleSheet("color: #888888;")
+        self.time_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)};")
         self.time_label.setMinimumWidth(120)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.time_label)
@@ -215,12 +223,12 @@ class StatusBarWidget(QWidget):
                 status_icon = parent_frame.findChild(QLabel)
                 if status_icon and status_icon.text() == "●":
                     color_map = {
-                        "info": "#00ff00",
-                        "warning": "#ffaa00", 
-                        "error": "#ff0000",
-                        "success": "#00ff00"
+                        "info": self.color_scheme.to_hex(self.color_scheme.status_info),
+                        "warning": self.color_scheme.to_hex(self.color_scheme.status_warning),
+                        "error": self.color_scheme.to_hex(self.color_scheme.status_error),
+                        "success": self.color_scheme.to_hex(self.color_scheme.status_success)
                     }
-                    color = color_map.get(status_type, "#00ff00")
+                    color = color_map.get(status_type, self.color_scheme.to_hex(self.color_scheme.status_success))
                     status_icon.setStyleSheet(f"color: {color}; font-weight: bold;")
         
         logger.debug(f"Status updated: {message} ({status_type})")

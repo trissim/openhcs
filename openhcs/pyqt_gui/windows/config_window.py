@@ -19,6 +19,8 @@ from PyQt6.QtGui import QFont
 
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
+from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 # Import PyQt6 help components
 from openhcs.pyqt_gui.widgets.shared.clickable_help_components import GroupBoxWithHelp, LabelWithHelp
@@ -38,23 +40,29 @@ class ConfigWindow(QDialog):
     config_saved = pyqtSignal(object)  # saved config
     config_cancelled = pyqtSignal()
     
-    def __init__(self, config_class: Type, current_config: Any, 
-                 on_save_callback: Optional[Callable] = None, parent=None):
+    def __init__(self, config_class: Type, current_config: Any,
+                 on_save_callback: Optional[Callable] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the configuration window.
-        
+
         Args:
             config_class: Configuration class type
             current_config: Current configuration instance
             on_save_callback: Function to call when config is saved
+            color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
-        
+
         # Business logic state (extracted from Textual version)
         self.config_class = config_class
         self.current_config = current_config
         self.on_save_callback = on_save_callback
+
+        # Initialize color scheme and style generator
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+        self.style_generator = StyleSheetGenerator(self.color_scheme)
 
         # Create config form using shared parameter form manager (mirrors Textual TUI)
         param_info = SignatureAnalyzer.analyze(config_class)
@@ -70,7 +78,8 @@ class ConfigWindow(QDialog):
 
         # Create parameter form manager (reuses Textual TUI logic)
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "config", param_info
+            parameters, parameter_types, "config", param_info,
+            color_scheme=self.color_scheme
         )
 
         # Setup UI
@@ -108,7 +117,7 @@ class ConfigWindow(QDialog):
 
         header_label = QLabel(f"Configure {self.config_class.__name__}")
         header_label.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        header_label.setStyleSheet("color: #00aaff;")
+        header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
         header_layout.addWidget(header_label)
 
         # Add help button for the dataclass itself
@@ -137,41 +146,8 @@ class ConfigWindow(QDialog):
         button_panel = self.create_button_panel()
         layout.addWidget(button_panel)
         
-        # Set styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
-                color: white;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #555555;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: #1e1e1e;
-                color: #ffffff;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: #00aaff;
-            }
-            QLabel {
-                color: #cccccc;
-            }
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-                background-color: #404040;
-                color: white;
-                border: 1px solid #666666;
-                border-radius: 3px;
-                padding: 5px;
-            }
-            QCheckBox {
-                color: white;
-            }
-        """)
+        # Apply centralized styling
+        self.setStyleSheet(self.style_generator.generate_config_window_style())
     
     def create_parameter_form(self) -> QWidget:
         """
@@ -237,9 +213,10 @@ class ConfigWindow(QDialog):
                     text=label_text,
                     param_name=param_name,
                     param_description=param_description,
-                    param_type=param_info.param_type
+                    param_type=param_info.param_type,
+                    color_scheme=self.color_scheme
                 )
-                label_with_help.setStyleSheet("color: #cccccc; font-weight: normal;")
+                label_with_help.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: normal;")
                 
                 # Add to form
                 layout.addRow(label_with_help, widget)
@@ -322,13 +299,13 @@ class ConfigWindow(QDialog):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(panel)
@@ -338,18 +315,8 @@ class ConfigWindow(QDialog):
         reset_button = QPushButton("Reset to Defaults")
         reset_button.setMinimumWidth(120)
         reset_button.clicked.connect(self.reset_to_defaults)
-        reset_button.setStyleSheet("""
-            QPushButton {
-                background-color: #666666;
-                color: white;
-                border: 1px solid #888888;
-                border-radius: 3px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #777777;
-            }
-        """)
+        button_styles = self.style_generator.generate_config_button_styles()
+        reset_button.setStyleSheet(button_styles["reset"])
         layout.addWidget(reset_button)
         
         layout.addSpacing(10)
@@ -358,36 +325,14 @@ class ConfigWindow(QDialog):
         cancel_button = QPushButton("Cancel")
         cancel_button.setMinimumWidth(80)
         cancel_button.clicked.connect(self.reject)
-        cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #cc0000;
-                color: white;
-                border: 1px solid #ff0000;
-                border-radius: 3px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #dd0000;
-            }
-        """)
+        cancel_button.setStyleSheet(button_styles["cancel"])
         layout.addWidget(cancel_button)
         
         # Save button
         save_button = QPushButton("Save")
         save_button.setMinimumWidth(80)
         save_button.clicked.connect(self.save_config)
-        save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
-                color: white;
-                border: 1px solid #106ebe;
-                border-radius: 3px;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-        """)
+        save_button.setStyleSheet(button_styles["save"])
         layout.addWidget(save_button)
         
         return panel

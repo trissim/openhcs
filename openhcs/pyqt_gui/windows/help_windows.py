@@ -11,6 +11,7 @@ from PyQt6.QtGui import QFont
 
 # REUSE the actual working Textual TUI help components
 from openhcs.textual_tui.widgets.shared.signature_analyzer import DocstringExtractor, SignatureAnalyzer
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,12 @@ logger = logging.getLogger(__name__)
 class BaseHelpWindow(QDialog):
     """Base class for all PyQt6 help windows - reuses Textual TUI help logic."""
     
-    def __init__(self, title: str = "Help", parent=None):
+    def __init__(self, title: str = "Help", color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         self.setWindowTitle(title)
         self.setModal(False)  # Allow interaction with main window
         self.resize(600, 400)
@@ -52,20 +57,21 @@ class BaseHelpWindow(QDialog):
 class DocstringHelpWindow(BaseHelpWindow):
     """Help window for functions and classes - reuses Textual TUI DocstringExtractor."""
     
-    def __init__(self, target: Union[Callable, type], title: Optional[str] = None, parent=None):
+    def __init__(self, target: Union[Callable, type], title: Optional[str] = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         self.target = target
-        
+
         # REUSE Textual TUI docstring extraction logic
         self.docstring_info = DocstringExtractor.extract(target)
-        
+
         # Generate title from target if not provided
         if title is None:
             if hasattr(target, '__name__'):
                 title = f"Help: {target.__name__}"
             else:
                 title = "Help"
-                
-        super().__init__(title, parent)
+
+        super().__init__(title, color_scheme, parent)
         self.populate_content()
         
     def populate_content(self):
@@ -115,7 +121,7 @@ class DocstringHelpWindow(BaseHelpWindow):
                 if param_desc:
                     desc_label = QLabel(param_desc)
                     desc_label.setWordWrap(True)
-                    desc_label.setStyleSheet("color: #666666; margin-left: 10px;")
+                    desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; margin-left: 10px;")
                     param_layout.addWidget(desc_label)
                     
                 layout.addWidget(param_widget)
@@ -130,7 +136,7 @@ class DocstringHelpWindow(BaseHelpWindow):
             
             returns_desc = QLabel(self.docstring_info.returns)
             returns_desc.setWordWrap(True)
-            returns_desc.setStyleSheet("color: #666666; margin-left: 20px;")
+            returns_desc.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; margin-left: 20px;")
             layout.addWidget(returns_desc)
             
         # Examples section
@@ -145,7 +151,7 @@ class DocstringHelpWindow(BaseHelpWindow):
             examples_text.setPlainText(self.docstring_info.examples)
             examples_text.setReadOnly(True)
             examples_text.setMaximumHeight(150)
-            examples_text.setStyleSheet("background-color: #f5f5f5; font-family: monospace;")
+            examples_text.setStyleSheet(f"background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)}; font-family: monospace;")
             layout.addWidget(examples_text)
             
         layout.addStretch()
@@ -155,13 +161,14 @@ class DocstringHelpWindow(BaseHelpWindow):
 class ParameterHelpWindow(BaseHelpWindow):
     """Help window for individual parameters - reuses Textual TUI parameter logic."""
     
-    def __init__(self, param_name: str, param_description: str, param_type: type = None, parent=None):
+    def __init__(self, param_name: str, param_description: str, param_type: type = None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         self.param_name = param_name
         self.param_description = param_description
         self.param_type = param_type
-        
+
         title = f"Parameter Help: {param_name}"
-        super().__init__(title, parent)
+        super().__init__(title, color_scheme, parent)
         self.populate_content()
         
     def populate_content(self):
@@ -190,7 +197,7 @@ class ParameterHelpWindow(BaseHelpWindow):
             layout.addWidget(desc_text)
         else:
             no_desc_label = QLabel("No description available")
-            no_desc_label.setStyleSheet("color: #666666; font-style: italic;")
+            no_desc_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_disabled)}; font-style: italic;")
             layout.addWidget(no_desc_label)
             
         layout.addStretch()

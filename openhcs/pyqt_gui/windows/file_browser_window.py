@@ -19,6 +19,7 @@ from PyQt6.QtGui import QFileSystemModel
 from PyQt6.QtCore import Qt, QDir, pyqtSignal, QModelIndex
 from PyQt6.QtGui import QFont
 
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +53,7 @@ class FileBrowserWindow(QDialog):
                  selection_mode: SelectionMode = SelectionMode.FILES_ONLY,
                  filter_extensions: Optional[List[str]] = None,
                  title: str = "File Browser",
-                 on_result_callback: Optional[Callable] = None,
+                 on_result_callback: Optional[Callable] = None, color_scheme: Optional[PyQt6ColorScheme] = None,
                  parent=None):
         """
         Initialize the file browser window.
@@ -67,6 +68,9 @@ class FileBrowserWindow(QDialog):
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         # Business logic state (extracted from Textual version)
         self.initial_path = initial_path or Path.home()
@@ -121,25 +125,25 @@ class FileBrowserWindow(QDialog):
         layout.addWidget(button_panel)
         
         # Set styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
                 color: white;
-            }
-            QTreeView {
-                background-color: #1e1e1e;
+            }}
+            QTreeView {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
                 color: white;
-                border: 1px solid #555555;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
-                selection-background-color: #0078d4;
-            }
-            QLineEdit, QComboBox {
-                background-color: #404040;
+                selection-background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QLineEdit, QComboBox {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 5px;
-            }
+            }}
         """)
     
     def create_header(self) -> QWidget:
@@ -151,20 +155,20 @@ class FileBrowserWindow(QDialog):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 8px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(frame)
         
         # Path label
         path_label = QLabel("Path:")
-        path_label.setStyleSheet("color: #cccccc; font-weight: bold;")
+        path_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: bold;")
         layout.addWidget(path_label)
         
         # Path edit
@@ -177,23 +181,23 @@ class FileBrowserWindow(QDialog):
         up_button = QPushButton("↑ Up")
         up_button.setMaximumWidth(60)
         up_button.clicked.connect(self.navigate_up)
-        up_button.setStyleSheet("""
-            QPushButton {
-                background-color: #404040;
+        up_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
                 padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.button_hover_bg)};
+            }}
         """)
         layout.addWidget(up_button)
         
         # Filter combo
         filter_label = QLabel("Filter:")
-        filter_label.setStyleSheet("color: #cccccc; font-weight: bold;")
+        filter_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: bold;")
         layout.addWidget(filter_label)
         
         self.filter_combo = QComboBox()
@@ -259,13 +263,13 @@ class FileBrowserWindow(QDialog):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 5px;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(frame)
@@ -273,18 +277,18 @@ class FileBrowserWindow(QDialog):
         # Selection label
         selection_label = QLabel("Selection:")
         selection_label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        selection_label.setStyleSheet("color: #00aaff;")
+        selection_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
         layout.addWidget(selection_label)
         
         # Selection list
         self.selection_list = QListWidget()
-        self.selection_list.setStyleSheet("""
-            QListWidget {
-                background-color: #404040;
+        self.selection_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
                 color: white;
-                border: 1px solid #666666;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_light)};
                 border-radius: 3px;
-            }
+            }}
         """)
         layout.addWidget(self.selection_list)
         
@@ -299,20 +303,20 @@ class FileBrowserWindow(QDialog):
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 8px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(frame)
         
         # Filename label
         filename_label = QLabel("Filename:")
-        filename_label.setStyleSheet("color: #cccccc; font-weight: bold;")
+        filename_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: bold;")
         layout.addWidget(filename_label)
         
         # Filename edit
@@ -331,13 +335,13 @@ class FileBrowserWindow(QDialog):
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(panel)
@@ -347,17 +351,17 @@ class FileBrowserWindow(QDialog):
         cancel_button = QPushButton("Cancel")
         cancel_button.setMinimumWidth(80)
         cancel_button.clicked.connect(self.cancel_selection)
-        cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #cc0000;
+        cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 color: white;
-                border: 1px solid #ff0000;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.status_error)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #dd0000;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.status_error)};
+            }}
         """)
         layout.addWidget(cancel_button)
         
@@ -366,17 +370,17 @@ class FileBrowserWindow(QDialog):
         self.select_button = QPushButton(action_text)
         self.select_button.setMinimumWidth(80)
         self.select_button.clicked.connect(self.confirm_selection)
-        self.select_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        self.select_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
-                border: 1px solid #106ebe;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 3px;
                 padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         layout.addWidget(self.select_button)
         
@@ -535,7 +539,7 @@ def open_file_browser_window(initial_path: Optional[Path] = None,
                             selection_mode: SelectionMode = SelectionMode.FILES_ONLY,
                             filter_extensions: Optional[List[str]] = None,
                             title: str = "File Browser",
-                            on_result_callback: Optional[Callable] = None,
+                            on_result_callback: Optional[Callable] = None, color_scheme: Optional[PyQt6ColorScheme] = None,
                             parent=None):
     """
     Open file browser window.

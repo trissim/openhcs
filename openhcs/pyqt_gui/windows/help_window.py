@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 logger = logging.getLogger(__name__)
 
 
@@ -68,7 +69,7 @@ and the online documentation at https://openhcs.org
 Version: PyQt6 GUI 1.0.0
 """
     
-    def __init__(self, content: Optional[str] = None, parent=None):
+    def __init__(self, content: Optional[str] = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """
         Initialize the help window.
         
@@ -77,6 +78,9 @@ Version: PyQt6 GUI 1.0.0
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
         
         # Business logic state
         self.content = content or self.HELP_TEXT
@@ -110,24 +114,24 @@ Version: PyQt6 GUI 1.0.0
         layout.addWidget(button_panel)
         
         # Set styling
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #2b2b2b;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};
                 color: white;
-            }
-            QTextEdit {
-                background-color: #1e1e1e;
+            }}
+            QTextEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
                 color: white;
-                border: 1px solid #555555;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 padding: 10px;
                 font-family: 'Courier New', monospace;
                 font-size: 11px;
                 line-height: 1.4;
-            }
-            QLabel {
+            }}
+            QLabel {{
                 color: white;
-            }
+            }}
         """)
     
     def create_header(self) -> QWidget:
@@ -139,13 +143,13 @@ Version: PyQt6 GUI 1.0.0
         """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Shape.Box)
-        frame.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 5px;
                 padding: 15px;
-            }
+            }}
         """)
         
         layout = QVBoxLayout(frame)
@@ -153,14 +157,14 @@ Version: PyQt6 GUI 1.0.0
         # ASCII art title
         title_label = QLabel(self.get_ascii_title())
         title_label.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
-        title_label.setStyleSheet("color: #00aaff;")
+        title_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
         
         # Subtitle
         subtitle_label = QLabel("Visual Programming for Cell Biology Research")
         subtitle_label.setFont(QFont("Arial", 12))
-        subtitle_label.setStyleSheet("color: #cccccc;")
+        subtitle_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};")
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle_label)
         
@@ -192,13 +196,13 @@ Version: PyQt6 GUI 1.0.0
         """
         panel = QFrame()
         panel.setFrameStyle(QFrame.Shape.Box)
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #1e1e1e;
-                border: 1px solid #555555;
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
                 border-radius: 3px;
                 padding: 10px;
-            }
+            }}
         """)
         
         layout = QHBoxLayout(panel)
@@ -209,21 +213,21 @@ Version: PyQt6 GUI 1.0.0
         close_button.setMinimumWidth(100)
         close_button.setMinimumHeight(35)
         close_button.clicked.connect(self.accept)
-        close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0078d4;
+        close_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 color: white;
-                border: 1px solid #106ebe;
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
                 border-radius: 5px;
                 padding: 8px;
                 font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #106ebe;
-            }
-            QPushButton:pressed {
-                background-color: #005a9e;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.selection_bg)};
+            }}
         """)
         layout.addWidget(close_button)
         
@@ -266,7 +270,7 @@ Version: PyQt6 GUI 1.0.0
         import re
         html_content = re.sub(
             r'^([A-Z][A-Za-z\s]+:)$',
-            r'<h3 style="color: #00aaff; margin-top: 20px; margin-bottom: 10px;">\1</h3>',
+            r'<h3 style="color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; margin-top: 20px; margin-bottom: 10px;">\1</h3>',
             html_content,
             flags=re.MULTILINE
         )
@@ -274,7 +278,7 @@ Version: PyQt6 GUI 1.0.0
         # Format bullet points
         html_content = re.sub(
             r'^• (.+)$',
-            r'<li style="margin-left: 20px; color: #cccccc;">\1</li>',
+            r'<li style="margin-left: 20px; color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};">\1</li>',
             html_content,
             flags=re.MULTILINE
         )
@@ -282,7 +286,7 @@ Version: PyQt6 GUI 1.0.0
         # Format numbered lists
         html_content = re.sub(
             r'^(\d+\.) (.+)$',
-            r'<div style="margin-left: 20px; color: #cccccc;"><strong style="color: #00aaff;">\1</strong> \2</div>',
+            r'<div style="margin-left: 20px; color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)};"><strong style="color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};">\1</strong> \2</div>',
             html_content,
             flags=re.MULTILINE
         )
@@ -290,14 +294,14 @@ Version: PyQt6 GUI 1.0.0
         # Format keyboard shortcuts
         html_content = re.sub(
             r'(Ctrl\+[A-Z]|F\d+|Esc)',
-            r'<code style="background-color: #404040; padding: 2px 4px; border-radius: 3px; color: #ffff00;">\1</code>',
+            r'<code style="background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)}; padding: 2px 4px; border-radius: 3px; color: {self.color_scheme.to_hex(self.color_scheme.text_accent)};">\1</code>',
             html_content
         )
         
         # Wrap in HTML structure
         html_content = f"""
         <html>
-        <body style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; color: #ffffff;">
+        <body style="font-family: Arial, sans-serif; font-size: 12px; line-height: 1.6; color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};">
         {html_content}
         </body>
         </html>
