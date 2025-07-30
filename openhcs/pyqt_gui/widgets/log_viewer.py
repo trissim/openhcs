@@ -1142,12 +1142,23 @@ class LogViewerWindow(QMainWindow):
 
     def cleanup(self) -> None:
         """Cleanup all resources and background processes."""
-        # Stop tailing timer
-        if self.tail_timer and self.tail_timer.isActive():
-            self.tail_timer.stop()
+        try:
+            # Stop tailing timer
+            if hasattr(self, 'tail_timer') and self.tail_timer and self.tail_timer.isActive():
+                self.tail_timer.stop()
+                self.tail_timer.deleteLater()
+                self.tail_timer = None
 
-        # Stop file monitoring
-        self.stop_monitoring()
+            # Stop file monitoring
+            self.stop_monitoring()
+
+            # Clean up file detector
+            if hasattr(self, 'file_detector') and self.file_detector:
+                self.file_detector.stop_watching()
+                self.file_detector = None
+
+        except Exception as e:
+            logger.warning(f"Error during log viewer cleanup: {e}")
 
     def closeEvent(self, event) -> None:
         """Handle window close event."""

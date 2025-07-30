@@ -346,7 +346,9 @@ class PlateManagerWidget(QWidget):
         
         if self.selected_plate_path in paths_to_delete:
             self.selected_plate_path = ""
-        
+            # Notify pipeline editor that no plate is selected (mirrors Textual TUI)
+            self.plate_selected.emit("")
+
         self.update_plate_list()
         self.status_message.emit(f"Deleted {len(paths_to_delete)} plate(s)")
     

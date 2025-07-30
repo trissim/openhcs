@@ -290,9 +290,6 @@ class PipelineEditorWidget(QWidget):
     
     def action_add_step(self):
         """Handle Add Step button (adapted from Textual version)."""
-        # Validate orchestrator is initialized before allowing step creation
-        if not self._validate_orchestrator_initialized():
-            return
 
         from openhcs.core.steps.function_step import FunctionStep
         from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
@@ -342,10 +339,6 @@ class PipelineEditorWidget(QWidget):
     
     def action_edit_step(self):
         """Handle Edit Step button (adapted from Textual version)."""
-        # Validate orchestrator is selected before allowing step editing
-        if not self._validate_orchestrator_selected():
-            return
-
         selected_items = self.get_selected_steps()
         if not selected_items:
             self.service_adapter.show_error_dialog("No step selected to edit.")
@@ -382,9 +375,6 @@ class PipelineEditorWidget(QWidget):
     
     def action_load_pipeline(self):
         """Handle Load Pipeline button (adapted from Textual version)."""
-        # Validate orchestrator is initialized before allowing pipeline load
-        if not self._validate_orchestrator_initialized():
-            return
 
         from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
 
@@ -538,16 +528,20 @@ class PipelineEditorWidget(QWidget):
         return selected_items
     
     def update_button_states(self):
-        """Update button enabled/disabled states based on selection and orchestrator."""
+        """Update button enabled/disabled states based on mathematical constraints (mirrors Textual TUI)."""
+        has_plate = bool(self.current_plate)
+        is_initialized = self._is_current_plate_initialized()
         has_steps = len(self.pipeline_steps) > 0
         has_selection = len(self.get_selected_steps()) > 0
-        has_orchestrator = bool(self.current_plate)  # Only allow operations when orchestrator is selected
 
-        # Update button states - require orchestrator for editing operations
-        self.buttons["add_step"].setEnabled(has_orchestrator)
-        self.buttons["load_pipeline"].setEnabled(has_orchestrator)
-        self.buttons["del_step"].setEnabled(has_selection and has_orchestrator)
-        self.buttons["edit_step"].setEnabled(has_selection and has_orchestrator)
+        # Mathematical constraints (mirrors Textual TUI logic):
+        # - Pipeline editing requires initialization
+        # - Step operations require steps to exist
+        # - Edit requires valid selection
+        self.buttons["add_step"].setEnabled(has_plate and is_initialized)
+        self.buttons["load_pipeline"].setEnabled(has_plate and is_initialized)
+        self.buttons["del_step"].setEnabled(has_steps)
+        self.buttons["edit_step"].setEnabled(has_steps and has_selection)
         self.buttons["save_pipeline"].setEnabled(has_steps)
         self.buttons["code_pipeline"].setEnabled(has_steps)
     
@@ -635,29 +629,7 @@ class PipelineEditorWidget(QWidget):
                                      OrchestratorState.COMPLETED, OrchestratorState.COMPILE_FAILED,
                                      OrchestratorState.EXEC_FAILED]
 
-    def _validate_orchestrator_initialized(self) -> bool:
-        """Validate that an orchestrator is initialized before allowing pipeline operations."""
-        if not self.current_plate:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                "No Orchestrator Selected",
-                "Please select a plate in the Plate Manager before editing pipelines.\n\n"
-                "Pipeline editing requires an active orchestrator to provide component information."
-            )
-            return False
 
-        if not self._is_current_plate_initialized():
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                "Orchestrator Not Initialized",
-                "Please initialize the selected plate in the Plate Manager before editing pipelines.\n\n"
-                "Click the 'Init' button in the Plate Manager to initialize the orchestrator."
-            )
-            return False
-
-        return True
 
     def _find_main_window(self):
         """Find the main window by traversing parent hierarchy."""

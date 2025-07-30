@@ -557,20 +557,36 @@ class OpenHCSMainWindow(QMainWindow):
         """Handle application close event."""
         logger.info("Starting application shutdown...")
 
-        # Stop system monitor
-        self.system_monitor.stop_monitoring()
+        try:
+            # Stop system monitor first
+            if hasattr(self, 'system_monitor'):
+                self.system_monitor.stop_monitoring()
 
-        # Close floating windows and cleanup their resources
-        for window in self.floating_windows.values():
-            layout = window.layout()
-            if layout and layout.count() > 0:
-                widget = layout.itemAt(0).widget()
-                if hasattr(widget, 'cleanup'):
-                    widget.cleanup()
-            window.close()
+            # Close floating windows and cleanup their resources
+            for window_name, window in list(self.floating_windows.items()):
+                try:
+                    layout = window.layout()
+                    if layout and layout.count() > 0:
+                        widget = layout.itemAt(0).widget()
+                        if hasattr(widget, 'cleanup'):
+                            widget.cleanup()
+                    window.close()
+                    window.deleteLater()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up window {window_name}: {e}")
 
-        # Save window state
-        self.save_window_state()
+            # Clear floating windows dict
+            self.floating_windows.clear()
+
+            # Save window state
+            self.save_window_state()
+
+            # Force Qt to process pending events before shutdown
+            from PyQt6.QtWidgets import QApplication
+            QApplication.processEvents()
+
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
         # Accept close event
         event.accept()

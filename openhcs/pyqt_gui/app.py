@@ -152,11 +152,36 @@ class OpenHCSPyQtApp(QApplication):
         Returns:
             Application exit code
         """
-        # Show main window
-        self.show_main_window()
+        try:
+            # Show main window
+            self.show_main_window()
 
-        # Start event loop
-        return self.exec()
+            # Start event loop
+            exit_code = self.exec()
+
+            # Ensure clean shutdown
+            self.cleanup()
+
+            return exit_code
+
+        except Exception as e:
+            logger.error(f"Error during application run: {e}")
+            self.cleanup()
+            return 1
+
+    def cleanup(self):
+        """Clean up application resources."""
+        try:
+            # Process any remaining events
+            self.processEvents()
+
+            # Clean up main window
+            if hasattr(self, 'main_window') and self.main_window:
+                self.main_window.deleteLater()
+                self.main_window = None
+
+        except Exception as e:
+            logger.warning(f"Error during application cleanup: {e}")
 
 
 if __name__ == "__main__":
