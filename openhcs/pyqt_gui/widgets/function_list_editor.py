@@ -6,6 +6,7 @@ Displays a scrollable list of function panes with Add/Load/Save/Code controls.
 """
 
 import logging
+import os
 from typing import List, Union, Dict, Any, Optional, Callable, Tuple
 from pathlib import Path
 
@@ -311,9 +312,111 @@ class FunctionListEditorWidget(QWidget):
                 self._save_function_pattern_to_file(file_path)
     
     def edit_function_code(self):
-        """Edit function pattern as code (mirrors Textual TUI)."""
-        # TODO: Implement code editor
-        logger.debug("Edit function code clicked - TODO: implement code editor")
+        """Edit function pattern as code (simple and direct)."""
+        logger.debug("Edit function code clicked - opening code editor")
+
+        # Validation guard: Check for empty patterns
+        if not self.functions and not self.pattern_data:
+            if self.service_adapter:
+                self.service_adapter.show_info_dialog("No function pattern to edit. Add functions first.")
+            return
+
+        try:
+            # Update pattern data first
+            self._update_pattern_data()
+
+            # Generate complete Python code with imports
+            python_code = self._generate_complete_python_code()
+
+            # Create simple code editor service
+            from openhcs.pyqt_gui.services.simple_code_editor import SimpleCodeEditorService
+            editor_service = SimpleCodeEditorService(self)
+
+            # Check if user wants external editor (check environment variable)
+            use_external = os.environ.get('OPENHCS_USE_EXTERNAL_EDITOR', '').lower() in ('1', 'true', 'yes')
+
+            # Launch editor with callback
+            editor_service.edit_code(
+                initial_content=python_code,
+                title="Edit Function Pattern",
+                callback=self._handle_edited_pattern,
+                use_external=use_external
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to launch code editor: {e}")
+            if self.service_adapter:
+                self.service_adapter.show_error_dialog(f"Failed to launch code editor: {str(e)}")
+
+    def _generate_complete_python_code(self) -> str:
+        """Generate complete Python code with imports (following debug module approach)."""
+        # Use complete function pattern code generation from pickle_to_python
+        from openhcs.debug.pickle_to_python import generate_complete_function_pattern_code
+
+        return generate_complete_function_pattern_code(self.pattern_data, clean_mode=False)
+
+    def _handle_edited_pattern(self, edited_code: str) -> None:
+        """Handle the edited pattern code from code editor."""
+        try:
+            # Ensure we have a string
+            if not isinstance(edited_code, str):
+                logger.error(f"Expected string, got {type(edited_code)}: {edited_code}")
+                if self.service_adapter:
+                    self.service_adapter.show_error_dialog("Invalid code format received from editor")
+                return
+
+            # Execute the code (it has all necessary imports)
+            namespace = {}
+            exec(edited_code, namespace)
+
+            # Get the pattern from the namespace
+            if 'pattern' in namespace:
+                new_pattern = namespace['pattern']
+                self._apply_edited_pattern(new_pattern)
+            else:
+                if self.service_adapter:
+                    self.service_adapter.show_error_dialog("No 'pattern = ...' assignment found in edited code")
+
+        except SyntaxError as e:
+            if self.service_adapter:
+                self.service_adapter.show_error_dialog(f"Invalid Python syntax: {e}")
+        except Exception as e:
+            logger.error(f"Failed to parse edited pattern: {e}")
+            if self.service_adapter:
+                self.service_adapter.show_error_dialog(f"Failed to parse edited pattern: {str(e)}")
+
+    def _apply_edited_pattern(self, new_pattern):
+        """Apply the edited pattern back to the UI."""
+        try:
+            if self.is_dict_mode:
+                if isinstance(new_pattern, dict):
+                    self.pattern_data = new_pattern
+                    # Update current channel if it exists in new pattern
+                    if self.selected_channel and self.selected_channel in new_pattern:
+                        self.functions = self._normalize_function_list(new_pattern[self.selected_channel])
+                    else:
+                        # Select first channel
+                        if new_pattern:
+                            self.selected_channel = next(iter(new_pattern))
+                            self.functions = self._normalize_function_list(new_pattern[self.selected_channel])
+                        else:
+                            self.functions = []
+                else:
+                    raise ValueError("Expected dict pattern for dict mode")
+            else:
+                if isinstance(new_pattern, list):
+                    self.pattern_data = new_pattern
+                    self.functions = self._normalize_function_list(new_pattern)
+                else:
+                    raise ValueError("Expected list pattern for list mode")
+
+            # Refresh the UI and notify of changes
+            self._populate_function_list()
+            self.function_pattern_changed.emit()
+
+        except Exception as e:
+            if self.service_adapter:
+                self.service_adapter.show_error_dialog(f"Failed to apply edited pattern: {str(e)}")
     
     def _move_function(self, index, direction):
         """Move function up or down."""

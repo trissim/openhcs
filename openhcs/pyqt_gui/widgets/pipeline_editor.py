@@ -409,8 +409,77 @@ class PipelineEditorWidget(QWidget):
             self.save_pipeline_to_file(file_path)
     
     def action_code_pipeline(self):
-        """Handle Code Pipeline button (placeholder)."""
-        self.service_adapter.show_info_dialog("Pipeline code editing not yet implemented in PyQt6 version.")
+        """Handle Code Pipeline button - edit pipeline as Python code."""
+        logger.debug("Code button pressed - opening code editor")
+
+        if not self.pipeline_steps:
+            self.service_adapter.show_error_dialog("No pipeline steps to edit")
+            return
+
+        if not self.current_plate:
+            self.service_adapter.show_error_dialog("No plate selected")
+            return
+
+        try:
+            # Use complete pipeline steps code generation
+            from openhcs.debug.pickle_to_python import generate_complete_pipeline_steps_code
+
+            # Generate complete pipeline steps code with imports
+            python_code = generate_complete_pipeline_steps_code(
+                pipeline_steps=list(self.pipeline_steps),
+                clean_mode=False
+            )
+
+            # Create simple code editor service
+            from openhcs.pyqt_gui.services.simple_code_editor import SimpleCodeEditorService
+            editor_service = SimpleCodeEditorService(self)
+
+            # Check if user wants external editor (check environment variable)
+            import os
+            use_external = os.environ.get('OPENHCS_USE_EXTERNAL_EDITOR', '').lower() in ('1', 'true', 'yes')
+
+            # Launch editor with callback
+            editor_service.edit_code(
+                initial_content=python_code,
+                title="Edit Pipeline Steps",
+                callback=self._handle_edited_pipeline_code,
+                use_external=use_external
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to open pipeline code editor: {e}")
+            self.service_adapter.show_error_dialog(f"Failed to open code editor: {str(e)}")
+
+    def _handle_edited_pipeline_code(self, edited_code: str) -> None:
+        """Handle the edited pipeline code from code editor."""
+        logger.debug("Pipeline code edited, processing changes...")
+        try:
+            # Ensure we have a string
+            if not isinstance(edited_code, str):
+                logger.error(f"Expected string, got {type(edited_code)}: {edited_code}")
+                self.service_adapter.show_error_dialog("Invalid code format received from editor")
+                return
+
+            # Execute the code (it has all necessary imports)
+            namespace = {}
+            exec(edited_code, namespace)
+
+            # Get the pipeline_steps from the namespace
+            if 'pipeline_steps' in namespace:
+                new_pipeline_steps = namespace['pipeline_steps']
+                # Update the pipeline with new steps
+                self.pipeline_steps = new_pipeline_steps
+                self.update_step_list()
+                self.pipeline_changed.emit(self.pipeline_steps)
+                self.status_message.emit(f"Pipeline updated with {len(new_pipeline_steps)} steps")
+            else:
+                self.service_adapter.show_error_dialog("No 'pipeline_steps = [...]' assignment found in edited code")
+
+        except SyntaxError as e:
+            self.service_adapter.show_error_dialog(f"Invalid Python syntax: {e}")
+        except Exception as e:
+            logger.error(f"Failed to parse edited pipeline code: {e}")
+            self.service_adapter.show_error_dialog(f"Failed to parse pipeline code: {str(e)}")
     
     def load_pipeline_from_file(self, file_path: Path):
         """

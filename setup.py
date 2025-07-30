@@ -44,7 +44,9 @@ setup(
         "watchdog>=2.0.0",
         "napari",
         "setuptools",
-        "dill>=0.3.0"
+        "dill>=0.3.0",
+        "PyQt6>=6.5.0",
+        "PyQt6-QScintilla>=2.14.0"
     ],
     extras_require={
         "gpu": [
