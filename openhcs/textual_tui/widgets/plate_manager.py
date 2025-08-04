@@ -48,7 +48,7 @@ from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants.constants import GroupBy, Backend, VariableComponents, OrchestratorState
 from openhcs.textual_tui.services.file_browser_service import SelectionMode
 from openhcs.textual_tui.services.window_service import WindowService
-from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey, get_path_cache
+from openhcs.core.path_cache import get_cached_browser_path, PathCacheKey, get_path_cache
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -569,21 +569,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Create data file for subprocess (only file needed besides log)
             data_file = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pkl')
 
-            # Generate unique ID for this subprocess
-            import time
-            subprocess_timestamp = int(time.time())
-            plate_names = [Path(path).name for path in plate_paths_to_run]
-            unique_id = f"plates_{'_'.join(plate_names[:2])}_{subprocess_timestamp}"  # Limit to first 2 plates for filename length
-
-            # Build subprocess log name from TUI log base
-            tui_log_path = get_current_log_file_path()
-            if tui_log_path.endswith('.log'):
-                tui_base = tui_log_path[:-4]  # Remove .log extension
-            else:
-                tui_base = tui_log_path
-
-            # Create hierarchical log file base: TUI_base_subprocess_timestamp
-            log_file_base = f"{tui_base}_subprocess_{subprocess_timestamp}"
+            # Subprocess will determine its own log file name - no need to micromanage this
 
             # Pickle data for subprocess
             subprocess_data = {
@@ -602,34 +588,20 @@ class PlateManagerWidget(ButtonListWidget):
             await asyncio.get_event_loop().run_in_executor(None, _write_pickle_data)
 
             logger.debug(f"🔥 Created data file: {data_file.name}")
-            # Generate actual log file path that subprocess will create
-            actual_log_file_path = f"{log_file_base}_{unique_id}.log"
-            logger.debug(f"🔥 Log file base: {log_file_base}")
-            logger.debug(f"🔥 Unique ID: {unique_id}")
-            logger.debug(f"🔥 Actual log file: {actual_log_file_path}")
-
-            # Debug data storage removed - no longer needed
 
             # Create subprocess (like integration tests)
             subprocess_script = Path(__file__).parent.parent / "subprocess_runner.py"
 
-            # Store log file path for monitoring (subprocess logger writes to this)
-            self.log_file_path = actual_log_file_path
-            self.log_file_position = self._get_current_log_position()  # Start from current end
+            logger.debug(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name}")
 
-            logger.debug(f"🔥 Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {log_file_base} {unique_id}")
-            logger.debug(f"🔥 Subprocess logger will write to: {self.log_file_path}")
-            logger.debug(f"🔥 Subprocess stdout will be silenced (logger handles output)")
-
-            # SIMPLE SUBPROCESS: Let subprocess log to its own file (single source of truth)
-            # Wrap subprocess creation in executor to avoid blocking UI
+            # Create subprocess - it will determine its own log file name
             def _create_subprocess():
                 return subprocess.Popen([
                     sys.executable, str(subprocess_script),
-                    data_file.name, log_file_base, unique_id  # Only data file and log - no temp files
+                    data_file.name  # Only data file - subprocess handles its own logging
                 ],
-                stdout=subprocess.DEVNULL,  # Subprocess logs to its own file
-                stderr=subprocess.DEVNULL,  # Subprocess logs to its own file
+                stdout=subprocess.PIPE,  # Capture stdout to get log file path
+                stderr=subprocess.PIPE,  # Capture stderr for errors
                 text=True,  # Text mode for easier handling
                 )
 
@@ -637,7 +609,22 @@ class PlateManagerWidget(ButtonListWidget):
 
             logger.info(f"🔥 Subprocess started with PID: {self.current_process.pid}")
 
-            # Subprocess logs to its own dedicated file - no output monitoring needed
+            # Read the log file path from subprocess stdout
+            try:
+                # Read first line of stdout to get log file path
+                stdout_line = await asyncio.get_event_loop().run_in_executor(
+                    None, self.current_process.stdout.readline
+                )
+                if stdout_line.startswith("SUBPROCESS_LOG_FILE:"):
+                    self.log_file_path = stdout_line.split(":", 1)[1].strip()
+                    self.log_file_position = 0
+                    logger.debug(f"🔥 Subprocess log file: {self.log_file_path}")
+                else:
+                    logger.warning(f"Unexpected subprocess output: {stdout_line}")
+                    self.log_file_path = None
+            except Exception as e:
+                logger.error(f"Failed to read subprocess log file path: {e}")
+                self.log_file_path = None
 
             # Update orchestrator states to show running state
             for plate in ready_items:

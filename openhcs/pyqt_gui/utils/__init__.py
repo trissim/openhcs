@@ -4,14 +4,14 @@ PyQt6 GUI utilities.
 Provides utility functions and classes for the PyQt6 GUI implementation.
 """
 
-from openhcs.pyqt_gui.utils.path_cache import (
-    PathCache, PathCacheKey, get_path_cache, 
+from openhcs.core.path_cache import (
+    UnifiedPathCache as PathCache, PathCacheKey, get_path_cache,
     cache_dialog_path, get_cached_dialog_path
 )
 
 __all__ = [
     "PathCache",
-    "PathCacheKey", 
+    "PathCacheKey",
     "get_path_cache",
     "cache_dialog_path",
     "get_cached_dialog_path"

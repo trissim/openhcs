@@ -85,7 +85,7 @@ class OpenHCSMainWindow(QMainWindow):
     def setup_ui(self):
         """Setup basic UI structure."""
         self.setWindowTitle("OpenHCS - High-Content Screening Platform")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(640, 480)
 
         # Make main window floating (not tiled) like other OpenHCS components
         from PyQt6.QtCore import Qt
@@ -546,7 +546,7 @@ class OpenHCSMainWindow(QMainWindow):
     def _save_config_to_cache(self, config):
         """Save config to cache asynchronously (matches TUI pattern)."""
         try:
-            from openhcs.pyqt_gui.services.global_config_cache import get_global_config_cache
+            from openhcs.pyqt_gui.services.config_cache_adapter import get_global_config_cache
             cache = get_global_config_cache()
             cache.save_config_to_cache_async(config)
             logger.info("Global config save to cache initiated")
@@ -558,8 +558,9 @@ class OpenHCSMainWindow(QMainWindow):
         logger.info("Starting application shutdown...")
 
         try:
-            # Stop system monitor first
+            # Stop system monitor first with timeout
             if hasattr(self, 'system_monitor'):
+                logger.info("Stopping system monitor...")
                 self.system_monitor.stop_monitoring()
 
             # Close floating windows and cleanup their resources
@@ -585,12 +586,20 @@ class OpenHCSMainWindow(QMainWindow):
             from PyQt6.QtWidgets import QApplication
             QApplication.processEvents()
 
+            # Additional cleanup - force garbage collection
+            import gc
+            gc.collect()
+
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
 
         # Accept close event
         event.accept()
         logger.info("OpenHCS PyQt6 application closed")
+
+        # Force application quit with a short delay
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(100, lambda: QApplication.instance().quit())
 
     # ========== THEME MANAGEMENT METHODS ==========
 

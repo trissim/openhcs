@@ -141,15 +141,25 @@ class PipelinePathPlanner:
         # ALWAYS use plate_path for path planning calculations to ensure consistent naming
         # Store the real input_dir for first step override at the end
         real_input_dir = context.input_dir
+
+        # DEBUG: Log initial context values
+        logger.info(f"🚀 PATH PLANNER INIT - Context values:")
+        logger.info(f"  📂 context.input_dir: {repr(context.input_dir)}")
+        logger.info(f"  📂 context.plate_path: {repr(getattr(context, 'plate_path', 'NOT_SET'))}")
+        logger.info(f"  📂 context.zarr_conversion_path: {repr(getattr(context, 'zarr_conversion_path', 'NOT_SET'))}")
+
         if context.zarr_conversion_path:
             # For zarr conversion, use zarr conversion path for calculations
             initial_pipeline_input_dir = Path(context.zarr_conversion_path)
+            logger.info(f"  🔄 Using zarr_conversion_path: {repr(initial_pipeline_input_dir)}")
         elif hasattr(context, 'plate_path') and context.plate_path:
             # Use plate_path for all calculations to ensure consistent output naming
             initial_pipeline_input_dir = Path(context.plate_path)
+            logger.info(f"  🎯 Using plate_path: {repr(initial_pipeline_input_dir)}")
         else:
             # Fallback to input_dir if plate_path not available
             initial_pipeline_input_dir = context.input_dir
+            logger.info(f"  ⚠️  Fallback to input_dir: {repr(initial_pipeline_input_dir)}")
 
         if not step_plans: # Should be initialized by PipelineCompiler before this call
             raise ValueError("Context step_plans must be initialized before path planning.")
@@ -341,18 +351,49 @@ class PipelinePathPlanner:
                 # Always use plate_path.name for consistent output naming
                 if hasattr(context, 'plate_path') and context.plate_path:
                     plate_path = Path(context.plate_path)
+
+                    # DEBUG: Log detailed path construction info
+                    logger.info(f"🔍 PATH PLANNER DEBUG - Step {i} ({step_id}):")
+                    logger.info(f"  📁 Raw plate_path: {repr(context.plate_path)}")
+                    logger.info(f"  📁 Path object: {repr(plate_path)}")
+                    logger.info(f"  📁 plate_path.name: {repr(plate_path.name)}")
+                    logger.info(f"  📁 plate_path.name (bytes): {plate_path.name.encode('unicode_escape')}")
+                    logger.info(f"  📁 output_dir_suffix: {repr(path_config.output_dir_suffix)}")
+
                     # Check if global output folder is configured
                     global_output_folder = path_config.global_output_folder
+                    logger.info(f"  🌍 global_output_folder (raw): {repr(global_output_folder)}")
+
+                    # Clean global output folder path - strip whitespace and newlines
+                    if global_output_folder:
+                        global_output_folder = global_output_folder.strip()
+                        logger.info(f"  🧹 global_output_folder (cleaned): {repr(global_output_folder)}")
+
                     if global_output_folder:
                         # Use global output folder: {global_folder}/{plate_name}{suffix}
                         global_folder = Path(global_output_folder)
-                        step_output_dir = global_folder / f"{plate_path.name}{path_config.output_dir_suffix}"
+                        constructed_name = f"{plate_path.name}{path_config.output_dir_suffix}"
+                        logger.info(f"  🔧 Constructed name: {repr(constructed_name)}")
+                        logger.info(f"  🔧 Constructed name (bytes): {constructed_name.encode('unicode_escape')}")
+                        step_output_dir = global_folder / constructed_name
+                        logger.info(f"  ✅ Final output_dir (global): {repr(step_output_dir)}")
+                        logger.info(f"  ✅ Final output_dir (global str): {str(step_output_dir)}")
                     else:
                         # Use plate parent directory: {plate_parent}/{plate_name}{suffix}
-                        step_output_dir = plate_path.with_name(f"{plate_path.name}{path_config.output_dir_suffix}")
+                        constructed_name = f"{plate_path.name}{path_config.output_dir_suffix}"
+                        logger.info(f"  🔧 Constructed name: {repr(constructed_name)}")
+                        logger.info(f"  🔧 Constructed name (bytes): {constructed_name.encode('unicode_escape')}")
+                        step_output_dir = plate_path.with_name(constructed_name)
+                        logger.info(f"  ✅ Final output_dir (local): {repr(step_output_dir)}")
                 else:
                     # Fallback to input directory name if plate_path not available
-                    step_output_dir = step_input_dir.with_name(f"{step_input_dir.name}{path_config.output_dir_suffix}")
+                    logger.info(f"🔍 PATH PLANNER DEBUG - Step {i} ({step_id}) - FALLBACK:")
+                    logger.info(f"  📁 No plate_path, using step_input_dir: {repr(step_input_dir)}")
+                    logger.info(f"  📁 step_input_dir.name: {repr(step_input_dir.name)}")
+                    constructed_name = f"{step_input_dir.name}{path_config.output_dir_suffix}"
+                    logger.info(f"  🔧 Constructed name: {repr(constructed_name)}")
+                    step_output_dir = step_input_dir.with_name(constructed_name)
+                    logger.info(f"  ✅ Final output_dir (fallback): {repr(step_output_dir)}")
 
             # Store the output directory for this step
             step_output_dirs[step_id] = step_output_dir

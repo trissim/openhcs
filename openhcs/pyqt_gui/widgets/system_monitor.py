@@ -6,6 +6,7 @@ Migrated from Textual TUI with full feature parity.
 """
 
 import logging
+import time
 from typing import Optional
 from datetime import datetime
 from collections import deque
@@ -16,19 +17,19 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, pyqtSignal, QThread
 from PyQt6.QtGui import QFont
 
-# Try to import matplotlib for plotting
+# Import PyQtGraph for high-performance plotting
 try:
-    import matplotlib.pyplot as plt
-    from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.figure import Figure
-    MATPLOTLIB_AVAILABLE = True
+    import pyqtgraph as pg
+    PYQTGRAPH_AVAILABLE = True
 except ImportError:
-    MATPLOTLIB_AVAILABLE = False
+    PYQTGRAPH_AVAILABLE = False
 
 # Import the SystemMonitor service
 from openhcs.textual_tui.services.system_monitor import SystemMonitor
+from openhcs.pyqt_gui.services.persistent_system_monitor import PersistentSystemMonitor
 from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+from openhcs.pyqt_gui.config import PyQtGUIConfig, PerformanceMonitorConfig, get_default_pyqt_gui_config
 
 logger = logging.getLogger(__name__)
 
@@ -44,24 +45,40 @@ class SystemMonitorWidget(QWidget):
     # Signals
     metrics_updated = pyqtSignal(dict)  # Emitted when metrics are updated
     
-    def __init__(self, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
+    def __init__(self,
+                 color_scheme: Optional[PyQt6ColorScheme] = None,
+                 config: Optional[PyQtGUIConfig] = None,
+                 parent=None):
         """
         Initialize the system monitor widget.
 
         Args:
             color_scheme: Color scheme for styling (optional, uses default if None)
+            config: GUI configuration (optional, uses default if None)
             parent: Parent widget
         """
         super().__init__(parent)
+
+        # Initialize configuration
+        self.config = config or get_default_pyqt_gui_config()
+        self.monitor_config = self.config.performance_monitor
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or PyQt6ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
 
-        # Core monitoring
-        self.monitor = SystemMonitor()
-        self.update_timer = QTimer()
-        self.update_interval = 1000  # 1 second in milliseconds
+        # Calculate monitoring parameters from configuration
+        update_interval = self.monitor_config.update_interval_seconds
+        history_length = self.monitor_config.calculated_max_data_points
+
+        # Core monitoring - use persistent thread for non-blocking metrics collection
+        self.monitor = SystemMonitor(history_length=history_length)  # Match the dynamic history length
+
+        self.persistent_monitor = PersistentSystemMonitor(
+            update_interval=update_interval,
+            history_length=history_length
+        )
+        # No timer needed - the persistent thread handles timing
         
         # Setup UI
         self.setup_ui()
@@ -71,6 +88,18 @@ class SystemMonitorWidget(QWidget):
         self.start_monitoring()
         
         logger.debug("System monitor widget initialized")
+
+    def closeEvent(self, event):
+        """Handle widget close event - cleanup resources."""
+        self.cleanup()
+        super().closeEvent(event)
+
+    def __del__(self):
+        """Destructor - ensure cleanup happens."""
+        try:
+            self.cleanup()
+        except:
+            pass  # Ignore errors during destruction
     
     def setup_ui(self):
         """Setup the user interface."""
@@ -83,8 +112,8 @@ class SystemMonitorWidget(QWidget):
         layout.addLayout(header_layout)
         
         # Monitoring section
-        if MATPLOTLIB_AVAILABLE:
-            monitoring_widget = self.create_matplotlib_section()
+        if PYQTGRAPH_AVAILABLE:
+            monitoring_widget = self.create_pyqtgraph_section()
         else:
             monitoring_widget = self.create_fallback_section()
         
@@ -119,40 +148,63 @@ class SystemMonitorWidget(QWidget):
         
         return header_layout
     
-    def create_matplotlib_section(self) -> QWidget:
+    def create_pyqtgraph_section(self) -> QWidget:
         """
-        Create matplotlib-based monitoring section.
-        
+        Create PyQtGraph-based monitoring section with consolidated graphs.
+
         Returns:
-            Widget containing matplotlib plots
+            Widget containing consolidated PyQtGraph plots
         """
         widget = QWidget()
         layout = QGridLayout(widget)
-        
-        # Create matplotlib figure
-        self.figure = Figure(figsize=(12, 8), facecolor=self.color_scheme.to_hex(self.color_scheme.window_bg))
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet(f"background-color: {self.color_scheme.to_hex(self.color_scheme.window_bg)};")
-        
-        # Create subplots
-        self.cpu_ax = self.figure.add_subplot(2, 2, 1)
-        self.ram_ax = self.figure.add_subplot(2, 2, 2)
-        self.gpu_ax = self.figure.add_subplot(2, 2, 3)
-        self.vram_ax = self.figure.add_subplot(2, 2, 4)
-        
-        # Style subplots
-        for ax in [self.cpu_ax, self.ram_ax, self.gpu_ax, self.vram_ax]:
-            ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
-            ax.tick_params(colors='white')
-            ax.spines['bottom'].set_color('white')
-            ax.spines['top'].set_color('white')
-            ax.spines['right'].set_color('white')
-            ax.spines['left'].set_color('white')
-            ax.set_ylim(0, 100)
-        
-        self.figure.tight_layout()
-        
-        layout.addWidget(self.canvas, 0, 0)
+
+        # Configure PyQtGraph based on config settings
+        pg.setConfigOption('background', self.color_scheme.to_hex(self.color_scheme.window_bg))
+        pg.setConfigOption('foreground', 'white')
+        pg.setConfigOption('antialias', self.monitor_config.antialiasing)
+
+        # Create consolidated PyQtGraph plots in 1x2 grid
+        self.cpu_gpu_plot = pg.PlotWidget(title="CPU/GPU Usage")
+        self.ram_vram_plot = pg.PlotWidget(title="RAM/VRAM Usage")
+
+        # Store plot data items for efficient updates using configured colors and line width
+        colors = self.monitor_config.chart_colors
+        line_width = self.monitor_config.line_width
+
+        # CPU/GPU plot curves
+        self.cpu_curve = self.cpu_gpu_plot.plot(pen=pg.mkPen(colors['cpu'], width=line_width), name='CPU')
+        self.gpu_curve = self.cpu_gpu_plot.plot(pen=pg.mkPen(colors['gpu'], width=line_width), name='GPU')
+
+        # RAM/VRAM plot curves
+        self.ram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['ram'], width=line_width), name='RAM')
+        self.vram_curve = self.ram_vram_plot.plot(pen=pg.mkPen(colors['vram'], width=line_width), name='VRAM')
+
+        # Style CPU/GPU plot
+        self.cpu_gpu_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+        self.cpu_gpu_plot.setYRange(0, 100)
+        self.cpu_gpu_plot.setXRange(0, self.monitor_config.history_duration_seconds)  # Show time range in seconds
+        self.cpu_gpu_plot.setLabel('left', 'Usage (%)')
+        self.cpu_gpu_plot.setLabel('bottom', 'Time (seconds)')
+        self.cpu_gpu_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        self.cpu_gpu_plot.getAxis('left').setTextPen('white')
+        self.cpu_gpu_plot.getAxis('bottom').setTextPen('white')
+        self.cpu_gpu_plot.addLegend()
+
+        # Style RAM/VRAM plot
+        self.ram_vram_plot.setBackground(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+        self.ram_vram_plot.setYRange(0, 100)
+        self.ram_vram_plot.setXRange(0, self.monitor_config.history_duration_seconds)  # Show time range in seconds
+        self.ram_vram_plot.setLabel('left', 'Usage (%)')
+        self.ram_vram_plot.setLabel('bottom', 'Time (seconds)')
+        self.ram_vram_plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
+        self.ram_vram_plot.getAxis('left').setTextPen('white')
+        self.ram_vram_plot.getAxis('bottom').setTextPen('white')
+        self.ram_vram_plot.addLegend()
+
+        # Add plots to grid layout (1x2 instead of 2x2)
+        layout.addWidget(self.cpu_gpu_plot, 0, 0)
+        layout.addWidget(self.ram_vram_plot, 0, 1)
+
         return widget
     
     def create_fallback_section(self) -> QWidget:
@@ -184,33 +236,91 @@ class SystemMonitorWidget(QWidget):
     
     def setup_connections(self):
         """Setup signal/slot connections."""
-        self.update_timer.timeout.connect(self.update_metrics)
         self.metrics_updated.connect(self.update_display)
+
+        # Connect persistent monitor signals
+        self.persistent_monitor.connect_signals(
+            metrics_callback=self.on_metrics_updated,
+            error_callback=self.on_metrics_error
+        )
     
     def start_monitoring(self):
-        """Start the monitoring timer."""
-        self.update_timer.start(self.update_interval)
+        """Start the persistent monitoring thread."""
+        self.persistent_monitor.start_monitoring()
         logger.debug("System monitoring started")
 
     def stop_monitoring(self):
-        """Stop the monitoring timer."""
-        self.update_timer.stop()
+        """Stop the persistent monitoring thread."""
+        self.persistent_monitor.stop_monitoring()
         logger.debug("System monitoring stopped")
-    
-    def update_metrics(self):
-        """Update system metrics (called by timer)."""
+
+    def cleanup(self):
+        """Clean up widget resources."""
         try:
-            # Update metrics using the SystemMonitor service
-            self.monitor.update_metrics()
+            logger.debug("Cleaning up SystemMonitorWidget...")
 
-            # Get current metrics
-            metrics = self.monitor.get_metrics_dict()
+            # Stop monitoring first
+            self.stop_monitoring()
 
-            # Emit signal with updated metrics
-            self.metrics_updated.emit(metrics)
+            # Clean up pyqtgraph plots
+            if PYQTGRAPH_AVAILABLE and hasattr(self, 'cpu_plot'):
+                try:
+                    self.cpu_plot.clear()
+                    self.ram_plot.clear()
+                    self.gpu_plot.clear()
+                    self.vram_plot.clear()
+
+                    # Clear plot widgets
+                    if hasattr(self, 'cpu_plot_widget'):
+                        self.cpu_plot_widget.close()
+                    if hasattr(self, 'ram_plot_widget'):
+                        self.ram_plot_widget.close()
+                    if hasattr(self, 'gpu_plot_widget'):
+                        self.gpu_plot_widget.close()
+                    if hasattr(self, 'vram_plot_widget'):
+                        self.vram_plot_widget.close()
+
+                except Exception as e:
+                    logger.warning(f"Error cleaning up pyqtgraph plots: {e}")
+
+            # Clear data
+            if hasattr(self, 'monitor'):
+                self.monitor.cpu_history.clear()
+                self.monitor.ram_history.clear()
+                self.monitor.gpu_history.clear()
+                self.monitor.vram_history.clear()
+                self.monitor.time_stamps.clear()
+
+            logger.debug("SystemMonitorWidget cleanup completed")
 
         except Exception as e:
-            logger.warning(f"Failed to update system metrics: {e}")
+            logger.warning(f"Error during SystemMonitorWidget cleanup: {e}")
+    
+    def on_metrics_updated(self, metrics: dict):
+        """Handle metrics update from persistent monitor thread."""
+        try:
+            # Update the sync monitor's history for compatibility with existing plotting code
+            if metrics:
+                self.monitor.cpu_history.append(metrics.get('cpu_percent', 0))
+                self.monitor.ram_history.append(metrics.get('ram_percent', 0))
+                self.monitor.gpu_history.append(metrics.get('gpu_percent', 0))
+                self.monitor.vram_history.append(metrics.get('vram_percent', 0))
+                self.monitor.time_stamps.append(time.time())
+
+                # Update cached metrics
+                self.monitor._current_metrics = metrics.copy()
+
+            # Use QTimer.singleShot to ensure UI update happens on main thread
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.metrics_updated.emit(metrics))
+
+        except Exception as e:
+            logger.warning(f"Failed to process metrics update: {e}")
+
+    def on_metrics_error(self, error_message: str):
+        """Handle metrics collection error."""
+        logger.warning(f"Metrics collection failed: {error_message}")
+        # Continue with cached/default metrics to keep UI responsive
 
     def update_display(self, metrics: dict):
         """
@@ -224,65 +334,64 @@ class SystemMonitorWidget(QWidget):
             self.update_system_info(metrics)
 
             # Update plots or fallback display
-            if MATPLOTLIB_AVAILABLE:
-                self.update_matplotlib_plots()
+            if PYQTGRAPH_AVAILABLE:
+                self.update_pyqtgraph_plots()
             else:
                 self.update_fallback_display(metrics)
 
         except Exception as e:
             logger.warning(f"Failed to update display: {e}")
     
-    def update_matplotlib_plots(self):
-        """Update matplotlib plots with current data."""
+    def update_pyqtgraph_plots(self):
+        """Update consolidated PyQtGraph plots with current data - non-blocking and fast."""
         try:
-            # Get data for plotting
-            x_range = list(range(len(self.monitor.cpu_history)))
+            # Convert data point indices to time values in seconds
+            data_length = len(self.monitor.cpu_history)
+            if data_length == 0:
+                return
 
-            # Clear and update CPU plot
-            self.cpu_ax.clear()
-            self.cpu_ax.plot(x_range, list(self.monitor.cpu_history), 'cyan', linewidth=2)
-            self.cpu_ax.set_title(f'CPU Usage: {self.monitor.cpu_history[-1]:.1f}%', color='white')
-            self.cpu_ax.set_ylim(0, 100)
-            self.cpu_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+            # Create time axis: each data point represents update_interval_seconds
+            update_interval = self.monitor_config.update_interval_seconds
+            x_time = [i * update_interval for i in range(data_length)]
 
-            # Clear and update RAM plot
-            self.ram_ax.clear()
-            self.ram_ax.plot(x_range, list(self.monitor.ram_history), 'lime', linewidth=2)
-            self.ram_ax.set_title(f'RAM Usage: {self.monitor.ram_history[-1]:.1f}%', color='white')
-            self.ram_ax.set_ylim(0, 100)
-            self.ram_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+            # Get current data
+            cpu_data = list(self.monitor.cpu_history)
+            ram_data = list(self.monitor.ram_history)
+            gpu_data = list(self.monitor.gpu_history)
+            vram_data = list(self.monitor.vram_history)
 
-            # Clear and update GPU plot
-            self.gpu_ax.clear()
-            if any(self.monitor.gpu_history):
-                self.gpu_ax.plot(x_range, list(self.monitor.gpu_history), 'orange', linewidth=2)
-                self.gpu_ax.set_title(f'GPU Usage: {self.monitor.gpu_history[-1]:.1f}%', color='white')
+            # Update CPU/GPU consolidated plot
+            self.cpu_curve.setData(x_time, cpu_data)
+
+            # Handle GPU data (may not be available)
+            if any(gpu_data):
+                self.gpu_curve.setData(x_time, gpu_data)
+                gpu_status = f'{gpu_data[-1]:.1f}%' if gpu_data else 'N/A'
             else:
-                self.gpu_ax.set_title('GPU: Not Available', color='white')
-            self.gpu_ax.set_ylim(0, 100)
-            self.gpu_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+                self.gpu_curve.setData([], [])  # Clear data
+                gpu_status = 'Not Available'
 
-            # Clear and update VRAM plot
-            self.vram_ax.clear()
-            if any(self.monitor.vram_history):
-                self.vram_ax.plot(x_range, list(self.monitor.vram_history), 'magenta', linewidth=2)
-                self.vram_ax.set_title(f'VRAM Usage: {self.monitor.vram_history[-1]:.1f}%', color='white')
+            # Update CPU/GPU plot title with current values
+            cpu_status = f'{cpu_data[-1]:.1f}%' if cpu_data else 'N/A'
+            self.cpu_gpu_plot.setTitle(f'CPU/GPU Usage - CPU: {cpu_status}, GPU: {gpu_status}')
+
+            # Update RAM/VRAM consolidated plot
+            self.ram_curve.setData(x_time, ram_data)
+
+            # Handle VRAM data (may not be available)
+            if any(vram_data):
+                self.vram_curve.setData(x_time, vram_data)
+                vram_status = f'{vram_data[-1]:.1f}%' if vram_data else 'N/A'
             else:
-                self.vram_ax.set_title('VRAM: Not Available', color='white')
-            self.vram_ax.set_ylim(0, 100)
-            self.vram_ax.set_facecolor(self.color_scheme.to_hex(self.color_scheme.panel_bg))
+                self.vram_curve.setData([], [])  # Clear data
+                vram_status = 'Not Available'
 
-            # Style all axes
-            for ax in [self.cpu_ax, self.ram_ax, self.gpu_ax, self.vram_ax]:
-                ax.tick_params(colors='white', labelsize=8)
-                for spine in ax.spines.values():
-                    spine.set_color('white')
-
-            # Refresh canvas
-            self.canvas.draw()
+            # Update RAM/VRAM plot title with current values
+            ram_status = f'{ram_data[-1]:.1f}%' if ram_data else 'N/A'
+            self.ram_vram_plot.setTitle(f'RAM/VRAM Usage - RAM: {ram_status}, VRAM: {vram_status}')
 
         except Exception as e:
-            logger.warning(f"Failed to update matplotlib plots: {e}")
+            logger.warning(f"Failed to update PyQtGraph plots: {e}")
     
     def update_fallback_display(self, metrics: dict):
         """
@@ -370,10 +479,72 @@ Total RAM: {metrics.get('ram_total_gb', 0):.1f} GB | Used RAM: {metrics.get('ram
         Args:
             interval_ms: Update interval in milliseconds
         """
-        self.update_interval = interval_ms
-        if self.update_timer.isActive():
-            self.update_timer.stop()
-            self.update_timer.start(self.update_interval)
+        interval_seconds = interval_ms / 1000.0
+        self.persistent_monitor.set_update_interval(interval_seconds)
+
+    def update_config(self, new_config: PyQtGUIConfig):
+        """
+        Update the widget configuration and apply changes.
+
+        Args:
+            new_config: New configuration to apply
+        """
+        old_config = self.config
+        self.config = new_config
+        self.monitor_config = new_config.performance_monitor
+
+        # Check if we need to restart monitoring with new parameters
+        if (old_config.performance_monitor.update_fps != new_config.performance_monitor.update_fps or
+            old_config.performance_monitor.history_duration_seconds != new_config.performance_monitor.history_duration_seconds):
+
+            logger.info(f"Updating performance monitor: {new_config.performance_monitor.update_fps} FPS, "
+                       f"{new_config.performance_monitor.history_duration_seconds}s history")
+
+            # Stop current monitoring
+            self.stop_monitoring()
+
+            # Recalculate parameters
+            update_interval = self.monitor_config.update_interval_seconds
+            history_length = self.monitor_config.calculated_max_data_points
+
+            # Create new monitors with updated config
+            self.monitor = SystemMonitor(history_length=history_length)
+            self.persistent_monitor = PersistentSystemMonitor(
+                update_interval=update_interval,
+                history_length=history_length
+            )
+
+            # Reconnect signals
+            self.persistent_monitor.connect_signals(
+                metrics_callback=self.on_metrics_updated,
+                error_callback=self.on_metrics_error
+            )
+
+            # Restart monitoring
+            self.start_monitoring()
+
+        # Update plot appearance if needed
+        if (old_config.performance_monitor.chart_colors != new_config.performance_monitor.chart_colors or
+            old_config.performance_monitor.line_width != new_config.performance_monitor.line_width):
+            self._update_plot_appearance()
+
+        logger.debug("Performance monitor configuration updated")
+
+    def _update_plot_appearance(self):
+        """Update plot appearance based on current configuration."""
+        colors = self.monitor_config.chart_colors
+        line_width = self.monitor_config.line_width
+
+        # Update curve pens
+        self.cpu_curve.setPen(pg.mkPen(colors['cpu'], width=line_width))
+        self.ram_curve.setPen(pg.mkPen(colors['ram'], width=line_width))
+        self.gpu_curve.setPen(pg.mkPen(colors['gpu'], width=line_width))
+        self.vram_curve.setPen(pg.mkPen(colors['vram'], width=line_width))
+
+        # Update plot grid for consolidated plots (don't change X range here - let update_pyqtgraph_plots handle it)
+        plots = [self.cpu_gpu_plot, self.ram_vram_plot]
+        for plot in plots:
+            plot.showGrid(x=self.monitor_config.show_grid, y=self.monitor_config.show_grid, alpha=0.3)
     
     def closeEvent(self, event):
         """Handle widget close event."""

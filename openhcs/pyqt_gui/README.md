@@ -36,7 +36,7 @@ This PyQt6 GUI provides a native desktop interface for OpenHCS (Open High-Conten
 pip install PyQt6 PyQt6-tools
 
 # Optional dependencies for enhanced features
-pip install matplotlib pyqtgraph psutil cupy dill
+pip install pyqtgraph psutil cupy dill
 ```
 
 ### Setup
@@ -160,7 +160,7 @@ class PlateManagerWidget(QWidget):
 - Dialog management and system command execution
 
 ### Core Widgets (`widgets/`)
-- `SystemMonitorWidget`: Real-time system monitoring with matplotlib
+- `SystemMonitorWidget`: Real-time system monitoring with PyQtGraph
 - `PlateManagerWidget`: Plate selection and management
 - `PipelineEditorWidget`: Pipeline step editing
 - `FunctionPaneWidget`: Function parameter editing

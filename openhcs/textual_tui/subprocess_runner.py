@@ -575,20 +575,43 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
 
 def main():
     """Main entry point for subprocess runner."""
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print("Usage: python subprocess_runner.py <data_file.pkl> <log_file_base> [unique_id]")
+    if len(sys.argv) != 2:
+        print("Usage: python subprocess_runner.py <data_file.pkl>")
         sys.exit(1)
 
     data_file = sys.argv[1]
-    log_file_base = sys.argv[2]
-    unique_id = sys.argv[3] if len(sys.argv) == 4 else None
 
-    # Generate unique log file path using the unique_id from TUI
-    if unique_id:
-        log_file = f"{log_file_base}_{unique_id}.log"
-    else:
-        import uuid
-        log_file = f"{log_file_base}_{uuid.uuid4().hex[:8]}.log"
+    # Generate our own log file name based on current main log + timestamp
+    import time
+    import uuid
+
+    # Try to get current main log file to derive base name
+    try:
+        # Get the root logger and find the FileHandler
+        import logging
+        root_logger = logging.getLogger()
+        main_log_path = None
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                main_log_path = handler.baseFilename
+                break
+
+        if main_log_path and main_log_path.endswith('.log'):
+            log_base = main_log_path[:-4]  # Remove .log extension
+        else:
+            # Fallback to generic naming
+            log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_base = str(log_dir / f"openhcs_subprocess_{int(time.time())}")
+    except:
+        # Last resort fallback
+        log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_base = str(log_dir / f"openhcs_subprocess_{int(time.time())}")
+
+    # Create unique subprocess log file name
+    subprocess_id = f"{int(time.time())}_{uuid.uuid4().hex[:8]}"
+    log_file = f"{log_base}_subprocess_{subprocess_id}.log"
 
     # PROCESS GROUP CLEANUP: Create new process group to manage all child processes
     try:
@@ -634,7 +657,12 @@ def main():
     # Set up logging first
     logger = setup_subprocess_logging(log_file)
     logger.info("🔥 SUBPROCESS: Starting OpenHCS subprocess runner")
-    logger.info(f"🔥 SUBPROCESS: Args - data: {data_file}, log: {log_file}")
+    logger.info(f"🔥 SUBPROCESS: Args - data: {data_file}")
+    logger.info(f"🔥 SUBPROCESS: Log file: {log_file}")
+
+    # Write log file path to stdout so parent can discover it
+    print(f"SUBPROCESS_LOG_FILE:{log_file}")
+    sys.stdout.flush()
 
     # DEATH DETECTION: Set up heartbeat monitoring
     import threading
@@ -738,12 +766,15 @@ def main():
             pipeline_steps = pipeline_data[plate_path]
             logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(pipeline_steps)} steps")
 
+            # Use the same base path for worker logs (remove _subprocess_id.log suffix)
+            worker_log_base = log_base + f"_subprocess_{subprocess_id}"
+
             run_single_plate(
                 plate_path=plate_path,
                 pipeline_steps=pipeline_steps,
                 global_config=global_config,
                 logger=logger,
-                log_file_base=log_file_base
+                log_file_base=worker_log_base
             )
         
         logger.info("🔥 SUBPROCESS: All plates completed successfully")

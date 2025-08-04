@@ -636,7 +636,7 @@ async def main():
 
     try:
         # Load configuration with cache support
-        from openhcs.textual_tui.services.global_config_cache import load_cached_global_config
+        from openhcs.textual_tui.services.config_cache_adapter import load_cached_global_config_tui as load_cached_global_config
         global_config = await load_cached_global_config()
 
         # REMOVED: setup_global_gpu_registry - this is now ONLY done in __main__.py

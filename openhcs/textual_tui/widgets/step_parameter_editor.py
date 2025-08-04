@@ -186,7 +186,7 @@ class StepParameterEditorWidget(ScrollableContainer):
                 self._load_step_from_file(result)
 
         # Launch file browser window for .step files
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+        from openhcs.core.path_cache import get_cached_browser_path, PathCacheKey
 
         await open_file_browser_window(
             app=self.app,

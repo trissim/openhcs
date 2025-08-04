@@ -303,7 +303,7 @@ class StartMenuDropdown(ModalScreen[None]):
     def _save_config_to_cache(self, config) -> None:
         """Save config to cache asynchronously."""
         async def _async_save():
-            from openhcs.textual_tui.services.global_config_cache import save_global_config_to_cache
+            from openhcs.textual_tui.services.config_cache_adapter import save_global_config_to_cache
             try:
                 success = await save_global_config_to_cache(config)
                 if success:

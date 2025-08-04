@@ -19,7 +19,7 @@ from openhcs.constants.constants import Backend
 from openhcs.io.filemanager import FileManager
 from openhcs.textual_tui.adapters.universal_directorytree import OpenHCSDirectoryTree
 from openhcs.textual_tui.windows.base_window import BaseOpenHCSWindow
-from openhcs.textual_tui.utils.path_cache import PathCacheKey
+from openhcs.core.path_cache import PathCacheKey
 from openhcs.textual_tui.services.file_browser_service import SelectionMode
 
 logger = logging.getLogger(__name__)

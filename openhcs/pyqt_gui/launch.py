@@ -63,7 +63,6 @@ def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None):
     logger.info(f"Log file: {log_file}")
 
     # Reduce noise from some libraries
-    logging.getLogger('matplotlib').setLevel(logging.WARNING)
     logging.getLogger('PIL').setLevel(logging.WARNING)
 
 
@@ -139,7 +138,7 @@ def load_configuration(config_path: Optional[Path] = None):
             config = get_default_global_config()
         else:
             # Load cached configuration (matches TUI pattern)
-            from openhcs.pyqt_gui.services.global_config_cache import load_cached_global_config_sync
+            from openhcs.pyqt_gui.services.config_cache_adapter import load_cached_global_config_sync
             config = load_cached_global_config_sync()
 
         return config
@@ -166,12 +165,12 @@ def check_dependencies():
     except ImportError:
         missing_deps.append("PyQt6")
     
-    # Check matplotlib (optional)
+    # Check PyQtGraph (optional)
     try:
-        import matplotlib
-        logging.debug(f"Matplotlib version: {matplotlib.__version__}")
+        import pyqtgraph
+        logging.debug(f"PyQtGraph version: {pyqtgraph.__version__}")
     except ImportError:
-        logging.warning("Matplotlib not available - system monitor will use fallback display")
+        logging.warning("PyQtGraph not available - system monitor will use fallback display")
     
     # Check other optional dependencies
     optional_deps = {

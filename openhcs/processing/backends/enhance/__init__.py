@@ -51,6 +51,24 @@ try:
 except ImportError:
     pass
 
+# Import torch_nlm processor implementation
+try:
+    from openhcs.processing.backends.enhance.torch_nlm_processor import (
+        non_local_means_denoise_torch,
+        torch_nlm_denoise
+    )
+except ImportError:
+    pass
+
+# Import JAX NLM processor implementation
+try:
+    from openhcs.processing.backends.enhance.jax_nlm_processor import (
+        non_local_means_denoise_jax,
+        jax_nlm_denoise
+    )
+except ImportError:
+    pass
+
 __all__ = [
     # BaSiC processor implementations
     "basic_flatfield_correction_numpy",
@@ -66,4 +84,12 @@ __all__ = [
     # Self-supervised deconvolution implementations
     "self_supervised_2d_deconvolution",
     "self_supervised_3d_deconvolution",
+
+    # torch_nlm processor implementations
+    "non_local_means_denoise_torch",
+    "torch_nlm_denoise",
+
+    # JAX NLM processor implementations
+    "non_local_means_denoise_jax",
+    "jax_nlm_denoise",
 ]

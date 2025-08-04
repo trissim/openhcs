@@ -172,13 +172,27 @@ class OpenHCSPyQtApp(QApplication):
     def cleanup(self):
         """Clean up application resources."""
         try:
+            logger.info("Starting application cleanup...")
+
             # Process any remaining events
             self.processEvents()
 
             # Clean up main window
             if hasattr(self, 'main_window') and self.main_window:
+                # Force close if not already closed
+                if not self.main_window.isHidden():
+                    self.main_window.close()
                 self.main_window.deleteLater()
                 self.main_window = None
+
+            # Process events again to handle deleteLater
+            self.processEvents()
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+
+            logger.info("Application cleanup completed")
 
         except Exception as e:
             logger.warning(f"Error during application cleanup: {e}")

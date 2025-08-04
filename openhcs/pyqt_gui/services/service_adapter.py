@@ -14,7 +14,7 @@ from PyQt6.QtCore import QProcess, QThread, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtCore import QUrl
 
-from openhcs.pyqt_gui.utils.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
+from openhcs.core.path_cache import PathCacheKey, get_cached_dialog_path, cache_dialog_path
 from openhcs.pyqt_gui.shared.palette_manager import ThemeManager
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 

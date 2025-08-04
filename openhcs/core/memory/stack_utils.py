@@ -320,7 +320,11 @@ def stack_slices(slices: List[Any], memory_type: str, gpu_id: int) -> Any:
                 )
 
             # Assign converted slice directly to pre-allocated result array
-            result[i] = converted_data
+            # Handle JAX immutability
+            if memory_type == MEMORY_TYPE_JAX:
+                result = result.at[i].set(converted_data)
+            else:
+                result[i] = converted_data
 
     # 🔍 MEMORY CONVERSION LOGGING: Only log when conversions happen or issues occur
     if conversion_count > 0:

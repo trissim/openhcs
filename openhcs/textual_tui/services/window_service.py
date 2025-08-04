@@ -6,7 +6,7 @@ from textual.css.query import NoMatches
 
 from openhcs.constants.constants import Backend
 from openhcs.textual_tui.services.file_browser_service import SelectionMode
-from openhcs.textual_tui.utils.path_cache import PathCacheKey
+from openhcs.core.path_cache import PathCacheKey
 
 
 class WindowService:

@@ -284,7 +284,7 @@ class FunctionListEditorWidget(QWidget):
     def load_function_pattern(self):
         """Load function pattern from file (mirrors Textual TUI)."""
         if self.service_adapter:
-            from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
+            from openhcs.core.path_cache import PathCacheKey
             
             file_path = self.service_adapter.show_cached_file_dialog(
                 cache_key=PathCacheKey.FUNCTION_PATTERNS,

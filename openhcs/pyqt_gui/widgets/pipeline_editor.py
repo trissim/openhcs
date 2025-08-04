@@ -376,7 +376,7 @@ class PipelineEditorWidget(QWidget):
     def action_load_pipeline(self):
         """Handle Load Pipeline button (adapted from Textual version)."""
 
-        from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
+        from openhcs.core.path_cache import PathCacheKey
 
         # Use cached file dialog (mirrors Textual TUI pattern)
         file_path = self.service_adapter.show_cached_file_dialog(
@@ -395,7 +395,7 @@ class PipelineEditorWidget(QWidget):
             self.service_adapter.show_error_dialog("No pipeline steps to save.")
             return
 
-        from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
+        from openhcs.core.path_cache import PathCacheKey
 
         # Use cached file dialog (mirrors Textual TUI pattern)
         file_path = self.service_adapter.show_cached_file_dialog(

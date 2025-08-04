@@ -531,7 +531,7 @@ class PipelineEditorWidget(ButtonListWidget):
         from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
         from openhcs.textual_tui.services.file_browser_service import SelectionMode
         from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+        from openhcs.core.path_cache import get_cached_browser_path, PathCacheKey
 
         await open_file_browser_window(
             app=self.app,
