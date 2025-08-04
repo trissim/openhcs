@@ -44,12 +44,12 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
     margin_y = int(jnp.floor(height * margin_ratio))
     margin_x = int(jnp.floor(width * margin_ratio))
 
-    weight_y = jnp.ones(height, dtype=jnp.float32)
+    weight_h = jnp.ones(height, dtype=jnp.float32)
     if margin_y > 0:
         ramp_top = jnp.linspace(0, 1, margin_y, endpoint=False)
         ramp_bottom = jnp.linspace(1, 0, margin_y, endpoint=False)
-        weight_y = weight_y.at[:margin_y].set(ramp_top)
-        weight_y = weight_y.at[-margin_y:].set(ramp_bottom)
+        weight_h = weight_h.at[:margin_y].set(ramp_top)
+        weight_h = weight_h.at[-margin_y:].set(ramp_bottom)
 
     weight_x = jnp.ones(width, dtype=jnp.float32)
     if margin_x > 0:
@@ -59,7 +59,7 @@ def create_linear_weight_mask(height: int, width: int, margin_ratio: float = 0.1
         weight_x = weight_x.at[-margin_x:].set(ramp_right)
 
     # Create 2D weight mask using outer product
-    weight_mask = jnp.outer(weight_y, weight_x)
+    weight_mask = jnp.outer(weight_h, weight_x)
 
     return weight_mask
 

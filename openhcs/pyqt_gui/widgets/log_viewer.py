@@ -19,9 +19,12 @@ from PyQt6.QtCore import QObject, QTimer, QFileSystemWatcher, pyqtSignal, Qt, QR
 from PyQt6.QtGui import QTextCharFormat, QColor, QAction, QFont, QTextCursor
 
 from openhcs.io.filemanager import FileManager
-from openhcs.textual_tui.widgets.reactive_log_monitor import LogFileInfo
+from openhcs.core.log_utils import LogFileInfo
 from openhcs.pyqt_gui.utils.log_detection_utils import (
-    get_current_tui_log_path, discover_logs, classify_log_file, is_relevant_log_file
+    get_current_tui_log_path, discover_logs, discover_all_logs
+)
+from openhcs.core.log_utils import (
+    classify_log_file, is_openhcs_log_file, infer_base_log_path
 )
 
 # Import Pygments for advanced syntax highlighting
@@ -242,6 +245,8 @@ class LogFileDetector(QObject):
         self._previous_files = current_files
         return new_files
 
+
+
     def _on_directory_changed(self, directory_path: str) -> None:
         """
         Handle QFileSystemWatcher directory change signal.
@@ -260,9 +265,16 @@ class LogFileDetector(QObject):
         
         # Process new files
         for file_path in new_files:
-            if file_path.exists() and is_relevant_log_file(file_path, self._base_log_path):
+            if file_path.exists() and is_openhcs_log_file(file_path):
                 try:
-                    log_info = classify_log_file(file_path, self._base_log_path, include_tui_log=False)
+                    # For general watching, try to infer base_log_path from the file name
+                    effective_base_log_path = self._base_log_path
+                    if not effective_base_log_path and 'subprocess_' in file_path.name:
+                        effective_base_log_path = infer_base_log_path(file_path)
+
+                    log_info = classify_log_file(file_path, effective_base_log_path,
+                                                include_tui_log=False)
+
                     logger.info(f"New relevant log file detected: {file_path} (type: {log_info.log_type})")
                     self.new_log_detected.emit(log_info)
                 except Exception as e:
@@ -742,22 +754,24 @@ class LogViewerWindow(QMainWindow):
         logger.debug("LogViewerWindow connections setup complete")
 
     def initialize_logs(self) -> None:
-        """Initialize with TUI log and start monitoring."""
+        """Initialize with main process log only and start monitoring."""
+        # Only discover the current main process log, not old logs
         try:
-            # Discover initial logs (TUI log only initially)
-            initial_logs = discover_logs(base_log_path=None, include_tui_log=True)
-            self.populate_log_dropdown(initial_logs)
+            from openhcs.core.log_utils import get_current_log_file_path, classify_log_file
+            from pathlib import Path
 
-            # Switch to TUI log if available
-            if initial_logs:
-                tui_logs = [log for log in initial_logs if log.log_type == "tui"]
-                if tui_logs:
-                    self.switch_to_log(tui_logs[0].path)
+            main_log_path = get_current_log_file_path()
+            main_log = Path(main_log_path)
+            if main_log.exists():
+                log_info = classify_log_file(main_log, None, True)
+                self.populate_log_dropdown([log_info])
+                self.switch_to_log(main_log)
+        except Exception:
+            # Main log not available, continue without it
+            pass
 
-            logger.info("Log viewer initialized with TUI log")
-        except Exception as e:
-            logger.error(f"Failed to initialize logs: {e}")
-            self.log_display.setText(f"Error initializing logs: {e}")
+        # Start monitoring for new logs
+        self.start_monitoring()
 
     # Dropdown Management Methods
     def populate_log_dropdown(self, log_files: List[LogFileInfo]) -> None:
@@ -801,6 +815,11 @@ class LogViewerWindow(QMainWindow):
 
     def clear_subprocess_logs(self) -> None:
         """Remove all non-TUI logs from dropdown and switch to TUI log."""
+        import traceback
+        logger.error(f"🔥 DEBUG: clear_subprocess_logs called! Stack trace:")
+        for line in traceback.format_stack():
+            logger.error(f"🔥 DEBUG: {line.strip()}")
+
         current_logs = []
 
         # Collect TUI logs only
@@ -1118,20 +1137,18 @@ class LogViewerWindow(QMainWindow):
             # File will be read on next timer tick
 
     # External Integration Methods
-    def start_monitoring(self, base_log_path: str) -> None:
-        """Start monitoring for new subprocess logs."""
+    def start_monitoring(self, base_log_path: Optional[str] = None) -> None:
+        """Start monitoring for new logs."""
         if self.file_detector:
             self.file_detector.stop_watching()
 
-        # Extract directory from base_log_path (file prefix)
-        log_directory = Path(base_log_path).parent
+        # Get log directory
+        log_directory = Path(base_log_path).parent if base_log_path else Path.home() / ".local" / "share" / "openhcs" / "logs"
 
-        # Create new detector
+        # Start file watching
         self.file_detector = LogFileDetector(base_log_path)
         self.file_detector.new_log_detected.connect(self.add_new_log)
         self.file_detector.start_watching(log_directory)
-
-        logger.info(f"Started monitoring for new logs in: {log_directory}")
 
     def stop_monitoring(self) -> None:
         """Stop monitoring for new logs."""

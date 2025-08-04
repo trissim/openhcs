@@ -161,16 +161,54 @@ class PersistentSystemMonitorThread(QThread):
             metrics['cpu_cores'] = psutil.cpu_count()
             metrics['cpu_freq_mhz'] = get_cpu_freq_mhz()
             
-            # GPU usage (temporarily disabled to prevent segfaults)
-            # TODO: Re-enable GPU monitoring with proper thread safety
-            metrics.update({
-                'gpu_percent': 0.0,
-                'vram_percent': 0.0,
-                'gpu_name': 'Disabled',
-                'gpu_temp': 0,
-                'vram_used_mb': 0,
-                'vram_total_mb': 0
-            })
+            # GPU usage
+            if GPU_AVAILABLE:
+                try:
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]  # Use first GPU
+                        gpu_load = gpu.load * 100
+                        vram_util = gpu.memoryUtil * 100
+
+                        metrics.update({
+                            'gpu_percent': gpu_load,
+                            'vram_percent': vram_util,
+                            'gpu_name': gpu.name,
+                            'gpu_temp': gpu.temperature,
+                            'vram_used_mb': gpu.memoryUsed,
+                            'vram_total_mb': gpu.memoryTotal
+                        })
+                    else:
+                        # No GPUs found
+                        metrics.update({
+                            'gpu_percent': 0.0,
+                            'vram_percent': 0.0,
+                            'gpu_name': 'No GPU Found',
+                            'gpu_temp': 0,
+                            'vram_used_mb': 0,
+                            'vram_total_mb': 0
+                        })
+                except Exception as e:
+                    # GPU monitoring failed
+                    logger.debug(f"GPU monitoring failed: {e}")
+                    metrics.update({
+                        'gpu_percent': 0.0,
+                        'vram_percent': 0.0,
+                        'gpu_name': 'GPU Error',
+                        'gpu_temp': 0,
+                        'vram_used_mb': 0,
+                        'vram_total_mb': 0
+                    })
+            else:
+                # GPUtil not available
+                metrics.update({
+                    'gpu_percent': 0.0,
+                    'vram_percent': 0.0,
+                    'gpu_name': 'GPUtil Not Available',
+                    'gpu_temp': 0,
+                    'vram_used_mb': 0,
+                    'vram_total_mb': 0
+                })
             
         except Exception as e:
             logger.warning(f"Error in metrics collection: {e}")

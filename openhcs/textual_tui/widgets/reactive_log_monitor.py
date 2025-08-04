@@ -28,30 +28,15 @@ from textual.containers import Horizontal, Vertical
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
 
+# Import core log utilities
+from openhcs.core.log_utils import LogFileInfo, discover_logs, classify_log_file, is_relevant_log_file
+
 # Toolong components are imported in ToolongWidget
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class LogFileInfo:
-    """Information about a log file."""
-    path: Path
-    log_type: str  # "tui", "main", "worker", "unknown"
-    well_id: Optional[str] = None
-    display_name: Optional[str] = None
-    
-    def __post_init__(self):
-        """Generate display name if not provided."""
-        if not self.display_name:
-            if self.log_type == "tui":
-                self.display_name = "TUI Process"
-            elif self.log_type == "main":
-                self.display_name = "Main Subprocess"
-            elif self.log_type == "worker" and self.well_id:
-                self.display_name = f"Worker {self.well_id}"
-            else:
-                self.display_name = self.path.name
+
 
 
 class ReactiveLogFileHandler(FileSystemEventHandler):
@@ -64,15 +49,15 @@ class ReactiveLogFileHandler(FileSystemEventHandler):
         """Handle file creation events."""
         if not event.is_directory and event.src_path.endswith('.log'):
             file_path = Path(event.src_path)
-            if self.monitor._is_relevant_log_file(file_path):
+            if is_relevant_log_file(file_path, self.monitor.base_log_path):
                 logger.debug(f"Log file created: {file_path}")
                 self.monitor._handle_log_file_created(file_path)
-                
+
     def on_modified(self, event):
         """Handle file modification events."""
         if not event.is_directory and event.src_path.endswith('.log'):
             file_path = Path(event.src_path)
-            if self.monitor._is_relevant_log_file(file_path):
+            if is_relevant_log_file(file_path, self.monitor.base_log_path):
                 self.monitor._handle_log_file_modified(file_path)
 
 
@@ -194,146 +179,17 @@ class ReactiveLogMonitor(Widget):
         
         logger.debug("Reactive log monitoring stopped")
 
-    def get_current_tui_log_path(self) -> Path:
-        """Get the current TUI process log file path - FAIL LOUD if not found."""
-        # Get the root logger and find the FileHandler (same as status bar)
-        root_logger = logging.getLogger()
-        for handler in root_logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                return Path(handler.baseFilename)
 
-        # Fallback: try to get from openhcs logger (same as status bar)
-        openhcs_logger = logging.getLogger("openhcs")
-        for handler in openhcs_logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                return Path(handler.baseFilename)
 
-        # FAIL LOUD - this should never happen in a running TUI
-        raise RuntimeError(
-            f"CRITICAL: No FileHandler found in logging system!\n"
-            f"Root logger handlers: {[type(h).__name__ for h in root_logger.handlers]}\n"
-            f"OpenHCS logger handlers: {[type(h).__name__ for h in openhcs_logger.handlers]}\n"
-            f"The TUI process should always have a log file!"
-        )
 
-    def discover_logs(self) -> Set[Path]:
-        """
-        Pure function: Discover all relevant log files.
 
-        Returns:
-            Set of Path objects for discovered log files
-        """
-        discovered_logs = set()
-        
-        # Always include current TUI log if requested
-        if self.include_tui_log:
-            tui_log = self.get_current_tui_log_path()  # This will raise if not found
-            # FAIL LOUD if log file doesn't exist
-            if not tui_log.exists():
-                raise RuntimeError(f"TUI log file does not exist: {tui_log}")
-            discovered_logs.add(tui_log)
-            logger.debug(f"Added TUI log to monitoring: {tui_log}")
-        
-        # Include subprocess logs if base_log_path is provided
-        if self.base_log_path:
-            base_path = Path(self.base_log_path)
-            log_dir = base_path.parent
-            base_name = base_path.name
-            
-            # Fail fast if directory doesn't exist
-            if log_dir.exists():
-                # Find main subprocess log: {base_name}.log
-                main_log = base_path.with_suffix('.log')
-                if main_log.exists() and main_log.is_file():
-                    discovered_logs.add(main_log)
-                    
-                # Find worker logs: {base_name}_worker_*.log
-                worker_pattern = f"{base_name}_worker_*.log"
-                for log_file in log_dir.glob(worker_pattern):
-                    if log_file.is_file() and self._is_valid_worker_log(log_file, base_name):
-                        discovered_logs.add(log_file)
-                
-        return discovered_logs
 
-    def classify_log_file(self, log_path: Path) -> LogFileInfo:
-        """
-        Pure function: Classify a log file and extract metadata.
 
-        Args:
-            log_path: Path to log file
 
-        Returns:
-            LogFileInfo with classification and metadata
-        """
-        file_name = log_path.name
-
-        # Check if it's the current TUI log
-        if self.include_tui_log:
-            tui_log = self.get_current_tui_log_path()
-            if tui_log and log_path == tui_log:
-                return LogFileInfo(log_path, "tui", display_name="TUI Process")
-
-        # Check subprocess logs if base_log_path is provided
-        if self.base_log_path:
-            base_name = Path(self.base_log_path).name
-
-            # Check if it's the main subprocess log: exact match
-            if file_name == f"{base_name}.log":
-                return LogFileInfo(log_path, "main", display_name="Main Subprocess")
-
-            # Check if it's a worker log: {base_name}_worker_{well_id}.log
-            worker_pattern = rf"^{re.escape(base_name)}_worker_([A-Za-z0-9_]+)\.log$"
-            match = re.match(worker_pattern, file_name)
-            if match:
-                well_id = match.group(1)
-                # Validate well_id format (basic sanity check)
-                if self._is_valid_well_id(well_id):
-                    return LogFileInfo(log_path, "worker", well_id)
-                else:
-                    logger.warning(f"Invalid well ID format in log file: {file_name}")
-
-        # Unknown or malformed log file
-        logger.debug(f"Unrecognized log file pattern: {file_name}")
-        return LogFileInfo(log_path, "unknown")
-
-    def _is_relevant_log_file(self, log_path: Path) -> bool:
-        """Check if a log file is relevant for monitoring."""
-        if not self.base_log_path:
-            return False
-
-        base_name = Path(self.base_log_path).name
-        file_name = log_path.name
-
-        # Check if it matches our patterns
-        if file_name == f"{base_name}.log":
-            return True
-
-        if file_name.startswith(f"{base_name}_worker_") and file_name.endswith('.log'):
-            return True
-
-        return False
-
-    def _is_valid_worker_log(self, log_path: Path, base_name: str) -> bool:
-        """Validate that a file is a properly formatted worker log."""
-        file_name = log_path.name
-        worker_pattern = rf"^{re.escape(base_name)}_worker_([A-Za-z0-9_]+)\.log$"
-        match = re.match(worker_pattern, file_name)
-
-        if not match:
-            return False
-
-        well_id = match.group(1)
-        return self._is_valid_well_id(well_id)
-
-    def _is_valid_well_id(self, well_id: str) -> bool:
-        """Validate well ID format (e.g., A01, B12, etc.)."""
-        # Allow alphanumeric well IDs with underscores
-        # Common formats: A01, B12, A_01, etc.
-        return bool(re.match(r'^[A-Za-z0-9_]+$', well_id)) and len(well_id) <= 10
 
     def _discover_existing_logs(self) -> None:
         """Discover and add existing log files."""
-        discovered = self.discover_logs()
+        discovered = discover_logs(self.base_log_path, self.include_tui_log)
         for log_path in discovered:
             self._add_log_file(log_path)
 
@@ -343,7 +199,7 @@ class ReactiveLogMonitor(Widget):
             return  # Already monitoring
 
         # Classify the log file
-        log_info = self.classify_log_file(log_path)
+        log_info = classify_log_file(log_path, self.base_log_path, self.include_tui_log)
         self._log_info_cache[log_path] = log_info
 
         # Add to active logs (triggers reactive update)

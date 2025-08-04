@@ -46,7 +46,8 @@ setup(
         "setuptools",
         "dill>=0.3.0",
         "PyQt6>=6.5.0",
-        "PyQt6-QScintilla>=2.14.0"
+        "PyQt6-QScintilla>=2.14.0",
+        "pyqtgraph>=0.13.0"
     ],
     extras_require={
         "gpu": [
@@ -78,7 +79,10 @@ setup(
             "pyclesperanto",
 
             # torbi - GPU-accelerated Viterbi decoding (patched fork for PyTorch 2.6+ compatibility)
-            "torbi @ git+https://github.com/trissim/torbi.git"
+            "torbi @ git+https://github.com/trissim/torbi.git",
+
+            # torch_nlm - PyTorch-based non-local means denoising with GPU support
+            "nlm-torch>=0.1.0"
         ]
     }
 )

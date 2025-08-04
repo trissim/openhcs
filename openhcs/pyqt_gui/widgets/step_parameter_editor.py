@@ -195,7 +195,7 @@ class StepParameterEditorWidget(QScrollArea):
             logger.warning("No service adapter available for file dialog")
             return
         
-        from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
+        from openhcs.core.path_cache import PathCacheKey
         
         file_path = self.service_adapter.show_cached_file_dialog(
             cache_key=PathCacheKey.STEP_SETTINGS,

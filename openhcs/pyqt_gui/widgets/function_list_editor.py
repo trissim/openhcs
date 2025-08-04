@@ -299,7 +299,7 @@ class FunctionListEditorWidget(QWidget):
     def save_function_pattern(self):
         """Save function pattern to file (mirrors Textual TUI)."""
         if self.service_adapter:
-            from openhcs.pyqt_gui.utils.path_cache import PathCacheKey
+            from openhcs.core.path_cache import PathCacheKey
             
             file_path = self.service_adapter.show_cached_file_dialog(
                 cache_key=PathCacheKey.FUNCTION_PATTERNS,

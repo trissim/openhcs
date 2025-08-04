@@ -577,26 +577,7 @@ class PlateManagerWidget(QWidget):
             # Create data file for subprocess
             data_file = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pkl')
 
-            # Generate unique ID for this subprocess
-            import time
-            subprocess_timestamp = int(time.time())
-            plate_names = [Path(path).name for path in plate_paths_to_run]
-            unique_id = f"plates_{'_'.join(plate_names[:2])}_{subprocess_timestamp}"
-
-            # Build subprocess log name using log utilities
-            from openhcs.core.log_utils import get_current_log_file_path
-            try:
-                tui_log_path = get_current_log_file_path()
-                if tui_log_path.endswith('.log'):
-                    tui_base = tui_log_path[:-4]  # Remove .log extension
-                else:
-                    tui_base = tui_log_path
-                log_file_base = f"{tui_base}_subprocess_{subprocess_timestamp}"
-            except RuntimeError:
-                # Fallback if no main log found
-                log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
-                log_dir.mkdir(parents=True, exist_ok=True)
-                log_file_base = str(log_dir / f"pyqt_gui_subprocess_{subprocess_timestamp}")
+            # Subprocess will determine its own log file name - no need to micromanage this
 
             # Pickle data for subprocess
             subprocess_data = {
@@ -622,26 +603,16 @@ class PlateManagerWidget(QWidget):
             # Create subprocess
             subprocess_script = Path(__file__).parent.parent.parent / "textual_tui" / "subprocess_runner.py"
 
-            # Generate actual log file path that subprocess will create
-            actual_log_file_path = f"{log_file_base}_{unique_id}.log"
-            logger.debug(f"Log file base: {log_file_base}")
-            logger.debug(f"Unique ID: {unique_id}")
-            logger.debug(f"Actual log file: {actual_log_file_path}")
+            logger.debug(f"Subprocess command: {sys.executable} {subprocess_script} {data_file.name}")
 
-            # Store log file path for monitoring
-            self.log_file_path = actual_log_file_path
-            self.log_file_position = 0
-
-            logger.debug(f"Subprocess command: {sys.executable} {subprocess_script} {data_file.name} {log_file_base} {unique_id}")
-
-            # Create subprocess
+            # Create subprocess - it will determine its own log file name
             def _create_subprocess():
                 return subprocess.Popen([
                     sys.executable, str(subprocess_script),
-                    data_file.name, log_file_base, unique_id
+                    data_file.name  # Only data file - subprocess handles its own logging
                 ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,  # Capture stdout to get log file path
+                stderr=subprocess.PIPE,  # Capture stderr for errors
                 text=True,
                 )
 
@@ -652,8 +623,28 @@ class PlateManagerWidget(QWidget):
 
             logger.info(f"Subprocess started with PID: {self.current_process.pid}")
 
-            # Emit signal for log viewer to start monitoring
-            self.subprocess_log_started.emit(log_file_base)
+            # Read the log file path from subprocess stdout
+            try:
+                # Read first line of stdout to get log file path
+                stdout_line = await loop.run_in_executor(
+                    None, self.current_process.stdout.readline
+                )
+                if stdout_line.startswith("SUBPROCESS_LOG_FILE:"):
+                    self.log_file_path = stdout_line.split(":", 1)[1].strip()
+                    self.log_file_position = 0
+                    logger.debug(f"Subprocess log file: {self.log_file_path}")
+
+                    # Extract base path for log monitoring (remove .log extension)
+                    log_path = Path(self.log_file_path)
+                    actual_base_log_path = str(log_path.with_suffix(''))
+                    logger.debug(f"Emitting subprocess_log_started signal with base_log_path: {actual_base_log_path}")
+                    self.subprocess_log_started.emit(actual_base_log_path)
+                else:
+                    logger.warning(f"Unexpected subprocess output: {stdout_line}")
+                    self.log_file_path = None
+            except Exception as e:
+                logger.error(f"Failed to read subprocess log file path: {e}")
+                self.log_file_path = None
 
             # Update orchestrator states to show running state
             for plate in ready_items:
