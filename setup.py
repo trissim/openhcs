@@ -51,38 +51,38 @@ setup(
     ],
     extras_require={
         "gpu": [
-            # PyTorch - compatible with CUDA 12.6 and CuDNN 9.5.x
-            "torch>=2.5.0,<2.8.0",
-            "torchvision>=0.20.0,<0.22.0",
+            # PyTorch - let pip resolve compatible versions automatically
+            "torch>=2.6.0,<2.8.0",
+            "torchvision>=0.21.0,<0.23.0",
 
-            # JAX - compatible with CUDA 12.6 and modern dependencies
-            "jax>=0.4.38,<0.6.0",
-            "jaxlib>=0.4.38,<0.6.0",
+            # JAX - pinned to current working versions
+            "jax>=0.5.3,<0.6.0",
+            "jaxlib>=0.5.3,<0.6.0",
 
-            # JAX CUDA plugins - compatible range for CUDA 12.x
-            "jax-cuda12-pjrt>=0.5.0,<0.6.0",
-            "jax-cuda12-plugin>=0.5.0,<0.6.0",
+            # JAX CUDA plugins - pinned to current working versions
+            "jax-cuda12-pjrt>=0.5.3,<0.6.0",
+            "jax-cuda12-plugin>=0.5.3,<0.6.0",
 
-            # CuPy - CUDA 12.x optimized version
-            "cupy-cuda12x>=13.0.0,<14.0.0",
+            # CuPy - pinned to current working version
+            "cupy-cuda12x>=13.3.0,<14.0.0",
 
-            # CuCIM - CUDA 12 optimized GPU scikit-image (170 functions, missing filters)
-            "cucim-cu12>=25.0.0,<26.0.0",
+            # CuCIM - pinned to current working version
+            "cucim-cu12>=25.6.0,<26.0.0",
 
-            # TensorFlow - stable version with DLPack support (2.12+ required)
-            "tensorflow>=2.15.0,<2.20.0",
+            # TensorFlow - pinned to current working version
+            "tensorflow>=2.19.0,<2.20.0",
 
-            # TensorFlow Probability - for memory-efficient percentile calculations
-            "tensorflow-probability[tf]>=0.25.0",
+            # TensorFlow Probability - pinned to current working version
+            "tensorflow-probability[tf]>=0.25.0,<0.26.0",
 
-            # pyclesperanto - OpenCL-based GPU image processing
-            "pyclesperanto",
+            # pyclesperanto - pinned to current working version
+            "pyclesperanto>=0.17.1",
 
             # torbi - GPU-accelerated Viterbi decoding (patched fork for PyTorch 2.6+ compatibility)
             "torbi @ git+https://github.com/trissim/torbi.git",
 
             # torch_nlm - PyTorch-based non-local means denoising with GPU support
-            "nlm-torch>=0.1.0"
+            # "nlm-torch>=0.1.0"  # Disabled: requires numpy==1.23.5 which conflicts with modern stack
         ]
     }
 )
