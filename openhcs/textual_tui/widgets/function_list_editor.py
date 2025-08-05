@@ -489,7 +489,7 @@ class FunctionListEditorWidget(Container):
 
         from openhcs.textual_tui.windows import open_file_browser_window, BrowserMode
         from openhcs.constants.constants import Backend
-        from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+        from openhcs.core.path_cache import get_cached_browser_path, PathCacheKey
 
         def handle_result(result):
             logger.debug(f"🔍 LOAD FUNC: File browser callback received result: {result} (type: {type(result)})")

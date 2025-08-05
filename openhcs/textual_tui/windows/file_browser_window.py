@@ -361,7 +361,7 @@ class FileBrowserWindow(BaseOpenHCSWindow):
 
     def _cache_successful_path(self, result):
         """Cache the successful path selection."""
-        from openhcs.textual_tui.utils.path_cache import get_path_cache
+        from openhcs.core.path_cache import get_path_cache
 
         try:
             path_cache = get_path_cache()

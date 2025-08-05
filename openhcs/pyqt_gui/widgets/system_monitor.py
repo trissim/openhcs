@@ -83,11 +83,21 @@ class SystemMonitorWidget(QWidget):
         # Setup UI
         self.setup_ui()
         self.setup_connections()
-        
-        # Start monitoring
-        self.start_monitoring()
-        
+
+        # Delay monitoring start until widget is shown (fixes WSL2 hanging)
+        self._monitoring_started = False
+
         logger.debug("System monitor widget initialized")
+
+    def showEvent(self, event):
+        """Handle widget show event - start monitoring when widget becomes visible."""
+        super().showEvent(event)
+        if not self._monitoring_started:
+            # Start monitoring only when widget is actually shown
+            # This prevents WSL2 hanging issues during initialization
+            self.start_monitoring()
+            self._monitoring_started = True
+            logger.debug("System monitoring started on widget show")
 
     def closeEvent(self, event):
         """Handle widget close event - cleanup resources."""

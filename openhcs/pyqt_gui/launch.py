@@ -9,6 +9,8 @@ Provides command-line interface and application initialization.
 import sys
 import argparse
 import logging
+import os
+import platform
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +23,29 @@ except ImportError:
     from openhcs.core.config import get_default_global_config
 
 from openhcs.pyqt_gui.app import OpenHCSPyQtApp
+
+
+def is_wsl() -> bool:
+    """Check if running in Windows Subsystem for Linux."""
+    try:
+        return 'microsoft' in platform.uname().release.lower()
+    except Exception:
+        return False
+
+
+def setup_qt_platform():
+    """Setup Qt platform for different environments, especially WSL2."""
+    # Check if QT_QPA_PLATFORM is already set
+    if 'QT_QPA_PLATFORM' in os.environ:
+        logging.debug(f"QT_QPA_PLATFORM already set to: {os.environ['QT_QPA_PLATFORM']}")
+        return
+
+    # For WSL2, we need to explicitly set the platform to xcb
+    if is_wsl():
+        os.environ['QT_QPA_PLATFORM'] = 'xcb'
+        logging.info("WSL2 detected - setting QT_QPA_PLATFORM=xcb")
+    else:
+        logging.debug("Not running in WSL2 - using default Qt platform")
 
 
 def setup_logging(log_level: str = "INFO", log_file: Optional[Path] = None):
@@ -205,11 +230,14 @@ def main():
     
     # Setup logging
     setup_logging(args.log_level, args.log_file)
-    
+
     logging.info("Starting OpenHCS PyQt6 GUI...")
     logging.info(f"Python version: {sys.version}")
     logging.info(f"Platform: {sys.platform}")
-    
+
+    # Setup Qt platform (must be done before creating QApplication)
+    setup_qt_platform()
+
     try:
         # Check dependencies
         if not check_dependencies():

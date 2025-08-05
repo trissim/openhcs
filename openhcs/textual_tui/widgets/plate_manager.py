@@ -1634,7 +1634,7 @@ class PlateManagerWidget(ButtonListWidget):
             # Launch file browser to save the script
             from openhcs.textual_tui.windows.file_browser_window import open_file_browser_window, BrowserMode
             from openhcs.textual_tui.services.file_browser_service import SelectionMode
-            from openhcs.textual_tui.utils.path_cache import get_cached_browser_path, PathCacheKey
+            from openhcs.core.path_cache import get_cached_browser_path, PathCacheKey
             from openhcs.constants.constants import Backend
 
             def handle_save_result(result):
