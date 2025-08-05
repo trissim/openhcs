@@ -22,16 +22,17 @@ def collect_imports_from_data(data_obj):
     enum_imports = defaultdict(set)
 
     def find_and_register_imports(obj):
-        # Extract exact logic from lines 111-126
         if isinstance(obj, Enum):
             module = obj.__class__.__module__
             name = obj.__class__.__name__
-            if module and name and module.startswith('openhcs'):
+            # Only skip built-in modules that don't need imports
+            if module and name and module != 'builtins':
                 enum_imports[module].add(name)
         elif callable(obj):
             module = getattr(obj, '__module__', None)
             name = getattr(obj, '__name__', None)
-            if module and name and module.startswith('openhcs'):
+            # Only skip built-in modules that don't need imports
+            if module and name and module != 'builtins':
                 function_imports[module].add(name)
         elif isinstance(obj, (list, tuple)):
             for item in obj:
@@ -277,36 +278,163 @@ def generate_readable_function_repr(func_obj, indent=0, clean_mode=False):
         return _value_to_repr(func_obj)
 
 
+def _format_parameter_value(param_name, value):
+    """Generic parameter formatting with type-based rules."""
+    from enum import Enum
+
+    # Handle different value types generically
+    if isinstance(value, Enum):
+        # For any enum, use ClassName.VALUE_NAME format
+        return f"{value.__class__.__name__}.{value.name}"
+    elif isinstance(value, str):
+        # String values need quotes
+        return f'"{value}"'
+    elif isinstance(value, list):
+        # Handle lists of enums or other objects
+        if value and isinstance(value[0], Enum):
+            enum_reprs = [f"{item.__class__.__name__}.{item.name}" for item in value]
+            return f"[{', '.join(enum_reprs)}]"
+        else:
+            return repr(value)
+    else:
+        # Use standard repr for everything else (bool, int, float, None, etc.)
+        return repr(value)
+
+
+def _collect_enum_classes_from_step(step):
+    """Collect enum classes referenced in step parameters for import generation."""
+    from enum import Enum
+    import inspect
+
+    enum_classes = set()
+    sig = inspect.signature(FunctionStep.__init__)
+
+    for param_name, param in sig.parameters.items():
+        if param_name in ['self', 'func']:
+            continue
+
+        value = getattr(step, param_name)
+
+        # Collect enum classes from parameter values
+        if isinstance(value, Enum):
+            enum_classes.add(value.__class__)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, Enum):
+                    enum_classes.add(item.__class__)
+
+    return enum_classes
+
+
+def _collect_dataclass_classes_from_object(obj, visited=None):
+    """Recursively collect dataclass classes that will be referenced in generated code."""
+    import dataclasses
+    from enum import Enum
+
+    if visited is None:
+        visited = set()
+
+    # Avoid infinite recursion
+    if id(obj) in visited:
+        return set(), set()
+    visited.add(id(obj))
+
+    dataclass_classes = set()
+    enum_classes = set()
+
+    if dataclasses.is_dataclass(obj):
+        # Add the dataclass class itself
+        dataclass_classes.add(obj.__class__)
+
+        # Recursively check all fields
+        for field in dataclasses.fields(obj):
+            field_value = getattr(obj, field.name)
+            nested_dataclasses, nested_enums = _collect_dataclass_classes_from_object(field_value, visited)
+            dataclass_classes.update(nested_dataclasses)
+            enum_classes.update(nested_enums)
+
+    elif isinstance(obj, Enum):
+        # Collect enum classes from enum values
+        enum_classes.add(obj.__class__)
+
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            nested_dataclasses, nested_enums = _collect_dataclass_classes_from_object(item, visited)
+            dataclass_classes.update(nested_dataclasses)
+            enum_classes.update(nested_enums)
+
+    elif isinstance(obj, dict):
+        for value in obj.values():
+            nested_dataclasses, nested_enums = _collect_dataclass_classes_from_object(value, visited)
+            dataclass_classes.update(nested_dataclasses)
+            enum_classes.update(nested_enums)
+
+    return dataclass_classes, enum_classes
+
+
+def _generate_step_parameters(step, default_step, clean_mode=False):
+    """Automatically generate all FunctionStep parameters using introspection."""
+    import inspect
+
+    step_args = []
+    sig = inspect.signature(FunctionStep.__init__)
+
+    for param_name, param in sig.parameters.items():
+        # Skip constructor-specific parameters
+        if param_name in ['self', 'func']:
+            continue
+
+        current_val = getattr(step, param_name)
+        default_val = getattr(default_step, param_name)
+
+        # Include parameter if it differs from default (clean mode) or always (full mode)
+        if not clean_mode or current_val != default_val:
+            formatted_val = _format_parameter_value(param_name, current_val)
+            step_args.append(f"{param_name}={formatted_val}")
+
+    return step_args
+
+
 def generate_complete_pipeline_steps_code(pipeline_steps, clean_mode=False):
     """Generate complete Python code for pipeline steps with imports."""
     # Build code with imports and steps
     code_lines = ["# Edit this pipeline and save to apply changes", ""]
 
-    # Add required imports for FunctionStep and VariableComponents
-    code_lines.extend([
-        "# Required imports",
-        "from openhcs.core.steps.function_step import FunctionStep",
-        "from openhcs.constants.constants import VariableComponents",
-        ""
-    ])
-
-    # Collect imports from all function patterns in the pipeline steps (encapsulation)
+    # Collect imports from ALL data in pipeline steps (functions AND parameters)
     all_function_imports = defaultdict(set)
     all_enum_imports = defaultdict(set)
 
     for step in pipeline_steps:
-        # Get imports from each function pattern
+        # Get imports from function patterns
         func_imports, enum_imports = collect_imports_from_data(step.func)
-        # Merge into pipeline-level imports
+        # Get imports from step parameters (variable_components, group_by, etc.)
+        param_imports, param_enums = collect_imports_from_data(step)
+
+        # Get enum classes referenced in generated code (VariableComponents, GroupBy, etc.)
+        enum_classes = _collect_enum_classes_from_step(step)
+        for enum_class in enum_classes:
+            module = enum_class.__module__
+            name = enum_class.__name__
+            if module and name:
+                all_enum_imports[module].add(name)
+
+        # Merge all imports
         for module, names in func_imports.items():
             all_function_imports[module].update(names)
         for module, names in enum_imports.items():
             all_enum_imports[module].update(names)
+        for module, names in param_imports.items():
+            all_function_imports[module].update(names)
+        for module, names in param_enums.items():
+            all_enum_imports[module].update(names)
 
-    # Format and add function pattern imports
+    # Add FunctionStep import (always needed for generated code)
+    all_function_imports['openhcs.core.steps.function_step'].add('FunctionStep')
+
+    # Format and add all collected imports
     import_lines = format_imports_as_strings(all_function_imports, all_enum_imports)
     if import_lines:
-        code_lines.append("# Function and Enum imports from encapsulated patterns")
+        code_lines.append("# Automatically collected imports")
         code_lines.extend(import_lines)
         code_lines.append("")
 
@@ -320,22 +448,9 @@ def generate_complete_pipeline_steps_code(pipeline_steps, clean_mode=False):
         code_lines.append(f"# Step {i+1}: {step.name}")
         func_repr = generate_readable_function_repr(step.func, indent=1, clean_mode=clean_mode)
 
-        # Generate FunctionStep arguments (exact logic from lines 178-192)
+        # Generate all FunctionStep parameters automatically
         step_args = [f"func={func_repr}"]
-
-        params_to_check = {
-            "name": (f'name="{step.name}"', step.name, default_step.name),
-            "variable_components": (
-                f'variable_components=[VariableComponents.{step.variable_components[0].name}]',
-                step.variable_components,
-                default_step.variable_components
-            ),
-            "force_disk_output": (f'force_disk_output={step.force_disk_output}', step.force_disk_output, default_step.force_disk_output)
-        }
-
-        for name, (repr_str, current_val, default_val) in params_to_check.items():
-            if not clean_mode or current_val != default_val:
-                step_args.append(repr_str)
+        step_args.extend(_generate_step_parameters(step, default_step, clean_mode))
 
         args_str = ",\n    ".join(step_args)
         code_lines.append(f"step_{i+1} = FunctionStep(\n    {args_str}\n)")
@@ -350,36 +465,64 @@ def generate_complete_orchestrator_code(plate_paths, pipeline_data, global_confi
     # Build complete code (extract exact logic from lines 150-200)
     code_lines = ["# Edit this orchestrator configuration and save to apply changes", ""]
 
-    # Add required imports for orchestrator
-    code_lines.extend([
-        "# Required imports",
-        "from openhcs.core.steps.function_step import FunctionStep",
-        "from openhcs.constants.constants import VariableComponents",
-        "from openhcs.core.config import GlobalPipelineConfig, PathPlanningConfig, VFSConfig, ZarrConfig",
-        "from openhcs.core.config import AnalysisConsolidationConfig, PlateMetadataConfig",
-        "from openhcs.constants.constants import Backend, Microscope",
-        "from openhcs.core.config import MaterializationBackend, ZarrCompressor, ZarrChunkStrategy",
-        ""
-    ])
-
-    # Collect imports from ALL encapsulated pipeline steps (encapsulation)
+    # Collect imports from ALL data in orchestrator (functions, parameters, config)
     all_function_imports = defaultdict(set)
     all_enum_imports = defaultdict(set)
 
+    # Collect from pipeline steps
     for plate_path, steps in pipeline_data.items():
         for step in steps:
-            # Get imports from each function pattern in each pipeline
+            # Get imports from function patterns
             func_imports, enum_imports = collect_imports_from_data(step.func)
-            # Merge into orchestrator-level imports
+            # Get imports from step parameters
+            param_imports, param_enums = collect_imports_from_data(step)
+
+            # Get enum classes referenced in generated code
+            enum_classes = _collect_enum_classes_from_step(step)
+            for enum_class in enum_classes:
+                module = enum_class.__module__
+                name = enum_class.__name__
+                if module and name:
+                    all_enum_imports[module].add(name)
+
+            # Merge all imports
             for module, names in func_imports.items():
                 all_function_imports[module].update(names)
             for module, names in enum_imports.items():
                 all_enum_imports[module].update(names)
+            for module, names in param_imports.items():
+                all_function_imports[module].update(names)
+            for module, names in param_enums.items():
+                all_enum_imports[module].update(names)
 
-    # Format and add function pattern imports
+    # Collect from global config
+    config_imports, config_enums = collect_imports_from_data(global_config)
+    for module, names in config_imports.items():
+        all_function_imports[module].update(names)
+    for module, names in config_enums.items():
+        all_enum_imports[module].update(names)
+
+    # Collect dataclass and enum classes referenced in generated code (PathPlanningConfig, VFSConfig, Backend, etc.)
+    dataclass_classes, config_enum_classes = _collect_dataclass_classes_from_object(global_config)
+    for dataclass_class in dataclass_classes:
+        module = dataclass_class.__module__
+        name = dataclass_class.__name__
+        if module and name:
+            all_function_imports[module].add(name)
+
+    for enum_class in config_enum_classes:
+        module = enum_class.__module__
+        name = enum_class.__name__
+        if module and name:
+            all_enum_imports[module].add(name)
+
+    # Add always-needed imports for generated code structure
+    all_function_imports['openhcs.core.steps.function_step'].add('FunctionStep')
+
+    # Format and add all collected imports
     import_lines = format_imports_as_strings(all_function_imports, all_enum_imports)
     if import_lines:
-        code_lines.append("# Function and Enum imports from encapsulated pipelines")
+        code_lines.append("# Automatically collected imports")
         code_lines.extend(import_lines)
         code_lines.append("")
 
@@ -407,20 +550,9 @@ def generate_complete_orchestrator_code(plate_paths, pipeline_data, global_confi
             code_lines.append(f"# Step {i+1}: {step.name}")
             func_repr = generate_readable_function_repr(step.func, indent=1, clean_mode=clean_mode)
 
+            # Generate all FunctionStep parameters automatically
             step_args = [f"func={func_repr}"]
-            params_to_check = {
-                "name": (f'name="{step.name}"', step.name, default_step.name),
-                "variable_components": (
-                    f'variable_components=[VariableComponents.{step.variable_components[0].name}]',
-                    step.variable_components,
-                    default_step.variable_components
-                ),
-                "force_disk_output": (f'force_disk_output={step.force_disk_output}', step.force_disk_output, default_step.force_disk_output)
-            }
-
-            for name, (repr_str, current_val, default_val) in params_to_check.items():
-                if not clean_mode or current_val != default_val:
-                    step_args.append(repr_str)
+            step_args.extend(_generate_step_parameters(step, default_step, clean_mode))
 
             args_str = ",\n    ".join(step_args)
             code_lines.append(f"step_{i+1} = FunctionStep(\n    {args_str}\n)")
