@@ -16,27 +16,31 @@ class ClickableHelpLabel(QLabel):
     
     help_requested = pyqtSignal()
     
-    def __init__(self, text: str, help_target: Union[Callable, type] = None, 
-                 param_name: str = None, param_description: str = None, 
-                 param_type: type = None, parent=None):
+    def __init__(self, text: str, help_target: Union[Callable, type] = None,
+                 param_name: str = None, param_description: str = None,
+                 param_type: type = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         """Initialize clickable help label.
-        
+
         Args:
             text: Display text for the label
             help_target: Function or class to show help for (for function help)
             param_name: Parameter name (for parameter help)
             param_description: Parameter description (for parameter help)
             param_type: Parameter type (for parameter help)
+            color_scheme: Color scheme for styling (optional, uses default if None)
         """
         # Add help indicator to text
         display_text = f"{text} (?)"
         super().__init__(display_text, parent)
-        
+
+        # Initialize color scheme
+        self.color_scheme = color_scheme or PyQt6ColorScheme()
+
         self.help_target = help_target
         self.param_name = param_name
         self.param_description = param_description
         self.param_type = param_type
-        
+
         # Style as clickable
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setStyleSheet(f"""
@@ -76,22 +80,23 @@ class ClickableHelpLabel(QLabel):
 
 class ClickableFunctionTitle(ClickableHelpLabel):
     """PyQt6 clickable function title that shows function documentation - mirrors Textual TUI."""
-    
-    def __init__(self, func: Callable, index: int = None, parent=None):
+
+    def __init__(self, func: Callable, index: int = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         func_name = getattr(func, '__name__', 'Unknown Function')
         module_name = getattr(func, '__module__', '').split('.')[-1] if func else ''
-        
+
         # Build title text
         title = f"{index + 1}: {func_name}" if index is not None else func_name
         if module_name:
             title += f" ({module_name})"
-            
+
         super().__init__(
             text=title,
             help_target=func,
+            color_scheme=color_scheme,
             parent=parent
         )
-        
+
         # Make title bold
         font = QFont()
         font.setBold(True)
@@ -100,17 +105,18 @@ class ClickableFunctionTitle(ClickableHelpLabel):
 
 class ClickableParameterLabel(ClickableHelpLabel):
     """PyQt6 clickable parameter label that shows parameter documentation - mirrors Textual TUI."""
-    
-    def __init__(self, param_name: str, param_description: str = None, 
-                 param_type: type = None, parent=None):
+
+    def __init__(self, param_name: str, param_description: str = None,
+                 param_type: type = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
         # Format parameter name nicely
         display_name = param_name.replace('_', ' ').title()
-        
+
         super().__init__(
             text=display_name,
             param_name=param_name,
             param_description=param_description or "No description available",
             param_type=param_type,
+            color_scheme=color_scheme,
             parent=parent
         )
 

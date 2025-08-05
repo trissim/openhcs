@@ -15,16 +15,16 @@ setup(
     name="openhcs",
     packages=find_packages(include=["openhcs", "openhcs.*"]),
     install_requires=[
-        "numpy>=1.20.0",
-        "scikit-image>=0.18.0",
-        "scikit-learn>=1.0.0",
-        "scipy>=1.6.0",
-        "pandas>=1.2.0",
-        "imageio>=2.9.0",
-        "tifffile>=2021.1.1",
-        "imagecodecs>=2021.1.1",
+        "numpy>=1.26.0",  # Compatible with modern PyTorch/JAX (2023+)
+        "scikit-image>=0.22.0",  # Compatible with modern GPU stack (2024+)
+        "scikit-learn>=1.3.0",  # Compatible with modern numpy/scipy
+        "scipy>=1.10.0",  # Compatible with modern numpy (2023+)
+        "pandas>=2.0.0",  # Modern pandas with better performance
+        "imageio>=2.31.0",  # Modern imageio with better format support
+        "tifffile>=2023.7.10",  # Modern tifffile with zarr support
+        "imagecodecs>=2023.7.4",  # Modern imagecodecs with better compression
         #"ashlar>=1.14.0",
-        "opencv-python>=4.5.0",
+        "opencv-python>=4.8.0",  # Modern OpenCV compatible with Python 3.12
         "Multi-Template-Matching>=2.0.0",
         "PyYAML>=6.0",
         "zarr>=2.10.0",
