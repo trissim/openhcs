@@ -268,7 +268,7 @@ class ParameterFormManager(QWidget):
                     widget.setCurrentIndex(index)
 
             widget.currentIndexChanged.connect(
-                lambda index: self._emit_parameter_change(param_name, [widget.itemData(index)])
+                lambda index: self._emit_parameter_change(param_name, widget.itemData(index))
             )
             return widget
         

@@ -157,17 +157,15 @@ class StepParameterEditorWidget(QScrollArea):
     def _handle_parameter_change(self, param_name: str, value: Any):
         """Handle parameter change from form manager (mirrors Textual TUI)."""
         try:
-            # Convert value to appropriate type
-            if param_name == 'force_disk_output':
-                value = bool(value)
-            elif param_name in ('input_dir', 'output_dir') and value:
-                value = Path(value)
-            
+            # Get the properly converted value from the form manager
+            # The form manager handles all type conversions including List[Enum]
+            final_value = self.form_manager.get_current_values().get(param_name, value)
+
             # Update step attribute
-            setattr(self.step, param_name, value)
-            logger.debug(f"Updated step parameter {param_name}={value}")
+            setattr(self.step, param_name, final_value)
+            logger.debug(f"Updated step parameter {param_name}={final_value}")
             self.step_parameter_changed.emit()
-            
+
         except Exception as e:
             logger.error(f"Error updating step parameter {param_name}: {e}")
     
