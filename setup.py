@@ -15,39 +15,39 @@ setup(
     name="openhcs",
     packages=find_packages(include=["openhcs", "openhcs.*"]),
     install_requires=[
-        "numpy>=1.26.0",  # Compatible with modern PyTorch/JAX (2023+)
-        "scikit-image>=0.22.0",  # Compatible with modern GPU stack (2024+)
-        "scikit-learn>=1.3.0",  # Compatible with modern numpy/scipy
-        "scipy>=1.10.0",  # Compatible with modern numpy (2023+)
-        "pandas>=2.0.0",  # Modern pandas with better performance
-        "imageio>=2.31.0",  # Modern imageio with better format support
-        "tifffile>=2023.7.10",  # Modern tifffile with zarr support
-        "imagecodecs>=2023.7.4",  # Modern imagecodecs with better compression
+        "numpy>=1.26.4",  # Compatible with modern PyTorch/JAX (2023+)
+        "scikit-image>=0.25.2",  # Compatible with modern GPU stack (2024+)
+        "scikit-learn>=1.7.1",  # Compatible with modern numpy/scipy
+        "scipy>=1.12.0",  # Compatible with modern numpy (2023+)
+        "pandas>=2.3.1",  # Modern pandas with better performance
+        "imageio>=2.37.0",  # Modern imageio with better format support
+        "tifffile>=2025.6.11",  # Modern tifffile with zarr support
+        "imagecodecs>=2025.3.30",  # Modern imagecodecs with better compression
         #"ashlar>=1.14.0",
-        "opencv-python>=4.8.0",  # Modern OpenCV compatible with Python 3.12
-        "Multi-Template-Matching>=2.0.0",
-        "PyYAML>=6.0",
-        "zarr>=2.10.0",
-        "ome-zarr>=0.8.0",
-        "pygments>=2.10.0",
-        "textual>=3.0.0",
-        "textual-serve>=1.0.0",
+        "opencv-python>=4.11.0.86",  # Modern OpenCV compatible with Python 3.12
+        "Multi-Template-Matching>=2.0.1",
+        "PyYAML>=6.0.2",
+        "zarr>=2.18.7",
+        "ome-zarr>=0.11.1",
+        "pygments>=2.19.2",
+        "textual>=3.7.1",
+        "textual-serve>=1.1.2",
         "textual-terminal",
         "textual-universal-directorytree",
         "textual-window @ git+https://github.com/trissim/textual-window.git",
         "toolong @ git+https://github.com/trissim/toolong.git",
         "basicpy @ git+https://github.com/trissim/BaSiCPy.git",
-        "plotext>=5.2.0",
-        "psutil>=5.9.0",
+        "plotext>=5.3.2",
+        "psutil>=7.0.0",
         "GPUtil>=1.4.0",
         "textual-plotext",
-        "watchdog>=2.0.0",
+        "watchdog>=6.0.0",
         "napari",
         "setuptools",
-        "dill>=0.3.0",
-        "PyQt6>=6.5.0",
-        "PyQt6-QScintilla>=2.14.0",
-        "pyqtgraph>=0.13.0"
+        "dill>=0.4.0",
+        "PyQt6>=6.9.1",
+        "PyQt6-QScintilla>=2.14.1",
+        "pyqtgraph>=0.13.7"
     ],
     extras_require={
         "gpu": [
