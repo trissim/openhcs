@@ -230,7 +230,7 @@ class HelpWindowManager:
                     cls._docstring_window = None
 
             # Create new window
-            cls._docstring_window = DocstringHelpWindow(target, title, parent)
+            cls._docstring_window = DocstringHelpWindow(target, title=title, parent=parent)
             cls._docstring_window.show()
 
         except Exception as e:
@@ -257,7 +257,7 @@ class HelpWindowManager:
                     cls._parameter_window = None
 
             # Create new window
-            cls._parameter_window = ParameterHelpWindow(param_name, param_description, param_type, parent)
+            cls._parameter_window = ParameterHelpWindow(param_name, param_description, param_type, parent=parent)
             cls._parameter_window.show()
 
         except Exception as e:
