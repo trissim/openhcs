@@ -162,8 +162,8 @@ class PipelineCompiler:
                                 f"Setting group_by=None to maintain semantic coherence.")
                     current_plan["group_by"] = None
 
-                if hasattr(step, 'func'): # func attribute is set in FunctionStep.__init__
-                    current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
+                # func attribute is guaranteed in FunctionStep.__init__
+                current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
 
                 # Memory type hints from step instance (set in FunctionStep.__init__ if provided)
                 # These are initial hints; FuncStepContractValidator will set final types.
@@ -207,8 +207,7 @@ class PipelineCompiler:
 
             will_use_zarr = (
                 vfs_config.materialization_backend == MaterializationBackend.ZARR and
-                (step.requires_disk_output or
-                 getattr(step, "force_disk_output", False) or
+                (getattr(step, "force_disk_output", False) or
                  steps_definition.index(step) == len(steps_definition) - 1)
             )
 

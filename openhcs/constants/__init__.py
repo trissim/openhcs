@@ -19,6 +19,7 @@ from openhcs.constants.constants import (  # Backend constants; Memory constants
     REQUIRES_DISK_READ, REQUIRES_DISK_WRITE, SUPPORTED_MEMORY_TYPES,
     VALID_GPU_MEMORY_TYPES, VALID_MEMORY_TYPES, WRITE_BACKEND, Backend,
     GroupBy, MemoryType, Microscope, VariableComponents)
+from openhcs.constants.input_source import InputSource
 
 __all__ = [
     # Backends
@@ -34,6 +35,9 @@ __all__ = [
     'DEFAULT_IMAGE_EXTENSION', 'DEFAULT_IMAGE_EXTENSIONS', 'DEFAULT_SITE_PADDING',
     'DEFAULT_RECURSIVE_PATTERN_SEARCH', 'DEFAULT_VARIABLE_COMPONENTS', 'DEFAULT_GROUP_BY',
     'GroupBy', 'VariableComponents', 'Microscope', 'DEFAULT_MICROSCOPE',
+
+    # Input Source
+    'InputSource',
 
     # Pipeline
     'DEFAULT_NUM_WORKERS', 'DEFAULT_OUT_DIR_SUFFIX',

@@ -363,8 +363,6 @@ Each step gets a comprehensive execution plan:
        },
 
        # Flags
-       "requires_disk_input": True,
-       "requires_disk_output": False,
        "force_disk_output": False,
        "visualize": False
    }

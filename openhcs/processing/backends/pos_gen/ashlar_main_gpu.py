@@ -16,7 +16,7 @@ import scipy.spatial.distance
 import sklearn.linear_model
 import pandas as pd
 
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs, chain_breaker
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.utils import optional_import
 
@@ -790,7 +790,6 @@ def _convert_ashlar_positions_to_openhcs_gpu(ashlar_positions) -> List[Tuple[flo
 
 @special_inputs("grid_dimensions")
 @special_outputs("positions")
-@chain_breaker
 @cupy_func
 def ashlar_compute_tile_positions_gpu(
     image_stack,

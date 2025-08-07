@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
 from openhcs.constants.constants import VariableComponents, GroupBy
+from openhcs.constants.input_source import InputSource
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -68,6 +69,38 @@ class AbstractStep(abc.ABC):
     ProcessingContext (which is frozen) and their specific plan within
     context.step_plans.
 
+    Input Source Control:
+
+    The input_source parameter controls where a step reads its input data:
+
+    - InputSource.PREVIOUS_STEP (default): Standard pipeline chaining where the step
+      reads from the output directory of the previous step. This maintains normal
+      sequential data flow.
+
+    - InputSource.PIPELINE_START: The step reads from the original pipeline input
+      directory, bypassing all previous step outputs. This replaces the @chain_breaker
+      decorator functionality and is used for position generation and quality control.
+
+    Usage Examples:
+
+    Standard processing step (default):
+    ```python
+    step = FunctionStep(
+        func=my_processing_function,
+        name="process_images"
+        # input_source defaults to InputSource.PREVIOUS_STEP
+    )
+    ```
+
+    Position generation accessing original images:
+    ```python
+    step = FunctionStep(
+        func=ashlar_compute_tile_positions_gpu,
+        name="compute_positions",
+        input_source=InputSource.PIPELINE_START
+    )
+    ```
+
     # Clause 3 — Declarative Primacy
     # Clause 66 — Immutability After Construction
     # Clause 88 — No Inferred Capabilities
@@ -77,17 +110,7 @@ class AbstractStep(abc.ABC):
     # Clause 503 — Cognitive Load Transfer
     """
 
-    @property
-    @abstractmethod
-    def requires_disk_input(self) -> bool:
-        """Indicates if the step requires its primary input to be on disk."""
-        pass
 
-    @property
-    @abstractmethod
-    def requires_disk_output(self) -> bool:
-        """Indicates if the step requires its primary output to be written to disk."""
-        pass
 
     # Step metadata - these are primarily used during pipeline definition and compilation
     step_id: str
@@ -106,7 +129,8 @@ class AbstractStep(abc.ABC):
         force_disk_output: Optional[bool] = False,
         group_by: Optional[GroupBy] = None,
         input_dir: Optional[Union[str,Path]] = None, # Used during path planning
-        output_dir: Optional[Union[str,Path]] = None # Used during path planning
+        output_dir: Optional[Union[str,Path]] = None, # Used during path planning
+        input_source: InputSource = InputSource.PREVIOUS_STEP
     ) -> None:
         """
         Initialize a step. These attributes are primarily used during the
@@ -121,6 +145,9 @@ class AbstractStep(abc.ABC):
             group_by: Optional grouping hint for step execution.
             input_dir: Hint for input directory, used by path planner.
             output_dir: Hint for output directory, used by path planner.
+            input_source: Input source strategy for this step. Defaults to PREVIOUS_STEP
+                         for normal pipeline chaining. Use PIPELINE_START to access
+                         original input data (replaces @chain_breaker decorator).
         """
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components
@@ -128,6 +155,7 @@ class AbstractStep(abc.ABC):
         self.group_by = group_by
         self.input_dir = input_dir
         self.output_dir = output_dir
+        self.input_source = input_source
 
         # Generate a stable step_id based on object id at instantiation.
         # This ID is used to link the step object to its plan in the context.

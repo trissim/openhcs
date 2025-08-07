@@ -67,9 +67,8 @@ Backend Selection Issues
 
 **Symptoms**: Steps assigned incorrect read/write backends
 
-**Investigation Steps**: 1. Check step’s ``requires_disk_input`` and
-``requires_disk_output`` properties 2. Verify step position in pipeline
-(first/last have special rules) 3. Check ``force_disk_output`` flag 4.
+**Investigation Steps**: 1. Check step’s step position in pipeline
+(first/last have special rules) 2. Check ``force_disk_output`` flag 3.
 Verify VFS configuration in global_config
 
 Phase 4 Errors: Memory Contract Validation

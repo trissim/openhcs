@@ -169,7 +169,6 @@ The pipeline compiler determines optimal storage locations based on:
 4. **Explicit Flags**:
 
    -  ``force_disk_output``: Override to force disk storage
-   -  ``requires_disk_input/output``: Step-level requirements
 
 Step Plan Integration
 ~~~~~~~~~~~~~~~~~~~~~
