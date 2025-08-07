@@ -100,25 +100,6 @@ def special_inputs(*input_names: str) -> Callable[[F], F]:
     return decorator
 
 
-def chain_breaker(func: F) -> F:
-    """
-    Decorator that marks a function as a chain breaker.
 
-    Chain breakers are functions that explicitly break the automatic chaining
-    of functions in a pipeline. They are used when a function needs to operate
-    independently of the normal pipeline flow.
-
-    The path planner will force any step following a chain breaker step
-    (a step with a single function in the pattern) to have its input be the
-    same as the input of the step at the beginning of the pipeline.
-
-    This decorator takes no arguments - its presence alone is sufficient to
-    mark a function as a chain breaker.
-
-    Returns:
-        The decorated function with chain breaker attribute set
-    """
-    func.__chain_breaker__ = True
-    return func
 
 

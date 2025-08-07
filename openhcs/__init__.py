@@ -11,6 +11,16 @@ import logging
 
 __version__ = "0.1.0"
 
+# Monkey patch logging.FileHandler to default to UTF-8 encoding
+# This ensures all log files support emojis and Unicode characters
+_original_file_handler_init = logging.FileHandler.__init__
+
+def _utf8_file_handler_init(self, filename, mode='a', encoding='utf-8', delay=False, errors=None):
+    """FileHandler.__init__ with UTF-8 encoding as default."""
+    return _original_file_handler_init(self, filename, mode, encoding, delay, errors)
+
+logging.FileHandler.__init__ = _utf8_file_handler_init
+
 # Set up basic logging configuration if none exists
 # This ensures INFO level logging works when testing outside the TUI
 def _ensure_basic_logging():

@@ -21,6 +21,7 @@ from openhcs.constants.constants import (DEFAULT_IMAGE_EXTENSION,
                                              DEFAULT_IMAGE_EXTENSIONS,
                                              DEFAULT_SITE_PADDING, Backend,
                                              MemoryType, VariableComponents, GroupBy)
+from openhcs.constants.input_source import InputSource
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
@@ -705,7 +706,8 @@ class FunctionStep(AbstractStep):
         func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
         *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
         group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False,
-        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None
+        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None,
+        input_source: InputSource = InputSource.PREVIOUS_STEP
     ):
         actual_func_for_name = func
         if isinstance(func, tuple): actual_func_for_name = func[0]
@@ -718,7 +720,8 @@ class FunctionStep(AbstractStep):
             name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
             variable_components=variable_components, group_by=group_by,
             force_disk_output=force_disk_output,
-            input_dir=input_dir, output_dir=output_dir
+            input_dir=input_dir, output_dir=output_dir,
+            input_source=input_source
         )
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 

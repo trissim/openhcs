@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Tuple
 
 from openhcs.constants.constants import DEFAULT_PATCH_SIZE, DEFAULT_SEARCH_RADIUS
 from openhcs.core.memory.decorators import cupy as cupy_func
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs, chain_breaker
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.utils import optional_import
 
 from .phase_correlation import phase_correlation_gpu_only, phase_correlation_nist_gpu
@@ -445,7 +445,6 @@ def _global_optimization_gpu_only(
 
 @special_inputs("grid_dimensions")
 @special_outputs("positions")
-@chain_breaker
 @cupy_func
 def mist_compute_tile_positions(
     image_stack: "cp.ndarray",  # type: ignore

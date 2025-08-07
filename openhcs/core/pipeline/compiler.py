@@ -162,8 +162,8 @@ class PipelineCompiler:
                                 f"Setting group_by=None to maintain semantic coherence.")
                     current_plan["group_by"] = None
 
-                if hasattr(step, 'func'): # func attribute is set in FunctionStep.__init__
-                    current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
+                # func attribute is guaranteed in FunctionStep.__init__
+                current_plan["func_name"] = getattr(step.func, '__name__', str(step.func))
 
                 # Memory type hints from step instance (set in FunctionStep.__init__ if provided)
                 # These are initial hints; FuncStepContractValidator will set final types.
