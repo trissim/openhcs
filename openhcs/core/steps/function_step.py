@@ -556,8 +556,8 @@ def _process_single_pattern_group(
         
         final_base_kwargs = base_func_args.copy()
         
-        # Get step function from context - context must have _current_step
-        step_func = context._current_step.func
+        # Get step function from step plan
+        step_func = context.step_plans[step_id]["func"]
 
         if isinstance(step_func, dict):
             dict_key_for_funcplan = component_value  # Use actual dict key for dict patterns

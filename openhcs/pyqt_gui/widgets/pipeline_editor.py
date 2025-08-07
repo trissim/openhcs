@@ -12,7 +12,7 @@ from typing import List, Dict, Optional, Callable, Tuple
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget,
     QListWidgetItem, QLabel, QMessageBox, QFileDialog, QFrame,
     QSplitter, QTextEdit, QScrollArea
 )
@@ -30,6 +30,39 @@ from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 logger = logging.getLogger(__name__)
+
+
+class ReorderableListWidget(QListWidget):
+    """
+    Custom QListWidget that properly handles drag and drop reordering.
+    Emits a signal when items are moved so the parent can update the data model.
+    """
+
+    items_reordered = pyqtSignal(int, int)  # from_index, to_index
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+
+    def dropEvent(self, event):
+        """Handle drop events and emit reorder signal."""
+        # Get the item being dropped and its original position
+        source_item = self.currentItem()
+        if not source_item:
+            super().dropEvent(event)
+            return
+
+        source_index = self.row(source_item)
+
+        # Let the default drop behavior happen first
+        super().dropEvent(event)
+
+        # Find the new position of the item
+        target_index = self.row(source_item)
+
+        # Only emit signal if position actually changed
+        if source_index != target_index:
+            self.items_reordered.emit(source_index, target_index)
 
 
 class PipelineEditorWidget(QWidget):
@@ -107,9 +140,8 @@ class PipelineEditorWidget(QWidget):
         layout.addWidget(splitter)
         
         # Pipeline steps list
-        self.step_list = QListWidget()
+        self.step_list = ReorderableListWidget()
         self.step_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.step_list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.step_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
@@ -231,7 +263,10 @@ class PipelineEditorWidget(QWidget):
         # Step list selection
         self.step_list.itemSelectionChanged.connect(self.on_selection_changed)
         self.step_list.itemDoubleClicked.connect(self.on_item_double_clicked)
-        
+
+        # Step list reordering
+        self.step_list.items_reordered.connect(self.on_steps_reordered)
+
         # Internal signals
         self.status_message.connect(self.update_status)
         self.pipeline_changed.connect(self.on_pipeline_changed)
@@ -651,7 +686,35 @@ class PipelineEditorWidget(QWidget):
         if step_data:
             # Double-click triggers edit
             self.action_edit_step()
-    
+
+    def on_steps_reordered(self, from_index: int, to_index: int):
+        """
+        Handle step reordering from drag and drop.
+
+        Args:
+            from_index: Original position of the moved step
+            to_index: New position of the moved step
+        """
+        # Update the underlying pipeline_steps list to match the visual order
+        current_steps = list(self.pipeline_steps)
+
+        # Move the step in the data model
+        step = current_steps.pop(from_index)
+        current_steps.insert(to_index, step)
+
+        # Update pipeline steps
+        self.pipeline_steps = current_steps
+
+        # Emit pipeline changed signal to notify other components
+        self.pipeline_changed.emit(self.pipeline_steps)
+
+        # Update status message
+        step_name = getattr(step, 'name', 'Unknown Step')
+        direction = "up" if to_index < from_index else "down"
+        self.status_message.emit(f"Moved step '{step_name}' {direction}")
+
+        logger.debug(f"Reordered step '{step_name}' from index {from_index} to {to_index}")
+
     def on_pipeline_changed(self, steps: List[FunctionStep]):
         """
         Handle pipeline changes.
