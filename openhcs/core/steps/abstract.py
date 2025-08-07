@@ -110,17 +110,7 @@ class AbstractStep(abc.ABC):
     # Clause 503 — Cognitive Load Transfer
     """
 
-    @property
-    @abstractmethod
-    def requires_disk_input(self) -> bool:
-        """Indicates if the step requires its primary input to be on disk."""
-        pass
 
-    @property
-    @abstractmethod
-    def requires_disk_output(self) -> bool:
-        """Indicates if the step requires its primary output to be written to disk."""
-        pass
 
     # Step metadata - these are primarily used during pipeline definition and compilation
     step_id: str

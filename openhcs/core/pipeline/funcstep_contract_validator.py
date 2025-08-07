@@ -139,17 +139,13 @@ class FuncStepContractValidator:
                 # Verify that other planners have run before this validator by checking attributes
                 # This is a fallback verification when pipeline_context is not provided
                 try:
-                    # Check for materialization planner fields
-                    _ = step.requires_disk_input
-                    _ = step.requires_disk_output
-
                     # Check for path planner fields
                     _ = step.input_dir
                     _ = step.output_dir
                 except AttributeError as e:
                     raise AssertionError(
                         f"Clause 101 Violation: Required planners must run before FuncStepContractValidator. "
-                        f"Missing attribute: {e}. Materialization and path planners must run first."
+                        f"Missing attribute: {e}. Path planner must run first."
                     ) from e
 
                 memory_types = FuncStepContractValidator.validate_funcstep(step, orchestrator)

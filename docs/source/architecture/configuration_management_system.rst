@@ -229,14 +229,11 @@ selection:
                step_plan = context.step_plans[step.uid]
                
                # Determine read backend
-               if step_plan.get("requires_disk_input", False):
-                   step_plan["read_backend"] = "disk"
-               else:
-                   # Use configured intermediate backend
-                   step_plan["read_backend"] = vfs_config.default_intermediate_backend
-               
+               # Use configured intermediate backend for all steps except first
+               step_plan["read_backend"] = vfs_config.default_intermediate_backend
+
                # Determine write backend
-               if step_plan.get("requires_disk_output", False):
+               if step_plan.get("force_disk_output", False):
                    # Use configured materialization backend
                    step_plan["write_backend"] = vfs_config.default_materialization_backend
                else:

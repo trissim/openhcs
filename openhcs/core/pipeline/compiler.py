@@ -207,8 +207,7 @@ class PipelineCompiler:
 
             will_use_zarr = (
                 vfs_config.materialization_backend == MaterializationBackend.ZARR and
-                (step.requires_disk_output or
-                 getattr(step, "force_disk_output", False) or
+                (getattr(step, "force_disk_output", False) or
                  steps_definition.index(step) == len(steps_definition) - 1)
             )
 

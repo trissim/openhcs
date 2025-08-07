@@ -696,10 +696,6 @@ def _process_single_pattern_group(
         raise ValueError(f"Failed to process pattern group {pattern_repr}: {e}") from e
 
 class FunctionStep(AbstractStep):
-    @property
-    def requires_disk_input(self) -> bool: return False 
-    @property
-    def requires_disk_output(self) -> bool: return False
 
     def __init__(
         self,
