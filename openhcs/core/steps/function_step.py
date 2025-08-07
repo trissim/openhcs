@@ -526,14 +526,8 @@ def _process_single_pattern_group(
         matching_files.sort()
         logger.debug(f"🔥 PATTERN: Sorted files: {[Path(f).name for f in matching_files]}")
 
-        try:
-            full_file_paths = [str(step_input_dir / f) for f in matching_files]
-            raw_slices = context.filemanager.load_batch(full_file_paths, Backend.MEMORY.value)
-            # Filter out None values if any
-            raw_slices = [img for img in raw_slices if img is not None]
-        except Exception as e:
-            logger.error(f"Error loading batch of images: {e}", exc_info=True)
-            raw_slices = []
+        full_file_paths = [str(step_input_dir / f) for f in matching_files]
+        raw_slices = context.filemanager.load_batch(full_file_paths, Backend.MEMORY.value)
         
         if not raw_slices:
             raise ValueError(
@@ -562,12 +556,8 @@ def _process_single_pattern_group(
         
         final_base_kwargs = base_func_args.copy()
         
-        # Determine dict_key for funcplan lookup based on pattern structure
-        if hasattr(context, '_current_step') and hasattr(context._current_step, 'func'):
-            step_func = context._current_step.func
-        else:
-            # Fallback: try to get step from step_plans
-            step_func = context.step_plans.get(step_id, {}).get('func', None)
+        # Get step function from context - context must have _current_step
+        step_func = context._current_step.func
 
         if isinstance(step_func, dict):
             dict_key_for_funcplan = component_value  # Use actual dict key for dict patterns

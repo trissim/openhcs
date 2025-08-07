@@ -105,6 +105,8 @@ class ZarrStorageBackend(StorageBackend):
         Maps paths to zarr store and key:
         - File: "/path/to/plate/A01.tif" → Store: "/path/to/plate/images.zarr", Key: "A01.tif"
         - Directory: "/path/to/plate" → Store: "/path/to/plate/images.zarr", Key: ""
+
+        Returns a DirectoryStore with dimension_separator='/' for OME-ZARR compatibility.
         """
         path = Path(path)
 
@@ -118,8 +120,10 @@ class ZarrStorageBackend(StorageBackend):
             store_path = path.parent / self.store_name
             relative_key = path.name
 
-        # In zarr v2, we just use the path string directly
-        return str(store_path), relative_key
+        # CRITICAL: Create DirectoryStore with dimension_separator='/' for OME-ZARR compatibility
+        # This ensures chunk paths use '/' instead of '.' (e.g., '0/0/0' not '0.0.0')
+        store = zarr.DirectoryStore(str(store_path), dimension_separator='/')
+        return store, relative_key
 
     def save(self, data: Any, output_path: Union[str, Path], **kwargs):
         """
@@ -144,7 +148,7 @@ class ZarrStorageBackend(StorageBackend):
 
         try:
             # Create array with correct shape and dtype, then assign data
-            array = group.create_array(
+            array = group.create_dataset(
                 name=key,
                 shape=data.shape,
                 dtype=data.dtype,
@@ -182,8 +186,9 @@ class ZarrStorageBackend(StorageBackend):
         if not store_path.exists():
             raise FileNotFoundError(f"Expected zarr store not found: {store_path}")
 
-        # Open store as group (not array)
-        root = zarr.open_group(str(store_path), mode='r')
+        # Open store as group (not array) - _split_store_and_key handles dimension_separator
+        store, _ = self._split_store_and_key(store_path)
+        root = zarr.open_group(store=store, mode='r')
 
         # Group files by well based on OME-ZARR structure
         well_to_files = {}
@@ -297,8 +302,9 @@ class ZarrStorageBackend(StorageBackend):
         # Ensure parent directory exists
         store_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Use zarr's open_group with create mode - it handles concurrent access
-        root = zarr.open_group(str(store_path), mode='a')  # 'a' = read/write, create if doesn't exist
+        # Use _split_store_and_key to get properly configured store with dimension_separator='/'
+        store, _ = self._split_store_and_key(store_path)
+        root = zarr.open_group(store=store, mode='a')  # 'a' = read/write, create if doesn't exist
 
         # Set OME metadata if not already present
         if "ome" not in root.attrs:
