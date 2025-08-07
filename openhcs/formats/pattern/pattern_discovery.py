@@ -385,6 +385,12 @@ class PatternDiscoveryEngine:
         # 🔒 Clause 92 — Structural Validation First
         # Validate the final pattern list
         if not patterns:
-            logger.warning("No patterns generated from files")
+            raise ValueError(
+                "No patterns generated from files. This indicates either: "
+                "(1) no image files found in the directory, "
+                "(2) files don't match the expected naming convention, or "
+                "(3) pattern generation logic failed. "
+                "Check that image files exist and follow the expected naming pattern."
+            )
 
         return patterns

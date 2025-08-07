@@ -513,8 +513,12 @@ def _process_single_pattern_group(
         )
 
         if not matching_files:
-            logger.warning(f"No matching files for pattern group {pattern_repr} in {step_input_dir}")
-            return
+            raise ValueError(
+                f"No matching files found for pattern group {pattern_repr} in {step_input_dir}. "
+                f"This indicates either: (1) no image files exist in the directory, "
+                f"(2) files don't match the pattern, or (3) pattern parsing failed. "
+                f"Check that input files exist and match the expected naming convention."
+            )
 
         logger.debug(f"🔥 PATTERN: Found {len(matching_files)} files: {[Path(f).name for f in matching_files]}")
 
@@ -532,8 +536,12 @@ def _process_single_pattern_group(
             raw_slices = []
         
         if not raw_slices:
-            logger.warning(f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}")
-            return
+            raise ValueError(
+                f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}. "
+                f"Found {len(matching_files)} matching files but failed to load any valid images. "
+                f"This indicates corrupted image files, unsupported formats, or I/O errors. "
+                f"Check file integrity and format compatibility."
+            )
 
         # 🔍 DEBUG: Log stacking operation
         logger.debug(f"🔍 STACKING: {len(raw_slices)} slices → memory_type: {input_memory_type_from_plan}")
@@ -840,14 +848,21 @@ class FunctionStep(AbstractStep):
 
             logger.info(f"🔥 STEP: Starting processing for '{step_name}' well {well_id} (group_by={group_by.name}, variable_components={[vc.name for vc in variable_components]})")
 
-            if well_id in patterns_by_well:
-                if isinstance(patterns_by_well[well_id], dict):
-                    # Grouped patterns (when group_by is set)
-                    for comp_val, pattern_list in patterns_by_well[well_id].items():
-                        logger.debug(f"🔥 STEP: Component '{comp_val}' has {len(pattern_list)} patterns: {pattern_list}")
-                else:
-                    # Ungrouped patterns (when group_by is None)
-                    logger.debug(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
+            if well_id not in patterns_by_well:
+                raise ValueError(
+                    f"No patterns detected for well '{well_id}' in step '{step_name}' (ID: {step_id}). "
+                    f"This indicates either: (1) no image files found for this well, "
+                    f"(2) image files don't match the expected naming pattern, or "
+                    f"(3) pattern detection failed. Check input directory: {step_input_dir}"
+                )
+
+            if isinstance(patterns_by_well[well_id], dict):
+                # Grouped patterns (when group_by is set)
+                for comp_val, pattern_list in patterns_by_well[well_id].items():
+                    logger.debug(f"🔥 STEP: Component '{comp_val}' has {len(pattern_list)} patterns: {pattern_list}")
+            else:
+                # Ungrouped patterns (when group_by is None)
+                logger.debug(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
 
             if func_from_plan is None:
                 raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")

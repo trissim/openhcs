@@ -208,7 +208,7 @@ class ZarrStorageBackend(StorageBackend):
 
                                     # Check which requested files are in this well
                                     for i, path in enumerate(file_paths):
-                                        filename = str(path)  # Use full path for matching
+                                        filename = Path(path).name  # Use filename only for matching
                                         if filename in filename_map:
                                             if well_name not in well_to_files:
                                                 well_to_files[well_name] = []
@@ -410,7 +410,7 @@ class ZarrStorageBackend(StorageBackend):
             z_idx = remaining % n_z
 
             # Store as tuple (field, channel, z) - y,x are full slices
-            filename_map[str(path)] = (field_idx, channel_idx, z_idx)
+            filename_map[Path(path).name] = (field_idx, channel_idx, z_idx)
 
         field_array = field_group['0']
         field_array.attrs["openhcs_filename_map"] = filename_map
