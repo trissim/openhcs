@@ -54,13 +54,14 @@ class UnifiedPathCache:
     def __init__(self, cache_file: Optional[Path] = None):
         """
         Initialize path cache.
-        
+
         Args:
             cache_file: Optional custom cache file location
         """
         if cache_file is None:
-            cache_file = Path.home() / ".openhcs" / "path_cache.json"
-        
+            from openhcs.core.xdg_paths import get_data_file_path
+            cache_file = get_data_file_path("path_cache.json")
+
         self.cache_file = cache_file
         self._cache: Dict[str, str] = {}
         self._load_cache()

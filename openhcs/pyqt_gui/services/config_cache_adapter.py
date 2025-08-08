@@ -46,7 +46,8 @@ class QtGlobalConfigCache(QObject):
     def __init__(self, cache_file=None):
         super().__init__()
         if cache_file is None:
-            cache_file = Path.home() / ".openhcs" / "global_config.config"
+            from openhcs.core.xdg_paths import get_config_file_path
+            cache_file = get_config_file_path("global_config.config")
         self.cache_file = cache_file
         self.thread_pool = QThreadPool()
 

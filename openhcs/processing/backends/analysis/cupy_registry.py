@@ -8,6 +8,7 @@ CuPy functions generally have better dtype preservation than scikit-image.
 
 import inspect
 import cupy as cp
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Callable, Tuple
 from enum import Enum
@@ -349,11 +350,122 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
 
 
 
+# ===== PERSISTENT CACHE SYSTEM (following scikit-image pattern) =====
+
+def _get_cucim_version() -> str:
+    """Get CuCIM version for cache validation."""
+    try:
+        import cucim
+        return cucim.__version__
+    except Exception:
+        return "unknown"
+
+
+def _extract_cupy_cache_data(meta: CupyFunction) -> Dict[str, str]:
+    """Extract cacheable data from CupyFunction object."""
+    return {
+        'name': meta.name,
+        'module': meta.module,
+        'contract': meta.contract.value
+    }
+
+
+def _save_cupy_metadata(registry: Dict[str, CupyFunction]) -> None:
+    """Save CuPy function metadata to cache."""
+    from openhcs.processing.backends.analysis.cache_utils import save_library_metadata
+
+    # Only cache functions that will be decorated (skip UNKNOWN/DIM_CHANGE)
+    filtered_registry = {
+        name: meta for name, meta in registry.items()
+        if meta.contract in [ProcessingContract.SLICE_SAFE, ProcessingContract.CROSS_Z]
+    }
+
+    save_library_metadata(
+        library_name="cupy",
+        registry=filtered_registry,
+        get_version_func=_get_cucim_version,
+        extract_cache_data_func=_extract_cupy_cache_data
+    )
+
+
+def _load_cupy_metadata() -> Optional[Dict[str, Dict[str, str]]]:
+    """Load CuPy function metadata from cache with validation."""
+    from openhcs.processing.backends.analysis.cache_utils import load_library_metadata
+    return load_library_metadata("cupy", _get_cucim_version)
+
+
+def clear_cupy_cache() -> None:
+    """Clear the CuPy metadata cache to force rebuild on next startup."""
+    from openhcs.processing.backends.analysis.cache_utils import clear_library_cache
+    clear_library_cache("cupy")
+
+
+def _get_cupy_function(module_path: str, func_name: str):
+    """Get CuPy function object from module path and public name.
+
+    The cached public name may be prefixed with the module segment (e.g.,
+    'morphology_binary_opening' for module 'cucim.skimage.morphology'). This
+    function maps the public name back to the attribute name inside the module.
+    """
+    try:
+        import importlib
+
+        module = importlib.import_module(module_path)
+
+        # Derive real attribute name from public name convention
+        real_name = func_name
+        last_segment = module_path.split(".")[-1]
+        prefix = f"{last_segment}_"
+        if real_name.startswith(prefix):
+            real_name = real_name[len(prefix):]
+
+        return getattr(module, real_name, None)
+    except Exception:
+        return None
+
+
+def _register_cupy_from_cache() -> None:
+    """Register CuPy functions using cached metadata."""
+    from openhcs.processing.backends.analysis.cache_utils import register_functions_from_cache
+    from openhcs.processing.func_registry import _register_function
+    from openhcs.constants import MemoryType
+
+    # Load cached metadata
+    cached_metadata = _load_cupy_metadata()
+    if not cached_metadata:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("No CuPy metadata cache found - cannot register from cache")
+        return
+
+    def register_cupy_function(original_func, func_name: str, memory_type: str):
+        """Register a CuPy function with unified decoration."""
+        from openhcs.processing.func_registry import _apply_unified_decoration
+
+        wrapper_func = _apply_unified_decoration(
+            original_func=original_func,
+            func_name=func_name,
+            memory_type=MemoryType.CUPY,
+            create_wrapper=True  # CuPy needs dtype preservation
+        )
+
+        _register_function(wrapper_func, MemoryType.CUPY.value)
+
+    # Register functions from cache
+    register_functions_from_cache(
+        library_name="cupy",
+        cached_metadata=cached_metadata,
+        get_function_func=_get_cupy_function,
+        register_function_func=register_cupy_function,
+        memory_type=MemoryType.CUPY.value
+    )
+
 
 def _register_cupy_ops_direct() -> None:
     """
-    Register CuCIM skimage functions using unified decoration pattern.
+    Register CuCIM skimage functions with caching support.
 
+    Checks cache first for fast registration, falls back to full discovery if needed.
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
     try:
@@ -363,6 +475,15 @@ def _register_cupy_ops_direct() -> None:
         logger = logging.getLogger(__name__)
         logger.warning("CuCIM skimage not available - skipping GPU scikit-image registration")
         return
+
+    from openhcs.processing.backends.analysis.cache_utils import should_use_cache_for_library
+
+    # Check if we should use cache
+    if should_use_cache_for_library("cupy"):
+        cached_metadata = _load_cupy_metadata()
+        if cached_metadata:
+            _register_cupy_from_cache()
+            return
 
     from openhcs.processing.func_registry import _register_function
     import logging
@@ -413,6 +534,9 @@ def _register_cupy_ops_direct() -> None:
     logger = logging.getLogger(__name__)
     logger.info(f"Decorated {decorated_count} CuPy ndimage functions as OpenHCS functions")
     logger.info(f"Skipped {skipped_count} functions (unknown contracts or dim_change)")
+
+    # Save metadata to cache for future fast startup
+    _save_cupy_metadata(registry)
 
 
 if __name__ == "__main__":  # pragma: no cover – manual use

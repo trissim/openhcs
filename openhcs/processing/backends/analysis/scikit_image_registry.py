@@ -35,9 +35,8 @@ logger = logging.getLogger(__name__)
 
 def _get_metadata_cache_path() -> Path:
     """Get the path for the scikit-image metadata cache file."""
-    cache_dir = Path.home() / '.openhcs' / 'cache'
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / 'skimage_function_metadata.json'
+    from openhcs.core.xdg_paths import get_cache_file_path
+    return get_cache_file_path('skimage_function_metadata.json')
 
 
 def _save_function_metadata(registry: Dict[str, 'SkimageFunction']) -> None:

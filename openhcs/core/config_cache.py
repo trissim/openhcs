@@ -111,8 +111,9 @@ class UnifiedGlobalConfigCache:
     
     def __init__(self, cache_file: Optional[Path] = None, strategy: Optional[CacheExecutionStrategy] = None):
         if cache_file is None:
-            cache_file = Path.home() / ".openhcs" / "global_config.config"
-        
+            from openhcs.core.xdg_paths import get_config_file_path
+            cache_file = get_config_file_path("global_config.config")
+
         self.cache_file = cache_file
         self.strategy = strategy or AsyncExecutionStrategy()
         logger.debug(f"UnifiedGlobalConfigCache initialized with cache file: {self.cache_file}")
@@ -176,19 +177,20 @@ async def load_cached_global_config(strategy: Optional[CacheExecutionStrategy] =
 def load_cached_global_config_sync() -> GlobalPipelineConfig:
     """
     Synchronous version for startup scenarios.
-    
+
     Returns:
         GlobalPipelineConfig (cached or default)
     """
     try:
-        cache_file = Path.home() / ".openhcs" / "global_config.config"
+        from openhcs.core.xdg_paths import get_config_file_path
+        cache_file = get_config_file_path("global_config.config")
         cached_config = _sync_load_config(cache_file)
         if cached_config is not None:
             logger.info("Using cached global configuration")
             return cached_config
     except Exception as e:
         logger.warning(f"Failed to load cached config, using defaults: {e}")
-    
+
     # Fallback to default config
     logger.info("Using default global configuration")
     return get_default_global_config()

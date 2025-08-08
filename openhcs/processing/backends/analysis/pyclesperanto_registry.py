@@ -38,6 +38,7 @@ from __future__ import annotations
 import inspect
 import textwrap
 import numpy as np
+import os
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, Dict, List, Optional
@@ -208,7 +209,112 @@ _REGISTRY: Optional[Dict[str, OpMeta]] = None  # module‑level cache
 
 
 # ---------------------------------------------------------------------------
-# 4. Public API for OpenHCS – called in compile phase
+# 4. Persistent Cache System (following scikit-image pattern)
+# ---------------------------------------------------------------------------
+
+def _get_pyclesperanto_version() -> str:
+    """Get pyclesperanto version for cache validation."""
+    try:
+        import pyclesperanto as cle
+        return cle.__version__
+    except Exception:
+        return "unknown"
+
+
+def _extract_pyclesperanto_cache_data(meta: OpMeta) -> Dict[str, str]:
+    """Extract cacheable data from OpMeta object."""
+    return {
+        'name': meta.name,
+        'module': meta.func.__module__,
+        'contract': meta.contract.value
+    }
+
+
+def _save_pyclesperanto_metadata(registry: Dict[str, OpMeta]) -> None:
+    """Save pyclesperanto function metadata to cache."""
+    from openhcs.processing.backends.analysis.cache_utils import save_library_metadata
+
+    # Only cache functions that will be decorated (skip UNKNOWN/DIM_CHANGE)
+    filtered_registry = {
+        name: meta for name, meta in registry.items()
+        if meta.contract in [Contract.SLICE_SAFE, Contract.CROSS_Z]
+    }
+
+    save_library_metadata(
+        library_name="pyclesperanto",
+        registry=filtered_registry,
+        get_version_func=_get_pyclesperanto_version,
+        extract_cache_data_func=_extract_pyclesperanto_cache_data
+    )
+
+
+def _load_pyclesperanto_metadata() -> Optional[Dict[str, Dict[str, str]]]:
+    """Load pyclesperanto function metadata from cache with validation."""
+    from openhcs.processing.backends.analysis.cache_utils import load_library_metadata
+    return load_library_metadata("pyclesperanto", _get_pyclesperanto_version)
+
+
+def clear_pyclesperanto_cache() -> None:
+    """Clear the pyclesperanto metadata cache to force rebuild on next startup."""
+    from openhcs.processing.backends.analysis.cache_utils import clear_library_cache
+    clear_library_cache("pyclesperanto")
+
+
+def _get_pyclesperanto_function(module_path: str, func_name: str):
+    """Get pyclesperanto function object from module path and name."""
+    try:
+        import pyclesperanto as cle
+
+        # Handle pyclesperanto module structure
+        if module_path.startswith('pyclesperanto'):
+            # Get the function from pyclesperanto
+            if hasattr(cle, func_name):
+                return getattr(cle, func_name)
+
+        return None
+    except Exception:
+        return None
+
+
+def _register_pyclesperanto_from_cache() -> None:
+    """Register pyclesperanto functions using cached metadata."""
+    from openhcs.processing.backends.analysis.cache_utils import register_functions_from_cache
+    from openhcs.processing.func_registry import _register_function
+    from openhcs.constants import MemoryType
+
+    # Load cached metadata
+    cached_metadata = _load_pyclesperanto_metadata()
+    if not cached_metadata:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("No pyclesperanto metadata cache found - cannot register from cache")
+        return
+
+    def register_pyclesperanto_function(original_func, func_name: str, memory_type: str):
+        """Register a pyclesperanto function with unified decoration."""
+        from openhcs.processing.func_registry import _apply_unified_decoration
+
+        wrapper_func = _apply_unified_decoration(
+            original_func=original_func,
+            func_name=func_name,
+            memory_type=MemoryType.PYCLESPERANTO,
+            create_wrapper=True  # pyclesperanto needs dtype preservation
+        )
+
+        _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
+
+    # Register functions from cache
+    register_functions_from_cache(
+        library_name="pyclesperanto",
+        cached_metadata=cached_metadata,
+        get_function_func=_get_pyclesperanto_function,
+        register_function_func=register_pyclesperanto_function,
+        memory_type=MemoryType.PYCLESPERANTO.value
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. Public API for OpenHCS – called in compile phase
 # ---------------------------------------------------------------------------
 
 def build_pycle_registry(refresh: bool = False) -> Dict[str, OpMeta]:
@@ -570,18 +676,26 @@ def _enhance_docstring_with_contract_info(func: Callable, meta: OpMeta) -> None:
 
 def _register_pycle_ops_direct() -> None:
     """
-    Direct decoration of pyclesperanto functions - SIMPLE APPROACH.
+    Direct decoration of pyclesperanto functions with caching support.
 
-    Just add memory type attributes directly to the original functions.
-    No wrappers, no complexity - just make external functions BE OpenHCS functions.
-
+    Checks cache first for fast registration, falls back to full discovery if needed.
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
+    from openhcs.processing.backends.analysis.cache_utils import should_use_cache_for_library
+
+    # Check if we should use cache
+    if should_use_cache_for_library("pyclesperanto"):
+        cached_metadata = _load_pyclesperanto_metadata()
+        if cached_metadata:
+            _register_pyclesperanto_from_cache()
+            return
+
+    # Fall back to full discovery
     from openhcs.processing.func_registry import _register_function
     from openhcs.core.memory.decorators import pyclesperanto
     import inspect
 
-    print("🔧 Direct decoration of pyclesperanto functions - SIMPLE APPROACH...")
+    print("🔧 Direct decoration of pyclesperanto functions - FULL DISCOVERY...")
 
     decorated_count = 0
     skipped_count = 0
@@ -638,3 +752,6 @@ def _register_pycle_ops_direct() -> None:
     logger = logging.getLogger(__name__)
     logger.info(f"Decorated {decorated_count} pyclesperanto functions as OpenHCS functions")
     logger.info(f"Skipped {skipped_count} functions (dim_change or errors)")
+
+    # Save metadata to cache for future fast startup
+    _save_pyclesperanto_metadata(registry)
