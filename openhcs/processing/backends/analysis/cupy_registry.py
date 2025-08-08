@@ -18,13 +18,46 @@ import warnings
 # Suppress CuPy warnings during analysis
 warnings.filterwarnings('ignore', category=FutureWarning, module='cupyx')
 
+# Import blacklist system
+from .function_classifier import is_blacklisted, log_blacklist_stats
+
+
+# ---- Module-level adapter: CuCIM/CuPy → OpenHCS policy ----
+def _cucim_adapt_function(original_func):
+    from functools import wraps
+    DIM_ERR_TOKENS = ("dimension", "dimensional", "3d", "ndim", "axis", "rank", "shapes not aligned")
+
+    @wraps(original_func)
+    def adapted(image, *args, **kwargs):
+        import cupy as cp
+        if isinstance(image, cp.ndarray) and image.ndim == 3:
+            try:
+                result = original_func(image, *args, **kwargs)
+            except Exception as e:
+                msg = str(e).lower()
+                if any(tok in msg for tok in DIM_ERR_TOKENS):
+                    from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                    mem = _detect_memory_type(image)
+                    slices = unstack_slices(image, mem, 0)
+                    results = [original_func(sl, *args, **kwargs) for sl in slices]
+                    result = stack_slices(results, mem, 0)
+                else:
+                    raise
+            if hasattr(result, 'ndim') and result.ndim == 2:
+                result = result[None, ...]
+            elif isinstance(result, tuple) and hasattr(result[0], 'ndim') and result[0].ndim == 2:
+                result = (result[0][None, ...], *result[1:])
+            return result
+        return original_func(image, *args, **kwargs)
+    return adapted
+
 
 # ===== FUNCTION CATEGORIZATION FOR ARRAY-IN/ARRAY-OUT COMPLIANCE =====
 
 # Category 1: Pure array functions - input 3D array, output 3D array (preserve dtype)
 PURE_ARRAY_FUNCTIONS = {
     'gaussian_filter', 'gaussian_filter1d', 'median_filter', 'sobel', 'prewitt', 'laplace',
-    'uniform_filter', 'uniform_filter1d', 'maximum_filter', 'minimum_filter', 
+    'uniform_filter', 'uniform_filter1d', 'maximum_filter', 'minimum_filter',
     'percentile_filter', 'rank_filter', 'convolve', 'correlate', 'shift', 'rotate',
     'grey_erosion', 'grey_dilation', 'grey_opening', 'grey_closing',
     'black_tophat', 'white_tophat', 'morphological_gradient', 'morphological_laplace',
@@ -66,17 +99,17 @@ def _auto_detect_cupy_array_compliance(result, original_image, original_dtype):
     # If result is already a 3D array, just fix dtype if needed
     if isinstance(result, cp.ndarray) and result.ndim == 3:
         return _scale_and_convert_cupy(result, original_dtype)
-    
+
     # If result is scalar/coordinates, return (original_image, result)
-    elif cp.isscalar(result) or (isinstance(result, (cp.ndarray, tuple)) and 
+    elif cp.isscalar(result) or (isinstance(result, (cp.ndarray, tuple)) and
                                  (not hasattr(result, 'ndim') or result.ndim < 3)):
         return original_image, result
-    
+
     # If result is 2D, expand to 3D (assume same for all Z slices)
     elif isinstance(result, cp.ndarray) and result.ndim == 2:
         expanded = cp.stack([result] * original_image.shape[0], axis=0)
         return _scale_and_convert_cupy(expanded, original_dtype)
-    
+
     # Fallback: return original image
     else:
         return original_image
@@ -218,15 +251,22 @@ def _test_cupy_3d_behavior(func, func_name):
     """
     Test how a CuPy function behaves with 3D input to determine its processing contract.
     """
+    # Get full import path for debugging
+    module_name = getattr(func, '__module__', 'unknown')
+    full_import_path = f"{module_name}.{func_name}"
+
     # Create test data
     test_3d = cp.random.rand(3, 20, 20).astype(cp.float32)
     test_2d = test_3d[0]
-    
+
     try:
+        # Print function being tested for warning attribution
+        print(f"    🧪 Testing CuPy function: {full_import_path}")
+
         # Test if function accepts 3D input
         result_3d = func(test_3d)
         result_2d = func(test_2d)
-        
+
         # Check if shapes are preserved
         if hasattr(result_3d, 'shape'):
             if result_3d.shape == ():
@@ -238,21 +278,21 @@ def _test_cupy_3d_behavior(func, func_name):
         else:
             # No shape attribute - this is a value-returning function
             return ProcessingContract.SLICE_SAFE, True
-        
+
         # Test if processing is slice-by-slice
         manual_3d = cp.stack([func(test_3d[z]) for z in range(test_3d.shape[0])])
-        
+
         if cp.allclose(result_3d, manual_3d, rtol=1e-5, atol=1e-8):
             # Results match slice-by-slice processing
             return ProcessingContract.SLICE_SAFE, True
         else:
             # Different results - likely volumetric processing
             return ProcessingContract.CROSS_Z, True
-            
+
     except Exception as e:
         # Function failed on 3D input
         error_msg = str(e).lower()
-        
+
         # Check if it's a dimension error
         if any(keyword in error_msg for keyword in ['dimension', 'shape', '3d', 'axis']):
             return ProcessingContract.SLICE_SAFE, False  # 2D only, but slice-safe
@@ -270,6 +310,9 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
     try:
         import cucim.skimage
         print("🔍 Analyzing CuCIM skimage functions...")
+
+        # Log blacklist information
+        log_blacklist_stats()
     except ImportError as e:
         print(f"❌ CuCIM skimage not available: {e}")
         print("❌ No fallback - CuCIM is required for GPU scikit-image functions")
@@ -305,6 +348,11 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
 
                     # Skip classes and non-function objects
                     if not hasattr(func, '__call__') or (hasattr(func, '__name__') and func.__name__[0].isupper()):
+                        continue
+
+                    # Skip blacklisted functions
+                    if is_blacklisted(func, name):
+                        print(f"    🚫 Skipping blacklisted function: {name}")
                         continue
 
                     try:
@@ -436,14 +484,15 @@ def _register_cupy_from_cache() -> bool:
         return False
 
     def register_cupy_function(original_func, func_name: str, memory_type: str):
-        """Register a CuPy function with unified decoration."""
+        """Register a CuPy function with registry-specific adapter + unified decoration."""
         from openhcs.processing.func_registry import _apply_unified_decoration
 
+        adapted = _cucim_adapt_function(original_func)
         wrapper_func = _apply_unified_decoration(
-            original_func=original_func,
+            original_func=adapted,
             func_name=func_name,
             memory_type=MemoryType.CUPY,
-            create_wrapper=True  # CuPy needs dtype preservation
+            create_wrapper=True
         )
 
         _register_function(wrapper_func, MemoryType.CUPY.value)
@@ -490,6 +539,9 @@ def _register_cupy_ops_direct() -> None:
     skipped_count = 0
 
     # Get functions using build_cupy_registry
+
+            # Compose adapted wrapper in discovery path as well (already registered above)
+
     registry = build_cupy_registry()
 
     for func_name, meta in registry.items():
@@ -504,20 +556,23 @@ def _register_cupy_ops_direct() -> None:
                 skipped_count += 1
                 continue
 
-            # Apply unified decoration pattern with CuPy wrapper
+
             from openhcs.constants import MemoryType
             from openhcs.processing.func_registry import _apply_unified_decoration
 
+            adapted = _cucim_adapt_function(meta.func)
             wrapper_func = _apply_unified_decoration(
-                original_func=meta.func,
+                original_func=adapted,
                 func_name=func_name,
                 memory_type=MemoryType.CUPY,
-                create_wrapper=True  # Use CuPy dtype preserving wrapper
+                create_wrapper=True
             )
 
-            # Register the function
             _register_function(wrapper_func, MemoryType.CUPY.value)
             decorated_count += 1
+            continue
+
+
 
         except Exception as e:
             import logging

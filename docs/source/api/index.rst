@@ -44,12 +44,15 @@ Discover the 574+ available processing functions organized by computational back
    processing_backends
    image_processing_functions
    stitching_functions
+   dtype_conversion
 
 **Processing Backends**: GPU-accelerated functions for image processing, analysis, and assembly. Includes automatic memory type conversion between NumPy, CuPy, PyTorch, JAX, and pyclesperanto.
 
 **Image Processing Functions**: Core image processing functions across 6 computational backends (NumPy, CuPy, PyTorch, TensorFlow, JAX, pyclesperanto) for filtering, normalization, morphology, and composition.
 
 **Stitching Functions**: Complete stitching workflow with GPU-accelerated position generation and image assembly using Ashlar and MIST algorithms.
+
+**Dtype Conversion**: Automatic data type conversion system for GPU libraries with specific dtype requirements. Handles binary and uint8 conversions transparently while maintaining pipeline consistency.
 
 Data Management
 ===============

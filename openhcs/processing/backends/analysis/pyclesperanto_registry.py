@@ -18,6 +18,98 @@ Highlights
       ``shape[0] > 1`` (e.g. label/ watershed / voronoi). Works fine on
       single‑slice input.
     * ``DIM_CHANGE``        – changes the dimensionality or returns a
+
+# Functions requiring specific dtype conversions
+BINARY_FUNCTIONS = {'binary_infsup', 'binary_supinf'}
+UINT8_FUNCTIONS = {'mode', 'mode_box', 'mode_sphere'}  # Functions requiring uint8 input
+
+# ---- Module-level adapter: pyclesperanto → OpenHCS policy ----
+def _pycle_adapt_function(original_func):
+    from functools import wraps
+    import numpy as np
+    DIM_ERR_TOKENS = ("dimension", "dimensional", "3d", "ndim", "axis", "rank", "shapes not aligned")
+
+    func_name = getattr(original_func, '__name__', 'unknown')
+
+    @wraps(original_func)
+    def adapted(image, *args, slice_by_slice: bool = False, **kwargs):
+        try:
+            import pyclesperanto as cle
+        except Exception:
+            return original_func(image, *args, **kwargs)
+
+        original_dtype = image.dtype
+        converted_image = image
+
+        # Apply dtype conversion for functions with specific requirements
+        if func_name in BINARY_FUNCTIONS:
+            # Convert to binary: float32 [0,1] -> uint8 {0,255} with threshold at 0.5
+            if image.dtype == np.float32:
+                converted_image = ((image > 0.5) * 255).astype(np.uint8)
+        elif func_name in UINT8_FUNCTIONS:
+            # Convert to uint8: float32 [0,1] -> uint8 [0,255]
+            if image.dtype == np.float32:
+                converted_image = (np.clip(image, 0, 1) * 255).astype(np.uint8)
+
+        if hasattr(converted_image, 'ndim') and converted_image.ndim == 3:
+            if slice_by_slice:
+                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                mem = _detect_memory_type(converted_image)
+                slices = unstack_slices(converted_image, mem, 0)
+                results = [original_func(sl, *args, **kwargs) for sl in slices]
+                result = stack_slices(results, mem, 0)
+            else:
+                try:
+                    result = original_func(converted_image, *args, **kwargs)
+                except Exception as e:
+                    msg = str(e).lower()
+                    if any(tok in msg for tok in DIM_ERR_TOKENS):
+                        from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                        mem = _detect_memory_type(converted_image)
+                        slices = unstack_slices(converted_image, mem, 0)
+                        results = [original_func(sl, *args, **kwargs) for sl in slices]
+                        result = stack_slices(results, mem, 0)
+                    else:
+                        raise
+            # Promote 2D to singleton-Z
+            if hasattr(result, 'ndim') and result.ndim == 2:
+                try:
+                    temp = cle.concatenate_along_z(result, result)
+                    result = temp[0:1, :, :]
+                except Exception:
+                    pass
+            elif isinstance(result, tuple) and hasattr(result[0], 'ndim') and result[0].ndim == 2:
+                try:
+                    temp = cle.concatenate_along_z(result[0], result[0])
+                    main = temp[0:1, :, :]
+                    result = (main, *result[1:])
+                except Exception:
+                    pass
+        else:
+            result = original_func(converted_image, *args, **kwargs)
+
+        # Convert result back to original dtype if needed
+        if func_name in BINARY_FUNCTIONS or func_name in UINT8_FUNCTIONS:
+            if hasattr(result, 'dtype') and result.dtype != original_dtype:
+                if result.dtype == np.uint8 and original_dtype == np.float32:
+                    # Convert back: uint8 [0,255] -> float32 [0,1]
+                    result = result.astype(np.float32) / 255.0
+                elif result.dtype == np.bool_ and original_dtype == np.float32:
+                    # Convert back: bool -> float32
+                    result = result.astype(np.float32)
+            elif isinstance(result, tuple):
+                # Handle tuple results (array, value) - convert array part
+                if hasattr(result[0], 'dtype') and result[0].dtype != original_dtype:
+                    if result[0].dtype == np.uint8 and original_dtype == np.float32:
+                        converted_array = result[0].astype(np.float32) / 255.0
+                        result = (converted_array, *result[1:])
+                    elif result[0].dtype == np.bool_ and original_dtype == np.float32:
+                        converted_array = result[0].astype(np.float32)
+                        result = (converted_array, *result[1:])
+
+        return result
+    return adapted
+
       scalar/table (e.g. projections, statistics). Rejected for the
       *img→img* contract.
 
@@ -49,6 +141,9 @@ except ModuleNotFoundError as e:  # pragma: no cover – won't happen in CI
     raise ImportError("pyclesperanto must be installed before importing "
                       "openhcs.plugin.pycle_registry") from e
 
+# Import blacklist system
+from .function_classifier import is_blacklisted, log_blacklist_stats
+
 # ---------------------------------------------------------------------------
 # 1. Contracts & metadata
 # ---------------------------------------------------------------------------
@@ -61,40 +156,7 @@ class Contract(Enum):
     DIM_CHANGE = auto()   # output is scalar, table or different shape ➔ excluded
 
 
-# Import DtypeConversion from centralized location
-try:
-    from openhcs.core.memory.decorators import DtypeConversion, _scale_and_convert_pyclesperanto
-except ImportError:
-    # Fallback for standalone usage
-    from enum import Enum
-    import numpy as np
 
-    class DtypeConversion(Enum):
-        """Data type conversion modes for pyclesperanto functions."""
-        PRESERVE_INPUT = "preserve"
-        NATIVE_OUTPUT = "native"
-        UINT8 = "uint8"
-        UINT16 = "uint16"
-        INT16 = "int16"
-        INT32 = "int32"
-        FLOAT32 = "float32"
-        FLOAT64 = "float64"
-
-        @property
-        def numpy_dtype(self):
-            dtype_map = {
-                self.UINT8: np.uint8,
-                self.UINT16: np.uint16,
-                self.INT16: np.int16,
-                self.INT32: np.int32,
-                self.FLOAT32: np.float32,
-                self.FLOAT64: np.float64,
-            }
-            return dtype_map.get(self, None)
-
-    def _scale_and_convert_pyclesperanto(result, target_dtype):
-        """Fallback scaling function."""
-        return result.astype(target_dtype)
 
 
 @dataclass(frozen=True)
@@ -123,22 +185,57 @@ class OpMeta:
 
 
 # ---------------------------------------------------------------------------
-# 2. Heuristic patterns (kept in one place for easy tweaking)
+# 2. Result handling (same approach as CuPy/scikit-image)
 # ---------------------------------------------------------------------------
 
-# Operators that *change* dimensionality or produce non‑image output
-_DIM_DROP_PAT = (
-    "projection",                 # z‑ or dimension projections
-    "_of_all_pixels",             # statistics reductions
-    "statistics_of_",            # DataFrame/table
-    "distance_matrix_to_",       # mesh utilities
-)
+def _handle_pycle_result(result, original_image):
+    """
+    Handle pyclesperanto function results to maintain array-in/array-out contract.
+    Same logic as CuPy and scikit-image registries.
+    """
+    import numpy as np
+    import pyclesperanto as cle
 
-# Operators whose neighbourhood must reach across Z – no sigma_z/radius_z
-_CROSS_Z_PAT = (
-    "connected", "watershed", "distance", "label",
-    "voronoi", "skeleton", "mesh", "morphological_geodesic",  # etc.
-)
+    # If result is already a 3D array, return as-is
+    if hasattr(result, 'ndim') and result.ndim == 3:
+        return result
+
+    # If result is scalar, return (original_image, result) - same as CuPy/scikit-image
+    elif np.isscalar(result):
+        return original_image, result
+
+    # If result is 2D, promote to 3D (singleton Z)
+    elif hasattr(result, 'ndim') and result.ndim == 2:
+        try:
+            temp = cle.concatenate_along_z(result, result)
+            return temp[0:1, :, :]
+        except Exception:
+            # Fallback: use numpy
+            return np.expand_dims(result, 0)
+
+    # If result is tuple with 2D first element, promote first element
+    elif isinstance(result, tuple) and hasattr(result[0], 'ndim') and result[0].ndim == 2:
+        try:
+            temp = cle.concatenate_along_z(result[0], result[0])
+            main = temp[0:1, :, :]
+            return (main, *result[1:])
+        except Exception:
+            # Fallback: use numpy
+            main = np.expand_dims(result[0], 0)
+            return (main, *result[1:])
+
+    # If result is array with ndim < 3, return (original_image, result)
+    elif hasattr(result, 'ndim') and result.ndim < 3:
+        return original_image, result
+
+    # Fallback: return original image
+    else:
+        return original_image
+
+
+# ---------------------------------------------------------------------------
+# 3. Runtime classification (same approach as CuPy/scikit-image)
+# ---------------------------------------------------------------------------
 
 _IMAGE_PARAM_NAMES = {"src", "source", "image", "input", "src1", "input_image", "input_image0"}
 
@@ -152,6 +249,67 @@ def _is_image_param(p: inspect.Parameter) -> bool:
         inspect.Parameter.POSITIONAL_ONLY,
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
     )
+
+
+def _classify_pycle_function(func) -> Tuple[Contract, bool]:
+    """
+    Test how a pyclesperanto function behaves with 3D input to determine its processing contract.
+    Same logic as CuPy and scikit-image registries.
+    """
+    try:
+        import numpy as np
+        import pyclesperanto as cle
+
+        # Get full import path for debugging
+        module_name = getattr(func, '__module__', 'unknown')
+        func_name = getattr(func, '__name__', 'unknown')
+        full_import_path = f"{module_name}.{func_name}"
+
+        # Create test data
+        test_3d = np.random.rand(3, 20, 20).astype(np.float32)
+        test_2d = test_3d[0]
+
+        # Print function being tested for warning attribution
+        print(f"    🧪 Testing pyclesperanto function: {full_import_path}")
+
+        # Test if function accepts 3D input
+        result_3d = func(test_3d)
+        result_2d = func(test_2d)
+
+        # Check if shapes are preserved
+        if hasattr(result_3d, 'shape'):
+            if result_3d.shape == ():
+                # Scalar result - this is a value-returning function (same as CuPy/scikit-image)
+                return Contract.SLICE_SAFE, True
+            elif result_3d.shape != test_3d.shape:
+                # Output shape changed - likely dimension-changing function
+                return Contract.DIM_CHANGE, True
+        else:
+            # No shape attribute - this is a value-returning function
+            return Contract.SLICE_SAFE, True
+
+        # Test if processing is slice-by-slice
+        manual_3d = np.stack([func(test_3d[z]) for z in range(test_3d.shape[0])])
+
+        if np.allclose(result_3d, manual_3d, rtol=1e-5, atol=1e-8):
+            # Results match slice-by-slice processing
+            return Contract.SLICE_SAFE, True
+        else:
+            # Different results - likely volumetric processing
+            return Contract.CROSS_Z, True
+
+    except Exception as e:
+        # Function failed on 3D input
+        error_msg = str(e).lower()
+
+        # Check if it's a dimension error
+        if any(keyword in error_msg for keyword in ['dimension', 'shape', '3d', 'axis']):
+            return Contract.SLICE_SAFE, False  # 2D only, but slice-safe
+        else:
+            return Contract.DIM_CHANGE, False  # Unknown behavior, mark as dimension-changing
+
+
+
 
 
 def _discover() -> Dict[str, OpMeta]:
@@ -178,18 +336,31 @@ def _discover() -> Dict[str, OpMeta]:
         if not params or not _is_image_param(params[0]):
             continue  # first positional arg is not an image
 
-        lname = name.lower()
-        has_z_kw = any("z" in p.name and p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
-                        for p in params)
+        # Skip known problematic functions that open windows or have side effects
+        problematic_names = {
+            'imshow', 'show', 'plot', 'display', 'visualize', 'viewer',
+            'save', 'write', 'export', 'print_info', 'info'
+        }
+        if name.lower() in problematic_names:
+            continue
 
-        if any(pat in lname for pat in _DIM_DROP_PAT):
-            contract = Contract.DIM_CHANGE
-        elif any(pat in lname for pat in _CROSS_Z_PAT):
-            contract = Contract.CROSS_Z
-        elif has_z_kw:
-            contract = Contract.SLICE_SAFE
-        else:
-            contract = Contract.SLICE_SAFE  # default safe (per‑pixel)
+        # Skip blacklisted functions
+        if is_blacklisted(fn, name):
+            continue
+
+        # Use runtime testing to classify function behavior (same as CuPy/scikit-image)
+        contract, is_valid = _classify_pycle_function(fn)
+
+        # Skip functions that failed classification
+        if not is_valid:
+            continue
+
+        # Check for Z-axis parameters (still needed for metadata)
+        has_z_kw = any("z" in p.name and p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+                       for p in params)
+
+        # Get lowercase name for tags
+        lname = name.lower()
 
         doc_lines = textwrap.dedent(fn.__doc__ or "").splitlines()
         first_line_doc = doc_lines[0] if doc_lines else ""
@@ -287,27 +458,46 @@ def _register_pyclesperanto_from_cache() -> bool:
     if not cached_metadata:
         return False
 
-    def register_pyclesperanto_function(original_func, func_name: str, memory_type: str):
-        """Register a pyclesperanto function with unified decoration."""
-        from openhcs.processing.func_registry import _apply_unified_decoration
+    # Register functions from cache (following scikit-image pattern)
+    decorated_count = 0
+    skipped_count = 0
 
-        wrapper_func = _apply_unified_decoration(
-            original_func=original_func,
-            func_name=func_name,
-            memory_type=MemoryType.PYCLESPERANTO,
-            create_wrapper=True  # pyclesperanto needs dtype preservation
-        )
+    for full_name, func_data in cached_metadata.items():
+        try:
+            func_name = func_data['name']
+            contract = func_data['contract']
 
-        _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
+            # Skip functions with unknown or dimension-changing contracts
+            if contract in ['unknown', 'dim_change']:
+                skipped_count += 1
+                continue
 
-    # Register functions from cache
-    register_functions_from_cache(
-        library_name="pyclesperanto",
-        cached_metadata=cached_metadata,
-        get_function_func=_get_pyclesperanto_function,
-        register_function_func=register_pyclesperanto_function,
-        memory_type=MemoryType.PYCLESPERANTO.value
-    )
+            # Get the actual function object
+            original_func = _get_pyclesperanto_function("pyclesperanto", func_name)
+            if original_func is None:
+                logger.warning(f"Could not find function {func_name} in pyclesperanto")
+                skipped_count += 1
+                continue
+
+            # Adapt then apply unified decoration (following scikit-image pattern)
+            from openhcs.processing.func_registry import _apply_unified_decoration, _register_function
+            adapted = _pycle_adapt_function(original_func)
+            wrapper_func = _apply_unified_decoration(
+                original_func=adapted,
+                func_name=func_name,
+                memory_type=MemoryType.PYCLESPERANTO,
+                create_wrapper=True
+            )
+
+            _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
+            decorated_count += 1
+
+        except Exception as e:
+            logger.warning(f"Failed to register {func_name}: {e}")
+            skipped_count += 1
+
+    logger.info(f"Registered {decorated_count} pyclesperanto functions from cache")
+    logger.info(f"Skipped {skipped_count} functions (unknown/dim_change contracts or errors)")
     return True
 
 
@@ -319,6 +509,8 @@ def build_pycle_registry(refresh: bool = False) -> Dict[str, OpMeta]:
     """Return a *cached* registry mapping kernel‑name → :class:`OpMeta`."""
     global _REGISTRY  # noqa: PLW0603 – intentional module cache
     if refresh or _REGISTRY is None:
+        # Log blacklist information
+        log_blacklist_stats()
         _REGISTRY = _discover()
     return _REGISTRY
 
@@ -373,17 +565,19 @@ def register_pycle_ops(*, auto_register: bool = True):
             continue
 
         try:
-            # Apply @pyclesperanto decorator
-            decorated_func = pyclesperanto(meta.func)
+            # Use the new unified registration system (same as cache path)
+            from openhcs.constants import MemoryType
+            from openhcs.processing.func_registry import _apply_unified_decoration
 
-            # Register with OpenHCS function registry
-            register_function(
-                decorated_func,
-                backend="pyclesperanto",
-                contract=meta.contract.name.lower(),  # e.g. "slice_safe"
-                tags=meta.tags,
-                doc=meta.doc,
+            adapted = _pycle_adapt_function(meta.func)
+            wrapper_func = _apply_unified_decoration(
+                original_func=adapted,
+                func_name=meta.name,
+                memory_type=MemoryType.PYCLESPERANTO,
+                create_wrapper=True
             )
+
+            _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
             registered_count += 1
 
         except Exception as e:
@@ -415,154 +609,8 @@ if __name__ == "__main__":  # pragma: no cover – manual use
 # _scale_and_convert_pyclesperanto is now imported from decorators module
 
 
-def _create_pyclesperanto_array_compliant_wrapper(original_func, func_name):
-    """
-    Create a wrapper that ensures array-in/array-out compliance and dtype preservation for pyclesperanto functions.
 
-    All OpenHCS functions must:
-    1. Take 3D pyclesperanto array as first argument
-    2. Return 3D pyclesperanto array as first output
-    3. Additional outputs (values, coordinates) as 2nd, 3rd, etc. returns
-    4. Preserve input dtype when appropriate
-    """
-    from functools import wraps
 
-    @wraps(original_func)
-    def pyclesperanto_dtype_and_slice_preserving_wrapper(image_3d, *args, slice_by_slice: bool = False, dtype_conversion: DtypeConversion = DtypeConversion.PRESERVE_INPUT, **kwargs):
-        try:
-            # Store original dtype for preservation
-            original_dtype = image_3d.dtype
-
-            # Handle slice_by_slice processing for 3D arrays using OpenHCS stack utilities
-            if slice_by_slice and hasattr(image_3d, 'ndim') and image_3d.ndim == 3:
-                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices
-
-                # Process each slice individually
-                slices = unstack_slices(image_3d)
-                processed_slices = []
-
-                for slice_2d in slices:
-                    # Apply function to 2D slice
-                    result_slice = original_func(slice_2d, *args, **kwargs)
-                    processed_slices.append(result_slice)
-
-                # Stack results back to 3D
-                result = stack_slices(processed_slices)
-            else:
-                # Normal 3D processing
-                result = original_func(image_3d, *args, **kwargs)
-
-            # Check if result is 2D and needs expansion to 3D (like CuPy wrapper does)
-            if hasattr(result, 'ndim') and result.ndim == 2:
-                # Expand 2D result to 3D single slice
-                # Use pyclesperanto's concatenate_along_z and slice to create single 3D slice
-                try:
-                    # Concatenate with itself to create 3D, then take first slice
-                    temp_3d = cle.concatenate_along_z(result, result)  # Creates (2, Y, X)
-                    result = temp_3d[0:1, :, :]  # Take first slice to get (1, Y, X)
-                except Exception:
-                    # If expansion fails, return original 2D result
-                    # This maintains backward compatibility
-                    pass
-
-            # Apply dtype conversion based on enum value
-            if hasattr(result, 'dtype') and hasattr(result, 'shape'):
-                if dtype_conversion == DtypeConversion.PRESERVE_INPUT:
-                    # Preserve input dtype
-                    if result.dtype != original_dtype:
-                        return _scale_and_convert_pyclesperanto(result, original_dtype)
-                    return result
-
-                elif dtype_conversion == DtypeConversion.NATIVE_OUTPUT:
-                    # Return pyclesperanto's native output dtype
-                    return result
-
-                else:
-                    # Force specific dtype
-                    target_dtype = dtype_conversion.numpy_dtype
-                    if target_dtype is not None and result.dtype != target_dtype:
-                        return _scale_and_convert_pyclesperanto(result, target_dtype)
-                    return result
-            else:
-                # Non-array result, return as-is
-                return result
-
-        except Exception as e:
-            # If anything goes wrong, fall back to original function
-            return original_func(image_3d, *args, **kwargs)
-
-    # Update function signature to include new parameters
-    try:
-        import inspect
-        original_sig = inspect.signature(original_func)
-        new_params = list(original_sig.parameters.values())
-
-        # Add slice_by_slice parameter
-        slice_param = inspect.Parameter(
-            'slice_by_slice',
-            inspect.Parameter.KEYWORD_ONLY,
-            default=False,
-            annotation=bool
-        )
-        new_params.append(slice_param)
-
-        # Add dtype_conversion parameter
-        dtype_param = inspect.Parameter(
-            'dtype_conversion',
-            inspect.Parameter.KEYWORD_ONLY,
-            default=DtypeConversion.PRESERVE_INPUT,
-            annotation=DtypeConversion
-        )
-        new_params.append(dtype_param)
-
-        new_sig = original_sig.replace(parameters=new_params)
-        pyclesperanto_dtype_and_slice_preserving_wrapper.__signature__ = new_sig
-
-        # Set type annotations manually for get_type_hints() compatibility
-        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__ = getattr(original_func, '__annotations__', {}).copy()
-        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__['slice_by_slice'] = bool
-        pyclesperanto_dtype_and_slice_preserving_wrapper.__annotations__['dtype_conversion'] = DtypeConversion
-
-    except Exception:
-        # If signature modification fails, continue without it
-        pass
-
-    # Update docstring to mention additional parameters - following scikit-image/CuPy pattern
-    original_doc = pyclesperanto_dtype_and_slice_preserving_wrapper.__doc__ or ""
-    additional_doc = """
-
-    Additional OpenHCS Parameters
-    -----------------------------
-    slice_by_slice : bool, optional (default: False)
-        If True, process 3D arrays slice-by-slice to avoid cross-slice contamination.
-        If False, use original 3D behavior. Recommended for edge detection functions
-        on stitched microscopy data to prevent artifacts at field boundaries.
-
-    dtype_conversion : DtypeConversion, optional (default: PRESERVE_INPUT)
-        Controls output data type conversion:
-
-        - PRESERVE_INPUT: Keep input dtype (uint16 → uint16)
-        - NATIVE_OUTPUT: Use pyclesperanto's native output (often float32)
-        - UINT8: Force 8-bit unsigned integer (0-255 range)
-        - UINT16: Force 16-bit unsigned integer (microscopy standard)
-        - INT16: Force 16-bit signed integer
-        - INT32: Force 32-bit signed integer
-        - FLOAT32: Force 32-bit float (GPU performance)
-        - FLOAT64: Force 64-bit float (maximum precision)
-
-        Examples:
-            # Preserve input type
-            result = func(uint16_image, dtype_conversion=DtypeConversion.PRESERVE_INPUT)
-
-            # Force float32 for performance
-            result = func(float64_image, dtype_conversion=DtypeConversion.FLOAT32)
-
-            # Force uint16 for microscopy pipeline
-            result = func(float32_image, dtype_conversion=DtypeConversion.UINT16)
-    """
-    pyclesperanto_dtype_and_slice_preserving_wrapper.__doc__ = original_doc + additional_doc
-
-    return pyclesperanto_dtype_and_slice_preserving_wrapper
 
 
 def _get_z_parameter_guidance(func: Callable) -> str:
@@ -699,48 +747,75 @@ def _register_pycle_ops_direct() -> None:
     registry = build_pycle_registry()
 
     for meta in registry.values():
-        # Check if function returns array (array-in/array-out pattern)
+        # Register all functions with valid contracts (same as CuPy/scikit-image)
+        # pyclesperanto doesn't have UNKNOWN contract, so register all
+
+        # Register the function with OpenHCS
         try:
-            sig = inspect.signature(meta.func)
-            return_annotation = str(sig.return_annotation)
-
-            # Skip functions that don't return arrays
-            if not ('Array' in return_annotation or 'ndarray' in return_annotation):
-                skipped_count += 1
-                continue
-
-        except Exception:
-            skipped_count += 1
-            continue
-
-        # Skip dimension-changing functions (they break array chains)
-        if meta.dim_change:
-            skipped_count += 1
-            continue
-
-        try:
-            # Apply unified decoration pattern
             from openhcs.constants import MemoryType
             from openhcs.processing.func_registry import _apply_unified_decoration
+            from functools import wraps
+
+            # Define adapter function locally (same as cache registration)
+            DIM_ERR_TOKENS = ("dimension", "dimensional", "3d", "ndim", "axis", "rank", "shapes not aligned")
+
+            @wraps(meta.func)
+            def adapted(image, *args, slice_by_slice: bool = False, **kwargs):
+                try:
+                    import pyclesperanto as cle
+                except Exception:
+                    return meta.func(image, *args, **kwargs)
+                if hasattr(image, 'ndim') and image.ndim == 3:
+                    if slice_by_slice:
+                        from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                        mem = _detect_memory_type(image)
+                        slices = unstack_slices(image, mem, 0)
+                        results = [meta.func(sl, *args, **kwargs) for sl in slices]
+                        result = stack_slices(results, mem, 0)
+                    else:
+                        try:
+                            result = meta.func(image, *args, **kwargs)
+                        except Exception as e:
+                            msg = str(e).lower()
+                            if any(tok in msg for tok in DIM_ERR_TOKENS):
+                                from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                                mem = _detect_memory_type(image)
+                                slices = unstack_slices(image, mem, 0)
+                                results = [meta.func(sl, *args, **kwargs) for sl in slices]
+                                result = stack_slices(results, mem, 0)
+                            else:
+                                raise
+                    # Handle different result types (same as CuPy/scikit-image)
+                    result = _handle_pycle_result(result, image)
+                else:
+                    try:
+                        result = meta.func(image, *args, **kwargs)
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if any(tok in msg for tok in DIM_ERR_TOKENS):
+                            from openhcs.core.memory.stack_utils import unstack_slices, stack_slices, _detect_memory_type
+                            mem = _detect_memory_type(image)
+                            slices = unstack_slices(image, mem, 0)
+                            results = [meta.func(sl, *args, **kwargs) for sl in slices]
+                            result = stack_slices(results, mem, 0)
+                        else:
+                            raise
+                # Handle different result types (same as CuPy/scikit-image)
+                return _handle_pycle_result(result, image)
 
             wrapper_func = _apply_unified_decoration(
-                original_func=meta.func,
+                original_func=adapted,
                 func_name=meta.name,
                 memory_type=MemoryType.PYCLESPERANTO,
-                create_wrapper=True  # pyclesperanto needs dtype preservation (many functions convert to float32)
+                create_wrapper=True
             )
 
-            # Enhance docstring with contract information (following CuPy/scikit-image pattern)
-            _enhance_docstring_with_contract_info(wrapper_func, meta)
-
-            # Register the function
             _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
             decorated_count += 1
-
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to decorate {meta.name}: {e}")
+            logger.warning(f"Failed to register {meta.name}: {e}")
             skipped_count += 1
 
     import logging

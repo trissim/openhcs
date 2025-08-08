@@ -214,6 +214,18 @@ class TilingKeybindings:
 
 
 @dataclass(frozen=True)
+class FunctionRegistryConfig:
+    """Configuration for function registry behavior across all libraries."""
+    enable_scalar_functions: bool = True
+    """
+    Whether to register functions that return scalars.
+    When True: Scalar-returning functions are wrapped as (array, scalar) tuples.
+    When False: Scalar-returning functions are filtered out entirely.
+    Applies uniformly to all libraries (CuPy, scikit-image, pyclesperanto).
+    """
+
+
+@dataclass(frozen=True)
 class TUIConfig:
     """Configuration for OpenHCS Textual User Interface."""
     default_tiling_layout: TilingLayout = TilingLayout.MASTER_DETAIL
@@ -253,9 +265,12 @@ class GlobalPipelineConfig:
     plate_metadata: PlateMetadataConfig = field(default_factory=PlateMetadataConfig)
     """Configuration for plate metadata in consolidated outputs."""
 
+    function_registry: FunctionRegistryConfig = field(default_factory=FunctionRegistryConfig)
+    """Configuration for function registry behavior."""
+
     microscope: Microscope = Microscope.AUTO
     """Default microscope type for auto-detection."""
-    
+
     use_threading: bool = field(default_factory=lambda: os.getenv('OPENHCS_USE_THREADING', 'false').lower() == 'true')
     """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
 
@@ -275,6 +290,7 @@ _DEFAULT_VFS_CONFIG = VFSConfig(
 _DEFAULT_ZARR_CONFIG = ZarrConfig()
 _DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG = AnalysisConsolidationConfig()
 _DEFAULT_PLATE_METADATA_CONFIG = PlateMetadataConfig()
+_DEFAULT_FUNCTION_REGISTRY_CONFIG = FunctionRegistryConfig()
 _DEFAULT_TUI_CONFIG = TUIConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
@@ -291,5 +307,6 @@ def get_default_global_config() -> GlobalPipelineConfig:
         vfs=_DEFAULT_VFS_CONFIG,
         zarr=_DEFAULT_ZARR_CONFIG,
         analysis_consolidation=_DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG,
-        plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG
+        plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG,
+        function_registry=_DEFAULT_FUNCTION_REGISTRY_CONFIG
     )

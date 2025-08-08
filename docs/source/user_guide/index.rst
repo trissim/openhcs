@@ -24,10 +24,12 @@ This production script demonstrates every major OpenHCS feature with real parame
    :hidden:
 
    code_ui_editing
+   dtype_conversion
 
 **Available Guides**:
 
 - :doc:`code_ui_editing` - Bidirectional editing between TUI and Python code
+- :doc:`dtype_conversion` - Automatic data type conversion for GPU libraries
 
 **What's Coming**:
 
