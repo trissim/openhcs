@@ -35,7 +35,7 @@ class NoScrollComboBox(QComboBox):
         event.ignore()
 
 # REUSE the actual working Textual TUI services
-from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer, ParameterInfo
 from openhcs.textual_tui.widgets.shared.parameter_form_manager import ParameterFormManager as TextualParameterFormManager
 from openhcs.textual_tui.widgets.shared.typed_widget_factory import TypedWidgetFactory
 
@@ -226,7 +226,19 @@ class ParameterFormManager(QWidget):
             widget.valueChanged.connect(lambda value: self._emit_parameter_change(param_name, value))
             return widget
             
-        elif param_type == str or param_type == Path:
+        elif param_type == Path:
+            # Use enhanced path widget with browse button
+            from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
+
+            # Get parameter info for intelligent behavior detection
+            param_info = self.textual_form_manager.parameter_info.get(param_name) if hasattr(self.textual_form_manager, 'parameter_info') else None
+
+            widget = EnhancedPathWidget(param_name, current_value, param_info, self.color_scheme)
+            widget.path_changed.connect(lambda text: self._emit_parameter_change(param_name, text))
+            return widget
+
+        elif param_type == str:
+            # Regular string widget - no path detection for string types
             widget = QLineEdit()
             widget.setText(str(current_value) if current_value is not None else "")
             widget.textChanged.connect(lambda text: self._emit_parameter_change(param_name, text))
@@ -278,6 +290,8 @@ class ParameterFormManager(QWidget):
             widget.setText(str(current_value) if current_value is not None else "")
             widget.textChanged.connect(lambda text: self._emit_parameter_change(param_name, text))
             return widget
+
+
     
     def _emit_parameter_change(self, param_name: str, value: Any):
         """Emit parameter change signal."""
@@ -321,6 +335,11 @@ class ParameterFormManager(QWidget):
     
     def _update_widget_value(self, widget: QWidget, value: Any):
         """Update widget value without triggering signals."""
+        # Handle EnhancedPathWidget FIRST (duck typing)
+        if hasattr(widget, 'set_path'):
+            widget.set_path(value)
+            return
+
         if isinstance(widget, QCheckBox):
             widget.blockSignals(True)
             widget.setChecked(bool(value) if value is not None else False)

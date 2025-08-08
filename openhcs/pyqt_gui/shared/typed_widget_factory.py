@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, QDate, QTime
 from PyQt6.QtGui import QIntValidator, QDoubleValidator, QWheelEvent
 
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+from openhcs.textual_tui.widgets.shared.signature_analyzer import ParameterInfo
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,27 @@ class TypedWidgetFactory:
         }
         
         logger.debug("Typed widget factory initialized")
-    
+
+    def create_enhanced_widget(self, param_name: str, param_type: Type, current_value: Any,
+                             param_info: Optional[ParameterInfo] = None) -> Optional[QWidget]:
+        """
+        Create enhanced widget with parameter info support.
+
+        Args:
+            param_name: Parameter name
+            param_type: Parameter type
+            current_value: Current parameter value
+            param_info: Optional parameter info with docstring
+
+        Returns:
+            Enhanced widget for parameter editing or None
+        """
+        if self._is_path_type(param_type):
+            from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
+            return EnhancedPathWidget(param_name, current_value, param_info, self.color_scheme)
+        else:
+            return self.create_widget(param_name, param_type, current_value)
+
     def create_widget(self, param_name: str, param_type: Type, current_value: Any) -> Optional[QWidget]:
         """
         Create a widget for the given parameter type.
@@ -178,12 +199,17 @@ class TypedWidgetFactory:
     def update_widget_value(self, widget: QWidget, value: Any):
         """
         Update widget value without triggering signals.
-        
+
         Args:
             widget: Widget to update
             value: New value
         """
-        # Temporarily block signals to avoid recursion
+        # Handle EnhancedPathWidget FIRST (duck typing)
+        if hasattr(widget, 'set_path'):
+            widget.set_path(value)
+            return
+
+        # Temporarily block signals to avoid recursion for standard widgets
         widget.blockSignals(True)
         
         try:
@@ -226,7 +252,26 @@ class TypedWidgetFactory:
             logger.warning(f"Failed to update widget value: {e}")
         finally:
             widget.blockSignals(False)
-    
+
+    def _is_path_type(self, param_type: Type) -> bool:
+        """Check if parameter type is Path or Optional[Path]."""
+        import typing
+
+        # Direct Path type
+        if param_type == Path:
+            return True
+
+        # Check for Optional[Path] (Union[Path, None])
+        if hasattr(typing, 'get_origin') and hasattr(typing, 'get_args'):
+            origin = typing.get_origin(param_type)
+            if origin is typing.Union:
+                args = typing.get_args(param_type)
+                # Optional[Path] is Union[Path, None]
+                if len(args) == 2 and Path in args and type(None) in args:
+                    return True
+
+        return False
+
     def _is_enum_type(self, param_type: Type) -> bool:
         """Check if type is an enum."""
         return any(base.__name__ == 'Enum' for base in param_type.__bases__)

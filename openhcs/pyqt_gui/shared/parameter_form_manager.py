@@ -7,11 +7,13 @@ Adapted from Textual TUI version with PyQt6 widget integration.
 
 import logging
 from typing import Dict, Any, Type, Optional
+from pathlib import Path
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel
 from PyQt6.QtCore import pyqtSignal, QObject
 
 from openhcs.textual_tui.widgets.shared.parameter_form_manager import ParameterFormManager
+from openhcs.textual_tui.widgets.shared.signature_analyzer import ParameterInfo
 from openhcs.pyqt_gui.shared.typed_widget_factory import TypedWidgetFactory
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
@@ -73,9 +75,15 @@ class PyQtParameterFormManager(QObject):
         # Create widgets for each parameter
         for param_name, param_type in self.core_manager.parameter_types.items():
             current_value = self.core_manager.parameters[param_name]
-            
-            # Create parameter widget
-            widget = self.widget_factory.create_widget(param_name, param_type, current_value)
+
+            # Get parameter info for enhanced widget creation
+            param_info = self.core_manager.parameter_info.get(param_name) if hasattr(self.core_manager, 'parameter_info') else None
+
+            # Use enhanced widget creation for Path types only
+            if self.widget_factory._is_path_type(param_type):
+                widget = self.widget_factory.create_enhanced_widget(param_name, param_type, current_value, param_info)
+            else:
+                widget = self.widget_factory.create_widget(param_name, param_type, current_value)
             if widget:
                 # Connect widget changes to parameter updates
                 self.connect_widget_signals(widget, param_name)
@@ -98,6 +106,11 @@ class PyQtParameterFormManager(QObject):
             widget: Widget to connect
             param_name: Parameter name
         """
+        # Handle EnhancedPathWidget FIRST (duck typing)
+        if hasattr(widget, 'path_changed'):
+            widget.path_changed.connect(lambda text: self.handle_parameter_change(param_name, text))
+            return
+
         # Connect appropriate signal based on widget type
         if hasattr(widget, 'textChanged'):
             widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
@@ -204,3 +217,5 @@ class PyQtParameterFormManager(QObject):
     def parameter_types(self) -> Dict[str, Type]:
         """Get parameter types."""
         return self.core_manager.parameter_types
+
+

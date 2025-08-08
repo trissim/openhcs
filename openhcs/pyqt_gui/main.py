@@ -108,13 +108,11 @@ class OpenHCSMainWindow(QMainWindow):
         # Get theme manager from service adapter
         theme_manager = self.service_adapter.get_theme_manager()
 
-        # Apply theme to the application
-        theme_manager.apply_color_scheme(theme_manager.color_scheme)
-
-        # Register for theme change notifications
+        # Note: ServiceAdapter already applied dark theme globally in its __init__
+        # Just register for theme change notifications, don't re-apply
         theme_manager.register_theme_change_callback(self.on_theme_changed)
 
-        logger.debug("Applied initial theme to main window")
+        logger.debug("Registered for theme change notifications (theme already applied by ServiceAdapter)")
 
     def on_theme_changed(self, color_scheme):
         """

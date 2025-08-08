@@ -42,7 +42,31 @@ class PyQtServiceAdapter:
         # Initialize theme manager for centralized color management
         self.theme_manager = ThemeManager()
 
+        # Apply dark theme globally to ensure consistent dialog styling
+        self._apply_dark_theme()
+
         logger.debug("PyQt6 service adapter initialized")
+
+    def _apply_dark_theme(self):
+        """Apply dark theme globally for consistent dialog styling."""
+        try:
+            # Create dark color scheme (same as enhanced path widget)
+            dark_scheme = PyQt6ColorScheme()
+
+            # Apply the dark theme globally so all dialogs use consistent styling
+            self.theme_manager.apply_color_scheme(dark_scheme)
+
+            logger.debug("Applied dark theme globally for consistent dialog styling")
+        except Exception as e:
+            logger.warning(f"Failed to apply dark theme: {e}")
+
+    def get_theme_manager(self):
+        """Get the theme manager instance."""
+        return self.theme_manager
+
+    def get_current_color_scheme(self):
+        """Get the current color scheme."""
+        return self.theme_manager.color_scheme
 
     def execute_async_operation(self, async_func, *args, **kwargs):
         """

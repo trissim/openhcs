@@ -157,7 +157,7 @@ class PathPlanningConfig:
     output_dir_suffix: str = "_outputs"
     """Default suffix for general step output directories."""
 
-    global_output_folder: Optional[str] = None
+    global_output_folder: Optional[Path] = None
     """
     Optional global output folder where all plate workspaces and outputs will be created.
     If specified, plate workspaces will be created as {global_output_folder}/{plate_name}_workspace/
@@ -166,7 +166,7 @@ class PathPlanningConfig:
     Example: "/data/results" or "/mnt/hcs_output"
     """
 
-    materialization_results_path: str = "results"
+    materialization_results_path: Path = Path("results")
     """
     Path for materialized analysis results (CSV, JSON files from special outputs).
     Can be relative to plate folder or absolute path.
