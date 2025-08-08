@@ -689,34 +689,21 @@ def _create_dtype_preserving_wrapper_DEPRECATED(original_func, func_name):
 
 def _register_skimage_ops_direct() -> None:
     """
-    Register scikit-image functions directly in the OpenHCS function registry.
-
-    This creates dtype-preserving wrappers for compatible scikit-image functions
-    and registers them as OpenHCS functions with proper memory type attributes.
-
-    Only functions with SLICE_SAFE and CROSS_Z contracts are decorated.
-    UNKNOWN and DIM_CHANGE functions are skipped for stability.
+    Register scikit-image functions with caching support via unified orchestrator.
 
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
     from openhcs.processing.func_registry import _register_function
     import os
 
-    # Check if we're in subprocess mode - use cached metadata instead of expensive analysis
-    if os.environ.get('OPENHCS_SUBPROCESS_MODE'):
-        logger.info("SUBPROCESS: Using cached metadata for scikit-image function registration")
-        _register_skimage_ops_from_cache()
+    # Attempt cache‑based registration first
+    from openhcs.processing.backends.analysis.cache_utils import run_cached_registration
+    if run_cached_registration("skimage", _register_skimage_ops_from_cache):
         return
 
-    # TUI SPEEDUP: Try to use cached metadata for TUI startup too
-    logger.info("Checking for cached metadata to speed up TUI startup...")
-    cached_metadata = _load_function_metadata()
-    if cached_metadata:
-        logger.info("TUI: Found cached metadata - using fast registration path")
-        _register_skimage_ops_from_cache()
-        return
-
-    logger.info("TUI: No cache found - performing full analysis and building cache")
+    # run_cached_registration already handles subprocess and TUI fast-path
+    # If it didn't return, fall through to full discovery
+    logger.info("No valid cache fast-path, performing full analysis and building cache")
 
     decorated_count = 0
     skipped_count = 0
@@ -763,9 +750,9 @@ def _register_skimage_ops_direct() -> None:
     _save_function_metadata(registry)
 
 
-def _register_skimage_ops_from_cache() -> None:
+def _register_skimage_ops_from_cache() -> bool:
     """
-    Register scikit-image functions using cached metadata (for subprocess workers).
+    Register scikit-image functions using cached metadata. Returns True if used.
 
     This decorates ALL the same functions as the main process but without expensive analysis.
     Uses pre-computed metadata to determine which functions to decorate and their contracts.
@@ -780,7 +767,7 @@ def _register_skimage_ops_from_cache() -> None:
     metadata = _load_function_metadata()
     if not metadata:
         logger.error("SUBPROCESS: No metadata cache found - cannot decorate functions")
-        return
+        return False
 
     decorated_count = 0
     skipped_count = 0
@@ -823,6 +810,7 @@ def _register_skimage_ops_from_cache() -> None:
 
     logger.info(f"SUBPROCESS: Decorated {decorated_count} scikit-image functions from cache")
     logger.info(f"SUBPROCESS: Skipped {skipped_count} functions (UNKNOWN/DIM_CHANGE or errors)")
+    return True
 
 
 

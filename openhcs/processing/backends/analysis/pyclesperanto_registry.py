@@ -276,8 +276,8 @@ def _get_pyclesperanto_function(module_path: str, func_name: str):
         return None
 
 
-def _register_pyclesperanto_from_cache() -> None:
-    """Register pyclesperanto functions using cached metadata."""
+def _register_pyclesperanto_from_cache() -> bool:
+    """Register pyclesperanto functions using cached metadata. Returns True if used."""
     from openhcs.processing.backends.analysis.cache_utils import register_functions_from_cache
     from openhcs.processing.func_registry import _register_function
     from openhcs.constants import MemoryType
@@ -285,10 +285,7 @@ def _register_pyclesperanto_from_cache() -> None:
     # Load cached metadata
     cached_metadata = _load_pyclesperanto_metadata()
     if not cached_metadata:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error("No pyclesperanto metadata cache found - cannot register from cache")
-        return
+        return False
 
     def register_pyclesperanto_function(original_func, func_name: str, memory_type: str):
         """Register a pyclesperanto function with unified decoration."""
@@ -311,6 +308,7 @@ def _register_pyclesperanto_from_cache() -> None:
         register_function_func=register_pyclesperanto_function,
         memory_type=MemoryType.PYCLESPERANTO.value
     )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -681,14 +679,11 @@ def _register_pycle_ops_direct() -> None:
     Checks cache first for fast registration, falls back to full discovery if needed.
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
-    from openhcs.processing.backends.analysis.cache_utils import should_use_cache_for_library
+    from openhcs.processing.backends.analysis.cache_utils import run_cached_registration
 
-    # Check if we should use cache
-    if should_use_cache_for_library("pyclesperanto"):
-        cached_metadata = _load_pyclesperanto_metadata()
-        if cached_metadata:
-            _register_pyclesperanto_from_cache()
-            return
+    # Attempt cache‑based registration first
+    if run_cached_registration("pyclesperanto", _register_pyclesperanto_from_cache):
+        return
 
     # Fall back to full discovery
     from openhcs.processing.func_registry import _register_function
