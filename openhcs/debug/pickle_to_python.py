@@ -313,7 +313,7 @@ def _collect_enum_classes_from_step(step):
         if param_name in ['self', 'func']:
             continue
 
-        value = getattr(step, param_name)
+        value = getattr(step, param_name, param.default)
 
         # Collect enum classes from parameter values
         if isinstance(value, Enum):
@@ -384,7 +384,7 @@ def _generate_step_parameters(step, default_step, clean_mode=False):
         if param_name in ['self', 'func']:
             continue
 
-        current_val = getattr(step, param_name)
+        current_val = getattr(step, param_name, param.default)
         default_val = getattr(default_step, param_name)
 
         # Include parameter if it differs from default (clean mode) or always (full mode)
