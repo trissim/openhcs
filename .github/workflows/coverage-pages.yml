@@ -1,4 +1,4 @@
-name: Tests, Coverage and GitHub Pages
+name: Tests and Coverage Reports
 
 on:
   push:
