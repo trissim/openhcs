@@ -15,6 +15,7 @@ from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps import FunctionStep as Step
 from openhcs.constants.constants import VariableComponents
+from openhcs.constants.input_source import InputSource
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
 
 # Import processing functions directly
@@ -102,6 +103,7 @@ def get_pipeline(input_dir):
             #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             Step(func=(assemble_stack_cpu),
                  name="CPU Assembler",
+                 input_source=InputSource.PIPELINE_START
             )
         ],
         name = "Mega Flex Pipeline" + (" (CPU-Only)" if cpu_only_mode else ""),
