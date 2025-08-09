@@ -23,7 +23,7 @@ from openhcs.core.utils import optional_import
 torch = optional_import("torch")
 
 # Import torbi for GPU-accelerated Viterbi decoding
-import torbi
+torbi = optional_import("torbi")
 
 
 def materialize_hmm_analysis(
