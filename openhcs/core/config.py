@@ -95,7 +95,7 @@ class ZarrConfig:
     """Generate OME-ZARR compatible metadata and structure."""
 
     write_plate_metadata: bool = True
-    """Write plate-level metadata for HCS viewing (required for napari ome-zarr)."""
+    """Write plate-level metadata for HCS viewing (required for OME-ZARR viewers like napari)."""
 
 
 @dataclass(frozen=True)

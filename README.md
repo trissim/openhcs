@@ -5,7 +5,7 @@
 </div>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![GPU Accelerated](https://img.shields.io/badge/GPU-Accelerated-green.svg)](https://github.com/trissim/openhcs)
 
 ## High-Performance Bioimage Analysis Platform
@@ -50,6 +50,35 @@ OpenHCS is a production-grade bioimage analysis platform designed for high-conte
 
 ### Installation
 
+OpenHCS offers flexible installation options to match your specific needs:
+
+```bash
+# Basic installation (core image processing only)
+pip install openhcs
+
+# With Terminal User Interface (recommended for SSH/remote work)
+pip install "openhcs[tui]"
+
+# With Desktop GUI (recommended for local development)
+pip install "openhcs[gui]"
+
+# With GPU acceleration (high-performance processing)
+pip install "openhcs[gpu]"
+
+# Common combinations
+pip install "openhcs[tui,gpu]"     # TUI + GPU acceleration
+pip install "openhcs[gui,gpu]"     # GUI + GPU acceleration
+pip install "openhcs[tui,gui]"     # Both interfaces
+
+# Everything (all features)
+pip install "openhcs[all]"
+
+# Optional: Real-time visualization during processing
+pip install "openhcs[viz]"         # Adds napari support
+```
+
+#### Development Installation
+
 ```bash
 # Install with pyenv (recommended)
 pyenv install 3.11
@@ -59,27 +88,54 @@ pyenv global 3.11
 python -m venv .venv
 source .venv/bin/activate
 
-# Install OpenHCS (development installation)
+# Clone and install in development mode
 git clone https://github.com/trissim/openhcs.git
 cd openhcs
-pip install -e .
-
-# For GPU support
-pip install -e ".[gpu]"
+pip install -e ".[all]"  # Install with all features for development
 ```
 
 ### Launch Interactive Interface
 
-```bash
-# Terminal interface (works over SSH)
-python -m openhcs.textual_tui
+OpenHCS provides convenient command-line entry points:
 
-# Desktop GUI application
-python -m openhcs.pyqt_gui
+```bash
+# Terminal interface (works over SSH, requires 'tui' extra)
+openhcs-tui
+# or: openhcs  (default interface)
+
+# Desktop GUI application (requires 'gui' extra)
+openhcs-gui
 
 # Web-based TUI (accessible via browser)
-python -m openhcs.textual_tui --web
+openhcs-tui --web
+
+# Utility: Recache function registry (useful after updates)
+openhcs-recache
 ```
+
+**Legacy commands** (still supported):
+```bash
+python -m openhcs.textual_tui
+python -m openhcs.pyqt_gui
+```
+
+### 🎯 Choosing the Right Installation
+
+| Use Case | Installation Command | What You Get |
+|----------|---------------------|--------------|
+| **Remote server work** | `pip install "openhcs[tui]"` | Terminal interface + monitoring |
+| **Local development** | `pip install "openhcs[gui]"` | Desktop GUI + monitoring |
+| **High-performance processing** | `pip install "openhcs[gpu]"` | GPU acceleration (574+ functions) |
+| **Complete remote setup** | `pip install "openhcs[tui,gpu]"` | Terminal interface + GPU power |
+| **Complete local setup** | `pip install "openhcs[gui,gpu]"` | Desktop GUI + GPU power |
+| **Research/visualization** | `pip install "openhcs[all]"` | Everything including napari |
+| **Minimal/testing** | `pip install openhcs` | Core processing only |
+
+**💡 Pro Tips:**
+- Start with `openhcs[tui]` for SSH/remote work
+- Use `openhcs[gui,gpu]` for local high-performance analysis
+- Add `viz` extra for real-time napari visualization during processing
+- The `all` extra includes everything but is ~2GB+ with GPU libraries
 
 ## 📊 Basic Usage
 
@@ -259,8 +315,8 @@ We welcome contributions! OpenHCS is actively developed for production neuroscie
 git clone https://github.com/trissim/openhcs.git
 cd openhcs
 
-# Install in development mode
-pip install -e .
+# Install in development mode with all features
+pip install -e ".[all,dev]"
 
 # Run tests
 pytest tests/

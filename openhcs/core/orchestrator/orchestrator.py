@@ -30,7 +30,15 @@ from openhcs.io.filemanager import FileManager
 from openhcs.io.base import storage_registry
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
-from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
+
+# Optional napari import for visualization
+try:
+    from openhcs.runtime.napari_stream_visualizer import NapariStreamVisualizer
+    NapariVisualizerType = NapariStreamVisualizer
+except ImportError:
+    # Create a placeholder type for type hints when napari is not available
+    NapariStreamVisualizer = None
+    NapariVisualizerType = Any  # Use Any for type hints when napari is not available
 
 
 logger = logging.getLogger(__name__)
@@ -409,7 +417,7 @@ class PipelineOrchestrator:
         self,
         pipeline_definition: List[AbstractStep],
         frozen_context: ProcessingContext,
-        visualizer: Optional[NapariStreamVisualizer]
+        visualizer: Optional[NapariVisualizerType]
     ) -> Dict[str, Any]:
         """Executes the pipeline for a single well using its frozen context."""
         well_id = frozen_context.well_id
@@ -478,7 +486,7 @@ class PipelineOrchestrator:
         pipeline_definition: List[AbstractStep],
         compiled_contexts: Dict[str, ProcessingContext],
         max_workers: Optional[int] = None,
-        visualizer: Optional[NapariStreamVisualizer] = None,
+        visualizer: Optional[NapariVisualizerType] = None,
         log_file_base: Optional[str] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
@@ -489,8 +497,8 @@ class PipelineOrchestrator:
             compiled_contexts: Dict of well_id to its compiled, frozen ProcessingContext.
                                Obtained from `compile_plate_for_processing`.
             max_workers: Maximum number of worker threads for parallel execution.
-            visualizer: Optional instance of NapariStreamVisualizer (must be
-                        initialized with orchestrator's filemanager by the caller).
+            visualizer: Optional instance of NapariStreamVisualizer for real-time visualization
+                        (requires napari to be installed; must be initialized with orchestrator's filemanager by the caller).
             log_file_base: Base path for worker process log files (without extension).
                           Each worker will create its own log file: {log_file_base}_worker_{pid}.log
 

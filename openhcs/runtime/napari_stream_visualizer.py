@@ -17,8 +17,16 @@ import threading
 from typing import Any, Dict, Optional
 
 from openhcs.io.filemanager import FileManager
+from openhcs.utils.import_utils import optional_import
 
-import napari
+# Optional napari import - this module should only be imported if napari is available
+napari = optional_import("napari")
+if napari is None:
+    raise ImportError(
+        "napari is required for NapariStreamVisualizer. "
+        "Install it with: pip install 'openhcs[viz]' or pip install napari"
+    )
+
 import numpy as np
 
 logger = logging.getLogger(__name__)

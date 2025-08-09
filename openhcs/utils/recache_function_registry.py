@@ -42,58 +42,77 @@ def recache_function_registry():
         print(f"📊 Current registry status: {'✅ Initialized' if current_initialized else '❌ Not initialized'}")
         print(f"📊 Current function count: {current_count}")
 
-        # Show cache status for all libraries
-        print("\n📋 Cache status for all libraries:")
+        # Show cache status for available libraries only
+        print("\n📋 Cache status for available libraries:")
 
-        # Scikit-image cache status
+        # Check which libraries are actually available
+        available_libraries = []
+
+        # Check scikit-image (always available as it's in base dependencies)
+        available_libraries.append("skimage")
+
+        # Check optional GPU libraries
+        try:
+            import pyclesperanto
+            available_libraries.append("pyclesperanto")
+        except ImportError:
+            print("  ⚠️  pyclesperanto not installed - skipping")
+
+        try:
+            import cupy
+            available_libraries.append("cupy")
+        except ImportError:
+            print("  ⚠️  CuPy not installed - skipping")
+
+        # Show cache status for available libraries
         try:
             from openhcs.processing.backends.analysis.cache_utils import get_cache_status
-            skimage_status = get_cache_status("skimage")
-            status_icon = "✅" if skimage_status['exists'] else "❌"
-            print(f"  {status_icon} scikit-image: {skimage_status['function_count'] or 0} functions cached")
-        except Exception as e:
-            print(f"  ❌ scikit-image: Error checking cache status: {e}")
 
-        # Pyclesperanto cache status
-        try:
-            pycle_status = get_cache_status("pyclesperanto")
-            status_icon = "✅" if pycle_status['exists'] else "❌"
-            print(f"  {status_icon} pyclesperanto: {pycle_status['function_count'] or 0} functions cached")
-        except Exception as e:
-            print(f"  ❌ pyclesperanto: Error checking cache status: {e}")
+            for library in available_libraries:
+                try:
+                    status = get_cache_status(library)
+                    status_icon = "✅" if status['exists'] else "❌"
+                    library_name = {
+                        "skimage": "scikit-image",
+                        "pyclesperanto": "pyclesperanto",
+                        "cupy": "CuPy"
+                    }.get(library, library)
+                    print(f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached")
+                except Exception as e:
+                    print(f"  ❌ {library_name}: Error checking cache status: {e}")
 
-        # CuPy cache status
-        try:
-            cupy_status = get_cache_status("cupy")
-            status_icon = "✅" if cupy_status['exists'] else "❌"
-            print(f"  {status_icon} CuPy: {cupy_status['function_count'] or 0} functions cached")
         except Exception as e:
-            print(f"  ❌ CuPy: Error checking cache status: {e}")
+            print(f"  ❌ Error importing cache utilities: {e}")
 
         # Step 0: Migrate legacy cache files to XDG locations
         print("\n🔄 Migrating legacy cache files to XDG locations...")
         from openhcs.core.xdg_paths import migrate_all_legacy_cache_files
         migrate_all_legacy_cache_files()
 
-        # Step 1: Clear all function metadata caches
-        print("\n🧹 Clearing all function metadata caches...")
+        # Step 1: Clear function metadata caches for available libraries
+        print("\n🧹 Clearing function metadata caches for available libraries...")
 
-        # Clear scikit-image cache
+        # Clear scikit-image cache (always available)
+        print("  🧹 Clearing scikit-image cache...")
         scikit_registry.clear_function_metadata_cache()
 
-        # Clear pyclesperanto cache
+        # Clear pyclesperanto cache (if available)
         try:
+            import pyclesperanto  # Check if available first
             from openhcs.processing.backends.analysis.pyclesperanto_registry import clear_pyclesperanto_cache
+            print("  🧹 Clearing pyclesperanto cache...")
             clear_pyclesperanto_cache()
         except ImportError:
-            print("  ⚠️  pyclesperanto not available - skipping cache clear")
+            print("  ⚠️  pyclesperanto not installed - skipping cache clear")
 
-        # Clear CuPy cache
+        # Clear CuPy cache (if available)
         try:
+            import cupy  # Check if available first
             from openhcs.processing.backends.analysis.cupy_registry import clear_cupy_cache
+            print("  🧹 Clearing CuPy cache...")
             clear_cupy_cache()
         except ImportError:
-            print("  ⚠️  CuPy not available - skipping cache clear")
+            print("  ⚠️  CuPy not installed - skipping cache clear")
         
         # Step 2: Force clear and reset the registry
         print("🧹 Clearing and resetting function registry...")
@@ -126,42 +145,64 @@ def recache_function_registry():
         else:
             print(f"⚠️  Registry function count decreased by {current_count - new_count} functions")
         
-        # Step 5: Test a specific function to verify dtype_conversion parameter
+        # Step 5: Test function signatures (if torch is available)
         print("\n🧪 Testing function signature updates...")
         try:
+            import torch  # Check if torch is available first
             from openhcs.processing.backends.processors.torch_processor import max_projection
             import inspect
-            
+
             sig = inspect.signature(max_projection)
             has_slice_by_slice = 'slice_by_slice' in sig.parameters
             has_dtype_conversion = 'dtype_conversion' in sig.parameters
-            
+
             print(f"   max_projection has slice_by_slice: {'✅' if has_slice_by_slice else '❌'}")
             print(f"   max_projection has dtype_conversion: {'✅' if has_dtype_conversion else '❌'}")
-            
+
             if has_dtype_conversion:
                 dtype_param = sig.parameters['dtype_conversion']
                 print(f"   dtype_conversion type: {dtype_param.annotation}")
                 print(f"   dtype_conversion default: {dtype_param.default}")
-            
+
+        except ImportError:
+            print("   ⚠️  PyTorch not installed - skipping function signature test")
         except Exception as e:
-            print(f"⚠️  Could not test function signature: {e}")
+            print(f"   ⚠️  Could not test function signature: {e}")
         
-        # Step 6: Show final cache status
-        print("\n📋 Final cache status for all libraries:")
+        # Step 6: Show final cache status for available libraries
+        print("\n📋 Final cache status for available libraries:")
 
         try:
             from openhcs.processing.backends.analysis.cache_utils import get_cache_status
 
-            # Check all library caches
-            for library in ["skimage", "pyclesperanto", "cupy"]:
+            # Check which libraries are available and their cache status
+            libraries_to_check = []
+
+            # scikit-image is always available
+            libraries_to_check.append(("skimage", "scikit-image"))
+
+            # Check optional libraries
+            try:
+                import pyclesperanto
+                libraries_to_check.append(("pyclesperanto", "pyclesperanto"))
+            except ImportError:
+                pass
+
+            try:
+                import cupy
+                libraries_to_check.append(("cupy", "CuPy"))
+            except ImportError:
+                pass
+
+            # Check cache status for available libraries
+            for library_key, library_name in libraries_to_check:
                 try:
-                    status = get_cache_status(library)
+                    status = get_cache_status(library_key)
                     status_icon = "✅" if status['exists'] else "❌"
                     age_info = f" ({status['cache_age_days']:.1f} days old)" if status['cache_age_days'] else ""
-                    print(f"  {status_icon} {library}: {status['function_count'] or 0} functions cached{age_info}")
+                    print(f"  {status_icon} {library_name}: {status['function_count'] or 0} functions cached{age_info}")
                 except Exception as e:
-                    print(f"  ❌ {library}: Error checking cache status: {e}")
+                    print(f"  ❌ {library_name}: Error checking cache status: {e}")
 
         except Exception as e:
             print(f"  ❌ Error checking final cache status: {e}")
