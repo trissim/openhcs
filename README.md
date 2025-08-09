@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![GPU Accelerated](https://img.shields.io/badge/GPU-Accelerated-green.svg)](https://github.com/trissim/openhcs)
+[![Documentation Status](https://readthedocs.org/projects/openhcs/badge/?version=latest)](https://openhcs.readthedocs.io/en/latest/?badge=latest)
+[![Coverage](https://trissim.github.io/openhcs/.github/badges/coverage.svg)](https://trissim.github.io/openhcs/coverage/)
 
 ## High-Performance Bioimage Analysis Platform
 
@@ -247,6 +249,19 @@ steps = [
 - **Skeletonization**: GPU-accelerated morphological thinning
 - **Tracing**: SKAN-based neurite analysis with HMM models
 - **Quantification**: Length, branching, connectivity metrics
+
+## 📚 Documentation
+
+### **Complete Documentation**
+- **📖 [Read the Docs](https://openhcs.readthedocs.io/)** - Complete API documentation, tutorials, and guides
+- **📊 [Coverage Reports](https://trissim.github.io/openhcs/coverage/)** - Live test coverage analysis
+- **🔧 [API Reference](https://openhcs.readthedocs.io/en/latest/api/)** - Detailed function and class documentation
+- **🎯 [User Guide](https://openhcs.readthedocs.io/en/latest/user_guide/)** - Step-by-step tutorials and examples
+
+### **Quick Links**
+- **Architecture**: [Pipeline System](https://openhcs.readthedocs.io/en/latest/architecture/pipeline-compilation-system.html) | [GPU Processing](https://openhcs.readthedocs.io/en/latest/architecture/gpu-resource-management.html) | [VFS](https://openhcs.readthedocs.io/en/latest/architecture/vfs-system.html)
+- **Getting Started**: [Installation](https://openhcs.readthedocs.io/en/latest/getting_started/installation.html) | [First Pipeline](https://openhcs.readthedocs.io/en/latest/getting_started/first_pipeline.html)
+- **Advanced**: [GPU Optimization](https://openhcs.readthedocs.io/en/latest/guides/gpu_optimization.html) | [Large Datasets](https://openhcs.readthedocs.io/en/latest/guides/large_datasets.html)
 
 ## 🏗️ Architecture Overview
 
