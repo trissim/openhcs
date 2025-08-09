@@ -88,6 +88,8 @@ pyenv global 3.11
 python -m venv .venv
 source .venv/bin/activate
 
+# Note: GPU dependencies require CUDA 12.x (see GPU Compatibility section below)
+
 # Clone and install in development mode
 git clone https://github.com/trissim/openhcs.git
 cd openhcs
@@ -136,6 +138,17 @@ python -m openhcs.pyqt_gui
 - Use `openhcs[gui,gpu]` for local high-performance analysis
 - Add `viz` extra for real-time napari visualization during processing
 - The `all` extra includes everything but is ~2GB+ with GPU libraries
+
+### 🔧 GPU Compatibility
+
+OpenHCS GPU dependencies require **CUDA 12.x**. 
+
+**CPU-Only Mode:**
+```bash
+# Skip GPU dependencies entirely
+export OPENHCS_CPU_ONLY=true
+pip install "openhcs[tui]"  # or [gui] without [gpu]
+```
 
 ## 📊 Basic Usage
 
