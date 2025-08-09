@@ -1,0 +1,53 @@
+[run]
+# Coverage configuration for OpenHCS
+source = openhcs
+branch = True
+parallel = True
+concurrency = multiprocessing
+
+# Include all Python files in the openhcs package
+include = openhcs/*
+
+# Exclude test files and generated files
+omit = 
+    */tests/*
+    */test_*
+    */__pycache__/*
+    */.*
+    setup.py
+    */conftest.py
+    # Exclude external packages that might be in the source tree
+    */torbi/*
+    */semantic_matrix_analyzer/*
+    */dna/*
+
+[report]
+# Reporting configuration
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.DEBUG
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.:
+    class .*\bProtocol\):
+    @(abc\.)?abstractmethod
+
+# Show missing lines in the report
+show_missing = True
+skip_covered = False
+skip_empty = False
+
+# Precision for coverage percentage
+precision = 1
+
+[html]
+# HTML report configuration
+directory = site/coverage
+title = OpenHCS Coverage Report
+
+[xml]
+# XML report configuration (for badges and CI)
+output = coverage.xml

@@ -34,26 +34,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run unit tests with coverage
+      - name: Run integration tests with coverage
         continue-on-error: true  # Continue workflow even if tests fail
+        env:
+          OPENHCS_CPU_ONLY: true
         run: |
           mkdir -p site
           python -m pytest --cov=openhcs \
                 --cov-report=xml \
                 --cov-report=html:site/coverage \
-                tests/ --ignore=tests/integration/ || echo "Some unit tests failed, but continuing with coverage report generation"
-
-      - name: Run integration tests (CPU-only)
-        continue-on-error: true  # Continue workflow even if tests fail
-        env:
-          OPENHCS_CPU_ONLY: true
-        run: |
-          python -m pytest tests/integration/ \
+                tests/integration/ \
                 --it-backends disk,zarr \
                 --it-microscopes ImageXpress,OperaPhenix \
                 --it-dims 3d \
                 --it-exec-mode multiprocessing \
-                -v || echo "Some integration tests failed, but continuing"
+                -v || echo "Some integration tests failed, but continuing with coverage report generation"
+
+
 
       - name: Generate coverage badge
         run: |
