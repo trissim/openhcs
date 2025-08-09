@@ -69,8 +69,10 @@ def cleanup_cupy_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans current device.
     """
-    try:
-        import cupy
+    from openhcs.core.utils import optional_import
+    cupy = optional_import("cupy")
+    if cupy is None:
+        return
 
         if device_id is not None:
             # Clean specific device
@@ -333,16 +335,13 @@ def check_gpu_memory_usage() -> None:
         logger.debug("  PyTorch: Not installed")
 
     # Check CuPy
-    try:
-        import cupy
+    from openhcs.core.utils import optional_import
+    cupy = optional_import("cupy")
+    if cupy is not None:
         mempool = cupy.get_default_memory_pool()
         used_bytes = mempool.used_bytes()
         total_bytes = mempool.total_bytes()
         logger.debug(f"  CuPy: {used_bytes / 1024**3:.2f}GB used, {total_bytes / 1024**3:.2f}GB total")
-    except ImportError:
-        logger.debug("  CuPy: Not installed")
-    except Exception as e:
-        logger.debug(f"  CuPy: Error checking memory - {e}")
 
     # Note: TensorFlow and JAX don't have easy memory introspection
     logger.debug("  TensorFlow/JAX: Memory usage not easily queryable")
@@ -407,16 +406,13 @@ def get_gpu_memory_summary() -> dict:
         pass
 
     # Check CuPy
-    try:
-        import cupy
+    from openhcs.core.utils import optional_import
+    cupy = optional_import("cupy")
+    if cupy is not None:
         mempool = cupy.get_default_memory_pool()
         memory_info["cupy"]["available"] = True
         memory_info["cupy"]["used_gb"] = mempool.used_bytes() / 1024**3
         memory_info["cupy"]["total_gb"] = mempool.total_bytes() / 1024**3
-    except ImportError:
-        pass
-    except Exception:
-        pass
 
     return memory_info
 

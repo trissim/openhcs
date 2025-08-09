@@ -10,7 +10,6 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Tuple, List
 import numpy as np
-import cupy as cp
 import networkx as nx
 import scipy.spatial.distance
 import sklearn.linear_model
@@ -19,6 +18,9 @@ import pandas as pd
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.memory.decorators import cupy as cupy_func
 from openhcs.core.utils import optional_import
+
+# Import CuPy using the established optional import pattern
+cp = optional_import("cupy")
 
 import warnings
 
