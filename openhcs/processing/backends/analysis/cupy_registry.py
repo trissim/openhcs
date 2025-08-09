@@ -7,7 +7,6 @@ CuPy functions generally have better dtype preservation than scikit-image.
 """
 
 import inspect
-import cupy as cp
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional, Callable, Tuple
@@ -15,8 +14,16 @@ from enum import Enum
 from functools import wraps
 import warnings
 
-# Suppress CuPy warnings during analysis
-warnings.filterwarnings('ignore', category=FutureWarning, module='cupyx')
+# Import CuPy using the established optional import pattern
+from openhcs.core.utils import optional_import
+
+# Optional imports following OpenHCS patterns
+cp = optional_import("cupy")
+cucim_skimage = optional_import("cucim.skimage")
+
+# Suppress CuPy warnings during analysis if available
+if cp is not None:
+    warnings.filterwarnings('ignore', category=FutureWarning, module='cupyx')
 
 # Import blacklist system
 from .function_classifier import is_blacklisted, log_blacklist_stats
@@ -29,7 +36,6 @@ def _cucim_adapt_function(original_func):
 
     @wraps(original_func)
     def adapted(image, *args, **kwargs):
-        import cupy as cp
         if isinstance(image, cp.ndarray) and image.ndim == 3:
             try:
                 result = original_func(image, *args, **kwargs)
@@ -307,16 +313,16 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
     CuCIM provides GPU-accelerated versions of scikit-image functions that are
     equivalent to their CPU counterparts but run on GPU.
     """
-    try:
-        import cucim.skimage
-        print("🔍 Analyzing CuCIM skimage functions...")
-
-        # Log blacklist information
-        log_blacklist_stats()
-    except ImportError as e:
-        print(f"❌ CuCIM skimage not available: {e}")
+    # Use the module-level optional import
+    if cucim_skimage is None:
+        print("❌ CuCIM skimage not available")
         print("❌ No fallback - CuCIM is required for GPU scikit-image functions")
         return {}
+
+    print("🔍 Analyzing CuCIM skimage functions...")
+
+    # Log blacklist information
+    log_blacklist_stats()
 
     registry = {}
     analyzed_functions = 0
@@ -402,11 +408,13 @@ def build_cupy_registry() -> Dict[str, CupyFunction]:
 
 def _get_cucim_version() -> str:
     """Get CuCIM version for cache validation."""
-    try:
-        import cucim
-        return cucim.__version__
-    except Exception:
-        return "unknown"
+    cucim = optional_import("cucim")
+    if cucim is not None:
+        try:
+            return cucim.__version__
+        except Exception:
+            return "unknown"
+    return "unknown"
 
 
 def _extract_cupy_cache_data(meta: CupyFunction) -> Dict[str, str]:
@@ -515,9 +523,8 @@ def _register_cupy_ops_direct() -> None:
     Checks cache first for fast registration, falls back to full discovery if needed.
     This is called during Phase 2 of registry initialization to avoid circular dependencies.
     """
-    try:
-        import cucim.skimage
-    except ImportError:
+    # Use the module-level optional import
+    if cucim_skimage is None:
         import logging
         logger = logging.getLogger(__name__)
         logger.warning("CuCIM skimage not available - skipping GPU scikit-image registration")

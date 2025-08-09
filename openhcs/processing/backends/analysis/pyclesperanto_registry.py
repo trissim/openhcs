@@ -33,9 +33,7 @@ def _pycle_adapt_function(original_func):
 
     @wraps(original_func)
     def adapted(image, *args, slice_by_slice: bool = False, **kwargs):
-        try:
-            import pyclesperanto as cle
-        except Exception:
+        if cle is None:
             return original_func(image, *args, **kwargs)
 
         original_dtype = image.dtype
@@ -135,11 +133,11 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Callable, Dict, List, Optional
 
-try:
-    import pyclesperanto as cle
-except ModuleNotFoundError as e:  # pragma: no cover – won't happen in CI
-    raise ImportError("pyclesperanto must be installed before importing "
-                      "openhcs.plugin.pycle_registry") from e
+# Import pyclesperanto using the established optional import pattern
+from openhcs.core.utils import optional_import
+
+# Optional imports following OpenHCS patterns
+cle = optional_import("pyclesperanto")
 
 # Import blacklist system
 from .function_classifier import is_blacklisted, log_blacklist_stats
@@ -194,7 +192,6 @@ def _handle_pycle_result(result, original_image):
     Same logic as CuPy and scikit-image registries.
     """
     import numpy as np
-    import pyclesperanto as cle
 
     # If result is already a 3D array, return as-is
     if hasattr(result, 'ndim') and result.ndim == 3:
@@ -258,7 +255,6 @@ def _classify_pycle_function(func) -> Tuple[Contract, bool]:
     """
     try:
         import numpy as np
-        import pyclesperanto as cle
 
         # Get full import path for debugging
         module_name = getattr(func, '__module__', 'unknown')
@@ -385,11 +381,12 @@ _REGISTRY: Optional[Dict[str, OpMeta]] = None  # module‑level cache
 
 def _get_pyclesperanto_version() -> str:
     """Get pyclesperanto version for cache validation."""
-    try:
-        import pyclesperanto as cle
-        return cle.__version__
-    except Exception:
-        return "unknown"
+    if cle is not None:
+        try:
+            return cle.__version__
+        except Exception:
+            return "unknown"
+    return "unknown"
 
 
 def _extract_pyclesperanto_cache_data(meta: OpMeta) -> Dict[str, str]:
@@ -434,7 +431,6 @@ def clear_pyclesperanto_cache() -> None:
 def _get_pyclesperanto_function(module_path: str, func_name: str):
     """Get pyclesperanto function object from module path and name."""
     try:
-        import pyclesperanto as cle
 
         # Handle pyclesperanto module structure
         if module_path.startswith('pyclesperanto'):
@@ -761,9 +757,7 @@ def _register_pycle_ops_direct() -> None:
 
             @wraps(meta.func)
             def adapted(image, *args, slice_by_slice: bool = False, **kwargs):
-                try:
-                    import pyclesperanto as cle
-                except Exception:
+                if cle is None:
                     return meta.func(image, *args, **kwargs)
                 if hasattr(image, 'ndim') and image.ndim == 3:
                     if slice_by_slice:
