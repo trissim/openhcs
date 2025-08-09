@@ -304,7 +304,7 @@ class ZarrStorageBackend(StorageBackend):
 
         # Use _split_store_and_key to get properly configured store with dimension_separator='/'
         store, _ = self._split_store_and_key(store_path)
-        root = zarr.open_group(store=store, mode='a')  # 'a' = read/write, create if doesn't exist
+        root = zarr.group(store=store)  # Open existing or create new group without mode conflicts
 
         # Set OME metadata if not already present
         if "ome" not in root.attrs:

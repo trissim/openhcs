@@ -104,9 +104,9 @@ class MemoryStorageBackend(StorageBackend):
         print(f"🔧 MEMORY DEBUG: Total files in memory: {len(self._memory_store)}")
         print(f"🔧 MEMORY DEBUG: Memory keys (first 10): {list(self._memory_store.keys())[:10]}")
 
-        # Show directory structure
+        # Show directory structure (thread-safe copy of keys)
         directories = set()
-        for path in self._memory_store.keys():
+        for path in list(self._memory_store.keys()):
             directories.add(str(Path(path).parent))
         print(f"🔧 MEMORY DEBUG: Directories in memory: {sorted(directories)}")
 
@@ -140,9 +140,9 @@ class MemoryStorageBackend(StorageBackend):
         print(f"🔧 MEMORY DEBUG: Total files in memory: {len(self._memory_store)}")
         print(f"🔧 MEMORY DEBUG: Memory keys (first 10): {list(self._memory_store.keys())[:10]}")
 
-        # Show directory structure
+        # Show directory structure (thread-safe copy of keys)
         directories = set()
-        for path in self._memory_store.keys():
+        for path in list(self._memory_store.keys()):
             directories.add(str(Path(path).parent))
         print(f"🔧 MEMORY DEBUG: Directories in memory: {sorted(directories)}")
 
@@ -278,7 +278,7 @@ class MemoryStorageBackend(StorageBackend):
 
             # If it was a directory, delete all children
             dir_prefix = key + "/" if not key.endswith("/") else key
-            keys_to_delete = [k for k in self._memory_store.keys() if k.startswith(dir_prefix)]
+            keys_to_delete = [k for k in list(self._memory_store.keys()) if k.startswith(dir_prefix)]
             for k in keys_to_delete:
                 del self._memory_store[k]
 
