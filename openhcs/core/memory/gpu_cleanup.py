@@ -8,9 +8,19 @@ processing steps to free up GPU memory that's no longer needed.
 
 import logging
 from typing import Optional
+from openhcs.core.utils import optional_import
+from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES # Import directly if always available
 
 logger = logging.getLogger(__name__)
 
+# --- Top-level optional imports for GPU frameworks ---
+torch = optional_import("torch")
+cupy = optional_import("cupy")
+tensorflow = optional_import("tensorflow")
+jax = optional_import("jax")
+pyclesperanto = optional_import("pyclesperanto")
+
+# --- Cleanup functions ---
 
 def is_gpu_memory_type(memory_type: str) -> bool:
     """
@@ -22,13 +32,11 @@ def is_gpu_memory_type(memory_type: str) -> bool:
     Returns:
         True if it's a GPU memory type, False otherwise
     """
-    try:
-        from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES
-        return memory_type in VALID_GPU_MEMORY_TYPES
-    except ImportError:
-        # Fallback if constants not available
-        gpu_types = {"torch", "cupy", "tensorflow", "jax", "pyclesperanto"}
-        return memory_type.lower() in gpu_types
+    # Using VALID_GPU_MEMORY_TYPES directly after top-level import
+    # If openhcs.constants.constants is itself optional, then this function
+    # might need to revert to its try-except, or ensure that constants are
+    # always available for core utilities. Assuming it's always available now.
+    return memory_type in VALID_GPU_MEMORY_TYPES
 
 
 def cleanup_pytorch_gpu(device_id: Optional[int] = None) -> None:
@@ -38,9 +46,11 @@ def cleanup_pytorch_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans all devices.
     """
+    if torch is None:
+        logger.debug("PyTorch not available, skipping PyTorch GPU cleanup")
+        return
+
     try:
-        import torch
-        
         if not torch.cuda.is_available():
             return
             
@@ -56,8 +66,6 @@ def cleanup_pytorch_gpu(device_id: Optional[int] = None) -> None:
             torch.cuda.synchronize()
             logger.debug("🔥 GPU CLEANUP: Cleared PyTorch CUDA cache for all devices")
             
-    except ImportError:
-        logger.debug("PyTorch not available, skipping PyTorch GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup PyTorch GPU memory: {e}")
 
@@ -69,11 +77,11 @@ def cleanup_cupy_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans current device.
     """
-    from openhcs.core.utils import optional_import
-    cupy = optional_import("cupy")
     if cupy is None:
+        logger.debug("CuPy not available, skipping CuPy GPU cleanup")
         return
 
+    try:
         if device_id is not None:
             # Clean specific device
             with cupy.cuda.Device(device_id):
@@ -109,8 +117,6 @@ def cleanup_cupy_gpu(device_id: Optional[int] = None) -> None:
 
             logger.debug(f"🔥 GPU CLEANUP: Cleared CuPy memory pools for current device, freed {freed_mb:.1f}MB")
 
-    except ImportError:
-        logger.debug("CuPy not available, skipping CuPy GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup CuPy GPU memory: {e}")
 
@@ -122,11 +128,13 @@ def cleanup_tensorflow_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans all devices.
     """
+    if tensorflow is None:
+        logger.debug("TensorFlow not available, skipping TensorFlow GPU cleanup")
+        return
+    
     try:
-        import tensorflow as tf
-        
         # Get list of GPU devices
-        gpus = tf.config.list_physical_devices('GPU')
+        gpus = tensorflow.config.list_physical_devices('GPU')
         if not gpus:
             return
             
@@ -142,8 +150,6 @@ def cleanup_tensorflow_gpu(device_id: Optional[int] = None) -> None:
             gc.collect()
             logger.debug("🔥 GPU CLEANUP: Triggered garbage collection for TensorFlow GPUs")
             
-    except ImportError:
-        logger.debug("TensorFlow not available, skipping TensorFlow GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup TensorFlow GPU memory: {e}")
 
@@ -155,9 +161,11 @@ def cleanup_jax_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans all devices.
     """
-    try:
-        import jax
+    if jax is None:
+        logger.debug("JAX not available, skipping JAX GPU cleanup")
+        return
 
+    try:
         # JAX doesn't have explicit memory cleanup like PyTorch/CuPy
         # but we can trigger garbage collection and clear compilation cache
         import gc
@@ -171,8 +179,6 @@ def cleanup_jax_gpu(device_id: Optional[int] = None) -> None:
         else:
             logger.debug("🔥 GPU CLEANUP: Cleared JAX caches and triggered GC for all devices")
 
-    except ImportError:
-        logger.debug("JAX not available, skipping JAX GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup JAX GPU memory: {e}")
 
@@ -184,8 +190,11 @@ def cleanup_pyclesperanto_gpu(device_id: Optional[int] = None) -> None:
     Args:
         device_id: Optional GPU device ID. If None, cleans current device.
     """
+    if pyclesperanto is None:
+        logger.debug("pyclesperanto not available, skipping pyclesperanto GPU cleanup")
+        return
+
     try:
-        import pyclesperanto as cle
         import gc
 
         # pyclesperanto doesn't have explicit memory cleanup like PyTorch/CuPy
@@ -193,9 +202,9 @@ def cleanup_pyclesperanto_gpu(device_id: Optional[int] = None) -> None:
 
         if device_id is not None:
             # Select the specific device
-            devices = cle.list_available_devices()
+            devices = pyclesperanto.list_available_devices()
             if device_id < len(devices):
-                cle.select_device(device_id)
+                pyclesperanto.select_device(device_id)
                 logger.debug(f"🔥 GPU CLEANUP: Selected pyclesperanto device {device_id}")
             else:
                 logger.warning(f"🔥 GPU CLEANUP: Device {device_id} not available in pyclesperanto")
@@ -210,8 +219,6 @@ def cleanup_pyclesperanto_gpu(device_id: Optional[int] = None) -> None:
         else:
             logger.debug(f"🔥 GPU CLEANUP: Triggered GC for pyclesperanto current device, collected {collected} objects")
 
-    except ImportError:
-        logger.debug("pyclesperanto not available, skipping pyclesperanto GPU cleanup")
     except Exception as e:
         logger.warning(f"Failed to cleanup pyclesperanto GPU memory: {e}")
 
@@ -322,8 +329,7 @@ def check_gpu_memory_usage() -> None:
     logger.debug("🔍 GPU Memory Usage Report:")
 
     # Check PyTorch
-    try:
-        import torch
+    if torch is not None:
         if torch.cuda.is_available():
             for i in range(torch.cuda.device_count()):
                 allocated = torch.cuda.memory_allocated(i) / 1024**3
@@ -331,20 +337,24 @@ def check_gpu_memory_usage() -> None:
                 logger.debug(f"  PyTorch GPU {i}: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
         else:
             logger.debug("  PyTorch: No CUDA available")
-    except ImportError:
+    else:
         logger.debug("  PyTorch: Not installed")
 
     # Check CuPy
-    from openhcs.core.utils import optional_import
-    cupy = optional_import("cupy")
     if cupy is not None:
         mempool = cupy.get_default_memory_pool()
         used_bytes = mempool.used_bytes()
         total_bytes = mempool.total_bytes()
         logger.debug(f"  CuPy: {used_bytes / 1024**3:.2f}GB used, {total_bytes / 1024**3:.2f}GB total")
+    else:
+        logger.debug("  CuPy: Not installed") # Added missing log for consistency
 
     # Note: TensorFlow and JAX don't have easy memory introspection
-    logger.debug("  TensorFlow/JAX: Memory usage not easily queryable")
+    logger.debug("  TensorFlow/JAX: Memory usage not easily queryable. Check if installed:")
+    if tensorflow is None:
+        logger.debug("  TensorFlow: Not installed")
+    if jax is None:
+        logger.debug("  JAX: Not installed")
 
 
 def log_gpu_memory_usage(context: str = "") -> None:
@@ -356,20 +366,20 @@ def log_gpu_memory_usage(context: str = "") -> None:
     """
     context_str = f" ({context})" if context else ""
 
-    try:
-        import torch
-        if torch.cuda.is_available():
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / 1024**3
-                reserved = torch.cuda.memory_reserved(i) / 1024**3
-                free_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3 - reserved
-                logger.debug(f"🔍 VRAM{context_str} GPU {i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {free_memory:.2f}GB free")
-        else:
-            logger.debug(f"🔍 VRAM{context_str}: No CUDA available")
-    except ImportError:
+    if torch is not None:
+        try: # Keep try-except for runtime CUDA availability check
+            if torch.cuda.is_available():
+                for i in range(torch.cuda.device_count()):
+                    allocated = torch.cuda.memory_allocated(i) / 1024**3
+                    reserved = torch.cuda.memory_reserved(i) / 1024**3
+                    free_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3 - reserved
+                    logger.debug(f"🔍 VRAM{context_str} GPU {i}: {allocated:.2f}GB alloc, {reserved:.2f}GB reserved, {free_memory:.2f}GB free")
+            else:
+                logger.debug(f"🔍 VRAM{context_str}: No CUDA available")
+        except Exception as e:
+            logger.warning(f"🔍 VRAM{context_str}: Error checking PyTorch memory - {e}")
+    else:
         logger.debug(f"🔍 VRAM{context_str}: PyTorch not available")
-    except Exception as e:
-        logger.warning(f"🔍 VRAM{context_str}: Error checking memory - {e}")
 
 
 def get_gpu_memory_summary() -> dict:
@@ -385,32 +395,28 @@ def get_gpu_memory_summary() -> dict:
     }
 
     # Check PyTorch
-    try:
-        import torch
-        if torch.cuda.is_available():
-            memory_info["pytorch"]["available"] = True
-            for i in range(torch.cuda.device_count()):
-                allocated = torch.cuda.memory_allocated(i) / 1024**3
-                reserved = torch.cuda.memory_reserved(i) / 1024**3
-                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
-                memory_info["pytorch"]["devices"].append({
-                    "device_id": i,
-                    "allocated_gb": allocated,
-                    "reserved_gb": reserved,
-                    "total_gb": total,
-                    "free_gb": total - reserved
-                })
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    if torch is not None:
+        try: # Keep try-except for runtime CUDA availability check
+            if torch.cuda.is_available():
+                memory_info["pytorch"]["available"] = True
+                for i in range(torch.cuda.device_count()):
+                    allocated = torch.cuda.memory_allocated(i) / 1024**3
+                    reserved = torch.cuda.memory_reserved(i) / 1024**3
+                    total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                    memory_info["pytorch"]["devices"].append({
+                        "device_id": i,
+                        "allocated_gb": allocated,
+                        "reserved_gb": reserved,
+                        "total_gb": total,
+                        "free_gb": total - reserved
+                    })
+        except Exception: # Catch exceptions related to CUDA operations if available
+            pass # Suppress specific error details if main check is for availability
 
     # Check CuPy
-    from openhcs.core.utils import optional_import
-    cupy = optional_import("cupy")
     if cupy is not None:
-        mempool = cupy.get_default_memory_pool()
         memory_info["cupy"]["available"] = True
+        mempool = cupy.get_default_memory_pool()
         memory_info["cupy"]["used_gb"] = mempool.used_bytes() / 1024**3
         memory_info["cupy"]["total_gb"] = mempool.total_bytes() / 1024**3
 

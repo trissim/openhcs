@@ -8,7 +8,7 @@ methods and colocalization metrics.
 
 import numpy as np  # Keep for CPU fallbacks and data conversion
 import logging
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import Dict, List, Tuple, Any, Optional, Union, TYPE_CHECKING
 from dataclasses import dataclass
 from enum import Enum
 
@@ -16,6 +16,10 @@ from enum import Enum
 from openhcs.core.utils import optional_import
 
 cp = optional_import("cupy")
+
+# Type checking imports
+if TYPE_CHECKING:
+    import cupy as cp_typing
 
 logger = logging.getLogger(__name__)
 

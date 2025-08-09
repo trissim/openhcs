@@ -1,15 +1,12 @@
 import logging
+from openhcs.core.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
-# Attempt to import cupy at the module level.
-# If this fails, CuPyMemoryTracker cannot be used.
-try:
-    import cupy
-    CUPY_AVAILABLE = True
-except ImportError:
-    cupy = None # type: ignore 
-    CUPY_AVAILABLE = False
+# Import cupy using the optional_import utility
+cupy = optional_import("cupy")
+CUPY_AVAILABLE = cupy is not None
+if not CUPY_AVAILABLE:
     logger.info("CuPy library not found. CuPyMemoryTracker will not be available.")
 
 class CuPyMemoryTracker: # Implements MemoryTracker protocol
