@@ -44,6 +44,8 @@ class IntersectionGPU:
     """Calculate intersection region between two tiles - EXACT Ashlar implementation for GPU."""
 
     def __init__(self, corners1, corners2, min_size=0):
+        if cp is None:
+            raise ImportError("CuPy is required for GPU intersection calculations")
         if isinstance(min_size, (int, float)):
             min_size = cp.full(2, min_size)
         elif not isinstance(min_size, cp.ndarray):
@@ -67,6 +69,8 @@ class IntersectionGPU:
 
 def _get_window(shape):
     """Build a 2D Hann window (from Ashlar utils.get_window) on GPU."""
+    if cp is None:
+        raise ImportError("CuPy is required for GPU window functions")
     # Build a 2D Hann window by taking the outer product of two 1-D windows.
     wy = cp.hanning(shape[0]).astype(cp.float32)
     wx = cp.hanning(shape[1]).astype(cp.float32)
@@ -75,7 +79,9 @@ def _get_window(shape):
 
 
 # Precompute Laplacian kernel for whitening (equivalent to skimage.restoration.uft.laplacian)
-_laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
+_laplace_kernel_gpu = None
+if cp is not None:
+    _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
 
 
 def whiten_gpu(img, sigma):
