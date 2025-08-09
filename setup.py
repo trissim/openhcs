@@ -50,6 +50,14 @@ setup(
         "pyqtgraph>=0.13.7"
     ],
     extras_require={
+        "dev": [
+            # Testing dependencies
+            "pytest>=7.4.0",
+            "pytest-cov>=4.1.0",
+            "coverage>=7.3.2",
+            "genbadge[coverage]",
+            "pytest-asyncio>=0.21.0",
+        ],
         "gpu": [
             # PyTorch - let pip resolve compatible versions automatically
             "torch>=2.6.0,<2.8.0",
