@@ -48,6 +48,12 @@ FUNC_REGISTRY: Dict[str, List[Callable]] = {}
 # Valid memory types
 VALID_MEMORY_TYPES = {"numpy", "cupy", "torch", "tensorflow", "jax", "pyclesperanto"}
 
+# CPU-only memory types (for CI/testing without GPU)
+CPU_ONLY_MEMORY_TYPES = {"numpy"}
+
+# Check if CPU-only mode is enabled
+CPU_ONLY_MODE = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+
 # Flag to track if the registry has been initialized
 _registry_initialized = False
 
@@ -75,8 +81,15 @@ def _auto_initialize_registry() -> None:
     try:
         # Clear and initialize the registry with valid memory types
         FUNC_REGISTRY.clear()
-        for memory_type in VALID_MEMORY_TYPES:
+
+        # Use CPU-only memory types if CPU_ONLY_MODE is enabled
+        memory_types_to_use = CPU_ONLY_MEMORY_TYPES if CPU_ONLY_MODE else VALID_MEMORY_TYPES
+
+        for memory_type in memory_types_to_use:
             FUNC_REGISTRY[memory_type] = []
+
+        if CPU_ONLY_MODE:
+            logger.info("CPU-only mode enabled - only registering numpy functions")
 
         # Phase 1: Scan processing directory and register native OpenHCS functions
         _scan_and_register_functions()
@@ -98,7 +111,8 @@ def _auto_initialize_registry() -> None:
         logger.error(f"Failed to auto-initialize function registry: {e}")
         # Initialize empty registry as fallback
         FUNC_REGISTRY.clear()
-        for memory_type in VALID_MEMORY_TYPES:
+        memory_types_to_use = CPU_ONLY_MEMORY_TYPES if CPU_ONLY_MODE else VALID_MEMORY_TYPES
+        for memory_type in memory_types_to_use:
             FUNC_REGISTRY[memory_type] = []
         _registry_initialized = True
 
@@ -125,7 +139,8 @@ def initialize_registry() -> None:
         
         # Clear and initialize the registry with valid memory types
         FUNC_REGISTRY.clear()
-        for memory_type in VALID_MEMORY_TYPES:
+        memory_types_to_use = CPU_ONLY_MEMORY_TYPES if CPU_ONLY_MODE else VALID_MEMORY_TYPES
+        for memory_type in memory_types_to_use:
             FUNC_REGISTRY[memory_type] = []
         
         # Phase 1: Scan processing directory and register native OpenHCS functions

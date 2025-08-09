@@ -33,7 +33,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install pytest==7.4.0 pytest-cov==4.1.0 coverage==7.3.2 genbadge[coverage]
 
       - name: Run unit tests with coverage
         continue-on-error: true  # Continue workflow even if tests fail
@@ -95,14 +94,15 @@ jobs:
           Last updated: $(date)
           EOF
 
-      - name: Commit and push if coverage badge changed
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add .github/badges/coverage.svg -f
-          git commit -m "chore: update coverage badge" || exit 0
-          git push
+      # Disabled: Auto-committing badges causes push conflicts
+      # - name: Commit and push if coverage badge changed
+      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      #   run: |
+      #     git config --local user.email "github-actions[bot]@users.noreply.github.com"
+      #     git config --local user.name "github-actions[bot]"
+      #     git add .github/badges/coverage.svg -f
+      #     git commit -m "chore: update coverage badge" || exit 0
+      #     git push
 
       - name: Check GitHub Pages status
         run: |
