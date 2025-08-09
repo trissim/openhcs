@@ -13,9 +13,34 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
+class _ModulePlaceholder:
+    """
+    Placeholder for missing optional modules that allows attribute access
+    for type annotations while still being falsy and failing on actual use.
+    """
+    def __init__(self, module_name: str):
+        self._module_name = module_name
+
+    def __bool__(self):
+        return False
+
+    def __getattr__(self, name):
+        # Return another placeholder for chained attribute access
+        # This allows things like cp.ndarray in type annotations to work
+        return _ModulePlaceholder(f"{self._module_name}.{name}")
+
+    def __call__(self, *args, **kwargs):
+        # If someone tries to actually call a function, fail loudly
+        raise ImportError(f"Module '{self._module_name}' is not available. Please install the required dependency.")
+
+    def __repr__(self):
+        return f"<ModulePlaceholder for '{self._module_name}'>"
+
+
 def optional_import(module_name: str) -> Optional[Any]:
     """
-    Import a module if available, otherwise return None.
+    Import a module if available, otherwise return a placeholder that handles
+    attribute access gracefully for type annotations but fails on actual use.
 
     This function allows for graceful handling of optional dependencies.
     It can be used to import libraries that may not be installed,
@@ -25,7 +50,7 @@ def optional_import(module_name: str) -> Optional[Any]:
         module_name: Name of the module to import
 
     Returns:
-        The imported module if available, None otherwise
+        The imported module if available, a placeholder otherwise
 
     Example:
         ```python
@@ -33,7 +58,7 @@ def optional_import(module_name: str) -> Optional[Any]:
         torch = optional_import("torch")
 
         # Check if torch is available before using it
-        if torch is not None:
+        if torch:
             # Use torch
             tensor = torch.tensor([1, 2, 3])
         else:
@@ -46,8 +71,8 @@ def optional_import(module_name: str) -> Optional[Any]:
         import importlib
         return importlib.import_module(module_name)
     except (ImportError, ModuleNotFoundError, AttributeError):
-        # Catch AttributeError as well to handle cases where a submodule doesn't exist
-        return None
+        # Return a placeholder that handles attribute access gracefully
+        return _ModulePlaceholder(module_name)
 
 # Global thread activity tracking
 thread_activity = defaultdict(list)

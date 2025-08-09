@@ -44,7 +44,7 @@ class IntersectionGPU:
     """Calculate intersection region between two tiles - EXACT Ashlar implementation for GPU."""
 
     def __init__(self, corners1, corners2, min_size=0):
-        if cp is None:
+        if not cp:
             raise ImportError("CuPy is required for GPU intersection calculations")
         if isinstance(min_size, (int, float)):
             min_size = cp.full(2, min_size)
@@ -80,7 +80,7 @@ def _get_window(shape):
 
 # Precompute Laplacian kernel for whitening (equivalent to skimage.restoration.uft.laplacian)
 _laplace_kernel_gpu = None
-if cp is not None:
+if cp:
     _laplace_kernel_gpu = cp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=cp.float32)
 
 
