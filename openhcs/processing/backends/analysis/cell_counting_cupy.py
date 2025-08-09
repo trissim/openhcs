@@ -6,28 +6,32 @@ supporting both single-channel and multi-channel analysis with various detection
 methods and colocalization metrics.
 """
 
-import cupy as cp
 import numpy as np  # Keep for CPU fallbacks and data conversion
 import logging
 from typing import Dict, List, Tuple, Any, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 
+# Import CuPy using the established optional import pattern
+from openhcs.core.utils import optional_import
+
+cp = optional_import("cupy")
+
 logger = logging.getLogger(__name__)
 
-# Core scientific computing imports - CuPy equivalents
+# Core scientific computing imports
 import pandas as pd
 import json
-from cupyx.scipy import ndimage
-from cupyx.scipy.spatial.distance import cdist
 
-# CuCIM imports for scikit-image equivalents (only what's available)
-from cucim.skimage.feature import blob_log, blob_dog, blob_doh, peak_local_max
-from cucim.skimage.filters import threshold_otsu, threshold_li, gaussian, median
-from cucim.skimage.segmentation import clear_border
-from cucim.skimage.morphology import remove_small_objects, disk, binary_erosion, binary_dilation
-from cucim.skimage.measure import label, regionprops
-from cucim.skimage import exposure
+# Optional imports using established pattern
+cupyx_scipy = optional_import("cupyx.scipy")
+cupyx_spatial_distance = optional_import("cupyx.scipy.spatial.distance")
+cucim_feature = optional_import("cucim.skimage.feature")
+cucim_filters = optional_import("cucim.skimage.filters")
+cucim_segmentation = optional_import("cucim.skimage.segmentation")
+cucim_morphology = optional_import("cucim.skimage.morphology")
+cucim_measure = optional_import("cucim.skimage.measure")
+cucim_exposure = optional_import("cucim.skimage.exposure")
 
 
 

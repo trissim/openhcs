@@ -7,7 +7,6 @@ the same API as the original CPU version.
 """
 
 import numpy as np
-import torch
 import networkx as nx
 import skimage
 import math
@@ -18,6 +17,10 @@ from skimage.filters import median, threshold_li
 from skimage.morphology import remove_small_objects, skeletonize
 from openhcs.core.memory.decorators import torch as torch_func
 from openhcs.core.pipeline.function_contracts import special_outputs
+
+# Import torch using the established optional import pattern
+from openhcs.core.utils import optional_import
+torch = optional_import("torch")
 
 # Import torbi for GPU-accelerated Viterbi decoding
 import torbi
