@@ -264,8 +264,9 @@ def convertFile(input_file, output_file, analysis_path = None):
     xml = write_pzfx(data_dict, analysis_path)
     
     #output file
-    Path(output_file).write_text(xml, encoding="utf-8")
-    print(f"Conversion complete. Output written to {output_file}")
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(xml)
+        print(f"Conversion complete. Output written to {output_file}")
     
 
 if __name__ == "__main__":
