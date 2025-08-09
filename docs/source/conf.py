@@ -52,11 +52,14 @@ if on_rtd:
 # -- Project information -----------------------------------------------------
 
 project = 'OpenHCS'
-copyright = '2024, trissim'
+copyright = '2025, trissim'
 author = 'trissim'
 
 # The full version, including alpha/beta/rc tags
 release = '0.1.0'
+
+# The short X.Y version
+version = '0.1'
 
 # -- General configuration ---------------------------------------------------
 
@@ -162,4 +165,4 @@ html_sidebars = {
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'EZStitcherdoc'
+htmlhelp_basename = 'OpenHCSdoc'
