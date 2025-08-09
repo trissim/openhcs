@@ -8,9 +8,8 @@ Converts analysis results from Excel files into a .pzfx file format compatible w
 import pandas as pd  # For reading Excel files
 import xml.sax.saxutils as saxutils  # For escaping XML special characters
 from pathlib import Path  # For OS-independent file paths
-from .buffer_text import FOOTER, HEADER  # Importing constants for footer and header XML
+from .buffer_text import FOOTER, HEADER, FOOTERMARKER  # Importing constants for footer and header XML
 
-import re 
 
 
 def parse_xlsx(file_path):
@@ -24,12 +23,11 @@ def parse_xlsx(file_path):
         dict: Dictionary where keys are sheet names and values are DataFrames.
     """
     try: 
-        all_sheets = pd.read_excel(file_path, sheet_name=None)
+        return pd.read_excel(file_path, sheet_name=None)
     except Exception as e:
         print(f"Error reading Excel file: {e}")
         return None
    
-    return all_sheets
 
 def num(x):
     """
@@ -74,6 +72,7 @@ def get_replicate_info(df):
         replicates += 1
     if replicates == 0:
         print("Warning: No replicate columns detected. Defaulting to 1.")
+        return 1
     return replicates
 
 
@@ -147,7 +146,6 @@ def df_to_table1024(
     """
     Converts a DataFrame to a Prism Table1024 XML block.
     """
-    import math
 
     df = df.copy()
     # Infer replicates 
@@ -203,12 +201,10 @@ def parse_footer(analysis_path):
     #file handling
     if analysis_path is None:
         return FOOTER
-    
-    initialFooterSequence =  """<!--Analyses, graphs and layouts as compressed binary. Don't edit this part of the file.-->"""
     try:
         with open(analysis_path, 'r', encoding='utf-8') as f:
             template = f.read()
-            index = template.find(initialFooterSequence)
+            index = template.find(FOOTERMARKER)
             if index == -1:
                 print("Warning: Initial footer sequence not found in analysis template. Appending default footer.")
                 return FOOTER
@@ -240,7 +236,7 @@ def write_pzfx(data_dict, units = "uM", analysis_path=None):
         xml += df_to_table1024(df, table_id, sheet_name, units)
     
     #TableSequence
-    xml.replace("<!--TABLESEQUENCE-->", insert_tablesequence(table_ids))
+    xml = xml.replace("<!--TABLESEQUENCE-->", insert_tablesequence(table_ids))
     
     #Footer
     xml += parse_footer(analysis_path)
@@ -268,9 +264,8 @@ def convertFile(input_file, output_file, analysis_path = None):
     xml = write_pzfx(data_dict, analysis_path)
     
     #output file
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write(xml)
-        print(f"Conversion complete. Output written to {output_file}")
+    Path(output_file).write_text(xml, encoding="utf-8")
+    print(f"Conversion complete. Output written to {output_file}")
     
 
 if __name__ == "__main__":
