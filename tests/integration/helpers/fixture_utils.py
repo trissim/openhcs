@@ -85,25 +85,29 @@ DATA_TYPE_CONFIGS = {
     "3d": {"z_stack_levels": 5, "name": "zstack_plate"}
 }
 
-@pytest.fixture(scope="module", params=list(MICROSCOPE_CONFIGS.keys()))
+@pytest.fixture(scope="module")
 def microscope_config(request):
-    """Provide microscope configuration based on the parameter."""
-    return MICROSCOPE_CONFIGS[request.param]
-
-@pytest.fixture(scope="module", params=BACKEND_CONFIGS)
-def backend_config(request):
-    """Provide backend configuration based on the parameter."""
+    """Provide microscope configuration - parametrized by pytest_generate_tests."""
+    # The actual parameter value is passed by pytest via pytest_generate_tests hook
     return request.param
 
-@pytest.fixture(scope="module", params=list(DATA_TYPE_CONFIGS.keys()))
-def data_type_config(request):
-    """Provide data type configuration based on the parameter."""
-    return DATA_TYPE_CONFIGS[request.param]
+@pytest.fixture(scope="module")
+def backend_config(request):
+    """Provide backend configuration - parametrized by pytest_generate_tests."""
+    # The actual parameter value is passed by pytest via pytest_generate_tests hook
+    return request.param
 
-@pytest.fixture(scope="module", params=["threading", "multiprocessing"])
+@pytest.fixture(scope="module")
+def data_type_config(request):
+    """Provide data type configuration - parametrized by pytest_generate_tests."""
+    # The actual parameter value is passed by pytest via pytest_generate_tests hook
+    return request.param
+
+@pytest.fixture(scope="module")
 def execution_mode(request):
     """
-    Parameterized fixture for execution mode - threading vs multiprocessing.
+    Execution mode fixture with environment variable management.
+    Parametrized by pytest_generate_tests hook.
 
     This allows tests to run with both execution modes to ensure compatibility.
     Threading mode is useful for debugging, multiprocessing for production testing.
@@ -159,7 +163,6 @@ def test_function_dir(base_test_dir, microscope_config, request):
     yield test_dir
 
 @pytest.fixture(scope="module")
-@pytest.mark.skip(reason="Smell-loop gated — do not run until certified")
 def test_params(microscope_config):
     """Get test parameters for the specific microscope type."""
     # Use the format key instead of microscope_type

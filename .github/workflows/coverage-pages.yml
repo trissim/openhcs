@@ -27,7 +27,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -35,14 +35,26 @@ jobs:
           pip install -e ".[dev]"
           pip install pytest==7.4.0 pytest-cov==4.1.0 coverage==7.3.2 genbadge[coverage]
 
-      - name: Run tests with coverage
+      - name: Run unit tests with coverage
         continue-on-error: true  # Continue workflow even if tests fail
         run: |
           mkdir -p site
-          python -m pytest --cov=ezstitcher \
+          python -m pytest --cov=openhcs \
                 --cov-report=xml \
                 --cov-report=html:site/coverage \
-                tests/ || echo "Some tests failed, but continuing with coverage report generation"
+                tests/ --ignore=tests/integration/ || echo "Some unit tests failed, but continuing with coverage report generation"
+
+      - name: Run integration tests (CPU-only)
+        continue-on-error: true  # Continue workflow even if tests fail
+        env:
+          OPENHCS_CPU_ONLY: true
+        run: |
+          python -m pytest tests/integration/ \
+                --it-backends disk,zarr \
+                --it-microscopes ImageXpress,OperaPhenix \
+                --it-dims 3d \
+                --it-exec-mode multiprocessing \
+                -v || echo "Some integration tests failed, but continuing"
 
       - name: Generate coverage badge
         run: |
@@ -67,9 +79,9 @@ jobs:
 
           # Create README.md in the site directory
           cat > site/README.md << 'EOF'
-          # EZStitcher Code Coverage Reports
+          # OpenHCS Code Coverage Reports
 
-          This site contains the code coverage reports for the [EZStitcher](https://github.com/trissim/ezstitcher) project.
+          This site contains the code coverage reports for the [OpenHCS](https://github.com/trissim/openhcs) project.
 
           ## Navigation
 
@@ -95,7 +107,7 @@ jobs:
       - name: Check GitHub Pages status
         run: |
           echo "⚠️ IMPORTANT: Make sure GitHub Pages is enabled in your repository settings!"
-          echo "Go to https://github.com/trissim/ezstitcher/settings/pages"
+          echo "Go to https://github.com/trissim/openhcs/settings/pages"
           echo "Set 'Source' to 'GitHub Actions' to enable GitHub Pages deployment."
 
       - name: Setup Pages

@@ -23,6 +23,7 @@ from openhcs.processing.backends.processors.numpy_processor import (
     stack_equalize_histogram, create_composite
 )
 from openhcs.processing.backends.pos_gen.ashlar_main_gpu import ashlar_compute_tile_positions_gpu
+from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
 from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
 from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
 from openhcs.processing.backends.enhance.basic_processor_jax import basic_flatfield_correction_jax
@@ -54,6 +55,13 @@ from tests.integration.helpers.fixture_utils import (
 )
 
 def get_pipeline(input_dir):
+    # Check if CPU-only mode is enabled
+    import os
+    cpu_only_mode = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+
+    # Choose position generation function based on mode
+    position_func = ashlar_compute_tile_positions_cpu if cpu_only_mode else ashlar_compute_tile_positions_gpu
+
     return Pipeline(
         steps=[
             Step(func=create_composite,
@@ -77,7 +85,7 @@ def get_pipeline(input_dir):
             #),
             #Step(func=gpu_ashlar_align_cupy,
             #),
-            Step(func=ashlar_compute_tile_positions_gpu,
+            Step(func=position_func,
             ),
             Step(name="Image Enhancement Processing",
                  func=[
@@ -96,7 +104,7 @@ def get_pipeline(input_dir):
                  name="CPU Assembler",
             )
         ],
-        name = "Mega Flex Pipeline",
+        name = "Mega Flex Pipeline" + (" (CPU-Only)" if cpu_only_mode else ""),
     )
 
 
@@ -105,6 +113,11 @@ def test_main(plate_dir: Union[Path,str], backend_config: str, data_type_config:
     """Unified test for all combinations of microscope types, backends, data types, and execution modes."""
 
     print(f"🔥 STARTING TEST with plate dir: {plate_dir}, backend: {backend_config}, execution: {execution_mode}")
+
+    # Clean up memory backend before each test to prevent FileExistsError from previous test runs
+    from openhcs.io.base import reset_memory_backend
+    reset_memory_backend()
+    print("🔥 Memory backend reset - cleared files from previous test runs")
 
     def run_test():
         # Initialize GPU registry before creating orchestrator
