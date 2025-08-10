@@ -174,6 +174,13 @@ class PathPlanningConfig:
     Examples: "results", "./analysis", "/data/analysis_results", "../shared_results"
     """
 
+    sub_dir: str = "images"
+    """
+    Subdirectory within plate folder for storing processed data.
+    Automatically adds .zarr suffix when using zarr backend.
+    Examples: "images", "processed", "data/images"
+    """
+
 
 @dataclass(frozen=True)
 class TilingKeybinding:

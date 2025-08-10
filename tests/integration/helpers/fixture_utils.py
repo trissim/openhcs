@@ -14,7 +14,7 @@ import numpy as np
 from typing import List, Union
 
 from openhcs.core.orchestrator import PipelineOrchestrator
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend, ZarrConfig, PathPlanningConfig
 # from openhcs.core.config import StitcherConfig, PipelineConfig
 from openhcs.core.pipeline import Pipeline
 # from openhcs.core.step_base import Step
@@ -290,13 +290,28 @@ def base_pipeline_config(microscope_config):
 
 @pytest.fixture
 def debug_global_config(execution_mode, backend_config):
-    """Create a GlobalPipelineConfig optimized for debugging."""
-    
+    """Create a GlobalPipelineConfig optimized for debugging.
+
+    Following OpenHCS modular design principles:
+    - Always create complete configuration with all sections
+    - Let backend selection determine what gets used
+    - No conditional configuration creation
+    """
     use_threading = execution_mode == "threading"
-    
+
+    # Always create complete configuration - let the system use what it needs
     return GlobalPipelineConfig(
-        num_workers=1,  # Single worker for easier debugging
+        num_workers=1,  # Single worker for deterministic testing
+        path_planning=PathPlanningConfig(
+            sub_dir="images",  # Default subdirectory for processed data
+            output_dir_suffix="_outputs"  # Suffix for output directories
+        ),
         vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
+        zarr=ZarrConfig(
+            store_name="images.zarr",  # Name of the zarr store
+            ome_zarr_metadata=True,    # Generate OME-ZARR metadata
+            write_plate_metadata=True  # Write plate-level metadata
+        ),
         use_threading=use_threading
     )
 

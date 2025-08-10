@@ -16,7 +16,7 @@ from openhcs.core.pipeline import Pipeline
 from openhcs.core.steps import FunctionStep as Step
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend
+from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend, ZarrConfig, PathPlanningConfig
 
 # Import processing functions directly
 from openhcs.processing.backends.processors.numpy_processor import (
@@ -92,6 +92,7 @@ def get_pipeline(input_dir):
                  func=[
                      (stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5}),
                  ],
+                 input_source=InputSource.PIPELINE_START,
             ),
             #Step(func=n2v2_denoise_torch,
             #),
@@ -103,7 +104,6 @@ def get_pipeline(input_dir):
             #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
             Step(func=(assemble_stack_cpu),
                  name="CPU Assembler",
-                 input_source=InputSource.PIPELINE_START
             )
         ],
         name = "Mega Flex Pipeline" + (" (CPU-Only)" if cpu_only_mode else ""),
@@ -129,9 +129,21 @@ def test_main(plate_dir: Union[Path,str], backend_config: str, data_type_config:
 
         # Get threading mode from environment (set by execution_mode fixture)
         use_threading = execution_mode == "threading"
-        
+
+        # Always create complete configuration - let the system use what it needs
+        # Following OpenHCS modular design principles
         config = GlobalPipelineConfig(
+            num_workers=1,  # Single worker for deterministic testing
+            path_planning=PathPlanningConfig(
+                sub_dir="images",  # Default subdirectory for processed data
+                output_dir_suffix="_outputs"  # Suffix for output directories
+            ),
             vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
+            zarr=ZarrConfig(
+                store_name="images.zarr",  # Name of the zarr store
+                ome_zarr_metadata=True,    # Generate OME-ZARR metadata
+                write_plate_metadata=True  # Write plate-level metadata
+            ),
             use_threading=use_threading
         )
         

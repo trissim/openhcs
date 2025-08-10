@@ -851,66 +851,55 @@ def _register_skimage_ops_direct() -> None:
     _save_function_metadata(registry)
 
 
-def _register_skimage_ops_from_cache() -> bool:
-    """
-    Register scikit-image functions using cached metadata. Returns True if used.
+def _get_skimage_function(module_path: str, func_name: str):
+    """Get scikit-image function object from module path and function name."""
+    try:
+        import importlib
 
-    This decorates ALL the same functions as the main process but without expensive analysis.
-    Uses pre-computed metadata to determine which functions to decorate and their contracts.
-    """
+        module = importlib.import_module(module_path)
+        return getattr(module, func_name, None)
+    except Exception:
+        return None
+
+
+def _register_skimage_ops_from_cache() -> bool:
+    """Register scikit-image functions using cached metadata. Returns True if used."""
+    from openhcs.processing.backends.analysis.cache_utils import register_functions_from_cache
     from openhcs.processing.func_registry import _register_function
     from openhcs.constants import MemoryType
-    import sys
+    import logging
 
+    logger = logging.getLogger(__name__)
     logger.info("SUBPROCESS: Registering scikit-image functions from metadata cache")
 
     # Load cached metadata
-    metadata = _load_function_metadata()
-    if not metadata:
+    cached_metadata = _load_function_metadata()
+    if not cached_metadata:
         logger.error("SUBPROCESS: No metadata cache found - cannot decorate functions")
         return False
 
-    decorated_count = 0
-    skipped_count = 0
+    def register_skimage_function(original_func, func_name: str, memory_type: str):
+        """Register a scikit-image function with registry-specific adapter + unified decoration."""
+        from openhcs.processing.func_registry import _apply_unified_decoration
 
-    for full_name, meta in metadata.items():
-        try:
-            # All cached functions are decoratable (SLICE_SAFE or CROSS_Z)
-            module_name = meta['module']
-            func_name = meta['name']
+        adapted = _skimage_adapt_function(original_func)
+        wrapper_func = _apply_unified_decoration(
+            original_func=adapted,
+            func_name=func_name,
+            memory_type=MemoryType.NUMPY,
+            create_wrapper=True
+        )
 
-            try:
-                module = __import__(module_name, fromlist=[func_name])
-                if not hasattr(module, func_name):
-                    logger.warning(f"SUBPROCESS: {full_name}: function not found in module {module_name}")
-                    skipped_count += 1
-                    continue
+        _register_function(wrapper_func, MemoryType.NUMPY.value)
 
-                original_func = getattr(module, func_name)
-            except ImportError:
-                logger.warning(f"SUBPROCESS: {full_name}: module import failed for {module_name}")
-                skipped_count += 1
-                continue
-
-            # Adapt then apply unified decoration (cache path)
-            from openhcs.processing.func_registry import _apply_unified_decoration
-            adapted = _skimage_adapt_function(original_func)
-            wrapper_func = _apply_unified_decoration(
-                original_func=adapted,
-                func_name=func_name,
-                memory_type=MemoryType.NUMPY,
-                create_wrapper=True
-            )
-
-            _register_function(wrapper_func, MemoryType.NUMPY.value)
-            decorated_count += 1
-
-        except Exception as e:
-            logger.error(f"SUBPROCESS: Failed to decorate {full_name}: {e}")
-            skipped_count += 1
-
-    logger.info(f"SUBPROCESS: Decorated {decorated_count} scikit-image functions from cache")
-    logger.info(f"SUBPROCESS: Skipped {skipped_count} functions (UNKNOWN/DIM_CHANGE or errors)")
+    # Register functions from cache using unified system
+    register_functions_from_cache(
+        library_name="skimage",
+        cached_metadata=cached_metadata,
+        get_function_func=_get_skimage_function,
+        register_function_func=register_skimage_function,
+        memory_type=MemoryType.NUMPY.value
+    )
     return True
 
 

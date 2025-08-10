@@ -213,7 +213,6 @@ class PipelineCompiler:
 
             if will_use_zarr:
                 step_plan["zarr_config"] = {
-                    "store_name": "images.zarr",
                     "all_wells": all_wells,
                     "needs_initialization": True
                 }

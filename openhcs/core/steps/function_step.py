@@ -794,7 +794,7 @@ class FunctionStep(AbstractStep):
 
             # 🔄 ZARR CONVERSION: Convert loaded memory data to zarr if needed
             convert_to_zarr_path = step_plan.get('convert_to_zarr')
-            if convert_to_zarr_path and Path(convert_to_zarr_path).exists():
+            if convert_to_zarr_path:
                 logger.info(f"Converting loaded data to zarr: {convert_to_zarr_path}")
                 zarr_config = step_plan.get('zarr_config', context.global_config.zarr)
 
@@ -803,6 +803,8 @@ class FunctionStep(AbstractStep):
                 memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
 
                 # Create zarr paths by joining convert_to_zarr_path with just the filename
+                # This creates paths like /plate/images.zarr/image001.tiff
+                # The zarr backend will use the filename as the key within the store
                 zarr_paths = []
                 for memory_path in memory_paths:
                     filename = Path(memory_path).name
@@ -810,7 +812,7 @@ class FunctionStep(AbstractStep):
                     zarr_paths.append(str(zarr_path))
 
                 # Parse actual filenames to determine dimensions
-                # Calculate zarr dimensions from file paths
+                # Calculate zarr dimensions from zarr paths (which contain the filenames)
                 n_channels, n_z, n_fields = _calculate_zarr_dimensions(zarr_paths, context.microscope_handler)
                 # Parse well to get row and column for zarr structure
                 row, col = context.microscope_handler.parser.extract_row_column(well_id)
@@ -820,8 +822,11 @@ class FunctionStep(AbstractStep):
                                      n_channels=n_channels, n_z=n_z, n_fields=n_fields,
                                      row=row, col=col)
 
-                # 📄 OPENHCS METADATA: Create metadata for zarr conversion
-                self._create_openhcs_metadata_for_materialization(context, convert_to_zarr_path, Backend.ZARR.value)
+                # 📄 OPENHCS METADATA: Create metadata for zarr conversion (in plate directory)
+                # convert_to_zarr_path points to the zarr store (e.g., /plate/images.zarr)
+                # but metadata should be in the plate directory (e.g., /plate)
+                plate_dir = context.zarr_conversion_path
+                self._create_openhcs_metadata_for_materialization(context, plate_dir, Backend.ZARR.value)
 
             # 🔍 VRAM TRACKING: Log memory at step start
             try:

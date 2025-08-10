@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 from openhcs.constants.constants import READ_BACKEND, WRITE_BACKEND, Backend
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.config import MaterializationBackend
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,25 @@ class MaterializationFlagPlanner:
             else:  # Other steps - read from memory (unless already set by chainbreaker logic)
                 if READ_BACKEND not in step_plan:
                     step_plan[READ_BACKEND] = Backend.MEMORY.value
+
+            # === ZARR PATH VALIDATION ===
+            # If reading with zarr backend, ensure the input path contains .zarr
+            if step_plan.get(READ_BACKEND) == Backend.ZARR.value:
+                input_dir = step_plan.get('input_dir')
+                if input_dir and '.zarr' not in str(input_dir):
+                    # Convert path to zarr format by adding .zarr suffix to the appropriate component
+                    from pathlib import Path
+                    input_path = Path(input_dir)
+
+                    # If this is a plate directory, convert it to the zarr store path inside the plate
+                    if vfs_config.materialization_backend == MaterializationBackend.ZARR:
+                        path_config = context.get_path_planning_config()
+                        # Create zarr store inside the plate directory: plate_dir/sub_dir.zarr
+                        zarr_path = input_path / f"{path_config.sub_dir}.zarr"
+                        step_plan['input_dir'] = str(zarr_path)
+                        logger.info(f"Zarr read backend: redirected input_dir from {input_dir} to {zarr_path}")
+                    else:
+                        logger.warning(f"Step {step.name} has zarr read backend but input_dir {input_dir} doesn't contain .zarr")
 
             # === WRITE BACKEND SELECTION ===
             # Check if this step will use zarr (has zarr_config set by compiler)

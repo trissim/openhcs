@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from openhcs.constants.constants import READ_BACKEND, WRITE_BACKEND, Backend
 from openhcs.constants.input_source import InputSource
+from openhcs.core.config import MaterializationBackend
 from openhcs.core.context.processing_context import ProcessingContext # ADDED
 from openhcs.core.pipeline.pipeline_utils import get_core_callable
 from openhcs.core.pipeline.funcstep_contract_validator import FuncStepContractValidator
@@ -153,14 +154,13 @@ class PipelinePathPlanner:
             # For zarr conversion, use zarr conversion path for calculations
             initial_pipeline_input_dir = Path(context.zarr_conversion_path)
             logger.info(f"  🔄 Using zarr_conversion_path: {repr(initial_pipeline_input_dir)}")
-        elif hasattr(context, 'plate_path') and context.plate_path:
-            # Use plate_path for all calculations to ensure consistent output naming
-            initial_pipeline_input_dir = Path(context.plate_path)
-            logger.info(f"  🎯 Using plate_path: {repr(initial_pipeline_input_dir)}")
         else:
-            # Fallback to input_dir if plate_path not available
-            initial_pipeline_input_dir = context.input_dir
-            logger.info(f"  ⚠️  Fallback to input_dir: {repr(initial_pipeline_input_dir)}")
+            # Use actual image directory provided by microscope handler
+            initial_pipeline_input_dir = Path(context.input_dir)
+            logger.info(f"  🎯 Using input_dir: {repr(initial_pipeline_input_dir)}")
+
+        # NOTE: sub_dir and .zarr are for OUTPUT paths only, not input paths
+        # Microscope handler provides the correct input directory
 
         if not step_plans: # Should be initialized by PipelineCompiler before this call
             raise ValueError("Context step_plans must be initialized before path planning.")
@@ -337,21 +337,29 @@ class PipelinePathPlanner:
                         global_output_folder = global_output_folder.strip()
                         logger.info(f"  🧹 global_output_folder (cleaned): {repr(global_output_folder)}")
 
+                    # Build base output name
+                    output_name = f"{plate_path.name}{path_config.output_dir_suffix}"
+                    output_path = Path(output_name)
+
+                    # Apply sub_dir if configured
+                    if path_config.sub_dir:
+                        output_path = output_path / path_config.sub_dir
+                        logger.info(f"  📁 Applied sub_dir: {repr(output_path)}")
+
+                    # Add .zarr to the final component if using zarr backend
+                    vfs_config = context.get_vfs_config()
+                    if vfs_config.materialization_backend == MaterializationBackend.ZARR:
+                        output_path = output_path.with_suffix('.zarr')
+                        logger.info(f"  🗃️  Added .zarr suffix: {repr(output_path)}")
+
                     if global_output_folder:
-                        # Use global output folder: {global_folder}/{plate_name}{suffix}
+                        # Use global output folder
                         global_folder = Path(global_output_folder)
-                        constructed_name = f"{plate_path.name}{path_config.output_dir_suffix}"
-                        logger.info(f"  🔧 Constructed name: {repr(constructed_name)}")
-                        logger.info(f"  🔧 Constructed name (bytes): {constructed_name.encode('unicode_escape')}")
-                        step_output_dir = global_folder / constructed_name
+                        step_output_dir = global_folder / output_path
                         logger.info(f"  ✅ Final output_dir (global): {repr(step_output_dir)}")
-                        logger.info(f"  ✅ Final output_dir (global str): {str(step_output_dir)}")
                     else:
-                        # Use plate parent directory: {plate_parent}/{plate_name}{suffix}
-                        constructed_name = f"{plate_path.name}{path_config.output_dir_suffix}"
-                        logger.info(f"  🔧 Constructed name: {repr(constructed_name)}")
-                        logger.info(f"  🔧 Constructed name (bytes): {constructed_name.encode('unicode_escape')}")
-                        step_output_dir = plate_path.with_name(constructed_name)
+                        # Use plate parent directory
+                        step_output_dir = plate_path.parent / output_path
                         logger.info(f"  ✅ Final output_dir (local): {repr(step_output_dir)}")
                 else:
                     # Fallback to input directory name if plate_path not available
@@ -549,18 +557,14 @@ class PipelinePathPlanner:
         if context.zarr_conversion_path and steps:
             first_step_id = steps[0].step_id
             step_plans[first_step_id]['input_dir'] = context.original_input_dir
-            step_plans[first_step_id]['convert_to_zarr'] = context.zarr_conversion_path
-            logger.info(f"Zarr conversion: first step reads from {context.original_input_dir}, converts to {context.zarr_conversion_path}")
+            # Create zarr store inside the original plate directory
+            path_config = context.get_path_planning_config()
+            zarr_store_path = Path(context.zarr_conversion_path) / f"{path_config.sub_dir}.zarr"
+            step_plans[first_step_id]['convert_to_zarr'] = str(zarr_store_path)
+            logger.info(f"Zarr conversion: first step reads from {context.original_input_dir}, converts to {zarr_store_path}")
 
         # === FIRST STEP INPUT OVERRIDE ===
-        # If we used plate_path for calculations but real input is different, override first step
-        elif hasattr(context, 'plate_path') and context.plate_path and real_input_dir and steps:
-            plate_path_str = str(context.plate_path)
-            real_input_str = str(real_input_dir)
-            if plate_path_str != real_input_str:
-                first_step_id = steps[0].step_id
-                step_plans[first_step_id]['input_dir'] = real_input_str
-                logger.info(f"Path planning: used plate_path ({plate_path_str}) for calculations, overriding first step to read from real input ({real_input_str})")
+        # No longer needed - we now use actual input_dir from the start
 
         return step_plans
 

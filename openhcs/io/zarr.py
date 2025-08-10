@@ -60,7 +60,6 @@ class ZarrStorageBackend(StorageBackend):
         self.config = zarr_config
 
         # Convenience attributes
-        self.store_name = zarr_config.store_name
         self.compression_level = zarr_config.compression_level
 
         # Create actual compressor from config
@@ -100,24 +99,25 @@ class ZarrStorageBackend(StorageBackend):
 
     def _split_store_and_key(self, path: Union[str, Path]) -> Tuple[Any, str]:
         """
-        Auto-inject zarr store path for clean filesystem-like API.
+        Split path into zarr store and key without auto-injection.
+        Path planner now provides the complete storage path.
 
         Maps paths to zarr store and key:
-        - File: "/path/to/plate/A01.tif" → Store: "/path/to/plate/images.zarr", Key: "A01.tif"
-        - Directory: "/path/to/plate" → Store: "/path/to/plate/images.zarr", Key: ""
+        - Directory: "/path/to/plate/images.zarr" → Store: "/path/to/plate/images.zarr", Key: ""
+        - File: "/path/to/plate/images.zarr/A01.tif" → Store: "/path/to/plate/images.zarr", Key: "A01.tif"
 
         Returns a DirectoryStore with dimension_separator='/' for OME-ZARR compatibility.
         """
         path = Path(path)
 
-        # If path has no extension, treat as directory (zarr store goes inside it)
-        if not path.suffix:
-            # Directory path - zarr store goes inside the directory
-            store_path = path / self.store_name
+        # If path has no extension or ends with .zarr, treat as directory (zarr store)
+        if not path.suffix or path.suffix == '.zarr':
+            # Directory path - treat as zarr store
+            store_path = path
             relative_key = ""
         else:
-            # File path - zarr store goes in same directory as file
-            store_path = path.parent / self.store_name
+            # File path - parent is zarr store, filename is key
+            store_path = path.parent
             relative_key = path.name
 
         # CRITICAL: Create DirectoryStore with dimension_separator='/' for OME-ZARR compatibility
@@ -178,16 +178,13 @@ class ZarrStorageBackend(StorageBackend):
         if not file_paths:
             return []
 
-        # Use first path's directory to find zarr store
-        base_dir = Path(file_paths[0]).parent
-        store_path = base_dir / self.store_name
+        # Use _split_store_and_key to get store path from first file path
+        store, _ = self._split_store_and_key(file_paths[0])
+        store_path = Path(store.path)
 
         # FAIL LOUD: Store must exist
         if not store_path.exists():
             raise FileNotFoundError(f"Expected zarr store not found: {store_path}")
-
-        # Open store as group (not array) - _split_store_and_key handles dimension_separator
-        store, _ = self._split_store_and_key(store_path)
         root = zarr.open_group(store=store, mode='r')
 
         # Group files by well based on OME-ZARR structure
@@ -281,8 +278,9 @@ class ZarrStorageBackend(StorageBackend):
         if not OME_ZARR_AVAILABLE:
             raise ImportError("ome-zarr package is required. Install with: pip install ome-zarr")
 
-        base_dir = Path(output_paths[0]).parent
-        store_path = base_dir / self.store_name
+        # Use _split_store_and_key to get store path from first output path
+        store, _ = self._split_store_and_key(output_paths[0])
+        store_path = Path(store.path)
 
         logger.debug(f"Saving batch for chunk {chunk_name} with {len(data_list)} images to row={row}, col={col}")
 

@@ -1,35 +1,42 @@
-"""openhcs.plugin.pycle_registry
+"""
+openhcs.plugin.pycle_registry
 --------------------------------
 Static discovery & registration of *pyclesperanto* kernels for the
 **OpenHCS** declarative execution engine.
 
-This helper is imported at *compile time* (not at run‑time) so that every
+This helper is imported at *compile time* (not at run-time) so that every
 GPU operation is validated *before* the execution context is frozen.
 
 Highlights
 ~~~~~~~~~~
-*   Zero GPU work – purely uses ``inspect`` & naming heuristics.
+*   Zero GPU work - purely uses ``inspect`` & naming heuristics.
 *   Classifies each function into one of three contracts that matter to
     OpenHCS:
 
-    * ``SLICE_SAFE``        – never couples neighbouring Z‑slices (or can
+    * ``SLICE_SAFE``        – never couples neighbouring Z-slices (or can
       be forced not to by setting a ``*_z`` parameter to 0).
     * ``CROSS_Z``           – fuses slices whenever the input stack has
       ``shape[0] > 1`` (e.g. label/ watershed / voronoi). Works fine on
-      single‑slice input.
+      single-slice input.
     * ``DIM_CHANGE``        – changes the dimensionality or returns a
+      scalar/table. Excluded from the registry.
 
+*   Provides automatic dtype conversion for functions with specific requirements:
+    * ``BINARY_FUNCTIONS`` - convert to binary (0/1) before processing
+    * ``UINT8_FUNCTIONS`` - convert to uint8 before processing
+"""
+from __future__ import annotations
 # Functions requiring specific dtype conversions
 BINARY_FUNCTIONS = {'binary_infsup', 'binary_supinf'}
 UINT8_FUNCTIONS = {'mode', 'mode_box', 'mode_sphere'}  # Functions requiring uint8 input
 
-# ---- Module-level adapter: pyclesperanto → OpenHCS policy ----
 def _pycle_adapt_function(original_func):
+    """Adapter function for pyclesperanto functions to work with OpenHCS."""
     from functools import wraps
     import numpy as np
-    DIM_ERR_TOKENS = ("dimension", "dimensional", "3d", "ndim", "axis", "rank", "shapes not aligned")
 
     func_name = getattr(original_func, '__name__', 'unknown')
+    DIM_ERR_TOKENS = ("dimension", "dimensional", "3d", "ndim", "axis", "rank", "shapes not aligned")
 
     @wraps(original_func)
     def adapted(image, *args, slice_by_slice: bool = False, **kwargs):
@@ -41,11 +48,9 @@ def _pycle_adapt_function(original_func):
 
         # Apply dtype conversion for functions with specific requirements
         if func_name in BINARY_FUNCTIONS:
-            # Convert to binary: float32 [0,1] -> uint8 {0,255} with threshold at 0.5
             if image.dtype == np.float32:
                 converted_image = ((image > 0.5) * 255).astype(np.uint8)
         elif func_name in UINT8_FUNCTIONS:
-            # Convert to uint8: float32 [0,1] -> uint8 [0,255]
             if image.dtype == np.float32:
                 converted_image = (np.clip(image, 0, 1) * 255).astype(np.uint8)
 
@@ -69,6 +74,7 @@ def _pycle_adapt_function(original_func):
                         result = stack_slices(results, mem, 0)
                     else:
                         raise
+
             # Promote 2D to singleton-Z
             if hasattr(result, 'ndim') and result.ndim == 2:
                 try:
@@ -90,13 +96,10 @@ def _pycle_adapt_function(original_func):
         if func_name in BINARY_FUNCTIONS or func_name in UINT8_FUNCTIONS:
             if hasattr(result, 'dtype') and result.dtype != original_dtype:
                 if result.dtype == np.uint8 and original_dtype == np.float32:
-                    # Convert back: uint8 [0,255] -> float32 [0,1]
                     result = result.astype(np.float32) / 255.0
                 elif result.dtype == np.bool_ and original_dtype == np.float32:
-                    # Convert back: bool -> float32
                     result = result.astype(np.float32)
             elif isinstance(result, tuple):
-                # Handle tuple results (array, value) - convert array part
                 if hasattr(result[0], 'dtype') and result[0].dtype != original_dtype:
                     if result[0].dtype == np.uint8 and original_dtype == np.float32:
                         converted_array = result[0].astype(np.float32) / 255.0
@@ -108,22 +111,22 @@ def _pycle_adapt_function(original_func):
         return result
     return adapted
 
-      scalar/table (e.g. projections, statistics). Rejected for the
-      *img→img* contract.
 
-*   Provides a single public function ``register_pycle_ops()`` that either
-    (a) returns an organised registry **or** (b) auto‑calls the OpenHCS
-    registrar if available.
+# Legacy documentation comments (preserved for reference):
+# scalar/table (e.g. projections, statistics). Rejected for the
+# *img→img* contract.
+#
+# * Provides a single public function ``register_pycle_ops()`` that either
+#   (a) returns an organised registry **or** (b) auto-calls the OpenHCS
+#   registrar if available.
+#
+# Usage
+# ~~~~~
+# >>> from openhcs.plugin.pycle_registry import register_pycle_ops
+# >>> registry = register_pycle_ops()           # during compile phase
+#
+# ----------------------------------------------------------------------------
 
-Usage
-~~~~~
->>> from openhcs.plugin.pycle_registry import register_pycle_ops
->>> registry = register_pycle_ops()           # during compile phase
-
-----------------------------------------------------------------------------
-"""
-
-from __future__ import annotations
 
 import inspect
 import textwrap
@@ -149,8 +152,8 @@ from .function_classifier import is_blacklisted, log_blacklist_stats
 class Contract(Enum):
     """Semantic contracts recognised by OpenHCS."""
 
-    SLICE_SAFE = auto()   # keeps each Z‑slice independent (sigma_z or radius_z can be 0)
-    CROSS_Z = auto()      # 3‑D connectivity – fuses neighbouring slices
+    SLICE_SAFE = auto()   # keeps each Z-slice independent (sigma_z or radius_z can be 0)
+    CROSS_Z = auto()      # 3-D connectivity – fuses neighbouring slices
     DIM_CHANGE = auto()   # output is scalar, table or different shape ➔ excluded
 
 
@@ -159,7 +162,7 @@ class Contract(Enum):
 
 @dataclass(frozen=True)
 class OpMeta:
-    """Compile‑time metadata for a pyclesperanto kernel."""
+    """Compile-time metadata for a pyclesperanto kernel."""
 
     name: str
     func: Callable
@@ -170,7 +173,7 @@ class OpMeta:
 
     # Convenience helpers ----------------------------------------------------
     @property
-    def slice_safe(self) -> bool:  # noqa: D401 – property is short
+    def slice_safe(self) -> bool:  # noqa: D401 - property is short
         return self.contract is Contract.SLICE_SAFE
 
     @property
@@ -372,7 +375,7 @@ def _discover() -> Dict[str, OpMeta]:
     return registry
 
 
-_REGISTRY: Optional[Dict[str, OpMeta]] = None  # module‑level cache
+_REGISTRY: Optional[Dict[str, OpMeta]] = None  # module-level cache
 
 
 # ---------------------------------------------------------------------------
@@ -448,52 +451,38 @@ def _register_pyclesperanto_from_cache() -> bool:
     from openhcs.processing.backends.analysis.cache_utils import register_functions_from_cache
     from openhcs.processing.func_registry import _register_function
     from openhcs.constants import MemoryType
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     # Load cached metadata
     cached_metadata = _load_pyclesperanto_metadata()
     if not cached_metadata:
+        logger.warning("No pyclesperanto metadata cache found")
         return False
 
-    # Register functions from cache (following scikit-image pattern)
-    decorated_count = 0
-    skipped_count = 0
+    def register_pyclesperanto_function(original_func, func_name: str, memory_type: str):
+        """Register a pyclesperanto function with registry-specific adapter + unified decoration."""
+        from openhcs.processing.func_registry import _apply_unified_decoration
 
-    for full_name, func_data in cached_metadata.items():
-        try:
-            func_name = func_data['name']
-            contract = func_data['contract']
+        adapted = _pycle_adapt_function(original_func)
+        wrapper_func = _apply_unified_decoration(
+            original_func=adapted,
+            func_name=func_name,
+            memory_type=MemoryType.PYCLESPERANTO,
+            create_wrapper=True
+        )
 
-            # Skip functions with unknown or dimension-changing contracts
-            if contract in ['unknown', 'dim_change']:
-                skipped_count += 1
-                continue
+        _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
 
-            # Get the actual function object
-            original_func = _get_pyclesperanto_function("pyclesperanto", func_name)
-            if original_func is None:
-                logger.warning(f"Could not find function {func_name} in pyclesperanto")
-                skipped_count += 1
-                continue
-
-            # Adapt then apply unified decoration (following scikit-image pattern)
-            from openhcs.processing.func_registry import _apply_unified_decoration, _register_function
-            adapted = _pycle_adapt_function(original_func)
-            wrapper_func = _apply_unified_decoration(
-                original_func=adapted,
-                func_name=func_name,
-                memory_type=MemoryType.PYCLESPERANTO,
-                create_wrapper=True
-            )
-
-            _register_function(wrapper_func, MemoryType.PYCLESPERANTO.value)
-            decorated_count += 1
-
-        except Exception as e:
-            logger.warning(f"Failed to register {func_name}: {e}")
-            skipped_count += 1
-
-    logger.info(f"Registered {decorated_count} pyclesperanto functions from cache")
-    logger.info(f"Skipped {skipped_count} functions (unknown/dim_change contracts or errors)")
+    # Register functions from cache using unified system
+    register_functions_from_cache(
+        library_name="pyclesperanto",
+        cached_metadata=cached_metadata,
+        get_function_func=_get_pyclesperanto_function,
+        register_function_func=register_pyclesperanto_function,
+        memory_type=MemoryType.PYCLESPERANTO.value
+    )
     return True
 
 
@@ -502,7 +491,7 @@ def _register_pyclesperanto_from_cache() -> bool:
 # ---------------------------------------------------------------------------
 
 def build_pycle_registry(refresh: bool = False) -> Dict[str, OpMeta]:
-    """Return a *cached* registry mapping kernel‑name → :class:`OpMeta`."""
+    """Return a *cached* registry mapping kernel-name → :class:`OpMeta`."""
     global _REGISTRY  # noqa: PLW0603 – intentional module cache
     if refresh or _REGISTRY is None:
         # Log blacklist information
@@ -725,7 +714,7 @@ def _register_pycle_ops_direct() -> None:
     """
     from openhcs.processing.backends.analysis.cache_utils import run_cached_registration
 
-    # Attempt cache‑based registration first
+    # Attempt cache-based registration first
     if run_cached_registration("pyclesperanto", _register_pyclesperanto_from_cache):
         return
 

@@ -1,15 +1,12 @@
 import logging
+from openhcs.core.utils import optional_import
 
 logger = logging.getLogger(__name__)
 
-# Attempt to import pyclesperanto at the module level.
-# If this fails, PyclesperantoMemoryTracker cannot be used.
-try:
-    import pyclesperanto as cle
-    PYCLESPERANTO_AVAILABLE = True
-except ImportError:
-    cle = None # type: ignore 
-    PYCLESPERANTO_AVAILABLE = False
+# Import pyclesperanto using the optional_import utility
+cle = optional_import("pyclesperanto")
+PYCLESPERANTO_AVAILABLE = cle is not None
+if not PYCLESPERANTO_AVAILABLE:
     logger.info("pyclesperanto library not found. PyclesperantoMemoryTracker will not be available.")
 
 class PyclesperantoMemoryTracker: # Implements MemoryTracker protocol
