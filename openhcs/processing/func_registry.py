@@ -293,16 +293,17 @@ def _apply_unified_decoration(original_func, func_name, memory_type, create_wrap
 
 def _register_external_libraries() -> None:
     """
-    Phase 2: Register external library functions (pyclesperanto, scikit-image).
+    Phase 2: Register external library functions using clean unified registries.
 
     This is separate from core scanning to avoid circular dependencies.
     External library registration should use direct registration, not trigger re-initialization.
     """
-    logger.info("Phase 2: Registering external library functions...")
+    logger.info("Phase 2: Registering external library functions using unified registries...")
 
     try:
-        from openhcs.processing.backends.analysis.pyclesperanto_registry import _register_pycle_ops_direct
-        _register_pycle_ops_direct()
+        from openhcs.processing.backends.lib_registry.pyclesperanto_registry import PyclesperantoRegistry
+        registry = PyclesperantoRegistry()
+        registry.register_functions_direct()
         logger.info("Successfully registered pyclesperanto functions")
     except ImportError as e:
         logger.warning(f"Could not register pyclesperanto functions: {e}")
@@ -310,8 +311,9 @@ def _register_external_libraries() -> None:
         logger.error(f"Error registering pyclesperanto functions: {e}")
 
     try:
-        from openhcs.processing.backends.analysis.scikit_image_registry import _register_skimage_ops_direct
-        _register_skimage_ops_direct()
+        from openhcs.processing.backends.lib_registry.scikit_image_registry import SkimageRegistry
+        registry = SkimageRegistry()
+        registry.register_functions_direct()
         logger.info("Successfully registered scikit-image functions")
     except ImportError as e:
         logger.warning(f"Could not register scikit-image functions: {e}")
@@ -319,8 +321,9 @@ def _register_external_libraries() -> None:
         logger.error(f"Error registering scikit-image functions: {e}")
 
     try:
-        from openhcs.processing.backends.analysis.cupy_registry import _register_cupy_ops_direct
-        _register_cupy_ops_direct()
+        from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
+        registry = CupyRegistry()
+        registry.register_functions_direct()
         logger.info("Successfully registered CuPy ndimage functions")
     except ImportError as e:
         logger.warning(f"Could not register CuPy functions: {e}")

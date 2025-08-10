@@ -11,19 +11,69 @@ clearing all caches and re-scanning all functions. Use this when:
 4. You want to ensure the registry reflects the latest code changes
 
 Usage:
-    python recache_function_registry.py
+    python recache_function_registry.py [--unified|--legacy]
+
+    --unified    Use the new unified registry system (default)
+    --legacy     Use the legacy registry system for comparison
 
 The script will:
-- Clear function metadata cache
+- Clear function metadata cache (unified or legacy)
 - Reset registry initialization flags
 - Clear decoration tracking
-- Force complete re-initialization
+- Force complete re-initialization using selected system
 - Verify the registry is working correctly
 """
 
 import sys
 import logging
 from datetime import datetime
+
+# Toggle between legacy and unified registry systems
+USE_UNIFIED_REGISTRIES = True  # Set to False to use legacy registries
+
+def _switch_to_unified_registries():
+    """Temporarily switch func_registry to use unified registries."""
+    import openhcs.processing.func_registry as func_registry
+
+    # Monkey patch the _register_external_libraries function to use unified registries
+    def _register_external_libraries_unified():
+        """Register external libraries using unified registries."""
+        logger = logging.getLogger(__name__)
+        logger.info("Phase 2: Registering external library functions using unified registries...")
+
+        try:
+            from openhcs.processing.backends.analysis.pyclesperanto_registry_clean import PyclesperantoRegistry
+            registry = PyclesperantoRegistry()
+            registry.register_functions_direct()
+            logger.info("Successfully registered pyclesperanto functions")
+        except ImportError as e:
+            logger.warning(f"Could not register pyclesperanto functions: {e}")
+        except Exception as e:
+            logger.error(f"Error registering pyclesperanto functions: {e}")
+
+        try:
+            from openhcs.processing.backends.analysis.scikit_image_registry_clean import SkimageRegistry
+            registry = SkimageRegistry()
+            registry.register_functions_direct()
+            logger.info("Successfully registered scikit-image functions")
+        except ImportError as e:
+            logger.warning(f"Could not register scikit-image functions: {e}")
+        except Exception as e:
+            logger.error(f"Error registering scikit-image functions: {e}")
+
+        try:
+            from openhcs.processing.backends.lib_registry.cupy_registry import CupyRegistry
+            registry = CupyRegistry()
+            registry.register_functions_direct()
+            logger.info("Successfully registered CuPy ndimage functions")
+        except ImportError as e:
+            logger.warning(f"Could not register CuPy functions: {e}")
+        except Exception as e:
+            logger.error(f"Error registering CuPy functions: {e}")
+
+    # Replace the function
+    func_registry._register_external_libraries = _register_external_libraries_unified
+    print("  ✅ Switched to unified registry system")
 
 def recache_function_registry():
     """Force a complete recache of the OpenHCS function registry."""
@@ -33,7 +83,10 @@ def recache_function_registry():
     try:
         # Import required modules
         import openhcs.processing.func_registry as func_registry
-        import openhcs.processing.backends.analysis.scikit_image_registry as scikit_registry
+
+        # Only import legacy registry if needed
+        if not USE_UNIFIED_REGISTRIES:
+            import openhcs.processing.backends.analysis.scikit_image_registry as scikit_registry
         
         # Show current status
         current_initialized = func_registry.is_registry_initialized()
@@ -90,29 +143,65 @@ def recache_function_registry():
         migrate_all_legacy_cache_files()
 
         # Step 1: Clear function metadata caches for available libraries
-        print("\n🧹 Clearing function metadata caches for available libraries...")
+        print(f"\n🧹 Clearing function metadata caches for available libraries...")
+        print(f"   Using {'unified' if USE_UNIFIED_REGISTRIES else 'legacy'} registry system")
 
-        # Clear scikit-image cache (always available)
-        print("  🧹 Clearing scikit-image cache...")
-        scikit_registry.clear_function_metadata_cache()
+        if USE_UNIFIED_REGISTRIES:
+            # Clear caches using unified registry system
+            print("  🧹 Clearing unified registry caches...")
+            try:
+                from openhcs.processing.backends.analysis.cache_utils import clear_library_cache
 
-        # Clear pyclesperanto cache (if available)
-        try:
-            import pyclesperanto  # Check if available first
-            from openhcs.processing.backends.analysis.pyclesperanto_registry import clear_pyclesperanto_cache
-            print("  🧹 Clearing pyclesperanto cache...")
-            clear_pyclesperanto_cache()
-        except ImportError:
-            print("  ⚠️  pyclesperanto not installed - skipping cache clear")
+                # Clear scikit-image cache (always available)
+                print("    🧹 Clearing scikit-image cache...")
+                clear_library_cache("skimage")
 
-        # Clear CuPy cache (if available)
-        try:
-            import cupy  # Check if available first
-            from openhcs.processing.backends.analysis.cupy_registry import clear_cupy_cache
-            print("  🧹 Clearing CuPy cache...")
-            clear_cupy_cache()
-        except ImportError:
-            print("  ⚠️  CuPy not installed - skipping cache clear")
+                # Clear pyclesperanto cache (if available)
+                try:
+                    import pyclesperanto
+                    print("    🧹 Clearing pyclesperanto cache...")
+                    clear_library_cache("pyclesperanto")
+                except ImportError:
+                    print("    ⚠️  pyclesperanto not installed - skipping cache clear")
+
+                # Clear CuPy cache (if available)
+                try:
+                    import cupy
+                    print("    🧹 Clearing CuPy cache...")
+                    clear_library_cache("cupy")
+                except ImportError:
+                    print("    ⚠️  CuPy not installed - skipping cache clear")
+
+            except ImportError as e:
+                print(f"    ❌ Error importing unified cache utilities: {e}")
+                print("    🔄 Falling back to legacy cache clearing...")
+                USE_UNIFIED_REGISTRIES = False
+
+        if not USE_UNIFIED_REGISTRIES:
+            # Clear caches using legacy registry system
+            print("  🧹 Clearing legacy registry caches...")
+
+            # Clear scikit-image cache (always available)
+            print("    🧹 Clearing scikit-image cache...")
+            scikit_registry.clear_function_metadata_cache()
+
+            # Clear pyclesperanto cache (if available)
+            try:
+                import pyclesperanto  # Check if available first
+                from openhcs.processing.backends.analysis.pyclesperanto_registry import clear_pyclesperanto_cache
+                print("    🧹 Clearing pyclesperanto cache...")
+                clear_pyclesperanto_cache()
+            except ImportError:
+                print("    ⚠️  pyclesperanto not installed - skipping cache clear")
+
+            # Clear CuPy cache (if available)
+            try:
+                import cupy  # Check if available first
+                from openhcs.processing.backends.analysis.cupy_registry import clear_cupy_cache
+                print("    🧹 Clearing CuPy cache...")
+                clear_cupy_cache()
+            except ImportError:
+                print("    ⚠️  CuPy not installed - skipping cache clear")
         
         # Step 2: Force clear and reset the registry
         print("🧹 Clearing and resetting function registry...")
@@ -127,8 +216,13 @@ def recache_function_registry():
             # Clear decoration tracking to allow re-decoration
             func_registry._decoration_applied.clear()
         
-        # Step 3: Force re-initialization
-        print("🔄 Force re-initializing function registry...")
+        # Step 3: Force re-initialization with selected registry system
+        print(f"🔄 Force re-initializing function registry using {'unified' if USE_UNIFIED_REGISTRIES else 'legacy'} system...")
+
+        if USE_UNIFIED_REGISTRIES:
+            # Temporarily switch func_registry to use unified registries
+            _switch_to_unified_registries()
+
         func_registry._auto_initialize_registry()
         
         # Step 4: Verify the new registry
@@ -262,8 +356,33 @@ def generate_audit_table():
 
 def main():
     """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="OpenHCS Function Registry Recache Tool")
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy registry system instead of unified registries"
+    )
+    parser.add_argument(
+        "--unified",
+        action="store_true",
+        help="Use unified registry system (default)"
+    )
+    args = parser.parse_args()
+
+    # Update the global toggle based on command line arguments
+    global USE_UNIFIED_REGISTRIES
+    if args.legacy:
+        USE_UNIFIED_REGISTRIES = False
+    elif args.unified:
+        USE_UNIFIED_REGISTRIES = True
+    # Otherwise use the default value set at module level
+
     print("OpenHCS Function Registry Recache Tool")
     print("=" * 50)
+    print(f"Registry System: {'Unified' if USE_UNIFIED_REGISTRIES else 'Legacy'}")
+    print()
 
     # Step 1: Recache the registry
     recache_success = recache_function_registry()
