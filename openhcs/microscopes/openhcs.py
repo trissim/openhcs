@@ -11,26 +11,29 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, GroupBy, DEFAULT_IMAGE_EXTENSIONS
 from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.io.filemanager import FileManager
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
-from openhcs.microscopes.imagexpress import ImageXpressFilenameParser # Placeholder for dynamic loading
-from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser # Placeholder for dynamic loading
-
 logger = logging.getLogger(__name__)
 
-# Import known filename parsers for dynamic loading
-from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
-from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
-# Import other FilenameParser implementations here if they exist and are needed.
+def _get_available_filename_parsers():
+    """
+    Lazy import of filename parsers to avoid circular imports.
 
-AVAILABLE_FILENAME_PARSERS = {
-    "ImageXpressFilenameParser": ImageXpressFilenameParser,
-    "OperaPhenixFilenameParser": OperaPhenixFilenameParser,
-    # Add other parsers to this dictionary as they are implemented/imported.
-    # Example: "MyOtherParser": MyOtherParser,
-}
+    Returns:
+        Dict mapping parser class names to parser classes
+    """
+    # Import parsers only when needed to avoid circular imports
+    from openhcs.microscopes.imagexpress import ImageXpressFilenameParser
+    from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
+
+    return {
+        "ImageXpressFilenameParser": ImageXpressFilenameParser,
+        "OperaPhenixFilenameParser": OperaPhenixFilenameParser,
+        # Add other parsers to this dictionary as they are implemented/imported.
+        # Example: "MyOtherParser": MyOtherParser,
+    }
 
 
 class OpenHCSMetadataHandler(MetadataHandler):
@@ -329,6 +332,192 @@ class OpenHCSMetadataHandler(MetadataHandler):
         # Update cache
         self._metadata_cache = metadata
         logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
+
+
+class OpenHCSMetadataGenerator:
+    """
+    Generator for OpenHCS metadata files.
+
+    Handles creation of openhcs_metadata.json files for processed plates,
+    extracting information from processing context and output directories.
+    """
+
+    def __init__(self, filemanager: FileManager):
+        """
+        Initialize the metadata generator.
+
+        Args:
+            filemanager: FileManager instance for file operations
+        """
+        self.filemanager = filemanager
+        self.logger = logging.getLogger(__name__)
+
+    def create_metadata(
+        self,
+        context: 'ProcessingContext',
+        output_dir: str,
+        write_backend: str
+    ) -> None:
+        """
+        Create OpenHCS metadata file for materialization writes.
+
+        Direct extraction of FunctionStep._create_openhcs_metadata_for_materialization
+        with identical behavior, plus relative path conversion for portability.
+
+        Args:
+            context: ProcessingContext containing microscope_handler and other state
+            output_dir: Output directory path where metadata should be written
+            write_backend: Backend being used for the write (disk/zarr)
+        """
+        # Check if this is a materialization write (disk/zarr) - memory writes don't need metadata
+        if write_backend == Backend.MEMORY.value:
+            self.logger.debug(f"Skipping metadata creation (memory write)")
+            return
+
+        self.logger.debug(f"Creating metadata for materialization write: {write_backend} -> {output_dir}")
+
+        try:
+            # Extract required information
+            step_output_dir = Path(output_dir)
+
+            # Check if we have microscope handler for metadata extraction
+            if not context.microscope_handler:
+                self.logger.debug("No microscope_handler in context - skipping OpenHCS metadata creation")
+                return
+
+            # Get source microscope information
+            source_parser_name = context.microscope_handler.parser.__class__.__name__
+
+            # Extract metadata from source microscope handler
+            try:
+                grid_dimensions = context.microscope_handler.metadata_handler.get_grid_dimensions(context.input_dir)
+                pixel_size = context.microscope_handler.metadata_handler.get_pixel_size(context.input_dir)
+            except Exception as e:
+                self.logger.debug(f"Could not extract grid_dimensions/pixel_size from source: {e}")
+                grid_dimensions = [1, 1]  # Default fallback
+                pixel_size = 1.0  # Default fallback
+
+            # Get list of image files in output directory
+            try:
+                image_files = []
+                if self.filemanager.exists(str(step_output_dir), write_backend):
+                    # List files in output directory
+                    files = self.filemanager.list_files(str(step_output_dir), write_backend)
+                    # Filter for image files (common extensions) and convert to strings
+                    image_extensions = {'.tif', '.tiff', '.png', '.jpg', '.jpeg'}
+                    image_files = [str(f) for f in files if Path(f).suffix.lower() in image_extensions]
+                    self.logger.debug(f"Found {len(image_files)} image files in {step_output_dir}")
+            except Exception as e:
+                self.logger.debug(f"Could not list image files in output directory: {e}")
+                image_files = []
+
+            # Get available backends from metadata handler (determined by compiler)
+            available_backends = context.microscope_handler.metadata_handler.get_available_backends(context.input_dir)
+
+            # Create metadata structure
+            metadata = {
+                "microscope_handler_name": context.microscope_handler.microscope_type,
+                "source_filename_parser_name": source_parser_name,
+                "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
+                "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
+                "image_files": self._convert_to_relative_paths(image_files, step_output_dir, context),
+                "channels": self._extract_component_metadata(context, GroupBy.CHANNEL),
+                "wells": self._extract_component_metadata(context, GroupBy.WELL),
+                "sites": self._extract_component_metadata(context, GroupBy.SITE),
+                "z_indexes": self._extract_component_metadata(context, GroupBy.Z_INDEX),
+                "available_backends": available_backends
+            }
+
+            # Save metadata file using disk backend (JSON files always on disk)
+            metadata_path = Path(context.output_plate_root) / OpenHCSMetadataHandler.METADATA_FILENAME
+
+            # Always ensure we can write to the metadata path (delete if exists)
+            if self.filemanager.exists(str(metadata_path), Backend.DISK.value):
+                self.filemanager.delete(str(metadata_path), Backend.DISK.value)
+
+            # Ensure output plate root directory exists on disk
+            self.filemanager.ensure_directory(str(context.output_plate_root), Backend.DISK.value)
+
+            # Create JSON content - OpenHCS handler expects JSON format
+            json_content = json.dumps(metadata, indent=2)
+            self.filemanager.save(json_content, str(metadata_path), Backend.DISK.value)
+            self.logger.debug(f"Created OpenHCS metadata file at output plate root (disk): {metadata_path}")
+
+        except Exception as e:
+            # Graceful degradation - log error but don't fail the step
+            self.logger.warning(f"Failed to create OpenHCS metadata file: {e}")
+            self.logger.debug(f"OpenHCS metadata creation error details:", exc_info=True)
+
+    def _extract_component_metadata(self, context: 'ProcessingContext', group_by: GroupBy) -> Optional[Dict[str, str]]:
+        """
+        Extract component metadata from context cache safely.
+
+        Args:
+            context: ProcessingContext containing metadata_cache
+            group_by: GroupBy enum specifying which component to extract
+
+        Returns:
+            Dictionary mapping component keys to display names, or None if not available
+        """
+        try:
+            if hasattr(context, 'metadata_cache') and context.metadata_cache:
+                return context.metadata_cache.get(group_by, None)
+            else:
+                self.logger.debug(f"No metadata_cache available in context for {group_by.value}")
+                return None
+        except Exception as e:
+            self.logger.debug(f"Error extracting {group_by.value} metadata from cache: {e}")
+            return None
+
+    def _convert_to_relative_paths(
+        self,
+        image_files: List[str],
+        step_output_dir: Path,
+        context: 'ProcessingContext'
+    ) -> List[str]:
+        """
+        Convert absolute image file paths to relative paths.
+
+        The path planner is responsible for .zarr suffix handling - this method
+        just extracts the relative portion from the actual paths provided.
+
+        Args:
+            image_files: List of absolute file paths
+            step_output_dir: Step output directory path
+            context: ProcessingContext for path config
+
+        Returns:
+            List of relative file paths
+        """
+        path_config = context.get_path_planning_config()
+
+        if not path_config.sub_dir:
+            # No sub_dir configured, use just filenames
+            return [Path(f).name for f in image_files]
+
+        # Extract relative paths by finding the sub_dir component in actual paths
+        # The path planner already handled .zarr suffix addition if needed
+        relative_files = []
+        for file_path in image_files:
+            file_path_obj = Path(file_path)
+
+            # Find the sub_dir component in the path (may have .zarr suffix already)
+            # Work backwards from the filename to find the sub_dir
+            for i, part in enumerate(reversed(file_path_obj.parts)):
+                if part.startswith(path_config.sub_dir):
+                    # Found sub_dir (possibly with .zarr suffix), build relative path
+                    relative_parts = file_path_obj.parts[-(i+1):]
+                    relative_path = str(Path(*relative_parts))
+                    relative_files.append(relative_path)
+                    break
+            else:
+                # Fallback: just use filename if sub_dir not found in path
+                relative_files.append(file_path_obj.name)
+
+        self.logger.debug(f"Converted {len(image_files)} absolute paths to relative paths")
+        return relative_files
+
+
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.microscopes.microscope_interfaces import FilenameParser
 
@@ -376,13 +565,14 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
                 )
 
             parser_name = self.metadata_handler.get_source_filename_parser_name(self.plate_folder)
-            ParserClass = AVAILABLE_FILENAME_PARSERS.get(parser_name)
+            available_parsers = _get_available_filename_parsers()
+            ParserClass = available_parsers.get(parser_name)
 
             if not ParserClass:
                 raise ValueError(
                     f"Unknown or unsupported filename parser '{parser_name}' specified in "
                     f"{OpenHCSMetadataHandler.METADATA_FILENAME} for plate {self.plate_folder}. "
-                    f"Available parsers: {list(AVAILABLE_FILENAME_PARSERS.keys())}"
+                    f"Available parsers: {list(available_parsers.keys())}"
                 )
 
             try:
