@@ -26,6 +26,7 @@ from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
+from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
 
 logger = logging.getLogger(__name__)
 
@@ -1025,21 +1026,19 @@ class FunctionStep(AbstractStep):
             }
 
             # Save metadata file using disk backend (JSON files always on disk)
-            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
-            metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
+            metadata_path = Path(context.output_plate_root) / OpenHCSMetadataHandler.METADATA_FILENAME
 
             # Always ensure we can write to the metadata path (delete if exists)
             if context.filemanager.exists(str(metadata_path), Backend.DISK.value):
                 context.filemanager.delete(str(metadata_path), Backend.DISK.value)
 
-            # Ensure output directory exists on disk
-            context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
+            # Ensure output plate root directory exists on disk
+            context.filemanager.ensure_directory(str(context.output_plate_root), Backend.DISK.value)
 
             # Create JSON content - OpenHCS handler expects JSON format
-            import json
             json_content = json.dumps(metadata, indent=2)
             context.filemanager.save(json_content, str(metadata_path), Backend.DISK.value)
-            logger.debug(f"Created OpenHCS metadata file (disk): {metadata_path}")
+            logger.debug(f"Created OpenHCS metadata file at output plate root (disk): {metadata_path}")
 
         except Exception as e:
             # Graceful degradation - log error but don't fail the step

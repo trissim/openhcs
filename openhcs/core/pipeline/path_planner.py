@@ -566,6 +566,14 @@ class PipelinePathPlanner:
         # === FIRST STEP INPUT OVERRIDE ===
         # No longer needed - we now use actual input_dir from the start
 
+        # === SET OUTPUT PLATE ROOT IN CONTEXT ===
+        # Determine output plate root from first step's output directory
+        if steps and step_output_dirs:
+            first_step_id = steps[0].step_id
+            if first_step_id in step_output_dirs:
+                first_step_output = step_output_dirs[first_step_id]
+                context.output_plate_root = PipelinePathPlanner.resolve_output_plate_root(first_step_output, path_config)
+
         return step_plans
 
     @staticmethod
@@ -583,6 +591,29 @@ class PipelinePathPlanner:
             return str(base_folder / results_path)
         else:
             return results_path
+
+    @staticmethod
+    def resolve_output_plate_root(step_output_dir: Union[str, Path], path_config) -> Path:
+        """
+        Resolve output plate root directory from step output directory.
+
+        Args:
+            step_output_dir: Step's output directory
+            path_config: PathPlanningConfig with sub_dir
+
+        Returns:
+            Output plate root directory
+        """
+        step_output_path = Path(step_output_dir)
+
+        if not path_config.sub_dir:
+            return step_output_path
+
+        # Remove sub_dir component: if path ends with sub_dir(.zarr), return parent
+        if step_output_path.name in (path_config.sub_dir, f"{path_config.sub_dir}.zarr"):
+            return step_output_path.parent
+
+        return step_output_path
 
 
 
