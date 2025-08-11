@@ -123,6 +123,12 @@ class TypedWidgetFactory:
                 enum_type = self._get_enum_from_list(param_type)
                 return self._create_enum_widget(enum_type, current_value)
 
+            # Handle dataclass types (missing from original implementation!)
+            if self._is_dataclass_type(param_type):
+                # Return None to indicate this should be handled by the parameter form manager
+                # The parameter form manager will detect the dataclass and create nested widgets
+                return None
+
             # Handle basic types
             if param_type in self.widget_creators:
                 return self.widget_creators[param_type](param_name, current_value)
@@ -275,6 +281,11 @@ class TypedWidgetFactory:
     def _is_enum_type(self, param_type: Type) -> bool:
         """Check if type is an enum."""
         return any(base.__name__ == 'Enum' for base in param_type.__bases__)
+
+    def _is_dataclass_type(self, param_type: Type) -> bool:
+        """Check if type is a dataclass."""
+        import dataclasses
+        return dataclasses.is_dataclass(param_type)
     
     def _create_bool_widget(self, param_name: str, current_value: Any) -> QCheckBox:
         """Create checkbox widget for boolean parameters."""

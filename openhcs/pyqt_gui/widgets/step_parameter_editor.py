@@ -44,8 +44,9 @@ class StepParameterEditorWidget(QScrollArea):
         self.step = step
         self.service_adapter = service_adapter
         
-        # Analyze FunctionStep signature (mirrors Textual TUI)
-        param_info = SignatureAnalyzer.analyze(FunctionStep.__init__)
+        # Analyze AbstractStep signature to get all inherited parameters (mirrors Textual TUI)
+        from openhcs.core.steps.abstract import AbstractStep
+        param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
         
         # Get current parameter values from step instance
         parameters = {}
@@ -53,8 +54,7 @@ class StepParameterEditorWidget(QScrollArea):
         param_defaults = {}
         
         for name, info in param_info.items():
-            if name in ('func',):  # Skip func parameter
-                continue
+            # All AbstractStep parameters are relevant for editing
             current_value = getattr(self.step, name, info.default_value)
             parameters[name] = current_value
             parameter_types[name] = info.param_type

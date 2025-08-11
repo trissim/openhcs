@@ -15,7 +15,10 @@ import json
 import shutil
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDict as TypingOrderedDict
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, OrderedDict as TypingOrderedDict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openhcs.core.config import PathPlanningConfig
 
 from openhcs.constants.constants import (DEFAULT_IMAGE_EXTENSION,
                                              DEFAULT_IMAGE_EXTENSIONS,
@@ -30,6 +33,28 @@ from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
 
 logger = logging.getLogger(__name__)
 
+def _generate_materialized_paths(memory_paths: List[str], step_output_dir: Path, materialized_output_dir: Path) -> List[str]:
+    """Generate materialized file paths by replacing step output directory."""
+    materialized_paths = []
+    for memory_path in memory_paths:
+        relative_path = Path(memory_path).relative_to(step_output_dir)
+        materialized_path = materialized_output_dir / relative_path
+        materialized_paths.append(str(materialized_path))
+    return materialized_paths
+
+
+def _save_materialized_data(filemanager, memory_data: List, materialized_paths: List[str],
+                           materialized_backend: str, step_plan: Dict, context, well_id: str) -> None:
+    """Save data to materialized location using appropriate backend."""
+    if materialized_backend == Backend.ZARR.value:
+        n_channels, n_z, n_fields = _calculate_zarr_dimensions(materialized_paths, context.microscope_handler)
+        row, col = context.microscope_handler.parser.extract_row_column(well_id)
+        filemanager.save_batch(memory_data, materialized_paths, materialized_backend,
+                             chunk_name=well_id, zarr_config=step_plan.get("zarr_config"),
+                             n_channels=n_channels, n_z=n_z, n_fields=n_fields,
+                             row=row, col=col)
+    else:
+        filemanager.save_batch(memory_data, materialized_paths, materialized_backend)
 
 
 
@@ -186,7 +211,7 @@ def _bulk_writeout_step_images(
 
     # Convert relative memory paths back to absolute paths for target backend
     # Memory backend stores relative paths, but target backend needs absolute paths
-#    file_paths = 
+#    file_paths =
 #    for memory_path in memory_file_paths:
 #        # Get just the filename and construct proper target path
 #        filename = Path(memory_path).name
@@ -399,7 +424,7 @@ def _execute_function_core(
                 logger.error(f"Mismatch: {num_special_outputs} special outputs planned, but fewer values returned by function for key '{output_key}'.")
                 # Or, if partial returns are allowed, this might be a warning. For now, error.
                 raise ValueError(f"Function did not return enough values for all planned special outputs. Missing value for '{output_key}'.")
-    
+
     return main_output_data
 
 def _execute_chain_core(
@@ -529,7 +554,7 @@ def _process_single_pattern_group(
 
         full_file_paths = [str(step_input_dir / f) for f in matching_files]
         raw_slices = context.filemanager.load_batch(full_file_paths, Backend.MEMORY.value)
-        
+
         if not raw_slices:
             raise ValueError(
                 f"No valid images loaded for pattern group {pattern_repr} in {step_input_dir}. "
@@ -552,11 +577,11 @@ def _process_single_pattern_group(
         stack_shape = getattr(main_data_stack, 'shape', 'no shape')
         stack_type = type(main_data_stack).__name__
         logger.debug(f"🔍 STACKED RESULT: shape: {stack_shape}, type: {stack_type}")
-        
+
         logger.info(f"🔍 special_outputs_map: {special_outputs_map}")
-        
+
         final_base_kwargs = base_func_args.copy()
-        
+
         # Get step function from step plan
         step_func = context.step_plans[step_id]["func"]
 
@@ -699,25 +724,22 @@ class FunctionStep(AbstractStep):
     def __init__(
         self,
         func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
-        *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
-        group_by: GroupBy = GroupBy.CHANNEL, force_disk_output: bool = False,
-        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None,
-        input_source: InputSource = InputSource.PREVIOUS_STEP
+        **kwargs
     ):
-        actual_func_for_name = func
-        if isinstance(func, tuple): actual_func_for_name = func[0]
-        elif isinstance(func, list) and func:
-             first_item = func[0]
-             if isinstance(first_item, tuple): actual_func_for_name = first_item[0]
-             elif callable(first_item): actual_func_for_name = first_item
-        
-        super().__init__(
-            name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
-            variable_components=variable_components, group_by=group_by,
-            force_disk_output=force_disk_output,
-            input_dir=input_dir, output_dir=output_dir,
-            input_source=input_source
-        )
+        # Generate default name from function if not provided
+        if 'name' not in kwargs or kwargs['name'] is None:
+            actual_func_for_name = func
+            if isinstance(func, tuple):
+                actual_func_for_name = func[0]
+            elif isinstance(func, list) and func:
+                first_item = func[0]
+                if isinstance(first_item, tuple):
+                    actual_func_for_name = first_item[0]
+                elif callable(first_item):
+                    actual_func_for_name = first_item
+            kwargs['name'] = getattr(actual_func_for_name, '__name__', 'FunctionStep')
+
+        super().__init__(**kwargs)
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
     def process(self, context: 'ProcessingContext') -> None:
@@ -735,7 +757,7 @@ class FunctionStep(AbstractStep):
             variable_components = step_plan['variable_components']
             group_by = step_plan['group_by']
             func_from_plan = step_plan['func']
-            
+
             # special_inputs/outputs are dicts: {'key': 'vfs_path_value'}
             special_inputs = step_plan['special_inputs']
             special_outputs = step_plan['special_outputs'] # Should be OrderedDict if order matters
@@ -759,8 +781,8 @@ class FunctionStep(AbstractStep):
                 well_filter=[well_id],         # well_filter
                 extensions=DEFAULT_IMAGE_EXTENSIONS,  # extensions
                 group_by=group_by.value if group_by else None,             # group_by
-                variable_components=[vc.value for vc in variable_components] if variable_components else None  # variable_components
-            )            
+                variable_components=[vc.value for vc in variable_components] if variable_components else []  # variable_components
+            )
 
 
             # Only access gpu_id if the step requires GPU (has GPU memory types)
@@ -844,7 +866,7 @@ class FunctionStep(AbstractStep):
             except Exception:
                 pass
 
-            logger.info(f"🔥 STEP: Starting processing for '{step_name}' well {well_id} (group_by={group_by.name}, variable_components={[vc.name for vc in variable_components]})")
+            logger.info(f"🔥 STEP: Starting processing for '{step_name}' well {well_id} (group_by={group_by.name if group_by else None}, variable_components={[vc.name for vc in variable_components] if variable_components else []})")
 
             if well_id not in patterns_by_well:
                 raise ValueError(
@@ -891,7 +913,7 @@ class FunctionStep(AbstractStep):
                         variable_components, step_id  # Pass step_id for funcplan lookup
                     )
             logger.info(f"🔥 STEP: Completed processing for '{step_name}' well {well_id}.")
-            
+
             # 📄 MATERIALIZATION WRITE: Only if not writing to memory
             if write_backend != Backend.MEMORY.value:
                 memory_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
@@ -904,7 +926,21 @@ class FunctionStep(AbstractStep):
                                      chunk_name=well_id, zarr_config=step_plan["zarr_config"],
                                      n_channels=n_channels, n_z=n_z, n_fields=n_fields,
                                      row=row, col=col)
-            
+
+            # 📄 PER-STEP MATERIALIZATION: Additional materialized output if configured
+            if "materialized_output_dir" in step_plan:
+                materialized_output_dir = step_plan["materialized_output_dir"]
+                materialized_backend = step_plan["materialized_backend"]
+
+                memory_paths = get_paths_for_well(step_output_dir, Backend.MEMORY.value)
+                memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
+                materialized_paths = _generate_materialized_paths(memory_paths, step_output_dir, Path(materialized_output_dir))
+
+                filemanager.ensure_directory(materialized_output_dir, materialized_backend)
+                _save_materialized_data(filemanager, memory_data, materialized_paths, materialized_backend, step_plan, context, well_id)
+
+                logger.info(f"🔬 Materialized {len(materialized_paths)} files to {materialized_output_dir}")
+
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion

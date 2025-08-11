@@ -27,8 +27,9 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
-from openhcs.constants.constants import VariableComponents, GroupBy
+from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS
 from openhcs.constants.input_source import InputSource
+from openhcs.core.config import PathPlanningConfig
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -125,12 +126,13 @@ class AbstractStep(abc.ABC):
         self,
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
-        variable_components: Optional[List[VariableComponents]] = None,
+        variable_components: List[VariableComponents] = DEFAULT_VARIABLE_COMPONENTS,
         force_disk_output: Optional[bool] = False,
         group_by: Optional[GroupBy] = None,
         input_dir: Optional[Union[str,Path]] = None, # Used during path planning
         output_dir: Optional[Union[str,Path]] = None, # Used during path planning
-        input_source: InputSource = InputSource.PREVIOUS_STEP
+        input_source: InputSource = InputSource.PREVIOUS_STEP,
+        materialization_config: Optional['PathPlanningConfig'] = None
     ) -> None:
         """
         Initialize a step. These attributes are primarily used during the
@@ -148,6 +150,9 @@ class AbstractStep(abc.ABC):
             input_source: Input source strategy for this step. Defaults to PREVIOUS_STEP
                          for normal pipeline chaining. Use PIPELINE_START to access
                          original input data (replaces @chain_breaker decorator).
+            materialization_config: Optional PathPlanningConfig for per-step materialized output.
+                                   When provided, enables saving materialized copy of step output
+                                   to custom location in addition to normal memory backend processing.
         """
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components
@@ -156,6 +161,7 @@ class AbstractStep(abc.ABC):
         self.input_dir = input_dir
         self.output_dir = output_dir
         self.input_source = input_source
+        self.materialization_config = materialization_config
 
         # Generate a stable step_id based on object id at instantiation.
         # This ID is used to link the step object to its plan in the context.

@@ -96,8 +96,12 @@ class ParameterFormManager(QWidget):
         for param_name, param_type in self.textual_form_manager.parameter_types.items():
             current_value = self.textual_form_manager.parameters[param_name]
 
+            # Handle Optional[dataclass] types with checkbox wrapper
+            if self._is_optional_dataclass(param_type):
+                inner_dataclass_type = self._get_optional_inner_type(param_type)
+                field_widget = self._create_optional_dataclass_field(param_name, inner_dataclass_type, current_value)
             # Handle nested dataclasses (reuse Textual TUI logic)
-            if dataclasses.is_dataclass(param_type):
+            elif dataclasses.is_dataclass(param_type):
                 field_widget = self._create_nested_dataclass_field(param_name, param_type, current_value)
             else:
                 field_widget = self._create_regular_parameter_field(param_name, param_type, current_value)
@@ -159,7 +163,61 @@ class ParameterFormManager(QWidget):
         layout.addWidget(nested_manager)
         
         return group_box
-    
+
+    def _is_optional_dataclass(self, param_type: type) -> bool:
+        """Check if parameter type is Optional[dataclass]."""
+        if get_origin(param_type) is Union:
+            args = get_args(param_type)
+            if len(args) == 2 and type(None) in args:
+                inner_type = next(arg for arg in args if arg is not type(None))
+                return dataclasses.is_dataclass(inner_type)
+        return False
+
+    def _get_optional_inner_type(self, param_type: type) -> type:
+        """Extract the inner type from Optional[T]."""
+        if get_origin(param_type) is Union:
+            args = get_args(param_type)
+            if len(args) == 2 and type(None) in args:
+                return next(arg for arg in args if arg is not type(None))
+        return param_type
+
+    def _create_optional_dataclass_field(self, param_name: str, dataclass_type: type, current_value: Any) -> QWidget:
+        """Create a checkbox + dataclass widget for Optional[dataclass] parameters."""
+        from PyQt6.QtWidgets import QWidget, QVBoxLayout, QCheckBox
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+
+        # Checkbox and dataclass widget
+        checkbox = QCheckBox(f"Enable {param_name.replace('_', ' ').title()}")
+        checkbox.setChecked(current_value is not None)
+        dataclass_widget = self._create_nested_dataclass_field(param_name, dataclass_type, current_value)
+        dataclass_widget.setEnabled(current_value is not None)
+
+        # Toggle logic
+        def toggle_dataclass(checked: bool):
+            dataclass_widget.setEnabled(checked)
+            value = (dataclass_type() if checked and current_value is None
+                    else self.nested_managers[param_name].get_current_values()
+                         and dataclass_type(**self.nested_managers[param_name].get_current_values())
+                    if checked and param_name in self.nested_managers else None)
+            self.textual_form_manager.update_parameter(param_name, value)
+            self.parameter_changed.emit(param_name, value)
+
+        checkbox.stateChanged.connect(toggle_dataclass)
+
+        layout.addWidget(checkbox)
+        layout.addWidget(dataclass_widget)
+
+        # Store reference
+        if not hasattr(self, 'optional_checkboxes'):
+            self.optional_checkboxes = {}
+        self.optional_checkboxes[param_name] = checkbox
+
+        return container
+
     def _create_regular_parameter_field(self, param_name: str, param_type: type, current_value: Any) -> QWidget:
         """Create a field for regular (non-dataclass) parameter."""
         container = QFrame()

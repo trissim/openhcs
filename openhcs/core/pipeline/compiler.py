@@ -20,6 +20,7 @@ Doctrinal Clauses:
 - Clause 524 — Step = Declaration = ID = Runtime Authority
 """
 
+import inspect
 import logging
 import json
 from pathlib import Path
@@ -40,6 +41,18 @@ from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.steps.function_step import FunctionStep # Used for isinstance check
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_step_attributes(pipeline_definition: List[AbstractStep]) -> None:
+    """Backwards compatibility: Set missing step attributes to constructor defaults."""
+    sig = inspect.signature(AbstractStep.__init__)
+    defaults = {name: param.default for name, param in sig.parameters.items()
+                if name != 'self' and param.default != inspect.Parameter.empty}
+
+    for step in pipeline_definition:
+        for attr_name, default_value in defaults.items():
+            if not hasattr(step, attr_name):
+                setattr(step, attr_name, default_value)
 
 
 class PipelineCompiler:
@@ -77,6 +90,12 @@ class PipelineCompiler:
 
         if not hasattr(context, 'step_plans') or context.step_plans is None:
             context.step_plans = {} # Ensure step_plans dict exists
+
+        # === BACKWARDS COMPATIBILITY PREPROCESSING ===
+        # Ensure all steps have complete attribute sets based on AbstractStep constructor
+        # This must happen before any other compilation logic to eliminate defensive programming
+        logger.debug("🔧 BACKWARDS COMPATIBILITY: Normalizing step attributes...")
+        _normalize_step_attributes(steps_definition)
 
         # Pre-initialize step_plans with basic entries for each step
         # This ensures step_plans is not empty when path planner checks it
@@ -147,11 +166,17 @@ class PipelineCompiler:
             current_plan.setdefault("special_outputs", OrderedDict())
             current_plan.setdefault("chainbreaker", False) # PathPlanner now sets this.
 
-            # Add FunctionStep specific attributes (non-I/O, non-path related)
+            # Add step-specific attributes (non-I/O, non-path related)
+            current_plan["variable_components"] = step.variable_components
+            current_plan["group_by"] = step.group_by
+            current_plan["force_disk_output"] = step.force_disk_output
+
+            # Store materialization_config if present
+            if step.materialization_config is not None:
+                current_plan["materialization_config"] = step.materialization_config
+
+            # Add FunctionStep specific attributes
             if isinstance(step, FunctionStep):
-                current_plan["variable_components"] = step.variable_components
-                current_plan["group_by"] = step.group_by
-                current_plan["force_disk_output"] = step.force_disk_output
 
                 # 🎯 SEMANTIC COHERENCE FIX: Prevent group_by/variable_components conflict
                 # When variable_components contains the same value as group_by,

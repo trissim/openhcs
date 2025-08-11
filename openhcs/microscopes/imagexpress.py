@@ -63,13 +63,13 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
+    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
         """
         Get available storage backends for ImageXpress plates.
 
         ImageXpress only supports DISK backend.
         """
-        return {"disk": True, "zarr": False}
+        return [Backend.DISK]
 
     # Uses default workspace initialization from base class
 
@@ -464,7 +464,7 @@ class ImageXpressMetadataHandler(MetadataHandler):
     Metadata handler for ImageXpress microscopes.
 
     Handles finding and parsing HTD files for ImageXpress microscopes.
-    Metadata for ImageXpressHandler must be present. Legacy fallback is not supported.
+    Inherits fallback values from MetadataHandler ABC.
     """
     def __init__(self, filemanager: FileManager):
         """
@@ -735,6 +735,20 @@ class ImageXpressMetadataHandler(MetadataHandler):
             None - ImageXpress doesn't provide rich z_index names in metadata
         """
         return None
+
+    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
+        """
+        Get available storage backends for ImageXpress plates.
+
+        ImageXpress only supports DISK backend.
+
+        Args:
+            plate_path: Path to the plate folder
+
+        Returns:
+            Dict mapping backend names to availability flags
+        """
+        return {Backend.DISK.value: True, Backend.ZARR.value: False}
 
 
 # Set metadata handler class after class definition for automatic registration

@@ -88,6 +88,10 @@ class MaterializationFlagPlanner:
             else:  # Other steps - write to memory
                 step_plan[WRITE_BACKEND] = Backend.MEMORY.value
 
+            # === PER-STEP MATERIALIZATION BACKEND SELECTION ===
+            if "materialized_output_dir" in step_plan:
+                step_plan["materialized_backend"] = vfs_config.materialization_backend.value
+
     @staticmethod
     def _get_first_step_read_backend(context: ProcessingContext) -> str:
         """Get read backend for first step based on compatible backends (in priority order) and availability."""

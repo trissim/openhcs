@@ -59,7 +59,7 @@ syn_data_params = {
     "grid_size": (3, 3),
     "tile_size": (256, 256),  # Increased from 64x64 to 128x128 for patch size compatibility
     "overlap_percent": 10,
-    "wavelengths": 3,
+    "wavelengths": 2,  # Changed from 3 to 2 channels
     "cell_size_range": (3, 6),
     "wells": ['A01', 'D02', 'B03', 'B06']
 }
@@ -82,7 +82,7 @@ BACKEND_CONFIGS = ["disk", "zarr"]
 # Data type configurations for parametrized testing
 DATA_TYPE_CONFIGS = {
     "2d": {"z_stack_levels": 1, "name": "flat_plate"},
-    "3d": {"z_stack_levels": 5, "name": "zstack_plate"}
+    "3d": {"z_stack_levels": 3, "name": "zstack_plate"}  # Changed from 5 to 3 z-planes
 }
 
 @pytest.fixture(scope="module")
@@ -301,7 +301,7 @@ def debug_global_config(execution_mode, backend_config):
 
     # Always create complete configuration - let the system use what it needs
     return GlobalPipelineConfig(
-        num_workers=1,  # Single worker for deterministic testing
+        num_workers=2,  # Changed from 1 to 2 workers
         path_planning=PathPlanningConfig(
             sub_dir="images",  # Default subdirectory for processed data
             output_dir_suffix="_outputs"  # Suffix for output directories

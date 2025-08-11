@@ -400,7 +400,7 @@ class OpenHCSMetadataGenerator:
         write_backend: str
     ) -> OpenHCSMetadata:
         """
-        Extract metadata from context - fail-loud, no fallbacks.
+        Extract metadata from context - fail-loud, no fallbacks except for synthetic test data.
 
         Returns:
             OpenHCSMetadata dataclass with all required fields
@@ -410,8 +410,14 @@ class OpenHCSMetadataGenerator:
 
         # Extract source information - fail if not available
         source_parser_name = microscope_handler.parser.__class__.__name__
-        grid_dimensions = microscope_handler.metadata_handler.get_grid_dimensions(context.input_dir)
-        pixel_size = microscope_handler.metadata_handler.get_pixel_size(context.input_dir)
+
+        # Extract metadata with explicit fallback support
+        grid_dimensions = microscope_handler.metadata_handler._get_with_fallback(
+            'get_grid_dimensions', context.input_dir
+        )
+        pixel_size = microscope_handler.metadata_handler._get_with_fallback(
+            'get_pixel_size', context.input_dir
+        )
 
         # Get image files - fail if directory doesn't exist
         image_files = self.filemanager.list_image_files(output_dir, write_backend)

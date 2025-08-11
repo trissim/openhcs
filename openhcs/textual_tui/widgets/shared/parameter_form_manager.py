@@ -30,8 +30,12 @@ class ParameterFormManager:
             for param_name, param_type in self.parameter_types.items():
                 current_value = self.parameters[param_name]
 
+                # Handle Optional[dataclass] types with checkbox wrapper
+                if self._is_optional_dataclass(param_type):
+                    inner_dataclass_type = self._get_optional_inner_type(param_type)
+                    yield from self._build_optional_dataclass_form(param_name, inner_dataclass_type, current_value)
                 # Handle nested dataclasses recursively
-                if dataclasses.is_dataclass(param_type):
+                elif dataclasses.is_dataclass(param_type):
                     yield from self._build_nested_dataclass_form(param_name, param_type, current_value)
                 else:
                     yield from self._build_regular_parameter_form(param_name, param_type, current_value)
@@ -66,6 +70,65 @@ class ParameterFormManager:
         with collapsible:
             yield from nested_form_manager.build_form()
 
+        yield collapsible
+
+    def _is_optional_dataclass(self, param_type: type) -> bool:
+        """Check if parameter type is Optional[dataclass]."""
+        from typing import get_origin, get_args, Union
+        if get_origin(param_type) is Union:
+            args = get_args(param_type)
+            if len(args) == 2 and type(None) in args:
+                inner_type = next(arg for arg in args if arg is not type(None))
+                return dataclasses.is_dataclass(inner_type)
+        return False
+
+    def _get_optional_inner_type(self, param_type: type) -> type:
+        """Extract the inner type from Optional[T]."""
+        from typing import get_origin, get_args, Union
+        if get_origin(param_type) is Union:
+            args = get_args(param_type)
+            if len(args) == 2 and type(None) in args:
+                return next(arg for arg in args if arg is not type(None))
+        return param_type
+
+    def _build_optional_dataclass_form(self, param_name: str, dataclass_type: type, current_value: Any) -> ComposeResult:
+        """Build form for Optional[dataclass] parameter with checkbox toggle."""
+        from textual.widgets import Checkbox
+
+        # Checkbox
+        checkbox_id = f"{self.field_id}_{param_name}_enabled"
+        checkbox = Checkbox(
+            value=current_value is not None,
+            label=f"Enable {param_name.replace('_', ' ').title()}",
+            id=checkbox_id,
+            compact=True
+        )
+        yield checkbox
+
+        # Collapsible dataclass widget
+        collapsible = TypedWidgetFactory.create_widget(dataclass_type, current_value, None)
+        collapsible.collapsed = (current_value is None)
+
+        # Setup nested form
+        nested_param_info = SignatureAnalyzer.analyze(dataclass_type)
+        nested_parameters = {name: getattr(current_value, name, info.default_value) if current_value else info.default_value
+                           for name, info in nested_param_info.items()}
+        nested_parameter_types = {name: info.param_type for name, info in nested_param_info.items()}
+
+        nested_form_manager = ParameterFormManager(
+            nested_parameters, nested_parameter_types, f"{self.field_id}_{param_name}", nested_param_info
+        )
+
+        # Store references
+        if not hasattr(self, 'nested_managers'):
+            self.nested_managers = {}
+        if not hasattr(self, 'optional_checkboxes'):
+            self.optional_checkboxes = {}
+        self.nested_managers[param_name] = nested_form_manager
+        self.optional_checkboxes[param_name] = checkbox
+
+        with collapsible:
+            yield from nested_form_manager.build_form()
         yield collapsible
 
     def _build_regular_parameter_form(self, param_name: str, param_type: type, current_value: Any) -> ComposeResult:
@@ -250,6 +313,18 @@ class ParameterFormManager:
 
             # Handle special reset behavior for DifferentValuesInput widgets
             self._handle_different_values_reset(param_name)
+
+    def handle_optional_checkbox_change(self, param_name: str, enabled: bool):
+        """Handle checkbox change for Optional[dataclass] parameters."""
+        if param_name in self.parameter_types and self._is_optional_dataclass(self.parameter_types[param_name]):
+            dataclass_type = self._get_optional_inner_type(self.parameter_types[param_name])
+            nested_managers = getattr(self, 'nested_managers', {})
+            self.parameters[param_name] = (
+                dataclass_type(**nested_managers[param_name].get_current_values())
+                if enabled and param_name in nested_managers
+                else dataclass_type() if enabled
+                else None
+            )
 
     def _handle_different_values_reset(self, param_name: str):
         """Handle reset behavior for DifferentValuesInput widgets."""
