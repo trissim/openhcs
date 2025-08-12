@@ -314,6 +314,10 @@ class SignatureAnalyzer:
                 if param_name in ('self', 'cls'):
                     continue
 
+                # Skip dunder parameters (internal/reserved fields)
+                if param_name.startswith('__') and param_name.endswith('__'):
+                    continue
+
                 # Skip the first parameter (after self/cls) - this is always the image/tensor
                 # that gets passed automatically by the processing system
                 if i == 0 or (i == 1 and param_list[0][0] in ('self', 'cls')):

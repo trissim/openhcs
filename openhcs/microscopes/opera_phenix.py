@@ -67,13 +67,7 @@ class OperaPhenixHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
-        """
-        Get available storage backends for Opera Phenix plates.
 
-        Opera Phenix only supports DISK backend.
-        """
-        return [Backend.DISK]
 
     # Uses default workspace initialization from base class
 
@@ -806,19 +800,7 @@ class OperaPhenixMetadataHandler(MetadataHandler):
         """
         return None
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
-        """
-        Get available storage backends for Opera Phenix plates.
 
-        Opera Phenix only supports DISK backend.
-
-        Args:
-            plate_path: Path to the plate folder
-
-        Returns:
-            Dict mapping backend names to availability flags
-        """
-        return {Backend.DISK.value: True, Backend.ZARR.value: False}
 
     def create_xml_parser(self, xml_path: Union[str, Path]):
         """

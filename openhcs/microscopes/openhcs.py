@@ -15,8 +15,44 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Type
 from openhcs.constants.constants import Backend, GroupBy, DEFAULT_IMAGE_EXTENSIONS
 from openhcs.io.exceptions import MetadataNotFoundError
 from openhcs.io.filemanager import FileManager
+from openhcs.io.metadata_writer import AtomicMetadataWriter, MetadataWriteError, get_metadata_path, METADATA_CONFIG
 from openhcs.microscopes.microscope_interfaces import MetadataHandler
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OpenHCSMetadataFields:
+    """Centralized constants for OpenHCS metadata field names."""
+    # Core metadata structure - use centralized constants
+    SUBDIRECTORIES: str = METADATA_CONFIG.SUBDIRECTORIES_KEY
+    IMAGE_FILES: str = "image_files"
+    AVAILABLE_BACKENDS: str = METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
+
+    # Required metadata fields
+    GRID_DIMENSIONS: str = "grid_dimensions"
+    PIXEL_SIZE: str = "pixel_size"
+    SOURCE_FILENAME_PARSER_NAME: str = "source_filename_parser_name"
+    MICROSCOPE_HANDLER_NAME: str = "microscope_handler_name"
+
+    # Optional metadata fields
+    CHANNELS: str = "channels"
+    WELLS: str = "wells"
+    SITES: str = "sites"
+    Z_INDEXES: str = "z_indexes"
+    OBJECTIVES: str = "objectives"
+    ACQUISITION_DATETIME: str = "acquisition_datetime"
+    PLATE_NAME: str = "plate_name"
+
+    # Default values
+    DEFAULT_SUBDIRECTORY: str = "."
+    DEFAULT_SUBDIRECTORY_LEGACY: str = "images"
+
+    # Microscope type identifier
+    MICROSCOPE_TYPE: str = "openhcsdata"
+
+
+# Global instance for easy access
+FIELDS = OpenHCSMetadataFields()
 
 def _get_available_filename_parsers():
     """
@@ -44,7 +80,7 @@ class OpenHCSMetadataHandler(MetadataHandler):
     This handler reads metadata from an 'openhcs_metadata.json' file
     located in the root of the plate folder.
     """
-    METADATA_FILENAME = "openhcs_metadata.json"
+    METADATA_FILENAME = METADATA_CONFIG.METADATA_FILENAME
 
     def __init__(self, filemanager: FileManager):
         """
@@ -55,6 +91,7 @@ class OpenHCSMetadataHandler(MetadataHandler):
         """
         super().__init__()
         self.filemanager = filemanager
+        self.atomic_writer = AtomicMetadataWriter()
         self._metadata_cache: Optional[Dict[str, Any]] = None
         self._plate_path_cache: Optional[Path] = None
 
@@ -77,262 +114,235 @@ class OpenHCSMetadataHandler(MetadataHandler):
             return self._metadata_cache
 
         metadata_file_path = self.find_metadata_file(current_path)
-        if not metadata_file_path or not self.filemanager.exists(str(metadata_file_path), 'disk'):
-            raise MetadataNotFoundError(
-                f"Metadata file '{self.METADATA_FILENAME}' not found in {plate_path}."
-            )
+        if not self.filemanager.exists(str(metadata_file_path), Backend.DISK.value):
+            raise MetadataNotFoundError(f"Metadata file '{self.METADATA_FILENAME}' not found in {plate_path}")
 
         try:
-            # Use filemanager to load file content - returns string content
             content = self.filemanager.load(str(metadata_file_path), Backend.DISK.value)
-            if isinstance(content, bytes):
-                content = content.decode('utf-8')
-            self._metadata_cache = json.loads(content)
+            metadata_dict = json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
+
+            # Handle subdirectory-keyed format
+            if subdirs := metadata_dict.get(FIELDS.SUBDIRECTORIES):
+                if not subdirs:
+                    raise MetadataNotFoundError(f"Empty subdirectories in metadata file '{metadata_file_path}'")
+
+                # Merge all subdirectories: use first as base, combine all image_files
+                base_metadata = next(iter(subdirs.values())).copy()
+                base_metadata[FIELDS.IMAGE_FILES] = [
+                    file for subdir in subdirs.values()
+                    for file in subdir.get(FIELDS.IMAGE_FILES, [])
+                ]
+                self._metadata_cache = base_metadata
+            else:
+                # Legacy format not supported - use migration script
+                raise MetadataNotFoundError(
+                    f"Legacy metadata format detected in '{metadata_file_path}'. "
+                    f"Please run the migration script: python scripts/migrate_legacy_metadata.py {current_path}"
+                )
+
             self._plate_path_cache = current_path
             return self._metadata_cache
+
         except json.JSONDecodeError as e:
-            raise MetadataNotFoundError(
-                f"Error decoding JSON from '{metadata_file_path}': {e}"
-            ) from e
-        except Exception as e:
-            raise MetadataNotFoundError(
-                f"Could not read or parse metadata file '{metadata_file_path}': {e}"
-            ) from e
+            raise MetadataNotFoundError(f"Error decoding JSON from '{metadata_file_path}': {e}") from e
 
-    def find_metadata_file(self, plate_path: Union[str, Path],
-                           context: Optional[Any] = None) -> Optional[Path]:
-        """
-        Find the OpenHCS JSON metadata file.
 
-        Args:
-            plate_path: Path to the plate folder.
-            context: Optional context (not used).
 
-        Returns:
-            Path to the 'openhcs_metadata.json' file if found, else None.
-        """
+    def determine_main_subdirectory(self, plate_path: Union[str, Path]) -> str:
+        """Determine main input subdirectory from metadata."""
+        metadata_dict = self._load_metadata_dict(plate_path)
+        subdirs = metadata_dict.get(FIELDS.SUBDIRECTORIES)
+
+        # Legacy format not supported - should have been caught by _load_metadata_dict
+        if not subdirs:
+            raise MetadataNotFoundError(f"No subdirectories found in metadata for {plate_path}")
+
+        # Single subdirectory - use it
+        if len(subdirs) == 1:
+            return next(iter(subdirs.keys()))
+
+        # Multiple subdirectories - find main or fallback
+        main_subdir = next((name for name, data in subdirs.items() if data.get("main")), None)
+        if main_subdir:
+            return main_subdir
+
+        # Fallback hierarchy: legacy default -> first available
+        if FIELDS.DEFAULT_SUBDIRECTORY_LEGACY in subdirs:
+            return FIELDS.DEFAULT_SUBDIRECTORY_LEGACY
+        else:
+            return next(iter(subdirs.keys()))
+
+    def _load_metadata_dict(self, plate_path: Union[str, Path]) -> Dict[str, Any]:
+        """Load and parse metadata JSON, fail-loud on errors."""
+        metadata_file_path = self.find_metadata_file(plate_path)
+        if not self.filemanager.exists(str(metadata_file_path), Backend.DISK.value):
+            raise MetadataNotFoundError(f"Metadata file '{self.METADATA_FILENAME}' not found in {plate_path}")
+
+        try:
+            content = self.filemanager.load(str(metadata_file_path), Backend.DISK.value)
+            return json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
+        except json.JSONDecodeError as e:
+            raise MetadataNotFoundError(f"Error decoding JSON from '{metadata_file_path}': {e}") from e
+
+    def find_metadata_file(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Path]:
+        """Find the OpenHCS JSON metadata file."""
         plate_p = Path(plate_path)
-        if not self.filemanager.is_dir(str(plate_p), 'disk'):
-            logger.warning(f"Plate path {plate_p} is not a directory.")
+        if not self.filemanager.is_dir(str(plate_p), Backend.DISK.value):
             return None
 
         expected_file = plate_p / self.METADATA_FILENAME
-        if self.filemanager.exists(str(expected_file), 'disk') and self.filemanager.is_file(str(expected_file), 'disk'):
+        if self.filemanager.exists(str(expected_file), Backend.DISK.value):
             return expected_file
 
-        logger.debug(f"Metadata file {self.METADATA_FILENAME} not found directly in {plate_path}.")
-
-        # Attempt to find it recursively, though it's expected to be in the root.
-        # This uses the filemanager's find_file_recursive method.
+        # Fallback: recursive search
         try:
-            # Use correct signature: find_file_recursive(directory, filename, backend)
-            # Use disk backend for metadata file search
-            found_files = self.filemanager.find_file_recursive(plate_p, self.METADATA_FILENAME, 'disk')
-            if found_files:
-                # find_file_recursive might return a list or a single path string/Path
+            if found_files := self.filemanager.find_file_recursive(plate_p, self.METADATA_FILENAME, Backend.DISK.value):
                 if isinstance(found_files, list):
-                    if not found_files:
-                        return None
-                    # Prioritize file in root if multiple found (though unlikely for this specific filename)
-                    for f_path_str in found_files:
-                        f_path = Path(f_path_str)
-                        if f_path.name == self.METADATA_FILENAME and f_path.parent == plate_p:
-                            return f_path
-                    return Path(found_files[0]) # Return the first one found
-                else: # Assuming it's a single path string or Path object
-                    return Path(found_files)
+                    # Prioritize root location, then first found
+                    return next((Path(f) for f in found_files if Path(f).parent == plate_p), Path(found_files[0]))
+                return Path(found_files)
         except Exception as e:
-            logger.error(f"Error while searching for {self.METADATA_FILENAME} in {plate_path} using filemanager: {e}")
+            logger.error(f"Error searching for {self.METADATA_FILENAME} in {plate_path}: {e}")
 
         return None
 
 
-    def get_grid_dimensions(self, plate_path: Union[str, Path],
-                             context: Optional[Any] = None) -> Tuple[int, int]:
-        """
-        Get grid dimensions from the OpenHCS JSON metadata.
-
-        Args:
-            plate_path: Path to the plate folder.
-            context: Optional context (not used).
-
-        Returns:
-            Tuple (rows, cols).
-        """
-        metadata = self._load_metadata(plate_path)
-        dims = metadata.get("grid_dimensions")
-        if not isinstance(dims, list) or len(dims) != 2 or \
-           not all(isinstance(d, int) for d in dims):
-            raise ValueError(
-                f"'grid_dimensions' is missing, malformed, or not a list of two integers in {self.METADATA_FILENAME}"
-            )
+    def get_grid_dimensions(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Tuple[int, int]:
+        """Get grid dimensions from OpenHCS metadata."""
+        dims = self._load_metadata(plate_path).get(FIELDS.GRID_DIMENSIONS)
+        if not (isinstance(dims, list) and len(dims) == 2 and all(isinstance(d, int) for d in dims)):
+            raise ValueError(f"'{FIELDS.GRID_DIMENSIONS}' must be a list of two integers in {self.METADATA_FILENAME}")
         return tuple(dims)
 
-    def get_pixel_size(self, plate_path: Union[str, Path],
-                       context: Optional[Any] = None) -> float:
-        """
-        Get pixel size from the OpenHCS JSON metadata.
-
-        Args:
-            plate_path: Path to the plate folder.
-            context: Optional context (not used).
-
-        Returns:
-            Pixel size in micrometers.
-        """
-        metadata = self._load_metadata(plate_path)
-        pixel_size = metadata.get("pixel_size")
+    def get_pixel_size(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> float:
+        """Get pixel size from OpenHCS metadata."""
+        pixel_size = self._load_metadata(plate_path).get(FIELDS.PIXEL_SIZE)
         if not isinstance(pixel_size, (float, int)):
-            raise ValueError(
-                f"'pixel_size' is missing or not a number in {self.METADATA_FILENAME}"
-            )
+            raise ValueError(f"'{FIELDS.PIXEL_SIZE}' must be a number in {self.METADATA_FILENAME}")
         return float(pixel_size)
 
     def get_source_filename_parser_name(self, plate_path: Union[str, Path]) -> str:
-        """
-        Get the name of the source filename parser from the OpenHCS JSON metadata.
-
-        Args:
-            plate_path: Path to the plate folder.
-
-        Returns:
-            The class name of the source filename parser.
-        """
-        metadata = self._load_metadata(plate_path)
-        parser_name = metadata.get("source_filename_parser_name")
-        if not isinstance(parser_name, str) or not parser_name:
-            raise ValueError(
-                f"'source_filename_parser_name' is missing or not a string in {self.METADATA_FILENAME}"
-            )
+        """Get source filename parser name from OpenHCS metadata."""
+        parser_name = self._load_metadata(plate_path).get(FIELDS.SOURCE_FILENAME_PARSER_NAME)
+        if not (isinstance(parser_name, str) and parser_name):
+            raise ValueError(f"'{FIELDS.SOURCE_FILENAME_PARSER_NAME}' must be a non-empty string in {self.METADATA_FILENAME}")
         return parser_name
 
     def get_image_files(self, plate_path: Union[str, Path]) -> List[str]:
-        """
-        Get the list of image files from the OpenHCS JSON metadata.
-
-        Args:
-            plate_path: Path to the plate folder.
-
-        Returns:
-            A list of image filenames.
-        """
-        metadata = self._load_metadata(plate_path)
-        image_files = metadata.get("image_files")
-        if not isinstance(image_files, list) or not all(isinstance(f, str) for f in image_files):
-            raise ValueError(
-                f"'image_files' is missing or not a list of strings in {self.METADATA_FILENAME}"
-            )
+        """Get image files list from OpenHCS metadata."""
+        image_files = self._load_metadata(plate_path).get(FIELDS.IMAGE_FILES)
+        if not (isinstance(image_files, list) and all(isinstance(f, str) for f in image_files)):
+            raise ValueError(f"'{FIELDS.IMAGE_FILES}' must be a list of strings in {self.METADATA_FILENAME}")
         return image_files
 
     # Optional metadata getters
     def _get_optional_metadata_dict(self, plate_path: Union[str, Path], key: str) -> Optional[Dict[str, str]]:
         """Helper to get optional dictionary metadata."""
-        metadata = self._load_metadata(plate_path)
-        value = metadata.get(key)
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            logger.warning(f"Optional metadata '{key}' is not a dictionary in {self.METADATA_FILENAME}. Ignoring.")
-            return None
-        # Ensure keys and values are strings, as expected by some interfaces, though JSON naturally supports string keys.
-        return {str(k): str(v) for k, v in value.items()}
+        value = self._load_metadata(plate_path).get(key)
+        return {str(k): str(v) for k, v in value.items()} if isinstance(value, dict) else None
 
-    def get_channel_values(self, plate_path: Union[str, Path],
-                           context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, "channels")
+    def get_channel_values(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
+        return self._get_optional_metadata_dict(plate_path, FIELDS.CHANNELS)
 
-    def get_well_values(self, plate_path: Union[str, Path],
-                        context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, "wells")
+    def get_well_values(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
+        return self._get_optional_metadata_dict(plate_path, FIELDS.WELLS)
 
-    def get_site_values(self, plate_path: Union[str, Path],
-                        context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, "sites")
+    def get_site_values(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
+        return self._get_optional_metadata_dict(plate_path, FIELDS.SITES)
 
-    def get_z_index_values(self, plate_path: Union[str, Path],
-                           context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
-        return self._get_optional_metadata_dict(plate_path, "z_indexes")
+    def get_z_index_values(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Dict[str, Optional[str]]]:
+        return self._get_optional_metadata_dict(plate_path, FIELDS.Z_INDEXES)
 
-    def get_objective_values(self, plate_path: Union[str, Path],
-                             context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    def get_objective_values(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+        """Get objective lens information if available."""
+        return self._get_optional_metadata_dict(plate_path, FIELDS.OBJECTIVES)
+
+    def get_plate_acquisition_datetime(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[str]:
+        """Get plate acquisition datetime if available."""
+        return self._get_optional_metadata_str(plate_path, FIELDS.ACQUISITION_DATETIME)
+
+    def get_plate_name(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Optional[str]:
+        """Get plate name if available."""
+        return self._get_optional_metadata_str(plate_path, FIELDS.PLATE_NAME)
+
+    def _get_optional_metadata_str(self, plate_path: Union[str, Path], field: str) -> Optional[str]:
+        """Helper to get optional string metadata field."""
+        value = self._load_metadata(plate_path).get(field)
+        return value if isinstance(value, str) and value else None
+
+    def get_available_backends(self, input_dir: Union[str, Path]) -> Dict[str, bool]:
         """
-        Retrieves objective lens information if available in the metadata.
-        The structure within the JSON for this is not strictly defined by the initial plan,
-        so this is a placeholder implementation.
-        """
-        metadata = self._load_metadata(plate_path)
-        # Assuming 'objectives' might be a key in the JSON if this data is stored
-        objectives_data = metadata.get("objectives")
-        if objectives_data and isinstance(objectives_data, dict):
-            return objectives_data
-        logger.debug("No 'objectives' data found in OpenHCS metadata.")
-        return None
+        Get available storage backends for the input directory.
 
-    def get_plate_acquisition_datetime(self, plate_path: Union[str, Path],
-                                       context: Optional[Any] = None) -> Optional[str]:
-        """
-        Retrieves plate acquisition date/time if available.
-        The JSON field for this is not strictly defined by the initial plan.
-        """
-        metadata = self._load_metadata(plate_path)
-        # Assuming 'acquisition_datetime' might be a key
-        acq_datetime = metadata.get("acquisition_datetime")
-        if acq_datetime and isinstance(acq_datetime, str):
-            return acq_datetime
-        logger.debug("No 'acquisition_datetime' data found in OpenHCS metadata.")
-        return None
-
-    def get_plate_name(self, plate_path: Union[str, Path],
-                       context: Optional[Any] = None) -> Optional[str]:
-        """
-        Retrieves plate name if available.
-        The JSON field for this is not strictly defined by the initial plan.
-        """
-        metadata = self._load_metadata(plate_path)
-        # Assuming 'plate_name' might be a key
-        plate_name = metadata.get("plate_name")
-        if plate_name and isinstance(plate_name, str):
-            return plate_name
-        logger.debug("No 'plate_name' data found in OpenHCS metadata.")
-        return None
-
-    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
-        """
-        Get available storage backends from metadata in priority order.
+        This method resolves the plate root from the input directory,
+        loads the OpenHCS metadata, and returns the available backends.
 
         Args:
-            plate_path: Path to the plate folder.
+            input_dir: Path to the input directory (may be plate root or subdirectory)
 
         Returns:
-            Ordered dictionary mapping backend names to availability flags.
-            Order represents selection priority (first available backend is used).
-            Defaults to {"zarr": False, "disk": True} if not specified.
-        """
-        metadata = self._load_metadata(plate_path)
-        return metadata.get("available_backends", {"zarr": False, "disk": True})
+            Dictionary mapping backend names to availability (e.g., {"disk": True, "zarr": False})
 
-    def update_available_backends(self, plate_path: Union[str, Path], available_backends: Dict[str, bool]) -> None:
+        Raises:
+            MetadataNotFoundError: If metadata file cannot be found or parsed
         """
-        Update available storage backends in metadata and save to disk.
+        # Resolve plate root from input directory
+        plate_root = self._resolve_plate_root(input_dir)
+
+        # Load metadata using existing infrastructure
+        metadata = self._load_metadata(plate_root)
+
+        # Extract available backends, defaulting to empty dict if not present
+        available_backends = metadata.get(FIELDS.AVAILABLE_BACKENDS, {})
+
+        if not isinstance(available_backends, dict):
+            logger.warning(f"Invalid available_backends format in metadata: {available_backends}")
+            return {}
+
+        return available_backends
+
+    def _resolve_plate_root(self, input_dir: Union[str, Path]) -> Path:
+        """
+        Resolve the plate root directory from an input directory.
+
+        The input directory may be the plate root itself or a subdirectory.
+        This method walks up the directory tree to find the directory containing
+        the OpenHCS metadata file.
 
         Args:
-            plate_path: Path to the plate folder.
-            available_backends: Ordered dict mapping backend names to availability flags.
+            input_dir: Path to resolve
+
+        Returns:
+            Path to the plate root directory
+
+        Raises:
+            MetadataNotFoundError: If no metadata file is found
         """
-        # Load current metadata
-        metadata = self._load_metadata(plate_path)
+        current_path = Path(input_dir)
 
-        # Update the available backends
-        metadata["available_backends"] = available_backends
+        # Walk up the directory tree looking for metadata file
+        for path in [current_path] + list(current_path.parents):
+            metadata_file = path / self.METADATA_FILENAME
+            if self.filemanager.exists(str(metadata_file), Backend.DISK.value):
+                return path
 
-        # Save back to file
-        metadata_file_path = Path(plate_path) / self.METADATA_FILENAME
-        content = json.dumps(metadata, indent=2)
-        self.filemanager.save(content, str(metadata_file_path), Backend.DISK.value)
+        # If not found, raise an error
+        raise MetadataNotFoundError(
+            f"Could not find {self.METADATA_FILENAME} in {input_dir} or any parent directory"
+        )
 
-        # Update cache
-        self._metadata_cache = metadata
-        logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
+    def update_available_backends(self, plate_path: Union[str, Path], available_backends: Dict[str, bool]) -> None:
+        """Update available storage backends in metadata and save to disk."""
+        metadata_file_path = get_metadata_path(plate_path)
+
+        try:
+            self.atomic_writer.update_available_backends(metadata_file_path, available_backends)
+            # Clear cache to force reload on next access
+            self._metadata_cache = None
+            self._plate_path_cache = None
+            logger.info(f"Updated available backends to {available_backends} in {metadata_file_path}")
+        except MetadataWriteError as e:
+            raise ValueError(f"Failed to update available backends: {e}") from e
 
 
 @dataclass(frozen=True)
@@ -352,6 +362,39 @@ class OpenHCSMetadata:
     sites: Optional[Dict[str, str]]
     z_indexes: Optional[Dict[str, str]]
     available_backends: Dict[str, bool]
+    main: Optional[bool] = None  # Indicates if this subdirectory is the primary/input subdirectory
+
+
+@dataclass(frozen=True)
+class SubdirectoryKeyedMetadata:
+    """
+    Subdirectory-keyed metadata structure for OpenHCS.
+
+    Organizes metadata by subdirectory to prevent conflicts when multiple
+    steps write to the same plate folder with different subdirectories.
+
+    Structure: {subdirectory_name: OpenHCSMetadata}
+    """
+    subdirectories: Dict[str, OpenHCSMetadata]
+
+    def get_subdirectory_metadata(self, sub_dir: str) -> Optional[OpenHCSMetadata]:
+        """Get metadata for specific subdirectory."""
+        return self.subdirectories.get(sub_dir)
+
+    def add_subdirectory_metadata(self, sub_dir: str, metadata: OpenHCSMetadata) -> 'SubdirectoryKeyedMetadata':
+        """Add or update metadata for subdirectory (immutable operation)."""
+        new_subdirs = {**self.subdirectories, sub_dir: metadata}
+        return SubdirectoryKeyedMetadata(subdirectories=new_subdirs)
+
+    @classmethod
+    def from_single_metadata(cls, sub_dir: str, metadata: OpenHCSMetadata) -> 'SubdirectoryKeyedMetadata':
+        """Create from single OpenHCSMetadata (migration helper)."""
+        return cls(subdirectories={sub_dir: metadata})
+
+    @classmethod
+    def from_legacy_dict(cls, legacy_dict: Dict[str, Any], default_sub_dir: str = FIELDS.DEFAULT_SUBDIRECTORY_LEGACY) -> 'SubdirectoryKeyedMetadata':
+        """Create from legacy single-subdirectory metadata dict."""
+        return cls.from_single_metadata(default_sub_dir, OpenHCSMetadata(**legacy_dict))
 
 
 class OpenHCSMetadataGenerator:
@@ -360,6 +403,9 @@ class OpenHCSMetadataGenerator:
 
     Handles creation of openhcs_metadata.json files for processed plates,
     extracting information from processing context and output directories.
+
+    Design principle: Generate metadata that accurately reflects what exists on disk
+    after processing, not what was originally intended or what the source contained.
     """
 
     def __init__(self, filemanager: FileManager):
@@ -370,126 +416,53 @@ class OpenHCSMetadataGenerator:
             filemanager: FileManager instance for file operations
         """
         self.filemanager = filemanager
+        self.atomic_writer = AtomicMetadataWriter()
         self.logger = logging.getLogger(__name__)
 
     def create_metadata(
         self,
         context: 'ProcessingContext',
         output_dir: str,
-        write_backend: str
+        write_backend: str,
+        is_main: bool = False,
+        plate_root: str = None,
+        sub_dir: str = None
     ) -> None:
-        """
-        Create OpenHCS metadata file for materialization writes.
+        """Create or update subdirectory-keyed OpenHCS metadata file."""
+        plate_root_path = Path(plate_root)
+        metadata_path = get_metadata_path(plate_root_path)
 
-        Fail-loud: No defensive programming, no fallbacks, no silent errors.
+        current_metadata = self._extract_metadata_from_disk_state(context, output_dir, write_backend, is_main, sub_dir)
+        metadata_dict = asdict(current_metadata)
 
-        Args:
-            context: ProcessingContext containing microscope_handler and other state
-            output_dir: Output directory path where metadata should be written
-            write_backend: Backend being used for the write (disk/zarr)
-        """
-        # Skip memory writes - only materialization needs metadata
-        # Fail-loud: All required components must exist
-        metadata = self._extract_metadata(context, output_dir, write_backend)
-        self._write_metadata_file(context, metadata)
+        self.atomic_writer.update_subdirectory_metadata(metadata_path, sub_dir, metadata_dict)
 
-    def _extract_metadata(
-        self,
-        context: 'ProcessingContext',
-        output_dir: str,
-        write_backend: str
-    ) -> OpenHCSMetadata:
-        """
-        Extract metadata from context - fail-loud, no fallbacks except for synthetic test data.
 
-        Returns:
-            OpenHCSMetadata dataclass with all required fields
-        """
-        # Fail-loud: microscope handler must exist
-        microscope_handler = context.microscope_handler
 
-        # Extract source information - fail if not available
-        source_parser_name = microscope_handler.parser.__class__.__name__
-
-        # Extract metadata with explicit fallback support
-        grid_dimensions = microscope_handler.metadata_handler._get_with_fallback(
-            'get_grid_dimensions', context.input_dir
-        )
-        pixel_size = microscope_handler.metadata_handler._get_with_fallback(
-            'get_pixel_size', context.input_dir
-        )
-
-        # Get image files - fail if directory doesn't exist
-        image_files = self.filemanager.list_image_files(output_dir, write_backend)
-        relative_image_files = self._convert_to_relative_paths(image_files, Path(output_dir), context)
-
-        # Get backend info from compiler-determined source
-        available_backends = microscope_handler.metadata_handler.get_available_backends(context.input_dir)
-
-        # Extract component metadata using safe accessor
+    def _extract_metadata_from_disk_state(self, context: 'ProcessingContext', output_dir: str, write_backend: str, is_main: bool, sub_dir: str) -> OpenHCSMetadata:
+        """Extract metadata reflecting current disk state after processing."""
+        handler = context.microscope_handler
         cache = context.metadata_cache or {}
 
+        actual_files = self.filemanager.list_image_files(output_dir, write_backend)
+        relative_files = [f"{sub_dir}/{Path(f).name}" for f in actual_files]
+
         return OpenHCSMetadata(
-            microscope_handler_name=microscope_handler.microscope_type,
-            source_filename_parser_name=source_parser_name,
-            grid_dimensions=grid_dimensions,
-            pixel_size=pixel_size,
-            image_files=relative_image_files,
+            microscope_handler_name=handler.microscope_type,
+            source_filename_parser_name=handler.parser.__class__.__name__,
+            grid_dimensions=handler.metadata_handler._get_with_fallback('get_grid_dimensions', context.input_dir),
+            pixel_size=handler.metadata_handler._get_with_fallback('get_pixel_size', context.input_dir),
+            image_files=relative_files,
             channels=cache.get(GroupBy.CHANNEL),
             wells=cache.get(GroupBy.WELL),
             sites=cache.get(GroupBy.SITE),
             z_indexes=cache.get(GroupBy.Z_INDEX),
-            available_backends=available_backends
+            available_backends={write_backend: True},
+            main=is_main if is_main else None
         )
 
 
 
-    def _write_metadata_file(self, context: 'ProcessingContext', metadata: OpenHCSMetadata) -> None:
-        """
-        Write metadata to file - fail-loud.
-        """
-        metadata_path = Path(context.output_plate_root) / OpenHCSMetadataHandler.METADATA_FILENAME
-
-        # Clean slate: delete existing file
-        if self.filemanager.exists(str(metadata_path), Backend.DISK.value):
-            self.filemanager.delete(str(metadata_path), Backend.DISK.value)
-
-        # Ensure directory exists
-        self.filemanager.ensure_directory(str(context.output_plate_root), Backend.DISK.value)
-
-        # Convert dataclass to dict automatically
-        metadata_dict = asdict(metadata)
-
-        json_content = json.dumps(metadata_dict, indent=2)
-        self.filemanager.save(json_content, str(metadata_path), Backend.DISK.value)
-
-
-
-    def _convert_to_relative_paths(
-        self,
-        image_files: List[str],
-        step_output_dir: Path,
-        context: 'ProcessingContext'
-    ) -> List[str]:
-        """Convert absolute paths to relative paths using path config."""
-        path_config = context.get_path_planning_config()
-
-        if not path_config.sub_dir:
-            return [Path(f).name for f in image_files]
-
-        # Extract relative paths by finding sub_dir component
-        relative_files = []
-        for file_path in image_files:
-            path_parts = Path(file_path).parts
-            # Find sub_dir in path (may have .zarr suffix from path planner)
-            for i, part in enumerate(reversed(path_parts)):
-                if part.startswith(path_config.sub_dir):
-                    relative_files.append(str(Path(*path_parts[-(i+1):])))
-                    break
-            else:
-                relative_files.append(Path(file_path).name)
-
-        return relative_files
 
 
 from openhcs.microscopes.microscope_base import MicroscopeHandler
@@ -506,7 +479,7 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     """
 
     # Class attributes for automatic registration
-    _microscope_type = 'openhcsdata'  # Override automatic naming
+    _microscope_type = FIELDS.MICROSCOPE_TYPE  # Override automatic naming
     _metadata_handler_class = None  # Set after class definition
 
     def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
@@ -607,7 +580,7 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
     @property
     def microscope_type(self) -> str:
         """Microscope type identifier (for interface enforcement only)."""
-        return 'openhcsdata'
+        return FIELDS.MICROSCOPE_TYPE
 
     @property
     def metadata_handler_class(self) -> Type[MetadataHandler]:
@@ -626,20 +599,38 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
 
     def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
         """
-        Get available storage backends from metadata.
+        Get available storage backends for OpenHCS plates.
 
-        Only returns backends that this handler supports AND are available in metadata.
+        OpenHCS plates can support multiple backends based on what actually exists on disk.
+        This method checks the metadata to see what backends are actually available.
         """
-        backend_dict = self.metadata_handler.get_available_backends(plate_path)
-        available_backends = []
-        for backend in self.compatible_backends:
-            if backend_dict.get(backend.value, False):
-                available_backends.append(backend)
-        return available_backends
+        try:
+            # Get available backends from metadata as Dict[str, bool]
+            available_backends_dict = self.metadata_handler.get_available_backends(plate_path)
+
+            # Convert to List[Backend] by filtering compatible backends that are available
+            available_backends = []
+            for backend_enum in self.compatible_backends:
+                backend_name = backend_enum.value
+                if available_backends_dict.get(backend_name, False):
+                    available_backends.append(backend_enum)
+
+            # If no backends are available from metadata, fall back to compatible backends
+            # This handles cases where metadata might not have the available_backends field
+            if not available_backends:
+                logger.warning(f"No available backends found in metadata for {plate_path}, using all compatible backends")
+                return self.compatible_backends
+
+            return available_backends
+
+        except Exception as e:
+            logger.warning(f"Failed to get available backends from metadata for {plate_path}: {e}")
+            # Fall back to all compatible backends if metadata reading fails
+            return self.compatible_backends
 
     def initialize_workspace(self, plate_path: Path, workspace_path: Optional[Path], filemanager: FileManager) -> Path:
         """
-        OpenHCS format doesn't need workspace - images are already processed and ready.
+        OpenHCS format doesn't need workspace - determines the correct input subdirectory from metadata.
 
         Args:
             plate_path: Path to the original plate directory
@@ -647,15 +638,27 @@ class OpenHCSMicroscopeHandler(MicroscopeHandler):
             filemanager: FileManager instance for file operations
 
         Returns:
-            The plate path directly (no workspace needed)
+            Path to the main subdirectory containing input images (e.g., plate_path/images)
         """
-        logger.info(f"OpenHCS format: Using plate directory directly {plate_path} (no workspace needed)")
+        logger.info(f"OpenHCS format: Determining input subdirectory from metadata in {plate_path}")
 
         # Set plate_folder for this handler
         self.plate_folder = plate_path
         logger.debug(f"OpenHCSHandler: plate_folder set to {self.plate_folder}")
 
-        return plate_path
+        # Determine the main subdirectory from metadata - fail-loud on errors
+        main_subdir = self.metadata_handler.determine_main_subdirectory(plate_path)
+        input_dir = plate_path / main_subdir
+
+        # Verify the subdirectory exists - fail-loud if missing
+        if not filemanager.is_dir(str(input_dir), Backend.DISK.value):
+            raise FileNotFoundError(
+                f"Main subdirectory '{main_subdir}' does not exist at {input_dir}. "
+                f"Expected directory structure: {plate_path}/{main_subdir}/"
+            )
+
+        logger.info(f"OpenHCS input directory determined: {input_dir} (subdirectory: {main_subdir})")
+        return input_dir
 
     def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
         """

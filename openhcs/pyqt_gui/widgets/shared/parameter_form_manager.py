@@ -22,17 +22,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 # No-scroll widget classes to prevent accidental value changes
-class NoScrollSpinBox(QSpinBox):
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-class NoScrollDoubleSpinBox(QDoubleSpinBox):
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-class NoScrollComboBox(QComboBox):
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
+# Import no-scroll widgets from separate module
+from .no_scroll_spinbox import NoScrollSpinBox, NoScrollDoubleSpinBox, NoScrollComboBox
 
 # REUSE the actual working Textual TUI services
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer, ParameterInfo
@@ -41,6 +32,13 @@ from openhcs.textual_tui.widgets.shared.typed_widget_factory import TypedWidgetF
 
 # Import PyQt6 help components (using same pattern as Textual TUI)
 from openhcs.pyqt_gui.widgets.shared.clickable_help_components import LabelWithHelp, GroupBoxWithHelp
+
+# Import simplified abstraction layer
+from openhcs.ui.shared.parameter_form_abstraction import (
+    ParameterFormAbstraction, apply_lazy_default_placeholder
+)
+from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
+from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +64,12 @@ class ParameterFormManager(QWidget):
         # Store function target for docstring fallback
         self._function_target = function_target
 
-        # Create the actual Textual TUI form manager (reuse the working logic)
+        # Initialize simplified abstraction layer
+        self.form_abstraction = ParameterFormAbstraction(
+            parameters, parameter_types, field_id, create_pyqt6_registry(), parameter_info
+        )
+
+        # Create the actual Textual TUI form manager (reuse the working logic for compatibility)
         self.textual_form_manager = TextualParameterFormManager(
             parameters, parameter_types, field_id, parameter_info
         )
@@ -153,6 +156,9 @@ class ParameterFormManager(QWidget):
             nested_param_info,
             use_scroll_area=False  # Disable scroll area for nested dataclasses
         )
+
+        # Store the parent dataclass type for proper lazy resolution detection
+        nested_manager._parent_dataclass_type = param_type
         
         # Connect nested parameter changes
         nested_manager.parameter_changed.connect(
@@ -238,9 +244,13 @@ class ParameterFormManager(QWidget):
         label_with_help.setMinimumWidth(150)
         layout.addWidget(label_with_help)
 
-        # Create appropriate widget based on type
-        widget = self._create_typed_widget(param_name, param_type, current_value)
+        # Create widget using registry and apply placeholder
+        widget = self.form_abstraction.create_widget_for_parameter(param_name, param_type, current_value)
         if widget:
+            apply_lazy_default_placeholder(widget, param_name, current_value,
+                                         self.form_abstraction.parameter_types, 'pyqt6')
+            PyQt6WidgetEnhancer.connect_change_signal(widget, param_name, self._emit_parameter_change)
+
             self.widgets[param_name] = widget
             layout.addWidget(widget)
 
@@ -252,102 +262,7 @@ class ParameterFormManager(QWidget):
         
         return container
     
-    def _create_typed_widget(self, param_name: str, param_type: type, current_value: Any) -> QWidget:
-        """Create appropriate widget based on parameter type."""
-        # Handle Optional types
-        origin = get_origin(param_type)
-        if origin is Union:
-            args = get_args(param_type)
-            if len(args) == 2 and type(None) in args:
-                # This is Optional[T]
-                param_type = args[0] if args[1] is type(None) else args[1]
-        
-        # Handle different types
-        if param_type == bool:
-            widget = QCheckBox()
-            widget.setChecked(bool(current_value) if current_value is not None else False)
-            widget.stateChanged.connect(lambda state: self._emit_parameter_change(param_name, widget.isChecked()))
-            return widget
-            
-        elif param_type == int:
-            widget = NoScrollSpinBox()
-            widget.setRange(-999999, 999999)
-            widget.setValue(int(current_value) if current_value is not None else 0)
-            widget.valueChanged.connect(lambda value: self._emit_parameter_change(param_name, value))
-            return widget
-
-        elif param_type == float:
-            widget = NoScrollDoubleSpinBox()
-            widget.setRange(-999999.0, 999999.0)
-            widget.setDecimals(6)
-            widget.setValue(float(current_value) if current_value is not None else 0.0)
-            widget.valueChanged.connect(lambda value: self._emit_parameter_change(param_name, value))
-            return widget
-            
-        elif param_type == Path:
-            # Use enhanced path widget with browse button
-            from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
-
-            # Get parameter info for intelligent behavior detection
-            param_info = self.textual_form_manager.parameter_info.get(param_name) if hasattr(self.textual_form_manager, 'parameter_info') else None
-
-            widget = EnhancedPathWidget(param_name, current_value, param_info, self.color_scheme)
-            widget.path_changed.connect(lambda text: self._emit_parameter_change(param_name, text))
-            return widget
-
-        elif param_type == str:
-            # Regular string widget - no path detection for string types
-            widget = QLineEdit()
-            widget.setText(str(current_value) if current_value is not None else "")
-            widget.textChanged.connect(lambda text: self._emit_parameter_change(param_name, text))
-            return widget
-            
-        elif hasattr(param_type, '__bases__') and Enum in param_type.__bases__:
-            # Enum type (use exact same logic as Textual TUI)
-            widget = NoScrollComboBox()
-            for enum_value in param_type:
-                # Use enum.value for display and enum object for data (like Textual TUI)
-                widget.addItem(enum_value.value.upper(), enum_value)
-
-            # Set current value
-            if current_value is not None:
-                index = widget.findData(current_value)
-                if index >= 0:
-                    widget.setCurrentIndex(index)
-
-            widget.currentIndexChanged.connect(
-                lambda index: self._emit_parameter_change(param_name, widget.itemData(index))
-            )
-            return widget
-
-        elif TypedWidgetFactory._is_list_of_enums(param_type):
-            # Handle List[Enum] types (like List[VariableComponents]) - mirrors Textual TUI
-            enum_type = TypedWidgetFactory._get_enum_from_list(param_type)
-            widget = QComboBox()
-            for enum_value in enum_type:
-                widget.addItem(enum_value.value.upper(), enum_value)
-
-            # For list of enums, current_value might be a list, so get first item or None
-            display_value = None
-            if current_value and isinstance(current_value, list) and len(current_value) > 0:
-                display_value = current_value[0]
-
-            if display_value is not None:
-                index = widget.findData(display_value)
-                if index >= 0:
-                    widget.setCurrentIndex(index)
-
-            widget.currentIndexChanged.connect(
-                lambda index: self._emit_parameter_change(param_name, widget.itemData(index))
-            )
-            return widget
-        
-        else:
-            # Fallback to string input
-            widget = QLineEdit()
-            widget.setText(str(current_value) if current_value is not None else "")
-            widget.textChanged.connect(lambda text: self._emit_parameter_change(param_name, text))
-            return widget
+    # _create_typed_widget method removed - functionality moved inline
 
 
     
@@ -366,6 +281,11 @@ class ParameterFormManager(QWidget):
 
             # Rebuild nested dataclass instance
             nested_type = self.textual_form_manager.parameter_types[parent_name]
+
+            # Resolve Union types (like Optional[DataClass]) to the actual dataclass type
+            if self._is_optional_dataclass(nested_type):
+                nested_type = self._get_optional_inner_type(nested_type)
+
             nested_values = nested_manager.get_current_values()
             new_instance = nested_type(**nested_values)
 
@@ -430,3 +350,5 @@ class ParameterFormManager(QWidget):
     def get_current_values(self) -> Dict[str, Any]:
         """Get current parameter values (mirrors Textual TUI)."""
         return self.textual_form_manager.parameters.copy()
+
+    # Old placeholder methods removed - now using centralized abstraction layer

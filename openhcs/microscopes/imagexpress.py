@@ -30,6 +30,9 @@ class ImageXpressHandler(MicroscopeHandler):
     enforcing semantic alignment between file layout parsing and metadata resolution.
     """
 
+    # Explicit microscope type for proper registration
+    _microscope_type = 'imagexpress'
+
     # Class attribute for automatic metadata handler registration (set after class definition)
     _metadata_handler_class = None
 
@@ -63,13 +66,7 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
-        """
-        Get available storage backends for ImageXpress plates.
 
-        ImageXpress only supports DISK backend.
-        """
-        return [Backend.DISK]
 
     # Uses default workspace initialization from base class
 
@@ -736,19 +733,7 @@ class ImageXpressMetadataHandler(MetadataHandler):
         """
         return None
 
-    def get_available_backends(self, plate_path: Union[str, Path]) -> Dict[str, bool]:
-        """
-        Get available storage backends for ImageXpress plates.
 
-        ImageXpress only supports DISK backend.
-
-        Args:
-            plate_path: Path to the plate folder
-
-        Returns:
-            Dict mapping backend names to availability flags
-        """
-        return {Backend.DISK.value: True, Backend.ZARR.value: False}
 
 
 # Set metadata handler class after class definition for automatic registration

@@ -518,7 +518,6 @@ def _process_single_pattern_group(
     output_memory_type_from_plan: str, # Explicitly from plan
     device_id: Optional[int],
     same_directory: bool,
-    force_disk_output_flag: bool,
     special_inputs_map: Dict[str, str],
     special_outputs_map: TypingOrderedDict[str, str],
     zarr_config: Optional[Dict[str, Any]],
@@ -689,13 +688,6 @@ def _process_single_pattern_group(
            #         else:
             context.filemanager.save_batch(output_data, output_paths_batch, Backend.MEMORY.value)
 
-            # Force disk output if needed
-            if force_disk_output_flag and write_backend != Backend.DISK.value:
-                logger.info(f"Force disk output: saving additional copy to disk at {step_output_dir}")
-                context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
-                # Disk backend doesn't need zarr_config - fail loud for invalid parameters
-                context.filemanager.save_batch(output_data, output_paths_batch, Backend.DISK.value)
-
         except Exception as e:
             logger.error(f"Error saving batch of output slices for pattern {pattern_repr}: {e}", exc_info=True)
 
@@ -762,7 +754,6 @@ class FunctionStep(AbstractStep):
             special_inputs = step_plan['special_inputs']
             special_outputs = step_plan['special_outputs'] # Should be OrderedDict if order matters
 
-            force_disk_output = step_plan['force_disk_output']
             read_backend = step_plan['read_backend']
             write_backend = step_plan['write_backend']
             input_mem_type = step_plan['input_memory_type']
@@ -815,43 +806,27 @@ class FunctionStep(AbstractStep):
                 _bulk_preload_step_images(step_input_dir, step_output_dir, well_id, read_backend,
                                         patterns_by_well,filemanager, microscope_handler, step_plan["zarr_config"])
 
-            # 🔄 ZARR CONVERSION: Convert loaded memory data to zarr if needed
-            convert_to_zarr_path = step_plan.get('convert_to_zarr')
-            if convert_to_zarr_path:
-                logger.info(f"Converting loaded data to zarr: {convert_to_zarr_path}")
-                zarr_config = step_plan.get('zarr_config', context.global_config.zarr)
+            # 🔄 INPUT CONVERSION: Convert loaded input data to zarr if configured
+            if "input_conversion_dir" in step_plan:
+                input_conversion_dir = step_plan["input_conversion_dir"]
+                input_conversion_backend = step_plan["input_conversion_backend"]
 
-                # Get memory paths and data, then create zarr paths pointing to plate root
+                logger.info(f"Converting input data to zarr: {input_conversion_dir}")
+
+                # Get memory paths from input data (already loaded)
                 memory_paths = get_paths_for_well(step_input_dir, Backend.MEMORY.value)
                 memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
 
-                # Create zarr paths by joining convert_to_zarr_path with just the filename
-                # This creates paths like /plate/images.zarr/image001.tiff
-                # The zarr backend will use the filename as the key within the store
-                zarr_paths = []
-                for memory_path in memory_paths:
-                    filename = Path(memory_path).name
-                    zarr_path = Path(convert_to_zarr_path) / filename
-                    zarr_paths.append(str(zarr_path))
+                # Generate conversion paths (input_dir → conversion_dir)
+                conversion_paths = _generate_materialized_paths(memory_paths, Path(step_input_dir), Path(input_conversion_dir))
 
-                # Parse actual filenames to determine dimensions
-                # Calculate zarr dimensions from zarr paths (which contain the filenames)
-                n_channels, n_z, n_fields = _calculate_zarr_dimensions(zarr_paths, context.microscope_handler)
-                # Parse well to get row and column for zarr structure
-                row, col = context.microscope_handler.parser.extract_row_column(well_id)
+                # Ensure conversion directory exists
+                filemanager.ensure_directory(input_conversion_dir, input_conversion_backend)
 
-                filemanager.save_batch(memory_data, zarr_paths, Backend.ZARR.value,
-                                     chunk_name=well_id, zarr_config=zarr_config,
-                                     n_channels=n_channels, n_z=n_z, n_fields=n_fields,
-                                     row=row, col=col)
+                # Save using existing materialized data infrastructure
+                _save_materialized_data(filemanager, memory_data, conversion_paths, input_conversion_backend, step_plan, context, well_id)
 
-                # 📄 OPENHCS METADATA: Create metadata for zarr conversion (in plate directory)
-                # convert_to_zarr_path points to the zarr store (e.g., /plate/images.zarr)
-                # but metadata should be in the plate directory (e.g., /plate)
-                plate_dir = context.zarr_conversion_path
-                from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
-                metadata_generator = OpenHCSMetadataGenerator(context.filemanager)
-                metadata_generator.create_metadata(context, plate_dir, Backend.ZARR.value)
+                logger.info(f"🔬 Converted {len(conversion_paths)} input files to {input_conversion_dir}")
 
             # 🔍 VRAM TRACKING: Log memory at step start
             try:
@@ -907,7 +882,7 @@ class FunctionStep(AbstractStep):
                         context, pattern_item, exec_func_or_chain, base_kwargs,
                         step_input_dir, step_output_dir, well_id, comp_val,
                         read_backend, write_backend, input_mem_type, output_mem_type,
-                        device_id, same_dir, force_disk_output,
+                        device_id, same_dir,
                         special_inputs, special_outputs, # Pass the maps from step_plan
                         step_plan["zarr_config"],
                         variable_components, step_id  # Pass step_id for funcplan lookup
@@ -944,11 +919,36 @@ class FunctionStep(AbstractStep):
             logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
+            # Track which backend was actually used for writing files
+            actual_write_backend = step_plan['write_backend']
+
             from openhcs.microscopes.openhcs import OpenHCSMetadataGenerator
             metadata_generator = OpenHCSMetadataGenerator(context.filemanager)
-            metadata_generator.create_metadata(context, step_plan['output_dir'], step_plan['write_backend'])
 
-            # 🔬 SPECIAL DATA MATERIALIZATION
+            # Main step output metadata
+            is_pipeline_output = (actual_write_backend != Backend.MEMORY.value)
+            metadata_generator.create_metadata(
+                context,
+                step_plan['output_dir'],
+                actual_write_backend,
+                is_main=is_pipeline_output,
+                plate_root=step_plan['output_plate_root'],
+                sub_dir=step_plan['sub_dir']
+            )
+
+            # 📄 MATERIALIZED METADATA: Create metadata for materialized directory if it exists
+            if 'materialized_output_dir' in step_plan:
+                materialized_backend = step_plan.get('materialized_backend', actual_write_backend)
+                metadata_generator.create_metadata(
+                    context,
+                    step_plan['materialized_output_dir'],
+                    materialized_backend,
+                    is_main=False,
+                    plate_root=step_plan['materialized_plate_root'],
+                    sub_dir=step_plan['materialized_sub_dir']
+                )
+
+            #  SPECIAL DATA MATERIALIZATION
             special_outputs = step_plan.get('special_outputs', {})
             logger.debug(f"🔍 MATERIALIZATION: special_outputs from step_plan: {special_outputs}")
             logger.debug(f"🔍 MATERIALIZATION: special_outputs is empty? {not special_outputs}")

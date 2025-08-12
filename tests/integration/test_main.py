@@ -1,221 +1,280 @@
 """
 Integration tests for the pipeline and TUI components.
-"""
-import pytest
-import sys
-import os
-import io
-import logging
-from contextlib import redirect_stdout, redirect_stderr
-from typing import Union, Dict, List, Any, Optional
-from pathlib import Path
 
-from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
-from openhcs.core.pipeline import Pipeline
-from openhcs.core.steps import FunctionStep as Step
+Refactored using Systematic Code Refactoring Framework:
+- Eliminated magic strings and hardcoded values
+- Simplified validation logic with fail-loud approach
+- Converted to modern Python patterns with dataclasses
+- Reduced verbosity and defensive programming patterns
+"""
+import json
+import os
+import pytest
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Union
+
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import GlobalPipelineConfig, VFSConfig, MaterializationBackend, ZarrConfig, PathPlanningConfig
-
-# Import processing functions directly
-from openhcs.processing.backends.processors.numpy_processor import (
-    create_projection, sharpen, stack_percentile_normalize,
-    stack_equalize_histogram, create_composite
+from openhcs.core.config import (
+    GlobalPipelineConfig, MaterializationBackend, MaterializationPathConfig,
+    PathPlanningConfig, VFSConfig, ZarrConfig
 )
-from openhcs.processing.backends.pos_gen.ashlar_main_gpu import ashlar_compute_tile_positions_gpu
-from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
-from openhcs.processing.backends.assemblers.assemble_stack_cupy import assemble_stack_cupy
+from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.pipeline import Pipeline
+from openhcs.core.steps import FunctionStep as Step
+
+# Processing functions
 from openhcs.processing.backends.assemblers.assemble_stack_cpu import assemble_stack_cpu
-from openhcs.processing.backends.enhance.basic_processor_jax import basic_flatfield_correction_jax
-from openhcs.processing.backends.enhance.basic_processor_numpy import basic_flatfield_correction_numpy
-from openhcs.processing.backends.enhance.n2v2_processor_torch import n2v2_denoise_torch
-from openhcs.processing.backends.enhance.self_supervised_3d_deconvolution import self_supervised_3d_deconvolution
-
-# Import fixtures and utilities from fixture_utils.py
-from tests.integration.helpers.fixture_utils import (
-    microscope_config,
-    backend_config,
-    data_type_config,
-    plate_dir,
-    base_test_dir,
-    test_function_dir,
-    test_params,
-    flat_plate_dir,
-    zstack_plate_dir,
-    execution_mode,
-    thread_tracker,
-    base_pipeline_config,
-    create_config,
-    normalize,
-    calcein_process,
-    dapi_process,
-    find_image_files,
-    create_synthetic_plate_data,
-    print_thread_activity_report
+from openhcs.processing.backends.pos_gen.ashlar_main_cpu import ashlar_compute_tile_positions_cpu
+from openhcs.processing.backends.pos_gen.ashlar_main_gpu import ashlar_compute_tile_positions_gpu
+from openhcs.processing.backends.processors.numpy_processor import (
+    create_composite, create_projection, stack_percentile_normalize
 )
 
-def get_pipeline(input_dir):
-    # Check if CPU-only mode is enabled
-    import os
-    cpu_only_mode = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+# Test utilities and fixtures
+from tests.integration.helpers.fixture_utils import (
+    backend_config, base_test_dir, data_type_config, execution_mode,
+    microscope_config, plate_dir, test_params, print_thread_activity_report
+)
 
-    # Choose position generation function based on mode
+
+@dataclass(frozen=True)
+class TestConstants:
+    """Centralized constants for test execution and validation."""
+
+    # Test output indicators
+    START_INDICATOR: str = "🔥 STARTING TEST"
+    SUCCESS_INDICATOR: str = "🔥 TEST COMPLETED SUCCESSFULLY!"
+    VALIDATION_INDICATOR: str = "🔍"
+    SUCCESS_CHECK: str = "✅"
+    FAILURE_INDICATOR: str = "🔥 VALIDATION FAILED"
+
+    # Configuration values
+    DEFAULT_WORKERS: int = 1
+    DEFAULT_SUB_DIR: str = "images"
+    OUTPUT_SUFFIX: str = "_outputs"
+    ZARR_STORE_NAME: str = "images.zarr"
+
+    # Metadata validation
+    METADATA_FILENAME: str = "openhcs_metadata.json"
+    SUBDIRECTORIES_FIELD: str = "subdirectories"
+    MIN_METADATA_ENTRIES: int = 2
+
+
+
+    # Required metadata fields
+    REQUIRED_FIELDS: List[str] = None
+
+    def __post_init__(self):
+        # Use object.__setattr__ for frozen dataclass
+        object.__setattr__(self, 'REQUIRED_FIELDS',
+                          ["image_files", "available_backends", "microscope_handler_name"])
+
+
+@dataclass
+class TestConfig:
+    """Configuration for test execution."""
+    plate_dir: Path
+    backend_config: str
+    execution_mode: str
+    use_threading: bool = False
+
+    def __post_init__(self):
+        self.use_threading = self.execution_mode == "threading"
+
+
+CONSTANTS = TestConstants()
+
+
+@pytest.fixture
+def test_function_dir(base_test_dir, microscope_config, request):
+    """Create test directory for a specific test function."""
+    test_name = request.node.originalname or request.node.name.split('[')[0]
+    test_dir = base_test_dir / f"{test_name}[{microscope_config['format']}]"
+    test_dir.mkdir(parents=True, exist_ok=True)
+    yield test_dir
+
+def create_test_pipeline() -> Pipeline:
+    """Create test pipeline with materialization configuration."""
+    cpu_only_mode = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
     position_func = ashlar_compute_tile_positions_cpu if cpu_only_mode else ashlar_compute_tile_positions_gpu
 
     return Pipeline(
         steps=[
-            Step(func=create_composite,
-                 variable_components=[VariableComponents.CHANNEL]
+            Step(func=create_composite, variable_components=[VariableComponents.CHANNEL]),
+            Step(
+                name="Z-Stack Flattening",
+                func=(create_projection, {'method': 'max_projection'}),
+                variable_components=[VariableComponents.Z_INDEX],
+                materialization_config=MaterializationPathConfig()
             ),
-            Step(name="Z-Stack Flattening",
-                 func=(create_projection, {'method': 'max_projection'}),
-                 variable_components=[VariableComponents.Z_INDEX],
+            Step(
+                name="Image Enhancement Processing",
+                func=[(stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5})],
+                materialization_config=MaterializationPathConfig()
             ),
-            Step(name="Image Enhancement Processing",
-                 func=[
-                     (stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5}),
-                 ],
+            Step(name="Position Computation", func=position_func),
+            Step(
+                name="Secondary Enhancement",
+                func=[(stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5})],
+                input_source=InputSource.PIPELINE_START,
             ),
-            #Step(name="Image Enhancement Processing",
-            #     func=[
-            #         (sharpen, {'amount': 1.5}),
-            #         (stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5}),
-            #         stack_equalize_histogram  # No parameters needed
-            #     ],
-            #),
-            #Step(func=gpu_ashlar_align_cupy,
-            #),
-            Step(func=position_func,
-            ),
-            Step(name="Image Enhancement Processing",
-                 func=[
-                     (stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5}),
-                 ],
-                 input_source=InputSource.PIPELINE_START,
-            ),
-            #Step(func=n2v2_denoise_torch,
-            #),
-            #Step(func=basic_flatfield_correction_numpy),
-            #),
-            #Step(func=self_supervised_3d_deconvolution,
-            #),
-            #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
-            #Step(func=(assemble_stack_cupy, {'blend_method': 'rectangular', 'blend_radius': 5.0}),
-            Step(func=(assemble_stack_cpu),
-                 name="CPU Assembler",
-            )
+            Step(name="CPU Assembly", func=assemble_stack_cpu)
         ],
-        name = "Mega Flex Pipeline" + (" (CPU-Only)" if cpu_only_mode else ""),
+        name=f"Multi-Subdirectory Test Pipeline{' (CPU-Only)' if cpu_only_mode else ''}",
     )
 
 
+def _load_metadata(output_dir: Path) -> Dict:
+    """Load and validate metadata file existence."""
+    metadata_file = output_dir / CONSTANTS.METADATA_FILENAME
+    if not metadata_file.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
 
-def test_main(plate_dir: Union[Path,str], backend_config: str, data_type_config: Dict[str, Any], execution_mode: str):
-    """Unified test for all combinations of microscope types, backends, data types, and execution modes."""
+    with open(metadata_file, 'r') as f:
+        return json.load(f)
 
-    print(f"🔥 STARTING TEST with plate dir: {plate_dir}, backend: {backend_config}, execution: {execution_mode}")
 
-    # Clean up memory backend before each test to prevent FileExistsError from previous test runs
+def _validate_metadata_structure(metadata: Dict) -> List[str]:
+    """Validate metadata structure and return subdirectory list."""
+    if CONSTANTS.SUBDIRECTORIES_FIELD not in metadata:
+        raise ValueError(f"Missing '{CONSTANTS.SUBDIRECTORIES_FIELD}' field in metadata")
+
+    subdirs = list(metadata[CONSTANTS.SUBDIRECTORIES_FIELD].keys())
+
+    if len(subdirs) < CONSTANTS.MIN_METADATA_ENTRIES:
+        raise ValueError(
+            f"Expected at least {CONSTANTS.MIN_METADATA_ENTRIES} metadata entries, "
+            f"found {len(subdirs)}: {subdirs}"
+        )
+
+    return subdirs
+
+
+def _get_materialization_subdir() -> str:
+    """Get the actual subdirectory name used by MaterializationPathConfig."""
+    return MaterializationPathConfig().sub_dir
+
+
+def _validate_subdirectory_fields(metadata: Dict) -> None:
+    """Validate required fields in each subdirectory metadata."""
+    materialization_subdir = _get_materialization_subdir()
+
+    for subdir_name, subdir_metadata in metadata[CONSTANTS.SUBDIRECTORIES_FIELD].items():
+        missing_fields = [
+            field for field in CONSTANTS.REQUIRED_FIELDS
+            if field not in subdir_metadata
+        ]
+        if missing_fields:
+            raise ValueError(f"Subdirectory '{subdir_name}' missing fields: {missing_fields}")
+
+        # Validate image_files (allow empty for materialization subdirectory)
+        if not subdir_metadata.get("image_files") and subdir_name != materialization_subdir:
+            raise ValueError(f"Subdirectory '{subdir_name}' has empty image_files list")
+
+
+def validate_separate_materialization(plate_dir: Path) -> None:
+    """Validate materialization created multiple metadata entries correctly."""
+    output_dir = plate_dir.parent / f"{plate_dir.name}{CONSTANTS.OUTPUT_SUFFIX}"
+
+    if not (output_dir.exists() and output_dir.is_dir()):
+        raise FileNotFoundError(f"Output directory not found: {output_dir}")
+
+    print(f"{CONSTANTS.VALIDATION_INDICATOR} Validating materialization in: {output_dir}")
+
+    metadata = _load_metadata(output_dir)
+    subdirs = _validate_metadata_structure(metadata)
+    _validate_subdirectory_fields(metadata)
+
+    print(f"{CONSTANTS.VALIDATION_INDICATOR} Subdirectories: {sorted(subdirs)}")
+    print(f"{CONSTANTS.SUCCESS_CHECK} Materialization validation successful: {len(subdirs)} entries")
+
+
+
+def _create_pipeline_config(test_config: TestConfig) -> GlobalPipelineConfig:
+    """Create pipeline configuration for test execution."""
+    return GlobalPipelineConfig(
+        num_workers=CONSTANTS.DEFAULT_WORKERS,
+        path_planning=PathPlanningConfig(
+            sub_dir=CONSTANTS.DEFAULT_SUB_DIR,
+            output_dir_suffix=CONSTANTS.OUTPUT_SUFFIX
+        ),
+        vfs=VFSConfig(materialization_backend=MaterializationBackend(test_config.backend_config)),
+        zarr=ZarrConfig(
+            store_name=CONSTANTS.ZARR_STORE_NAME,
+            ome_zarr_metadata=True,
+            write_plate_metadata=True
+        ),
+        use_threading=test_config.use_threading
+    )
+
+
+def _initialize_orchestrator(test_config: TestConfig) -> PipelineOrchestrator:
+    """Initialize and configure the pipeline orchestrator."""
     from openhcs.io.base import reset_memory_backend
     reset_memory_backend()
-    print("🔥 Memory backend reset - cleared files from previous test runs")
 
-    def run_test():
-        # Initialize GPU registry before creating orchestrator
-        print("🔥 Initializing GPU registry...")
-        setup_global_gpu_registry()
-        print("🔥 GPU registry initialized!")
+    setup_global_gpu_registry()
+    config = _create_pipeline_config(test_config)
 
-        # Get threading mode from environment (set by execution_mode fixture)
-        use_threading = execution_mode == "threading"
+    orchestrator = PipelineOrchestrator(test_config.plate_dir, global_config=config)
+    orchestrator.initialize()
+    return orchestrator
 
-        # Always create complete configuration - let the system use what it needs
-        # Following OpenHCS modular design principles
-        config = GlobalPipelineConfig(
-            num_workers=1,  # Single worker for deterministic testing
-            path_planning=PathPlanningConfig(
-                sub_dir="images",  # Default subdirectory for processed data
-                output_dir_suffix="_outputs"  # Suffix for output directories
-            ),
-            vfs=VFSConfig(materialization_backend=MaterializationBackend(backend_config)),
-            zarr=ZarrConfig(
-                store_name="images.zarr",  # Name of the zarr store
-                ome_zarr_metadata=True,    # Generate OME-ZARR metadata
-                write_plate_metadata=True  # Write plate-level metadata
-            ),
-            use_threading=use_threading
-        )
-        
-        logger_mode = "THREADING" if use_threading else "MULTIPROCESSING"
-        print(f"🔥 EXECUTION MODE: {logger_mode} (use_threading={use_threading})")
 
-        # Initialize orchestrator
-        print("🔥 Creating orchestrator...")
-        orchestrator = PipelineOrchestrator(plate_dir, global_config=config)
-        orchestrator.initialize()
-        print("🔥 Orchestrator initialized!")
+def _execute_pipeline_phases(orchestrator: PipelineOrchestrator, pipeline: Pipeline) -> Dict:
+    """Execute compilation and execution phases of the pipeline."""
+    from openhcs.constants.constants import GroupBy
 
-        # Get pipeline and wells
-        from openhcs.constants.constants import GroupBy
-        wells = orchestrator.get_component_keys(GroupBy.WELL)
-        pipeline = get_pipeline(orchestrator.workspace_path)
-        print(f"🔥 Found {len(wells)} wells: {wells}")
-        print(f"🔥 Pipeline has {len(pipeline.steps)} steps")
+    wells = orchestrator.get_component_keys(GroupBy.WELL)
+    if not wells:
+        raise RuntimeError("No wells found for processing")
 
-        # Phase 1: Compilation - compile pipelines for all wells
-        print("🔥 Starting compilation phase...")
+    # Compilation phase
+    compiled_contexts = orchestrator.compile_pipelines(
+        pipeline_definition=pipeline.steps,
+        well_filter=wells
+    )
 
-        # DEBUG: Check step IDs before compilation
-        step_ids_before = [id(step) for step in pipeline.steps]
-        print(f"🔥 Step IDs BEFORE compilation: {step_ids_before}")
+    if len(compiled_contexts) != len(wells):
+        raise RuntimeError(f"Compilation failed: expected {len(wells)} contexts, got {len(compiled_contexts)}")
 
-        compiled_contexts = orchestrator.compile_pipelines(
-            pipeline_definition=pipeline.steps,  # Extract steps from Pipeline object
-            well_filter=wells
-        )
+    # Execution phase
+    results = orchestrator.execute_compiled_plate(
+        pipeline_definition=pipeline.steps,
+        compiled_contexts=compiled_contexts
+    )
 
-        # DEBUG: Check step IDs after compilation and in contexts
-        step_ids_after = [id(step) for step in pipeline.steps]
-        first_well_key = list(compiled_contexts.keys())[0] if compiled_contexts else None
-        step_ids_in_contexts = list(compiled_contexts[first_well_key].step_plans.keys()) if first_well_key and hasattr(compiled_contexts[first_well_key], 'step_plans') else []
-        print(f"🔥 Step IDs AFTER compilation: {step_ids_after}")
-        print(f"🔥 Step IDs in contexts: {step_ids_in_contexts}")
+    if len(results) != len(wells):
+        raise RuntimeError(f"Execution failed: expected {len(wells)} results, got {len(results)}")
 
-        print("🔥 Compilation completed!")
+    # Validate all wells succeeded
+    failed_wells = [
+        well_id for well_id, result in results.items()
+        if result.get('status') != 'success'
+    ]
+    if failed_wells:
+        raise RuntimeError(f"Wells failed execution: {failed_wells}")
 
-        # Verify compilation results
-        if not compiled_contexts:
-            raise RuntimeError("🔥 COMPILATION FAILED: No compiled contexts returned!")
-        if len(compiled_contexts) != len(wells):
-            raise RuntimeError(f"🔥 COMPILATION FAILED: Expected {len(wells)} contexts, got {len(compiled_contexts)}")
-        print(f"🔥 Compilation SUCCESS: {len(compiled_contexts)} contexts compiled")
+    return results
 
-        # Phase 2: Execution - execute compiled pipelines
-        print("🔥 Starting execution phase...")
-        results = orchestrator.execute_compiled_plate(
-            pipeline_definition=pipeline.steps,  # Use steps, not Pipeline object
-            compiled_contexts=compiled_contexts
-        )
-        print("🔥 Execution completed!")
 
-        # Verify execution results
-        if not results:
-            raise RuntimeError("🔥 EXECUTION FAILED: No results returned!")
-        if len(results) != len(wells):
-            raise RuntimeError(f"🔥 EXECUTION FAILED: Expected {len(wells)} results, got {len(results)}")
+def test_main(plate_dir: Union[Path, str], backend_config: str, data_type_config: Dict, execution_mode: str):
+    """Unified test for all combinations of microscope types, backends, data types, and execution modes."""
+    test_config = TestConfig(Path(plate_dir), backend_config, execution_mode)
 
-        # Check that all wells executed successfully
-        for well_id, result in results.items():
-            if result.get('status') != 'success':
-                error_msg = result.get('error_message', 'Unknown error')
-                raise RuntimeError(f"🔥 EXECUTION FAILED for well {well_id}: {error_msg}")
+    print(f"{CONSTANTS.START_INDICATOR} with plate: {plate_dir}, backend: {backend_config}, mode: {execution_mode}")
 
-        print(f"🔥 EXECUTION SUCCESS: {len(results)} wells executed successfully")
+    orchestrator = _initialize_orchestrator(test_config)
+    pipeline = create_test_pipeline()
 
-        print_thread_activity_report()
-        print(f"🔥 TEST COMPLETED SUCCESSFULLY!")
+    results = _execute_pipeline_phases(orchestrator, pipeline)
+    validate_separate_materialization(test_config.plate_dir)
 
-    # Run the test
-    run_test()
+    print_thread_activity_report()
+    print(f"{CONSTANTS.SUCCESS_INDICATOR} ({len(results)} wells processed)")
+
+
 

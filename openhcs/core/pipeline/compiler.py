@@ -29,7 +29,7 @@ from collections import OrderedDict # For special_outputs and special_inputs ord
 
 from openhcs.constants.constants import VALID_GPU_MEMORY_TYPES, READ_BACKEND, WRITE_BACKEND, Backend
 from openhcs.core.context.processing_context import ProcessingContext
-from openhcs.core.config import MaterializationBackend
+from openhcs.core.config import MaterializationBackend, PathPlanningConfig
 from openhcs.core.pipeline.funcstep_contract_validator import \
     FuncStepContractValidator
 from openhcs.core.pipeline.materialization_flag_planner import \
@@ -70,6 +70,7 @@ class PipelineCompiler:
     def initialize_step_plans_for_context(
         context: ProcessingContext,
         steps_definition: List[AbstractStep],
+        orchestrator,
         metadata_writer: bool = False,
         plate_path: Optional[Path] = None
         # base_input_dir and well_id parameters removed, will use from context
@@ -82,6 +83,7 @@ class PipelineCompiler:
         Args:
             context: ProcessingContext to initialize step plans for
             steps_definition: List of AbstractStep objects defining the pipeline
+            orchestrator: Orchestrator instance for well filter resolution
             metadata_writer: If True, this well is responsible for creating OpenHCS metadata files
             plate_path: Path to plate root for zarr conversion detection
         """
@@ -97,6 +99,12 @@ class PipelineCompiler:
         logger.debug("🔧 BACKWARDS COMPATIBILITY: Normalizing step attributes...")
         _normalize_step_attributes(steps_definition)
 
+        # === WELL FILTER RESOLUTION ===
+        # Resolve well filters for steps with materialization configs
+        # This must happen after normalization to ensure materialization_config exists
+        logger.debug("🎯 WELL FILTER RESOLUTION: Resolving step well filters...")
+        _resolve_step_well_filters(steps_definition, context, orchestrator)
+
         # Pre-initialize step_plans with basic entries for each step
         # This ensures step_plans is not empty when path planner checks it
         for step in steps_definition:
@@ -107,22 +115,32 @@ class PipelineCompiler:
                     "well_id": context.well_id,
                 }
 
-        # === ZARR CONVERSION DETECTION ===
-        # Set up zarr conversion only if we want zarr output and plate isn't already zarr
-        wants_zarr = (plate_path and steps_definition and
-                     context.get_vfs_config().materialization_backend == MaterializationBackend.ZARR)
+        # === INPUT CONVERSION DETECTION ===
+        # Check if first step needs zarr conversion
+        if steps_definition and plate_path:
+            first_step = steps_definition[0]
+            vfs_config = context.get_vfs_config()
 
-        # Check if plate already has zarr backend available
-        already_zarr = False
-        if wants_zarr:
-            available_backends = context.microscope_handler.get_available_backends(plate_path)
-            already_zarr = Backend.ZARR in available_backends
+            # Only convert if default materialization backend is ZARR
+            wants_zarr_conversion = (
+                vfs_config.materialization_backend == MaterializationBackend.ZARR
+            )
 
-        if wants_zarr and not already_zarr:
-            context.zarr_conversion_path = str(plate_path)
-            context.original_input_dir = str(context.input_dir)
-        else:
-            context.zarr_conversion_path = None
+            if wants_zarr_conversion:
+                # Check if input plate is already zarr format
+                available_backends = context.microscope_handler.get_available_backends(plate_path)
+                already_zarr = Backend.ZARR in available_backends
+
+                if not already_zarr:
+                    # Inject input conversion config using existing PathPlanningConfig pattern
+                    path_config = context.get_path_planning_config()
+                    conversion_config = PathPlanningConfig(
+                        output_dir_suffix="",  # No suffix - write to plate root
+                        global_output_folder=plate_path.parent,  # Parent of plate
+                        sub_dir=path_config.sub_dir  # Use same sub_dir (e.g., "images")
+                    )
+                    context.step_plans[first_step.step_id]["input_conversion_config"] = conversion_config
+                    logger.debug(f"Input conversion to zarr enabled for first step: {first_step.name}")
 
         # The well_id and base_input_dir are available from the context object.
         PipelinePathPlanner.prepare_pipeline_paths(
@@ -169,7 +187,6 @@ class PipelineCompiler:
             # Add step-specific attributes (non-I/O, non-path related)
             current_plan["variable_components"] = step.variable_components
             current_plan["group_by"] = step.group_by
-            current_plan["force_disk_output"] = step.force_disk_output
 
             # Store materialization_config if present
             if step.materialization_config is not None:
@@ -232,8 +249,7 @@ class PipelineCompiler:
 
             will_use_zarr = (
                 vfs_config.materialization_backend == MaterializationBackend.ZARR and
-                (getattr(step, "force_disk_output", False) or
-                 steps_definition.index(step) == len(steps_definition) - 1)
+                steps_definition.index(step) == len(steps_definition) - 1
             )
 
             if will_use_zarr:
@@ -453,3 +469,60 @@ class PipelineCompiler:
 # The monolithic compile() method is removed.
 # Orchestrator will call the static methods above in sequence.
 # _strip_step_attributes is also removed as StepAttributeStripper is called by Orchestrator.
+
+
+def _resolve_step_well_filters(steps_definition: List[AbstractStep], context, orchestrator):
+    """
+    Resolve well filters for steps with materialization configs.
+
+    This function handles step-level well filtering by resolving patterns like
+    "row:A", ["A01", "B02"], or max counts against the available wells for the plate.
+
+    Args:
+        steps_definition: List of pipeline steps
+        context: Processing context for the current well
+        orchestrator: Orchestrator instance with access to available wells
+    """
+    from openhcs.core.utils import WellFilterProcessor
+
+    # Get available wells from orchestrator using correct method
+    from openhcs.constants.constants import GroupBy
+    available_wells = orchestrator.get_component_keys(GroupBy.WELL)
+    if not available_wells:
+        logger.warning("No available wells found for well filter resolution")
+        return
+
+    # Initialize step_well_filters in context if not present
+    if not hasattr(context, 'step_well_filters'):
+        context.step_well_filters = {}
+
+    # Process each step that has materialization config with well filter
+    for step in steps_definition:
+        if (hasattr(step, 'materialization_config') and
+            step.materialization_config and
+            step.materialization_config.well_filter is not None):
+
+            try:
+                # Resolve the well filter pattern to concrete well IDs
+                resolved_wells = WellFilterProcessor.resolve_compilation_filter(
+                    step.materialization_config.well_filter,
+                    available_wells
+                )
+
+                # Store resolved wells in context for path planner
+                # Use structure expected by path planner
+                context.step_well_filters[step.step_id] = {
+                    'resolved_wells': sorted(resolved_wells),
+                    'filter_mode': step.materialization_config.well_filter_mode,
+                    'original_filter': step.materialization_config.well_filter
+                }
+
+                logger.debug(f"Step '{step.name}' well filter '{step.materialization_config.well_filter}' "
+                           f"resolved to {len(resolved_wells)} wells: {sorted(resolved_wells)}")
+
+            except Exception as e:
+                logger.error(f"Failed to resolve well filter for step '{step.name}': {e}")
+                raise ValueError(f"Invalid well filter '{step.materialization_config.well_filter}' "
+                               f"for step '{step.name}': {e}")
+
+    logger.debug(f"Well filter resolution complete. {len(context.step_well_filters)} steps have well filters.")

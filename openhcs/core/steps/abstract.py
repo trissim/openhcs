@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import PathPlanningConfig
+from openhcs.core.config import PathPlanningConfig, MaterializationPathConfig
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -127,12 +127,11 @@ class AbstractStep(abc.ABC):
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
         variable_components: List[VariableComponents] = DEFAULT_VARIABLE_COMPONENTS,
-        force_disk_output: Optional[bool] = False,
         group_by: Optional[GroupBy] = None,
-        input_dir: Optional[Union[str,Path]] = None, # Used during path planning
-        output_dir: Optional[Union[str,Path]] = None, # Used during path planning
+        __input_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
+        __output_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         input_source: InputSource = InputSource.PREVIOUS_STEP,
-        materialization_config: Optional['PathPlanningConfig'] = None
+        materialization_config: Optional['MaterializationPathConfig'] = None
     ) -> None:
         """
         Initialize a step. These attributes are primarily used during the
@@ -143,23 +142,24 @@ class AbstractStep(abc.ABC):
         Args:
             name: Human-readable name for the step. Defaults to class name.
             variable_components: List of variable components for this step.
-            force_disk_output: Whether to force filesystem output.
             group_by: Optional grouping hint for step execution.
-            input_dir: Hint for input directory, used by path planner.
-            output_dir: Hint for output directory, used by path planner.
+            __input_dir__: Internal hint for input directory, used by path planner.
+                          Dunder naming indicates this is a compiler-internal field.
+            __output_dir__: Internal hint for output directory, used by path planner.
+                           Dunder naming indicates this is a compiler-internal field.
             input_source: Input source strategy for this step. Defaults to PREVIOUS_STEP
                          for normal pipeline chaining. Use PIPELINE_START to access
                          original input data (replaces @chain_breaker decorator).
-            materialization_config: Optional PathPlanningConfig for per-step materialized output.
+            materialization_config: Optional PathPlanningConfig or MaterializationPathConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output
                                    to custom location in addition to normal memory backend processing.
+                                   Use MaterializationPathConfig() for safe defaults that prevent path collisions.
         """
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components
-        self.force_disk_output = force_disk_output
         self.group_by = group_by
-        self.input_dir = input_dir
-        self.output_dir = output_dir
+        self.__input_dir__ = __input_dir__
+        self.__output_dir__ = __output_dir__
         self.input_source = input_source
         self.materialization_config = materialization_config
 

@@ -60,6 +60,10 @@ class PlateManagerWidget(QWidget):
     progress_started = pyqtSignal(int)  # max_value
     progress_updated = pyqtSignal(int)  # current_value
     progress_finished = pyqtSignal()
+
+    # Error handling signals (thread-safe error reporting)
+    compilation_error = pyqtSignal(str, str)  # plate_name, error_message
+    initialization_error = pyqtSignal(str, str)  # plate_name, error_message
     
     def __init__(self, file_manager: FileManager, service_adapter,
                  color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
@@ -234,6 +238,10 @@ class PlateManagerWidget(QWidget):
         self.progress_started.connect(self._on_progress_started)
         self.progress_updated.connect(self._on_progress_updated)
         self.progress_finished.connect(self._on_progress_finished)
+
+        # Error handling signals for thread-safe error reporting
+        self.compilation_error.connect(self._handle_compilation_error)
+        self.initialization_error.connect(self._handle_initialization_error)
     
     def handle_button_action(self, action: str):
         """
@@ -396,7 +404,8 @@ class PlateManagerWidget(QWidget):
                 
             except Exception as e:
                 logger.error(f"Failed to initialize plate {plate['name']}: {e}")
-                self.service_adapter.show_error_dialog(f"Failed to initialize {plate['name']}: {e}")
+                # Use signal for thread-safe error reporting
+                self.initialization_error.emit(plate['name'], str(e))
         
         # Use signal for thread-safe progress completion
         self.progress_finished.emit()
@@ -535,7 +544,8 @@ class PlateManagerWidget(QWidget):
                 plate_data['error'] = str(e)
                 # Don't store anything in plate_compiled_data on failure
                 self.orchestrator_state_changed.emit(plate_path, "COMPILE_FAILED")
-                self.service_adapter.show_error_dialog(f"Compilation failed for {plate_data['name']}: {e}")
+                # Use signal for thread-safe error reporting instead of direct dialog call
+                self.compilation_error.emit(plate_data['name'], str(e))
 
             # Use signal for thread-safe progress update
             self.progress_updated.emit(i + 1)
@@ -1014,3 +1024,11 @@ class PlateManagerWidget(QWidget):
     def _on_progress_finished(self):
         """Handle progress finished signal (main thread)."""
         self.progress_bar.setVisible(False)
+
+    def _handle_compilation_error(self, plate_name: str, error_message: str):
+        """Handle compilation error on main thread (slot)."""
+        self.service_adapter.show_error_dialog(f"Compilation failed for {plate_name}: {error_message}")
+
+    def _handle_initialization_error(self, plate_name: str, error_message: str):
+        """Handle initialization error on main thread (slot)."""
+        self.service_adapter.show_error_dialog(f"Failed to initialize {plate_name}: {error_message}")

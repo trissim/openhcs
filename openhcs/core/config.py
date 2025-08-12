@@ -8,6 +8,8 @@ Configuration is intended to be immutable and provided as Python objects.
 
 import logging
 import os # For a potentially more dynamic default for num_workers
+import threading
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Union, Dict, Any, List
@@ -73,11 +75,17 @@ class MaterializationBackend(Enum):
     ZARR = "zarr"
     DISK = "disk"
 
+
+class WellFilterMode(Enum):
+    """Well filtering modes for selective materialization."""
+    INCLUDE = "include"  # Materialize only specified wells
+    EXCLUDE = "exclude"  # Materialize all wells except specified ones
+
 @dataclass(frozen=True)
 class ZarrConfig:
     """Configuration for Zarr storage backend."""
-    store_name: str = "images.zarr"
-    """Name of the zarr store file."""
+    store_name: str = "images"
+    """Name of the zarr store directory."""
 
     compressor: ZarrCompressor = ZarrCompressor.LZ4
     """Compression algorithm to use."""
@@ -153,7 +161,13 @@ class PlateMetadataConfig:
 
 @dataclass(frozen=True)
 class PathPlanningConfig:
-    """Configuration for pipeline path planning, defining directory suffixes."""
+    """
+    Configuration for pipeline path planning and directory structure.
+
+    This class handles path construction concerns including plate root directories,
+    output directory suffixes, and subdirectory organization. It does not handle
+    analysis results location, which is controlled at the pipeline level.
+    """
     output_dir_suffix: str = "_outputs"
     """Default suffix for general step output directories."""
 
@@ -166,20 +180,192 @@ class PathPlanningConfig:
     Example: "/data/results" or "/mnt/hcs_output"
     """
 
-    materialization_results_path: Path = Path("results")
-    """
-    Path for materialized analysis results (CSV, JSON files from special outputs).
-    Can be relative to plate folder or absolute path.
-    Default: "results" creates a results/ folder in the plate directory.
-    Examples: "results", "./analysis", "/data/analysis_results", "../shared_results"
-    """
-
     sub_dir: str = "images"
     """
     Subdirectory within plate folder for storing processed data.
     Automatically adds .zarr suffix when using zarr backend.
     Examples: "images", "processed", "data/images"
     """
+
+
+@dataclass(frozen=True)
+class DefaultMaterializationPathConfig:
+    """
+    Default values for MaterializationPathConfig - configurable in UI.
+
+    This dataclass appears in the UI like any other configuration, allowing users
+    to set pipeline-level defaults for materialization behavior. All MaterializationPathConfig()
+    instances will inherit these defaults unless explicitly overridden.
+
+    Well Filtering Defaults:
+    - well_filter=1 materializes first well only (enables quick checkpointing)
+    - well_filter=None materializes all wells
+    - well_filter=["A01", "B03"] materializes only specified wells
+    - well_filter="A01:A12" materializes well range
+    - well_filter=5 materializes first 5 wells processed
+    - well_filter_mode controls include/exclude behavior
+    """
+
+    # Well filtering defaults
+    well_filter: Optional[Union[List[str], str, int]] = 1
+    """
+    Default well filtering for selective materialization:
+    - 1: Materialize first well only (default - enables quick checkpointing)
+    - None: Materialize all wells
+    - List[str]: Specific well IDs ["A01", "B03", "D12"]
+    - str: Pattern/range "A01:A12", "row:A", "col:01-06"
+    - int: Maximum number of wells (first N processed)
+    """
+
+    well_filter_mode: WellFilterMode = WellFilterMode.INCLUDE
+    """
+    Default well filtering mode:
+    - INCLUDE: Materialize only wells matching the filter
+    - EXCLUDE: Materialize all wells except those matching the filter
+    """
+
+    # Path defaults to prevent collisions
+    output_dir_suffix: str = ""  # Uses same output plate path as main pipeline
+    sub_dir: str = "checkpoints"  # vs global "images"
+
+
+# Thread-local storage for current pipeline config
+_current_pipeline_config = threading.local()
+
+def set_current_pipeline_config(config: 'GlobalPipelineConfig'):
+    """Set the current pipeline config for MaterializationPathConfig defaults."""
+    _current_pipeline_config.value = config
+
+def get_current_materialization_defaults() -> DefaultMaterializationPathConfig:
+    """Get current materialization defaults from pipeline config."""
+    if hasattr(_current_pipeline_config, 'value') and _current_pipeline_config.value:
+        return _current_pipeline_config.value.materialization_defaults
+    # Fallback to default instance if no pipeline config is set
+    return DefaultMaterializationPathConfig()
+
+
+class LazyDefaultPlaceholderService:
+    """
+    Centralized service for detecting and resolving lazy default placeholders.
+
+    This service uses introspection to identify dataclasses with lazy default resolution
+    behavior and provides uniform placeholder text generation for UI forms.
+    """
+
+    @staticmethod
+    def has_lazy_resolution(dataclass_type: type) -> bool:
+        """
+        Detect if a dataclass implements lazy default resolution pattern.
+
+        Checks for:
+        - Dataclass with Optional[T] fields having None defaults
+        - Custom __getattribute__ method for lazy resolution
+        """
+        if not dataclasses.is_dataclass(dataclass_type):
+            return False
+
+        # Check if class has custom __getattribute__ method (not inherited from object)
+        if not hasattr(dataclass_type, '__getattribute__'):
+            return False
+
+        # Verify it's a custom implementation, not the default object.__getattribute__
+        if dataclass_type.__getattribute__ is object.__getattribute__:
+            return False
+
+        # Check for Optional[T] fields with None defaults
+        for field in dataclasses.fields(dataclass_type):
+            if field.default is None and field.default_factory is dataclasses.MISSING:
+                # This field has None as default, indicating potential lazy resolution
+                return True
+
+        return False
+
+    @staticmethod
+    def get_lazy_resolved_placeholder(dataclass_type: type, field_name: str) -> Optional[str]:
+        """
+        Get placeholder text for a lazy-resolved field by safely invoking resolution.
+
+        Args:
+            dataclass_type: The dataclass type with lazy resolution
+            field_name: Name of the field to resolve
+
+        Returns:
+            Formatted placeholder text or None if resolution fails
+        """
+        if not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
+            return None
+
+        try:
+            # Safely instantiate the dataclass and invoke lazy resolution
+            temp_instance = dataclass_type()
+            resolved_value = getattr(temp_instance, field_name)
+
+            # Format placeholder text - show resolved value directly
+            if resolved_value is not None:
+                return str(resolved_value)
+            else:
+                return "(none)"
+
+        except Exception:
+            # If anything fails during resolution, return None
+            return None
+
+
+@dataclass(frozen=True)
+class MaterializationPathConfig(PathPlanningConfig):
+    """
+    Configuration for per-step materialization with lazy default resolution.
+
+    Fields set to None will automatically resolve to current pipeline defaults
+    when accessed. This ensures UI-saved configurations stay synchronized with
+    pipeline default changes.
+    """
+    output_dir_suffix: Optional[str] = None
+    """Output directory suffix. None = use current pipeline default."""
+
+    sub_dir: Optional[str] = None
+    """Subdirectory name. None = use current pipeline default."""
+
+    well_filter: Optional[Union[int, List[str], str]] = None
+    """Well filtering configuration. None = use current pipeline default."""
+
+    well_filter_mode: Optional[WellFilterMode] = None
+    """Well filter mode. None = use current pipeline default."""
+
+    def __getattribute__(self, name: str):
+        """Lazy resolution of None values to current pipeline defaults."""
+        value = super().__getattribute__(name)
+
+        # If value is None, resolve from current pipeline defaults
+        if value is None and name in ('output_dir_suffix', 'sub_dir', 'well_filter', 'well_filter_mode'):
+            # Use existing function to get materialization defaults
+            defaults = get_current_materialization_defaults()
+            default_value = getattr(defaults, name)
+            if default_value is not None:
+                return default_value
+
+            # Fallback to PathPlanningConfig defaults for inherited fields
+            if name in ('output_dir_suffix', 'sub_dir'):
+                fallback_config = PathPlanningConfig()
+                return getattr(fallback_config, name)
+
+            # Fallback to hardcoded defaults for materialization-specific fields
+            if name == 'well_filter':
+                return 1
+            if name == 'well_filter_mode':
+                return WellFilterMode.INCLUDE
+
+        return value
+
+    @classmethod
+    def with_defaults(cls) -> 'MaterializationPathConfig':
+        """Create instance that uses all pipeline defaults (explicit factory method)."""
+        return cls()
+
+    @classmethod
+    def with_overrides(cls, **overrides) -> 'MaterializationPathConfig':
+        """Create instance with specific field overrides (explicit factory method)."""
+        return cls(**overrides)
 
 
 @dataclass(frozen=True)
@@ -266,6 +452,21 @@ class GlobalPipelineConfig:
     zarr: ZarrConfig = field(default_factory=ZarrConfig)
     """Configuration for Zarr storage backend."""
 
+    materialization_results_path: Path = Path("results")
+    """
+    Path for materialized analysis results (CSV, JSON files from special outputs).
+
+    This is a pipeline-wide setting that controls where all special output materialization
+    functions save their analysis results, regardless of which step produces them.
+
+    Can be relative to plate folder or absolute path.
+    Default: "results" creates a results/ folder in the plate directory.
+    Examples: "results", "./analysis", "/data/analysis_results", "../shared_results"
+
+    Note: This is separate from per-step image materialization, which is controlled
+    by the sub_dir field in each step's materialization_config.
+    """
+
     analysis_consolidation: AnalysisConsolidationConfig = field(default_factory=AnalysisConsolidationConfig)
     """Configuration for automatic analysis results consolidation."""
 
@@ -274,6 +475,9 @@ class GlobalPipelineConfig:
 
     function_registry: FunctionRegistryConfig = field(default_factory=FunctionRegistryConfig)
     """Configuration for function registry behavior."""
+
+    materialization_defaults: DefaultMaterializationPathConfig = field(default_factory=DefaultMaterializationPathConfig)
+    """Default values for MaterializationPathConfig - configurable in UI."""
 
     microscope: Microscope = Microscope.AUTO
     """Default microscope type for auto-detection."""
@@ -298,6 +502,7 @@ _DEFAULT_ZARR_CONFIG = ZarrConfig()
 _DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG = AnalysisConsolidationConfig()
 _DEFAULT_PLATE_METADATA_CONFIG = PlateMetadataConfig()
 _DEFAULT_FUNCTION_REGISTRY_CONFIG = FunctionRegistryConfig()
+_DEFAULT_MATERIALIZATION_DEFAULTS = DefaultMaterializationPathConfig()
 _DEFAULT_TUI_CONFIG = TUIConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
@@ -315,5 +520,6 @@ def get_default_global_config() -> GlobalPipelineConfig:
         zarr=_DEFAULT_ZARR_CONFIG,
         analysis_consolidation=_DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG,
         plate_metadata=_DEFAULT_PLATE_METADATA_CONFIG,
-        function_registry=_DEFAULT_FUNCTION_REGISTRY_CONFIG
+        function_registry=_DEFAULT_FUNCTION_REGISTRY_CONFIG,
+        materialization_defaults=_DEFAULT_MATERIALIZATION_DEFAULTS
     )

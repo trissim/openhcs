@@ -3,7 +3,7 @@
 import dataclasses
 import ast
 from enum import Enum
-from typing import Any, Dict, get_origin, get_args, Union
+from typing import Any, Dict, get_origin, get_args, Union, Optional
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Static, Button, Collapsible
 from textual.app import ComposeResult
@@ -13,14 +13,27 @@ from .signature_analyzer import SignatureAnalyzer
 from .clickable_help_label import ClickableParameterLabel, HelpIndicator
 from ..different_values_input import DifferentValuesInput
 
+# Import simplified abstraction layer
+from openhcs.ui.shared.parameter_form_abstraction import (
+    ParameterFormAbstraction, apply_lazy_default_placeholder
+)
+from openhcs.ui.shared.widget_creation_registry import create_textual_registry
+from openhcs.ui.shared.textual_widget_strategies import create_different_values_widget
+
 class ParameterFormManager:
     """Mathematical: (parameters, types, field_id) → parameter form"""
 
     def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type], field_id: str, parameter_info: Dict = None):
-        self.parameters = parameters.copy()  # Current values
-        self.parameter_types = parameter_types  # Types (immutable)
+        # Initialize simplified abstraction layer
+        self.form_abstraction = ParameterFormAbstraction(
+            parameters, parameter_types, field_id, create_textual_registry(), parameter_info
+        )
+
+        # Maintain backward compatibility
+        self.parameters = parameters.copy()
+        self.parameter_types = parameter_types
         self.field_id = field_id
-        self.parameter_info = parameter_info or {}  # Store parameter info for help
+        self.parameter_info = parameter_info or {}
     
     def build_form(self) -> ComposeResult:
         """Build parameter form - pure function with recursive dataclass support."""
@@ -60,6 +73,9 @@ class ParameterFormManager:
         # Create nested form manager with hierarchical underscore notation and parameter info
         nested_field_id = f"{self.field_id}_{param_name}"
         nested_form_manager = ParameterFormManager(nested_parameters, nested_parameter_types, nested_field_id, nested_param_info)
+
+        # Store the parent dataclass type for proper lazy resolution detection
+        nested_form_manager._parent_dataclass_type = param_type
 
         # Store reference to nested form manager for updates
         if not hasattr(self, 'nested_managers'):
@@ -119,6 +135,9 @@ class ParameterFormManager:
             nested_parameters, nested_parameter_types, f"{self.field_id}_{param_name}", nested_param_info
         )
 
+        # Store the parent dataclass type for proper lazy resolution detection
+        nested_form_manager._parent_dataclass_type = dataclass_type
+
         # Store references
         if not hasattr(self, 'nested_managers'):
             self.nested_managers = {}
@@ -140,47 +159,15 @@ class ParameterFormManager:
         # Create widget using hierarchical underscore notation
         widget_id = f"{self.field_id}_{param_name}"
 
-        # Handle different values based on widget type
+        # Handle different values or create normal widget
         if field_analysis.get('type') == 'different':
             default_value = field_analysis.get('default')
-
-            # For text inputs, use the clean DifferentValuesInput
-            if param_type in [str, int, float]:
-                from ..different_values_input import DifferentValuesInput
-                input_widget = DifferentValuesInput(
-                    default_value=default_value,
-                    field_name=param_name,
-                    id=widget_id
-                )
-            elif param_type == bool:
-                # For checkboxes, use simple different values checkbox
-                from ..different_values_checkbox import DifferentValuesCheckbox
-                input_widget = DifferentValuesCheckbox(
-                    default_value=default_value,
-                    field_name=param_name,
-                    id=widget_id
-                )
-            elif hasattr(param_type, '__bases__') and any(base.__name__ == 'Enum' for base in param_type.__bases__):
-                # For enums, use simple different values radio set
-                from ..different_values_radio_set import DifferentValuesRadioSet
-                input_widget = DifferentValuesRadioSet(
-                    enum_type=param_type,
-                    default_value=default_value,
-                    field_name=param_name,
-                    id=widget_id
-                )
-            else:
-                # Fallback to universal wrapper for other types
-                input_widget = TypedWidgetFactory.create_different_values_widget(
-                    param_type=param_type,
-                    default_value=default_value,
-                    widget_id=widget_id,
-                    field_name=param_name
-                )
+            input_widget = create_different_values_widget(param_name, param_type, default_value, widget_id)
         else:
-            # Convert enum to string for widget (centralized conversion)
+            # Use registry for widget creation and apply placeholder
             widget_value = current_value.value if hasattr(current_value, 'value') else current_value
-            input_widget = TypedWidgetFactory.create_widget(param_type, widget_value, widget_id)
+            input_widget = self.form_abstraction.create_widget_for_parameter(param_name, param_type, widget_value)
+            apply_lazy_default_placeholder(input_widget, param_name, current_value, self.parameter_types, 'textual')
 
         # Get parameter info for help functionality
         param_info = self._get_parameter_info(param_name)
@@ -235,6 +222,11 @@ class ParameterFormManager:
                     # Rebuild nested dataclass instance
                     nested_values = self.nested_managers[potential_nested].get_current_values()
                     nested_type = self.parameter_types[potential_nested]
+
+                    # Resolve Union types (like Optional[DataClass]) to the actual dataclass type
+                    if self._is_optional_dataclass(nested_type):
+                        nested_type = self._get_optional_inner_type(nested_type)
+
                     self.parameters[potential_nested] = nested_type(**nested_values)
                     return
 
@@ -304,6 +296,11 @@ class ParameterFormManager:
 
                     # Rebuild nested dataclass instance
                     nested_values = self.nested_managers[potential_nested].get_current_values()
+
+                    # Resolve Union types (like Optional[DataClass]) to the actual dataclass type
+                    if self._is_optional_dataclass(nested_type):
+                        nested_type = self._get_optional_inner_type(nested_type)
+
                     self.parameters[potential_nested] = nested_type(**nested_values)
                     return
 
@@ -357,6 +354,11 @@ class ParameterFormManager:
 
                         # Rebuild nested dataclass instance
                         nested_values = self.nested_managers[param_name].get_current_values()
+
+                        # Resolve Union types (like Optional[DataClass]) to the actual dataclass type
+                        if self._is_optional_dataclass(nested_type):
+                            nested_type = self._get_optional_inner_type(nested_type)
+
                         self.parameters[param_name] = nested_type(**nested_values)
                     else:
                         self.parameters[param_name] = default_value
@@ -418,6 +420,8 @@ class ParameterFormManager:
     def _get_parameter_info(self, param_name: str):
         """Get parameter info for help functionality."""
         return self.parameter_info.get(param_name)
+
+    # Old placeholder methods removed - now using centralized abstraction layer
 
     @staticmethod
     def convert_string_to_type(string_value: str, param_type: type, strict: bool = False) -> Any:

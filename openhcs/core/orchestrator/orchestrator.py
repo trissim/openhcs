@@ -152,6 +152,10 @@ class PipelineOrchestrator:
         else:
             self.global_config = global_config
 
+        # Set current pipeline config for MaterializationPathConfig defaults
+        from openhcs.core.config import set_current_pipeline_config
+        set_current_pipeline_config(self.global_config)
+
         if plate_path is None:
             # This case should ideally be prevented by TUI logic if plate_path is mandatory
             # for an orchestrator instance tied to a specific plate.
@@ -388,7 +392,7 @@ class PipelineOrchestrator:
                 is_responsible = (well_id == responsible_well)
                 logger.debug(f"Well {well_id} metadata responsibility: {is_responsible}")
 
-                PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible, plate_path=self.plate_path)
+                PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, self, metadata_writer=is_responsible, plate_path=self.plate_path)
                 PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
                 PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
                 PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
@@ -649,7 +653,7 @@ class PipelineOrchestrator:
                         for step_id, step_plan in context.step_plans.items():
                             if 'output_dir' in step_plan:
                                 # Found an output directory, check if it has a results subdirectory
-                                potential_results_dir = Path(step_plan['output_dir']) / self.global_config.path_planning.materialization_results_path
+                                potential_results_dir = Path(step_plan['output_dir']) / self.global_config.materialization_results_path
                                 if potential_results_dir.exists():
                                     results_dir = potential_results_dir
                                     logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_id}: {results_dir}")
@@ -933,6 +937,11 @@ class PipelineOrchestrator:
             f"New num_workers: {new_config.num_workers}"
         )
         self.global_config = new_config
+
+        # Update current pipeline config for MaterializationPathConfig defaults
+        from openhcs.core.config import set_current_pipeline_config
+        set_current_pipeline_config(new_config)
+
         # Re-initialization of components like path_planner or materialization_flag_planner
         # is implicitly handled if they are created fresh during compilation using contexts
         # that are generated with the new self.global_config.

@@ -141,20 +141,21 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         """
         pass
 
-    @abstractmethod
     def get_available_backends(self, plate_path: Union[str, Path]) -> List[Backend]:
         """
         Get available storage backends for this specific plate.
+
+        Default implementation returns all compatible backends.
+        Override this method only if you need to check actual disk state
+        (like OpenHCS which reads from metadata).
 
         Args:
             plate_path: Path to the plate folder
 
         Returns:
             List of Backend enums that are available for this plate.
-            For most handlers, this will be based on compatible_backends.
-            For OpenHCS, this reads from metadata.
         """
-        pass
+        return self.compatible_backends
 
     def initialize_workspace(self, plate_path: Path, workspace_path: Optional[Path], filemanager: FileManager) -> Path:
         """
