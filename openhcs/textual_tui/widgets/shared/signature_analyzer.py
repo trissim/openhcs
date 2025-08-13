@@ -565,9 +565,17 @@ class SignatureAnalyzer:
             parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
 
             # Update default values with current instance values
+            # For lazy dataclasses, use object.__getattribute__ to preserve None values for placeholders
             for name, param_info in parameters.items():
                 if hasattr(instance, name):
-                    current_value = getattr(instance, name)
+                    # Check if this is a lazy dataclass that should preserve None values
+                    if hasattr(instance, '_resolve_field_value'):
+                        # This is a lazy dataclass - use object.__getattribute__ to get stored value
+                        current_value = object.__getattribute__(instance, name)
+                    else:
+                        # Regular dataclass - use normal getattr
+                        current_value = getattr(instance, name)
+
                     # Create new ParameterInfo with current value as default
                     parameters[name] = ParameterInfo(
                         name=param_info.name,
@@ -582,28 +590,4 @@ class SignatureAnalyzer:
         except Exception:
             return {}
 
-    @staticmethod
-    def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
-        """Extract parameter information from a dataclass instance."""
-        try:
-            # Get the type and analyze it
-            dataclass_type = type(instance)
-            parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
-
-            # Update default values with current instance values
-            for name, param_info in parameters.items():
-                if hasattr(instance, name):
-                    current_value = getattr(instance, name)
-                    # Create new ParameterInfo with current value as default
-                    parameters[name] = ParameterInfo(
-                        name=param_info.name,
-                        param_type=param_info.param_type,
-                        default_value=current_value,
-                        is_required=param_info.is_required,
-                        description=param_info.description
-                    )
-
-            return parameters
-
-        except Exception:
-            return {}
+    # Duplicate method removed - using the fixed version above

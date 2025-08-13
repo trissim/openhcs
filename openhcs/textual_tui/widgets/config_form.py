@@ -31,7 +31,13 @@ class ConfigFormWidget(ScrollableContainer):
         param_defaults = {}
 
         for name, info in param_info.items():
-            current_value = getattr(self.instance, name, info.default_value)
+            # For lazy dataclasses, preserve None values for placeholder behavior
+            if hasattr(self.instance, '_resolve_field_value'):
+                # This is a lazy dataclass - use object.__getattribute__ to get stored value
+                current_value = object.__getattribute__(self.instance, name) if hasattr(self.instance, name) else info.default_value
+            else:
+                # Regular dataclass - use normal getattr
+                current_value = getattr(self.instance, name, info.default_value)
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value

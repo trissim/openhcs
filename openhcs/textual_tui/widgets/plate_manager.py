@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
+from openhcs.core.lazy_config import PipelineConfig
+
 from PIL import Image
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
@@ -1114,50 +1116,76 @@ class PlateManagerWidget(ButtonListWidget):
 
 
     async def action_edit_config(self) -> None:
-        """Handle Edit button - unified config editing for single or multiple selected orchestrators."""
-        # Get current selection state
+        """
+        Handle Edit button - create per-orchestrator PipelineConfig instances.
+
+        This enables per-orchestrator configuration without affecting global configuration.
+        Shows resolved defaults from GlobalPipelineConfig with "Pipeline default: {value}" placeholders.
+        """
         selected_items, selection_mode = self.get_selection_state()
 
         if selection_mode == "empty":
             self.app.current_status = "No orchestrators selected for configuration"
             return
 
-        # Get selected orchestrators
-        selected_orchestrators = []
-        for item in selected_items:
-            plate_path = item['path']
-            if plate_path in self.orchestrators:
-                selected_orchestrators.append(self.orchestrators[plate_path])
+        selected_orchestrators = [
+            self.orchestrators[item['path']] for item in selected_items
+            if item['path'] in self.orchestrators
+        ]
 
         if not selected_orchestrators:
             self.app.current_status = "No initialized orchestrators selected"
             return
 
-        # Use the same pattern as global config - launch config window
-        if len(selected_orchestrators) == 1:
-            # Single orchestrator - use existing global config window pattern
-            orchestrator = selected_orchestrators[0]
+        # Create PipelineConfig for editing with proper thread-local context
+        # This ensures form shows "Pipeline default: {value}" placeholders instead of resolved values
+        representative_orchestrator = selected_orchestrators[0]
+        from openhcs.core.lazy_config import create_pipeline_config_for_editing
+        current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
 
-            def handle_single_config_save(new_config):
-                # Apply config to the single orchestrator
+        def handle_config_save(new_config: PipelineConfig) -> None:
+            """Apply per-orchestrator configuration without global side effects."""
+            for orchestrator in selected_orchestrators:
+                # Direct synchronous call - no async needed
+                orchestrator.apply_pipeline_config(new_config)
+            count = len(selected_orchestrators)
+            self.app.current_status = f"Per-orchestrator configuration applied to {count} orchestrator(s)"
+
+        # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
+        await self.window_service.open_config_window(
+            PipelineConfig,
+            current_plate_config,
+            on_save_callback=handle_config_save
+        )
+
+    async def action_edit_global_config(self) -> None:
+        """
+        Handle global configuration editing - affects all orchestrators.
+
+        This maintains the existing global configuration workflow.
+        """
+        from openhcs.core.config import get_default_global_config
+
+        # Get current global config from app or use default
+        current_global_config = self.app.global_config or get_default_global_config()
+
+        def handle_global_config_save(new_config: GlobalPipelineConfig) -> None:
+            """Apply global configuration to all orchestrators."""
+            self.app.global_config = new_config  # Update app-level config
+
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_pipeline_config
+            set_current_pipeline_config(new_config)
+
+            for orchestrator in self.orchestrators.values():
                 asyncio.create_task(orchestrator.apply_new_global_config(new_config))
-                self.app.current_status = "Configuration applied successfully"
+            self.app.current_status = "Global configuration applied to all orchestrators"
 
-            # Use window service to open config window
-            await self.window_service.open_config_window(
-                GlobalPipelineConfig,
-                orchestrator.global_config,
-                on_save_callback=handle_single_config_save
-            )
-        else:
-            # Multi-orchestrator mode - use new multi-orchestrator window
-            def handle_multi_config_save(new_config, orchestrator_count):
-                self.app.current_status = f"Configuration applied to {orchestrator_count} orchestrators"
-
-            await self.window_service.open_multi_orchestrator_config(
-                orchestrators=selected_orchestrators,
-                on_save_callback=handle_multi_config_save
-            )
+        await self.window_service.open_config_window(
+            GlobalPipelineConfig,
+            current_global_config,
+            on_save_callback=handle_global_config_save
+        )
 
 
 

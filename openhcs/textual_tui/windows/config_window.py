@@ -78,6 +78,7 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         # Buttons
         with Horizontal(classes="dialog-buttons"):
+            yield Button("Reset to Defaults", id="reset_to_defaults", compact=True)
             yield Button("Save", id="save", compact=True)
             yield Button("Cancel", id="cancel", compact=True)
 
@@ -107,6 +108,8 @@ class ConfigWindow(BaseOpenHCSWindow):
             self._handle_save()
         elif event.button.id == "cancel":
             self.close_window()
+        elif event.button.id == "reset_to_defaults":
+            self._handle_reset_to_defaults()
 
     def _handle_save(self):
         """Handle save button - reuse existing logic from ConfigDialogScreen."""
@@ -122,4 +125,19 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         self.close_window()
 
+    def _handle_reset_to_defaults(self):
+        """Reset all parameters to materialized default values using functional composition."""
+        # Import the functional abstractions from PyQt6 config window
+        from openhcs.pyqt_gui.windows.config_window import ResetOperation
+
+        # Functional pipeline: analyze -> reset -> apply
+        reset_operation = ResetOperation.create_lazy_aware_reset(
+            config_class=self.config_class,
+            current_config=self.current_config
+        )
+
+        # Apply the reset operation to the form manager
+        reset_operation.apply_to_form_manager(
+            form_manager=self.config_form.form_manager
+        )
 

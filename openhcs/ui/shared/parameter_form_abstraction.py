@@ -65,8 +65,13 @@ def apply_lazy_default_placeholder(widget: Any, param_name: str, current_value: 
                 if hasattr(widget, 'placeholder'):
                     widget.placeholder = placeholder_text
             elif framework == 'pyqt6':
-                from .pyqt6_widget_strategies import PyQt6WidgetEnhancer
-                PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                try:
+                    from .pyqt6_widget_strategies import PyQt6WidgetEnhancer
+                    PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                except ImportError:
+                    # PyQt6 not available - fallback to basic placeholder setting
+                    if hasattr(widget, 'placeholder'):
+                        widget.placeholder = placeholder_text
     except Exception:
         pass
 
@@ -77,14 +82,19 @@ def _get_dataclass_type(parameter_types: Dict[str, Type]) -> Optional[Type]:
         from openhcs.core.config import LazyDefaultPlaceholderService
         param_names = set(parameter_types.keys())
 
+        # Check both config module and lazy_config module for lazy dataclasses
         import inspect
-        from openhcs.core import config
-        for name, obj in inspect.getmembers(config, inspect.isclass):
-            if (dataclasses.is_dataclass(obj) and
-                LazyDefaultPlaceholderService.has_lazy_resolution(obj)):
-                dataclass_fields = {field.name for field in dataclasses.fields(obj)}
-                if param_names == dataclass_fields:
-                    return obj
+        from openhcs.core import config, lazy_config
+
+        modules_to_check = [config, lazy_config]
+
+        for module in modules_to_check:
+            for name, obj in inspect.getmembers(module, inspect.isclass):
+                if (dataclasses.is_dataclass(obj) and
+                    LazyDefaultPlaceholderService.has_lazy_resolution(obj)):
+                    dataclass_fields = {field.name for field in dataclasses.fields(obj)}
+                    if param_names == dataclass_fields:
+                        return obj
     except Exception:
         pass
     return None

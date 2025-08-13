@@ -24,6 +24,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QFont
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.lazy_config import PipelineConfig
 from openhcs.io.filemanager import FileManager
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator, OrchestratorState
 from openhcs.core.pipeline import Pipeline
@@ -415,9 +416,123 @@ class PlateManagerWidget(QWidget):
     # (compile_plate, run_plate, code_plate, save_python_script, edit_config)
     
     def action_edit_config(self):
-        """Handle Edit Config button (placeholder)."""
-        self.service_adapter.show_info_dialog("Configuration editing not yet implemented in PyQt6 version.")
-    
+        """
+        Handle Edit Config button - create per-orchestrator PipelineConfig instances.
+
+        This enables per-orchestrator configuration without affecting global configuration.
+        Shows resolved defaults from GlobalPipelineConfig with "Pipeline default: {value}" placeholders.
+        """
+        selected_items = self.get_selected_plates()
+
+        if not selected_items:
+            self.service_adapter.show_error_dialog("No plates selected for configuration.")
+            return
+
+        # Get selected orchestrators
+        selected_orchestrators = [
+            self.orchestrators[item['path']] for item in selected_items
+            if item['path'] in self.orchestrators
+        ]
+
+        if not selected_orchestrators:
+            self.service_adapter.show_error_dialog("No initialized orchestrators selected.")
+            return
+
+        # Create PipelineConfig for editing with proper thread-local context
+        # This ensures form shows "Pipeline default: {value}" placeholders instead of resolved values
+        representative_orchestrator = selected_orchestrators[0]
+        from openhcs.core.lazy_config import create_pipeline_config_for_editing
+        current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
+
+        def handle_config_save(new_config: PipelineConfig) -> None:
+            """Apply per-orchestrator configuration without global side effects."""
+            for orchestrator in selected_orchestrators:
+                # Direct synchronous call - no async needed
+                orchestrator.apply_pipeline_config(new_config)
+            count = len(selected_orchestrators)
+            self.service_adapter.show_info_dialog(f"Per-orchestrator configuration applied to {count} orchestrator(s)")
+
+        # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
+        self._open_config_window(
+            config_class=PipelineConfig,
+            current_config=current_plate_config,
+            on_save_callback=handle_config_save
+        )
+
+    def _open_config_window(self, config_class, current_config, on_save_callback):
+        """
+        Open configuration window with specified config class and current config.
+
+        Args:
+            config_class: Configuration class type (PipelineConfig or GlobalPipelineConfig)
+            current_config: Current configuration instance
+            on_save_callback: Function to call when config is saved
+        """
+        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+
+        config_window = ConfigWindow(
+            config_class,           # config_class
+            current_config,         # current_config
+            on_save_callback,       # on_save_callback
+            self.color_scheme,      # color_scheme
+            self                    # parent
+        )
+        # Show as non-modal window (like main window configuration)
+        config_window.show()
+        config_window.raise_()
+        config_window.activateWindow()
+
+    def action_edit_global_config(self):
+        """
+        Handle global configuration editing - affects all orchestrators.
+
+        This maintains the existing global configuration workflow.
+        """
+        from openhcs.core.config import get_default_global_config
+
+        # Get current global config from service adapter or use default
+        current_global_config = self.service_adapter.get_global_config() or get_default_global_config()
+
+        def handle_global_config_save(new_config: GlobalPipelineConfig) -> None:
+            """Apply global configuration to all orchestrators and save to cache."""
+            self.service_adapter.set_global_config(new_config)  # Update app-level config
+
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_pipeline_config
+            set_current_pipeline_config(new_config)
+
+            # Save to cache for persistence between sessions
+            self._save_global_config_to_cache(new_config)
+
+            for orchestrator in self.orchestrators.values():
+                self.run_async_action(orchestrator.apply_new_global_config(new_config))
+            self.service_adapter.show_info_dialog("Global configuration applied to all orchestrators")
+
+        # Open configuration window using GlobalPipelineConfig
+        self._open_config_window(
+            config_class=GlobalPipelineConfig,
+            current_config=current_global_config,
+            on_save_callback=handle_global_config_save
+        )
+
+    def _save_global_config_to_cache(self, config: GlobalPipelineConfig):
+        """Save global config to cache for persistence between sessions."""
+        try:
+            # Use synchronous saving to ensure it completes
+            from openhcs.core.config_cache import _sync_save_config
+            from openhcs.core.xdg_paths import get_config_file_path
+
+            cache_file = get_config_file_path("global_config.config")
+            success = _sync_save_config(config, cache_file)
+
+            if success:
+                logger.info("Global config saved to cache for session persistence")
+            else:
+                logger.error("Failed to save global config to cache - sync save returned False")
+        except Exception as e:
+            logger.error(f"Failed to save global config to cache: {e}")
+            # Don't show error dialog as this is not critical for immediate functionality
+
     async def action_compile_plate(self):
         """Handle Compile Plate button - compile pipelines for selected plates."""
         selected_items = self.get_selected_plates()

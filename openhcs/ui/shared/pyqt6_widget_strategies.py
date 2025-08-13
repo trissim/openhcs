@@ -62,7 +62,11 @@ WIDGET_REPLACEMENT_REGISTRY: Dict[Type, callable] = {
 def create_string_fallback_widget(current_value: Any, **kwargs) -> QLineEdit:
     """Create string fallback widget for unsupported types."""
     widget = QLineEdit()
-    widget.setText(str(current_value) if current_value is not None else "")
+    # Handle literal "None" string - should display as empty
+    if isinstance(current_value, str) and current_value == "None":
+        widget.setText("")
+    else:
+        widget.setText(str(current_value) if current_value is not None else "")
     return widget
 
 
@@ -133,7 +137,30 @@ class MagicGuiWidgetFactory:
         else:
             # Try magicgui for standard types, with string fallback for unsupported types
             try:
-                widget = create_widget(annotation=resolved_type, value=extracted_value)
+                # Handle None values to prevent magicgui from converting None to literal "None" string
+                magicgui_value = extracted_value
+                if extracted_value is None:
+                    # Use appropriate default values for magicgui to prevent "None" string conversion
+                    if resolved_type == str:
+                        magicgui_value = ""
+                    elif resolved_type == int:
+                        magicgui_value = 0
+                    elif resolved_type == float:
+                        magicgui_value = 0.0
+                    elif resolved_type == bool:
+                        magicgui_value = False
+                    # For other types, let magicgui handle None (might still cause issues but less common)
+
+                widget = create_widget(annotation=resolved_type, value=magicgui_value)
+
+                # If original value was None, clear the widget to show placeholder behavior
+                if extracted_value is None and hasattr(widget, 'native'):
+                    native_widget = widget.native
+                    if hasattr(native_widget, 'setText'):
+                        native_widget.setText("")  # Clear text for None values
+                    elif hasattr(native_widget, 'setChecked') and resolved_type == bool:
+                        native_widget.setChecked(False)  # Uncheck for None bool values
+
                 # Extract native PyQt6 widget from magicgui wrapper if needed
                 if hasattr(widget, 'native'):
                     native_widget = widget.native
@@ -175,7 +202,7 @@ def create_pyqt6_registry() -> WidgetRegistry:
 PLACEHOLDER_STRATEGIES: Dict[str, callable] = {
     'setPlaceholderText': lambda widget, text: widget.setPlaceholderText(text),
     'setSpecialValueText': lambda widget, text: (
-        widget.setSpecialValueText(text),
+        widget.setSpecialValueText(text.replace("Pipeline default: ", "")),
         widget.setValue(widget.minimum()) if hasattr(widget, 'minimum') else None
     )[-1],
 }
@@ -212,7 +239,10 @@ class PyQt6WidgetEnhancer:
         if strategy:
             strategy(widget, placeholder_text)
         else:
-            raise ValueError(f"Widget {type(widget).__name__} does not support placeholder text")
+            # For widgets that don't support placeholders, set as tooltip
+            if hasattr(widget, 'setToolTip'):
+                widget.setToolTip(placeholder_text)
+            # If no tooltip support, ignore silently
 
     @staticmethod
     def connect_change_signal(widget: Any, param_name: str, callback: Any) -> None:

@@ -427,6 +427,11 @@ class OpenHCSMainWindow(QMainWindow):
         def handle_config_save(new_config):
             """Handle configuration save (mirrors Textual TUI pattern)."""
             self.global_config = new_config
+
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_pipeline_config
+            set_current_pipeline_config(new_config)
+
             # Emit signal for other components to update
             self.config_changed.emit(new_config)
 

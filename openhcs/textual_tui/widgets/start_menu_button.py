@@ -178,6 +178,10 @@ class StartMenuDropdown(ModalScreen[None]):
             # Apply config changes to app
             self.app.global_config = new_config
 
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_pipeline_config
+            set_current_pipeline_config(new_config)
+
             # Propagate config changes to all existing orchestrators and plate manager
             self._propagate_global_config_to_orchestrators(new_config)
 

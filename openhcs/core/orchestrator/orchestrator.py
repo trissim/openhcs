@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
 from openhcs.constants import Microscope
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
+from openhcs.core.lazy_config import PipelineConfig
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -128,7 +129,10 @@ def _ensure_step_ids_for_multiprocessing(
 
 class PipelineOrchestrator:
     """
-    Unified orchestrator for a two-phase pipeline execution model.
+    Updated orchestrator supporting both global and per-orchestrator configuration.
+
+    Global configuration: Updates all orchestrators (existing behavior)
+    Per-orchestrator configuration: Affects only this orchestrator instance
 
     The orchestrator first compiles the pipeline for all specified wells,
     creating frozen, immutable ProcessingContexts using `compile_plate_for_processing()`.
@@ -142,15 +146,21 @@ class PipelineOrchestrator:
         workspace_path: Optional[Union[str, Path]] = None,
         *,
         global_config: Optional[GlobalPipelineConfig] = None,
+        pipeline_config: Optional[PipelineConfig] = None,
         storage_registry: Optional[Any] = None, # Optional StorageRegistry instance
     ):
         # Lock removed - was orphaned code never used
-        
+
         if global_config is None:
             self.global_config = get_default_global_config()
             logger.info("PipelineOrchestrator using default global configuration.")
         else:
             self.global_config = global_config
+
+        # Initialize per-orchestrator configuration
+        self.pipeline_config = pipeline_config  # Per-orchestrator overrides
+
+
 
         # Set current pipeline config for MaterializationPathConfig defaults
         from openhcs.core.config import set_current_pipeline_config
@@ -916,36 +926,46 @@ class PipelineOrchestrator:
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """
-        Applies a new GlobalPipelineConfig to this orchestrator instance.
-
-        This updates the internal global_config reference. Subsequent operations,
-        especially new context creation and pipeline compilations, will use this
-        new configuration.
-
-        Args:
-            new_config: The new GlobalPipelineConfig object.
+        Apply global configuration - maintains existing global config workflow.
         """
         if not isinstance(new_config, GlobalPipelineConfig):
-            logger.error(
-                f"Attempted to apply invalid config type {type(new_config)} to PipelineOrchestrator. Expected GlobalPipelineConfig."
-            )
-            return
-
-        logger.info(
-            f"PipelineOrchestrator (plate: {self.plate_path}, workspace: {self.workspace_path}) "
-            f"is applying new GlobalPipelineConfig. Old num_workers: {self.global_config.num_workers}, "
-            f"New num_workers: {new_config.num_workers}"
-        )
+            raise TypeError(f"Expected GlobalPipelineConfig, got {type(new_config)}")
         self.global_config = new_config
 
-        # Update current pipeline config for MaterializationPathConfig defaults
+        # Update thread-local storage to reflect the new global configuration
+        # This ensures MaterializationPathConfig uses the updated defaults
         from openhcs.core.config import set_current_pipeline_config
-        set_current_pipeline_config(new_config)
+        effective_config = self.get_effective_config()
+        set_current_pipeline_config(effective_config)
 
-        # Re-initialization of components like path_planner or materialization_flag_planner
-        # is implicitly handled if they are created fresh during compilation using contexts
-        # that are generated with the new self.global_config.
-        # If any long-lived orchestrator components directly cache parts of global_config
-        # and need explicit updating, that would be done here. For now, updating the
-        # reference is the primary action.
-        logger.info("New GlobalPipelineConfig applied to orchestrator.")
+    def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
+        """
+        Apply per-orchestrator configuration - affects only this orchestrator.
+        Does not modify global configuration or affect other orchestrators.
+        """
+        if not isinstance(pipeline_config, PipelineConfig):
+            raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
+        self.pipeline_config = pipeline_config
+
+
+
+        # Update thread-local storage to reflect the new effective configuration
+        # This ensures MaterializationPathConfig uses the updated defaults
+        from openhcs.core.config import set_current_pipeline_config
+        effective_config = self.get_effective_config()
+        set_current_pipeline_config(effective_config)
+
+    def get_effective_config(self) -> GlobalPipelineConfig:
+        """Get effective configuration for this orchestrator."""
+        if self.pipeline_config:
+            return self.pipeline_config.to_base_config()
+        return self.global_config
+
+    def clear_pipeline_config(self) -> None:
+        """Clear per-orchestrator configuration."""
+        self.pipeline_config = None
+        logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
+
+        # Update thread-local storage to reflect global config
+        from openhcs.core.config import set_current_pipeline_config
+        set_current_pipeline_config(self.global_config)

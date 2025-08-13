@@ -189,15 +189,18 @@ class PathPlanningConfig:
 
 
 @dataclass(frozen=True)
-class DefaultMaterializationPathConfig:
+class StepMaterializationConfig(PathPlanningConfig):
     """
-    Default values for MaterializationPathConfig - configurable in UI.
+    Configuration for per-step materialization - configurable in UI.
 
     This dataclass appears in the UI like any other configuration, allowing users
-    to set pipeline-level defaults for materialization behavior. All MaterializationPathConfig()
-    instances will inherit these defaults unless explicitly overridden.
+    to set pipeline-level defaults for step materialization behavior. All step
+    materialization instances will inherit these defaults unless explicitly overridden.
 
-    Well Filtering Defaults:
+    Inherits from PathPlanningConfig to ensure all required path planning fields
+    (like global_output_folder) are available for the lazy loading system.
+
+    Well Filtering Options:
     - well_filter=1 materializes first well only (enables quick checkpointing)
     - well_filter=None materializes all wells
     - well_filter=["A01", "B03"] materializes only specified wells
@@ -209,7 +212,7 @@ class DefaultMaterializationPathConfig:
     # Well filtering defaults
     well_filter: Optional[Union[List[str], str, int]] = 1
     """
-    Default well filtering for selective materialization:
+    Well filtering for selective step materialization:
     - 1: Materialize first well only (default - enables quick checkpointing)
     - None: Materialize all wells
     - List[str]: Specific well IDs ["A01", "B03", "D12"]
@@ -219,12 +222,12 @@ class DefaultMaterializationPathConfig:
 
     well_filter_mode: WellFilterMode = WellFilterMode.INCLUDE
     """
-    Default well filtering mode:
+    Well filtering mode for step materialization:
     - INCLUDE: Materialize only wells matching the filter
     - EXCLUDE: Materialize all wells except those matching the filter
     """
 
-    # Path defaults to prevent collisions
+    # Override PathPlanningConfig defaults to prevent collisions
     output_dir_suffix: str = ""  # Uses same output plate path as main pipeline
     sub_dir: str = "checkpoints"  # vs global "images"
 
@@ -236,136 +239,125 @@ def set_current_pipeline_config(config: 'GlobalPipelineConfig'):
     """Set the current pipeline config for MaterializationPathConfig defaults."""
     _current_pipeline_config.value = config
 
-def get_current_materialization_defaults() -> DefaultMaterializationPathConfig:
-    """Get current materialization defaults from pipeline config."""
+def get_current_materialization_defaults() -> StepMaterializationConfig:
+    """Get current step materialization config from pipeline config."""
     if hasattr(_current_pipeline_config, 'value') and _current_pipeline_config.value:
         return _current_pipeline_config.value.materialization_defaults
     # Fallback to default instance if no pipeline config is set
-    return DefaultMaterializationPathConfig()
+    return StepMaterializationConfig()
 
 
 class LazyDefaultPlaceholderService:
     """
-    Centralized service for detecting and resolving lazy default placeholders.
+    Enhanced service supporting factory-created lazy classes with flexible resolution.
 
-    This service uses introspection to identify dataclasses with lazy default resolution
-    behavior and provides uniform placeholder text generation for UI forms.
+    Provides consistent "Pipeline default: {value}" placeholder pattern
+    for both static and dynamic lazy configuration classes.
     """
 
     @staticmethod
     def has_lazy_resolution(dataclass_type: type) -> bool:
-        """
-        Detect if a dataclass implements lazy default resolution pattern.
-
-        Checks for:
-        - Dataclass with Optional[T] fields having None defaults
-        - Custom __getattribute__ method for lazy resolution
-        """
-        if not dataclasses.is_dataclass(dataclass_type):
-            return False
-
-        # Check if class has custom __getattribute__ method (not inherited from object)
-        if not hasattr(dataclass_type, '__getattribute__'):
-            return False
-
-        # Verify it's a custom implementation, not the default object.__getattribute__
-        if dataclass_type.__getattribute__ is object.__getattribute__:
-            return False
-
-        # Check for Optional[T] fields with None defaults
-        for field in dataclasses.fields(dataclass_type):
-            if field.default is None and field.default_factory is dataclasses.MISSING:
-                # This field has None as default, indicating potential lazy resolution
-                return True
-
-        return False
+        """Check if dataclass has lazy resolution methods (created by factory)."""
+        return (hasattr(dataclass_type, '_resolve_field_value') and
+                hasattr(dataclass_type, 'to_base_config'))
 
     @staticmethod
-    def get_lazy_resolved_placeholder(dataclass_type: type, field_name: str) -> Optional[str]:
+    def get_lazy_resolved_placeholder(
+        dataclass_type: type,
+        field_name: str,
+        app_config: Optional[Any] = None
+    ) -> Optional[str]:
         """
-        Get placeholder text for a lazy-resolved field by safely invoking resolution.
+        Get placeholder text for lazy-resolved field with flexible resolution.
 
         Args:
-            dataclass_type: The dataclass type with lazy resolution
+            dataclass_type: The lazy dataclass type (created by factory)
             field_name: Name of the field to resolve
+            app_config: Optional app config for dynamic resolution
 
         Returns:
-            Formatted placeholder text or None if resolution fails
+            "Pipeline default: {value}" format for consistent UI experience.
         """
         if not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
             return None
 
-        try:
-            # Safely instantiate the dataclass and invoke lazy resolution
+        # For dynamic resolution, create lazy class with current app config
+        if app_config:
+            from openhcs.core.lazy_config import LazyDataclassFactory
+            dynamic_lazy_class = LazyDataclassFactory.create_lazy_dataclass(
+                defaults_source=app_config,  # Use the app_config directly
+                lazy_class_name=f"Dynamic{dataclass_type.__name__}"
+            )
+            temp_instance = dynamic_lazy_class()
+        else:
+            # Use existing lazy class (static resolution)
             temp_instance = dataclass_type()
-            resolved_value = getattr(temp_instance, field_name)
 
-            # Format placeholder text - show resolved value directly
-            if resolved_value is not None:
-                return str(resolved_value)
+        resolved_value = getattr(temp_instance, field_name)
+
+        if resolved_value is not None:
+            # Format nested dataclasses with key field values
+            if hasattr(resolved_value, '__dataclass_fields__'):
+                # For nested dataclasses, show key field values instead of generic info
+                summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
+                return f"Pipeline default: {summary}"
             else:
-                return "(none)"
+                return f"Pipeline default: {resolved_value}"
+        else:
+            return "Pipeline default: (none)"
 
-        except Exception:
-            # If anything fails during resolution, return None
-            return None
+    @staticmethod
+    def _format_nested_dataclass_summary(dataclass_instance) -> str:
+        """
+        Format nested dataclass with all field values for user-friendly placeholders.
+
+        Uses generic dataclass introspection to show all fields with their current values,
+        providing a complete and maintainable summary without hardcoded field mappings.
+        """
+        import dataclasses
+
+        class_name = dataclass_instance.__class__.__name__
+
+        # Get all fields from the dataclass using introspection
+        all_fields = [f.name for f in dataclasses.fields(dataclass_instance)]
+
+        # Extract all field values
+        field_summaries = []
+        for field_name in all_fields:
+            try:
+                value = getattr(dataclass_instance, field_name)
+
+                # Skip None values to keep summary concise
+                if value is None:
+                    continue
+
+                # Format different value types appropriately
+                if hasattr(value, 'value'):  # Enum
+                    formatted_value = value.value
+                elif hasattr(value, 'name'):  # Enum with name
+                    formatted_value = value.name
+                elif isinstance(value, str) and len(value) > 20:  # Long strings
+                    formatted_value = f"{value[:17]}..."
+                elif dataclasses.is_dataclass(value):  # Nested dataclass
+                    formatted_value = f"{value.__class__.__name__}(...)"
+                else:
+                    formatted_value = str(value)
+
+                field_summaries.append(f"{field_name}={formatted_value}")
+
+            except (AttributeError, Exception):
+                # Skip fields that can't be accessed
+                continue
+
+        if field_summaries:
+            return ", ".join(field_summaries)
+        else:
+            # Fallback when no non-None fields are found
+            return f"{class_name} (default settings)"
 
 
-@dataclass(frozen=True)
-class MaterializationPathConfig(PathPlanningConfig):
-    """
-    Configuration for per-step materialization with lazy default resolution.
-
-    Fields set to None will automatically resolve to current pipeline defaults
-    when accessed. This ensures UI-saved configurations stay synchronized with
-    pipeline default changes.
-    """
-    output_dir_suffix: Optional[str] = None
-    """Output directory suffix. None = use current pipeline default."""
-
-    sub_dir: Optional[str] = None
-    """Subdirectory name. None = use current pipeline default."""
-
-    well_filter: Optional[Union[int, List[str], str]] = None
-    """Well filtering configuration. None = use current pipeline default."""
-
-    well_filter_mode: Optional[WellFilterMode] = None
-    """Well filter mode. None = use current pipeline default."""
-
-    def __getattribute__(self, name: str):
-        """Lazy resolution of None values to current pipeline defaults."""
-        value = super().__getattribute__(name)
-
-        # If value is None, resolve from current pipeline defaults
-        if value is None and name in ('output_dir_suffix', 'sub_dir', 'well_filter', 'well_filter_mode'):
-            # Use existing function to get materialization defaults
-            defaults = get_current_materialization_defaults()
-            default_value = getattr(defaults, name)
-            if default_value is not None:
-                return default_value
-
-            # Fallback to PathPlanningConfig defaults for inherited fields
-            if name in ('output_dir_suffix', 'sub_dir'):
-                fallback_config = PathPlanningConfig()
-                return getattr(fallback_config, name)
-
-            # Fallback to hardcoded defaults for materialization-specific fields
-            if name == 'well_filter':
-                return 1
-            if name == 'well_filter_mode':
-                return WellFilterMode.INCLUDE
-
-        return value
-
-    @classmethod
-    def with_defaults(cls) -> 'MaterializationPathConfig':
-        """Create instance that uses all pipeline defaults (explicit factory method)."""
-        return cls()
-
-    @classmethod
-    def with_overrides(cls, **overrides) -> 'MaterializationPathConfig':
-        """Create instance with specific field overrides (explicit factory method)."""
-        return cls(**overrides)
+# MaterializationPathConfig is now LazyStepMaterializationConfig from lazy_config.py
+# Import moved to avoid circular dependency - use lazy import pattern
 
 
 @dataclass(frozen=True)
@@ -476,8 +468,8 @@ class GlobalPipelineConfig:
     function_registry: FunctionRegistryConfig = field(default_factory=FunctionRegistryConfig)
     """Configuration for function registry behavior."""
 
-    materialization_defaults: DefaultMaterializationPathConfig = field(default_factory=DefaultMaterializationPathConfig)
-    """Default values for MaterializationPathConfig - configurable in UI."""
+    materialization_defaults: StepMaterializationConfig = field(default_factory=StepMaterializationConfig)
+    """Default configuration for per-step materialization - configurable in UI."""
 
     microscope: Microscope = Microscope.AUTO
     """Default microscope type for auto-detection."""
@@ -502,7 +494,7 @@ _DEFAULT_ZARR_CONFIG = ZarrConfig()
 _DEFAULT_ANALYSIS_CONSOLIDATION_CONFIG = AnalysisConsolidationConfig()
 _DEFAULT_PLATE_METADATA_CONFIG = PlateMetadataConfig()
 _DEFAULT_FUNCTION_REGISTRY_CONFIG = FunctionRegistryConfig()
-_DEFAULT_MATERIALIZATION_DEFAULTS = DefaultMaterializationPathConfig()
+_DEFAULT_MATERIALIZATION_DEFAULTS = StepMaterializationConfig()
 _DEFAULT_TUI_CONFIG = TUIConfig()
 
 def get_default_global_config() -> GlobalPipelineConfig:
@@ -523,3 +515,7 @@ def get_default_global_config() -> GlobalPipelineConfig:
         function_registry=_DEFAULT_FUNCTION_REGISTRY_CONFIG,
         materialization_defaults=_DEFAULT_MATERIALIZATION_DEFAULTS
     )
+
+
+# Import MaterializationPathConfig directly - circular import solved by moving import to end
+from openhcs.core.lazy_config import LazyStepMaterializationConfig as MaterializationPathConfig

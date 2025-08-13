@@ -7,7 +7,10 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 
 import logging
 import dataclasses
-from typing import Type, Any, Callable, Optional, Dict
+from dataclasses import fields
+from typing import Type, Any, Callable, Optional, Dict, Protocol, Union
+from functools import partial
+from abc import ABC, abstractmethod
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
@@ -26,6 +29,179 @@ from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 from openhcs.pyqt_gui.widgets.shared.clickable_help_components import GroupBoxWithHelp, LabelWithHelp
 
 logger = logging.getLogger(__name__)
+
+
+# ========== FUNCTIONAL ABSTRACTIONS FOR CONFIG RESET ==========
+
+class FormManagerProtocol(Protocol):
+    """Protocol defining the interface for form managers."""
+    def update_parameter(self, param_name: str, value: Any) -> None: ...
+    def get_current_values(self) -> Dict[str, Any]: ...
+
+
+class DataclassIntrospector:
+    """Pure functional dataclass introspection and analysis."""
+
+    @staticmethod
+    def is_lazy_dataclass(instance: Any) -> bool:
+        """Check if an instance is a lazy dataclass."""
+        return hasattr(instance, '_resolve_field_value')
+
+    @staticmethod
+    def get_static_defaults(config_class: Type) -> Dict[str, Any]:
+        """Get static default values from dataclass definition."""
+        return {
+            field.name: field.default if field.default is not dataclasses.MISSING
+                       else field.default_factory() if field.default_factory is not dataclasses.MISSING
+                       else None
+            for field in fields(config_class)
+        }
+
+    @staticmethod
+    def get_lazy_reset_values(config_class: Type) -> Dict[str, Any]:
+        """Get reset values for lazy dataclass (all None for lazy loading)."""
+        return {field.name: None for field in fields(config_class)}
+
+    @staticmethod
+    def extract_field_values(dataclass_instance: Any) -> Dict[str, Any]:
+        """Extract field values from a dataclass instance."""
+        return {
+            field.name: getattr(dataclass_instance, field.name)
+            for field in fields(dataclass_instance)
+        }
+
+
+class ResetStrategy(ABC):
+    """Abstract base class for reset strategies."""
+
+    @abstractmethod
+    def generate_reset_values(self, config_class: Type, current_config: Any) -> Dict[str, Any]:
+        """Generate the values to reset to."""
+        pass
+
+
+class LazyAwareResetStrategy(ResetStrategy):
+    """Strategy that respects lazy dataclass architecture."""
+
+    def generate_reset_values(self, config_class: Type, current_config: Any) -> Dict[str, Any]:
+        if DataclassIntrospector.is_lazy_dataclass(current_config):
+            # Lazy dataclass: reset to None values to preserve lazy loading pattern
+            return DataclassIntrospector.get_lazy_reset_values(config_class)
+        else:
+            # Regular dataclass: reset to static default values
+            return DataclassIntrospector.get_static_defaults(config_class)
+
+
+class FormManagerUpdater:
+    """Pure functional form manager update operations."""
+
+    @staticmethod
+    def apply_values_to_form_manager(
+        form_manager: FormManagerProtocol,
+        values: Dict[str, Any],
+        modified_values_tracker: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Apply values to form manager and optionally track modifications."""
+        for param_name, value in values.items():
+            form_manager.update_parameter(param_name, value)
+            if modified_values_tracker is not None:
+                modified_values_tracker[param_name] = value
+
+    @staticmethod
+    def apply_nested_reset_recursively(
+        form_manager: Any,
+        config_class: Type,
+        current_config: Any
+    ) -> None:
+        """Apply reset values to nested form managers recursively."""
+        if not hasattr(form_manager, 'nested_managers'):
+            return
+
+        for nested_param_name, nested_manager in form_manager.nested_managers.items():
+            # Get the nested dataclass type and current instance
+            nested_field = next(
+                (f for f in fields(config_class) if f.name == nested_param_name),
+                None
+            )
+
+            if nested_field and dataclasses.is_dataclass(nested_field.type):
+                nested_config_class = nested_field.type
+                nested_current_config = getattr(current_config, nested_param_name, None) if current_config else None
+
+                # Generate reset values for nested dataclass
+                if nested_current_config and DataclassIntrospector.is_lazy_dataclass(nested_current_config):
+                    # Nested lazy dataclass: reset to None values
+                    nested_reset_values = DataclassIntrospector.get_lazy_reset_values(nested_config_class)
+                else:
+                    # Nested regular dataclass: reset to static defaults
+                    nested_reset_values = DataclassIntrospector.get_static_defaults(nested_config_class)
+
+                # Apply reset values to nested manager
+                FormManagerUpdater.apply_values_to_form_manager(nested_manager, nested_reset_values)
+
+                # Recurse for deeper nesting
+                FormManagerUpdater.apply_nested_reset_recursively(
+                    nested_manager, nested_config_class, nested_current_config
+                )
+            else:
+                # Fallback: reset using parameter info
+                FormManagerUpdater._reset_manager_to_parameter_defaults(nested_manager)
+
+    @staticmethod
+    def _reset_manager_to_parameter_defaults(manager: Any) -> None:
+        """Reset a manager to its parameter defaults."""
+        if (hasattr(manager, 'textual_form_manager') and
+            hasattr(manager.textual_form_manager, 'parameter_info')):
+            default_values = {
+                param_name: param_info.default_value
+                for param_name, param_info in manager.textual_form_manager.parameter_info.items()
+            }
+            FormManagerUpdater.apply_values_to_form_manager(manager, default_values)
+
+
+class ResetOperation:
+    """Immutable reset operation that respects lazy dataclass architecture."""
+
+    def __init__(self, strategy: ResetStrategy, config_class: Type, current_config: Any):
+        self.strategy = strategy
+        self.config_class = config_class
+        self.current_config = current_config
+        self._reset_values = None
+
+    @property
+    def reset_values(self) -> Dict[str, Any]:
+        """Lazy computation of reset values."""
+        if self._reset_values is None:
+            self._reset_values = self.strategy.generate_reset_values(
+                self.config_class, self.current_config
+            )
+        return self._reset_values
+
+    def apply_to_form_manager(
+        self,
+        form_manager: FormManagerProtocol,
+        modified_values_tracker: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Apply this reset operation to a form manager."""
+        # Apply top-level reset values
+        FormManagerUpdater.apply_values_to_form_manager(
+            form_manager, self.reset_values, modified_values_tracker
+        )
+
+        # Apply nested reset values recursively
+        FormManagerUpdater.apply_nested_reset_recursively(
+            form_manager, self.config_class, self.current_config
+        )
+
+    @classmethod
+    def create_lazy_aware_reset(cls, config_class: Type, current_config: Any) -> 'ResetOperation':
+        """Factory method for lazy-aware reset operations."""
+        return cls(LazyAwareResetStrategy(), config_class, current_config)
+
+    @classmethod
+    def create_custom_reset(cls, strategy: ResetStrategy, config_class: Type, current_config: Any) -> 'ResetOperation':
+        """Factory method for custom reset operations."""
+        return cls(strategy, config_class, current_config)
 
 
 class ConfigWindow(QDialog):
@@ -72,9 +248,19 @@ class ConfigWindow(QDialog):
         parameter_types = {}
 
         for name, info in param_info.items():
-            current_value = getattr(current_config, name, info.default_value)
+            # For lazy dataclasses, preserve None values for placeholder behavior
+            if hasattr(current_config, '_resolve_field_value'):
+                # This is a lazy dataclass - use object.__getattribute__ to get stored value
+                current_value = object.__getattribute__(current_config, name) if hasattr(current_config, name) else info.default_value
+            else:
+                # Regular dataclass - use normal getattr
+                current_value = getattr(current_config, name, info.default_value)
             parameters[name] = current_value
             parameter_types[name] = info.param_type
+
+        # Store parameter info and initialize tracking
+        self.parameter_info = param_info
+        self.modified_values = {}
 
         # Create parameter form manager (reuses Textual TUI logic)
         self.form_manager = ParameterFormManager(
@@ -198,8 +384,11 @@ class ConfigWindow(QDialog):
         layout = QFormLayout(group_box)
         
         for param_name, param_info in parameters.items():
-            # Get current value
-            current_value = getattr(self.current_config, param_name, param_info.default_value)
+            # Get current value - preserve None values for lazy dataclasses
+            if hasattr(self.current_config, '_resolve_field_value'):
+                current_value = object.__getattribute__(self.current_config, param_name) if hasattr(self.current_config, param_name) else param_info.default_value
+            else:
+                current_value = getattr(self.current_config, param_name, param_info.default_value)
             
             # Create parameter widget
             widget = self.create_parameter_widget(param_name, param_info.param_type, current_value)
@@ -353,9 +542,10 @@ class ConfigWindow(QDialog):
     
     def load_current_values(self):
         """Load current configuration values into widgets."""
-        for param_name, widget in self.parameter_widgets.items():
-            current_value = getattr(self.current_config, param_name)
-            self.update_widget_value(widget, current_value)
+        # The form manager already loads current values during initialization
+        # This method is kept for compatibility but doesn't need to do anything
+        # since the form manager handles widget initialization with current values
+        pass
     
     def handle_parameter_change(self, param_name: str, value: Any):
         """
@@ -397,20 +587,21 @@ class ConfigWindow(QDialog):
             widget.blockSignals(False)
     
     def reset_to_defaults(self):
-        """Reset all parameters to default values."""
-        for param_name, param_info in self.parameter_info.items():
-            default_value = param_info.default_value
-            
-            # Update widget
-            if param_name in self.parameter_widgets:
-                widget = self.parameter_widgets[param_name]
-                self.update_widget_value(widget, default_value)
-            
-            # Update modified values
-            self.modified_values[param_name] = default_value
-        
-        logger.debug("Reset all parameters to defaults")
-    
+        """Reset all parameters to materialized default values using functional composition."""
+        # Functional pipeline: analyze -> reset -> apply
+        reset_operation = ResetOperation.create_lazy_aware_reset(
+            config_class=self.config_class,
+            current_config=self.current_config
+        )
+
+        # Apply the reset operation to the form manager
+        reset_operation.apply_to_form_manager(
+            form_manager=self.form_manager,
+            modified_values_tracker=self.modified_values
+        )
+
+        logger.debug("Reset all parameters to materialized defaults")
+
     def save_config(self):
         """Save the configuration using form manager values (mirrors Textual TUI)."""
         try:

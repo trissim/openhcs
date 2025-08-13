@@ -66,7 +66,14 @@ class ParameterFormManager:
         nested_parameter_types = {}
 
         for nested_name, nested_info in nested_param_info.items():
-            nested_current_value = getattr(current_value, nested_name, nested_info.default_value) if current_value else nested_info.default_value
+            if current_value:
+                # For lazy dataclasses, preserve None values for placeholder behavior
+                if hasattr(current_value, '_resolve_field_value'):
+                    nested_current_value = object.__getattribute__(current_value, nested_name) if hasattr(current_value, nested_name) else nested_info.default_value
+                else:
+                    nested_current_value = getattr(current_value, nested_name, nested_info.default_value)
+            else:
+                nested_current_value = nested_info.default_value
             nested_parameters[nested_name] = nested_current_value
             nested_parameter_types[nested_name] = nested_info.param_type
 
@@ -127,8 +134,17 @@ class ParameterFormManager:
 
         # Setup nested form
         nested_param_info = SignatureAnalyzer.analyze(dataclass_type)
-        nested_parameters = {name: getattr(current_value, name, info.default_value) if current_value else info.default_value
-                           for name, info in nested_param_info.items()}
+        nested_parameters = {}
+        for name, info in nested_param_info.items():
+            if current_value:
+                # For lazy dataclasses, preserve None values for placeholder behavior
+                if hasattr(current_value, '_resolve_field_value'):
+                    value = object.__getattribute__(current_value, name) if hasattr(current_value, name) else info.default_value
+                else:
+                    value = getattr(current_value, name, info.default_value)
+            else:
+                value = info.default_value
+            nested_parameters[name] = value
         nested_parameter_types = {name: info.param_type for name, info in nested_param_info.items()}
 
         nested_form_manager = ParameterFormManager(
@@ -232,6 +248,10 @@ class ParameterFormManager:
 
         # Handle regular parameters (direct match)
         if param_name in self.parameters:
+            # Handle literal "None" string - convert back to Python None
+            if isinstance(value, str) and value == "None":
+                value = None
+
             # Convert string back to proper type (comprehensive conversion)
             if param_name in self.parameter_types:
                 param_type = self.parameter_types[param_name]
@@ -527,7 +547,14 @@ class ParameterFormManager:
                 nested_parameter_types = {}
 
                 for nested_name, nested_info in nested_param_info.items():
-                    nested_current_value = getattr(current_value, nested_name, nested_info.default_value) if current_value else nested_info.default_value
+                    if current_value:
+                        # For lazy dataclasses, preserve None values for placeholder behavior
+                        if hasattr(current_value, '_resolve_field_value'):
+                            nested_current_value = object.__getattribute__(current_value, nested_name) if hasattr(current_value, nested_name) else nested_info.default_value
+                        else:
+                            nested_current_value = getattr(current_value, nested_name, nested_info.default_value)
+                    else:
+                        nested_current_value = nested_info.default_value
                     nested_parameters[nested_name] = nested_current_value
                     nested_parameter_types[nested_name] = nested_info.param_type
 

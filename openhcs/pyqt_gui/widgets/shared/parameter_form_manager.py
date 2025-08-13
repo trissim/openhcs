@@ -135,16 +135,34 @@ class ParameterFormManager(QWidget):
 
         # Use the content layout from GroupBoxWithHelp
         layout = group_box.content_layout
-        
+
+        # Check if we need to create a lazy version of the nested dataclass
+        nested_dataclass_for_form = self._create_lazy_nested_dataclass_if_needed(param_name, param_type, current_value)
+
         # Analyze nested dataclass
         nested_param_info = SignatureAnalyzer.analyze(param_type)
-        
+
         # Get current values from nested dataclass instance
         nested_parameters = {}
         nested_parameter_types = {}
-        
+
         for nested_name, nested_info in nested_param_info.items():
-            nested_current_value = getattr(current_value, nested_name, nested_info.default_value) if current_value else nested_info.default_value
+            if nested_dataclass_for_form:
+                # For lazy dataclasses, preserve None values for storage but use resolved values for initialization
+                if hasattr(nested_dataclass_for_form, '_resolve_field_value'):
+                    # Get stored value (None if not explicitly set)
+                    stored_value = object.__getattribute__(nested_dataclass_for_form, nested_name) if hasattr(nested_dataclass_for_form, nested_name) else None
+                    if stored_value is not None:
+                        # User has explicitly set this value, use it
+                        nested_current_value = stored_value
+                    else:
+                        # No explicit value, use resolved value from parent for initialization
+                        # This allows the nested manager to show parent values while keeping None for unchanged fields
+                        nested_current_value = getattr(nested_dataclass_for_form, nested_name, nested_info.default_value)
+                else:
+                    nested_current_value = getattr(nested_dataclass_for_form, nested_name, nested_info.default_value)
+            else:
+                nested_current_value = nested_info.default_value
             nested_parameters[nested_name] = nested_current_value
             nested_parameter_types[nested_name] = nested_info.param_type
         
@@ -159,6 +177,8 @@ class ParameterFormManager(QWidget):
 
         # Store the parent dataclass type for proper lazy resolution detection
         nested_manager._parent_dataclass_type = param_type
+        # Also store the lazy dataclass instance we created for this nested field
+        nested_manager._lazy_dataclass_instance = nested_dataclass_for_form
         
         # Connect nested parameter changes
         nested_manager.parameter_changed.connect(
@@ -169,6 +189,40 @@ class ParameterFormManager(QWidget):
         layout.addWidget(nested_manager)
         
         return group_box
+
+    def _create_lazy_nested_dataclass_if_needed(self, param_name: str, param_type: type, current_value: Any) -> Any:
+        """
+        Create a lazy version of any nested dataclass for consistent lazy loading behavior.
+
+        This ensures that all nested dataclasses automatically get lazy loading behavior
+        without needing fragile context detection logic.
+        """
+        import dataclasses
+
+        # Only process actual dataclass types
+        if not dataclasses.is_dataclass(param_type):
+            return current_value
+
+        # Create lazy version of the dataclass
+        try:
+            from openhcs.core.lazy_config import LazyDataclassFactory
+
+            # Create lazy version with field path pointing to this nested field
+            lazy_nested_class = LazyDataclassFactory.make_lazy_thread_local(
+                base_class=param_type,
+                field_path=param_name,  # e.g., "vfs", "zarr", "path_planning"
+                lazy_class_name=f"Lazy{param_type.__name__}"
+            )
+
+            # Create instance with all None values for placeholder behavior
+            return lazy_nested_class()
+
+        except Exception as e:
+            # If lazy creation fails, fall back to current value
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Failed to create lazy nested dataclass for {param_name}: {e}")
+            return current_value
 
     def _is_optional_dataclass(self, param_type: type) -> bool:
         """Check if parameter type is Optional[dataclass]."""
@@ -286,8 +340,27 @@ class ParameterFormManager(QWidget):
             if self._is_optional_dataclass(nested_type):
                 nested_type = self._get_optional_inner_type(nested_type)
 
+            # Get current values from nested manager
             nested_values = nested_manager.get_current_values()
-            new_instance = nested_type(**nested_values)
+
+            # Get the original nested dataclass instance to preserve unchanged values
+            original_instance = self.textual_form_manager.parameters.get(parent_name)
+
+            # Create new instance, preserving original values for None fields (lazy loading pattern)
+            if original_instance and hasattr(original_instance, '__dataclass_fields__'):
+                # Merge: use nested_values for changed fields, original values for None fields
+                merged_values = {}
+                for field_name, field_value in nested_values.items():
+                    if field_value is not None:
+                        # User has explicitly set this value
+                        merged_values[field_name] = field_value
+                    else:
+                        # Preserve original value for unchanged field
+                        merged_values[field_name] = getattr(original_instance, field_name)
+                new_instance = nested_type(**merged_values)
+            else:
+                # Fallback: create with nested values as-is
+                new_instance = nested_type(**nested_values)
 
             # Update parent parameter in textual form manager
             self.textual_form_manager.update_parameter(parent_name, new_instance)
@@ -328,7 +401,11 @@ class ParameterFormManager(QWidget):
             widget.blockSignals(False)
         elif isinstance(widget, QLineEdit):
             widget.blockSignals(True)
-            widget.setText(str(value) if value is not None else "")
+            # Handle literal "None" string - should display as empty
+            if isinstance(value, str) and value == "None":
+                widget.setText("")
+            else:
+                widget.setText(str(value) if value is not None else "")
             widget.blockSignals(False)
         elif isinstance(widget, QComboBox):
             widget.blockSignals(True)
@@ -336,11 +413,7 @@ class ParameterFormManager(QWidget):
             if index >= 0:
                 widget.setCurrentIndex(index)
             widget.blockSignals(False)
-    
-    def get_current_values(self) -> Dict[str, Any]:
-        """Get current parameter values."""
-        return self.parameters.copy()
-    
+
     def update_parameter(self, param_name: str, value: Any):
         """Update parameter value programmatically."""
         self.textual_form_manager.update_parameter(param_name, value)
