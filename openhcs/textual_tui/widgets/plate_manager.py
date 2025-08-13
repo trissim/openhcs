@@ -1141,7 +1141,9 @@ class PlateManagerWidget(ButtonListWidget):
         representative_orchestrator = selected_orchestrators[0]
 
         if representative_orchestrator.pipeline_config:
-            # Use existing per-orchestrator config
+            # Use existing per-orchestrator config but ensure proper thread-local context
+            from openhcs.core.lazy_config import ensure_pipeline_config_context
+            ensure_pipeline_config_context(representative_orchestrator.get_effective_config())
             current_plate_config = representative_orchestrator.pipeline_config
         else:
             # Create new config with placeholders
@@ -1167,28 +1169,35 @@ class PlateManagerWidget(ButtonListWidget):
         """
         Handle global configuration editing - affects all orchestrators.
 
-        This maintains the existing global configuration workflow.
+        This maintains the existing global configuration workflow but uses lazy loading.
         """
         from openhcs.core.config import get_default_global_config
+        from openhcs.core.lazy_config import create_pipeline_config_for_editing, PipelineConfig
 
         # Get current global config from app or use default
         current_global_config = self.app.global_config or get_default_global_config()
 
-        def handle_global_config_save(new_config: GlobalPipelineConfig) -> None:
+        # Create lazy PipelineConfig for editing with proper thread-local context
+        current_lazy_config = create_pipeline_config_for_editing(current_global_config)
+
+        def handle_global_config_save(new_config: PipelineConfig) -> None:
             """Apply global configuration to all orchestrators."""
-            self.app.global_config = new_config  # Update app-level config
+            # Convert lazy PipelineConfig back to GlobalPipelineConfig
+            global_config = new_config.to_base_config()
+
+            self.app.global_config = global_config  # Update app-level config
 
             # Update thread-local storage for MaterializationPathConfig defaults
             from openhcs.core.config import set_current_pipeline_config
-            set_current_pipeline_config(new_config)
+            set_current_pipeline_config(global_config)
 
             for orchestrator in self.orchestrators.values():
-                asyncio.create_task(orchestrator.apply_new_global_config(new_config))
+                asyncio.create_task(orchestrator.apply_new_global_config(global_config))
             self.app.current_status = "Global configuration applied to all orchestrators"
 
         await self.window_service.open_config_window(
-            GlobalPipelineConfig,
-            current_global_config,
+            PipelineConfig,
+            current_lazy_config,
             on_save_callback=handle_global_config_save
         )
 

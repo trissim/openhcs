@@ -48,11 +48,18 @@ class ParameterFormAbstraction:
 def apply_lazy_default_placeholder(widget: Any, param_name: str, current_value: Any,
                                  parameter_types: Dict[str, Type], framework: str = 'textual') -> None:
     """Apply lazy default placeholder if value is None."""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"=== PLACEHOLDER DEBUG === {param_name}: value={current_value}, framework={framework}")
+
     if current_value is not None:
+        logger.info(f"Skipping placeholder for {param_name} - value is not None: {current_value}")
         return
 
     dataclass_type = _get_dataclass_type(parameter_types)
+    logger.info(f"Dataclass type for {param_name}: {dataclass_type}")
     if not dataclass_type:
+        logger.info(f"No dataclass type found for {param_name}")
         return
 
     try:
@@ -60,19 +67,26 @@ def apply_lazy_default_placeholder(widget: Any, param_name: str, current_value: 
         placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
             dataclass_type, param_name
         )
+        logger.info(f"Generated placeholder for {param_name}: {placeholder_text}")
         if placeholder_text:
             if framework == 'textual':
                 if hasattr(widget, 'placeholder'):
                     widget.placeholder = placeholder_text
+                    logger.info(f"Applied textual placeholder to {param_name}")
             elif framework == 'pyqt6':
                 try:
                     from .pyqt6_widget_strategies import PyQt6WidgetEnhancer
                     PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+                    logger.info(f"Applied PyQt6 placeholder to {param_name}")
                 except ImportError:
                     # PyQt6 not available - fallback to basic placeholder setting
                     if hasattr(widget, 'placeholder'):
                         widget.placeholder = placeholder_text
-    except Exception:
+                        logger.info(f"Applied fallback placeholder to {param_name}")
+        else:
+            logger.info(f"No placeholder text generated for {param_name}")
+    except Exception as e:
+        logger.error(f"Exception applying placeholder for {param_name}: {e}")
         pass
 
 

@@ -442,18 +442,55 @@ class PlateManagerWidget(QWidget):
         representative_orchestrator = selected_orchestrators[0]
 
         if representative_orchestrator.pipeline_config:
-            # Use existing per-orchestrator config
+            # Use existing per-orchestrator config but ensure proper thread-local context
+            from openhcs.core.lazy_config import ensure_pipeline_config_context
+            ensure_pipeline_config_context(representative_orchestrator.get_effective_config())
             current_plate_config = representative_orchestrator.pipeline_config
+
+            # DEBUG: Log what we're loading
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("=== LOADING EXISTING CONFIG ===")
+            logger.info(f"Pipeline config type: {type(current_plate_config)}")
+            logger.info(f"Has _resolve_field_value: {hasattr(current_plate_config, '_resolve_field_value')}")
+
+            # Log actual stored values vs resolved values for key fields
+            from dataclasses import fields
+            for field in fields(current_plate_config):
+                stored_val = object.__getattribute__(current_plate_config, field.name) if hasattr(current_plate_config, field.name) else "NOT_SET"
+                resolved_val = getattr(current_plate_config, field.name, "NOT_RESOLVED")
+                logger.info(f"Field {field.name}: stored={stored_val}, resolved={resolved_val}")
         else:
             # Create new config with placeholders
             from openhcs.core.lazy_config import create_pipeline_config_for_editing
+
+            # DEBUG: Log orchestrator global config for comparison
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("=== ORCHESTRATOR CONFIG DEBUG ===")
+            logger.info(f"Orchestrator global config: {representative_orchestrator.global_config}")
+            logger.info(f"Orchestrator global config type: {type(representative_orchestrator.global_config)}")
+
             current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
+
+            # DEBUG: Log new config creation
+            logger.info("=== CREATING NEW CONFIG ===")
+            logger.info(f"Pipeline config type: {type(current_plate_config)}")
+            logger.info(f"Has _resolve_field_value: {hasattr(current_plate_config, '_resolve_field_value')}")
 
         def handle_config_save(new_config: PipelineConfig) -> None:
             """Apply per-orchestrator configuration without global side effects."""
+            # DEBUG: Log what we're saving
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("=== APPLYING CONFIG TO ORCHESTRATOR ===")
+            logger.info(f"New config type: {type(new_config)}")
+            logger.info(f"New config: {new_config}")
+
             for orchestrator in selected_orchestrators:
                 # Direct synchronous call - no async needed
                 orchestrator.apply_pipeline_config(new_config)
+                logger.info(f"Applied to orchestrator. Stored pipeline_config: {orchestrator.pipeline_config}")
             count = len(selected_orchestrators)
             self.service_adapter.show_info_dialog(f"Per-orchestrator configuration applied to {count} orchestrator(s)")
 
@@ -491,32 +528,62 @@ class PlateManagerWidget(QWidget):
         """
         Handle global configuration editing - affects all orchestrators.
 
-        This maintains the existing global configuration workflow.
+        This maintains the existing global configuration workflow but uses lazy loading.
         """
         from openhcs.core.config import get_default_global_config
+        from openhcs.core.lazy_config import create_pipeline_config_for_editing, PipelineConfig
 
         # Get current global config from service adapter or use default
         current_global_config = self.service_adapter.get_global_config() or get_default_global_config()
 
-        def handle_global_config_save(new_config: GlobalPipelineConfig) -> None:
+        # DEBUG: Log what global config we're using
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("=== GLOBAL CONFIG DEBUG ===")
+        logger.info(f"Service adapter global config: {self.service_adapter.get_global_config()}")
+        logger.info(f"Final global config: {current_global_config}")
+        logger.info(f"Global config type: {type(current_global_config)}")
+
+        # Create lazy PipelineConfig for editing with proper thread-local context
+        logger.info("=== ABOUT TO CREATE LAZY CONFIG ===")
+        try:
+            current_lazy_config = create_pipeline_config_for_editing(current_global_config)
+            logger.info("=== LAZY CONFIG CREATED SUCCESSFULLY ===")
+            logger.info(f"Lazy config type: {type(current_lazy_config)}")
+
+            # Check stored values in the lazy config
+            from dataclasses import fields
+            for field in fields(current_lazy_config):
+                stored_val = object.__getattribute__(current_lazy_config, field.name) if hasattr(current_lazy_config, field.name) else "NOT_SET"
+                logger.info(f"Global lazy config stored {field.name}: {stored_val}")
+        except Exception as e:
+            logger.error(f"=== ERROR CREATING LAZY CONFIG === {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
+
+        def handle_global_config_save(new_config: PipelineConfig) -> None:
             """Apply global configuration to all orchestrators and save to cache."""
-            self.service_adapter.set_global_config(new_config)  # Update app-level config
+            # Convert lazy PipelineConfig back to GlobalPipelineConfig
+            global_config = new_config.to_base_config()
+
+            self.service_adapter.set_global_config(global_config)  # Update app-level config
 
             # Update thread-local storage for MaterializationPathConfig defaults
             from openhcs.core.config import set_current_pipeline_config
-            set_current_pipeline_config(new_config)
+            set_current_pipeline_config(global_config)
 
             # Save to cache for persistence between sessions
-            self._save_global_config_to_cache(new_config)
+            self._save_global_config_to_cache(global_config)
 
             for orchestrator in self.orchestrators.values():
-                self.run_async_action(orchestrator.apply_new_global_config(new_config))
+                self.run_async_action(orchestrator.apply_new_global_config(global_config))
             self.service_adapter.show_info_dialog("Global configuration applied to all orchestrators")
 
-        # Open configuration window using GlobalPipelineConfig
+        # Open configuration window using lazy PipelineConfig (not GlobalPipelineConfig)
         self._open_config_window(
-            config_class=GlobalPipelineConfig,
-            current_config=current_global_config,
+            config_class=PipelineConfig,
+            current_config=current_lazy_config,
             on_save_callback=handle_global_config_save
         )
 

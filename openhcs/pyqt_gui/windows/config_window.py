@@ -247,16 +247,31 @@ class ConfigWindow(QDialog):
         parameters = {}
         parameter_types = {}
 
+        logger.info("=== CONFIG WINDOW PARAMETER LOADING ===")
         for name, info in param_info.items():
-            # For lazy dataclasses, preserve None values for placeholder behavior
+            # For lazy dataclasses, handle Optional vs non-Optional fields differently
             if hasattr(current_config, '_resolve_field_value'):
-                # This is a lazy dataclass - use object.__getattribute__ to get stored value
-                current_value = object.__getattribute__(current_config, name) if hasattr(current_config, name) else info.default_value
+                # This is a lazy dataclass - check if field type is Optional
+                from typing import get_origin, get_args, Union
+                field_type = info.param_type
+                is_optional = (get_origin(field_type) is Union and
+                             type(None) in get_args(field_type))
+
+                if is_optional:
+                    # Optional field - use stored value (None) for placeholder behavior
+                    current_value = object.__getattribute__(current_config, name) if hasattr(current_config, name) else info.default_value
+                    logger.info(f"Lazy Optional field {name}: stored={current_value}, default={info.default_value}")
+                else:
+                    # Non-Optional field - use resolved value to show actual default
+                    current_value = getattr(current_config, name, info.default_value)
+                    logger.info(f"Lazy non-Optional field {name}: resolved={current_value}, default={info.default_value}")
             else:
                 # Regular dataclass - use normal getattr
                 current_value = getattr(current_config, name, info.default_value)
+                logger.info(f"Regular field {name}: value={current_value}")
             parameters[name] = current_value
             parameter_types[name] = info.param_type
+            logger.info(f"Final parameter value for {name}: {parameters[name]}")
 
         # Store parameter info and initialize tracking
         self.parameter_info = param_info
@@ -538,7 +553,8 @@ class ConfigWindow(QDialog):
         """Handle parameter change from form manager (mirrors Textual TUI)."""
         # Track user modifications for lazy config preservation
         self.modified_values[param_name] = value
-        logger.debug(f"Config parameter changed: {param_name} = {value}")
+        logger.info(f"=== PARAMETER CHANGED === {param_name} = {value}")
+        logger.info(f"Modified values now: {list(self.modified_values.keys())}")
     
     def load_current_values(self):
         """Load current configuration values into widgets."""
@@ -608,6 +624,12 @@ class ConfigWindow(QDialog):
             # Get current values from form manager
             form_values = self.form_manager.get_current_values()
 
+            logger.info("=== SAVE CONFIG DEBUG ===")
+            logger.info(f"Form values: {form_values}")
+            logger.info(f"Modified values: {self.modified_values}")
+            logger.info(f"Current config type: {type(self.current_config)}")
+            logger.info(f"Is lazy dataclass: {hasattr(self.current_config, '_resolve_field_value')}")
+
             # For lazy dataclasses, only include values that were actually modified
             # This preserves None values for unset fields to maintain lazy behavior
             if hasattr(self.current_config, '_resolve_field_value'):
@@ -616,15 +638,19 @@ class ConfigWindow(QDialog):
                 for field_name in form_values.keys():
                     stored_value = object.__getattribute__(self.current_config, field_name) if hasattr(self.current_config, field_name) else None
                     config_values[field_name] = stored_value
+                    logger.info(f"Field {field_name}: original stored = {stored_value}")
 
                 # Override with user-modified values
                 config_values.update(self.modified_values)
+                logger.info(f"Final config values to save: {config_values}")
             else:
                 # Regular dataclass - use all form values
                 config_values = form_values
+                logger.info(f"Using all form values (regular dataclass): {config_values}")
 
             # Create new config instance
             new_config = self.config_class(**config_values)
+            logger.info(f"Created new config: {new_config}")
 
             # Emit signal and call callback
             self.config_saved.emit(new_config)

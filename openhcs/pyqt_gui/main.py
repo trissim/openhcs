@@ -420,28 +420,34 @@ class OpenHCSMainWindow(QMainWindow):
                 pipeline_widget.save_pipeline()
     
     def show_configuration(self):
-        """Show configuration dialog."""
+        """Show configuration dialog with lazy loading support."""
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
-        from openhcs.core.config import GlobalPipelineConfig
+        from openhcs.core.lazy_config import create_pipeline_config_for_editing, PipelineConfig
+
+        # Create lazy PipelineConfig for editing with proper thread-local context
+        current_lazy_config = create_pipeline_config_for_editing(self.global_config)
 
         def handle_config_save(new_config):
             """Handle configuration save (mirrors Textual TUI pattern)."""
-            self.global_config = new_config
+            # Convert lazy PipelineConfig back to GlobalPipelineConfig
+            global_config = new_config.to_base_config()
+
+            self.global_config = global_config
 
             # Update thread-local storage for MaterializationPathConfig defaults
             from openhcs.core.config import set_current_pipeline_config
-            set_current_pipeline_config(new_config)
+            set_current_pipeline_config(global_config)
 
             # Emit signal for other components to update
-            self.config_changed.emit(new_config)
+            self.config_changed.emit(global_config)
 
             # Save config to cache for future sessions (matches TUI)
-            self._save_config_to_cache(new_config)
+            self._save_config_to_cache(global_config)
 
-        # Follow Textual TUI pattern: pass config_class and current_config separately
+        # Use lazy PipelineConfig instead of GlobalPipelineConfig for placeholder support
         config_window = ConfigWindow(
-            GlobalPipelineConfig,  # config_class
-            self.global_config,    # current_config
+            PipelineConfig,        # config_class (lazy wrapper)
+            current_lazy_config,   # current_config (lazy instance)
             handle_config_save,    # on_save_callback
             self.service_adapter.get_current_color_scheme(),  # color_scheme
             self                   # parent

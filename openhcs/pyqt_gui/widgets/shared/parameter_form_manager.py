@@ -96,15 +96,24 @@ class ParameterFormManager(QWidget):
         content_layout = QVBoxLayout(content_widget)
 
         # Build form fields using Textual TUI parameter types and logic
+        # Initialize logger for debug logging
+        import logging
+        logger = logging.getLogger(__name__)
+
         for param_name, param_type in self.textual_form_manager.parameter_types.items():
             current_value = self.textual_form_manager.parameters[param_name]
 
             # Handle Optional[dataclass] types with checkbox wrapper
             if self._is_optional_dataclass(param_type):
+                # DEBUG: Log Optional dataclass detection
+                logger.info(f"=== OPTIONAL DATACLASS DETECTED === {param_name}: {param_type}")
+
                 inner_dataclass_type = self._get_optional_inner_type(param_type)
                 field_widget = self._create_optional_dataclass_field(param_name, inner_dataclass_type, current_value)
             # Handle nested dataclasses (reuse Textual TUI logic)
             elif dataclasses.is_dataclass(param_type):
+                # DEBUG: Log regular dataclass detection
+                logger.info(f"=== REGULAR DATACLASS DETECTED === {param_name}: {param_type}")
                 field_widget = self._create_nested_dataclass_field(param_name, param_type, current_value)
             else:
                 field_widget = self._create_regular_parameter_field(param_name, param_type, current_value)

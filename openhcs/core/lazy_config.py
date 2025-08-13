@@ -43,12 +43,34 @@ class LazyDataclassFactory:
         if not is_dataclass(base_class):
             raise ValueError(f"{base_class} must be a dataclass")
 
-        # Introspect base class fields and make ALL fields lazy
+        # Introspect base class fields and preserve types for fields with defaults
         base_fields = fields(base_class)
-        lazy_field_definitions = [
-            (field.name, Union[field.type, type(None)], None)
-            for field in base_fields
-        ]
+        lazy_field_definitions = []
+
+        for field in base_fields:
+            # Check if field already has Optional type
+            origin = getattr(field.type, '__origin__', None)
+            is_already_optional = (origin is Union and
+                                 type(None) in getattr(field.type, '__args__', ()))
+
+            # Check if field has default value or factory
+            from dataclasses import MISSING
+            has_default = (field.default is not MISSING or
+                         field.default_factory is not MISSING)
+
+            if is_already_optional or not has_default:
+                # Field is already Optional or has no default - make it Optional for lazy loading
+                field_type = Union[field.type, type(None)] if not is_already_optional else field.type
+            else:
+                # Field has default - preserve original type (don't make Optional)
+                field_type = field.type
+
+            lazy_field_definitions.append((field.name, field_type, None))
+
+            # DEBUG: Log field type decisions
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"LAZY FIELD CREATION: {field.name} - original={field.type}, has_default={has_default}, final={field_type}")
 
         # Create new dataclass with all fields lazy - no base classes needed
         lazy_class = make_dataclass(
@@ -169,12 +191,34 @@ class LazyDataclassFactory:
             static_instance = base_class()
             return getattr(static_instance, field_name_to_resolve)
 
-        # Introspect base class fields and make ALL fields lazy
+        # Introspect base class fields and preserve types for fields with defaults
         base_fields = fields(base_class)
-        lazy_field_definitions = [
-            (field.name, Union[field.type, type(None)], None)
-            for field in base_fields
-        ]
+        lazy_field_definitions = []
+
+        for field in base_fields:
+            # Check if field already has Optional type
+            origin = getattr(field.type, '__origin__', None)
+            is_already_optional = (origin is Union and
+                                 type(None) in getattr(field.type, '__args__', ()))
+
+            # Check if field has default value or factory
+            from dataclasses import MISSING
+            has_default = (field.default is not MISSING or
+                         field.default_factory is not MISSING)
+
+            if is_already_optional or not has_default:
+                # Field is already Optional or has no default - make it Optional for lazy loading
+                field_type = Union[field.type, type(None)] if not is_already_optional else field.type
+            else:
+                # Field has default - preserve original type (don't make Optional)
+                field_type = field.type
+
+            lazy_field_definitions.append((field.name, field_type, None))
+
+            # DEBUG: Log field type decisions
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"THREAD-LOCAL LAZY FIELD: {field.name} - original={field.type}, has_default={has_default}, final={field_type}")
 
         # Create new dataclass with all fields lazy
         lazy_class = make_dataclass(
