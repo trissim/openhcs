@@ -11,7 +11,7 @@ Creates complete lazy dataclasses with bound methods - no mixin inheritance need
 # Standard library imports
 import logging
 import re
-from abc import ABC, abstractmethod
+# No ABC needed - using simple functions instead of strategy pattern
 from dataclasses import dataclass, fields, is_dataclass, make_dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
@@ -27,8 +27,6 @@ class LazyConfigConstants:
     THREAD_LOCAL_VALUE_ATTR: str = "value"
 
     # Class names for backward compatibility
-    GLOBAL_PIPELINE_CONFIG_NAME: str = "GlobalPipelineConfig"
-    STEP_MATERIALIZATION_CONFIG_NAME: str = "StepMaterializationConfig"
     PIPELINE_CONFIG_NAME: str = "PipelineConfig"
     LAZY_STEP_MATERIALIZATION_CONFIG_NAME: str = "LazyStepMaterializationConfig"
 
@@ -42,10 +40,8 @@ class LazyConfigConstants:
     # Debug message templates
     LAZY_FIELD_DEBUG_TEMPLATE: str = "LAZY FIELD CREATION: {field_name} - original={original_type}, has_default={has_default}, final={final_type}"
     THREAD_LOCAL_FIELD_DEBUG_TEMPLATE: str = "THREAD-LOCAL LAZY FIELD: {field_name} - original={original_type}, has_default={has_default}, final={final_type}"
-    DEPRECATED_METHOD_WARNING_TEMPLATE: str = "Using deprecated method for {class_name}. Please migrate to make_lazy_thread_local() with explicit field_path."
 
-    # Dataclass field constants
-    MISSING_IMPORT_NAME: str = "MISSING"
+    # Class name generation
     LAZY_CLASS_NAME_PREFIX: str = "Lazy"
 
 
@@ -64,58 +60,7 @@ def _get_config_imports() -> Tuple[Any, Callable[[Any], None], Type, Type]:
     return _current_pipeline_config, set_current_pipeline_config, GlobalPipelineConfig, StepMaterializationConfig
 
 
-class ResolutionStrategy(ABC):
-    """
-    Abstract base class for lazy dataclass field resolution strategies.
-
-    Defines the interface for creating field value resolvers that determine
-    how lazy dataclass fields are resolved when accessed.
-    """
-
-    @abstractmethod
-    def create_resolver(self, base_class: Type, **kwargs: Any) -> Callable[[str], Any]:
-        """Create a resolver function for the given base class and parameters."""
-        pass
-
-
-class StaticResolutionStrategy(ResolutionStrategy):
-    """
-    Resolution strategy that creates new instances for each field access.
-
-    Example:
-        strategy = StaticResolutionStrategy()
-        resolver = strategy.create_resolver(MyConfig, defaults_source=MyConfig)
-    """
-
-    def create_resolver(self, base_class: Type, defaults_source: Union[Type, Any], **kwargs: Any) -> Callable[[str], Any]:
-        """Create resolver that uses static instantiation or instance values."""
-        if isinstance(defaults_source, type):
-            # Static resolution: instantiate class for each field access
-            return lambda field_name: getattr(defaults_source(), field_name)
-        else:
-            # Dynamic resolution: use instance values directly
-            return lambda field_name: getattr(defaults_source, field_name)
-
-
-class ThreadLocalResolutionStrategy(ResolutionStrategy):
-    """Resolution strategy that resolves from thread-local storage using field paths."""
-
-    def create_resolver(self, base_class: Type, field_path: Optional[str] = None, **kwargs: Any) -> Callable[[str], Any]:
-        """Create resolver that uses thread-local storage with explicit field paths."""
-        def unified_thread_local_resolver(field_name_to_resolve: str) -> Any:
-            """Resolve field value from thread-local storage using explicit field path."""
-            # Get config imports with delayed loading
-            _current_pipeline_config, _, _, _ = _get_config_imports()
-
-            # Get thread-local instance using explicit field path
-            thread_local_instance = FieldPathNavigator.navigate_to_instance(
-                _current_pipeline_config, field_path
-            )
-
-            # Confidently expect thread-local instance to exist
-            return getattr(thread_local_instance, field_name_to_resolve)
-
-        return unified_thread_local_resolver
+# No strategy pattern needed - just use instance provider functions directly
 
 
 class FieldPathNavigator:
@@ -250,22 +195,24 @@ class LazyDataclassFactory:
     @staticmethod
     def _create_lazy_dataclass_unified(
         base_class: Type,
-        strategy: ResolutionStrategy,
+        instance_provider: Callable[[], Any],
         lazy_class_name: str,
-        debug_template: str,
-        **strategy_kwargs: Any
+        debug_template: str
     ) -> Type:
         """
         Unified lazy dataclass creation workflow.
 
         This is the core method that all other factory methods delegate to,
-        implementing the Template Method pattern with pluggable resolution strategies.
+        using a simple instance provider function for resolution.
         """
         if not is_dataclass(base_class):
             raise ValueError(f"{base_class} must be a dataclass")
 
-        # Create resolver using strategy
-        resolver = strategy.create_resolver(base_class, **strategy_kwargs)
+        # Create resolver directly from instance provider - no strategy pattern needed
+        def resolver(field_name: str) -> Any:
+            """Resolve field value from instance provided by instance_provider."""
+            instance = instance_provider()
+            return getattr(instance, field_name)
 
         # Introspect fields using unified logic
         lazy_field_definitions = LazyDataclassFactory._introspect_dataclass_fields(
@@ -305,15 +252,19 @@ class LazyDataclassFactory:
         # Determine base class from defaults_source
         base_class = defaults_source if isinstance(defaults_source, type) else type(defaults_source)
 
-        # Use static resolution strategy
-        strategy = StaticResolutionStrategy()
+        # Create instance provider for static resolution
+        if isinstance(defaults_source, type):
+            # Static resolution: instantiate class for each field access
+            instance_provider = lambda: defaults_source()
+        else:
+            # Dynamic resolution: use instance values directly
+            instance_provider = lambda: defaults_source
 
         return LazyDataclassFactory._create_lazy_dataclass_unified(
             base_class=base_class,
-            strategy=strategy,
+            instance_provider=instance_provider,
             lazy_class_name=lazy_class_name,
-            debug_template=CONSTANTS.LAZY_FIELD_DEBUG_TEMPLATE,
-            defaults_source=defaults_source
+            debug_template=CONSTANTS.LAZY_FIELD_DEBUG_TEMPLATE
         )
 
     @staticmethod
@@ -354,15 +305,17 @@ class LazyDataclassFactory:
         if lazy_class_name is None:
             lazy_class_name = f"{CONSTANTS.LAZY_CLASS_NAME_PREFIX}{base_class.__name__}"
 
-        # Use thread-local resolution strategy
-        strategy = ThreadLocalResolutionStrategy()
+        # Create instance provider for thread-local resolution
+        def thread_local_instance_provider() -> Any:
+            """Get instance from thread-local storage using field path."""
+            _current_pipeline_config, _, _, _ = _get_config_imports()
+            return FieldPathNavigator.navigate_to_instance(_current_pipeline_config, field_path)
 
         return LazyDataclassFactory._create_lazy_dataclass_unified(
             base_class=base_class,
-            strategy=strategy,
+            instance_provider=thread_local_instance_provider,
             lazy_class_name=lazy_class_name,
-            debug_template=CONSTANTS.THREAD_LOCAL_FIELD_DEBUG_TEMPLATE,
-            field_path=field_path
+            debug_template=CONSTANTS.THREAD_LOCAL_FIELD_DEBUG_TEMPLATE
         )
 
     # Deprecated methods removed - use make_lazy_thread_local() with explicit field_path
