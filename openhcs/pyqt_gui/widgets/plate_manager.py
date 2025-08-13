@@ -438,11 +438,16 @@ class PlateManagerWidget(QWidget):
             self.service_adapter.show_error_dialog("No initialized orchestrators selected.")
             return
 
-        # Create PipelineConfig for editing with proper thread-local context
-        # This ensures form shows "Pipeline default: {value}" placeholders instead of resolved values
+        # Load existing config or create new one for editing
         representative_orchestrator = selected_orchestrators[0]
-        from openhcs.core.lazy_config import create_pipeline_config_for_editing
-        current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
+
+        if representative_orchestrator.pipeline_config:
+            # Use existing per-orchestrator config
+            current_plate_config = representative_orchestrator.pipeline_config
+        else:
+            # Create new config with placeholders
+            from openhcs.core.lazy_config import create_pipeline_config_for_editing
+            current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
 
         def handle_config_save(new_config: PipelineConfig) -> None:
             """Apply per-orchestrator configuration without global side effects."""

@@ -536,8 +536,8 @@ class ConfigWindow(QDialog):
 
     def _handle_parameter_change(self, param_name: str, value):
         """Handle parameter change from form manager (mirrors Textual TUI)."""
-        # DON'T mutate the original config - just log the change
-        # The form manager keeps the values internally like Textual TUI
+        # Track user modifications for lazy config preservation
+        self.modified_values[param_name] = value
         logger.debug(f"Config parameter changed: {param_name} = {value}")
     
     def load_current_values(self):
@@ -603,13 +603,28 @@ class ConfigWindow(QDialog):
         logger.debug("Reset all parameters to materialized defaults")
 
     def save_config(self):
-        """Save the configuration using form manager values (mirrors Textual TUI)."""
+        """Save the configuration preserving lazy behavior for unset fields."""
         try:
             # Get current values from form manager
             form_values = self.form_manager.get_current_values()
 
+            # For lazy dataclasses, only include values that were actually modified
+            # This preserves None values for unset fields to maintain lazy behavior
+            if hasattr(self.current_config, '_resolve_field_value'):
+                # Start with original stored values (preserving None for unset fields)
+                config_values = {}
+                for field_name in form_values.keys():
+                    stored_value = object.__getattribute__(self.current_config, field_name) if hasattr(self.current_config, field_name) else None
+                    config_values[field_name] = stored_value
+
+                # Override with user-modified values
+                config_values.update(self.modified_values)
+            else:
+                # Regular dataclass - use all form values
+                config_values = form_values
+
             # Create new config instance
-            new_config = self.config_class(**form_values)
+            new_config = self.config_class(**config_values)
 
             # Emit signal and call callback
             self.config_saved.emit(new_config)
