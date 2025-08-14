@@ -586,7 +586,8 @@ class DualEditorWindow(QDialog):
         """Save the edited step."""
         try:
             # Validate step
-            if not hasattr(self.editing_step, 'name') or not self.editing_step.name.strip():
+            step_name = getattr(self.editing_step, 'name', None)
+            if not step_name or not step_name.strip():
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Validation Error", "Step name cannot be empty.")
                 return

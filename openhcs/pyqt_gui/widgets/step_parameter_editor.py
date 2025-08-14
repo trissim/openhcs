@@ -172,7 +172,7 @@ class StepParameterEditorWidget(QScrollArea):
 
         except Exception as e:
             logger.error(f"Error updating step parameter {param_name}: {e}")
-    
+
     def load_step_settings(self):
         """Load step settings from .step file (mirrors Textual TUI)."""
         if not self.service_adapter:
@@ -231,26 +231,7 @@ class StepParameterEditorWidget(QScrollArea):
             if self.service_adapter:
                 self.service_adapter.show_error_dialog(f"Failed to save step settings: {e}")
     
-    def reset_parameter(self, param_name: str):
-        """Reset parameter to default value."""
-        if param_name in self.param_defaults:
-            default_value = self.param_defaults[param_name]
-            setattr(self.step, param_name, default_value)
-            
-            # Update form manager
-            self.form_manager.update_parameter(param_name, default_value)
-            
-            self.step_parameter_changed.emit()
-            logger.debug(f"Reset parameter {param_name} to default: {default_value}")
-    
-    def reset_all_parameters(self):
-        """Reset all parameters to default values."""
-        for param_name, default_value in self.param_defaults.items():
-            setattr(self.step, param_name, default_value)
-            self.form_manager.update_parameter(param_name, default_value)
-        
-        self.step_parameter_changed.emit()
-        logger.debug("Reset all step parameters to defaults")
+
     
     def get_current_step(self) -> FunctionStep:
         """Get the current step with all parameter values."""
