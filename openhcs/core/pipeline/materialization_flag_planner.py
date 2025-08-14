@@ -57,25 +57,6 @@ class MaterializationFlagPlanner:
                 if READ_BACKEND not in step_plan:
                     step_plan[READ_BACKEND] = Backend.MEMORY.value
 
-            # === ZARR PATH VALIDATION ===
-            # If reading with zarr backend, ensure the input path contains .zarr
-            if step_plan.get(READ_BACKEND) == Backend.ZARR.value:
-                input_dir = step_plan.get('input_dir')
-                if input_dir and '.zarr' not in str(input_dir):
-                    # Convert path to zarr format by adding .zarr suffix to the appropriate component
-                    from pathlib import Path
-                    input_path = Path(input_dir)
-
-                    # If this is a plate directory, convert it to the zarr store path inside the plate
-                    if vfs_config.materialization_backend == MaterializationBackend.ZARR:
-                        path_config = context.get_path_planning_config()
-                        # Create zarr store inside the plate directory: plate_dir/sub_dir.zarr
-                        zarr_path = input_path / f"{path_config.sub_dir}.zarr"
-                        step_plan['input_dir'] = str(zarr_path)
-                        logger.info(f"Zarr read backend: redirected input_dir from {input_dir} to {zarr_path}")
-                    else:
-                        logger.warning(f"Step {step.name} has zarr read backend but input_dir {input_dir} doesn't contain .zarr")
-
             # === WRITE BACKEND SELECTION ===
             # Check if this step will use zarr (has zarr_config set by compiler)
             will_use_zarr = step_plan.get("zarr_config") is not None
@@ -87,6 +68,10 @@ class MaterializationFlagPlanner:
                 step_plan[WRITE_BACKEND] = vfs_config.materialization_backend.value
             else:  # Other steps - write to memory
                 step_plan[WRITE_BACKEND] = Backend.MEMORY.value
+
+            # === PER-STEP MATERIALIZATION BACKEND SELECTION ===
+            if "materialized_output_dir" in step_plan:
+                step_plan["materialized_backend"] = vfs_config.materialization_backend.value
 
     @staticmethod
     def _get_first_step_read_backend(context: ProcessingContext) -> str:

@@ -114,6 +114,10 @@ class TypedWidgetFactory:
                 # Recursively handle the resolved type
                 return self.create_widget(param_name, resolved_type, current_value)
 
+            # Special case: if current_value is None for basic types, use placeholder widget
+            if current_value is None and resolved_type in [int, float, bool]:
+                return self._create_placeholder_widget(param_name, resolved_type)
+
             # Handle enum types
             if self._is_enum_type(param_type):
                 return self._create_enum_widget(param_type, current_value)
@@ -122,6 +126,12 @@ class TypedWidgetFactory:
             if self._is_list_of_enums(param_type):
                 enum_type = self._get_enum_from_list(param_type)
                 return self._create_enum_widget(enum_type, current_value)
+
+            # Handle dataclass types (missing from original implementation!)
+            if self._is_dataclass_type(param_type):
+                # Return None to indicate this should be handled by the parameter form manager
+                # The parameter form manager will detect the dataclass and create nested widgets
+                return None
 
             # Handle basic types
             if param_type in self.widget_creators:
@@ -275,11 +285,16 @@ class TypedWidgetFactory:
     def _is_enum_type(self, param_type: Type) -> bool:
         """Check if type is an enum."""
         return any(base.__name__ == 'Enum' for base in param_type.__bases__)
+
+    def _is_dataclass_type(self, param_type: Type) -> bool:
+        """Check if type is a dataclass."""
+        import dataclasses
+        return dataclasses.is_dataclass(param_type)
     
     def _create_bool_widget(self, param_name: str, current_value: Any) -> QCheckBox:
         """Create checkbox widget for boolean parameters."""
         widget = QCheckBox()
-        widget.setChecked(bool(current_value))
+        widget.setChecked(bool(current_value) if current_value is not None else False)
         widget.setStyleSheet(f"""
             QCheckBox {{
                 color: {self.color_scheme.to_hex(self.color_scheme.text_primary)};
@@ -360,7 +375,40 @@ class TypedWidgetFactory:
             }}
         """)
         return widget
-    
+
+    def _create_placeholder_widget(self, param_name: str, param_type: Type) -> QLineEdit:
+        """Create a QLineEdit widget for None values that will show placeholder text."""
+        widget = QLineEdit()
+        widget.setText("")  # Empty text - placeholder will be applied later
+
+        # Store the original type so we can convert back when user enters a value
+        widget.setProperty("original_type", param_type)
+        widget.setProperty("is_placeholder_widget", True)
+
+        # Add helpful placeholder text that will be overridden by the placeholder system
+        if param_type == int:
+            widget.setPlaceholderText("Enter integer value...")
+        elif param_type == float:
+            widget.setPlaceholderText("Enter decimal value...")
+        elif param_type == bool:
+            widget.setPlaceholderText("Enter true/false...")
+
+        widget.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.input_bg)};
+                color: {self.color_scheme.to_hex(self.color_scheme.input_text)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_border)};
+                border-radius: 3px;
+                padding: 5px;
+                font-style: italic;  /* Italic to indicate placeholder state */
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.input_focus_border)};
+                font-style: normal;  /* Normal when focused */
+            }}
+        """)
+        return widget
+
     def _create_list_widget(self, param_name: str, current_value: Any) -> QTextEdit:
         """Create text edit widget for list parameters."""
         widget = QTextEdit()

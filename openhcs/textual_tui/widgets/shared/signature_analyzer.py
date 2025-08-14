@@ -5,6 +5,21 @@ import inspect
 import dataclasses
 import re
 from typing import Any, Dict, Callable, get_type_hints, NamedTuple, Union, Optional, Type
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class AnalysisConstants:
+    """Constants for signature analysis to eliminate magic strings."""
+    INIT_METHOD_SUFFIX: str = ".__init__"
+    SELF_PARAM: str = "self"
+    CLS_PARAM: str = "cls"
+    DUNDER_PREFIX: str = "__"
+    DUNDER_SUFFIX: str = "__"
+
+
+# Create constants instance for use throughout the module
+CONSTANTS = AnalysisConstants()
+
 
 class ParameterInfo(NamedTuple):
     """Information about a parameter."""
@@ -269,11 +284,15 @@ class SignatureAnalyzer:
     """Universal analyzer for extracting parameter information from any target."""
     
     @staticmethod
-    def analyze(target: Union[Callable, Type, object]) -> Dict[str, ParameterInfo]:
+    def analyze(target: Union[Callable, Type, object], skip_first_param: Optional[bool] = None) -> Dict[str, ParameterInfo]:
         """Extract parameter information from any target: function, constructor, dataclass, or instance.
 
         Args:
             target: Function, constructor, dataclass type, or dataclass instance
+            skip_first_param: Whether to skip the first parameter (after self/cls).
+                            If None, auto-detects based on context:
+                            - False for step constructors (all params are configuration)
+                            - True for image processing functions (first param is image data)
 
         Returns:
             Dict mapping parameter names to ParameterInfo
@@ -287,67 +306,102 @@ class SignatureAnalyzer:
                 return SignatureAnalyzer._analyze_dataclass(target)
             else:
                 # Try to analyze constructor
-                return SignatureAnalyzer._analyze_callable(target.__init__)
+                return SignatureAnalyzer._analyze_callable(target.__init__, skip_first_param)
         elif dataclasses.is_dataclass(target):
             # Instance of dataclass
             return SignatureAnalyzer._analyze_dataclass_instance(target)
         else:
             # Function, method, or other callable
-            return SignatureAnalyzer._analyze_callable(target)
+            return SignatureAnalyzer._analyze_callable(target, skip_first_param)
     
     @staticmethod
-    def _analyze_callable(callable_obj: Callable) -> Dict[str, ParameterInfo]:
-        """Extract parameter information from callable signature."""
+    def _analyze_callable(callable_obj: Callable, skip_first_param: Optional[bool] = None) -> Dict[str, ParameterInfo]:
+        """Extract parameter information from callable signature.
+
+        Args:
+            callable_obj: The callable to analyze
+            skip_first_param: Whether to skip the first parameter (after self/cls).
+                            If None, auto-detects based on context.
+        """
+        sig = inspect.signature(callable_obj)
+        type_hints = get_type_hints(callable_obj)
+
+        # Extract docstring information (with fallback for robustness)
         try:
-            sig = inspect.signature(callable_obj)
-            type_hints = get_type_hints(callable_obj)
-
-            # Extract docstring information
             docstring_info = DocstringExtractor.extract(callable_obj)
+        except:
+            docstring_info = None
 
-            parameters = {}
+        if not docstring_info:
+            docstring_info = DocstringInfo()
 
-            param_list = list(sig.parameters.items())
+        parameters = {}
+        param_list = list(sig.parameters.items())
 
-            for i, (param_name, param) in enumerate(param_list):
-                # Skip self, cls - parent can filter more if needed
-                if param_name in ('self', 'cls'):
-                    continue
+        # Determine skip behavior: explicit parameter overrides auto-detection
+        should_skip_first_param = (
+            skip_first_param if skip_first_param is not None
+            else SignatureAnalyzer._should_skip_first_parameter(callable_obj)
+        )
 
-                # Skip the first parameter (after self/cls) - this is always the image/tensor
-                # that gets passed automatically by the processing system
-                if i == 0 or (i == 1 and param_list[0][0] in ('self', 'cls')):
-                    continue
+        first_param_after_self_skipped = False
 
-                # Handle **kwargs parameters - try to extract original function signature
-                if param.kind == inspect.Parameter.VAR_KEYWORD:
-                    # Try to find the original function if this is a wrapper
-                    original_params = SignatureAnalyzer._extract_original_parameters(callable_obj)
-                    if original_params:
-                        parameters.update(original_params)
-                    continue
+        for i, (param_name, param) in enumerate(param_list):
+            # Always skip self/cls
+            if param_name in (CONSTANTS.SELF_PARAM, CONSTANTS.CLS_PARAM):
+                continue
 
-                from typing import Any
-                param_type = type_hints.get(param_name, Any)
-                default_value = param.default if param.default != inspect.Parameter.empty else None
-                is_required = param.default == inspect.Parameter.empty
+            # Always skip dunder parameters (internal/reserved fields)
+            if param_name.startswith(CONSTANTS.DUNDER_PREFIX) and param_name.endswith(CONSTANTS.DUNDER_SUFFIX):
+                continue
 
-                # Get parameter description from docstring
-                param_description = docstring_info.parameters.get(param_name)
+            # Skip first parameter for image processing functions only
+            if should_skip_first_param and not first_param_after_self_skipped:
+                first_param_after_self_skipped = True
+                continue
 
-                parameters[param_name] = ParameterInfo(
-                    name=param_name,
-                    param_type=param_type,
-                    default_value=default_value,
-                    is_required=is_required,
-                    description=param_description
-                )
+            # Handle **kwargs parameters - try to extract original function signature
+            if param.kind == inspect.Parameter.VAR_KEYWORD:
+                # Try to find the original function if this is a wrapper
+                original_params = SignatureAnalyzer._extract_original_parameters(callable_obj)
+                if original_params:
+                    parameters.update(original_params)
+                continue 
 
-            return parameters
-            
-        except Exception:
-            # Return empty dict on error
-            return {}
+            from typing import Any
+            param_type = type_hints.get(param_name, Any)
+            default_value = param.default if param.default != inspect.Parameter.empty else None
+            is_required = param.default == inspect.Parameter.empty
+
+            # Get parameter description from docstring
+            param_description = docstring_info.parameters.get(param_name) if docstring_info else None
+
+            parameters[param_name] = ParameterInfo(
+                name=param_name,
+                param_type=param_type,
+                default_value=default_value,
+                is_required=is_required,
+                description=param_description
+            )
+
+        return parameters
+
+    @staticmethod
+    def _should_skip_first_parameter(callable_obj: Callable) -> bool:
+        """
+        Determine if the first parameter should be skipped for any callable.
+
+        Universal logic that works with any object:
+        - Constructors (__init__ methods): don't skip (all params are configuration)
+        - All other callables: skip first param (assume it's data being processed)
+        """
+        # Check if this is any __init__ method (constructor)
+        if (hasattr(callable_obj, '__qualname__') and
+            callable_obj.__qualname__.endswith(CONSTANTS.INIT_METHOD_SUFFIX)):
+            return False
+
+        # Everything else: skip first parameter
+        return True
 
     @staticmethod
     def _extract_original_parameters(callable_obj: Callable) -> Dict[str, ParameterInfo]:
@@ -561,9 +615,17 @@ class SignatureAnalyzer:
             parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
 
             # Update default values with current instance values
+            # For lazy dataclasses, use object.__getattribute__ to preserve None values for placeholders
             for name, param_info in parameters.items():
                 if hasattr(instance, name):
-                    current_value = getattr(instance, name)
+                    # Check if this is a lazy dataclass that should preserve None values
+                    if hasattr(instance, '_resolve_field_value'):
+                        # This is a lazy dataclass - use object.__getattribute__ to get stored value
+                        current_value = object.__getattribute__(instance, name)
+                    else:
+                        # Regular dataclass - use normal getattr
+                        current_value = getattr(instance, name)
+
                     # Create new ParameterInfo with current value as default
                     parameters[name] = ParameterInfo(
                         name=param_info.name,
@@ -578,28 +640,4 @@ class SignatureAnalyzer:
         except Exception:
             return {}
 
-    @staticmethod
-    def _analyze_dataclass_instance(instance: object) -> Dict[str, ParameterInfo]:
-        """Extract parameter information from a dataclass instance."""
-        try:
-            # Get the type and analyze it
-            dataclass_type = type(instance)
-            parameters = SignatureAnalyzer._analyze_dataclass(dataclass_type)
-
-            # Update default values with current instance values
-            for name, param_info in parameters.items():
-                if hasattr(instance, name):
-                    current_value = getattr(instance, name)
-                    # Create new ParameterInfo with current value as default
-                    parameters[name] = ParameterInfo(
-                        name=param_info.name,
-                        param_type=param_info.param_type,
-                        default_value=current_value,
-                        is_required=param_info.is_required,
-                        description=param_info.description
-                    )
-
-            return parameters
-
-        except Exception:
-            return {}
+    # Duplicate method removed - using the fixed version above

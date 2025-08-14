@@ -24,7 +24,8 @@ class ConfigWindow(BaseOpenHCSWindow):
     """
 
     def __init__(self, config_class: Type, current_config: Any,
-                 on_save_callback: Optional[Callable] = None, **kwargs):
+                 on_save_callback: Optional[Callable] = None,
+                 is_global_config_editing: bool = False, **kwargs):
         """
         Initialize config window.
 
@@ -45,7 +46,7 @@ class ConfigWindow(BaseOpenHCSWindow):
         self.on_save_callback = on_save_callback
 
         # Create the form widget using unified parameter analysis
-        self.config_form = ConfigFormWidget.from_dataclass(config_class, current_config)
+        self.config_form = ConfigFormWidget.from_dataclass(config_class, current_config, is_global_config_editing=is_global_config_editing)
 
     def calculate_content_height(self) -> int:
         """Calculate dialog height based on number of fields."""
@@ -78,6 +79,7 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         # Buttons
         with Horizontal(classes="dialog-buttons"):
+            yield Button("Reset to Defaults", id="reset_to_defaults", compact=True)
             yield Button("Save", id="save", compact=True)
             yield Button("Cancel", id="cancel", compact=True)
 
@@ -107,6 +109,8 @@ class ConfigWindow(BaseOpenHCSWindow):
             self._handle_save()
         elif event.button.id == "cancel":
             self.close_window()
+        elif event.button.id == "reset_to_defaults":
+            self._handle_reset_to_defaults()
 
     def _handle_save(self):
         """Handle save button - reuse existing logic from ConfigDialogScreen."""
@@ -122,4 +126,18 @@ class ConfigWindow(BaseOpenHCSWindow):
 
         self.close_window()
 
+    def _handle_reset_to_defaults(self):
+        """Reset all parameters using individual field reset logic for consistency."""
+        # Use the same logic as individual reset buttons to ensure consistency
+        # This delegates to the form manager's lazy-aware reset logic
+        if hasattr(self.config_form.form_manager, 'reset_all_parameters'):
+            # Use the form manager's lazy-aware reset_all_parameters method
+            self.config_form.form_manager.reset_all_parameters()
+        else:
+            # Fallback: reset each parameter individually
+            from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+            param_info = SignatureAnalyzer.analyze(self.config_class)
+            for param_name in param_info.keys():
+                if hasattr(self.config_form.form_manager, 'reset_parameter'):
+                    self.config_form.form_manager.reset_parameter(param_name)
 

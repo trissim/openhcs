@@ -175,14 +175,21 @@ class StartMenuDropdown(ModalScreen[None]):
         from textual.css.query import NoMatches
 
         def handle_config_save(new_config):
+            # new_config is already GlobalPipelineConfig (concrete dataclass)
+            global_config = new_config
+
             # Apply config changes to app
-            self.app.global_config = new_config
+            self.app.global_config = global_config
+
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_pipeline_config
+            set_current_pipeline_config(global_config)
 
             # Propagate config changes to all existing orchestrators and plate manager
-            self._propagate_global_config_to_orchestrators(new_config)
+            self._propagate_global_config_to_orchestrators(global_config)
 
             # Save config to cache for future sessions
-            self._save_config_to_cache(new_config)
+            self._save_config_to_cache(global_config)
 
             logger.info("Configuration updated and applied from start menu")
 
@@ -196,7 +203,8 @@ class StartMenuDropdown(ModalScreen[None]):
             window = ConfigWindow(
                 GlobalPipelineConfig,
                 self.app.global_config,
-                on_save_callback=handle_config_save
+                on_save_callback=handle_config_save,
+                is_global_config_editing=True
             )
             await self.app.mount(window)
             window.open_state = True

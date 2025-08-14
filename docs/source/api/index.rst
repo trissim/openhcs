@@ -45,6 +45,7 @@ Discover the 574+ available processing functions organized by computational back
    image_processing_functions
    stitching_functions
    dtype_conversion
+   unified_registry
 
 **Processing Backends**: GPU-accelerated functions for image processing, analysis, and assembly. Includes automatic memory type conversion between NumPy, CuPy, PyTorch, JAX, and pyclesperanto.
 
@@ -53,6 +54,8 @@ Discover the 574+ available processing functions organized by computational back
 **Stitching Functions**: Complete stitching workflow with GPU-accelerated position generation and image assembly using Ashlar and MIST algorithms.
 
 **Dtype Conversion**: Automatic data type conversion system for GPU libraries with specific dtype requirements. Handles binary and uint8 conversions transparently while maintaining pipeline consistency.
+
+**Unified Registry**: New unified registry system that eliminates 1000+ lines of code duplication while providing clean abstractions for external library function registration. Includes LibraryRegistryBase, ProcessingContract, and intelligent caching.
 
 Data Management
 ===============

@@ -46,7 +46,7 @@ class SyntheticMicroscopyGenerator:
                  stage_error_px=2,
                  wavelengths=2,
                  z_stack_levels=1,
-                 z_step_size=1,
+                 z_step_size=0.1,  # Reduced by 10x for more subtle blur effect
                  num_cells=50,
                  cell_size_range=(10, 30),
                  cell_eccentricity_range=(0.1, 0.5),
@@ -329,13 +329,6 @@ class SyntheticMicroscopyGenerator:
         # Get cells for this well and wavelength
         cells = self.cell_params[key]
 
-        # Get background intensity from wavelength_backgrounds or use default
-        w_background = self.wavelength_backgrounds.get(wavelength_idx, self.background_intensity)
-
-        # Create empty image with wavelength-specific background intensity
-        # Ensure image is 2D (not 3D) to avoid shape mismatch in ashlar
-        image = np.ones(self.image_size, dtype=np.uint16) * w_background
-
         # Get cell parameters for this well and wavelength
         cells = self.cell_params[key]
 
@@ -347,10 +340,20 @@ class SyntheticMicroscopyGenerator:
         else:
             z_factor = 1.0
 
-        # Draw each cell
+        # STEP 1: Create uniform background
+        # Get background intensity from wavelength_backgrounds or use default
+        w_background = self.wavelength_backgrounds.get(wavelength_idx, self.background_intensity)
+        image = np.ones(self.image_size, dtype=np.uint16) * w_background
+
+        # STEP 2: Create cells on black background for blur processing
+        cell_image = np.zeros(self.image_size, dtype=np.uint16)
+
+        # Draw each cell on black background
         for cell in cells:
             # Adjust intensity based on Z level (cells are brightest at focus)
-            intensity = cell['intensity'] * z_factor
+            # Keep cells visible even when out of focus (minimum 30% intensity)
+            intensity_factor = 0.3 + 0.7 * z_factor  # Range from 0.3 to 1.0
+            intensity = cell['intensity'] * intensity_factor
 
             # Calculate ellipse parameters
             a = cell['size']
@@ -364,26 +367,36 @@ class SyntheticMicroscopyGenerator:
                 shape=self.image_size
             )
 
-            # Add cell to image
-            image[rr, cc] = intensity
+            # Add cell to black background
+            cell_image[rr, cc] = intensity
 
-        # Add noise
-        # Use wavelength-specific noise level if provided
-        w_noise_level = w_params.get('noise_level', self.noise_level)
-        noise = np.random.normal(0, w_noise_level, self.image_size)
-        image = image + noise
-
-        # Apply blur based on Z distance from focus
+        # STEP 3: Apply blur to cells on black background (optical defocus)
         if self.z_stack_levels > 1:
             # More blur for Z levels further from center
-            # Scale blur by z_step_size to create more realistic Z-stack effect
-            # z_step_size controls the amount of blur between Z-steps
-            blur_sigma = (self.z_step_size/500) * (1.0 + 2.0 * (1.0 - z_factor))
+            # Use a fixed scaling factor that works well regardless of z_step_size
+            # Base blur sigma ranges from 0.5 (in focus) to 2.0 (out of focus)
+            blur_sigma = 0.5 + 1.5 * (1.0 - z_factor)
             print(f"  Z-level {z_level}: blur_sigma={blur_sigma:.2f} (z_factor={z_factor:.2f}, z_step_size={self.z_step_size})")
-            image = filters.gaussian(image, sigma=blur_sigma, preserve_range=True)
+            if blur_sigma > 0.1:  # Only apply blur if sigma is meaningful
+                # Convert to float for processing, then back to preserve range properly
+                cell_image_float = cell_image.astype(np.float64)
+                cell_image_float = filters.gaussian(cell_image_float, sigma=blur_sigma)
+                cell_image = cell_image_float.astype(np.uint16)
 
-        # Ensure valid pixel values
+        # STEP 4: Add blurred cells to uniform background
+        # This preserves uniform background while adding blurred cell signal
+        image = image + cell_image
         image = np.clip(image, 0, 65535).astype(np.uint16)
+
+        # Use wavelength-specific noise level if provided (add noise AFTER blur)
+        w_noise_level = w_params.get('noise_level', self.noise_level)
+        if w_noise_level > 0:
+            noise = np.random.normal(0, w_noise_level, self.image_size)
+            image = image.astype(np.float64) + noise
+            image = np.clip(image, 0, 65535).astype(np.uint16)
+        else:
+            # Ensure valid pixel values even without noise
+            image = np.clip(image, 0, 65535).astype(np.uint16)
 
         return image
 

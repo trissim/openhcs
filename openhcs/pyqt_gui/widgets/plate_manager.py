@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QThread
 from PyQt6.QtGui import QFont
 
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 from openhcs.io.filemanager import FileManager
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator, OrchestratorState
 from openhcs.core.pipeline import Pipeline
@@ -60,6 +60,10 @@ class PlateManagerWidget(QWidget):
     progress_started = pyqtSignal(int)  # max_value
     progress_updated = pyqtSignal(int)  # current_value
     progress_finished = pyqtSignal()
+
+    # Error handling signals (thread-safe error reporting)
+    compilation_error = pyqtSignal(str, str)  # plate_name, error_message
+    initialization_error = pyqtSignal(str, str)  # plate_name, error_message
     
     def __init__(self, file_manager: FileManager, service_adapter,
                  color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
@@ -234,6 +238,10 @@ class PlateManagerWidget(QWidget):
         self.progress_started.connect(self._on_progress_started)
         self.progress_updated.connect(self._on_progress_updated)
         self.progress_finished.connect(self._on_progress_finished)
+
+        # Error handling signals for thread-safe error reporting
+        self.compilation_error.connect(self._handle_compilation_error)
+        self.initialization_error.connect(self._handle_initialization_error)
     
     def handle_button_action(self, action: str):
         """
@@ -396,7 +404,8 @@ class PlateManagerWidget(QWidget):
                 
             except Exception as e:
                 logger.error(f"Failed to initialize plate {plate['name']}: {e}")
-                self.service_adapter.show_error_dialog(f"Failed to initialize {plate['name']}: {e}")
+                # Use signal for thread-safe error reporting
+                self.initialization_error.emit(plate['name'], str(e))
         
         # Use signal for thread-safe progress completion
         self.progress_finished.emit()
@@ -406,9 +415,137 @@ class PlateManagerWidget(QWidget):
     # (compile_plate, run_plate, code_plate, save_python_script, edit_config)
     
     def action_edit_config(self):
-        """Handle Edit Config button (placeholder)."""
-        self.service_adapter.show_info_dialog("Configuration editing not yet implemented in PyQt6 version.")
-    
+        """
+        Handle Edit Config button - create per-orchestrator PipelineConfig instances.
+
+        This enables per-orchestrator configuration without affecting global configuration.
+        Shows resolved defaults from GlobalPipelineConfig with "Pipeline default: {value}" placeholders.
+        """
+        selected_items = self.get_selected_plates()
+
+        if not selected_items:
+            self.service_adapter.show_error_dialog("No plates selected for configuration.")
+            return
+
+        # Get selected orchestrators
+        selected_orchestrators = [
+            self.orchestrators[item['path']] for item in selected_items
+            if item['path'] in self.orchestrators
+        ]
+
+        if not selected_orchestrators:
+            self.service_adapter.show_error_dialog("No initialized orchestrators selected.")
+            return
+
+        # Load existing config or create new one for editing
+        representative_orchestrator = selected_orchestrators[0]
+
+        if representative_orchestrator.pipeline_config:
+            # Create editing config from existing orchestrator config with user-set values preserved
+            # Use current global config (not orchestrator's old global config) for updated placeholders
+            from openhcs.core.config import create_editing_config_from_existing_lazy_config
+            current_plate_config = create_editing_config_from_existing_lazy_config(
+                representative_orchestrator.pipeline_config,
+                self.global_config  # Use current global config for updated placeholders
+            )
+        else:
+            # Create new config with placeholders using current global config
+            from openhcs.core.config import create_pipeline_config_for_editing
+            current_plate_config = create_pipeline_config_for_editing(self.global_config)
+
+        def handle_config_save(new_config: PipelineConfig) -> None:
+            """Apply per-orchestrator configuration without global side effects."""
+            for orchestrator in selected_orchestrators:
+                # Direct synchronous call - no async needed
+                orchestrator.apply_pipeline_config(new_config)
+            count = len(selected_orchestrators)
+            self.service_adapter.show_info_dialog(f"Per-orchestrator configuration applied to {count} orchestrator(s)")
+
+        # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
+        # PipelineConfig already imported from openhcs.core.config
+        self._open_config_window(
+            config_class=PipelineConfig,
+            current_config=current_plate_config,
+            on_save_callback=handle_config_save
+        )
+
+    def _open_config_window(self, config_class, current_config, on_save_callback, is_global_config_editing=False):
+        """
+        Open configuration window with specified config class and current config.
+
+        Args:
+            config_class: Configuration class type (PipelineConfig or GlobalPipelineConfig)
+            current_config: Current configuration instance
+            on_save_callback: Function to call when config is saved
+            is_global_config_editing: Whether this is global config editing (affects placeholder behavior)
+        """
+        from openhcs.pyqt_gui.windows.config_window import ConfigWindow
+
+        config_window = ConfigWindow(
+            config_class,           # config_class
+            current_config,         # current_config
+            on_save_callback,       # on_save_callback
+            self.color_scheme,      # color_scheme
+            self,                   # parent
+            is_global_config_editing  # is_global_config_editing
+        )
+        # Show as non-modal window (like main window configuration)
+        config_window.show()
+        config_window.raise_()
+        config_window.activateWindow()
+
+    def action_edit_global_config(self):
+        """
+        Handle global configuration editing - affects all orchestrators.
+
+        Uses concrete GlobalPipelineConfig for direct editing with static placeholder defaults.
+        """
+        from openhcs.core.config import get_default_global_config, GlobalPipelineConfig
+
+        # Get current global config from service adapter or use default
+        current_global_config = self.service_adapter.get_global_config() or get_default_global_config()
+
+        def handle_global_config_save(new_config: GlobalPipelineConfig) -> None:
+            """Apply global configuration to all orchestrators and save to cache."""
+            self.service_adapter.set_global_config(new_config)  # Update app-level config
+
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, new_config)
+
+            # Save to cache for persistence between sessions
+            self._save_global_config_to_cache(new_config)
+
+            for orchestrator in self.orchestrators.values():
+                self.run_async_action(orchestrator.apply_new_global_config(new_config))
+            self.service_adapter.show_info_dialog("Global configuration applied to all orchestrators")
+
+        # Open configuration window using concrete GlobalPipelineConfig
+        self._open_config_window(
+            config_class=GlobalPipelineConfig,
+            current_config=current_global_config,
+            on_save_callback=handle_global_config_save,
+            is_global_config_editing=True
+        )
+
+    def _save_global_config_to_cache(self, config: GlobalPipelineConfig):
+        """Save global config to cache for persistence between sessions."""
+        try:
+            # Use synchronous saving to ensure it completes
+            from openhcs.core.config_cache import _sync_save_config
+            from openhcs.core.xdg_paths import get_config_file_path
+
+            cache_file = get_config_file_path("global_config.config")
+            success = _sync_save_config(config, cache_file)
+
+            if success:
+                logger.info("Global config saved to cache for session persistence")
+            else:
+                logger.error("Failed to save global config to cache - sync save returned False")
+        except Exception as e:
+            logger.error(f"Failed to save global config to cache: {e}")
+            # Don't show error dialog as this is not critical for immediate functionality
+
     async def action_compile_plate(self):
         """Handle Compile Plate button - compile pipelines for selected plates."""
         selected_items = self.get_selected_plates()
@@ -535,7 +672,8 @@ class PlateManagerWidget(QWidget):
                 plate_data['error'] = str(e)
                 # Don't store anything in plate_compiled_data on failure
                 self.orchestrator_state_changed.emit(plate_path, "COMPILE_FAILED")
-                self.service_adapter.show_error_dialog(f"Compilation failed for {plate_data['name']}: {e}")
+                # Use signal for thread-safe error reporting instead of direct dialog call
+                self.compilation_error.emit(plate_data['name'], str(e))
 
             # Use signal for thread-safe progress update
             self.progress_updated.emit(i + 1)
@@ -914,7 +1052,13 @@ class PlateManagerWidget(QWidget):
             new_config: New global configuration
         """
         self.global_config = new_config
-        # Update any orchestrators with new config if needed
+
+        # Apply new global config to all existing orchestrators
+        # This rebuilds their pipeline configs preserving concrete values
+        for orchestrator in self.orchestrators.values():
+            self.run_async_action(orchestrator.apply_new_global_config(new_config))
+
+        logger.info(f"Applied new global config to {len(self.orchestrators)} orchestrators")
 
     # ========== Helper Methods ==========
 
@@ -1014,3 +1158,11 @@ class PlateManagerWidget(QWidget):
     def _on_progress_finished(self):
         """Handle progress finished signal (main thread)."""
         self.progress_bar.setVisible(False)
+
+    def _handle_compilation_error(self, plate_name: str, error_message: str):
+        """Handle compilation error on main thread (slot)."""
+        self.service_adapter.show_error_dialog(f"Compilation failed for {plate_name}: {error_message}")
+
+    def _handle_initialization_error(self, plate_name: str, error_message: str):
+        """Handle initialization error on main thread (slot)."""
+        self.service_adapter.show_error_dialog(f"Failed to initialize {plate_name}: {error_message}")

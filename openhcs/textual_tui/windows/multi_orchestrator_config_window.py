@@ -166,6 +166,10 @@ class MultiOrchestratorConfigWindow(BaseOpenHCSWindow):
             # Create new config instance
             new_config = GlobalPipelineConfig(**form_values)
 
+            # Update thread-local storage for MaterializationPathConfig defaults
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, new_config)
+
             # Apply to all orchestrators
             import asyncio
             async def apply_to_all():

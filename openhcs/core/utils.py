@@ -377,3 +377,213 @@ def natural_sort_inplace(items: List[Union[str, Path]]) -> None:
     items.sort(key=natural_sort_key)
 
 
+# === WELL FILTERING UTILITIES ===
+
+import re
+import string
+from typing import List, Set, Union
+from openhcs.core.config import WellFilterMode
+
+
+class WellPatternConstants:
+    """Centralized constants for well pattern parsing."""
+    COMMA_SEPARATOR = ","
+    RANGE_SEPARATOR = ":"
+    ROW_PREFIX = "row:"
+    COL_PREFIX = "col:"
+
+
+class WellFilterProcessor:
+    """
+    Enhanced well filtering processor supporting both compilation-time and execution-time filtering.
+
+    Maintains backward compatibility with existing execution-time methods while adding
+    compilation-time capabilities for the 5-phase compilation system.
+
+    Follows systematic refactoring framework principles:
+    - Fail-loud validation with clear error messages
+    - Pythonic patterns and idioms
+    - Leverages existing well filtering infrastructure
+    - Eliminates magic strings through centralized constants
+    """
+
+    # === NEW COMPILATION-TIME METHOD ===
+
+    @staticmethod
+    def resolve_compilation_filter(
+        well_filter: Union[List[str], str, int],
+        available_wells: List[str]
+    ) -> Set[str]:
+        """
+        Resolve well filter to concrete well set during compilation.
+
+        Combines validation and resolution in single method to avoid verbose helper methods.
+        Supports all existing filter types while providing compilation-time optimization.
+        Works with any well naming format (A01, R01C03, etc.) by using available wells.
+
+        Args:
+            well_filter: Filter specification (list, string pattern, or max count)
+            available_wells: Ordered list of wells from orchestrator.get_component_keys(GroupBy.WELL)
+
+        Returns:
+            Set of well IDs that match the filter
+
+        Raises:
+            ValueError: If wells don't exist, insufficient wells for count, or invalid patterns
+        """
+        if isinstance(well_filter, list):
+            # Inline validation for specific wells
+            available_set = set(available_wells)
+            invalid_wells = [w for w in well_filter if w not in available_set]
+            if invalid_wells:
+                raise ValueError(
+                    f"Invalid wells specified: {invalid_wells}. "
+                    f"Available wells: {sorted(available_set)}"
+                )
+            return set(well_filter)
+
+        elif isinstance(well_filter, int):
+            # Inline validation for max count
+            if well_filter <= 0:
+                raise ValueError(f"Max count must be positive, got: {well_filter}")
+            if well_filter > len(available_wells):
+                raise ValueError(
+                    f"Requested {well_filter} wells but only {len(available_wells)} available"
+                )
+            return set(available_wells[:well_filter])
+
+        elif isinstance(well_filter, str):
+            # Pass available wells to pattern parsing for format-agnostic support
+            return WellFilterProcessor._parse_well_pattern(well_filter, available_wells)
+
+        else:
+            raise ValueError(f"Unsupported well filter type: {type(well_filter)}")
+
+    # === EXISTING EXECUTION-TIME METHODS (MAINTAINED) ===
+
+    @staticmethod
+    def should_materialize_well(
+        well_id: str,
+        config, # MaterializationPathConfig
+        processed_wells: Set[str]
+    ) -> bool:
+        """
+        EXISTING METHOD: Determine if a well should be materialized during execution.
+        Maintained for backward compatibility and execution-time fallback.
+        """
+        if config.well_filter is None:
+            return True  # No filter = materialize all wells
+
+        # Expand filter pattern to well list
+        target_wells = WellFilterProcessor.expand_well_filter(config.well_filter)
+
+        # Apply max wells limit if filter is integer
+        if isinstance(config.well_filter, int):
+            if len(processed_wells) >= config.well_filter:
+                return False
+
+        # Check if well matches filter
+        well_in_filter = well_id in target_wells
+
+        # Apply include/exclude mode
+        if config.well_filter_mode == WellFilterMode.INCLUDE:
+            return well_in_filter
+        else:  # EXCLUDE mode
+            return not well_in_filter
+
+    @staticmethod
+    def expand_well_filter(well_filter: Union[List[str], str, int]) -> Set[str]:
+        """
+        EXISTING METHOD: Expand well filter pattern to set of well IDs.
+        Maintained for backward compatibility.
+        """
+        if isinstance(well_filter, list):
+            return set(well_filter)
+
+        if isinstance(well_filter, int):
+            # For integer filters, we can't pre-expand wells since it depends on processing order
+            # Return empty set - the max wells logic is handled in should_materialize_well
+            return set()
+
+        if isinstance(well_filter, str):
+            return WellFilterProcessor._parse_well_pattern(well_filter, available_wells)
+
+        raise ValueError(f"Unsupported well filter type: {type(well_filter)}")
+
+    @staticmethod
+    def _parse_well_pattern(pattern: str, available_wells: List[str]) -> Set[str]:
+        """Parse string well patterns into well ID sets using available wells."""
+        pattern = pattern.strip()
+
+        # Comma-separated list
+        if WellPatternConstants.COMMA_SEPARATOR in pattern:
+            return set(w.strip() for w in pattern.split(WellPatternConstants.COMMA_SEPARATOR))
+
+        # Row pattern: "row:A"
+        if pattern.startswith(WellPatternConstants.ROW_PREFIX):
+            row = pattern[len(WellPatternConstants.ROW_PREFIX):].strip()
+            return WellFilterProcessor._expand_row_pattern(row, available_wells)
+
+        # Column pattern: "col:01-06"
+        if pattern.startswith(WellPatternConstants.COL_PREFIX):
+            col_spec = pattern[len(WellPatternConstants.COL_PREFIX):].strip()
+            return WellFilterProcessor._expand_col_pattern(col_spec, available_wells)
+
+        # Range pattern: "A01:A12"
+        if WellPatternConstants.RANGE_SEPARATOR in pattern:
+            return WellFilterProcessor._expand_range_pattern(pattern, available_wells)
+
+        # Single well
+        return {pattern}
+
+    @staticmethod
+    def _expand_row_pattern(row: str, available_wells: List[str]) -> Set[str]:
+        """Expand row pattern using available wells (format-agnostic)."""
+        # Direct prefix match (A01, B02, etc.)
+        result = {well for well in available_wells if well.startswith(row)}
+
+        # Opera Phenix format fallback (A → R01C*, B → R02C*)
+        if not result and len(row) == 1 and row.isalpha():
+            row_pattern = f"R{ord(row.upper()) - ord('A') + 1:02d}C"
+            result = {well for well in available_wells if well.startswith(row_pattern)}
+
+        return result
+
+    @staticmethod
+    def _expand_col_pattern(col_spec: str, available_wells: List[str]) -> Set[str]:
+        """Expand column pattern using available wells (format-agnostic)."""
+        # Parse column range
+        if "-" in col_spec:
+            start_col, end_col = map(int, col_spec.split("-"))
+            col_range = set(range(start_col, end_col + 1))
+        else:
+            col_range = {int(col_spec)}
+
+        # Extract numeric suffix and match (A01, B02, etc.)
+        def get_numeric_suffix(well: str) -> int:
+            digits = ''.join(char for char in reversed(well) if char.isdigit())
+            return int(digits[::-1]) if digits else 0
+
+        result = {well for well in available_wells if get_numeric_suffix(well) in col_range}
+
+        # Opera Phenix format fallback (C01, C02, etc.)
+        if not result:
+            patterns = {f"C{col:02d}" for col in col_range}
+            result = {well for well in available_wells
+                     if any(pattern in well for pattern in patterns)}
+
+        return result
+
+    @staticmethod
+    def _expand_range_pattern(pattern: str, available_wells: List[str]) -> Set[str]:
+        """Expand range pattern using available wells (format-agnostic)."""
+        start_well, end_well = map(str.strip, pattern.split(WellPatternConstants.RANGE_SEPARATOR))
+
+        try:
+            start_idx, end_idx = available_wells.index(start_well), available_wells.index(end_well)
+        except ValueError as e:
+            raise ValueError(f"Range pattern '{pattern}' contains wells not in available wells: {e}")
+
+        # Ensure proper order and return range (inclusive)
+        start_idx, end_idx = sorted([start_idx, end_idx])
+        return set(available_wells[start_idx:end_idx + 1])
