@@ -9,12 +9,14 @@ in OpenHCS pipelines, replacing the hardcoded Well-based multiprocessing and fix
 from .framework import ComponentConfiguration, ComponentConfigurationFactory
 from .multiprocessing import MultiprocessingCoordinator
 from .validation import GenericValidator
-from .patterns import GenericPatternEngine
+from .parser_metaprogramming import GenericFilenameParser, ParserInterfaceGenerator, parser_interface_generator
 
 __all__ = [
     'ComponentConfiguration',
-    'ComponentConfigurationFactory', 
+    'ComponentConfigurationFactory',
     'MultiprocessingCoordinator',
     'GenericValidator',
-    'GenericPatternEngine'
+    'GenericFilenameParser',
+    'ParserInterfaceGenerator',
+    'parser_interface_generator'
 ]

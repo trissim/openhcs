@@ -376,6 +376,8 @@ class OperaPhenixFilenameParser(FilenameParser):
             filemanager: FileManager instance (not used, but required for interface compatibility)
             pattern_format: Optional pattern format (not used, but required for interface compatibility)
         """
+        super().__init__()  # Initialize the generic parser interface
+
         # These parameters are not used by this parser, but are required for interface compatibility
         self.filemanager = filemanager
         self.pattern_format = pattern_format
@@ -448,24 +450,32 @@ class OperaPhenixFilenameParser(FilenameParser):
         logger.warning("Regex match failed for basename: '%s'", basename)
         return None
 
-    def construct_filename(self, well: str, site: Optional[Union[int, str]] = None, channel: Optional[int] = None,
-                          z_index: Optional[Union[int, str]] = None, extension: str = '.tiff',
-                          site_padding: int = 3, z_padding: int = 3) -> str:
+    def construct_filename(self, extension: str = '.tiff', site_padding: int = 3, z_padding: int = 3, **component_values) -> str:
         """
         Construct an Opera Phenix filename from components.
 
+        This method now uses **kwargs to accept any component values dynamically,
+        making it compatible with the generic parser interface.
+
         Args:
-            well (str): Well ID (e.g., 'R03C04' or 'A01')
-            site: Site/field number (int) or placeholder string
-            channel (int): Channel number
-            z_index: Z-index/plane (int) or placeholder string
-            extension (str, optional): File extension
+            extension (str, optional): File extension (default: '.tiff')
             site_padding (int, optional): Width to pad site numbers to (default: 3)
             z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
+            **component_values: Component values as keyword arguments.
+                               Expected keys: well, site, channel, z_index
 
         Returns:
             str: Constructed filename
         """
+        # Extract components from kwargs
+        well = component_values.get('well')
+        site = component_values.get('site')
+        channel = component_values.get('channel')
+        z_index = component_values.get('z_index')
+
+        if not well:
+            raise ValueError("Well component is required for filename construction")
+
         # Extract row and column from well name
         # Check if well is in Opera Phenix format (e.g., 'R01C03')
         match = self._well_pattern.match(well)

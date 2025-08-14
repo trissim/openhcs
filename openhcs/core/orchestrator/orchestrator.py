@@ -692,16 +692,11 @@ class PipelineOrchestrator:
         # Convert VariableComponents to GroupBy for legacy cache compatibility
         # This is temporary until we fully migrate the cache system to use VariableComponents
         from openhcs.constants.constants import VariableComponents
+        from openhcs.core.components.validation import convert_enum_by_value
 
         if isinstance(component, VariableComponents):
-            # Dynamic conversion: VariableComponents -> GroupBy
-            group_by_mapping = {
-                VariableComponents.WELL: GroupBy.WELL,
-                VariableComponents.CHANNEL: GroupBy.CHANNEL,
-                VariableComponents.SITE: GroupBy.SITE,
-                VariableComponents.Z_INDEX: GroupBy.Z_INDEX
-            }
-            group_by = group_by_mapping.get(component)
+            # Generic conversion: VariableComponents -> GroupBy using value matching
+            group_by = convert_enum_by_value(component, GroupBy)
             if not group_by:
                 raise ValueError(f"Unsupported component: {component.value}")
         else:

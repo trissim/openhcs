@@ -320,6 +320,8 @@ class ImageXpressFilenameParser(FilenameParser):
             filemanager: FileManager instance (not used, but required for interface compatibility)
             pattern_format: Optional pattern format (not used, but required for interface compatibility)
         """
+        super().__init__()  # Initialize the generic parser interface
+
         # These parameters are not used by this parser, but are required for interface compatibility
         self.filemanager = filemanager
         self.pattern_format = pattern_format
@@ -409,26 +411,28 @@ class ImageXpressFilenameParser(FilenameParser):
 
         return row, col
 
-    def construct_filename(self, well: str, site: Optional[Union[int, str]] = None,
-                          channel: Optional[int] = None,
-                          z_index: Optional[Union[int, str]] = None,
-                          extension: str = '.tif',
-                          site_padding: int = 3, z_padding: int = 3) -> str:
+    def construct_filename(self, extension: str = '.tif', site_padding: int = 3, z_padding: int = 3, **component_values) -> str:
         """
         Construct an ImageXpress filename from components, only including parts if provided.
 
+        This method now uses **kwargs to accept any component values dynamically,
+        making it compatible with the generic parser interface.
+
         Args:
-            well (str): Well ID (e.g., 'A01')
-            site (int or str, optional): Site number or placeholder string (e.g., '{iii}')
-            channel (int, optional): Channel number
-            z_index (int or str, optional): Z-index or placeholder string (e.g., '{zzz}')
-            extension (str, optional): File extension
+            extension (str, optional): File extension (default: '.tif')
             site_padding (int, optional): Width to pad site numbers to (default: 3)
             z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
+            **component_values: Component values as keyword arguments.
+                               Expected keys: well, site, channel, z_index
 
         Returns:
             str: Constructed filename
         """
+        # Extract components from kwargs
+        well = component_values.get('well')
+        site = component_values.get('site')
+        channel = component_values.get('channel')
+        z_index = component_values.get('z_index')
         if not well:
             raise ValueError("Well ID cannot be empty or None.")
 
@@ -651,7 +655,7 @@ class ImageXpressMetadataHandler(MetadataHandler):
 
     def get_channel_values(self, plate_path: Union[str, Path]) -> Optional[Dict[str, Optional[str]]]:
         """
-        Get channel key→name mapping from ImageXpress HTD file.
+        Get channel key->name mapping from ImageXpress HTD file.
 
         Args:
             plate_path: Path to the plate folder (str or Path)

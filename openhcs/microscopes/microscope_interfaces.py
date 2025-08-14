@@ -9,19 +9,23 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 from openhcs.constants.constants import VariableComponents
+from openhcs.core.components.parser_metaprogramming import GenericFilenameParser
 
 from openhcs.constants.constants import DEFAULT_PIXEL_SIZE
 
 
-class FilenameParser(ABC):
+class FilenameParser(GenericFilenameParser):
     """
     Abstract base class for parsing microscopy image filenames.
+
+    This class now uses the metaprogramming system to generate component-specific
+    methods dynamically based on the VariableComponents enum, eliminating hardcoded
+    component assumptions.
     """
 
-    # Constants
-    # Dynamically generate filename components from VariableComponents enum plus extension
-    FILENAME_COMPONENTS = [component.value for component in VariableComponents] + ['extension']
-    PLACEHOLDER_PATTERN = '{iii}'
+    def __init__(self):
+        """Initialize the parser with VariableComponents enum."""
+        super().__init__(VariableComponents)
 
     @classmethod
     @abstractmethod
@@ -46,7 +50,8 @@ class FilenameParser(ABC):
             filename (str): Filename to parse
 
         Returns:
-            dict or None: Dictionary with extracted components or None if parsing fails
+            dict or None: Dictionary with extracted components or None if parsing fails.
+            The dictionary should contain keys matching VariableComponents enum values plus 'extension'.
         """
         pass
 
@@ -67,25 +72,24 @@ class FilenameParser(ABC):
         pass
 
     @abstractmethod
-    def construct_filename(self, well: str, site: Optional[Union[int, str]] = None,
-                          channel: Optional[int] = None,
-                          z_index: Optional[Union[int, str]] = None,
-                          extension: str = '.tif',
-                          site_padding: int = 3, z_padding: int = 3) -> str:
+    def construct_filename(self, extension: str = '.tif', **component_values) -> str:
         """
-        Construct a filename from components.
+        Construct a filename from component values.
+
+        This method now uses **kwargs to accept any component values dynamically,
+        making it truly generic and adaptable to any component configuration.
 
         Args:
-            well (str): Well ID (e.g., 'A01')
-            site (int or str, optional): Site number or placeholder string (e.g., '{iii}')
-            channel (int, optional): Channel/wavelength number
-            z_index (int or str, optional): Z-index or placeholder string (e.g., '{zzz}')
-            extension (str, optional): File extension
-            site_padding (int, optional): Width to pad site numbers to (default: 3)
-            z_padding (int, optional): Width to pad Z-index numbers to (default: 3)
+            extension (str, optional): File extension (default: '.tif')
+            **component_values: Component values as keyword arguments.
+                               Keys should match VariableComponents enum values.
+                               Example: well='A01', site=1, channel=2, z_index=1
 
         Returns:
             str: Constructed filename
+
+        Example:
+            construct_filename(well='A01', site=1, channel=2, z_index=1, extension='.tif')
         """
         pass
 
