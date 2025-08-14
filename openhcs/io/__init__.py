@@ -10,6 +10,7 @@ from .disk import DiskStorageBackend
 from .filemanager import FileManager
 from .memory import MemoryStorageBackend
 from .metadata_writer import AtomicMetadataWriter, MetadataWriteError, MetadataUpdateRequest, get_metadata_path
+from .metadata_migration import detect_legacy_format, migrate_legacy_metadata, migrate_plate_metadata
 from .zarr import ZarrStorageBackend
 
 __all__ = [
@@ -28,5 +29,8 @@ __all__ = [
     'AtomicMetadataWriter',
     'MetadataWriteError',
     'MetadataUpdateRequest',
-    'get_metadata_path'
+    'get_metadata_path',
+    'detect_legacy_format',
+    'migrate_legacy_metadata',
+    'migrate_plate_metadata'
 ]
