@@ -356,11 +356,8 @@ class PipelineOrchestrator:
         """
         Compile-all phase: Prepares frozen ProcessingContexts for each well.
 
-        This method iterates through the specified wells, creates a ProcessingContext
-        for each, and invokes the various phases of the PipelineCompiler to populate
-        the context's step_plans. After all compilation phases for a well are complete,
-        its context is frozen. Finally, attributes are stripped from the pipeline_definition,
-        making the step objects stateless for the execution phase.
+        This method delegates to PipelineCompiler.compile_pipelines() to handle
+        the actual compilation logic while providing orchestrator context.
 
         Args:
             pipeline_definition: The list of AbstractStep objects defining the pipeline.
@@ -373,58 +370,12 @@ class PipelineOrchestrator:
             The input `pipeline_definition` list (of step objects) is modified in-place
             to become stateless.
         """
-        if not self.is_initialized():
-            raise RuntimeError("PipelineOrchestrator must be explicitly initialized before calling compile_pipelines().")
-
-        if not pipeline_definition:
-            raise ValueError("A valid pipeline definition (List[AbstractStep]) must be provided.")
-
-        try:
-            compiled_contexts: Dict[str, ProcessingContext] = {}
-            wells_to_process = self.get_component_keys(GroupBy.WELL, well_filter)
-
-            if not wells_to_process:
-                logger.warning("No wells found to process based on filter.")
-                return {}
-
-            logger.info(f"Starting compilation for wells: {', '.join(wells_to_process)}")
-
-            # Determine responsible well for metadata creation (lexicographically first)
-            responsible_well = sorted(wells_to_process)[0] if wells_to_process else None
-            logger.debug(f"Designated responsible well for metadata creation: {responsible_well}")
-
-            for well_id in wells_to_process:
-                logger.debug(f"Compiling for well: {well_id}")
-                context = self.create_context(well_id)
-
-                # Determine if this well is responsible for metadata creation
-                is_responsible = (well_id == responsible_well)
-                logger.debug(f"Well {well_id} metadata responsibility: {is_responsible}")
-
-                PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, self, metadata_writer=is_responsible, plate_path=self.plate_path)
-                PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
-                PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
-                PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
-                PipelineCompiler.assign_gpu_resources_for_context(context)
-
-                if enable_visualizer_override:
-                    PipelineCompiler.apply_global_visualizer_override_for_context(context, True)
-
-                context.freeze()
-                compiled_contexts[well_id] = context
-                logger.debug(f"Compilation finished for well: {well_id}")
-
-            # After processing all wells, strip attributes and finalize
-            logger.info("Stripping attributes from pipeline definition steps.")
-            StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
-
-            self._state = OrchestratorState.COMPILED
-            logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
-            return compiled_contexts
-        except Exception as e:
-            self._state = OrchestratorState.COMPILE_FAILED
-            logger.error(f"Failed to compile pipelines: {e}")
-            raise
+        return PipelineCompiler.compile_pipelines(
+            orchestrator=self,
+            pipeline_definition=pipeline_definition,
+            well_filter=well_filter,
+            enable_visualizer_override=enable_visualizer_override
+        )
 
     def _execute_single_well(
         self,

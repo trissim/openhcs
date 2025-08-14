@@ -159,7 +159,7 @@ class PathPlanner:
                 'materialized_plate_root': str(materialized_plate_root),
                 'materialized_sub_dir': step.materialization_config.sub_dir,  # Store resolved sub_dir for materialization
                 'materialized_backend': self.vfs.materialization_backend.value,
-                'materialization_config': step.materialization_config  # Store config for well filtering
+                'materialization_config': step.materialization_config  # Store config for well filtering (will be resolved by compiler)
             })
         if input_conversion_dir:
             self.plans[sid].update({
