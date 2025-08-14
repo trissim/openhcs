@@ -23,13 +23,20 @@ if TYPE_CHECKING:
 from openhcs.constants.constants import (DEFAULT_IMAGE_EXTENSION,
                                              DEFAULT_IMAGE_EXTENSIONS,
                                              DEFAULT_SITE_PADDING, Backend,
-                                             MemoryType, VariableComponents, GroupBy)
+                                             MemoryType, VariableComponents, GroupBy, OPENHCS_CONFIG)
 from openhcs.constants.input_source import InputSource
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep, get_step_id
 from openhcs.formats.func_arg_prep import prepare_patterns_and_functions
 from openhcs.core.memory.stack_utils import stack_slices, unstack_slices
 # OpenHCS imports moved to local imports to avoid circular dependencies
+
+# Import new generic validation system
+try:
+    from openhcs.core.components.validation import GenericValidator
+except ImportError:
+    # Fallback for cases where the new system isn't available yet
+    GenericValidator = None
 
 logger = logging.getLogger(__name__)
 
@@ -713,25 +720,39 @@ def _process_single_pattern_group(
 
 class FunctionStep(AbstractStep):
 
-    def __init__(
-        self,
-        func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
-        **kwargs
+        *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
+        group_by: Optional[GroupBy] = None, force_disk_output: bool = False,
+        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None,
+        input_source: InputSource = InputSource.PREVIOUS_STEP
     ):
-        # Generate default name from function if not provided
-        if 'name' not in kwargs or kwargs['name'] is None:
-            actual_func_for_name = func
-            if isinstance(func, tuple):
-                actual_func_for_name = func[0]
-            elif isinstance(func, list) and func:
-                first_item = func[0]
-                if isinstance(first_item, tuple):
-                    actual_func_for_name = first_item[0]
-                elif callable(first_item):
-                    actual_func_for_name = first_item
-            kwargs['name'] = getattr(actual_func_for_name, '__name__', 'FunctionStep')
+        actual_func_for_name = func
+        if isinstance(func, tuple): actual_func_for_name = func[0]
+        elif isinstance(func, list) and func:
+             first_item = func[0]
+             if isinstance(first_item, tuple): actual_func_for_name = first_item[0]
+             elif callable(first_item): actual_func_for_name = first_item
 
-        super().__init__(**kwargs)
+        # Early validation using generic system if available
+        if GenericValidator and OPENHCS_CONFIG:
+            try:
+                validator = GenericValidator(OPENHCS_CONFIG)
+                validation_result = validator.validate_step(
+                    variable_components, group_by, func,
+                    name or getattr(actual_func_for_name, '__name__', 'FunctionStep')
+                )
+                if not validation_result.is_valid:
+                    raise ValueError(validation_result.error_message)
+                logger.debug(f"FunctionStep validation passed using GenericValidator")
+            except Exception as e:
+                logger.warning(f"GenericValidator validation failed: {e}, proceeding with construction")
+
+        super().__init__(
+            name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
+            variable_components=variable_components, group_by=group_by,
+            force_disk_output=force_disk_output,
+            input_dir=input_dir, output_dir=output_dir,
+            input_source=input_source
+        )
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
     def process(self, context: 'ProcessingContext') -> None:

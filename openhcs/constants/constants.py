@@ -47,6 +47,18 @@ DEFAULT_VARIABLE_COMPONENTS: List[VariableComponents] = [VariableComponents.SITE
 DEFAULT_GROUP_BY: GroupBy = GroupBy.CHANNEL
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
 
+# Generic component configuration system
+# This provides the new configurable component system while maintaining backward compatibility
+try:
+    from openhcs.core.components.framework import ComponentConfigurationFactory
+
+    # Default OpenHCS configuration - maintains current behavior
+    OPENHCS_CONFIG = ComponentConfigurationFactory.create_openhcs_default_configuration()
+
+except ImportError:
+    # Fallback for cases where the new system isn't available yet
+    OPENHCS_CONFIG = None
+
 
 
 # Backend-related constants

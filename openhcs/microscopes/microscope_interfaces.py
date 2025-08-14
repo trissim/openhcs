@@ -8,6 +8,7 @@ including filename parsing and metadata handling.
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
+from openhcs.constants.constants import VariableComponents
 
 from openhcs.constants.constants import DEFAULT_PIXEL_SIZE
 
@@ -18,7 +19,8 @@ class FilenameParser(ABC):
     """
 
     # Constants
-    FILENAME_COMPONENTS = ['well', 'site', 'channel', 'z_index', 'extension']
+    # Dynamically generate filename components from VariableComponents enum plus extension
+    FILENAME_COMPONENTS = [component.value for component in VariableComponents] + ['extension']
     PLACEHOLDER_PATTERN = '{iii}'
 
     @classmethod

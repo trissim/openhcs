@@ -18,7 +18,7 @@ import multiprocessing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, Set
 
-from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
+from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState, OPENHCS_CONFIG
 from openhcs.constants import Microscope
 from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig
 from openhcs.core.context.processing_context import ProcessingContext
@@ -30,6 +30,13 @@ from openhcs.io.filemanager import FileManager
 from openhcs.io.base import storage_registry
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
+
+# Import new generic component system
+try:
+    from openhcs.core.components.multiprocessing import MultiprocessingCoordinator
+except ImportError:
+    # Fallback for cases where the new system isn't available yet
+    MultiprocessingCoordinator = None
 
 # Optional napari import for visualization
 try:
@@ -541,47 +548,48 @@ class PipelineOrchestrator:
                 logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
 
                 logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
-                future_to_well_id = {}
-                for well_id, context in contexts_snapshot.items():
+                future_to_axis_id = {}
+                axis_name = OPENHCS_CONFIG.multiprocessing_axis.value if OPENHCS_CONFIG else 'well'
+                for axis_id, context in contexts_snapshot.items():
                     try:
-                        logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
-                        logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
+                        logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_{axis_name.upper()}_{axis_id}")
+                        logger.info(f"🔥 ORCHESTRATOR: Submitting task for {axis_name} {axis_id}")
                         future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
-                        future_to_well_id[future] = well_id
-                        logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
-                        logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
+                        future_to_axis_id[future] = axis_id
+                        logger.info(f"🔥 ORCHESTRATOR: Task submitted for {axis_name} {axis_id}")
+                        logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_{axis_name.upper()}_{axis_id}")
                     except Exception as submit_error:
-                        error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for well {well_id}: {submit_error}"
+                        error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for {axis_name} {axis_id}: {submit_error}"
                         logger.error(error_msg, exc_info=True)
                         # FAIL-FAST: Re-raise task submission errors immediately
                         raise
 
                 logger.info("🔥 DEATH_MARKER: TASK_SUBMISSION_LOOP_COMPLETED")
 
-                logger.info(f"🔥 ORCHESTRATOR: All {len(future_to_well_id)} tasks submitted, waiting for completion")
+                logger.info(f"🔥 ORCHESTRATOR: All {len(future_to_axis_id)} tasks submitted, waiting for completion")
                 logger.info("🔥 DEATH_MARKER: BEFORE_COMPLETION_LOOP")
 
                 completed_count = 0
                 logger.info("🔥 DEATH_MARKER: ENTERING_AS_COMPLETED_LOOP")
-                for future in concurrent.futures.as_completed(future_to_well_id):
-                    well_id = future_to_well_id[future]
+                for future in concurrent.futures.as_completed(future_to_axis_id):
+                    axis_id = future_to_axis_id[future]
                     completed_count += 1
-                    logger.info(f"🔥 DEATH_MARKER: PROCESSING_COMPLETED_TASK_{completed_count}_WELL_{well_id}")
-                    logger.info(f"🔥 ORCHESTRATOR: Task {completed_count}/{len(future_to_well_id)} completed for well {well_id}")
+                    logger.info(f"🔥 DEATH_MARKER: PROCESSING_COMPLETED_TASK_{completed_count}_{axis_name.upper()}_{axis_id}")
+                    logger.info(f"🔥 ORCHESTRATOR: Task {completed_count}/{len(future_to_axis_id)} completed for {axis_name} {axis_id}")
 
                     try:
-                        logger.info(f"🔥 DEATH_MARKER: CALLING_FUTURE_RESULT_FOR_WELL_{well_id}")
+                        logger.info(f"🔥 DEATH_MARKER: CALLING_FUTURE_RESULT_FOR_{axis_name.upper()}_{axis_id}")
                         result = future.result()
-                        logger.info(f"🔥 DEATH_MARKER: FUTURE_RESULT_SUCCESS_FOR_WELL_{well_id}")
-                        logger.info(f"🔥 ORCHESTRATOR: Well {well_id} result: {result}")
-                        execution_results[well_id] = result
-                        logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_WELL_{well_id}")
+                        logger.info(f"🔥 DEATH_MARKER: FUTURE_RESULT_SUCCESS_FOR_{axis_name.upper()}_{axis_id}")
+                        logger.info(f"🔥 ORCHESTRATOR: {axis_name.title()} {axis_id} result: {result}")
+                        execution_results[axis_id] = result
+                        logger.info(f"🔥 DEATH_MARKER: RESULT_STORED_FOR_{axis_name.upper()}_{axis_id}")
                     except Exception as exc:
                         import traceback
                         full_traceback = traceback.format_exc()
-                        error_msg = f"Well {well_id} generated an exception during execution: {exc}"
+                        error_msg = f"{axis_name.title()} {axis_id} generated an exception during execution: {exc}"
                         logger.error(f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True)
-                        logger.error(f"🔥 ORCHESTRATOR FULL TRACEBACK for well {well_id}:\n{full_traceback}")
+                        logger.error(f"🔥 ORCHESTRATOR FULL TRACEBACK for {axis_name} {axis_id}:\n{full_traceback}")
                         # FAIL-FAST: Re-raise immediately instead of storing error
                         raise
 
@@ -658,18 +666,18 @@ class PipelineOrchestrator:
             logger.error(f"Failed to execute compiled plate: {e}")
             raise
 
-    def get_component_keys(self, group_by: GroupBy, component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
+    def get_component_keys(self, component: Union[GroupBy, 'VariableComponents'], component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
         """
-        Generic method to get component keys for any group_by type.
+        Generic method to get component keys for any component type.
 
-        This method works with any GroupBy enum value (CHANNEL, SITE, Z_INDEX, WELL)
+        This method works with any component enum (GroupBy or VariableComponents)
         and returns the discovered component values as strings to match the pattern
         detection system format.
 
         Tries metadata cache first, falls back to filename parsing cache if metadata is empty.
 
         Args:
-            group_by: GroupBy enum specifying which component to extract
+            component: Component enum (GroupBy or VariableComponents) specifying which component to extract
             component_filter: Optional list of component values to filter by
 
         Returns:
@@ -680,6 +688,25 @@ class PipelineOrchestrator:
         """
         if not self.is_initialized():
             raise RuntimeError("Orchestrator must be initialized before getting component keys.")
+
+        # Convert VariableComponents to GroupBy for legacy cache compatibility
+        # This is temporary until we fully migrate the cache system to use VariableComponents
+        from openhcs.constants.constants import VariableComponents
+
+        if isinstance(component, VariableComponents):
+            # Dynamic conversion: VariableComponents -> GroupBy
+            group_by_mapping = {
+                VariableComponents.WELL: GroupBy.WELL,
+                VariableComponents.CHANNEL: GroupBy.CHANNEL,
+                VariableComponents.SITE: GroupBy.SITE,
+                VariableComponents.Z_INDEX: GroupBy.Z_INDEX
+            }
+            group_by = group_by_mapping.get(component)
+            if not group_by:
+                raise ValueError(f"Unsupported component: {component.value}")
+        else:
+            # Already a GroupBy enum
+            group_by = component
 
         # Try metadata cache first (preferred source)
         if group_by in self._metadata_cache and self._metadata_cache[group_by]:

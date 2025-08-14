@@ -13,10 +13,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from openhcs.constants.constants import DEFAULT_IMAGE_EXTENSION
+from openhcs.constants.constants import DEFAULT_IMAGE_EXTENSION, OPENHCS_CONFIG
 from openhcs.io.filemanager import FileManager
 # Core OpenHCS Interfaces
 from openhcs.microscopes.microscope_interfaces import FilenameParser
+
+# Note: Previously used GenericPatternEngine, but now we always use microscope-specific parsers
 
 logger = logging.getLogger(__name__)
 
@@ -220,15 +222,15 @@ class PatternDiscoveryEngine:
             return {}
 
         result = {}
-        for well, files in files_by_well.items():
-            patterns = self._generate_patterns_for_files(files, variable_components)
+        for axis_value, files in files_by_well.items():
+            patterns = self._generate_patterns_for_files(files, variable_components, axis_value)
 
             # Validate patterns
             for pattern in patterns:
                 if not isinstance(pattern, str):
                     raise TypeError(f"Pattern generator returned invalid type: {type(pattern).__name__}")
 
-            result[well] = (
+            result[axis_value] = (
                 self.group_patterns_by_component(patterns, component=group_by)
                 if group_by else patterns
             )
@@ -300,7 +302,8 @@ class PatternDiscoveryEngine:
     def _generate_patterns_for_files(
         self,
         files: List[Any],
-        variable_components: List[str]
+        variable_components: List[str],
+        axis_value: str
     ) -> List[str]:
         """
         Generate patterns for a list of files.
@@ -322,6 +325,8 @@ class PatternDiscoveryEngine:
 
         if not isinstance(variable_components, list):
             raise TypeError(f"Expected list of variable components, got {type(variable_components).__name__}")
+
+        # Use microscope-specific parser for pattern generation
 
 
         component_combinations = defaultdict(list)
@@ -363,9 +368,22 @@ class PatternDiscoveryEngine:
                         pattern_args[comp] = template_metadata[comp]
 
             # 🔒 Clause 93 — Declarative Execution Enforcement
-            # Ensure all required components are present
-            if 'well' not in pattern_args or pattern_args['well'] is None:
-                raise ValueError("Clause 93 Violation: 'well' is a required component for pattern templates")
+            # Ensure multiprocessing axis component is present (it's always required)
+            # Use axis_value to determine which component is the multiprocessing axis
+            multiprocessing_axis_key = None
+            if axis_value:
+                # Find which component has the axis_value
+                for comp in self.parser.FILENAME_COMPONENTS:
+                    if comp in template_metadata and str(template_metadata[comp]) == str(axis_value):
+                        multiprocessing_axis_key = comp
+                        break
+
+            # Default to 'well' if we can't determine the axis (backward compatibility)
+            if not multiprocessing_axis_key:
+                multiprocessing_axis_key = 'well'
+
+            if multiprocessing_axis_key not in pattern_args or pattern_args[multiprocessing_axis_key] is None:
+                raise ValueError(f"Clause 93 Violation: '{multiprocessing_axis_key}' is a required component for pattern templates")
 
             pattern_str = self.parser.construct_filename(
                 well=pattern_args['well'],

@@ -13,8 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Type
 
 # Import constants
 from openhcs.constants.constants import Backend
-# Import PatternDiscoveryEngine for MicroscopeHandler initialization
-from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
+# PatternDiscoveryEngine imported locally to avoid circular imports
 from openhcs.io.filemanager import FileManager
 # Import interfaces from the base interfaces module
 from openhcs.microscopes.microscope_interfaces import (FilenameParser,
@@ -465,6 +464,7 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
             raise ValueError(f"Folder path does not exist: {folder_path}")
 
         # Create pattern engine on demand with the provided filemanager
+        from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
 
         # Get patterns from the pattern engine
@@ -519,6 +519,7 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         # The pattern engine will handle template expansion to find matching files
 
         # Create pattern engine on demand with the provided filemanager
+        from openhcs.formats.pattern.pattern_discovery import PatternDiscoveryEngine
         pattern_engine = PatternDiscoveryEngine(self.parser, filemanager)
 
         # Delegate to the pattern engine
