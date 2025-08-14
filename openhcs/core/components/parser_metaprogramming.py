@@ -7,7 +7,7 @@ assumptions about component names and makes the parser system truly generic.
 """
 
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 from typing import Any, Dict, Type, TypeVar, Optional, Union, Tuple
 from enum import Enum
 import inspect
@@ -56,7 +56,7 @@ class ParserMethodRegistry:
 _parser_registry = ParserMethodRegistry()
 
 
-class DynamicParserMeta(type):
+class DynamicParserMeta(ABCMeta):
     """
     Metaclass that dynamically generates parser interface methods based on component enums.
     
@@ -108,7 +108,7 @@ class DynamicParserMeta(type):
                 Returns a dictionary with keys matching component enum values plus 'extension'.
                 """
                 raise NotImplementedError("parse_filename must be implemented")
-            return parse_filename_method
+            return parse_filename
         
         namespace['parse_filename'] = create_parse_filename_method()
         
@@ -127,7 +127,7 @@ class DynamicParserMeta(type):
                     Constructed filename string
                 """
                 raise NotImplementedError("construct_filename must be implemented")
-            return construct_filename_method
+            return construct_filename
         
         namespace['construct_filename'] = create_construct_filename_method()
         
@@ -215,14 +215,16 @@ class GenericFilenameParser(ABC):
             if value is None:
                 return True  # Allow None values (placeholders)
 
-            # Strict validation - let TypeError bubble up for unsupported types
+            # Generic validation based on value type and placeholder patterns
             if isinstance(value, str):
                 # String values: allow non-empty strings or placeholder patterns
                 return len(value) > 0 or '{' in value
             elif isinstance(value, int):
                 # Integer values: allow positive integers
                 return value >= 0
-            # Remove else clause - unsupported types will cause natural failures
+            else:
+                # Other types: allow any value (extensible for future component types)
+                return True
 
         return validate_component
 
@@ -325,8 +327,12 @@ class GenericFilenameParser(ABC):
             True if the value is valid for the component
         """
         validate_method_name = f"validate_{component_name}"
-        validate_method = getattr(self, validate_method_name)  # Let AttributeError bubble up
-        return validate_method(value)
+        if hasattr(self, validate_method_name):
+            validate_method = getattr(self, validate_method_name)
+            return validate_method(value)
+        else:
+            # Fallback: allow any value for unknown components
+            return True
 
     def extract_component_by_name(self, filename: str, component_name: str) -> Optional[Any]:
         """

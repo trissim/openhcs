@@ -135,7 +135,7 @@ class DynamicInterfaceMeta(type):
                 logger.debug(f"Generated abstract method {method_name} for {interface_name}")
 
 
-class ComponentProcessorInterface(ABC, Generic[T], metaclass=DynamicInterfaceMeta):
+class ComponentProcessorInterface(metaclass=DynamicInterfaceMeta):
     """
     Base interface for component processors with dynamically generated methods.
     
@@ -210,7 +210,7 @@ class InterfaceGenerator:
                         component_enum: Type[T], 
                         interface_name: Optional[str] = None,
                         method_patterns: Optional[list] = None,
-                        base_classes: Optional[tuple] = None) -> Type[ComponentProcessorInterface[T]]:
+                        base_classes: Optional[tuple] = None) -> Type[ComponentProcessorInterface]:
         """
         Create a component-specific interface class.
         
@@ -235,7 +235,7 @@ class InterfaceGenerator:
         
         # Set default base classes
         if base_classes is None:
-            base_classes = (ComponentProcessorInterface[T],)
+            base_classes = (ComponentProcessorInterface,)
         
         # Create the interface class dynamically
         interface_class = DynamicInterfaceMeta(

@@ -677,6 +677,7 @@ class PipelineOrchestrator:
 
         Args:
             component: VariableComponents enum specifying which component to extract
+                      (also accepts GroupBy enum which will be converted to VariableComponents)
             component_filter: Optional list of component values to filter by
 
         Returns:
@@ -687,6 +688,12 @@ class PipelineOrchestrator:
         """
         if not self.is_initialized():
             raise RuntimeError("Orchestrator must be initialized before getting component keys.")
+
+        # Convert GroupBy enum to VariableComponents if needed
+        from openhcs.constants.constants import GroupBy, VariableComponents
+        if isinstance(component, GroupBy):
+            # GroupBy enum values are VariableComponents enum members
+            component = component.value
 
         # Use component directly - let natural errors occur for wrong types
         component_name = component.value

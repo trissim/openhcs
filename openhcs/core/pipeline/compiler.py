@@ -468,7 +468,7 @@ class PipelineCompiler:
             The input `pipeline_definition` list (of step objects) is modified in-place
             to become stateless.
         """
-        from openhcs.constants.constants import GroupBy, OrchestratorState
+        from openhcs.constants.constants import VariableComponents, OrchestratorState
         from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
 
         if not orchestrator.is_initialized():
@@ -479,7 +479,7 @@ class PipelineCompiler:
 
         try:
             compiled_contexts: Dict[str, ProcessingContext] = {}
-            wells_to_process = orchestrator.get_component_keys(GroupBy.WELL, well_filter)
+            wells_to_process = orchestrator.get_component_keys(VariableComponents.WELL, well_filter)
 
             if not wells_to_process:
                 logger.warning("No wells found to process based on filter.")

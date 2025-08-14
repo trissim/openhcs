@@ -720,39 +720,25 @@ def _process_single_pattern_group(
 
 class FunctionStep(AbstractStep):
 
-        *, name: Optional[str] = None, variable_components: List[VariableComponents] = [VariableComponents.SITE],
-        group_by: Optional[GroupBy] = None, force_disk_output: bool = False,
-        input_dir: Optional[Union[str, Path]] = None, output_dir: Optional[Union[str, Path]] = None,
-        input_source: InputSource = InputSource.PREVIOUS_STEP
+    def __init__(
+        self,
+        func: Union[Callable, Tuple[Callable, Dict], List[Union[Callable, Tuple[Callable, Dict]]]],
+        **kwargs
     ):
-        actual_func_for_name = func
-        if isinstance(func, tuple): actual_func_for_name = func[0]
-        elif isinstance(func, list) and func:
-             first_item = func[0]
-             if isinstance(first_item, tuple): actual_func_for_name = first_item[0]
-             elif callable(first_item): actual_func_for_name = first_item
+        # Generate default name from function if not provided
+        if 'name' not in kwargs or kwargs['name'] is None:
+            actual_func_for_name = func
+            if isinstance(func, tuple):
+                actual_func_for_name = func[0]
+            elif isinstance(func, list) and func:
+                first_item = func[0]
+                if isinstance(first_item, tuple):
+                    actual_func_for_name = first_item[0]
+                elif callable(first_item):
+                    actual_func_for_name = first_item
+            kwargs['name'] = getattr(actual_func_for_name, '__name__', 'FunctionStep')
 
-        # Early validation using generic system if available
-        if GenericValidator and OPENHCS_CONFIG:
-            try:
-                validator = GenericValidator(OPENHCS_CONFIG)
-                validation_result = validator.validate_step(
-                    variable_components, group_by, func,
-                    name or getattr(actual_func_for_name, '__name__', 'FunctionStep')
-                )
-                if not validation_result.is_valid:
-                    raise ValueError(validation_result.error_message)
-                logger.debug(f"FunctionStep validation passed using GenericValidator")
-            except Exception as e:
-                logger.warning(f"GenericValidator validation failed: {e}, proceeding with construction")
-
-        super().__init__(
-            name=name or getattr(actual_func_for_name, '__name__', 'FunctionStep'),
-            variable_components=variable_components, group_by=group_by,
-            force_disk_output=force_disk_output,
-            input_dir=input_dir, output_dir=output_dir,
-            input_source=input_source
-        )
+        super().__init__(**kwargs)
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
     def process(self, context: 'ProcessingContext') -> None:

@@ -21,10 +21,11 @@ class Microscope(Enum):
     OPERAPHENIX = "OperaPhenix"
 
 class GroupBy(Enum):
-    CHANNEL = VariableComponents.CHANNEL.value # Will be "channel"
-    Z_INDEX = VariableComponents.Z_INDEX.value # Will be "z_index"
-    SITE = VariableComponents.SITE.value     # Will be "site"
-    WELL = VariableComponents.WELL.value     # Will be "well"
+    # Use VariableComponents enum members as values to make them interchangeable
+    CHANNEL = VariableComponents.CHANNEL
+    Z_INDEX = VariableComponents.Z_INDEX
+    SITE = VariableComponents.SITE
+    WELL = VariableComponents.WELL
     NONE = "" # Added for allow_blank in Select
 
 class OrchestratorState(Enum):
