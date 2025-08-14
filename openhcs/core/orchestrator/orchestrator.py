@@ -229,10 +229,10 @@ class PipelineOrchestrator:
         self._state: OrchestratorState = OrchestratorState.CREATED
 
         # Component keys cache for fast access
-        self._component_keys_cache: Dict[GroupBy, List[str]] = {}
+        self._component_keys_cache: Dict['VariableComponents', List[str]] = {}
 
         # Metadata cache for component key→name mappings
-        self._metadata_cache: Dict[GroupBy, Dict[str, Optional[str]]] = {}
+        self._metadata_cache: Dict['VariableComponents', Dict[str, Optional[str]]] = {}
 
     def __setattr__(self, name: str, value: Any) -> None:
         """
@@ -666,18 +666,17 @@ class PipelineOrchestrator:
             logger.error(f"Failed to execute compiled plate: {e}")
             raise
 
-    def get_component_keys(self, component: Union[GroupBy, 'VariableComponents'], component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
+    def get_component_keys(self, component: 'VariableComponents', component_filter: Optional[List[Union[str, int]]] = None) -> List[str]:
         """
-        Generic method to get component keys for any component type.
+        Generic method to get component keys using VariableComponents directly.
 
-        This method works with any component enum (GroupBy or VariableComponents)
-        and returns the discovered component values as strings to match the pattern
+        Returns the discovered component values as strings to match the pattern
         detection system format.
 
         Tries metadata cache first, falls back to filename parsing cache if metadata is empty.
 
         Args:
-            component: Component enum (GroupBy or VariableComponents) specifying which component to extract
+            component: VariableComponents enum specifying which component to extract
             component_filter: Optional list of component values to filter by
 
         Returns:
@@ -689,38 +688,22 @@ class PipelineOrchestrator:
         if not self.is_initialized():
             raise RuntimeError("Orchestrator must be initialized before getting component keys.")
 
-        # Convert VariableComponents to GroupBy for legacy cache compatibility
-        # This is temporary until we fully migrate the cache system to use VariableComponents
-        from openhcs.constants.constants import VariableComponents
-        from openhcs.core.components.validation import convert_enum_by_value
-
-        if isinstance(component, VariableComponents):
-            # Generic conversion: VariableComponents -> GroupBy using value matching
-            group_by = convert_enum_by_value(component, GroupBy)
-            if not group_by:
-                raise ValueError(f"Unsupported component: {component.value}")
-        else:
-            # Already a GroupBy enum
-            group_by = component
+        # Use component directly - let natural errors occur for wrong types
+        component_name = component.value
 
         # Try metadata cache first (preferred source)
-        if group_by in self._metadata_cache and self._metadata_cache[group_by]:
-            all_components = list(self._metadata_cache[group_by].keys())
-            logger.debug(f"Using metadata cache for {group_by.value}: {len(all_components)} components")
+        if component in self._metadata_cache and self._metadata_cache[component]:
+            all_components = list(self._metadata_cache[component].keys())
+            logger.debug(f"Using metadata cache for {component.value}: {len(all_components)} components")
         else:
             # Fall back to filename parsing cache
-            if group_by not in self._component_keys_cache:
-                raise RuntimeError(f"Component keys cache is empty for {group_by.value}. "
-                                 f"Ensure cache_component_keys() was called during initialization.")
-
-            all_components = self._component_keys_cache[group_by]
+            all_components = self._component_keys_cache[component]  # Let KeyError bubble up naturally
 
             if not all_components:
-                component_name = group_by.value
                 logger.warning(f"No {component_name} values found in input directory: {self.input_dir}")
                 return []
 
-            logger.debug(f"Using filename parsing cache for {group_by.value}: {len(all_components)} components")
+            logger.debug(f"Using filename parsing cache for {component.value}: {len(all_components)} components")
 
         if component_filter:
             str_component_filter = {str(c) for c in component_filter}
@@ -732,7 +715,7 @@ class PipelineOrchestrator:
         else:
             return all_components
 
-    def cache_component_keys(self, components: Optional[List[GroupBy]] = None) -> None:
+    def cache_component_keys(self, components: Optional[List['VariableComponents']] = None) -> None:
         """
         Pre-compute and cache component keys for fast access using single-pass parsing.
 
@@ -740,22 +723,24 @@ class PipelineOrchestrator:
         extracting all component types in a single pass for maximum efficiency.
 
         Args:
-            components: Optional list of GroupBy components to cache.
-                       If None, caches all components in the GroupBy enum.
+            components: Optional list of VariableComponents to cache.
+                       If None, caches all components in the VariableComponents enum.
         """
         if not self.is_initialized():
             raise RuntimeError("Orchestrator must be initialized before caching component keys.")
 
+        # Import here to avoid circular imports
+        from openhcs.constants.constants import VariableComponents
+
         if components is None:
-            components = list(GroupBy)  # Cache all enum values
+            components = list(VariableComponents)  # Cache all enum values
 
         logger.info(f"Caching component keys for: {[comp.value for comp in components]}")
 
         # Initialize component sets for all requested components
-        component_sets: Dict[GroupBy, Set[Union[str, int]]] = {}
-        for group_by in components:
-            if group_by != GroupBy.NONE:  # Skip the empty enum
-                component_sets[group_by] = set()
+        component_sets: Dict['VariableComponents', Set[Union[str, int]]] = {}
+        for component in components:
+            component_sets[component] = set()
 
         # Single pass through all filenames - extract all components at once
         try:
@@ -766,31 +751,31 @@ class PipelineOrchestrator:
                 parsed_info = self.microscope_handler.parser.parse_filename(str(filename))
                 if parsed_info:
                     # Extract all requested components from this filename
-                    for group_by in component_sets:
-                        component_name = group_by.value
+                    for component in component_sets:
+                        component_name = component.value
                         if component_name in parsed_info and parsed_info[component_name] is not None:
-                            component_sets[group_by].add(parsed_info[component_name])
+                            component_sets[component].add(parsed_info[component_name])
                 else:
                     logger.warning(f"Could not parse filename: {filename}")
 
         except Exception as e:
             logger.error(f"Error listing files or parsing filenames from {self.input_dir}: {e}", exc_info=True)
             # Initialize empty sets for failed parsing
-            for group_by in component_sets:
-                component_sets[group_by] = set()
+            for component in component_sets:
+                component_sets[component] = set()
 
         # Convert sets to sorted lists and store in cache
-        for group_by, component_set in component_sets.items():
+        for component, component_set in component_sets.items():
             sorted_components = [str(comp) for comp in sorted(list(component_set))]
-            self._component_keys_cache[group_by] = sorted_components
-            logger.debug(f"Cached {len(sorted_components)} {group_by.value} keys")
+            self._component_keys_cache[component] = sorted_components
+            logger.debug(f"Cached {len(sorted_components)} {component.value} keys")
 
             if not sorted_components:
-                logger.warning(f"No {group_by.value} values found in input directory: {self.input_dir}")
+                logger.warning(f"No {component.value} values found in input directory: {self.input_dir}")
 
         logger.info(f"Component key caching complete. Cached {len(component_sets)} component types in single pass.")
 
-    def clear_component_cache(self, components: Optional[List[GroupBy]] = None) -> None:
+    def clear_component_cache(self, components: Optional[List['VariableComponents']] = None) -> None:
         """
         Clear cached component keys to force recomputation.
 
@@ -798,17 +783,17 @@ class PipelineOrchestrator:
         to refresh the component key cache.
 
         Args:
-            components: Optional list of GroupBy components to clear from cache.
+            components: Optional list of VariableComponents to clear from cache.
                        If None, clears entire cache.
         """
         if components is None:
             self._component_keys_cache.clear()
             logger.info("Cleared entire component keys cache")
         else:
-            for group_by in components:
-                if group_by in self._component_keys_cache:
-                    del self._component_keys_cache[group_by]
-                    logger.debug(f"Cleared cache for {group_by.value}")
+            for component in components:
+                if component in self._component_keys_cache:
+                    del self._component_keys_cache[component]
+                    logger.debug(f"Cleared cache for {component.value}")
             logger.info(f"Cleared cache for {len(components)} component types")
 
     def cache_metadata(self) -> None:
@@ -828,41 +813,44 @@ class PipelineOrchestrator:
             # Use plate_path for metadata loading since metadata files are in plate root
             metadata = self.microscope_handler.metadata_handler.parse_metadata(self.plate_path)
 
-            # Initialize all GroupBy components with component keys mapped to None
-            for group_by in [GroupBy.CHANNEL, GroupBy.WELL, GroupBy.SITE, GroupBy.Z_INDEX]:
-                # Get all component keys for this GroupBy from filename parsing
-                component_keys = self.get_component_keys(group_by)
+            # Import here to avoid circular imports
+            from openhcs.constants.constants import VariableComponents
+
+            # Initialize all VariableComponents with component keys mapped to None
+            for component in VariableComponents:
+                # Get all component keys for this component from filename parsing
+                component_keys = self.get_component_keys(component)
                 # Create dict mapping each key to None (no metadata available)
-                self._metadata_cache[group_by] = {key: None for key in component_keys}
+                self._metadata_cache[component] = {key: None for key in component_keys}
 
             # Update with actual metadata from metadata handler where available
             for component_name, mapping in metadata.items():
                 try:
-                    group_by = GroupBy(component_name)  # Convert string to enum
+                    component = VariableComponents(component_name)  # Convert string to enum
                     # For OpenHCS plates, metadata keys might be the only source of component keys
                     # Merge metadata keys with any existing component keys from filename parsing
-                    if group_by in self._metadata_cache:
+                    if component in self._metadata_cache:
                         # Start with existing component keys (from filename parsing)
-                        combined_cache = self._metadata_cache[group_by].copy()
+                        combined_cache = self._metadata_cache[component].copy()
                         # Add any metadata keys that weren't found in filename parsing
                         for metadata_key in mapping.keys():
                             if metadata_key not in combined_cache:
                                 combined_cache[metadata_key] = None
                         # Update with actual metadata values
                         combined_cache.update(mapping)
-                        self._metadata_cache[group_by] = combined_cache
+                        self._metadata_cache[component] = combined_cache
                     else:
-                        self._metadata_cache[group_by] = mapping
-                    logger.debug(f"Updated metadata for {group_by.value}: {len(mapping)} entries with real data")
+                        self._metadata_cache[component] = mapping
+                    logger.debug(f"Updated metadata for {component.value}: {len(mapping)} entries with real data")
                 except ValueError:
                     logger.warning(f"Unknown component type in metadata: {component_name}")
 
             # Log what we have for each component
-            for group_by in [GroupBy.CHANNEL, GroupBy.WELL, GroupBy.SITE, GroupBy.Z_INDEX]:
-                mapping = self._metadata_cache[group_by]
+            for component in VariableComponents:
+                mapping = self._metadata_cache[component]
                 real_metadata_count = sum(1 for v in mapping.values() if v is not None)
                 total_keys = len(mapping)
-                logger.debug(f"Cached {group_by.value}: {total_keys} keys, {real_metadata_count} with metadata")
+                logger.debug(f"Cached {component.value}: {total_keys} keys, {real_metadata_count} with metadata")
 
             logger.info(f"Metadata caching complete. All {len(self._metadata_cache)} component types populated.")
 
@@ -870,20 +858,20 @@ class PipelineOrchestrator:
             logger.warning(f"Could not cache metadata: {e}")
             # Don't fail - metadata is optional enhancement
 
-    def get_component_metadata(self, group_by: GroupBy, key: str) -> Optional[str]:
+    def get_component_metadata(self, component: 'VariableComponents', key: str) -> Optional[str]:
         """
         Get metadata display name for a specific component key.
 
         Args:
-            group_by: GroupBy enum specifying component type
+            component: VariableComponents enum specifying component type
             key: Component key (e.g., "1", "2", "A01")
 
         Returns:
             Display name from metadata, or None if not available
-            Example: get_component_metadata(GroupBy.CHANNEL, "1") → "HOECHST 33342"
+            Example: get_component_metadata(VariableComponents.CHANNEL, "1") → "HOECHST 33342"
         """
-        if group_by in self._metadata_cache:
-            return self._metadata_cache[group_by].get(key)
+        if component in self._metadata_cache:
+            return self._metadata_cache[component].get(key)
         return None
 
     def clear_metadata_cache(self) -> None:

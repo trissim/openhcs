@@ -195,13 +195,7 @@ class ImageXpressHandler(MicroscopeHandler):
                 components['z_index'] = z_index
 
                 # Use the parser to construct a new filename with the updated z_index
-                new_name = self.parser.construct_filename(
-                    well=components['well'],
-                    site=components['site'],
-                    channel=components['channel'],
-                    z_index=z_index,
-                    extension=components['extension']
-                )
+                new_name = self.parser.construct_filename(**components)
 
                 # Create the new path in the parent directory
                 new_path = directory / new_name if isinstance(directory, Path) else Path(os.path.join(str(directory), new_name))
@@ -275,13 +269,7 @@ class ImageXpressHandler(MicroscopeHandler):
             # Only rebuild filename if we added missing components
             if needs_rebuild:
                 # Construct new filename with complete metadata
-                new_name = self.parser.construct_filename(
-                    well=components['well'],
-                    site=components['site'],
-                    channel=components['channel'],
-                    z_index=components['z_index'],
-                    extension=components['extension']
-                )
+                new_name = self.parser.construct_filename(**components)
 
                 # Only rename if the filename actually changed
                 if new_name != img_file_name:
@@ -386,28 +374,28 @@ class ImageXpressFilenameParser(FilenameParser):
             logger.debug("Could not parse ImageXpress filename: %s", filename)
             return None
 
-    def extract_row_column(self, well: str) -> Tuple[str, str]:
+    def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
-        Extract row and column from ImageXpress well identifier.
+        Extract coordinates from component identifier (typically well).
 
         Args:
-            well (str): Well identifier (e.g., 'A01', 'C04')
+            component_value (str): Component identifier (e.g., 'A01', 'C04')
 
         Returns:
             Tuple[str, str]: (row, column) where row is like 'A', 'C' and column is like '01', '04'
 
         Raises:
-            ValueError: If well format is invalid
+            ValueError: If component format is invalid
         """
-        if not well or len(well) < 2:
-            raise ValueError(f"Invalid well format: {well}")
+        if not component_value or len(component_value) < 2:
+            raise ValueError(f"Invalid component format: {component_value}")
 
         # ImageXpress format: A01, B02, C04, etc.
-        row = well[0]
-        col = well[1:]
+        row = component_value[0]
+        col = component_value[1:]
 
         if not row.isalpha() or not col.isdigit():
-            raise ValueError(f"Invalid ImageXpress well format: {well}. Expected format like 'A01', 'C04'")
+            raise ValueError(f"Invalid ImageXpress component format: {component_value}. Expected format like 'A01', 'C04'")
 
         return row, col
 

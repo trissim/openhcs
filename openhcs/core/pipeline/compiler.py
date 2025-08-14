@@ -238,9 +238,9 @@ class PipelineCompiler:
             steps_definition: List of AbstractStep objects
             orchestrator: Orchestrator instance for accessing all wells
         """
-        from openhcs.constants.constants import GroupBy, Backend
+        from openhcs.constants.constants import VariableComponents, Backend
 
-        all_wells = orchestrator.get_component_keys(GroupBy.WELL)
+        all_wells = orchestrator.get_component_keys(VariableComponents.WELL)
 
         vfs_config = context.get_vfs_config()
 

@@ -202,15 +202,8 @@ class OperaPhenixHandler(MicroscopeHandler):
             new_field_id = field_mapping.get(original_field_id, original_field_id)
 
             # Construct the new filename with proper padding
-            new_name = self.parser.construct_filename(
-                well=metadata['well'],
-                site=new_field_id,
-                channel=metadata['channel'],
-                z_index=metadata['z_index'],
-                extension=metadata['extension'],
-                site_padding=3,
-                z_padding=3
-            )
+            metadata['site'] = new_field_id  # Update site with remapped value
+            new_name = self.parser.construct_filename(**metadata)
 
             # Create the new path in the temporary directory
             if isinstance(temp_dir, str):
@@ -532,34 +525,27 @@ class OperaPhenixFilenameParser(FilenameParser):
 
         # Always create a new filename with the remapped field ID and consistent padding
         # This ensures all filenames have the same format, even if the field ID didn't change
-        return self.construct_filename(
-            well=metadata['well'],
-            site=new_field_id,
-            channel=metadata['channel'],
-            z_index=metadata['z_index'],
-            extension=metadata['extension'],
-            site_padding=3,
-            z_padding=3
-        )
+        metadata['site'] = new_field_id  # Update site with remapped value
+        return self.construct_filename(**metadata)
 
-    def extract_row_column(self, well: str) -> Tuple[str, str]:
+    def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
-        Extract row and column from Opera Phenix well identifier.
+        Extract coordinates from component identifier (typically well).
 
         Args:
-            well (str): Well identifier (e.g., 'R03C04' or 'A01')
+            component_value (str): Component identifier (e.g., 'R03C04' or 'A01')
 
         Returns:
             Tuple[str, str]: (row, column) where row is like 'A', 'B' and column is like '01', '04'
 
         Raises:
-            ValueError: If well format is invalid
+            ValueError: If component format is invalid
         """
-        if not well:
-            raise ValueError(f"Invalid well format: {well}")
+        if not component_value:
+            raise ValueError(f"Invalid component format: {component_value}")
 
-        # Check if well is in Opera Phenix format (e.g., 'R01C03')
-        match = self._well_pattern.match(well)
+        # Check if component is in Opera Phenix format (e.g., 'R01C03')
+        match = self._well_pattern.match(component_value)
         if match:
             # Extract row and column from Opera Phenix format
             row_num = int(match.group(1))
@@ -570,12 +556,12 @@ class OperaPhenixFilenameParser(FilenameParser):
             return row, col
         else:
             # Assume simple format like 'A01', 'C04'
-            if len(well) < 2:
-                raise ValueError(f"Invalid well format: {well}")
-            row = well[0]
-            col = well[1:]
+            if len(component_value) < 2:
+                raise ValueError(f"Invalid component format: {component_value}")
+            row = component_value[0]
+            col = component_value[1:]
             if not row.isalpha() or not col.isdigit():
-                raise ValueError(f"Invalid Opera Phenix well format: {well}. Expected 'R01C03' or 'A01' format")
+                raise ValueError(f"Invalid Opera Phenix component format: {component_value}. Expected 'R01C03' or 'A01' format")
             return row, col
 
 

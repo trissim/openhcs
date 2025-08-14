@@ -56,18 +56,18 @@ class FilenameParser(GenericFilenameParser):
         pass
 
     @abstractmethod
-    def extract_row_column(self, well: str) -> Tuple[str, str]:
+    def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
         """
-        Extract row and column from a well identifier.
+        Extract coordinates from component identifier (typically well).
 
         Args:
-            well (str): Well identifier (e.g., 'A01', 'R03C04', 'C04')
+            component_value (str): Component identifier (e.g., 'A01', 'R03C04', 'C04')
 
         Returns:
             Tuple[str, str]: (row, column) where row is like 'A', 'B' and column is like '01', '04'
 
         Raises:
-            ValueError: If well format is invalid for this parser
+            ValueError: If component format is invalid for this parser
         """
         pass
 
@@ -227,9 +227,9 @@ class MetadataHandler(ABC):
 
     def parse_metadata(self, plate_path: Union[str, Path]) -> Dict[str, Dict[str, Optional[str]]]:
         """
-        Parse all metadata using enum→method mapping.
+        Parse all metadata using dynamic method resolution.
 
-        This method iterates through GroupBy components and calls the corresponding
+        This method iterates through VariableComponents and calls the corresponding
         abstract methods to collect all available metadata.
 
         Args:
@@ -239,19 +239,12 @@ class MetadataHandler(ABC):
             Dict mapping component names to their key→name mappings
             Example: {"channel": {"1": "HOECHST 33342", "2": "Calcein"}}
         """
-        # Import here to avoid circular imports
-        from openhcs.constants.constants import GroupBy
-
-        method_map = {
-            GroupBy.CHANNEL: self.get_channel_values,
-            GroupBy.WELL: self.get_well_values,
-            GroupBy.SITE: self.get_site_values,
-            GroupBy.Z_INDEX: self.get_z_index_values
-        }
-
         result = {}
-        for group_by, method in method_map.items():
+        for component in self.component_enum:
+            component_name = component.value
+            method_name = f"get_{component_name}_values"
+            method = getattr(self, method_name)  # Let AttributeError bubble up
             values = method(plate_path)
             if values:
-                result[group_by.value] = values
+                result[component_name] = values
         return result

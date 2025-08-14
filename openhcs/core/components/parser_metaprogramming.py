@@ -215,16 +215,14 @@ class GenericFilenameParser(ABC):
             if value is None:
                 return True  # Allow None values (placeholders)
 
-            # Generic validation based on value type and placeholder patterns
+            # Strict validation - let TypeError bubble up for unsupported types
             if isinstance(value, str):
                 # String values: allow non-empty strings or placeholder patterns
                 return len(value) > 0 or '{' in value
             elif isinstance(value, int):
                 # Integer values: allow positive integers
                 return value >= 0
-            else:
-                # Other types: allow any value (extensible for future component types)
-                return True
+            # Remove else clause - unsupported types will cause natural failures
 
         return validate_component
 
@@ -253,8 +251,8 @@ class GenericFilenameParser(ABC):
         pass
 
     @abstractmethod
-    def extract_row_column(self, well: str) -> Tuple[str, str]:
-        """Extract row and column from a well identifier."""
+    def extract_component_coordinates(self, component_value: str) -> Tuple[str, str]:
+        """Extract coordinates from component identifier (typically well)."""
         pass
 
     @abstractmethod
@@ -327,12 +325,8 @@ class GenericFilenameParser(ABC):
             True if the value is valid for the component
         """
         validate_method_name = f"validate_{component_name}"
-        if hasattr(self, validate_method_name):
-            validate_method = getattr(self, validate_method_name)
-            return validate_method(value)
-        else:
-            # Fallback: allow any value for unknown components
-            return True
+        validate_method = getattr(self, validate_method_name)  # Let AttributeError bubble up
+        return validate_method(value)
 
     def extract_component_by_name(self, filename: str, component_name: str) -> Optional[Any]:
         """

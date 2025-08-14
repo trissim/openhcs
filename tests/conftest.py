@@ -34,8 +34,15 @@ def pytest_addoption(parser):
     parser.addoption(
         "--it-exec-mode",
         action="store",
-        default=env_default("IT_EXEC_MODE", "multiprocessing"), 
+        default=env_default("IT_EXEC_MODE", "multiprocessing"),
         help="Comma-separated list of execution modes (default: multiprocessing). Options: threading,multiprocessing. Use 'all' for full coverage."
+    )
+
+    parser.addoption(
+        "--it-processing-axis",
+        action="store",
+        default=env_default("IT_PROCESSING_AXIS", "well"),
+        help="Comma-separated list of processing axis components (default: well). Options: well. Use 'all' for full coverage."
     )
 
 
@@ -45,17 +52,19 @@ def pytest_configure(config):
     # Define valid choices for each option
     valid_choices = {
         "backends": ["disk", "zarr"],
-        "microscopes": ["ImageXpress", "OperaPhenix"], 
+        "microscopes": ["ImageXpress", "OperaPhenix"],
         "dims": ["2d", "3d"],
-        "exec_modes": ["threading", "multiprocessing"]
+        "exec_modes": ["threading", "multiprocessing"],
+        "processing_axis": ["well"]
     }
     
     # Validate each option
     options_to_validate = [
         ("--it-backends", "backends"),
         ("--it-microscopes", "microscopes"),
-        ("--it-dims", "dims"), 
-        ("--it-exec-mode", "exec_modes")
+        ("--it-dims", "dims"),
+        ("--it-exec-mode", "exec_modes"),
+        ("--it-processing-axis", "processing_axis")
     ]
     
     for option_name, choice_key in options_to_validate:
@@ -98,6 +107,11 @@ INTEGRATION_TEST_CONFIG = {
         'option': '--it-exec-mode',
         'choices': ['threading', 'multiprocessing'],
         'value_mapper': lambda x: x  # Return mode name as-is
+    },
+    'processing_axis': {
+        'option': '--it-processing-axis',
+        'choices': ['well'],
+        'value_mapper': lambda x: x  # Return axis name as-is
     }
 }
 

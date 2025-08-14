@@ -347,15 +347,10 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
             )
 
             # Reconstruct the filename with proper padding
-            new_name = parser.construct_filename(
-                well=metadata['well'],
-                site=site,
-                channel=channel,
-                z_index=z_index,
-                extension=metadata['extension'],
-                site_padding=width,
-                z_padding=width
-            )
+            metadata['site'] = site
+            metadata['channel'] = channel
+            metadata['z_index'] = z_index
+            new_name = parser.construct_filename(**metadata)
 
             # Add to rename map if different
             if original_name != new_name:
@@ -426,30 +421,11 @@ class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
         """Delegate to parser."""
         return self.parser.parse_filename(filename)
 
-    def construct_filename(self, well: str = None, site: Optional[Union[int, str]] = None,
-                          channel: Optional[int] = None,
-                          z_index: Optional[Union[int, str]] = None,
-                          extension: str = '.tif',
-                          site_padding: int = 3, z_padding: int = 3, **kwargs) -> str:
+    def construct_filename(self, extension: str = '.tif', **component_values) -> str:
         """
-        Delegate to parser using generic interface.
-
-        This method maintains backward compatibility while supporting the new generic interface.
+        Delegate to parser using pure generic interface.
         """
-        # Combine explicit parameters with kwargs for generic interface
-        component_values = kwargs.copy()
-        if well is not None:
-            component_values['well'] = well
-        if site is not None:
-            component_values['site'] = site
-        if channel is not None:
-            component_values['channel'] = channel
-        if z_index is not None:
-            component_values['z_index'] = z_index
-
-        return self.parser.construct_filename(
-            extension=extension, site_padding=site_padding, z_padding=z_padding, **component_values
-        )
+        return self.parser.construct_filename(extension=extension, **component_values)
 
     def auto_detect_patterns(self, folder_path: Union[str, Path], filemanager: FileManager, backend: str,
                            well_filter=None, extensions=None, group_by='channel', variable_components=None):

@@ -240,7 +240,7 @@ def _bulk_writeout_step_images(
         if microscope_handler is not None:
             n_channels, n_z, n_fields = _calculate_zarr_dimensions(file_paths, microscope_handler)
             # Parse well to get row and column for zarr structure
-            row, col = microscope_handler.parser.extract_row_column(well_id)
+            row, col = microscope_handler.parser.extract_component_coordinates(well_id)
             filemanager.save_batch(memory_data, file_paths, write_backend,
                                  chunk_name=well_id, zarr_config=zarr_config,
                                  n_channels=n_channels, n_z=n_z, n_fields=n_fields,
@@ -841,8 +841,11 @@ class FunctionStep(AbstractStep):
                 # Generate conversion paths (input_dir → conversion_dir)
                 conversion_paths = _generate_materialized_paths(memory_paths, Path(step_input_dir), Path(input_conversion_dir))
 
-                # Ensure conversion directory exists
-                filemanager.ensure_directory(input_conversion_dir, input_conversion_backend)
+                # Parse actual filenames to determine dimensions
+                # Calculate zarr dimensions from zarr paths (which contain the filenames)
+                n_channels, n_z, n_fields = _calculate_zarr_dimensions(zarr_paths, context.microscope_handler)
+                # Parse well to get row and column for zarr structure
+                row, col = context.microscope_handler.parser.extract_component_coordinates(well_id)
 
                 # Save using existing materialized data infrastructure
                 _save_materialized_data(filemanager, memory_data, conversion_paths, input_conversion_backend, step_plan, context, well_id)
@@ -916,7 +919,7 @@ class FunctionStep(AbstractStep):
                 memory_data = filemanager.load_batch(memory_paths, Backend.MEMORY.value)
                 # Calculate zarr dimensions (ignored by non-zarr backends)
                 n_channels, n_z, n_fields = _calculate_zarr_dimensions(memory_paths, context.microscope_handler)
-                row, col = context.microscope_handler.parser.extract_row_column(well_id)
+                row, col = context.microscope_handler.parser.extract_component_coordinates(well_id)
                 filemanager.ensure_directory(step_output_dir, write_backend)
                 filemanager.save_batch(memory_data, memory_paths, write_backend,
                                      chunk_name=well_id, zarr_config=step_plan["zarr_config"],
@@ -992,6 +995,140 @@ class FunctionStep(AbstractStep):
 
             raise
 
+
+    def _extract_component_metadata(self, context: 'ProcessingContext', component: 'VariableComponents') -> Optional[Dict[str, str]]:
+        """
+        Extract component metadata from context cache safely.
+
+        Args:
+            context: ProcessingContext containing metadata_cache
+            component: VariableComponents enum specifying which component to extract
+
+        Returns:
+            Dictionary mapping component keys to display names, or None if not available
+        """
+        try:
+            if hasattr(context, 'metadata_cache') and context.metadata_cache:
+                return context.metadata_cache.get(component, None)
+            else:
+                logger.debug(f"No metadata_cache available in context for {component.value}")
+                return None
+        except Exception as e:
+            logger.debug(f"Error extracting {component.value} metadata from cache: {e}")
+            return None
+
+    def _create_openhcs_metadata_for_materialization(
+        self,
+        context: 'ProcessingContext',
+        output_dir: str,
+        write_backend: str
+    ) -> None:
+        """
+        Create OpenHCS metadata file for materialization writes.
+
+        Args:
+            context: ProcessingContext containing microscope_handler and other state
+            output_dir: Output directory path where metadata should be written
+            write_backend: Backend being used for the write (disk/zarr)
+        """
+        # Check if this is a materialization write (disk/zarr) - memory writes don't need metadata
+        if write_backend == Backend.MEMORY.value:
+            logger.debug(f"Skipping metadata creation (memory write)")
+            return
+
+        logger.debug(f"Creating metadata for materialization write: {write_backend} -> {output_dir}")
+
+        try:
+            # Extract required information
+            step_output_dir = Path(output_dir)
+
+            # Check if we have microscope handler for metadata extraction
+            if not context.microscope_handler:
+                logger.debug("No microscope_handler in context - skipping OpenHCS metadata creation")
+                return
+
+            # Get source microscope information
+            source_parser_name = context.microscope_handler.parser.__class__.__name__
+
+            # Extract metadata from source microscope handler
+            try:
+                grid_dimensions = context.microscope_handler.metadata_handler.get_grid_dimensions(context.input_dir)
+                pixel_size = context.microscope_handler.metadata_handler.get_pixel_size(context.input_dir)
+            except Exception as e:
+                logger.debug(f"Could not extract grid_dimensions/pixel_size from source: {e}")
+                grid_dimensions = [1, 1]  # Default fallback
+                pixel_size = 1.0  # Default fallback
+
+            # Get list of image files in output directory
+            try:
+                image_files = []
+                if context.filemanager.exists(str(step_output_dir), write_backend):
+                    # List files in output directory
+                    files = context.filemanager.list_files(str(step_output_dir), write_backend)
+                    # Filter for image files (common extensions) and convert to strings
+                    image_extensions = {'.tif', '.tiff', '.png', '.jpg', '.jpeg'}
+                    image_files = [str(f) for f in files if Path(f).suffix.lower() in image_extensions]
+                    logger.debug(f"Found {len(image_files)} image files in {step_output_dir}")
+            except Exception as e:
+                logger.debug(f"Could not list image files in output directory: {e}")
+                image_files = []
+
+            # Detect available backends based on actual output files
+            available_backends = self._detect_available_backends(step_output_dir)
+
+            # Create metadata structure
+            metadata = {
+                "microscope_handler_name": context.microscope_handler.microscope_type,
+                "source_filename_parser_name": source_parser_name,
+                "grid_dimensions": list(grid_dimensions) if hasattr(grid_dimensions, '__iter__') else [1, 1],
+                "pixel_size": float(pixel_size) if pixel_size is not None else 1.0,
+                "image_files": image_files,
+                "channels": self._extract_component_metadata(context, VariableComponents.CHANNEL),
+                "wells": self._extract_component_metadata(context, VariableComponents.WELL),
+                "sites": self._extract_component_metadata(context, VariableComponents.SITE),
+                "z_indexes": self._extract_component_metadata(context, VariableComponents.Z_INDEX),
+                "available_backends": available_backends
+            }
+
+            # Save metadata file using disk backend (JSON files always on disk)
+            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+            metadata_path = step_output_dir / OpenHCSMetadataHandler.METADATA_FILENAME
+
+            # Always ensure we can write to the metadata path (delete if exists)
+            if context.filemanager.exists(str(metadata_path), Backend.DISK.value):
+                context.filemanager.delete(str(metadata_path), Backend.DISK.value)
+
+            # Ensure output directory exists on disk
+            context.filemanager.ensure_directory(str(step_output_dir), Backend.DISK.value)
+
+            # Create JSON content - OpenHCS handler expects JSON format
+            import json
+            json_content = json.dumps(metadata, indent=2)
+            context.filemanager.save(json_content, str(metadata_path), Backend.DISK.value)
+            logger.debug(f"Created OpenHCS metadata file (disk): {metadata_path}")
+
+        except Exception as e:
+            # Graceful degradation - log error but don't fail the step
+            logger.warning(f"Failed to create OpenHCS metadata file: {e}")
+            logger.debug(f"OpenHCS metadata creation error details:", exc_info=True)
+
+    def _detect_available_backends(self, output_dir: Path) -> Dict[str, bool]:
+        """Detect which storage backends are actually available based on output files."""
+
+        backends = {Backend.ZARR.value: False, Backend.DISK.value: False}
+
+        # Check for zarr stores
+        if list(output_dir.glob("*.zarr")):
+            backends[Backend.ZARR.value] = True
+
+        # Check for image files
+        for ext in DEFAULT_IMAGE_EXTENSIONS:
+            if list(output_dir.glob(f"*{ext}")):
+                backends[Backend.DISK.value] = True
+                break
+
+        logger.debug(f"Backend detection result: {backends}")
+        return backends
 
 
     def _materialize_special_outputs(self, filemanager, step_plan, special_outputs):

@@ -134,10 +134,10 @@ class GroupBySelectorWindow(BaseOpenHCSWindow):
 
         # Get metadata name if orchestrator is available
         if self.orchestrator:
-            # Convert component_type string back to GroupBy enum
-            from openhcs.constants.constants import GroupBy
-            group_by = GroupBy(self.component_type)
-            metadata_name = self.orchestrator.get_component_metadata(group_by, component_key)
+            # Convert component_type string back to VariableComponents enum
+            from openhcs.constants.constants import VariableComponents
+            component = VariableComponents(self.component_type)
+            metadata_name = self.orchestrator.get_component_metadata(component, component_key)
 
             if metadata_name:
                 return f"{base_text} | {metadata_name}"
