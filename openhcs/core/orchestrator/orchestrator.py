@@ -334,7 +334,7 @@ class PipelineOrchestrator:
              raise RuntimeError("Orchestrator input_dir is not set; initialize orchestrator first.")
 
         context = ProcessingContext(
-            global_config=self.global_config,
+            global_config=self.get_effective_config(),
             well_id=well_id,
             filemanager=self.filemanager
         )
