@@ -214,8 +214,14 @@ class EnhancedPathWidget(QWidget):
         """Set path value without triggering signals."""
         self.path_input.blockSignals(True)
         try:
-            text = str(value) if value is not None else ""
-            self.path_input.setText(text)
+            if value is not None:
+                # Set actual value
+                text = str(value)
+                self.path_input.setText(text)
+            else:
+                # For None values, don't set empty text - let placeholder system handle it
+                # This allows lazy placeholder text to be visible instead of hardcoded placeholder
+                pass
         finally:
             self.path_input.blockSignals(False)
 

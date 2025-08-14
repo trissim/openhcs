@@ -1,6 +1,6 @@
 """Window service to break circular imports between widgets and windows."""
 
-from typing import Optional, Callable, List
+from typing import Any, Callable, List, Optional, Type
 from pathlib import Path
 from textual.css.query import NoMatches
 
@@ -54,16 +54,26 @@ class WindowService:
             enable_multi_selection=enable_multi_selection,
         )
     
-    async def open_config_window(self, config, on_save_callback: Optional[Callable] = None):
-        """Open config window without circular imports."""
-        # Lazy import to avoid circular dependency
-        from openhcs.textual_tui.windows.config_window import ConfigWindow
-        
+    async def open_config_window(
+        self,
+        config_class: Type,
+        current_config: Any,
+        on_save_callback: Optional[Callable] = None
+    ):
+        """
+        Open config window with separate config_class and current_config parameters.
+
+        Supports both GlobalPipelineConfig (global) and PipelineConfig (per-orchestrator).
+        """
         try:
             window = self.app.query_one(ConfigWindow)
             window.open_state = True
         except NoMatches:
-            window = ConfigWindow(config=config, on_save_callback=on_save_callback)
+            window = ConfigWindow(
+                config_class=config_class,
+                current_config=current_config,
+                on_save_callback=on_save_callback
+            )
             await self.app.mount(window)
             window.open_state = True
         return window

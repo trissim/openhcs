@@ -139,9 +139,9 @@ class FuncStepContractValidator:
                 # Verify that other planners have run before this validator by checking attributes
                 # This is a fallback verification when pipeline_context is not provided
                 try:
-                    # Check for path planner fields
-                    _ = step.input_dir
-                    _ = step.output_dir
+                    # Check for path planner fields (using dunder names)
+                    _ = step.__input_dir__
+                    _ = step.__output_dir__
                 except AttributeError as e:
                     raise AssertionError(
                         f"Clause 101 Violation: Required planners must run before FuncStepContractValidator. "

@@ -31,7 +31,9 @@ class StepParameterEditorWidget(ScrollableContainer):
         self.step = step
 
         # Create parameter form manager using shared components
-        param_info = SignatureAnalyzer.analyze(FunctionStep.__init__)
+        # Analyze AbstractStep to get all inherited parameters including materialization_config
+        # Auto-detection correctly identifies constructors and includes all parameters
+        param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
 
         # Get current parameter values from step instance
         parameters = {}
@@ -39,14 +41,19 @@ class StepParameterEditorWidget(ScrollableContainer):
         param_defaults = {}
 
         for name, info in param_info.items():
-            if name in ('func',):  # Skip func parameter
-                continue
+            # All AbstractStep parameters are relevant for editing
             current_value = getattr(self.step, name, info.default_value)
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
 
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "step", param_info)
+        # Configure form manager for step editing with pipeline context
+        from openhcs.core.config import GlobalPipelineConfig
+        self.form_manager = ParameterFormManager(
+            parameters, parameter_types, "step", param_info,
+            global_config_type=GlobalPipelineConfig,
+            placeholder_prefix="Pipeline default"
+        )
         self.param_defaults = param_defaults
 
     def compose(self) -> ComposeResult:
@@ -80,12 +87,21 @@ class StepParameterEditorWidget(ScrollableContainer):
 
     def on_checkbox_changed(self, event) -> None:
         """Handle checkbox changes from shared components."""
-        if event.checkbox.id.startswith("step_"):
-            param_name = event.checkbox.id.split("_", 1)[1]
-            if self.form_manager:
-                self.form_manager.update_parameter(param_name, event.value)
-                final_value = self.form_manager.parameters[param_name]
-                self._handle_parameter_change(param_name, final_value)
+        if not event.checkbox.id.startswith("step_") or not self.form_manager:
+            return
+
+        checkbox_id = event.checkbox.id
+        if checkbox_id.endswith("_enabled"):
+            # Optional dataclass checkbox
+            param_name = checkbox_id.replace("step_", "").replace("_enabled", "")
+            self.form_manager.handle_optional_checkbox_change(param_name, event.value)
+        else:
+            # Regular checkbox
+            param_name = checkbox_id.split("_", 1)[1]
+            self.form_manager.update_parameter(param_name, event.value)
+
+        final_value = self.form_manager.parameters[param_name]
+        self._handle_parameter_change(param_name, final_value)
 
     def on_radio_set_changed(self, event) -> None:
         """Handle RadioSet changes from shared components."""

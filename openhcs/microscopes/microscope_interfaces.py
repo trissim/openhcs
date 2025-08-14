@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
+from openhcs.constants.constants import DEFAULT_PIXEL_SIZE
+
 
 class FilenameParser(ABC):
     """
@@ -91,7 +93,22 @@ class MetadataHandler(ABC):
     Abstract base class for handling microscope metadata.
 
     All metadata methods require str or Path objects for file paths.
+
+    Subclasses can define FALLBACK_VALUES for explicit fallbacks:
+    FALLBACK_VALUES = {'pixel_size': 1.0, 'grid_dimensions': (3, 3)}
     """
+
+    FALLBACK_VALUES = {
+        'pixel_size': DEFAULT_PIXEL_SIZE,  # Default pixel size in micrometers
+        'grid_dimensions': None,  # No grid dimensions by default
+    }
+
+    def _get_with_fallback(self, method_name: str, *args, **kwargs):
+        try:
+            return getattr(self, method_name)(*args, **kwargs)
+        except Exception:
+            key = method_name.replace('get_', '')
+            return self.FALLBACK_VALUES[key]
 
     @abstractmethod
     def find_metadata_file(self, plate_path: Union[str, Path]) -> Path:

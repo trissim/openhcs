@@ -17,7 +17,7 @@ class ConfigFormWidget(ScrollableContainer):
     field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
 
 
-    def __init__(self, dataclass_type: type, instance: Any = None, **kwargs):
+    def __init__(self, dataclass_type: type, instance: Any = None, is_global_config_editing: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.dataclass_type = dataclass_type
         self.instance = instance or dataclass_type()
@@ -31,22 +31,28 @@ class ConfigFormWidget(ScrollableContainer):
         param_defaults = {}
 
         for name, info in param_info.items():
-            current_value = getattr(self.instance, name, info.default_value)
+            # For lazy dataclasses, preserve None values for placeholder behavior
+            if hasattr(self.instance, '_resolve_field_value'):
+                # This is a lazy dataclass - use object.__getattribute__ to get stored value
+                current_value = object.__getattribute__(self.instance, name) if hasattr(self.instance, name) else info.default_value
+            else:
+                # Regular dataclass - use normal getattr
+                current_value = getattr(self.instance, name, info.default_value)
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
 
         # Create shared form manager with parameter info for help functionality
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "config", param_info)
+        self.form_manager = ParameterFormManager(parameters, parameter_types, "config", param_info, is_global_config_editing=is_global_config_editing)
         self.param_defaults = param_defaults
 
         # Initialize field values for reactive updates
         self.field_values = parameters.copy()
 
     @classmethod
-    def from_dataclass(cls, dataclass_type: type, instance: Any = None, **kwargs):
+    def from_dataclass(cls, dataclass_type: type, instance: Any = None, is_global_config_editing: bool = False, **kwargs):
         """Create ConfigFormWidget from dataclass type and instance."""
-        return cls(dataclass_type, instance, **kwargs)
+        return cls(dataclass_type, instance, is_global_config_editing=is_global_config_editing, **kwargs)
     
     def compose(self) -> ComposeResult:
         """Compose the config form using shared form manager."""

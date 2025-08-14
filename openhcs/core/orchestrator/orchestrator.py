@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
 from openhcs.constants import Microscope
-from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -128,7 +128,10 @@ def _ensure_step_ids_for_multiprocessing(
 
 class PipelineOrchestrator:
     """
-    Unified orchestrator for a two-phase pipeline execution model.
+    Updated orchestrator supporting both global and per-orchestrator configuration.
+
+    Global configuration: Updates all orchestrators (existing behavior)
+    Per-orchestrator configuration: Affects only this orchestrator instance
 
     The orchestrator first compiles the pipeline for all specified wells,
     creating frozen, immutable ProcessingContexts using `compile_plate_for_processing()`.
@@ -142,15 +145,25 @@ class PipelineOrchestrator:
         workspace_path: Optional[Union[str, Path]] = None,
         *,
         global_config: Optional[GlobalPipelineConfig] = None,
+        pipeline_config: Optional[PipelineConfig] = None,
         storage_registry: Optional[Any] = None, # Optional StorageRegistry instance
     ):
         # Lock removed - was orphaned code never used
-        
+
         if global_config is None:
             self.global_config = get_default_global_config()
             logger.info("PipelineOrchestrator using default global configuration.")
         else:
             self.global_config = global_config
+
+        # Initialize per-orchestrator configuration
+        self.pipeline_config = pipeline_config  # Per-orchestrator overrides
+
+
+
+        # Set current pipeline config for MaterializationPathConfig defaults
+        from openhcs.core.config import set_current_pipeline_config
+        set_current_pipeline_config(self.global_config)
 
         if plate_path is None:
             # This case should ideally be prevented by TUI logic if plate_path is mandatory
@@ -343,11 +356,8 @@ class PipelineOrchestrator:
         """
         Compile-all phase: Prepares frozen ProcessingContexts for each well.
 
-        This method iterates through the specified wells, creates a ProcessingContext
-        for each, and invokes the various phases of the PipelineCompiler to populate
-        the context's step_plans. After all compilation phases for a well are complete,
-        its context is frozen. Finally, attributes are stripped from the pipeline_definition,
-        making the step objects stateless for the execution phase.
+        This method delegates to PipelineCompiler.compile_pipelines() to handle
+        the actual compilation logic while providing orchestrator context.
 
         Args:
             pipeline_definition: The list of AbstractStep objects defining the pipeline.
@@ -360,58 +370,12 @@ class PipelineOrchestrator:
             The input `pipeline_definition` list (of step objects) is modified in-place
             to become stateless.
         """
-        if not self.is_initialized():
-            raise RuntimeError("PipelineOrchestrator must be explicitly initialized before calling compile_pipelines().")
-
-        if not pipeline_definition:
-            raise ValueError("A valid pipeline definition (List[AbstractStep]) must be provided.")
-
-        try:
-            compiled_contexts: Dict[str, ProcessingContext] = {}
-            wells_to_process = self.get_component_keys(GroupBy.WELL, well_filter)
-
-            if not wells_to_process:
-                logger.warning("No wells found to process based on filter.")
-                return {}
-
-            logger.info(f"Starting compilation for wells: {', '.join(wells_to_process)}")
-
-            # Determine responsible well for metadata creation (lexicographically first)
-            responsible_well = sorted(wells_to_process)[0] if wells_to_process else None
-            logger.debug(f"Designated responsible well for metadata creation: {responsible_well}")
-
-            for well_id in wells_to_process:
-                logger.debug(f"Compiling for well: {well_id}")
-                context = self.create_context(well_id)
-
-                # Determine if this well is responsible for metadata creation
-                is_responsible = (well_id == responsible_well)
-                logger.debug(f"Well {well_id} metadata responsibility: {is_responsible}")
-
-                PipelineCompiler.initialize_step_plans_for_context(context, pipeline_definition, metadata_writer=is_responsible, plate_path=self.plate_path)
-                PipelineCompiler.declare_zarr_stores_for_context(context, pipeline_definition, self)
-                PipelineCompiler.plan_materialization_flags_for_context(context, pipeline_definition, self)
-                PipelineCompiler.validate_memory_contracts_for_context(context, pipeline_definition, self)
-                PipelineCompiler.assign_gpu_resources_for_context(context)
-
-                if enable_visualizer_override:
-                    PipelineCompiler.apply_global_visualizer_override_for_context(context, True)
-
-                context.freeze()
-                compiled_contexts[well_id] = context
-                logger.debug(f"Compilation finished for well: {well_id}")
-
-            # After processing all wells, strip attributes and finalize
-            logger.info("Stripping attributes from pipeline definition steps.")
-            StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
-
-            self._state = OrchestratorState.COMPILED
-            logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
-            return compiled_contexts
-        except Exception as e:
-            self._state = OrchestratorState.COMPILE_FAILED
-            logger.error(f"Failed to compile pipelines: {e}")
-            raise
+        return PipelineCompiler.compile_pipelines(
+            orchestrator=self,
+            pipeline_definition=pipeline_definition,
+            well_filter=well_filter,
+            enable_visualizer_override=enable_visualizer_override
+        )
 
     def _execute_single_well(
         self,
@@ -649,7 +613,7 @@ class PipelineOrchestrator:
                         for step_id, step_plan in context.step_plans.items():
                             if 'output_dir' in step_plan:
                                 # Found an output directory, check if it has a results subdirectory
-                                potential_results_dir = Path(step_plan['output_dir']) / self.global_config.path_planning.materialization_results_path
+                                potential_results_dir = Path(step_plan['output_dir']) / self.global_config.materialization_results_path
                                 if potential_results_dir.exists():
                                     results_dir = potential_results_dir
                                     logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_id}: {results_dir}")
@@ -912,31 +876,80 @@ class PipelineOrchestrator:
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """
-        Applies a new GlobalPipelineConfig to this orchestrator instance.
+        Apply global configuration and rebuild orchestrator-specific config if needed.
 
-        This updates the internal global_config reference. Subsequent operations,
-        especially new context creation and pipeline compilations, will use this
-        new configuration.
-
-        Args:
-            new_config: The new GlobalPipelineConfig object.
+        This method:
+        1. Updates the global config reference
+        2. Rebuilds any existing orchestrator-specific config to reference the new global config
+        3. Preserves all user-set field values while updating lazy resolution defaults
+        4. Re-initializes components that depend on config (if already initialized)
         """
-        if not isinstance(new_config, GlobalPipelineConfig):
-            logger.error(
-                f"Attempted to apply invalid config type {type(new_config)} to PipelineOrchestrator. Expected GlobalPipelineConfig."
-            )
-            return
+        from openhcs.core.config import GlobalPipelineConfig as GlobalPipelineConfigType
+        if not isinstance(new_config, GlobalPipelineConfigType):
+            raise TypeError(f"Expected GlobalPipelineConfig, got {type(new_config)}")
 
-        logger.info(
-            f"PipelineOrchestrator (plate: {self.plate_path}, workspace: {self.workspace_path}) "
-            f"is applying new GlobalPipelineConfig. Old num_workers: {self.global_config.num_workers}, "
-            f"New num_workers: {new_config.num_workers}"
-        )
+        old_global_config = self.global_config
         self.global_config = new_config
-        # Re-initialization of components like path_planner or materialization_flag_planner
-        # is implicitly handled if they are created fresh during compilation using contexts
-        # that are generated with the new self.global_config.
-        # If any long-lived orchestrator components directly cache parts of global_config
-        # and need explicit updating, that would be done here. For now, updating the
-        # reference is the primary action.
-        logger.info("New GlobalPipelineConfig applied to orchestrator.")
+
+        # Rebuild orchestrator-specific config if it exists
+        if self.pipeline_config is not None:
+            from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
+            self.pipeline_config = rebuild_lazy_config_with_new_global_reference(
+                self.pipeline_config,
+                new_config,
+                GlobalPipelineConfigType
+            )
+            logger.info(f"Rebuilt orchestrator-specific config for plate: {self.plate_path}")
+
+        # Update thread-local storage to reflect the new effective configuration
+        from openhcs.core.config import set_current_global_config
+        effective_config = self.get_effective_config()
+        set_current_global_config(GlobalPipelineConfigType, effective_config)
+
+        # Re-initialize components that depend on config if orchestrator was already initialized
+        if self.is_initialized():
+            logger.info(f"Re-initializing orchestrator components for plate: {self.plate_path}")
+            try:
+                # Reset initialization state to allow re-initialization
+                self._initialized = False
+                self._state = OrchestratorState.CREATED
+
+                # Re-initialize with new config
+                self.initialize()
+                logger.info(f"Successfully re-initialized orchestrator for plate: {self.plate_path}")
+            except Exception as e:
+                logger.error(f"Failed to re-initialize orchestrator for plate {self.plate_path}: {e}")
+                self._state = OrchestratorState.INIT_FAILED
+                raise
+
+    def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
+        """
+        Apply per-orchestrator configuration - affects only this orchestrator.
+        Does not modify global configuration or affect other orchestrators.
+        """
+        if not isinstance(pipeline_config, PipelineConfig):
+            raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
+        self.pipeline_config = pipeline_config
+
+
+
+        # Update thread-local storage to reflect the new effective configuration
+        # This ensures MaterializationPathConfig uses the updated defaults
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        effective_config = self.get_effective_config()
+        set_current_global_config(GlobalPipelineConfig, effective_config)
+
+    def get_effective_config(self) -> GlobalPipelineConfig:
+        """Get effective configuration for this orchestrator."""
+        if self.pipeline_config:
+            return self.pipeline_config.to_base_config()
+        return self.global_config
+
+    def clear_pipeline_config(self) -> None:
+        """Clear per-orchestrator configuration."""
+        self.pipeline_config = None
+        logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
+
+        # Update thread-local storage to reflect global config
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        set_current_global_config(GlobalPipelineConfig, self.global_config)
