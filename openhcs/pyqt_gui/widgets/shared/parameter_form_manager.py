@@ -907,100 +907,67 @@ class ParameterFormManager(QWidget):
         This fixes the lazy default materialization override saving issue by ensuring
         that lazy dataclasses maintain their structure when values are retrieved.
         """
-        raw_values = self.textual_form_manager.parameters.copy()
+        return {
+            param_name: self._preserve_lazy_structure_if_needed(param_name, param_value)
+            for param_name, param_value in self.textual_form_manager.parameters.items()
+        }
 
-        # Process values to preserve lazy dataclass structure
-        processed_values = {}
-        for param_name, param_value in raw_values.items():
-            processed_values[param_name] = self._get_value_preserving_lazy_structure(
-                param_name, param_value
-            )
-
-        return processed_values
-
-    def _get_value_preserving_lazy_structure(self, param_name: str, param_value: Any) -> Any:
-        """
-        Get parameter value while preserving lazy dataclass structure.
-
-        This ensures that lazy dataclasses created by the form manager maintain their
-        lazy properties when values are retrieved, preserving mixed lazy/concrete states.
-        """
-        # Check if this parameter is a dataclass type
-        if param_name in self.textual_form_manager.parameter_types:
-            param_type = self.textual_form_manager.parameter_types[param_name]
-
-            # Handle Optional[DataClass] types
-            if self._is_optional_dataclass(param_type):
-                param_type = self._get_optional_inner_type(param_type)
-
-            import dataclasses
-            if dataclasses.is_dataclass(param_type):
-                # This is a dataclass parameter - check if it should be lazy
-                if param_value is None:
-                    # None value - keep as None for lazy resolution
-                    return None
-
-                # Check if the current value is already a lazy dataclass
-                if hasattr(param_value, '_resolve_field_value'):
-                    # Already lazy - return as-is
-                    return param_value
-
-                # Check if this should be a lazy dataclass based on context
-                if not self.is_global_config_editing:
-                    # In lazy context (orchestrator editing) - ensure lazy structure
-                    return self._ensure_lazy_dataclass_structure(param_name, param_value, param_type)
-
-        # For non-dataclass parameters or global config editing, return value as-is
-        return param_value
-
-    def _ensure_lazy_dataclass_structure(self, param_name: str, param_value: Any, param_type: type) -> Any:
-        """Ensure dataclass value maintains lazy structure in lazy contexts."""
-        if param_value is None:
-            return None
-
-        # If it's already a lazy dataclass, return as-is
-        if hasattr(param_value, '_resolve_field_value'):
+    def _preserve_lazy_structure_if_needed(self, param_name: str, param_value: Any) -> Any:
+        """Preserve lazy dataclass structure for dataclass parameters in lazy contexts."""
+        # Early returns for simple cases
+        if param_value is None or hasattr(param_value, '_resolve_field_value'):
+            return param_value
+        if self.is_global_config_editing:
             return param_value
 
-        # If it's a concrete dataclass, convert to lazy while preserving field values
+        # Check if this should be converted to lazy dataclass
+        param_type = self._get_dataclass_type_for_param(param_name)
+        if param_type is None:
+            return param_value
+
+        return self._convert_to_lazy_dataclass(param_value, param_type)
+
+    def _get_dataclass_type_for_param(self, param_name: str) -> Optional[type]:
+        """Get the dataclass type for a parameter, handling Optional types."""
+        if param_name not in self.textual_form_manager.parameter_types:
+            return None
+
+        param_type = self.textual_form_manager.parameter_types[param_name]
+
+        # Handle Optional[DataClass] types
+        if self._is_optional_dataclass(param_type):
+            param_type = self._get_optional_inner_type(param_type)
+
+        import dataclasses
+        return param_type if dataclasses.is_dataclass(param_type) else None
+
+    def _convert_to_lazy_dataclass(self, param_value: Any, param_type: type) -> Any:
+        """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
+        from openhcs.core.lazy_config import LazyDataclassFactory
+
+        field_path = self._get_field_path_for_nested_type(param_type)
+        lazy_type = LazyDataclassFactory.make_lazy_thread_local(
+            base_class=param_type,
+            field_path=field_path,
+            lazy_class_name=f"Mixed{param_type.__name__}"
+        )
+
+        # Extract field values based on input type
         if hasattr(param_value, '__dataclass_fields__'):
-            # Create lazy version of this dataclass type
-            from openhcs.core.lazy_config import LazyDataclassFactory
-
-            # Determine field path for this parameter type
-            field_path = self._get_field_path_for_nested_type(param_type)
-
-            lazy_type = LazyDataclassFactory.make_lazy_thread_local(
-                base_class=param_type,
-                field_path=field_path,
-                lazy_class_name=f"Mixed{param_type.__name__}"
-            )
-
-            # Extract field values from concrete instance
+            # Concrete dataclass - extract field values
             import dataclasses
-            field_values = {}
-            for field in dataclasses.fields(param_value):
-                field_values[field.name] = getattr(param_value, field.name)
+            field_values = {
+                field.name: getattr(param_value, field.name)
+                for field in dataclasses.fields(param_value)
+            }
+        elif isinstance(param_value, dict):
+            # Dict from nested form manager
+            field_values = param_value
+        else:
+            # Fallback: return value as-is
+            return param_value
 
-            # Create lazy instance with preserved field values
-            return lazy_type(**field_values)
-
-        # If it's a dict (from nested form manager), convert to lazy dataclass
-        if isinstance(param_value, dict):
-            from openhcs.core.lazy_config import LazyDataclassFactory
-
-            field_path = self._get_field_path_for_nested_type(param_type)
-
-            lazy_type = LazyDataclassFactory.make_lazy_thread_local(
-                base_class=param_type,
-                field_path=field_path,
-                lazy_class_name=f"Mixed{param_type.__name__}"
-            )
-
-            return lazy_type(**param_value)
-
-        # Fallback: return value as-is
-        return param_value
+        return lazy_type(**field_values)
 
     def _rebuild_nested_dataclass_from_manager(self, parent_name: str):
         """Rebuild the nested dataclass instance from the nested manager's current values."""
@@ -1036,23 +1003,8 @@ class ParameterFormManager(QWidget):
                             break
             new_instance = nested_type(**merged_values)
         else:
-            # Lazy context: always create lazy dataclass instance with mixed concrete/lazy fields
-            # Even if all values are None (especially after reset), we want lazy resolution
-            from openhcs.core.lazy_config import LazyDataclassFactory
-
-            # Determine the correct field path using type inspection
-            field_path = self._get_field_path_for_nested_type(nested_type)
-
-            lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                base_class=nested_type,
-                field_path=field_path,  # Use correct field path for nested resolution
-                lazy_class_name=f"Mixed{nested_type.__name__}"
-            )
-
-            # Create instance with mixed concrete/lazy field values
-            # Pass ALL fields to constructor: concrete values for edited fields, None for lazy fields
-            # The lazy __getattribute__ will resolve None values via _resolve_field_value
-            new_instance = lazy_nested_type(**nested_values)
+            # Lazy context: create lazy instance using shared utility
+            new_instance = self._convert_to_lazy_dataclass(nested_values, nested_type)
 
         # Update parent parameter in textual form manager
         self.textual_form_manager.update_parameter(parent_name, new_instance)
