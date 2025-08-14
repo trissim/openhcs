@@ -12,7 +12,7 @@ import threading
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Union, Dict, Any, List
+from typing import Literal, Optional, Union, Dict, Any, List, Type
 from enum import Enum
 from openhcs.constants import Microscope
 from openhcs.constants.constants import Backend
@@ -232,28 +232,50 @@ class StepMaterializationConfig(PathPlanningConfig):
     sub_dir: str = "checkpoints"  # vs global "images"
 
 
-# Thread-local storage for current pipeline config
-_current_pipeline_config = threading.local()
+# Generic thread-local storage for any global config type
+_global_config_contexts: Dict[Type, threading.local] = {}
 
-def set_current_pipeline_config(config: 'GlobalPipelineConfig'):
-    """Set the current pipeline config for MaterializationPathConfig defaults."""
-    _current_pipeline_config.value = config
+def set_current_global_config(config_type: Type, config_instance: Any) -> None:
+    """Set current global config for any dataclass type."""
+    if config_type not in _global_config_contexts:
+        _global_config_contexts[config_type] = threading.local()
+    _global_config_contexts[config_type].value = config_instance
+
+def get_current_global_config(config_type: Type) -> Optional[Any]:
+    """Get current global config for any dataclass type."""
+    context = _global_config_contexts.get(config_type)
+    return getattr(context, 'value', None) if context else None
 
 def get_current_materialization_defaults() -> StepMaterializationConfig:
     """Get current step materialization config from pipeline config."""
-    if hasattr(_current_pipeline_config, 'value') and _current_pipeline_config.value:
-        return _current_pipeline_config.value.materialization_defaults
+    current_config = get_current_global_config(GlobalPipelineConfig)
+    if current_config:
+        return current_config.materialization_defaults
     # Fallback to default instance if no pipeline config is set
     return StepMaterializationConfig()
+
+
+# Type registry for lazy dataclass to base class mapping
+_lazy_type_registry: Dict[Type, Type] = {}
+
+def register_lazy_type_mapping(lazy_type: Type, base_type: Type) -> None:
+    """Register mapping between lazy dataclass type and its base type."""
+    _lazy_type_registry[lazy_type] = base_type
+
+def get_base_type_for_lazy(lazy_type: Type) -> Optional[Type]:
+    """Get the base type for a lazy dataclass type."""
+    return _lazy_type_registry.get(lazy_type)
 
 
 class LazyDefaultPlaceholderService:
     """
     Enhanced service supporting factory-created lazy classes with flexible resolution.
 
-    Provides consistent "Pipeline default: {value}" placeholder pattern
-    for both static and dynamic lazy configuration classes.
+    Provides consistent placeholder pattern for both static and dynamic lazy configuration classes.
     """
+
+    # Configurable placeholder prefix - set to empty string for cleaner appearance
+    PLACEHOLDER_PREFIX = ""
 
     @staticmethod
     def has_lazy_resolution(dataclass_type: type) -> bool:
@@ -265,7 +287,8 @@ class LazyDefaultPlaceholderService:
     def get_lazy_resolved_placeholder(
         dataclass_type: type,
         field_name: str,
-        app_config: Optional[Any] = None
+        app_config: Optional[Any] = None,
+        force_static_defaults: bool = False
     ) -> Optional[str]:
         """
         Get placeholder text for lazy-resolved field with flexible resolution.
@@ -274,37 +297,72 @@ class LazyDefaultPlaceholderService:
             dataclass_type: The lazy dataclass type (created by factory)
             field_name: Name of the field to resolve
             app_config: Optional app config for dynamic resolution
+            force_static_defaults: If True, always use static defaults regardless of thread-local context
 
         Returns:
-            "Pipeline default: {value}" format for consistent UI experience.
+            Placeholder text with configurable prefix for consistent UI experience.
         """
         if not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
             return None
 
-        # For dynamic resolution, create lazy class with current app config
-        if app_config:
+        if force_static_defaults:
+            # For global config editing: always use static defaults
+            if hasattr(dataclass_type, 'to_base_config'):
+                # This is a lazy dataclass - get the base class and create instance with static defaults
+                base_class = LazyDefaultPlaceholderService._get_base_class_from_lazy(dataclass_type)
+                static_instance = base_class()
+                resolved_value = getattr(static_instance, field_name, None)
+            else:
+                # Regular dataclass - create instance with static defaults
+                static_instance = dataclass_type()
+                resolved_value = getattr(static_instance, field_name, None)
+        elif app_config:
+            # For dynamic resolution, create lazy class with current app config
             from openhcs.core.lazy_config import LazyDataclassFactory
             dynamic_lazy_class = LazyDataclassFactory.create_lazy_dataclass(
                 defaults_source=app_config,  # Use the app_config directly
                 lazy_class_name=f"Dynamic{dataclass_type.__name__}"
             )
             temp_instance = dynamic_lazy_class()
+            resolved_value = getattr(temp_instance, field_name)
         else:
-            # Use existing lazy class (static resolution)
+            # Use existing lazy class (thread-local resolution)
             temp_instance = dataclass_type()
-
-        resolved_value = getattr(temp_instance, field_name)
+            resolved_value = getattr(temp_instance, field_name)
 
         if resolved_value is not None:
             # Format nested dataclasses with key field values
             if hasattr(resolved_value, '__dataclass_fields__'):
                 # For nested dataclasses, show key field values instead of generic info
                 summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
-                return f"Pipeline default: {summary}"
+                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{summary}"
             else:
-                return f"Pipeline default: {resolved_value}"
+                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{resolved_value}"
         else:
-            return "Pipeline default: (none)"
+            return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}(none)"
+
+    @staticmethod
+    def _get_base_class_from_lazy(lazy_class: Type) -> Type:
+        """
+        Extract the base class from a lazy dataclass using type registry.
+        """
+        # First check the type registry
+        base_type = get_base_type_for_lazy(lazy_class)
+        if base_type:
+            return base_type
+
+        # Check if the lazy class has a to_base_config method
+        if hasattr(lazy_class, 'to_base_config'):
+            # Create a dummy instance to inspect the to_base_config method
+            dummy_instance = lazy_class()
+            base_instance = dummy_instance.to_base_config()
+            return type(base_instance)
+
+        # If no mapping found, raise an error - this indicates missing registration
+        raise ValueError(
+            f"No base type registered for lazy class {lazy_class.__name__}. "
+            f"Use register_lazy_type_mapping() to register the mapping."
+        )
 
     @staticmethod
     def _format_nested_dataclass_summary(dataclass_instance) -> str:
@@ -517,5 +575,12 @@ def get_default_global_config() -> GlobalPipelineConfig:
     )
 
 
-# Import MaterializationPathConfig directly - circular import solved by moving import to end
-from openhcs.core.lazy_config import LazyStepMaterializationConfig as MaterializationPathConfig
+# Import pipeline-specific classes - circular import solved by moving import to end
+from openhcs.core.pipeline_config import (
+    LazyStepMaterializationConfig as MaterializationPathConfig,
+    PipelineConfig,
+    set_current_pipeline_config,
+    ensure_pipeline_config_context,
+    create_pipeline_config_for_editing,
+    create_editing_config_from_existing_lazy_config
+)

@@ -20,8 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
 from openhcs.constants import Microscope
-from openhcs.core.config import GlobalPipelineConfig, get_default_global_config
-from openhcs.core.lazy_config import PipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -926,17 +925,51 @@ class PipelineOrchestrator:
 
     async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
         """
-        Apply global configuration - maintains existing global config workflow.
+        Apply global configuration and rebuild orchestrator-specific config if needed.
+
+        This method:
+        1. Updates the global config reference
+        2. Rebuilds any existing orchestrator-specific config to reference the new global config
+        3. Preserves all user-set field values while updating lazy resolution defaults
+        4. Re-initializes components that depend on config (if already initialized)
         """
-        if not isinstance(new_config, GlobalPipelineConfig):
+        from openhcs.core.config import GlobalPipelineConfig as GlobalPipelineConfigType
+        if not isinstance(new_config, GlobalPipelineConfigType):
             raise TypeError(f"Expected GlobalPipelineConfig, got {type(new_config)}")
+
+        old_global_config = self.global_config
         self.global_config = new_config
 
-        # Update thread-local storage to reflect the new global configuration
-        # This ensures MaterializationPathConfig uses the updated defaults
-        from openhcs.core.config import set_current_pipeline_config
+        # Rebuild orchestrator-specific config if it exists
+        if self.pipeline_config is not None:
+            from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
+            self.pipeline_config = rebuild_lazy_config_with_new_global_reference(
+                self.pipeline_config,
+                new_config,
+                GlobalPipelineConfigType
+            )
+            logger.info(f"Rebuilt orchestrator-specific config for plate: {self.plate_path}")
+
+        # Update thread-local storage to reflect the new effective configuration
+        from openhcs.core.config import set_current_global_config
         effective_config = self.get_effective_config()
-        set_current_pipeline_config(effective_config)
+        set_current_global_config(GlobalPipelineConfigType, effective_config)
+
+        # Re-initialize components that depend on config if orchestrator was already initialized
+        if self.is_initialized():
+            logger.info(f"Re-initializing orchestrator components for plate: {self.plate_path}")
+            try:
+                # Reset initialization state to allow re-initialization
+                self._initialized = False
+                self._state = OrchestratorState.CREATED
+
+                # Re-initialize with new config
+                self.initialize()
+                logger.info(f"Successfully re-initialized orchestrator for plate: {self.plate_path}")
+            except Exception as e:
+                logger.error(f"Failed to re-initialize orchestrator for plate {self.plate_path}: {e}")
+                self._state = OrchestratorState.INIT_FAILED
+                raise
 
     def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
         """
@@ -951,9 +984,9 @@ class PipelineOrchestrator:
 
         # Update thread-local storage to reflect the new effective configuration
         # This ensures MaterializationPathConfig uses the updated defaults
-        from openhcs.core.config import set_current_pipeline_config
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
         effective_config = self.get_effective_config()
-        set_current_pipeline_config(effective_config)
+        set_current_global_config(GlobalPipelineConfig, effective_config)
 
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
@@ -967,5 +1000,5 @@ class PipelineOrchestrator:
         logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
 
         # Update thread-local storage to reflect global config
-        from openhcs.core.config import set_current_pipeline_config
-        set_current_pipeline_config(self.global_config)
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        set_current_global_config(GlobalPipelineConfig, self.global_config)

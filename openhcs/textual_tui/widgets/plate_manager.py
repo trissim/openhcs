@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any, Tuple
 
-from openhcs.core.lazy_config import PipelineConfig
+from openhcs.core.config import PipelineConfig
 
 from PIL import Image
 from textual.app import ComposeResult
@@ -1141,14 +1141,17 @@ class PlateManagerWidget(ButtonListWidget):
         representative_orchestrator = selected_orchestrators[0]
 
         if representative_orchestrator.pipeline_config:
-            # Use existing per-orchestrator config but ensure proper thread-local context
-            from openhcs.core.lazy_config import ensure_pipeline_config_context
-            ensure_pipeline_config_context(representative_orchestrator.get_effective_config())
-            current_plate_config = representative_orchestrator.pipeline_config
+            # Create editing config from existing orchestrator config with user-set values preserved
+            # Use current global config (not orchestrator's old global config) for updated placeholders
+            from openhcs.core.config import create_editing_config_from_existing_lazy_config
+            current_plate_config = create_editing_config_from_existing_lazy_config(
+                representative_orchestrator.pipeline_config,
+                self.global_config  # Use current global config for updated placeholders
+            )
         else:
-            # Create new config with placeholders
-            from openhcs.core.lazy_config import create_pipeline_config_for_editing
-            current_plate_config = create_pipeline_config_for_editing(representative_orchestrator.global_config)
+            # Create new config with placeholders using current global config
+            from openhcs.core.config import create_pipeline_config_for_editing
+            current_plate_config = create_pipeline_config_for_editing(self.global_config)
 
         def handle_config_save(new_config: PipelineConfig) -> None:
             """Apply per-orchestrator configuration without global side effects."""
@@ -1178,7 +1181,7 @@ class PlateManagerWidget(ButtonListWidget):
         current_global_config = self.app.global_config or get_default_global_config()
 
         # Create lazy PipelineConfig for editing with proper thread-local context
-        current_lazy_config = create_pipeline_config_for_editing(current_global_config)
+        current_lazy_config = create_pipeline_config_for_editing(current_global_config, preserve_values=True)
 
         def handle_global_config_save(new_config: PipelineConfig) -> None:
             """Apply global configuration to all orchestrators."""
@@ -1188,13 +1191,14 @@ class PlateManagerWidget(ButtonListWidget):
             self.app.global_config = global_config  # Update app-level config
 
             # Update thread-local storage for MaterializationPathConfig defaults
-            from openhcs.core.config import set_current_pipeline_config
-            set_current_pipeline_config(global_config)
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, global_config)
 
             for orchestrator in self.orchestrators.values():
                 asyncio.create_task(orchestrator.apply_new_global_config(global_config))
             self.app.current_status = "Global configuration applied to all orchestrators"
 
+        # PipelineConfig already imported from openhcs.core.config
         await self.window_service.open_config_window(
             PipelineConfig,
             current_lazy_config,

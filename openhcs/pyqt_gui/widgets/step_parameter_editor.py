@@ -46,6 +46,7 @@ class StepParameterEditorWidget(QScrollArea):
         
         # Analyze AbstractStep signature to get all inherited parameters (mirrors Textual TUI)
         from openhcs.core.steps.abstract import AbstractStep
+        # Auto-detection correctly identifies constructors and includes all parameters
         param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
         
         # Get current parameter values from step instance
@@ -61,9 +62,12 @@ class StepParameterEditorWidget(QScrollArea):
             param_defaults[name] = info.default_value
         
         # Create parameter form manager (reuses Textual TUI logic)
+        from openhcs.core.config import GlobalPipelineConfig
         self.form_manager = ParameterFormManager(
             parameters, parameter_types, "step", param_info,
-            color_scheme=self.color_scheme
+            color_scheme=self.color_scheme,
+            global_config_type=GlobalPipelineConfig,
+            placeholder_prefix="Pipeline default"
         )
         self.param_defaults = param_defaults
         

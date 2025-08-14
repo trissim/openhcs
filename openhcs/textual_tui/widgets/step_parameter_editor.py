@@ -32,6 +32,7 @@ class StepParameterEditorWidget(ScrollableContainer):
 
         # Create parameter form manager using shared components
         # Analyze AbstractStep to get all inherited parameters including materialization_config
+        # Auto-detection correctly identifies constructors and includes all parameters
         param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
 
         # Get current parameter values from step instance
@@ -46,7 +47,13 @@ class StepParameterEditorWidget(ScrollableContainer):
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
 
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "step", param_info)
+        # Configure form manager for step editing with pipeline context
+        from openhcs.core.config import GlobalPipelineConfig
+        self.form_manager = ParameterFormManager(
+            parameters, parameter_types, "step", param_info,
+            global_config_type=GlobalPipelineConfig,
+            placeholder_prefix="Pipeline default"
+        )
         self.param_defaults = param_defaults
 
     def compose(self) -> ComposeResult:

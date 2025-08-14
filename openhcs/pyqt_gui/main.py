@@ -420,37 +420,32 @@ class OpenHCSMainWindow(QMainWindow):
                 pipeline_widget.save_pipeline()
     
     def show_configuration(self):
-        """Show configuration dialog with lazy loading support."""
+        """Show configuration dialog for global config editing."""
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
-        from openhcs.core.lazy_config import create_pipeline_config_for_editing, PipelineConfig
-
-        # Create lazy PipelineConfig for editing with proper thread-local context
-        current_lazy_config = create_pipeline_config_for_editing(self.global_config)
 
         def handle_config_save(new_config):
             """Handle configuration save (mirrors Textual TUI pattern)."""
-            # Convert lazy PipelineConfig back to GlobalPipelineConfig
-            global_config = new_config.to_base_config()
-
-            self.global_config = global_config
+            # new_config is already a GlobalPipelineConfig (concrete class)
+            self.global_config = new_config
 
             # Update thread-local storage for MaterializationPathConfig defaults
-            from openhcs.core.config import set_current_pipeline_config
-            set_current_pipeline_config(global_config)
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, new_config)
 
             # Emit signal for other components to update
-            self.config_changed.emit(global_config)
+            self.config_changed.emit(new_config)
 
             # Save config to cache for future sessions (matches TUI)
-            self._save_config_to_cache(global_config)
+            self._save_config_to_cache(new_config)
 
-        # Use lazy PipelineConfig instead of GlobalPipelineConfig for placeholder support
+        # Use concrete GlobalPipelineConfig for global config editing (static context)
         config_window = ConfigWindow(
-            PipelineConfig,        # config_class (lazy wrapper)
-            current_lazy_config,   # current_config (lazy instance)
+            GlobalPipelineConfig,  # config_class (concrete class for static context)
+            self.service_adapter.get_global_config(),  # current_config (concrete instance)
             handle_config_save,    # on_save_callback
             self.service_adapter.get_current_color_scheme(),  # color_scheme
-            self                   # parent
+            self,                  # parent
+            is_global_config_editing=True  # This is global config editing
         )
         # Show as non-modal window (like plate manager and pipeline editor)
         config_window.show()

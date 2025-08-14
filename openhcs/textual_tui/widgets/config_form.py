@@ -17,7 +17,7 @@ class ConfigFormWidget(ScrollableContainer):
     field_values = reactive(dict, recompose=False)  # Prevent automatic recomposition during typing
 
 
-    def __init__(self, dataclass_type: type, instance: Any = None, **kwargs):
+    def __init__(self, dataclass_type: type, instance: Any = None, is_global_config_editing: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.dataclass_type = dataclass_type
         self.instance = instance or dataclass_type()
@@ -43,16 +43,16 @@ class ConfigFormWidget(ScrollableContainer):
             param_defaults[name] = info.default_value
 
         # Create shared form manager with parameter info for help functionality
-        self.form_manager = ParameterFormManager(parameters, parameter_types, "config", param_info)
+        self.form_manager = ParameterFormManager(parameters, parameter_types, "config", param_info, is_global_config_editing=is_global_config_editing)
         self.param_defaults = param_defaults
 
         # Initialize field values for reactive updates
         self.field_values = parameters.copy()
 
     @classmethod
-    def from_dataclass(cls, dataclass_type: type, instance: Any = None, **kwargs):
+    def from_dataclass(cls, dataclass_type: type, instance: Any = None, is_global_config_editing: bool = False, **kwargs):
         """Create ConfigFormWidget from dataclass type and instance."""
-        return cls(dataclass_type, instance, **kwargs)
+        return cls(dataclass_type, instance, is_global_config_editing=is_global_config_editing, **kwargs)
     
     def compose(self) -> ComposeResult:
         """Compose the config form using shared form manager."""
