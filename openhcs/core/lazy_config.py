@@ -14,6 +14,7 @@ import re
 # No ABC needed - using simple functions instead of strategy pattern
 from dataclasses import dataclass, fields, is_dataclass, make_dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
+from openhcs.core.config import get_base_type_for_lazy
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +377,56 @@ def ensure_global_config_context(global_config_type: Type, global_config_instanc
     """Ensure proper thread-local storage setup for any global config type."""
     _, set_current_global_config = _get_generic_config_imports()
     set_current_global_config(global_config_type, global_config_instance)
+
+
+def resolve_lazy_configurations_for_serialization(data: Any) -> Any:
+    """
+    Recursively resolve all lazy dataclass configurations to concrete values for serialization.
+
+    Traverses any data structure and converts lazy dataclass instances to their concrete
+    base configurations, making the data structure safe for pickling and inter-process
+    communication.
+
+    Args:
+        data: Any data structure that may contain lazy dataclass configurations
+
+    Returns:
+        Data structure with all lazy configurations resolved to concrete values
+
+    Note:
+        Uses existing OpenHCS lazy dataclass infrastructure:
+        - get_base_type_for_lazy() to detect lazy dataclass types
+        - to_base_config() method to resolve lazy configs to concrete configs
+    """
+    # Resolve the object itself if it's a lazy dataclass
+    resolved_data = (data.to_base_config()
+                    if get_base_type_for_lazy(type(data)) is not None
+                    else data)
+
+    # Recursively process nested structures based on type
+    if is_dataclass(resolved_data) and not isinstance(resolved_data, type):
+        # Process dataclass fields recursively
+        resolved_fields = {
+            field_obj.name: resolve_lazy_configurations_for_serialization(getattr(resolved_data, field_obj.name))
+            for field_obj in fields(resolved_data)
+        }
+        return type(resolved_data)(**resolved_fields)
+
+    elif isinstance(resolved_data, dict):
+        # Process dictionary values recursively
+        return {
+            key: resolve_lazy_configurations_for_serialization(value)
+            for key, value in resolved_data.items()
+        }
+
+    elif isinstance(resolved_data, (list, tuple)):
+        # Process sequence elements recursively
+        resolved_items = [resolve_lazy_configurations_for_serialization(item) for item in resolved_data]
+        return type(resolved_data)(resolved_items)
+
+    else:
+        # Primitive type or unknown structure - return as-is
+        return resolved_data
 
 
 # Generic dataclass editing with configurable value preservation

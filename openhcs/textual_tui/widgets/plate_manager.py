@@ -599,11 +599,15 @@ class PlateManagerWidget(ButtonListWidget):
                 'global_config': self.app.global_config  # Pickle config object directly
             }
 
+            # Resolve all lazy configurations to concrete values before pickling
+            from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+            resolved_subprocess_data = resolve_lazy_configurations_for_serialization(subprocess_data)
+
             # Wrap pickle operation in executor to avoid blocking UI
             def _write_pickle_data():
                 import dill as pickle
                 with open(data_file.name, 'wb') as f:
-                    pickle.dump(subprocess_data, f)
+                    pickle.dump(resolved_subprocess_data, f)
                 data_file.close()
 
             await asyncio.get_event_loop().run_in_executor(None, _write_pickle_data)

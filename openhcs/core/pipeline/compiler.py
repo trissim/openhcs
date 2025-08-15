@@ -423,22 +423,11 @@ class PipelineCompiler:
         Args:
             context: ProcessingContext to process
         """
-        from openhcs.core.config import get_base_type_for_lazy
+        from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
 
-        def resolve_lazy_dataclass(obj: Any) -> Any:
-            """Resolve lazy dataclass to base config if it's a lazy type, otherwise return as-is."""
-            obj_type = type(obj)
-            if get_base_type_for_lazy(obj_type) is not None:
-                # This is a lazy dataclass - resolve it to base config
-                return obj.to_base_config()
-            else:
-                # Not a lazy dataclass - return as-is
-                return obj
-
-        # Resolve all lazy dataclasses in step plans
+        # Use the shared recursive resolution function to handle nested structures
         for step_id, step_plan in context.step_plans.items():
-            for key, value in step_plan.items():
-                step_plan[key] = resolve_lazy_dataclass(value)
+            context.step_plans[step_id] = resolve_lazy_configurations_for_serialization(step_plan)
 
     @staticmethod
     def compile_pipelines(
