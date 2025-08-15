@@ -299,15 +299,13 @@ class ConfigWindow(QDialog):
         self.parameter_info = param_info
 
         # Create parameter form manager (reuses Textual TUI logic)
-        # Determine global config type and placeholder prefix
-        global_config_type = config_class if is_global_config_editing else None
+        # Determine placeholder prefix based on editing mode
         placeholder_prefix = "Default" if is_global_config_editing else "Pipeline default"
 
         self.form_manager = ParameterFormManager(
             parameters, parameter_types, "config", param_info,
             color_scheme=self.color_scheme,
-            is_global_config_editing=is_global_config_editing,
-            global_config_type=global_config_type,
+            dataclass_type=config_class,  # Use the config class directly as dataclass type
             placeholder_prefix=placeholder_prefix
         )
 

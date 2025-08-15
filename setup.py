@@ -36,6 +36,7 @@ extras_require = {
         "coverage>=7.3.2",
         "genbadge[coverage]",
         "pytest-asyncio>=0.21.0",
+        "pytest-qt>=4.2.0",  # PyQt6 testing framework
     ],
 
     # Terminal User Interface (TUI) dependencies

@@ -2,6 +2,9 @@
 import os
 import pytest
 
+# Import pytest-qt for proper PyQt6 testing support
+pytest_plugins = ["pytestqt"]
+
 
 def pytest_addoption(parser):
     """Add command-line options for integration test configuration."""

@@ -65,7 +65,7 @@ def apply_lazy_default_placeholder(widget: Any, param_name: str, current_value: 
             from openhcs.core.config import LazyDefaultPlaceholderService
             if LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
                 placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
-                    dataclass_type, param_name, force_static_defaults=is_global_config_editing
+                    dataclass_type, param_name, force_static_defaults=is_global_config_editing, placeholder_prefix=placeholder_prefix
                 )
         except Exception:
             pass
@@ -168,7 +168,7 @@ def _get_thread_local_placeholder(dataclass_type: Type, param_name: str, is_glob
 
             # Use the lazy placeholder service to resolve from thread-local context
             placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
-                dynamic_lazy_class, param_name, force_static_defaults=False
+                dynamic_lazy_class, param_name, force_static_defaults=False, placeholder_prefix=placeholder_prefix
             )
 
             return placeholder_text

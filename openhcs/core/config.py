@@ -288,7 +288,8 @@ class LazyDefaultPlaceholderService:
         dataclass_type: type,
         field_name: str,
         app_config: Optional[Any] = None,
-        force_static_defaults: bool = False
+        force_static_defaults: bool = False,
+        placeholder_prefix: str = ""
     ) -> Optional[str]:
         """
         Get placeholder text for lazy-resolved field with flexible resolution.
@@ -298,6 +299,7 @@ class LazyDefaultPlaceholderService:
             field_name: Name of the field to resolve
             app_config: Optional app config for dynamic resolution
             force_static_defaults: If True, always use static defaults regardless of thread-local context
+            placeholder_prefix: Custom prefix to use instead of the default empty prefix
 
         Returns:
             Placeholder text with configurable prefix for consistent UI experience.
@@ -335,11 +337,11 @@ class LazyDefaultPlaceholderService:
             if hasattr(resolved_value, '__dataclass_fields__'):
                 # For nested dataclasses, show key field values instead of generic info
                 summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
-                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{summary}"
+                return f"{placeholder_prefix}{summary}" if placeholder_prefix else summary
             else:
-                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{resolved_value}"
+                return f"{placeholder_prefix}: {resolved_value}" if placeholder_prefix else str(resolved_value)
         else:
-            return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}(none)"
+            return f"{placeholder_prefix}: (none)" if placeholder_prefix else "(none)"
 
     @staticmethod
     def _get_base_class_from_lazy(lazy_class: Type) -> Type:

@@ -294,10 +294,15 @@ def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
 
 
 def _apply_checkbox_placeholder(widget: QCheckBox, placeholder_text: str) -> None:
-    """Apply placeholder to checkbox with visual preview."""
+    """Apply placeholder to checkbox with visual preview without triggering signals."""
     try:
         default_value = _extract_default_value(placeholder_text).lower() == 'true'
-        widget.setChecked(default_value)
+        # Block signals to prevent checkbox state changes from triggering parameter updates
+        widget.blockSignals(True)
+        try:
+            widget.setChecked(default_value)
+        finally:
+            widget.blockSignals(False)
         _apply_placeholder_styling(
             widget,
             PlaceholderConfig.INTERACTION_HINTS['checkbox'],
@@ -381,6 +386,7 @@ WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[Any, str], None]] = {
     NoScrollSpinBox: _apply_spinbox_placeholder,
     NoScrollDoubleSpinBox: _apply_spinbox_placeholder,
     NoScrollComboBox: _apply_combobox_placeholder,
+    QLineEdit: _apply_lineedit_placeholder,  # Add standard QLineEdit support
 }
 
 # Add Path widget support dynamically to avoid import issues
@@ -392,8 +398,17 @@ def _register_path_widget_strategy():
     except ImportError:
         pass  # Path widget not available
 
-# Register Path widget strategy
+def _register_none_aware_lineedit_strategy():
+    """Register NoneAwareLineEdit strategy dynamically to avoid circular imports."""
+    try:
+        from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import NoneAwareLineEdit
+        WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = _apply_lineedit_placeholder
+    except ImportError:
+        pass  # NoneAwareLineEdit not available
+
+# Register widget strategies
 _register_path_widget_strategy()
+_register_none_aware_lineedit_strategy()
 
 # Functional signal connection registry
 SIGNAL_CONNECTION_REGISTRY: Dict[str, callable] = {

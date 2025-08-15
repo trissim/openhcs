@@ -8,6 +8,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import asyncio
 import inspect
+import contextlib
 from typing import List, Dict, Optional, Callable, Tuple
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt6.QtGui import QFont, QDrag
 
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.config import GlobalPipelineConfig, set_current_global_config, get_current_global_config
 from openhcs.io.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.widgets.mixins import (
@@ -343,13 +345,14 @@ class PipelineEditorWidget(QWidget):
             self.pipeline_changed.emit(self.pipeline_steps)
             self.status_message.emit(f"Added new step: {edited_step.name}")
 
-        # Create and show editor dialog
-        editor = DualEditorWindow(
-            step_data=new_step,
-            is_new=True,
-            on_save_callback=handle_save,
-            parent=self
-        )
+        # Create and show editor dialog within the correct config context
+        with self._scoped_orchestrator_context():
+            editor = DualEditorWindow(
+                step_data=new_step,
+                is_new=True,
+                on_save_callback=handle_save,
+                parent=self
+            )
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -397,13 +400,14 @@ class PipelineEditorWidget(QWidget):
             self.pipeline_changed.emit(self.pipeline_steps)
             self.status_message.emit(f"Updated step: {edited_step.name}")
 
-        # Create and show editor dialog
-        editor = DualEditorWindow(
-            step_data=step_to_edit,
-            is_new=False,
-            on_save_callback=handle_save,
-            parent=self
-        )
+        # Create and show editor dialog within the correct config context
+        with self._scoped_orchestrator_context():
+            editor = DualEditorWindow(
+                step_data=step_to_edit,
+                is_new=False,
+                on_save_callback=handle_save,
+                parent=self
+            )
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -762,6 +766,40 @@ class PipelineEditorWidget(QWidget):
                                      OrchestratorState.EXEC_FAILED]
 
 
+
+    def _get_current_orchestrator(self) -> Optional[PipelineOrchestrator]:
+        """Get the orchestrator for the currently selected plate."""
+        if not self.current_plate:
+            return None
+        main_window = self._find_main_window()
+        if not main_window:
+            return None
+        plate_manager_window = main_window.floating_windows.get("plate_manager")
+        if not plate_manager_window:
+            return None
+        layout = plate_manager_window.layout()
+        if not layout or layout.count() == 0:
+            return None
+        plate_manager_widget = layout.itemAt(0).widget()
+        if not hasattr(plate_manager_widget, 'orchestrators'):
+            return None
+        return plate_manager_widget.orchestrators.get(self.current_plate)
+
+    @contextlib.contextmanager
+    def _scoped_orchestrator_context(self):
+        """A context manager to temporarily set the thread-local config for the current orchestrator."""
+        original_config = get_current_global_config(GlobalPipelineConfig)
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator:
+            effective_config = orchestrator.get_effective_config()
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Set scoped config context for orchestrator: {orchestrator.plate_path}")
+        
+        try:
+            yield
+        finally:
+            set_current_global_config(GlobalPipelineConfig, original_config)
+            logger.debug("Restored original config context.")
 
     def _find_main_window(self):
         """Find the main window by traversing parent hierarchy."""
