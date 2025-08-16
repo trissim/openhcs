@@ -10,8 +10,8 @@ from typing import Any, Optional
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QScrollArea, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QScrollArea, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -24,7 +24,7 @@ from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 logger = logging.getLogger(__name__)
 
 
-class StepParameterEditorWidget(QScrollArea):
+class StepParameterEditorWidget(QWidget):
     """
     Step parameter editor using dynamic form generation.
     
@@ -77,22 +77,55 @@ class StepParameterEditorWidget(QScrollArea):
         logger.debug(f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}")
     
     def setup_ui(self):
-        """Setup the user interface."""
-        self.setWidgetResizable(True)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        # Main content widget
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(15)
-        
-        # Header
+        """Setup the user interface (matches FunctionListEditorWidget structure)."""
+        # Main layout directly on self (like FunctionListEditorWidget)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        # Header with controls (like FunctionListEditorWidget)
+        header_layout = QHBoxLayout()
+
+        # Header label
         header_label = QLabel("Step Parameters")
         header_label.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_accent)}; font-weight: bold; font-size: 14px;")
-        layout.addWidget(header_label)
-        
+        header_layout.addWidget(header_label)
+
+        header_layout.addStretch()
+
+        # Action buttons in header (preserving functionality)
+        load_btn = QPushButton("Load .step")
+        load_btn.setMaximumWidth(100)
+        load_btn.setStyleSheet(self._get_button_style())
+        load_btn.clicked.connect(self.load_step_settings)
+        header_layout.addWidget(load_btn)
+
+        save_btn = QPushButton("Save .step As")
+        save_btn.setMaximumWidth(120)
+        save_btn.setStyleSheet(self._get_button_style())
+        save_btn.clicked.connect(self.save_step_settings)
+        header_layout.addWidget(save_btn)
+
+        layout.addLayout(header_layout)
+
+        # Scrollable parameter form (like FunctionListEditorWidget)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.color_scheme.to_hex(self.color_scheme.panel_bg)};
+                border: 1px solid {self.color_scheme.to_hex(self.color_scheme.border_color)};
+                border-radius: 4px;
+            }}
+        """)
+
+        # Parameter form container (like FunctionListEditorWidget)
+        self.parameter_container = QWidget()
+        container_layout = QVBoxLayout(self.parameter_container)
+        container_layout.setContentsMargins(10, 10, 10, 10)
+        container_layout.setSpacing(15)
+
         # Parameter form (using shared form manager)
         form_frame = QFrame()
         form_frame.setFrameStyle(QFrame.Shape.Box)
@@ -104,35 +137,19 @@ class StepParameterEditorWidget(QScrollArea):
                 padding: 10px;
             }}
         """)
-        
+
+        # Set size policy to allow form frame to expand
+        form_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
         form_layout = QVBoxLayout(form_frame)
-        
-        # Add parameter form manager
         form_layout.addWidget(self.form_manager)
-        
-        layout.addWidget(form_frame)
-        
-        # Action buttons (mirrors Textual TUI)
-        button_layout = QHBoxLayout()
-        
-        load_btn = QPushButton("Load .step")
-        load_btn.setMaximumWidth(100)
-        load_btn.setStyleSheet(self._get_button_style())
-        load_btn.clicked.connect(self.load_step_settings)
-        button_layout.addWidget(load_btn)
-        
-        save_btn = QPushButton("Save .step As")
-        save_btn.setMaximumWidth(120)
-        save_btn.setStyleSheet(self._get_button_style())
-        save_btn.clicked.connect(self.save_step_settings)
-        button_layout.addWidget(save_btn)
-        
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-        
-        layout.addStretch()
-        
-        self.setWidget(content_widget)
+
+        # Add form frame with stretch factor to make it expand
+        container_layout.addWidget(form_frame, 1)  # stretch factor = 1
+
+        # Set container in scroll area and add to main layout (like FunctionListEditorWidget)
+        self.scroll_area.setWidget(self.parameter_container)
+        layout.addWidget(self.scroll_area)
     
     def _get_button_style(self) -> str:
         """Get consistent button styling."""
