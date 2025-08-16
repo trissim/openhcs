@@ -518,6 +518,10 @@ class PlateManagerWidget(QWidget):
 
             for orchestrator in self.orchestrators.values():
                 self.run_async_action(orchestrator.apply_new_global_config(new_config))
+
+            # Refresh placeholder text in any open parameter forms
+            self._refresh_all_parameter_form_placeholders()
+
             self.service_adapter.show_info_dialog("Global configuration applied to all orchestrators")
 
         # Open configuration window using concrete GlobalPipelineConfig
@@ -1063,6 +1067,42 @@ class PlateManagerWidget(QWidget):
             self.run_async_action(orchestrator.apply_new_global_config(new_config))
 
         logger.info(f"Applied new global config to {len(self.orchestrators)} orchestrators")
+
+        # Refresh placeholder text in any open parameter forms
+        self._refresh_all_parameter_form_placeholders()
+
+    def _refresh_all_parameter_form_placeholders(self) -> None:
+        """
+        Refresh placeholder text in all open parameter form windows.
+
+        This ensures that lazy dataclass forms show updated placeholder text
+        when the GlobalPipelineConfig changes.
+        """
+        # Check if there are any floating windows with parameter forms
+        if hasattr(self, 'service_adapter') and hasattr(self.service_adapter, 'app'):
+            app = self.service_adapter.app
+            if hasattr(app, 'floating_windows'):
+                for window in app.floating_windows.values():
+                    # Get the widget from the window's layout
+                    layout = window.layout()
+                    if layout and layout.count() > 0:
+                        widget = layout.itemAt(0).widget()
+                        # Look for parameter form managers in the widget
+                        self._refresh_widget_parameter_forms(widget)
+
+    def _refresh_widget_parameter_forms(self, widget) -> None:
+        """Recursively refresh parameter forms in a widget and its children."""
+        # Check if this widget has a parameter form manager
+        if hasattr(widget, 'form_manager') and hasattr(widget.form_manager, 'refresh_placeholder_text'):
+            widget.form_manager.refresh_placeholder_text()
+
+        # Recursively check child widgets
+        if hasattr(widget, 'children'):
+            for child in widget.children():
+                if hasattr(child, 'refresh_placeholder_text'):
+                    child.refresh_placeholder_text()
+                else:
+                    self._refresh_widget_parameter_forms(child)
 
     # ========== Helper Methods ==========
 

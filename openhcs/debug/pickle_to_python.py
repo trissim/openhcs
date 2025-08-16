@@ -281,18 +281,19 @@ def generate_readable_function_repr(func_obj, indent=0, clean_mode=False):
 def _format_parameter_value(param_name, value):
     """Generic parameter formatting with type-based rules."""
     from enum import Enum
+    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
 
     # Handle different value types generically
     if isinstance(value, Enum):
         # For any enum, use ClassName.VALUE_NAME format
-        return f"{value.__class__.__name__}.{value.name}"
+        return EnumDisplayFormatter.get_code_representation(value)
     elif isinstance(value, str):
         # String values need quotes
         return f'"{value}"'
     elif isinstance(value, list):
         # Handle lists of enums or other objects
         if value and isinstance(value[0], Enum):
-            enum_reprs = [f"{item.__class__.__name__}.{item.name}" for item in value]
+            enum_reprs = [EnumDisplayFormatter.get_code_representation(item) for item in value]
             return f"[{', '.join(enum_reprs)}]"
         else:
             return repr(value)

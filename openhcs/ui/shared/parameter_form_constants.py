@@ -107,7 +107,7 @@ class ParameterFormConstants:
     # Method and attribute name constants
     SET_PATH_METHOD: str = "set_path"
     GET_VALUE_METHOD: str = "get_value"
-    SET_VALUE_METHOD: str = "set_value"
+    SET_VALUE_METHOD: str = "setValue"  # PyQt6 uses camelCase
     BLOCK_SIGNALS_METHOD: str = "blockSignals"
     SET_TEXT_METHOD: str = "setText"
     SET_CHECKED_METHOD: str = "setChecked"

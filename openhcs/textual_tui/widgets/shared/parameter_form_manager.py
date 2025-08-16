@@ -229,8 +229,13 @@ class ParameterFormManager(ParameterFormManagerBase):
     
     def create_nested_form(self, param_name: str, param_type: Type, current_value: Any) -> Any:
         """Create a nested form using simplified constructor."""
-        # Extract nested parameters using service
-        nested_params, nested_types = self.service.extract_nested_parameters(current_value, param_type)
+        # Get parent dataclass type for context
+        parent_dataclass_type = getattr(self.config, 'dataclass_type', None) if hasattr(self.config, 'dataclass_type') else None
+
+        # Extract nested parameters using service with parent context
+        nested_params, nested_types = self.service.extract_nested_parameters(
+            current_value, param_type, parent_dataclass_type
+        )
         
         # Create nested config
         field_ids = self.service.generate_field_ids(self.config.field_id, param_name)

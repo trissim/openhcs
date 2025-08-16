@@ -246,13 +246,24 @@ class LazyDataclassFactory:
             raise ValueError(f"{base_class} must be a dataclass")
 
         # Create resolution configuration
-        resolution_config = ResolutionConfig(
-            instance_provider=instance_provider,
-            fallback_chain=fallback_chain or [create_static_defaults_fallback(base_class)]
-        ) if use_recursive_resolution else ResolutionConfig(
-            instance_provider=instance_provider,
-            fallback_chain=[lambda field_name: getattr(instance_provider(), field_name)]
-        )
+        if use_recursive_resolution:
+            resolution_config = ResolutionConfig(
+                instance_provider=instance_provider,
+                fallback_chain=fallback_chain or [create_static_defaults_fallback(base_class)]
+            )
+        else:
+            # For non-recursive resolution, create a safe fallback that handles None instance provider
+            def safe_instance_fallback(field_name: str) -> Any:
+                try:
+                    instance = instance_provider()
+                    return getattr(instance, field_name, None) if instance is not None else None
+                except (AttributeError, Exception):
+                    return None
+
+            resolution_config = ResolutionConfig(
+                instance_provider=instance_provider,
+                fallback_chain=[safe_instance_fallback, create_static_defaults_fallback(base_class)]
+            )
 
         # Create lazy dataclass with introspected fields
         lazy_class = make_dataclass(

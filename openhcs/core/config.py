@@ -274,8 +274,8 @@ class LazyDefaultPlaceholderService:
     Provides consistent placeholder pattern for both static and dynamic lazy configuration classes.
     """
 
-    # Configurable placeholder prefix - set to empty string for cleaner appearance
-    PLACEHOLDER_PREFIX = ""
+    # Configurable placeholder prefix - default for when no prefix is explicitly provided
+    PLACEHOLDER_PREFIX = "Default"
 
     @staticmethod
     def has_lazy_resolution(dataclass_type: type) -> bool:
@@ -289,7 +289,7 @@ class LazyDefaultPlaceholderService:
         field_name: str,
         app_config: Optional[Any] = None,
         force_static_defaults: bool = False,
-        placeholder_prefix: str = ""
+        placeholder_prefix: Optional[str] = None
     ) -> Optional[str]:
         """
         Get placeholder text for lazy-resolved field with flexible resolution.
@@ -299,11 +299,15 @@ class LazyDefaultPlaceholderService:
             field_name: Name of the field to resolve
             app_config: Optional app config for dynamic resolution
             force_static_defaults: If True, always use static defaults regardless of thread-local context
-            placeholder_prefix: Custom prefix to use instead of the default empty prefix
+            placeholder_prefix: Custom prefix to use instead of the class default
 
         Returns:
             Placeholder text with configurable prefix for consistent UI experience.
         """
+        # Use provided prefix or fall back to class default
+        if placeholder_prefix is None:
+            placeholder_prefix = LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX
+
         if not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
             return None
 
@@ -339,9 +343,27 @@ class LazyDefaultPlaceholderService:
                 summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
                 return f"{placeholder_prefix}{summary}" if placeholder_prefix else summary
             else:
-                return f"{placeholder_prefix}: {resolved_value}" if placeholder_prefix else str(resolved_value)
+                # Handle prefix formatting - avoid double colons
+                if placeholder_prefix:
+                    if placeholder_prefix.endswith(': '):
+                        return f"{placeholder_prefix}{resolved_value}"
+                    elif placeholder_prefix.endswith(':'):
+                        return f"{placeholder_prefix} {resolved_value}"
+                    else:
+                        return f"{placeholder_prefix}: {resolved_value}"
+                else:
+                    return str(resolved_value)
         else:
-            return f"{placeholder_prefix}: (none)" if placeholder_prefix else "(none)"
+            # Handle prefix formatting for None values - avoid double colons
+            if placeholder_prefix:
+                if placeholder_prefix.endswith(': '):
+                    return f"{placeholder_prefix}(none)"
+                elif placeholder_prefix.endswith(':'):
+                    return f"{placeholder_prefix} (none)"
+                else:
+                    return f"{placeholder_prefix}: (none)"
+            else:
+                return "(none)"
 
     @staticmethod
     def _get_base_class_from_lazy(lazy_class: Type) -> Type:
@@ -392,10 +414,9 @@ class LazyDefaultPlaceholderService:
                     continue
 
                 # Format different value types appropriately
-                if hasattr(value, 'value'):  # Enum
-                    formatted_value = value.value
-                elif hasattr(value, 'name'):  # Enum with name
-                    formatted_value = value.name
+                if hasattr(value, 'value') and hasattr(value, 'name'):  # Enum
+                    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+                    formatted_value = EnumDisplayFormatter.get_display_text(value)
                 elif isinstance(value, str) and len(value) > 20:  # Long strings
                     formatted_value = f"{value[:17]}..."
                 elif dataclasses.is_dataclass(value):  # Nested dataclass

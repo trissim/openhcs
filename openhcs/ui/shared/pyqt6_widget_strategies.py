@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Type, Callable
+from typing import Any, Dict, Type, Callable, Optional, Union
 
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox
 from magicgui.widgets import create_widget
@@ -72,10 +72,13 @@ def create_string_fallback_widget(current_value: Any, **kwargs) -> QLineEdit:
 
 
 def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) -> QComboBox:
-    """Unified enum widget creator."""
+    """Unified enum widget creator with consistent display text."""
+    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+
     widget = NoScrollComboBox()
     for enum_value in enum_type:
-        widget.addItem(enum_value.value, enum_value)
+        display_text = EnumDisplayFormatter.get_display_text(enum_value)
+        widget.addItem(display_text, enum_value)
 
     # Set current selection
     if current_value and hasattr(current_value, '__class__') and isinstance(current_value, enum_type):
@@ -233,6 +236,30 @@ def _extract_default_value(placeholder_text: str) -> str:
     return value
 
 
+def _extract_numeric_value_from_placeholder(placeholder_text: str) -> Optional[Union[int, float]]:
+    """
+    Extract numeric value from placeholder text for integer/float fields.
+
+    Args:
+        placeholder_text: Full placeholder text like "Pipeline default: 42"
+
+    Returns:
+        Numeric value if found and valid, None otherwise
+    """
+    try:
+        # Extract the value part after the prefix
+        value_str = placeholder_text.replace(PlaceholderConfig.PLACEHOLDER_PREFIX, "").strip()
+
+        # Try to parse as int first, then float
+        if value_str.isdigit() or (value_str.startswith('-') and value_str[1:].isdigit()):
+            return int(value_str)
+        else:
+            # Try float parsing
+            return float(value_str)
+    except (ValueError, AttributeError):
+        return None
+
+
 def _apply_placeholder_styling(widget: Any, interaction_hint: str, placeholder_text: str) -> None:
     """Apply consistent placeholder styling and tooltip."""
     # Get widget-specific styling that's strong enough to override application theme
@@ -277,9 +304,16 @@ def _apply_lineedit_placeholder(widget: Any, text: str) -> None:
 
 
 def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
-    """Apply placeholder to spinbox using special value text and visual styling."""
-    # Set special value text for the minimum value
-    widget.setSpecialValueText(_extract_default_value(text))
+    """Apply placeholder to spinbox using numeric-only special value text."""
+    # Extract numeric value from placeholder text for integer/float fields
+    numeric_value = _extract_numeric_value_from_placeholder(text)
+
+    # For numeric fields, show only the number, not the full text
+    if numeric_value is not None:
+        widget.setSpecialValueText(str(numeric_value))
+    else:
+        # Fallback to full text for non-numeric placeholders
+        widget.setSpecialValueText(text)
 
     # Set widget to minimum value to show the special value text
     if hasattr(widget, 'minimum'):
@@ -289,7 +323,7 @@ def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
     _apply_placeholder_styling(
         widget,
         'change value to set your own',
-        text
+        text  # Keep full text in tooltip
     )
 
 
@@ -480,7 +514,8 @@ class PyQt6WidgetEnhancer:
 
                 # Format the placeholder text appropriately for different types
                 if hasattr(field_value, 'name'):  # Enum
-                    placeholder_text = f"Pipeline default: {field_value.name}"
+                    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+                    placeholder_text = EnumDisplayFormatter.get_placeholder_text(field_value)
                 else:
                     placeholder_text = f"Pipeline default: {field_value}"
 

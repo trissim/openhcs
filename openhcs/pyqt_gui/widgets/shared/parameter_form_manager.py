@@ -5,9 +5,30 @@ This demonstrates how the widget implementation can be drastically simplified
 by leveraging the comprehensive shared infrastructure we've built.
 """
 
+import dataclasses
 from typing import Any, Dict, Type, Optional
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QLineEdit, QCheckBox
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox
 from PyQt6.QtCore import Qt, pyqtSignal
+
+# Import our comprehensive shared infrastructure
+from openhcs.ui.shared.parameter_form_base import ParameterFormManagerBase, ParameterFormConfig
+from openhcs.ui.shared.parameter_form_service import ParameterFormService, ParameterInfo
+from openhcs.ui.shared.parameter_form_config_factory import pyqt_config
+from openhcs.ui.shared.parameter_form_constants import CONSTANTS
+from openhcs.ui.shared.debug_config import DebugConfig, get_debugger
+from openhcs.ui.shared.parameter_form_abstraction import ParameterFormAbstraction, _get_field_path_for_nested_form
+from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
+from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
+from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
+
+# Import PyQt-specific components
+from .clickable_help_components import GroupBoxWithHelp, LabelWithHelp
+from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+
+# Import OpenHCS core components
+from openhcs.core.config import LazyDefaultPlaceholderService, GlobalPipelineConfig
+from openhcs.core.lazy_config import LazyDataclassFactory
+from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
 
 
 class NoneAwareLineEdit(QLineEdit):
@@ -21,16 +42,6 @@ class NoneAwareLineEdit(QLineEdit):
     def set_value(self, value):
         """Set value, handling None properly."""
         self.setText("" if value is None else str(value))
-
-# Import our comprehensive shared infrastructure
-from openhcs.ui.shared.parameter_form_base import ParameterFormManagerBase, ParameterFormConfig
-from openhcs.ui.shared.parameter_form_service import ParameterFormService
-from openhcs.ui.shared.parameter_form_config_factory import pyqt_config
-from openhcs.ui.shared.parameter_form_constants import CONSTANTS
-
-# Import PyQt-specific components
-from .clickable_help_components import GroupBoxWithHelp, LabelWithHelp
-from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 
 class ParameterFormManager(QWidget):
@@ -98,12 +109,12 @@ class ParameterFormManager(QWidget):
         self.config = config
 
         # Initialize shared infrastructure directly
-        from openhcs.ui.shared.debug_config import DebugConfig, get_debugger
         debug_config = DebugConfig(enabled=False)
         self.debugger = get_debugger(debug_config)
 
         # Initialize tracking attributes
         self.widgets = {}
+        self.reset_buttons = {}  # Track reset buttons for API compatibility
         self.nested_managers = {}
 
         # Store public API attributes for backward compatibility
@@ -119,12 +130,10 @@ class ParameterFormManager(QWidget):
 
         # Analyze form structure once using service layer
         self.form_structure = self.service.analyze_parameters(
-            parameters, parameter_types, config.field_id, config.parameter_info
+            parameters, parameter_types, config.field_id, config.parameter_info, self.dataclass_type
         )
 
         # Initialize form abstraction layer for proper widget creation and placeholders
-        from openhcs.ui.shared.parameter_form_abstraction import ParameterFormAbstraction
-        from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
         self.form_abstraction = ParameterFormAbstraction(
             parameters, parameter_types, field_id, create_pyqt6_registry(), parameter_info
         )
@@ -213,6 +222,9 @@ class ParameterFormManager(QWidget):
         reset_btn.setMaximumWidth(60)
         reset_btn.clicked.connect(lambda: self._reset_parameter(param_info.name))
         layout.addWidget(reset_btn)
+
+        # Store reset button reference for API compatibility
+        self.reset_buttons[param_info.name] = reset_btn
         
         return container
 
@@ -227,12 +239,10 @@ class ParameterFormManager(QWidget):
         inner_dataclass_type = self._get_optional_inner_type(param_info.type)
 
         # Checkbox for enabling/disabling the optional dataclass
-        from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
         checkbox = QCheckBox(ParameterNameFormatter.to_checkbox_label(param_info.name))
         checkbox.setChecked(param_info.current_value is not None)
 
         # Create the nested dataclass widget
-        from openhcs.ui.shared.parameter_form_service import ParameterInfo
         nested_param_info = ParameterInfo(
             name=param_info.name,
             type=inner_dataclass_type,
@@ -298,7 +308,10 @@ class ParameterFormManager(QWidget):
             self.config.enable_debug,
             self.config.debug_target_params
         )
-        
+
+        # Determine the correct dataclass type for nested forms
+        nested_dataclass_type = self._resolve_nested_dataclass_type(param_info.type, param_info.name)
+
         nested_manager = ParameterFormManager(
             {p.name: p.current_value for p in nested_structure.parameters},
             {p.name: p.type for p in nested_structure.parameters},
@@ -308,7 +321,7 @@ class ParameterFormManager(QWidget):
             False,  # use_scroll_area - nested forms don't use scroll areas
             self.function_target,
             self.color_scheme,
-            self.dataclass_type,    # Pass through dataclass type
+            nested_dataclass_type,  # Use lazy dataclass type for proper inheritance
             self.placeholder_prefix # Pass through placeholder prefix
         )
         
@@ -319,9 +332,34 @@ class ParameterFormManager(QWidget):
         group_box.content_layout.addWidget(nested_manager)
         
         return group_box
-    
 
-    
+    def _resolve_nested_dataclass_type(self, nested_type: Type, param_name: str) -> Type:
+        """
+        Resolve appropriate dataclass type for nested forms using existing OpenHCS utilities.
+
+        For lazy parent contexts, creates lazy nested dataclass types that resolve from
+        global config. For non-lazy contexts, returns the original type.
+
+        Raises:
+            ValueError: If field path cannot be determined for lazy nested type
+        """
+        # Use existing utility to check if parent form is in lazy context
+        if not self.dataclass_type or not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+            return nested_type
+
+        # Use existing utility to determine field path - fail loud if not found
+        field_path = _get_field_path_for_nested_form(nested_type, {}, GlobalPipelineConfig)
+        if field_path is None:
+            raise ValueError(f"Cannot determine field path for nested type {nested_type.__name__} in GlobalPipelineConfig")
+
+        # Create lazy dataclass using existing factory - let any errors bubble up
+        return LazyDataclassFactory.make_lazy_thread_local(
+            base_class=nested_type,
+            global_config_type=GlobalPipelineConfig,
+            field_path=field_path,
+            lazy_class_name=f"Nested{nested_type.__name__}"
+        )
+
     # Abstract method implementations (dramatically simplified)
     
     def create_parameter_widget(self, param_name: str, param_type: Type, current_value: Any) -> QWidget:
@@ -334,7 +372,6 @@ class ParameterFormManager(QWidget):
             self._apply_placeholder_with_lazy_context(widget, param_name, current_value)
 
             # Connect change signals for editability
-            from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
             PyQt6WidgetEnhancer.connect_change_signal(widget, param_name, self._emit_parameter_change)
 
             # Set object name for identification
@@ -360,9 +397,14 @@ class ParameterFormManager(QWidget):
             placeholder_text = None
 
         if placeholder_text:
-            # Apply placeholder using PyQt6 widget strategies
-            from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
-            PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+            # Block signals to prevent placeholder application from triggering parameter updates
+            widget.blockSignals(True)
+            try:
+                # Apply placeholder using PyQt6 widget strategies
+                PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+            finally:
+                # Always restore signal connections
+                widget.blockSignals(False)
 
 
 
@@ -379,8 +421,10 @@ class ParameterFormManager(QWidget):
 
     def create_nested_form(self, param_name: str, param_type: Type, current_value: Any) -> Any:
         """Create a nested form using simplified constructor."""
-        # Extract nested parameters using service
-        nested_params, nested_types = self.service.extract_nested_parameters(current_value, param_type)
+        # Extract nested parameters using service with parent context
+        nested_params, nested_types = self.service.extract_nested_parameters(
+            current_value, param_type, self.dataclass_type
+        )
         
         # Create nested config
         field_ids = self.service.generate_field_ids(self.config.field_id, param_name)
@@ -408,7 +452,22 @@ class ParameterFormManager(QWidget):
         # Block signals to prevent widget changes from triggering parameter updates
         widget.blockSignals(True)
         try:
-            if hasattr(widget, CONSTANTS.SET_VALUE_METHOD):
+            # Handle QComboBox specifically (for enum values)
+            if isinstance(widget, QComboBox):
+                if value is not None:
+                    # Find the index of the enum value in the combo box
+                    for i in range(widget.count()):
+                        if widget.itemData(i) == value:
+                            widget.setCurrentIndex(i)
+                            break
+                else:
+                    # For None values, set to -1 to indicate no selection
+                    # This allows placeholder text to be displayed properly
+                    widget.setCurrentIndex(-1)
+            # Handle QCheckBox specifically
+            elif hasattr(widget, CONSTANTS.SET_CHECKED_METHOD):
+                getattr(widget, CONSTANTS.SET_CHECKED_METHOD)(bool(value) if value is not None else False)
+            elif hasattr(widget, CONSTANTS.SET_VALUE_METHOD):
                 getattr(widget, CONSTANTS.SET_VALUE_METHOD)(value)
             elif hasattr(widget, CONSTANTS.SET_TEXT_METHOD):
                 getattr(widget, CONSTANTS.SET_TEXT_METHOD)(str(value))
@@ -420,7 +479,15 @@ class ParameterFormManager(QWidget):
     
     def get_widget_value(self, widget: QWidget) -> Any:
         """Get a widget's current value using framework-specific methods."""
-        if hasattr(widget, CONSTANTS.GET_VALUE_METHOD):
+        # Handle QComboBox specifically (for enum values)
+        if isinstance(widget, QComboBox):
+            current_index = widget.currentIndex()
+            if current_index >= 0:
+                return widget.itemData(current_index)
+            else:
+                # No selection (index -1) means None value
+                return None
+        elif hasattr(widget, CONSTANTS.GET_VALUE_METHOD):
             return getattr(widget, CONSTANTS.GET_VALUE_METHOD)()
         elif hasattr(widget, 'value') and hasattr(widget, 'minimum') and hasattr(widget, 'specialValueText'):
             # Handle spinboxes with placeholder text (QSpinBox, QDoubleSpinBox)
@@ -510,8 +577,8 @@ class ParameterFormManager(QWidget):
             widget = self.widgets[param_name]
             self._update_widget_value_with_context(widget, reset_value, param_name)
 
-        # Emit signal for PyQt6 compatibility
-        self.parameter_changed.emit(param_name, reset_value)
+        # Note: Do not emit signal here as it can trigger callbacks that overwrite the reset value
+        # The signal will be emitted by reset_all_parameters if needed
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
         """Reset parameter to default value (public API for backward compatibility)."""
@@ -533,18 +600,17 @@ class ParameterFormManager(QWidget):
         # Determine if this is global config editing by checking dataclass type's lazy resolution
         is_global_config_editing = False
         if self.dataclass_type:
-            from openhcs.core.config import LazyDefaultPlaceholderService
             is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
         # For static contexts (global config editing), set actual values and clear placeholder styling
         if is_global_config_editing or value is not None:
             # Clear any existing placeholder state using existing infrastructure
-            from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
             PyQt6WidgetEnhancer._clear_placeholder_state(widget)
             # Set the actual value
             self.update_widget_value(widget, value)
         else:
-            # For lazy contexts with None values, clear the widget first then apply placeholder styling
+            # For lazy contexts with None values, only apply placeholder styling
+            # Do NOT call update_widget_value as it can trigger signals that overwrite the None value
             self._clear_widget_text(widget)
             # Then reapply placeholder using existing infrastructure
             self._apply_placeholder_with_lazy_context(widget, param_name, value)
@@ -571,39 +637,161 @@ class ParameterFormManager(QWidget):
             # Always restore signal connections
             widget.blockSignals(False)
 
-    def _is_optional_dataclass(self, param_type: type) -> bool:
-        """Check if parameter type is Optional[dataclass]."""
-        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
-        return ParameterTypeUtils.is_optional_dataclass(param_type)
 
-    def _get_optional_inner_type(self, param_type: type) -> type:
-        """Extract the inner type from Optional[T]."""
-        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
-        return ParameterTypeUtils.get_optional_inner_type(param_type)
 
     def get_current_values(self) -> Dict[str, Any]:
-        """Get current parameter values."""
-        return self.parameters.copy()
+        """
+        Get current parameter values preserving lazy dataclass structure.
+
+        This fixes the lazy default materialization override saving issue by ensuring
+        that lazy dataclasses maintain their structure when values are retrieved.
+        """
+        # Start with a copy of current parameters
+        current_values = self.parameters.copy()
+
+        # First, collect values from nested managers and rebuild nested dataclass instances
+        # This must happen BEFORE applying lazy structure preservation to avoid overwriting
+        for param_name, nested_manager in self.nested_managers.items():
+            nested_values = nested_manager.get_current_values()
+            nested_type = self.parameter_types.get(param_name)
+
+            if nested_type and nested_values:
+                # Handle Optional[DataClass] types
+                if self.service._type_utils.is_optional_dataclass(nested_type):
+                    nested_type = self.service._type_utils.get_optional_inner_type(nested_type)
+
+                # Rebuild nested dataclass instance with current values
+                current_values[param_name] = self._rebuild_nested_dataclass_instance(
+                    nested_values, nested_type, param_name
+                )
+
+        # Then apply lazy structure preservation to all parameters (including rebuilt nested ones)
+        final_values = {
+            param_name: self._preserve_lazy_structure_if_needed(param_name, param_value)
+            for param_name, param_value in current_values.items()
+        }
+
+        return final_values
+
+    def refresh_placeholder_text(self) -> None:
+        """
+        Refresh placeholder text for all widgets to reflect current GlobalPipelineConfig.
+
+        This method should be called when the GlobalPipelineConfig changes to ensure
+        that lazy dataclass forms show updated placeholder text.
+        """
+        # Only refresh for lazy dataclasses (PipelineConfig forms)
+        if not self.dataclass_type:
+            return
+
+        is_lazy_dataclass = LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+
+        if not is_lazy_dataclass:
+            return
+
+        # Refresh placeholder text for all widgets with None values
+        for param_name, widget in self.widgets.items():
+            current_value = self.parameters.get(param_name)
+            if current_value is None:
+                self._apply_placeholder_with_lazy_context(widget, param_name, current_value)
+
+        # Recursively refresh nested managers
+        for nested_manager in self.nested_managers.values():
+            nested_manager.refresh_placeholder_text()
+
+    def _preserve_lazy_structure_if_needed(self, param_name: str, param_value: Any) -> Any:
+        """Preserve lazy dataclass structure for dataclass parameters in lazy contexts."""
+        # Early returns for simple cases
+        if param_value is None or ParameterTypeUtils.is_lazy_dataclass(param_value):
+            return param_value
+
+        # Determine if this is global config editing by checking dataclass type's lazy resolution
+        is_global_config_editing = False
+        if self.dataclass_type:
+            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+
+        if is_global_config_editing:
+            return param_value
+
+        # Check if this should be converted to lazy dataclass
+        param_type = ParameterTypeUtils.get_dataclass_type_for_param(param_name, self.parameter_types)
+        if param_type is None:
+            return param_value
+
+        return self._convert_to_lazy_dataclass(param_value, param_type)
+
+    def _convert_to_lazy_dataclass(self, param_value: Any, param_type: Type) -> Any:
+        """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
+        # Use existing shared utility for field path determination
+        field_path = _get_field_path_for_nested_form(param_type, {}, GlobalPipelineConfig)
+
+        lazy_type = LazyDataclassFactory.make_lazy_thread_local(
+            base_class=param_type,
+            global_config_type=GlobalPipelineConfig,
+            field_path=field_path,
+            lazy_class_name=f"Mixed{param_type.__name__}"
+        )
+
+        # Extract field values based on input type
+        if ParameterTypeUtils.has_dataclass_fields(param_value):
+            # Concrete dataclass - extract field values
+            field_values = {
+                field.name: getattr(param_value, field.name)
+                for field in dataclasses.fields(param_value)
+            }
+        elif isinstance(param_value, dict):
+            # Dict from nested form manager
+            field_values = param_value
+        else:
+            # Fallback: return value as-is
+            return param_value
+
+        return lazy_type(**field_values)
+
+    def _rebuild_nested_dataclass_instance(self, nested_values: Dict[str, Any],
+                                         nested_type: Type, param_name: str) -> Any:
+        """
+        Rebuild nested dataclass instance from current values, preserving lazy structure.
+
+        Args:
+            nested_values: Current values from nested manager
+            nested_type: The dataclass type to create
+            param_name: Parameter name for debugging
+
+        Returns:
+            Reconstructed dataclass instance with lazy structure preserved
+        """
+        # Determine if we're in a lazy context
+        is_global_config_editing = False
+        if self.dataclass_type:
+            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+
+        if is_global_config_editing:
+            # Global config editing: filter out None values and use concrete dataclass
+            filtered_values = {k: v for k, v in nested_values.items() if v is not None}
+            if filtered_values:
+                return nested_type(**filtered_values)
+            else:
+                return nested_type()
+        else:
+            # Lazy context: preserve None values and create lazy dataclass if needed
+            # Check if this nested type should be lazy
+            if LazyDefaultPlaceholderService.has_lazy_resolution(nested_type):
+                # Already a lazy type, create instance with all values (including None)
+                return nested_type(**nested_values)
+            else:
+                # Convert to lazy dataclass to preserve lazy structure
+                field_path = _get_field_path_for_nested_form(nested_type, {}, GlobalPipelineConfig)
+                if field_path:
+                    lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
+                        base_class=nested_type,
+                        global_config_type=GlobalPipelineConfig,
+                        field_path=field_path,
+                        lazy_class_name=f"Nested{nested_type.__name__}"
+                    )
+                    return lazy_nested_type(**nested_values)
+                else:
+                    # Fallback to concrete dataclass if field path cannot be determined
+                    return nested_type(**nested_values)
 
 
-# Convenience factory function
-def create_pyqt_form(parameters: Dict[str, Any], parameter_types: Dict[str, Type],
-                    field_id: str = "pyqt_form", parent: QWidget = None,
-                    **config_kwargs) -> ParameterFormManager:
-    """
-    Convenience factory for creating PyQt parameter forms.
-
-    Args:
-        parameters: Dictionary of parameter names to current values
-        parameter_types: Dictionary of parameter names to types
-        field_id: Unique identifier for the form
-        parent: Optional parent widget
-        **config_kwargs: Additional configuration options
-
-    Returns:
-        Configured ParameterFormManager
-    """
-    return ParameterFormManager(
-        parameters, parameter_types, field_id,
-        parent=parent, **config_kwargs
-    )

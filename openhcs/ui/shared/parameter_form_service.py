@@ -6,15 +6,16 @@ architectural dependency between PyQt and Textual implementations by providing
 shared business logic and data management.
 """
 
-from typing import Dict, Any, Type, Optional, List, Tuple
-from dataclasses import dataclass
 import dataclasses
+from dataclasses import dataclass
+from typing import Dict, Any, Type, Optional, List, Tuple
 
-from openhcs.ui.shared.parameter_form_constants import CONSTANTS
-from openhcs.ui.shared.field_id_generator import FieldIdGenerator
-from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
-from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
+from openhcs.core.config import LazyDefaultPlaceholderService
 from openhcs.ui.shared.debug_config import get_debugger, DebugConfig
+from openhcs.ui.shared.field_id_generator import FieldIdGenerator
+from openhcs.ui.shared.parameter_form_constants import CONSTANTS
+from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
+from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
 
 
 @dataclass
@@ -81,19 +82,21 @@ class ParameterFormService:
         self._name_formatter = ParameterNameFormatter()
     
     def analyze_parameters(self, parameters: Dict[str, Any], parameter_types: Dict[str, Type],
-                          field_id: str, parameter_info: Optional[Dict] = None) -> FormStructure:
+                          field_id: str, parameter_info: Optional[Dict] = None,
+                          parent_dataclass_type: Optional[Type] = None) -> FormStructure:
         """
         Analyze parameters and create form structure.
-        
+
         This method analyzes the parameters and their types to create a complete
         form structure that can be used by any UI framework.
-        
+
         Args:
             parameters: Dictionary of parameter names to current values
             parameter_types: Dictionary of parameter names to types
             field_id: Unique identifier for the form
             parameter_info: Optional parameter information dictionary
-            
+            parent_dataclass_type: Optional parent dataclass type for context
+
         Returns:
             Complete form structure information
         """
@@ -119,7 +122,7 @@ class ParameterFormService:
             if param_info.is_nested:
                 nested_field_id = self._field_id_generator.nested_field_id(field_id, param_name)
                 nested_structure = self._analyze_nested_dataclass(
-                    param_name, param_type, current_value, nested_field_id
+                    param_name, param_type, current_value, nested_field_id, parent_dataclass_type
                 )
                 nested_forms[param_name] = nested_structure
             
@@ -183,7 +186,16 @@ class ParameterFormService:
             except (ValueError, TypeError):
                 return None
 
-        # Handle string types - convert empty strings to None in lazy context for lazy resolution
+        # Handle empty strings in lazy context - convert to None for all parameter types
+        # This is critical for lazy dataclass behavior where None triggers placeholder resolution
+        if isinstance(value, str) and value == CONSTANTS.EMPTY_STRING:
+            # Check if we're in a lazy context by examining if this is being called
+            # during a reset operation or widget clearing in a lazy dataclass context
+            # For now, always convert empty strings to None - this preserves lazy behavior
+            # and concrete contexts should not be passing empty strings for non-string types
+            return None
+
+        # Handle string types - also convert empty strings to None for consistency
         if param_type == str and isinstance(value, str) and value == CONSTANTS.EMPTY_STRING:
             return None
 
@@ -259,43 +271,53 @@ class ParameterFormService:
         
         return False
     
-    def extract_nested_parameters(self, dataclass_instance: Any, dataclass_type: Type) -> Tuple[Dict[str, Any], Dict[str, Type]]:
-        """
-        Extract parameters and types from a dataclass instance.
-        
-        Args:
-            dataclass_instance: The dataclass instance
-            dataclass_type: The dataclass type
-            
-        Returns:
-            Tuple of (parameters dict, parameter_types dict)
-        """
+    def extract_nested_parameters(self, dataclass_instance: Any, dataclass_type: Type,
+                                parent_dataclass_type: Optional[Type] = None) -> Tuple[Dict[str, Any], Dict[str, Type]]:
+        """Extract parameters and types from a dataclass instance."""
         if not dataclasses.is_dataclass(dataclass_type):
             return {}, {}
-        
+
+        use_concrete_values = self._use_concrete_values(dataclass_instance, parent_dataclass_type)
+
         parameters = {}
         parameter_types = {}
-        
+
         for field in dataclasses.fields(dataclass_type):
-            field_name = field.name
-            field_type = field.type
-            
-            # Get current value
-            if dataclass_instance is not None:
-                if self._type_utils.has_resolve_field_value(dataclass_instance):
-                    # Lazy dataclass - get raw value
-                    current_value = object.__getattribute__(dataclass_instance, field_name) if hasattr(dataclass_instance, field_name) else field.default
-                else:
-                    # Concrete dataclass - get attribute value
-                    current_value = getattr(dataclass_instance, field_name, field.default)
+            if use_concrete_values:
+                current_value = self._get_field_value(dataclass_instance, field)
             else:
-                current_value = field.default
-            
-            parameters[field_name] = current_value
-            parameter_types[field_name] = field_type
-        
+                current_value = None  # Force placeholder behavior in lazy contexts
+
+            parameters[field.name] = current_value
+            parameter_types[field.name] = field.type
+
         return parameters, parameter_types
-    
+
+    def _use_concrete_values(self, dataclass_instance: Any, parent_dataclass_type: Optional[Type] = None) -> bool:
+        """Determine if nested fields should use concrete values or None for placeholders."""
+        if parent_dataclass_type is None:
+            return self.should_use_concrete_values(dataclass_instance, is_global_editing=True)
+
+        # In lazy parent contexts, force nested fields to None for placeholder text
+        if LazyDefaultPlaceholderService.has_lazy_resolution(parent_dataclass_type):
+            return False
+
+        return self.should_use_concrete_values(dataclass_instance, is_global_editing=True)
+
+    def _get_field_value(self, dataclass_instance: Any, field: Any) -> Any:
+        """Extract a single field value from a dataclass instance."""
+        if dataclass_instance is None:
+            return field.default
+
+        field_name = field.name
+
+        if self._type_utils.has_resolve_field_value(dataclass_instance):
+            # Lazy dataclass - get raw value
+            return object.__getattribute__(dataclass_instance, field_name) if hasattr(dataclass_instance, field_name) else field.default
+        else:
+            # Concrete dataclass - get attribute value
+            return getattr(dataclass_instance, field_name, field.default)
+
     def _create_parameter_info(self, param_name: str, param_type: Type, current_value: Any,
                              parameter_info: Optional[Dict] = None) -> ParameterInfo:
         """Create parameter information object."""
@@ -323,17 +345,19 @@ class ParameterFormService:
         )
     
     def _analyze_nested_dataclass(self, param_name: str, param_type: Type, current_value: Any,
-                                nested_field_id: str) -> FormStructure:
+                                nested_field_id: str, parent_dataclass_type: Type = None) -> FormStructure:
         """Analyze a nested dataclass parameter."""
         # Get the actual dataclass type
         if self._type_utils.is_optional_dataclass(param_type):
             dataclass_type = self._type_utils.get_optional_inner_type(param_type)
         else:
             dataclass_type = param_type
-        
-        # Extract nested parameters
-        nested_params, nested_types = self.extract_nested_parameters(current_value, dataclass_type)
-        
+
+        # Extract nested parameters using parent context
+        nested_params, nested_types = self.extract_nested_parameters(
+            current_value, dataclass_type, parent_dataclass_type
+        )
+
         # Recursively analyze nested structure
         return self.analyze_parameters(nested_params, nested_types, nested_field_id)
 
@@ -352,7 +376,6 @@ class ParameterFormService:
         - No lazy resolution (GlobalPipelineConfig) → global config editing
         """
         # Automatically derive editing mode from dataclass type capabilities
-        from openhcs.core.config import LazyDefaultPlaceholderService
         is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
 
         # Use the existing _get_thread_local_placeholder function directly
@@ -377,28 +400,49 @@ class ParameterFormService:
             param_type: Type of the parameter (int, str, bool, etc.)
             dataclass_type: The specific dataclass type (GlobalPipelineConfig or PipelineConfig)
 
-        The editing mode is automatically derived from the dataclass type's lazy resolution capabilities.
+        Returns:
+            - For lazy dataclasses (PipelineConfig): None to show placeholder text
+            - For non-lazy dataclasses (GlobalPipelineConfig): Actual default values
         """
-        # Automatically derive editing mode from dataclass type capabilities
-        from openhcs.core.config import LazyDefaultPlaceholderService
-        is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
+        # Check if this is a lazy dataclass (has factory-generated resolution methods)
+        is_lazy_dataclass = LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
 
-        if is_global_config_editing:
-            # For global config editing, use static defaults
-            if dataclasses.is_dataclass(param_type):
-                return param_type()  # Use dataclass default constructor
-            # For primitive types, use simple defaults
-            if param_type == bool:
-                return False
-            elif param_type == int:
-                return 0
-            elif param_type == float:
-                return 0.0
-            elif param_type == str:
-                return ""
-            else:
-                return None
+        if is_lazy_dataclass:
+            # For lazy dataclasses (PipelineConfig), reset to None to preserve
+            # placeholder behavior and inheritance hierarchy for ALL field types
+            return None
         else:
-            # For orchestrator config editing (lazy context), use None to preserve
-            # placeholder behavior and inheritance hierarchy
+            # For non-lazy dataclasses (GlobalPipelineConfig), reset to actual default values
+            # This provides concrete values that users can see and modify
+            return self._get_actual_dataclass_field_default(param_name, dataclass_type)
+
+    def _get_actual_dataclass_field_default(self, param_name: str, dataclass_type: Type) -> Any:
+        """
+        Get the actual default value for a dataclass field by creating a default instance.
+
+        This ensures we get the real defaults (like num_workers=16) instead of hardcoded primitives.
+        """
+        try:
+            # Create a default instance of the dataclass to get actual field defaults
+            default_instance = dataclass_type()
+            return getattr(default_instance, param_name, None)
+        except Exception:
+            # Fallback to primitive defaults if dataclass creation fails
+            param_type = None
+            for field in dataclasses.fields(dataclass_type):
+                if field.name == param_name:
+                    param_type = field.type
+                    break
+
+            if param_type:
+                if dataclasses.is_dataclass(param_type):
+                    return param_type()  # Use dataclass default constructor
+                elif param_type == bool:
+                    return False
+                elif param_type == int:
+                    return 0
+                elif param_type == float:
+                    return 0.0
+                elif param_type == str:
+                    return ""
             return None
