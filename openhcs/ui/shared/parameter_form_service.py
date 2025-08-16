@@ -273,36 +273,33 @@ class ParameterFormService:
     
     def extract_nested_parameters(self, dataclass_instance: Any, dataclass_type: Type,
                                 parent_dataclass_type: Optional[Type] = None) -> Tuple[Dict[str, Any], Dict[str, Type]]:
-        """Extract parameters and types from a dataclass instance."""
+        """
+        Extract parameters and types from a dataclass instance.
+
+        This method always preserves concrete field values when a dataclass instance exists,
+        regardless of parent context. Placeholder behavior is handled at the widget level,
+        not by discarding concrete values during parameter extraction.
+        """
         if not dataclasses.is_dataclass(dataclass_type):
             return {}, {}
-
-        use_concrete_values = self._use_concrete_values(dataclass_instance, parent_dataclass_type)
 
         parameters = {}
         parameter_types = {}
 
         for field in dataclasses.fields(dataclass_type):
-            if use_concrete_values:
+            # Always extract actual field values when dataclass instance exists
+            # This preserves concrete user-entered values in nested lazy dataclass forms
+            if dataclass_instance is not None:
                 current_value = self._get_field_value(dataclass_instance, field)
             else:
-                current_value = None  # Force placeholder behavior in lazy contexts
+                current_value = None  # Only use None when no instance exists
 
             parameters[field.name] = current_value
             parameter_types[field.name] = field.type
 
         return parameters, parameter_types
 
-    def _use_concrete_values(self, dataclass_instance: Any, parent_dataclass_type: Optional[Type] = None) -> bool:
-        """Determine if nested fields should use concrete values or None for placeholders."""
-        if parent_dataclass_type is None:
-            return self.should_use_concrete_values(dataclass_instance, is_global_editing=True)
 
-        # In lazy parent contexts, force nested fields to None for placeholder text
-        if LazyDefaultPlaceholderService.has_lazy_resolution(parent_dataclass_type):
-            return False
-
-        return self.should_use_concrete_values(dataclass_instance, is_global_editing=True)
 
     def _get_field_value(self, dataclass_instance: Any, field: Any) -> Any:
         """Extract a single field value from a dataclass instance."""
@@ -391,30 +388,39 @@ class ParameterFormService:
         )
 
     def get_reset_value_for_parameter(self, param_name: str, param_type: Type,
-                                    dataclass_type: Type) -> Any:
+                                    dataclass_type: Type, is_global_config_editing: Optional[bool] = None) -> Any:
         """
         Get appropriate reset value using existing OpenHCS patterns.
 
         Args:
             param_name: Name of the parameter to reset
             param_type: Type of the parameter (int, str, bool, etc.)
-            dataclass_type: The specific dataclass type (GlobalPipelineConfig or PipelineConfig)
+            dataclass_type: The specific dataclass type
+            is_global_config_editing: Whether we're in global config editing mode (auto-detected if None)
 
         Returns:
-            - For lazy dataclasses (PipelineConfig): None to show placeholder text
-            - For non-lazy dataclasses (GlobalPipelineConfig): Actual default values
+            - For global config editing: Actual default values
+            - For lazy config editing: None to show placeholder text
         """
-        # Check if this is a lazy dataclass (has factory-generated resolution methods)
-        is_lazy_dataclass = LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
+        # Context-driven behavior: Use the editing context to determine reset behavior
+        # This follows the architectural principle that behavior is determined by context
+        # of usage rather than intrinsic properties of the dataclass.
 
-        if is_lazy_dataclass:
-            # For lazy dataclasses (PipelineConfig), reset to None to preserve
-            # placeholder behavior and inheritance hierarchy for ALL field types
-            return None
-        else:
-            # For non-lazy dataclasses (GlobalPipelineConfig), reset to actual default values
-            # This provides concrete values that users can see and modify
+        # Context-driven behavior: Use explicit context when provided
+        # Auto-detect editing mode if not explicitly provided
+        if is_global_config_editing is None:
+            # Fallback: Use existing lazy resolution detection for backward compatibility
+            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
+
+        # Context-driven behavior: Reset behavior depends on editing context
+        if is_global_config_editing:
+            # Global config editing: Reset to actual default values
+            # Users expect to see concrete defaults when editing global configuration
             return self._get_actual_dataclass_field_default(param_name, dataclass_type)
+        else:
+            # Parameter form editing: Reset to None for placeholder behavior
+            # This ensures consistent enum reset and placeholder behavior
+            return None
 
     def _get_actual_dataclass_field_default(self, param_name: str, dataclass_type: Type) -> Any:
         """

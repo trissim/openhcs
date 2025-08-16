@@ -100,27 +100,26 @@ class TestNestedFieldResetIssues:
             print("✅ Nested field reset correctly returns None")
     
     def test_nested_field_reset_with_correct_context(self):
-        """Test what happens when nested field reset uses correct PathPlanningConfig context."""
+        """Test context-driven reset behavior for different editing modes."""
         from openhcs.ui.shared.parameter_form_service import ParameterFormService
         service = ParameterFormService()
-        
-        # Test reset value for field in PathPlanningConfig context (correct)
-        reset_value_correct_context = service.get_reset_value_for_parameter(
-            'output_dir_suffix', str, PathPlanningConfig
+
+        # Test reset value in global config editing context (should return actual defaults)
+        reset_value_global_context = service.get_reset_value_for_parameter(
+            'output_dir_suffix', str, PathPlanningConfig, is_global_config_editing=True
         )
-        
-        # Test reset value for field in GlobalPipelineConfig context (incorrect)
-        reset_value_wrong_context = service.get_reset_value_for_parameter(
-            'output_dir_suffix', str, GlobalPipelineConfig
+
+        # Test reset value in lazy config editing context (should return None for placeholders)
+        reset_value_lazy_context = service.get_reset_value_for_parameter(
+            'output_dir_suffix', str, PathPlanningConfig, is_global_config_editing=False
         )
-        
-        print(f"Reset value with PathPlanningConfig context: {reset_value_correct_context}")
-        print(f"Reset value with GlobalPipelineConfig context: {reset_value_wrong_context}")
-        
-        # PathPlanningConfig is non-lazy, so should return concrete value
-        # GlobalPipelineConfig is non-lazy, but doesn't have output_dir_suffix field, so returns None
-        assert reset_value_correct_context == "_outputs", "PathPlanningConfig context should return concrete value"
-        assert reset_value_wrong_context is None, "GlobalPipelineConfig context should return None (field doesn't exist)"
+
+        print(f"Reset value with global editing context: {reset_value_global_context}")
+        print(f"Reset value with lazy editing context: {reset_value_lazy_context}")
+
+        # Context-driven behavior: editing context determines reset behavior
+        assert reset_value_global_context == '_outputs', "Global editing context should return actual default"
+        assert reset_value_lazy_context is None, "Lazy editing context should return None for placeholders"
     
     def test_nested_field_placeholder_text_display(self, global_config_with_nested_form_manager):
         """Test that nested fields show correct placeholder text after reset."""
@@ -161,30 +160,39 @@ class TestNestedFieldResetIssues:
                             print(f"   Actual: text='{after_text}', placeholder='{after_placeholder}'")
     
     def test_nested_vs_top_level_reset_consistency(self, global_config_with_nested_form_manager):
-        """Test that nested field reset behaves consistently with top-level field reset."""
+        """Test that reset behavior is consistent when using proper context."""
         form_manager = global_config_with_nested_form_manager
-        
+
         from openhcs.ui.shared.parameter_form_service import ParameterFormService
         service = ParameterFormService()
-        
-        # Test top-level field reset
-        top_level_reset = service.get_reset_value_for_parameter('num_workers', int, GlobalPipelineConfig)
-        
-        # Test nested field reset
-        nested_reset = service.get_reset_value_for_parameter('output_dir_suffix', str, GlobalPipelineConfig)
-        
-        print(f"Top-level field reset (num_workers): {top_level_reset}")
-        print(f"Nested field reset (output_dir_suffix): {nested_reset}")
-        
-        # Both should return concrete values for GlobalPipelineConfig (non-lazy context)
-        assert top_level_reset == 16, "Top-level reset should return concrete value for non-lazy context"
-        assert nested_reset is None, "Nested field reset should return None (field doesn't exist in GlobalPipelineConfig)"
-        
-        if top_level_reset == nested_reset:
-            print("✅ Consistent reset behavior between top-level and nested fields")
-        else:
-            print("❌ BUG: Inconsistent reset behavior")
-            print("   Top-level and nested fields should have same reset behavior")
+
+        # Test with explicit global config editing context (should return actual defaults)
+        top_level_reset_global = service.get_reset_value_for_parameter(
+            'num_workers', int, GlobalPipelineConfig, is_global_config_editing=True
+        )
+        nested_reset_global = service.get_reset_value_for_parameter(
+            'output_dir_suffix', str, PathPlanningConfig, is_global_config_editing=True
+        )
+
+        # Test with explicit lazy context (should return None for placeholders)
+        top_level_reset_lazy = service.get_reset_value_for_parameter(
+            'num_workers', int, GlobalPipelineConfig, is_global_config_editing=False
+        )
+        nested_reset_lazy = service.get_reset_value_for_parameter(
+            'output_dir_suffix', str, PathPlanningConfig, is_global_config_editing=False
+        )
+
+        print(f"Global context - num_workers: {top_level_reset_global}")
+        print(f"Global context - output_dir_suffix: {nested_reset_global}")
+        print(f"Lazy context - num_workers: {top_level_reset_lazy}")
+        print(f"Lazy context - output_dir_suffix: {nested_reset_lazy}")
+
+        # Context-driven behavior: explicit context determines reset behavior
+        assert top_level_reset_global == 16, "Global context should return actual default (16)"
+        assert nested_reset_global == '_outputs', "Global context should return actual default ('_outputs')"
+        assert top_level_reset_lazy is None, "Lazy context should return None for placeholders"
+        assert nested_reset_lazy is None, "Lazy context should return None for placeholders"
+
 
 
 class TestNestedFieldResetFix:
@@ -212,19 +220,28 @@ class TestNestedFieldResetFix:
         assert True  # This test documents the intended fix
     
     def test_service_layer_handles_nested_context_correctly(self):
-        """Test that service layer correctly handles nested dataclass context."""
+        """Test that service layer correctly handles context-driven behavior."""
         from openhcs.ui.shared.parameter_form_service import ParameterFormService
         service = ParameterFormService()
-        
-        # Test with correct nested context
-        reset_value = service.get_reset_value_for_parameter('output_dir_suffix', str, PathPlanningConfig)
-        placeholder = service.get_placeholder_text('output_dir_suffix', PathPlanningConfig)
-        
+
+        # Test auto-detection (PathPlanningConfig doesn't have lazy resolution)
+        reset_value_auto = service.get_reset_value_for_parameter('output_dir_suffix', str, PathPlanningConfig)
+        placeholder_auto = service.get_placeholder_text('output_dir_suffix', PathPlanningConfig)
+
+        # Test explicit lazy context
+        reset_value_lazy = service.get_reset_value_for_parameter(
+            'output_dir_suffix', str, PathPlanningConfig, is_global_config_editing=False
+        )
+
         print(f"Service layer with PathPlanningConfig context:")
-        print(f"  Reset value: {reset_value}")
-        print(f"  Placeholder: {placeholder}")
-        
-        # PathPlanningConfig is non-lazy, so should return concrete value
-        assert reset_value == "_outputs"
-        assert placeholder is not None
-        assert "_outputs" in placeholder  # Should show the default value
+        print(f"  Auto-detected reset value: {reset_value_auto}")
+        print(f"  Auto-detected placeholder: {placeholder_auto}")
+        print(f"  Explicit lazy reset value: {reset_value_lazy}")
+
+        # Context-driven behavior: auto-detection returns actual defaults for non-lazy dataclasses
+        assert reset_value_auto == '_outputs', "Auto-detection should return actual default for PathPlanningConfig"
+        assert placeholder_auto is not None, "Placeholder should be generated"
+        assert "_outputs" in placeholder_auto, "Placeholder should show the default value"
+
+        # Explicit lazy context returns None
+        assert reset_value_lazy is None, "Explicit lazy context should return None"

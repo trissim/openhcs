@@ -18,6 +18,8 @@ from openhcs.ui.shared.parameter_form_constants import CONSTANTS
 from openhcs.ui.shared.debug_config import DebugConfig, get_debugger
 from openhcs.ui.shared.parameter_form_abstraction import ParameterFormAbstraction, _get_field_path_for_nested_form
 from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
+from openhcs.core.config import LazyDefaultPlaceholderService
+from openhcs.core.config import LazyDefaultPlaceholderService
 from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
 from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
 
@@ -66,7 +68,8 @@ class ParameterFormManager(QWidget):
                  field_id: str, parameter_info: Dict = None, parent=None, use_scroll_area: bool = True,
                  function_target=None, color_scheme: Optional[PyQt6ColorScheme] = None,
                  dataclass_type: Optional[Type] = None,
-                 placeholder_prefix: str = None):
+                 placeholder_prefix: str = None, is_global_config_editing: bool = None,
+                 global_config_type: Optional[Type] = None):
         """
         Initialize PyQt parameter form manager with backward-compatible API.
 
@@ -81,6 +84,8 @@ class ParameterFormManager(QWidget):
             color_scheme: Optional PyQt color scheme
             dataclass_type: The specific dataclass type for placeholder resolution
             placeholder_prefix: Prefix for placeholder text
+            is_global_config_editing: Whether this is global config editing mode
+            global_config_type: Type of global configuration being edited
         """
         # Initialize QWidget first
         QWidget.__init__(self, parent)
@@ -88,6 +93,21 @@ class ParameterFormManager(QWidget):
         # Store critical configuration parameters
         self.dataclass_type = dataclass_type
         self.placeholder_prefix = placeholder_prefix or CONSTANTS.DEFAULT_PLACEHOLDER_PREFIX
+
+        # Handle context determination with explicit vs auto-detection
+        if is_global_config_editing is not None:
+            # Explicit context provided
+            self.is_global_config_editing = is_global_config_editing
+            self._explicit_context_set = True
+        else:
+            # Auto-detect context based on dataclass type for backward compatibility
+            if dataclass_type:
+                self.is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
+            else:
+                self.is_global_config_editing = False
+            self._explicit_context_set = False
+
+        self.global_config_type = global_config_type
 
         # Convert old API to new config object internally
         if color_scheme is None:
@@ -102,6 +122,8 @@ class ParameterFormManager(QWidget):
         config.parameter_info = parameter_info
         config.dataclass_type = dataclass_type
         config.placeholder_prefix = placeholder_prefix
+        config.is_global_config_editing = is_global_config_editing
+        config.global_config_type = global_config_type
 
         # Initialize core attributes directly (avoid abstract class instantiation)
         self.parameters = parameters.copy()
@@ -236,7 +258,7 @@ class ParameterFormManager(QWidget):
         layout.setSpacing(5)
 
         # Get the inner dataclass type
-        inner_dataclass_type = self._get_optional_inner_type(param_info.type)
+        inner_dataclass_type = ParameterTypeUtils.get_optional_inner_type(param_info.type)
 
         # Checkbox for enabling/disabling the optional dataclass
         checkbox = QCheckBox(ParameterNameFormatter.to_checkbox_label(param_info.name))
@@ -562,8 +584,9 @@ class ParameterFormManager(QWidget):
         # Delegate to service layer for reset value determination using generic API
         if self.dataclass_type:
             param_type = self.parameter_types.get(param_name)
+            # Pass explicit context to service layer
             reset_value = self.service.get_reset_value_for_parameter(
-                param_name, param_type, self.dataclass_type
+                param_name, param_type, self.dataclass_type, self.is_global_config_editing
             )
         else:
             # Fallback if no dataclass type provided
@@ -577,8 +600,8 @@ class ParameterFormManager(QWidget):
             widget = self.widgets[param_name]
             self._update_widget_value_with_context(widget, reset_value, param_name)
 
-        # Note: Do not emit signal here as it can trigger callbacks that overwrite the reset value
-        # The signal will be emitted by reset_all_parameters if needed
+        # Emit signal to notify other components of the parameter change
+        self.parameter_changed.emit(param_name, reset_value)
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
         """Reset parameter to default value (public API for backward compatibility)."""
@@ -597,13 +620,18 @@ class ParameterFormManager(QWidget):
 
     def _update_widget_value_with_context(self, widget: QWidget, value: Any, param_name: str) -> None:
         """Update widget value with context-aware placeholder handling using existing infrastructure."""
-        # Determine if this is global config editing by checking dataclass type's lazy resolution
-        is_global_config_editing = False
-        if self.dataclass_type:
-            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        # Use explicit context from constructor, with auto-detection as fallback
+        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
+            is_global_config_editing = self.is_global_config_editing
+        else:
+            # Fallback to auto-detection for backward compatibility
+            is_global_config_editing = False
+            if self.dataclass_type:
+                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
         # For static contexts (global config editing), set actual values and clear placeholder styling
-        if is_global_config_editing or value is not None:
+        # Exception: when value is None (from reset), always use placeholder behavior
+        if (is_global_config_editing or value is not None) and value is not None:
             # Clear any existing placeholder state using existing infrastructure
             PyQt6WidgetEnhancer._clear_placeholder_state(widget)
             # Set the actual value
@@ -612,7 +640,7 @@ class ParameterFormManager(QWidget):
             # For lazy contexts with None values, only apply placeholder styling
             # Do NOT call update_widget_value as it can trigger signals that overwrite the None value
             self._clear_widget_text(widget)
-            # Then reapply placeholder using existing infrastructure
+            # Use the same placeholder application as initial form creation for all widgets
             self._apply_placeholder_with_lazy_context(widget, param_name, value)
 
 
@@ -629,7 +657,11 @@ class ParameterFormManager(QWidget):
         # Block signals to prevent widget changes from triggering parameter updates
         widget.blockSignals(True)
         try:
-            if hasattr(widget, 'clear'):
+            if isinstance(widget, QComboBox):
+                # For QComboBox, set to no selection (-1) to show placeholder state
+                # Don't call clear() as it removes all items
+                widget.setCurrentIndex(-1)
+            elif hasattr(widget, 'clear'):
                 widget.clear()
             elif hasattr(widget, 'setText'):
                 widget.setText("")
@@ -705,10 +737,14 @@ class ParameterFormManager(QWidget):
         if param_value is None or ParameterTypeUtils.is_lazy_dataclass(param_value):
             return param_value
 
-        # Determine if this is global config editing by checking dataclass type's lazy resolution
-        is_global_config_editing = False
-        if self.dataclass_type:
-            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        # Use explicit context from constructor, with auto-detection as fallback
+        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
+            is_global_config_editing = self.is_global_config_editing
+        else:
+            # Fallback to auto-detection for backward compatibility
+            is_global_config_editing = False
+            if self.dataclass_type:
+                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
         if is_global_config_editing:
             return param_value
@@ -761,10 +797,14 @@ class ParameterFormManager(QWidget):
         Returns:
             Reconstructed dataclass instance with lazy structure preserved
         """
-        # Determine if we're in a lazy context
-        is_global_config_editing = False
-        if self.dataclass_type:
-            is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        # Use explicit context from constructor, with auto-detection as fallback
+        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
+            is_global_config_editing = self.is_global_config_editing
+        else:
+            # Fallback to auto-detection for backward compatibility
+            is_global_config_editing = False
+            if self.dataclass_type:
+                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
         if is_global_config_editing:
             # Global config editing: filter out None values and use concrete dataclass

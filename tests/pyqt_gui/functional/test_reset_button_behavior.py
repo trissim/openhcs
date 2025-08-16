@@ -27,18 +27,11 @@ class TestResetButtonBehavior:
             num_workers=8,  # User-set value different from default
         )
         
-        # Create form configuration for global config editing
-        form_config = ParameterFormConfigFactory.create_global_config(
-            field_id="test_global_config",
-            global_config_type=GlobalPipelineConfig,
-            framework="pyqt6"
-        )
-        
-        # Create form manager
+        # Create form manager for global config editing
         form_manager = ParameterFormManager(
             parameters={"num_workers": 8},  # User has set this value
             parameter_types={"num_workers": int},
-            config=form_config,
+            field_id="test_global_config",
             dataclass_type=GlobalPipelineConfig
         )
         
@@ -56,7 +49,8 @@ class TestResetButtonBehavior:
         reset_button = form_manager.reset_buttons["num_workers"]
 
         # Click reset button
-        qtbot.mouseClick(reset_button, qtbot.LeftButton)
+        from PyQt6.QtCore import Qt
+        qtbot.mouseClick(reset_button, Qt.MouseButton.LeftButton)
 
         # After reset, the parameter should be None (unset)
         assert form_manager.parameters["num_workers"] is None
@@ -86,17 +80,11 @@ class TestResetButtonBehavior:
             path_planning=PathPlanningConfig(output_dir_suffix="_custom")
         )
         
-        form_config = ParameterFormConfigFactory.create_global_config(
-            field_id="test_string_reset",
-            global_config_type=GlobalPipelineConfig,
-            framework="pyqt6"
-        )
-        
         # Create form manager with user-set string value
         form_manager = ParameterFormManager(
             parameters={"path_planning": config.path_planning},
             parameter_types={"path_planning": PathPlanningConfig},
-            config=form_config,
+            field_id="test_string_reset",
             dataclass_type=GlobalPipelineConfig
         )
         
@@ -113,7 +101,8 @@ class TestResetButtonBehavior:
             reset_button = form_manager.reset_buttons["path_planning"]
             
             # Click reset button
-            qtbot.mouseClick(reset_button, qtbot.LeftButton)
+            from PyQt6.QtCore import Qt
+            qtbot.mouseClick(reset_button, Qt.MouseButton.LeftButton)
             
             # After reset, the nested parameter should be None or default
             # The key is that it should not retain the user-set "_custom" value
@@ -125,17 +114,11 @@ class TestResetButtonBehavior:
     def test_string_widget_shows_placeholder_after_reset(self, qtbot):
         """Test that string widgets show placeholder text after reset, not concrete values."""
         # Create a simple form with a string parameter
-        form_config = ParameterFormConfigFactory.create_global_config(
-            field_id="test_string_placeholder",
-            global_config_type=GlobalPipelineConfig,
-            framework="pyqt6"
-        )
-        
         # Simulate a string field that user has set
         form_manager = ParameterFormManager(
             parameters={"test_string": "user_value"},
             parameter_types={"test_string": str},
-            config=form_config,
+            field_id="test_string_placeholder",
             dataclass_type=GlobalPipelineConfig
         )
         
@@ -158,7 +141,8 @@ class TestResetButtonBehavior:
         assert form_manager.parameters["test_string"] == "user_value"
         
         # Click reset button
-        qtbot.mouseClick(reset_button, qtbot.LeftButton)
+        from PyQt6.QtCore import Qt
+        qtbot.mouseClick(reset_button, Qt.MouseButton.LeftButton)
         
         # After reset, parameter should be None (unset)
         assert form_manager.parameters["test_string"] is None
@@ -180,22 +164,21 @@ class TestResetButtonBehavior:
         reset_button = form_manager.reset_buttons["num_workers"]
         
         # Click reset button
-        qtbot.mouseClick(reset_button, qtbot.LeftButton)
+        from PyQt6.QtCore import Qt
+        qtbot.mouseClick(reset_button, Qt.MouseButton.LeftButton)
         
-        # Verify signal was emitted with None value
+        # Verify signal was emitted with reset value
         assert len(signal_spy) == 1
         signal_args = signal_spy[0]
         assert signal_args[0] == "num_workers"  # parameter name
-        assert signal_args[1] is None  # reset value should be None
+
+        # In global config editing mode, reset value should be actual default
+        default_config = GlobalPipelineConfig()
+        expected_reset_value = default_config.num_workers
+        assert signal_args[1] == expected_reset_value  # reset value should be actual default
     
     def test_lazy_vs_concrete_value_display(self, qtbot):
         """Test that lazy (unset) values show placeholders while concrete values show actual values."""
-        form_config = ParameterFormConfigFactory.create_global_config(
-            field_id="test_lazy_concrete",
-            global_config_type=GlobalPipelineConfig,
-            framework="pyqt6"
-        )
-        
         # Create form manager with mixed lazy and concrete values
         form_manager = ParameterFormManager(
             parameters={
@@ -206,7 +189,7 @@ class TestResetButtonBehavior:
                 "num_workers": int,
                 "unset_field": str
             },
-            config=form_config,
+            field_id="test_lazy_concrete",
             dataclass_type=GlobalPipelineConfig
         )
         
@@ -240,26 +223,20 @@ class TestResetButtonBehaviorIntegration:
         # Create actual GlobalPipelineConfig form
         config = GlobalPipelineConfig()
         
-        form_config = ParameterFormConfigFactory.create_global_config(
-            field_id="test_full_workflow",
-            global_config_type=GlobalPipelineConfig,
-            framework="pyqt6"
-        )
-        
         # Extract parameters from config for form
         import dataclasses
         parameters = {}
         parameter_types = {}
-        
+
         for field in dataclasses.fields(GlobalPipelineConfig):
             if field.type in [int, str, bool]:  # Simple types only for this test
                 parameters[field.name] = getattr(config, field.name)
                 parameter_types[field.name] = field.type
-        
+
         form_manager = ParameterFormManager(
             parameters=parameters,
             parameter_types=parameter_types,
-            config=form_config,
+            field_id="test_full_workflow",
             dataclass_type=GlobalPipelineConfig
         )
         
@@ -276,7 +253,8 @@ class TestResetButtonBehaviorIntegration:
             # Step 2: User clicks reset
             if "num_workers" in form_manager.reset_buttons:
                 reset_button = form_manager.reset_buttons["num_workers"]
-                qtbot.mouseClick(reset_button, qtbot.LeftButton)
+                from PyQt6.QtCore import Qt
+                qtbot.mouseClick(reset_button, Qt.MouseButton.LeftButton)
                 
                 # Step 3: Verify field is reset to unset state (None)
                 assert form_manager.parameters["num_workers"] is None

@@ -33,8 +33,8 @@ class TestResetBehaviorClarification:
         actual_default = default_config.num_workers
         print(f"Actual default value: {actual_default}")
         
-        # Current implementation: reset_value is None, placeholder shows actual default
-        assert reset_value is None, "Reset should return None to show placeholder"
+        # Context-driven behavior: auto-detection returns actual defaults for GlobalPipelineConfig
+        assert reset_value == actual_default, "Auto-detection should return actual default for GlobalPipelineConfig"
         assert placeholder is not None, "Placeholder should be available"
         assert str(actual_default) in placeholder, "Placeholder should show actual default"
     
@@ -55,11 +55,11 @@ class TestResetBehaviorClarification:
         user_value = 32
         print(f"2. User sets value: {user_value}")
         
-        # 3. User clicks reset → field returns to unset state with placeholder
+        # 3. User clicks reset → field returns to default value
         reset_value = service.get_reset_value_for_parameter('num_workers', int, GlobalPipelineConfig)
         print(f"3. After reset: value={reset_value}, placeholder='{placeholder}'")
-        
-        assert reset_value is None, "Reset should clear user input"
+
+        assert reset_value == actual_default, "Reset should return actual default for global config editing"
         assert "16" in placeholder, "Placeholder should still show default"
         
         # 4. User can see what the default would be without committing to it
