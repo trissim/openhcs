@@ -281,20 +281,8 @@ class ParameterFormManager:
                         # Global config editing: use concrete dataclass
                         self.parameters[potential_nested] = nested_type(**nested_values)
                     else:
-                        # Lazy context: always create lazy instance for thread-local resolution
-                        # Even if all values are None (especially after reset), we want lazy resolution
-                        from openhcs.core.lazy_config import LazyDataclassFactory
-
-                        # Determine the correct field path using type inspection
-                        field_path = self._get_field_path_for_nested_type(nested_type)
-
-                        lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                            base_class=nested_type,
-                            field_path=field_path,
-                            lazy_class_name=f"Mixed{nested_type.__name__}"
-                        )
-                        # Pass ALL fields: concrete values for edited fields, None for lazy resolution
-                        self.parameters[potential_nested] = lazy_nested_type(**nested_values)
+                        # Lazy context: create lazy instance using shared utility
+                        self.parameters[potential_nested] = self._convert_to_lazy_dataclass(nested_values, nested_type)
                     return
 
         # Handle regular parameters (direct match)
@@ -409,20 +397,8 @@ class ParameterFormManager:
                         # Global config editing: use concrete dataclass
                         self.parameters[potential_nested] = nested_type(**nested_values)
                     else:
-                        # Lazy context: always create lazy instance for thread-local resolution
-                        # Even if all values are None (especially after reset), we want lazy resolution
-                        from openhcs.core.lazy_config import LazyDataclassFactory
-
-                        # Determine the correct field path using type inspection
-                        field_path = self._get_field_path_for_nested_type(nested_type)
-
-                        lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                            base_class=nested_type,
-                            field_path=field_path,
-                            lazy_class_name=f"Mixed{nested_type.__name__}"
-                        )
-                        # Pass ALL fields: concrete values for edited fields, None for lazy resolution
-                        self.parameters[potential_nested] = lazy_nested_type(**nested_values)
+                        # Lazy context: create lazy instance using shared utility
+                        self.parameters[potential_nested] = self._convert_to_lazy_dataclass(nested_values, nested_type)
                     return
 
         # Handle regular parameters
@@ -656,20 +632,8 @@ class ParameterFormManager:
                             # Global config editing: use concrete dataclass
                             self.parameters[param_name] = nested_type(**nested_values)
                         else:
-                            # Lazy context: always create lazy instance for thread-local resolution
-                            # Even if all values are None (especially after reset), we want lazy resolution
-                            from openhcs.core.lazy_config import LazyDataclassFactory
-
-                            # Determine the correct field path using type inspection
-                            field_path = self._get_field_path_for_nested_type(nested_type)
-
-                            lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                                base_class=nested_type,
-                                field_path=field_path,
-                                lazy_class_name=f"Mixed{nested_type.__name__}"
-                            )
-                            # Pass ALL fields: concrete values for edited fields, None for lazy resolution
-                            self.parameters[param_name] = lazy_nested_type(**nested_values)
+                            # Lazy context: create lazy instance using shared utility
+                            self.parameters[param_name] = self._convert_to_lazy_dataclass(nested_values, nested_type)
                     else:
                         self.parameters[param_name] = default_value
                 else:
@@ -751,8 +715,73 @@ class ParameterFormManager:
             return None
 
     def get_current_values(self) -> Dict[str, Any]:
-        """Get current parameter values."""
-        return self.parameters.copy()
+        """
+        Get current parameter values preserving lazy dataclass structure.
+
+        This fixes the lazy default materialization override saving issue by ensuring
+        that lazy dataclasses maintain their structure when values are retrieved.
+        """
+        return {
+            param_name: self._preserve_lazy_structure_if_needed(param_name, param_value)
+            for param_name, param_value in self.parameters.items()
+        }
+
+    def _preserve_lazy_structure_if_needed(self, param_name: str, param_value: Any) -> Any:
+        """Preserve lazy dataclass structure for dataclass parameters in lazy contexts."""
+        # Early returns for simple cases
+        if param_value is None or hasattr(param_value, '_resolve_field_value'):
+            return param_value
+        if self.is_global_config_editing:
+            return param_value
+
+        # Check if this should be converted to lazy dataclass
+        param_type = self._get_dataclass_type_for_param(param_name)
+        if param_type is None:
+            return param_value
+
+        return self._convert_to_lazy_dataclass(param_value, param_type)
+
+    def _get_dataclass_type_for_param(self, param_name: str) -> Optional[type]:
+        """Get the dataclass type for a parameter, handling Optional types."""
+        if param_name not in self.parameter_types:
+            return None
+
+        param_type = self.parameter_types[param_name]
+
+        # Handle Optional[DataClass] types
+        if self._is_optional_dataclass(param_type):
+            param_type = self._get_optional_inner_type(param_type)
+
+        import dataclasses
+        return param_type if dataclasses.is_dataclass(param_type) else None
+
+    def _convert_to_lazy_dataclass(self, param_value: Any, param_type: type) -> Any:
+        """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
+        from openhcs.core.lazy_config import LazyDataclassFactory
+
+        field_path = self._get_field_path_for_nested_type(param_type)
+        lazy_type = LazyDataclassFactory.make_lazy_thread_local(
+            base_class=param_type,
+            field_path=field_path,
+            lazy_class_name=f"Mixed{param_type.__name__}"
+        )
+
+        # Extract field values based on input type
+        if hasattr(param_value, '__dataclass_fields__'):
+            # Concrete dataclass - extract field values
+            import dataclasses
+            field_values = {
+                field.name: getattr(param_value, field.name)
+                for field in dataclasses.fields(param_value)
+            }
+        elif isinstance(param_value, dict):
+            # Dict from nested form manager
+            field_values = param_value
+        else:
+            # Fallback: return value as-is
+            return param_value
+
+        return lazy_type(**field_values)
 
     def _get_parameter_info(self, param_name: str):
         """Get parameter info for help functionality."""

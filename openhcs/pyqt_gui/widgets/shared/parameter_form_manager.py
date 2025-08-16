@@ -315,10 +315,10 @@ class ParameterFormManager(QWidget):
         if hasattr(current_value, '__dataclass_fields__') and not hasattr(current_value, '_resolve_field_value'):
             return True
 
-        # For lazy dataclasses, always return False to enable mixed lazy/concrete behavior
-        # Individual field values will be checked separately in the nested form creation
+        # For lazy dataclasses, return True so we can extract raw values from them
+        # The nested form creation will then extract individual field raw values
         if hasattr(current_value, '_resolve_field_value'):
-            return False
+            return True
 
         # Default to placeholder behavior for lazy contexts
         return False
@@ -787,9 +787,10 @@ class ParameterFormManager(QWidget):
             # Set the actual value
             self._update_widget_value_direct(widget, value)
         else:
-            # For lazy contexts with None values, apply placeholder styling directly
-            # Don't call _update_widget_value_direct with None as it breaks combobox selection
-            # and doesn't properly handle placeholder text for string fields
+            # For lazy contexts with None values, clear the widget first then apply placeholder styling
+            # First clear the widget text to remove any existing content
+            self._clear_widget_text(widget)
+            # Then apply placeholder styling
             self._reapply_placeholder_if_needed(widget, param_name)
 
     def _clear_placeholder_state(self, widget: QWidget):
@@ -801,6 +802,26 @@ class ParameterFormManager(QWidget):
             current_tooltip = widget.toolTip()
             if "Pipeline default:" in current_tooltip:
                 widget.setToolTip("")
+
+    def _clear_widget_text(self, widget: QWidget):
+        """Clear the text content of a widget without triggering signals."""
+        if isinstance(widget, (QLineEdit, NoneAwareLineEdit)):
+            widget.blockSignals(True)
+            widget.clear()
+            widget.blockSignals(False)
+        elif isinstance(widget, QComboBox):
+            widget.blockSignals(True)
+            widget.setCurrentIndex(-1)  # Clear selection
+            widget.blockSignals(False)
+        elif isinstance(widget, QCheckBox):
+            widget.blockSignals(True)
+            widget.setChecked(False)
+            widget.blockSignals(False)
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            widget.blockSignals(True)
+            widget.setValue(0)
+            widget.blockSignals(False)
+        # Add more widget types as needed
 
     def _update_widget_value_direct(self, widget: QWidget, value: Any):
         """Update widget value without triggering signals or applying placeholder styling."""
@@ -880,8 +901,73 @@ class ParameterFormManager(QWidget):
             self._update_widget_value(self.widgets[param_name], value)
 
     def get_current_values(self) -> Dict[str, Any]:
-        """Get current parameter values (mirrors Textual TUI)."""
-        return self.textual_form_manager.parameters.copy()
+        """
+        Get current parameter values preserving lazy dataclass structure.
+
+        This fixes the lazy default materialization override saving issue by ensuring
+        that lazy dataclasses maintain their structure when values are retrieved.
+        """
+        return {
+            param_name: self._preserve_lazy_structure_if_needed(param_name, param_value)
+            for param_name, param_value in self.textual_form_manager.parameters.items()
+        }
+
+    def _preserve_lazy_structure_if_needed(self, param_name: str, param_value: Any) -> Any:
+        """Preserve lazy dataclass structure for dataclass parameters in lazy contexts."""
+        # Early returns for simple cases
+        if param_value is None or hasattr(param_value, '_resolve_field_value'):
+            return param_value
+        if self.is_global_config_editing:
+            return param_value
+
+        # Check if this should be converted to lazy dataclass
+        param_type = self._get_dataclass_type_for_param(param_name)
+        if param_type is None:
+            return param_value
+
+        return self._convert_to_lazy_dataclass(param_value, param_type)
+
+    def _get_dataclass_type_for_param(self, param_name: str) -> Optional[type]:
+        """Get the dataclass type for a parameter, handling Optional types."""
+        if param_name not in self.textual_form_manager.parameter_types:
+            return None
+
+        param_type = self.textual_form_manager.parameter_types[param_name]
+
+        # Handle Optional[DataClass] types
+        if self._is_optional_dataclass(param_type):
+            param_type = self._get_optional_inner_type(param_type)
+
+        import dataclasses
+        return param_type if dataclasses.is_dataclass(param_type) else None
+
+    def _convert_to_lazy_dataclass(self, param_value: Any, param_type: type) -> Any:
+        """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
+        from openhcs.core.lazy_config import LazyDataclassFactory
+
+        field_path = self._get_field_path_for_nested_type(param_type)
+        lazy_type = LazyDataclassFactory.make_lazy_thread_local(
+            base_class=param_type,
+            field_path=field_path,
+            lazy_class_name=f"Mixed{param_type.__name__}"
+        )
+
+        # Extract field values based on input type
+        if hasattr(param_value, '__dataclass_fields__'):
+            # Concrete dataclass - extract field values
+            import dataclasses
+            field_values = {
+                field.name: getattr(param_value, field.name)
+                for field in dataclasses.fields(param_value)
+            }
+        elif isinstance(param_value, dict):
+            # Dict from nested form manager
+            field_values = param_value
+        else:
+            # Fallback: return value as-is
+            return param_value
+
+        return lazy_type(**field_values)
 
     def _rebuild_nested_dataclass_from_manager(self, parent_name: str):
         """Rebuild the nested dataclass instance from the nested manager's current values."""
@@ -917,23 +1003,8 @@ class ParameterFormManager(QWidget):
                             break
             new_instance = nested_type(**merged_values)
         else:
-            # Lazy context: always create lazy dataclass instance with mixed concrete/lazy fields
-            # Even if all values are None (especially after reset), we want lazy resolution
-            from openhcs.core.lazy_config import LazyDataclassFactory
-
-            # Determine the correct field path using type inspection
-            field_path = self._get_field_path_for_nested_type(nested_type)
-
-            lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                base_class=nested_type,
-                field_path=field_path,  # Use correct field path for nested resolution
-                lazy_class_name=f"Mixed{nested_type.__name__}"
-            )
-
-            # Create instance with mixed concrete/lazy field values
-            # Pass ALL fields to constructor: concrete values for edited fields, None for lazy fields
-            # The lazy __getattribute__ will resolve None values via _resolve_field_value
-            new_instance = lazy_nested_type(**nested_values)
+            # Lazy context: create lazy instance using shared utility
+            new_instance = self._convert_to_lazy_dataclass(nested_values, nested_type)
 
         # Update parent parameter in textual form manager
         self.textual_form_manager.update_parameter(parent_name, new_instance)

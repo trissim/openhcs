@@ -743,11 +743,15 @@ class PlateManagerWidget(QWidget):
                 'global_config': self.global_config
             }
 
+            # Resolve all lazy configurations to concrete values before pickling
+            from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+            resolved_subprocess_data = resolve_lazy_configurations_for_serialization(subprocess_data)
+
             # Write pickle data
             def _write_pickle_data():
                 import dill as pickle
                 with open(data_file.name, 'wb') as f:
-                    pickle.dump(subprocess_data, f)
+                    pickle.dump(resolved_subprocess_data, f)
                 data_file.close()
 
             # Write pickle data in executor (works in Qt thread)
