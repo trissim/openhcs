@@ -2,23 +2,25 @@
 Pipeline-specific configuration classes and utilities.
 
 This module contains all pipeline-specific logic that was previously mixed
-into the generic lazy configuration system.
+into the generic lazy configuration system. Now uses the new generic hierarchy
+system while maintaining backward compatibility.
 """
 
 from typing import Any, Type, Optional
 from dataclasses import fields
 from openhcs.core.config import (
-    GlobalPipelineConfig, StepMaterializationConfig, 
+    GlobalPipelineConfig, StepMaterializationConfig,
     set_current_global_config, register_lazy_type_mapping
 )
 from openhcs.core.lazy_config import (
-    LazyDataclassFactory, create_config_for_editing, 
+    LazyDataclassFactory, create_config_for_editing,
     ensure_global_config_context, CONSTANTS
 )
+from openhcs.core.config_hierarchy import create_openhcs_hierarchy
 
 
 def set_current_pipeline_config(config: GlobalPipelineConfig) -> None:
-    """Set the current pipeline config for MaterializationPathConfig defaults."""
+    """Set the current pipeline config for LazyStepMaterializationConfig defaults."""
     set_current_global_config(GlobalPipelineConfig, config)
 
 
@@ -95,20 +97,23 @@ def create_editing_config_from_existing_lazy_config(
     return PipelineConfig(**field_values)
 
 
-# Generate pipeline-specific lazy configuration classes
-PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
-    base_class=GlobalPipelineConfig,
-    global_config_type=GlobalPipelineConfig,
-    field_path=None,  # Root instance
-    lazy_class_name=CONSTANTS.PIPELINE_CONFIG_NAME,
-    use_recursive_resolution=True
+# Create OpenHCS hierarchy and generate lazy configuration classes
+_openhcs_hierarchy = create_openhcs_hierarchy()
+
+# Generate pipeline-specific lazy configuration classes using the new generic system
+PipelineConfig = LazyDataclassFactory.make_lazy_hierarchical(
+    GlobalPipelineConfig,
+    _openhcs_hierarchy.registry
 )
 
-LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_thread_local(
-    base_class=StepMaterializationConfig,
-    global_config_type=GlobalPipelineConfig,
-    field_path=CONSTANTS.MATERIALIZATION_DEFAULTS_PATH,
-    lazy_class_name=CONSTANTS.LAZY_STEP_MATERIALIZATION_CONFIG_NAME
+# Create 3-level step materialization hierarchy
+from openhcs.core.config_hierarchy import create_step_materialization_hierarchy
+_step_hierarchy = create_step_materialization_hierarchy()
+
+# Generate step-level lazy class that uses 3-level hierarchy
+LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_hierarchical(
+    StepMaterializationConfig,
+    _step_hierarchy.registry
 )
 
 

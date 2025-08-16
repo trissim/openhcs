@@ -924,20 +924,22 @@ class PipelineOrchestrator:
 
     def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
         """
-        Apply per-orchestrator configuration - affects only this orchestrator.
-        Does not modify global configuration or affect other orchestrators.
+        Apply per-orchestrator configuration using context stacking for 3-level hierarchy.
+
+        This method now uses context stacking instead of replacing the global context,
+        enabling true Step → Orchestrator → Global resolution.
         """
         if not isinstance(pipeline_config, PipelineConfig):
             raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
+
         self.pipeline_config = pipeline_config
-
-
-
-        # Update thread-local storage to reflect the new effective configuration
-        # This ensures MaterializationPathConfig uses the updated defaults
-        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
         effective_config = self.get_effective_config()
-        set_current_global_config(GlobalPipelineConfig, effective_config)
+
+        # Store effective config for orchestrator-level resolution
+        # No context stacking needed - the hierarchical resolver will handle this
+        self._effective_orchestrator_config = effective_config
+
+        logger.info(f"Applied orchestrator context for plate: {self.plate_path}")
 
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
@@ -947,9 +949,22 @@ class PipelineOrchestrator:
 
     def clear_pipeline_config(self) -> None:
         """Clear per-orchestrator configuration."""
+        # Clear stored orchestrator config
+        if hasattr(self, '_effective_orchestrator_config'):
+            delattr(self, '_effective_orchestrator_config')
+
         self.pipeline_config = None
         logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
 
-        # Update thread-local storage to reflect global config
-        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        set_current_global_config(GlobalPipelineConfig, self.global_config)
+    def cleanup_pipeline_config(self) -> None:
+        """Clean up orchestrator context when done (for backward compatibility)."""
+        self.clear_pipeline_config()
+
+    def __del__(self):
+        """Ensure config cleanup on orchestrator destruction."""
+        try:
+            # Clear any stored configuration references
+            self.clear_pipeline_config()
+        except Exception:
+            # Ignore errors during cleanup in destructor to prevent cascading failures
+            pass

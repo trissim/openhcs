@@ -87,8 +87,18 @@ class ParameterFormManager(QWidget):
             is_global_config_editing: Whether this is global config editing mode
             global_config_type: Type of global configuration being edited
         """
+        import time
+        import logging
+
+        # Add timing logs to identify freeze source
+        start_time = time.time()
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 ParameterFormManager.__init__ started for field_id: {field_id}")
+
         # Initialize QWidget first
+        init_start = time.time()
         QWidget.__init__(self, parent)
+        logger.info(f"🔍 QWidget.__init__ completed in {(time.time() - init_start)*1000:.1f}ms")
 
         # Store critical configuration parameters
         self.dataclass_type = dataclass_type

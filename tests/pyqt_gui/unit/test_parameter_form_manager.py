@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import QWidget, QLineEdit, QComboBox, QCheckBox, QPushButto
 from PyQt6.QtCore import Qt
 
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
-from openhcs.core.config import PathPlanningConfig, MaterializationPathConfig, Microscope
+from openhcs.core.config import PathPlanningConfig, Microscope
+from openhcs.core.pipeline_config import LazyStepMaterializationConfig
 from openhcs.core.pipeline_config import PipelineConfig
 
 

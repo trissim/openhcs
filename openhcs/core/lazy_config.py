@@ -11,6 +11,8 @@ Creates complete lazy dataclasses with bound methods - no mixin inheritance need
 # Standard library imports
 import logging
 import re
+import threading
+from contextlib import contextmanager
 # No ABC needed - using simple functions instead of strategy pattern
 from dataclasses import dataclass, fields, is_dataclass, make_dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
@@ -54,6 +56,54 @@ def _get_generic_config_imports():
     """Get generic config imports with delayed loading to avoid circular dependencies."""
     from openhcs.core.config import get_current_global_config, set_current_global_config
     return get_current_global_config, set_current_global_config
+
+
+# Global context stacks for hierarchical resolution (3-level hierarchy support)
+_global_context_stacks: Dict[Type, List[Any]] = {}
+_context_stack_lock = threading.RLock()
+
+
+def push_context(config_type: Type, context: Any) -> None:
+    """Push a context onto the stack for hierarchical resolution."""
+    with _context_stack_lock:
+        if config_type not in _global_context_stacks:
+            _global_context_stacks[config_type] = []
+        _global_context_stacks[config_type].append(context)
+        logger.debug(f"Pushed context for {config_type.__name__}, stack depth: {len(_global_context_stacks[config_type])}")
+
+
+def pop_context(config_type: Type) -> Optional[Any]:
+    """Pop the top context from the stack."""
+    with _context_stack_lock:
+        stack = _global_context_stacks.get(config_type, [])
+        if stack:
+            context = stack.pop()
+            logger.debug(f"Popped context for {config_type.__name__}, remaining depth: {len(stack)}")
+            return context
+        return None
+
+
+def get_context_stack(config_type: Type) -> List[Any]:
+    """Get a copy of the current context stack."""
+    with _context_stack_lock:
+        return list(_global_context_stacks.get(config_type, []))
+
+
+def get_current_context_from_stack(config_type: Type) -> Optional[Any]:
+    """Get the current (top) context from the stack without popping it."""
+    with _context_stack_lock:
+        stack = _global_context_stacks.get(config_type, [])
+        return stack[-1] if stack else None
+
+
+@contextmanager
+def orchestrator_context(config_type: Type, context: Any):
+    """Context manager for safe orchestrator context management."""
+    push_context(config_type, context)
+    try:
+        yield
+    finally:
+        pop_context(config_type)
 
 
 # No strategy pattern needed - just use instance provider functions directly
@@ -222,8 +272,8 @@ class LazyDataclassFactory:
 
             lazy_field_definitions.append((field.name, field_type, None))
 
-            # Debug logging with provided template
-            logger.info(debug_template.format(
+            # Debug logging with provided template (reduced to DEBUG level to reduce log pollution)
+            logger.debug(debug_template.format(
                 field_name=field.name,
                 original_type=field.type,
                 has_default=has_default,
@@ -378,6 +428,67 @@ class LazyDataclassFactory:
         return LazyDataclassFactory._create_lazy_dataclass_unified(
             base_class, thread_local_instance_provider, lazy_class_name,
             CONSTANTS.THREAD_LOCAL_FIELD_DEBUG_TEMPLATE, use_recursive_resolution, fallback_chain
+        )
+
+    @staticmethod
+    def make_lazy_hierarchical(
+        base_class: Type,
+        hierarchy_registry: 'ConfigHierarchyRegistry',
+        lazy_class_name: str = None,
+        use_recursive_resolution: bool = True
+    ) -> Type:
+        """
+        Create lazy dataclass using hierarchical configuration registry.
+
+        This method creates a lazy class that automatically resolves through
+        the N-level hierarchy defined in the registry. The registry must be
+        provided by the caller to maintain generic design.
+
+        Args:
+            base_class: The dataclass type to make lazy
+            hierarchy_registry: Required registry containing the hierarchy definition
+            lazy_class_name: Optional name for the generated lazy class
+            use_recursive_resolution: Whether to use recursive resolution for None values
+
+        Returns:
+            Generated lazy dataclass with hierarchical resolution
+
+        Examples:
+            # Create registry first
+            registry = create_openhcs_hierarchy()
+
+            # Create lazy class with explicit registry
+            LazyStepConfig = LazyDataclassFactory.make_lazy_hierarchical(
+                StepMaterializationConfig,
+                hierarchy_registry=registry
+            )
+        """
+        # Import here to avoid circular imports
+        from openhcs.core.config_hierarchy import HierarchicalResolutionProvider
+
+        # Generate class name if not provided
+        if lazy_class_name is None:
+            lazy_class_name = f"Hierarchical{base_class.__name__}"
+
+        # Create hierarchical resolution provider
+        resolver = HierarchicalResolutionProvider(hierarchy_registry)
+
+        # Get the resolution chain for this type
+        resolution_functions = resolver.create_resolution_chain(base_class)
+
+        # Create instance provider (not used for hierarchical resolution)
+        def hierarchical_instance_provider() -> Any:
+            # For hierarchical resolution, we don't use a single instance provider
+            # Instead, we use the resolution chain in the fallback_chain
+            return None
+
+        return LazyDataclassFactory._create_lazy_dataclass_unified(
+            base_class,
+            hierarchical_instance_provider,
+            lazy_class_name,
+            "HIERARCHICAL LAZY FIELD: {field_name} - original={original_type}, has_default={has_default}, final={final_type}",
+            use_recursive_resolution,
+            resolution_functions
         )
 
     # Deprecated methods removed - use make_lazy_thread_local() with explicit field_path

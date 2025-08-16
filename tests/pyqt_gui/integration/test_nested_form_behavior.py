@@ -13,9 +13,10 @@ from PyQt6.QtCore import Qt
 
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
 from openhcs.core.config import (
-    PathPlanningConfig, MaterializationPathConfig, VFSConfig, ZarrConfig,
+    PathPlanningConfig, VFSConfig, ZarrConfig,
     StepMaterializationConfig, ZarrCompressor, MaterializationBackend, WellFilterMode
 )
+from openhcs.core.pipeline_config import LazyStepMaterializationConfig
 from openhcs.core.pipeline_config import PipelineConfig
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 from openhcs.constants import Backend, Microscope

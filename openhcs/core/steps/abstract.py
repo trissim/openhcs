@@ -29,7 +29,10 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import PathPlanningConfig, MaterializationPathConfig
+from openhcs.core.config import PathPlanningConfig
+
+# Import LazyStepMaterializationConfig for type hints
+from openhcs.core.pipeline_config import LazyStepMaterializationConfig
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -131,7 +134,7 @@ class AbstractStep(abc.ABC):
         __input_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         __output_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         input_source: InputSource = InputSource.PREVIOUS_STEP,
-        materialization_config: Optional['MaterializationPathConfig'] = None
+        materialization_config: Optional['LazyStepMaterializationConfig'] = None
     ) -> None:
         """
         Initialize a step. These attributes are primarily used during the
@@ -150,10 +153,10 @@ class AbstractStep(abc.ABC):
             input_source: Input source strategy for this step. Defaults to PREVIOUS_STEP
                          for normal pipeline chaining. Use PIPELINE_START to access
                          original input data (replaces @chain_breaker decorator).
-            materialization_config: Optional PathPlanningConfig or MaterializationPathConfig for per-step materialized output.
+            materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output
                                    to custom location in addition to normal memory backend processing.
-                                   Use MaterializationPathConfig() for safe defaults that prevent path collisions.
+                                   Use LazyStepMaterializationConfig() for safe defaults that prevent path collisions.
         """
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components

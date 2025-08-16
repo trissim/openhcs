@@ -12,7 +12,8 @@ from PyQt6.QtWidgets import QCheckBox, QWidget, QVBoxLayout, QGroupBox
 from PyQt6.QtCore import Qt
 
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
-from openhcs.core.config import PathPlanningConfig, MaterializationPathConfig
+from openhcs.core.config import PathPlanningConfig
+from openhcs.core.pipeline_config import LazyStepMaterializationConfig
 from openhcs.core.pipeline_config import PipelineConfig
 
 

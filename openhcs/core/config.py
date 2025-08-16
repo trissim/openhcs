@@ -242,7 +242,23 @@ def set_current_global_config(config_type: Type, config_instance: Any) -> None:
     _global_config_contexts[config_type].value = config_instance
 
 def get_current_global_config(config_type: Type) -> Optional[Any]:
-    """Get current global config for any dataclass type."""
+    """
+    Get current global config for any dataclass type.
+
+    First checks the context stack (for 3-level hierarchy), then falls back
+    to the existing thread-local storage (for backward compatibility).
+    """
+    # Try context stack first (3-level hierarchy support)
+    try:
+        from openhcs.core.lazy_config import get_current_context_from_stack
+        stack_context = get_current_context_from_stack(config_type)
+        if stack_context is not None:
+            return stack_context
+    except ImportError:
+        # Fallback if lazy_config is not available
+        pass
+
+    # Fall back to existing thread-local storage
     context = _global_config_contexts.get(config_type)
     return getattr(context, 'value', None) if context else None
 
@@ -437,8 +453,7 @@ class LazyDefaultPlaceholderService:
             return f"{class_name} (default settings)"
 
 
-# MaterializationPathConfig is now LazyStepMaterializationConfig from lazy_config.py
-# Import moved to avoid circular dependency - use lazy import pattern
+# LazyStepMaterializationConfig is imported from pipeline_config.py to avoid circular dependency
 
 
 @dataclass(frozen=True)
@@ -600,7 +615,7 @@ def get_default_global_config() -> GlobalPipelineConfig:
 
 # Import pipeline-specific classes - circular import solved by moving import to end
 from openhcs.core.pipeline_config import (
-    LazyStepMaterializationConfig as MaterializationPathConfig,
+    LazyStepMaterializationConfig,
     PipelineConfig,
     set_current_pipeline_config,
     ensure_pipeline_config_context,

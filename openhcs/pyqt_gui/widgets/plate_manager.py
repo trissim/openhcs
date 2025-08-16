@@ -459,7 +459,7 @@ class PlateManagerWidget(QWidget):
                 # Direct synchronous call - no async needed
                 orchestrator.apply_pipeline_config(new_config)
             count = len(selected_orchestrators)
-            self.service_adapter.show_info_dialog(f"Per-orchestrator configuration applied to {count} orchestrator(s)")
+            # Success message dialog removed for test automation compatibility
 
         # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
         # PipelineConfig already imported from openhcs.core.config

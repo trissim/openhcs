@@ -189,24 +189,15 @@ def _get_thread_local_placeholder(dataclass_type: Type, param_name: str, is_glob
 def _get_field_path_for_nested_form(dataclass_type: Type, parameter_types: Dict[str, Type],
                                    global_config_type: Optional[Type] = None) -> Optional[str]:
     """Determine the field path for nested form placeholder generation."""
-    try:
-        import dataclasses
+    # Use consolidated field path detection utility
+    from openhcs.core.hierarchy_introspection import FieldPathDetector
 
-        # If no global config type specified, try to determine it
-        if global_config_type is None:
-            # Default to GlobalPipelineConfig for backward compatibility
-            from openhcs.core.config import GlobalPipelineConfig
-            global_config_type = GlobalPipelineConfig
+    # If no global config type specified, use default
+    if global_config_type is None:
+        from openhcs.core.config import GlobalPipelineConfig
+        global_config_type = GlobalPipelineConfig
 
-        # Check if this dataclass type matches any field in the global config type
-        for field in dataclasses.fields(global_config_type):
-            if field.type == dataclass_type:
-                return field.name
-
-        # If not found, this might be a root-level form
-        return None
-    except Exception:
-        return None
+    return FieldPathDetector.find_field_path_for_type(global_config_type, dataclass_type)
 
 
 def _get_dataclass_type(parameter_types: Dict[str, Type]) -> Optional[Type]:
