@@ -566,7 +566,7 @@ class HierarchicalResolutionProvider:
             List of resolution functions in order of precedence
         """
         from openhcs.core.config import get_current_global_config
-        from openhcs.core.lazy_config import FieldPathNavigator, create_static_defaults_fallback, get_context_stack
+        from openhcs.core.lazy_config import FieldPathNavigator, create_static_defaults_fallback
 
         def _get_raw_field_value(obj: Any, field_name: str) -> Any:
             """
@@ -592,18 +592,7 @@ class HierarchicalResolutionProvider:
 
         resolution_functions = []
 
-        # Add context stack resolver as first priority (3-level hierarchy support)
-        def context_stack_resolver(field_name: str) -> Any:
-            """Resolve field from context stack (Step → Orchestrator → Global)."""
-            context_stack = get_context_stack(config_type)
-            # Traverse stack from top (most specific) to bottom (most general)
-            for context in reversed(context_stack):
-                value = _get_raw_field_value(context, field_name)
-                if value is not None:
-                    return value
-            return None
-
-        resolution_functions.append(context_stack_resolver)
+        # Context stack resolver removed - using simple thread-local storage approach
 
         if not hierarchy_chain:
             # No hierarchy found, use context stack + static defaults only

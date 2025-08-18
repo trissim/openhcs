@@ -50,6 +50,7 @@ class PlateManagerWidget(QWidget):
     plate_selected = pyqtSignal(str)  # plate_path
     status_message = pyqtSignal(str)  # status message
     orchestrator_state_changed = pyqtSignal(str, str)  # plate_path, state
+    orchestrator_config_changed = pyqtSignal(str, object)  # plate_path, effective_config
 
     # Log viewer integration signals
     subprocess_log_started = pyqtSignal(str)  # base_log_path
@@ -285,6 +286,27 @@ class PlateManagerWidget(QWidget):
             async_func: Async function to execute
         """
         self.service_adapter.execute_async_operation(async_func)
+
+    def _update_orchestrator_global_config(self, orchestrator, new_global_config):
+        """Update orchestrator's global config reference and rebuild pipeline config if needed."""
+        from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
+        from openhcs.core.config import GlobalPipelineConfig, set_current_global_config
+
+        # Update orchestrator's global config reference
+        orchestrator.global_config = new_global_config
+
+        # Rebuild orchestrator-specific config if it exists
+        if orchestrator.pipeline_config is not None:
+            orchestrator.pipeline_config = rebuild_lazy_config_with_new_global_reference(
+                orchestrator.pipeline_config,
+                new_global_config,
+                GlobalPipelineConfig
+            )
+            logger.info(f"Rebuilt orchestrator-specific config for plate: {orchestrator.plate_path}")
+
+        # Get effective config and emit signal for UI refresh
+        effective_config = orchestrator.get_effective_config()
+        self.orchestrator_config_changed.emit(str(orchestrator.plate_path), effective_config)
     
     # ========== Business Logic Methods (Extracted from Textual) ==========
     
@@ -440,17 +462,17 @@ class PlateManagerWidget(QWidget):
         # Load existing config or create new one for editing
         representative_orchestrator = selected_orchestrators[0]
 
-        if representative_orchestrator.pipeline_config:
-            # Create editing config from existing orchestrator config with user-set values preserved
-            # Use current global config (not orchestrator's old global config) for updated placeholders
-            from openhcs.core.config import create_editing_config_from_existing_lazy_config
+        # Create config for editing based on whether orchestrator has existing config
+        if representative_orchestrator.pipeline_config is not None:
+            # Existing config - use the editing function that preserves user values
+            from openhcs.core.pipeline_config import create_editing_config_from_existing_lazy_config
             current_plate_config = create_editing_config_from_existing_lazy_config(
                 representative_orchestrator.pipeline_config,
                 self.global_config  # Use current global config for updated placeholders
             )
         else:
             # Create new config with placeholders using current global config
-            from openhcs.core.config import create_pipeline_config_for_editing
+            from openhcs.core.pipeline_config import create_pipeline_config_for_editing
             current_plate_config = create_pipeline_config_for_editing(self.global_config)
 
         def handle_config_save(new_config: PipelineConfig) -> None:
@@ -458,6 +480,9 @@ class PlateManagerWidget(QWidget):
             for orchestrator in selected_orchestrators:
                 # Direct synchronous call - no async needed
                 orchestrator.apply_pipeline_config(new_config)
+                # Emit signal for UI components to refresh
+                effective_config = orchestrator.get_effective_config()
+                self.orchestrator_config_changed.emit(str(orchestrator.plate_path), effective_config)
             count = len(selected_orchestrators)
             # Success message dialog removed for test automation compatibility
 
@@ -519,7 +544,16 @@ class PlateManagerWidget(QWidget):
             self._save_global_config_to_cache(new_config)
 
             for orchestrator in self.orchestrators.values():
-                self.run_async_action(orchestrator.apply_new_global_config(new_config))
+                self._update_orchestrator_global_config(orchestrator, new_config)
+
+            # Update thread-local storage for currently selected orchestrator
+            # This ensures step forms resolve against the updated orchestrator defaults
+            if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+                current_orchestrator = self.orchestrators[self.selected_plate_path]
+                effective_config = current_orchestrator.get_effective_config()
+                from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+                set_current_global_config(GlobalPipelineConfig, effective_config)
+                logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
 
             # Refresh placeholder text in any open parameter forms
             self._refresh_all_parameter_form_placeholders()
@@ -1065,7 +1099,24 @@ class PlateManagerWidget(QWidget):
         # Apply new global config to all existing orchestrators
         # This rebuilds their pipeline configs preserving concrete values
         for orchestrator in self.orchestrators.values():
-            self.run_async_action(orchestrator.apply_new_global_config(new_config))
+            self._update_orchestrator_global_config(orchestrator, new_config)
+
+        # Update thread-local storage for currently selected orchestrator
+        # This ensures step forms resolve against the updated orchestrator defaults
+        if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+            current_orchestrator = self.orchestrators[self.selected_plate_path]
+            effective_config = current_orchestrator.get_effective_config()
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
+
+        # Update thread-local storage for currently selected orchestrator
+        if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+            current_orchestrator = self.orchestrators[self.selected_plate_path]
+            effective_config = current_orchestrator.get_effective_config()
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
 
         logger.info(f"Applied new global config to {len(self.orchestrators)} orchestrators")
 

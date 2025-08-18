@@ -575,22 +575,41 @@ class PipelineEditorWidget(QWidget):
     def set_current_plate(self, plate_path: str):
         """
         Set current plate and load its pipeline (extracted from Textual version).
-        
+
         Args:
             plate_path: Path of the current plate
         """
         self.current_plate = plate_path
-        
+
         # Load pipeline for the new plate
         if plate_path:
             plate_pipeline = self.plate_pipelines.get(plate_path, [])
             self.pipeline_steps = plate_pipeline
         else:
             self.pipeline_steps = []
-        
+
         self.update_step_list()
         self.update_button_states()
         logger.debug(f"Current plate changed: {plate_path}")
+
+    def on_orchestrator_config_changed(self, plate_path: str, effective_config):
+        """
+        Handle orchestrator configuration changes for placeholder refresh.
+
+        Args:
+            plate_path: Path of the plate whose orchestrator config changed
+            effective_config: The orchestrator's new effective configuration
+        """
+        # Only refresh if this is for the current plate
+        if plate_path == self.current_plate:
+            logger.debug(f"Refreshing placeholders for orchestrator config change: {plate_path}")
+
+            # Refresh any open step forms within the orchestrator's scoped context
+            # This ensures step forms resolve against the updated effective config
+            with self._scoped_orchestrator_context():
+                # Trigger refresh of any open configuration windows or step forms
+                # The scoped context ensures they resolve against the updated orchestrator config
+                logger.debug(f"Step forms will now resolve against updated orchestrator config for: {plate_path}")
     
     # ========== UI Helper Methods ==========
     

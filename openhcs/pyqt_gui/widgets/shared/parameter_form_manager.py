@@ -343,11 +343,39 @@ class ParameterFormManager(QWidget):
         
         # Store reference for updates
         self.nested_managers[param_info.name] = nested_manager
-        
+
+        # Connect nested manager parameter changes to parent form manager
+        # This ensures that when you change a field in the nested form, the parent knows about it
+        nested_manager.parameter_changed.connect(
+            lambda nested_param_name, nested_value: self._handle_nested_parameter_change(
+                param_info.name, nested_param_name, nested_value
+            )
+        )
+
         # Add nested form to group box
         group_box.content_layout.addWidget(nested_manager)
         
         return group_box
+
+    def _handle_nested_parameter_change(self, parent_param_name: str, nested_param_name: str, nested_value: Any):
+        """
+        Handle parameter changes from nested form managers.
+
+        This ensures that when you change a field in a nested dataclass form (like materialization_config),
+        the parent form manager knows about it and can properly rebuild the nested dataclass instance.
+
+        Args:
+            parent_param_name: Name of the parent parameter (e.g., 'materialization_config')
+            nested_param_name: Name of the nested field that changed (e.g., 'well_filter')
+            nested_value: New value for the nested field
+        """
+        # Debug: Track nested parameter changes
+        if parent_param_name == 'materialization_config':
+            print(f"DEBUG: Nested parameter change: {parent_param_name}.{nested_param_name} = {nested_value}")
+
+        # Trigger a parameter change for the parent parameter
+        # This will cause get_current_values() to rebuild the nested dataclass with current values
+        self.parameter_changed.emit(parent_param_name, nested_value)
 
     def _resolve_nested_dataclass_type(self, nested_type: Type, param_name: str) -> Type:
         """
@@ -661,15 +689,30 @@ class ParameterFormManager(QWidget):
             nested_values = nested_manager.get_current_values()
             nested_type = self.parameter_types.get(param_name)
 
+            # Debug: Check what nested values we got from the nested manager
+            if param_name == 'materialization_config':
+                print(f"DEBUG: Nested values from nested manager: {nested_values}")
+
             if nested_type and nested_values:
                 # Handle Optional[DataClass] types
                 if self.service._type_utils.is_optional_dataclass(nested_type):
                     nested_type = self.service._type_utils.get_optional_inner_type(nested_type)
 
                 # Rebuild nested dataclass instance with current values
-                current_values[param_name] = self._rebuild_nested_dataclass_instance(
+                rebuilt_instance = self._rebuild_nested_dataclass_instance(
                     nested_values, nested_type, param_name
                 )
+
+                # Debug: Check what we rebuilt
+                if param_name == 'materialization_config':
+                    print(f"DEBUG: Rebuilt instance: {rebuilt_instance}")
+                    if hasattr(rebuilt_instance, '__dataclass_fields__'):
+                        from dataclasses import fields
+                        for field_obj in fields(rebuilt_instance):
+                            raw_value = object.__getattribute__(rebuilt_instance, field_obj.name)
+                            print(f"DEBUG: Rebuilt field {field_obj.name} = {raw_value}")
+
+                current_values[param_name] = rebuilt_instance
 
         # Then apply lazy structure preservation to all parameters (including rebuilt nested ones)
         final_values = {

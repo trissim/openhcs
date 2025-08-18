@@ -242,33 +242,25 @@ def set_current_global_config(config_type: Type, config_instance: Any) -> None:
     _global_config_contexts[config_type].value = config_instance
 
 def get_current_global_config(config_type: Type) -> Optional[Any]:
-    """
-    Get current global config for any dataclass type.
-
-    First checks the context stack (for 3-level hierarchy), then falls back
-    to the existing thread-local storage (for backward compatibility).
-    """
-    # Try context stack first (3-level hierarchy support)
-    try:
-        from openhcs.core.lazy_config import get_current_context_from_stack
-        stack_context = get_current_context_from_stack(config_type)
-        if stack_context is not None:
-            return stack_context
-    except ImportError:
-        # Fallback if lazy_config is not available
-        pass
-
-    # Fall back to existing thread-local storage
+    """Get current global config for any dataclass type."""
     context = _global_config_contexts.get(config_type)
     return getattr(context, 'value', None) if context else None
 
 def get_current_materialization_defaults() -> StepMaterializationConfig:
-    """Get current step materialization config from pipeline config."""
+    """
+    Get current step materialization config from orchestrator's effective config.
+
+    Steps must resolve against their orchestrator's effective config, which contains
+    the Global → Orchestrator resolution chain. No fallback - steps cannot exist
+    without an orchestrator.
+    """
     current_config = get_current_global_config(GlobalPipelineConfig)
-    if current_config:
-        return current_config.materialization_defaults
-    # Fallback to default instance if no pipeline config is set
-    return StepMaterializationConfig()
+    if current_config is None:
+        raise RuntimeError(
+            "No orchestrator config found in thread-local storage. "
+            "Steps cannot exist without an orchestrator context."
+        )
+    return current_config.materialization_defaults
 
 
 # Type registry for lazy dataclass to base class mapping
@@ -626,6 +618,5 @@ from openhcs.core.pipeline_config import (
     PipelineConfig,
     set_current_pipeline_config,
     ensure_pipeline_config_context,
-    create_pipeline_config_for_editing,
-    create_editing_config_from_existing_lazy_config
+    create_pipeline_config_for_editing
 )

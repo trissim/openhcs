@@ -874,77 +874,31 @@ class PipelineOrchestrator:
         self._metadata_cache.clear()
         logger.info("Cleared metadata cache")
 
-    async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
-        """
-        Apply global configuration and rebuild orchestrator-specific config if needed.
-
-        This method:
-        1. Updates the global config reference
-        2. Rebuilds any existing orchestrator-specific config to reference the new global config
-        3. Preserves all user-set field values while updating lazy resolution defaults
-        4. Re-initializes components that depend on config (if already initialized)
-        """
-        from openhcs.core.config import GlobalPipelineConfig as GlobalPipelineConfigType
-        if not isinstance(new_config, GlobalPipelineConfigType):
-            raise TypeError(f"Expected GlobalPipelineConfig, got {type(new_config)}")
-
-        old_global_config = self.global_config
-        self.global_config = new_config
-
-        # Rebuild orchestrator-specific config if it exists
-        if self.pipeline_config is not None:
-            from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
-            self.pipeline_config = rebuild_lazy_config_with_new_global_reference(
-                self.pipeline_config,
-                new_config,
-                GlobalPipelineConfigType
-            )
-            logger.info(f"Rebuilt orchestrator-specific config for plate: {self.plate_path}")
-
-        # Update thread-local storage to reflect the new effective configuration
-        from openhcs.core.config import set_current_global_config
-        effective_config = self.get_effective_config()
-        set_current_global_config(GlobalPipelineConfigType, effective_config)
-
-        # Re-initialize components that depend on config if orchestrator was already initialized
-        if self.is_initialized():
-            logger.info(f"Re-initializing orchestrator components for plate: {self.plate_path}")
-            try:
-                # Reset initialization state to allow re-initialization
-                self._initialized = False
-                self._state = OrchestratorState.CREATED
-
-                # Re-initialize with new config
-                self.initialize()
-                logger.info(f"Successfully re-initialized orchestrator for plate: {self.plate_path}")
-            except Exception as e:
-                logger.error(f"Failed to re-initialize orchestrator for plate {self.plate_path}: {e}")
-                self._state = OrchestratorState.INIT_FAILED
-                raise
+    # Global config management removed - handled by UI layer
 
     def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
         """
-        Apply per-orchestrator configuration using context stacking for 3-level hierarchy.
+        Apply per-orchestrator configuration using thread-local storage.
 
-        This method uses context stacking to enable true Step → Orchestrator → Global resolution.
-        The orchestrator's effective config is pushed onto the context stack so that step-level
-        lazy configurations can resolve values through the hierarchy.
+        This method sets the orchestrator's effective config in thread-local storage
+        for step-level lazy configurations to resolve against.
         """
         if not isinstance(pipeline_config, PipelineConfig):
             raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
 
         self.pipeline_config = pipeline_config
+
+        # Set up thread-local context FIRST so to_base_config() can resolve None values correctly
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        set_current_global_config(GlobalPipelineConfig, self.global_config)
+
+        # Now get_effective_config() can resolve None values against proper context
         effective_config = self.get_effective_config()
 
-        # Push orchestrator context onto the stack for 3-level hierarchy resolution
-        from openhcs.core.lazy_config import push_context
-        from openhcs.core.config import GlobalPipelineConfig
-        push_context(GlobalPipelineConfig, effective_config)
+        # Update thread-local storage with the correctly resolved effective config
+        set_current_global_config(GlobalPipelineConfig, effective_config)
 
-        # Store effective config for orchestrator-level resolution
-        self._effective_orchestrator_config = effective_config
-
-        logger.info(f"Applied orchestrator context for plate: {self.plate_path}")
+        logger.info(f"Applied orchestrator config for plate: {self.plate_path}")
 
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
@@ -953,16 +907,11 @@ class PipelineOrchestrator:
         return self.global_config
 
     def clear_pipeline_config(self) -> None:
-        """Clear per-orchestrator configuration and context stack."""
-        # Pop orchestrator context from the stack if it was pushed
+        """Clear per-orchestrator configuration."""
+        # Reset thread-local storage to global config
         if self.pipeline_config is not None:
-            from openhcs.core.lazy_config import pop_context
-            from openhcs.core.config import GlobalPipelineConfig
-            pop_context(GlobalPipelineConfig)
-
-        # Clear stored orchestrator config
-        if hasattr(self, '_effective_orchestrator_config'):
-            delattr(self, '_effective_orchestrator_config')
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, self.global_config)
 
         self.pipeline_config = None
         logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")

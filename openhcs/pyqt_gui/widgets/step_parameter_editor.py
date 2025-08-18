@@ -57,6 +57,35 @@ class StepParameterEditorWidget(QScrollArea):
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
             current_value = getattr(self.step, name, info.default_value)
+
+            # Generic handling for any lazy dataclass parameter - use the SAME pattern as pipeline editor
+            if current_value is not None:
+                from openhcs.core.lazy_config import get_base_type_for_lazy
+                from openhcs.core.config import get_current_global_config, GlobalPipelineConfig
+                from dataclasses import fields
+
+                # Check if it's a lazy dataclass that needs proper editing preparation
+                if get_base_type_for_lazy(type(current_value)) is not None:
+                    # Use the EXACT SAME pattern as create_editing_config_from_existing_lazy_config
+                    # Extract field values, preserving user-set values as concrete values
+                    field_values = {}
+                    for field_obj in fields(current_value):
+                        # Get raw stored value without triggering lazy resolution
+                        raw_value = object.__getattribute__(current_value, field_obj.name)
+
+                        if raw_value is not None:
+                            # User has explicitly set this field - preserve as concrete value
+                            field_values[field_obj.name] = raw_value
+                        else:
+                            # Field is None - keep as None for placeholder behavior
+                            field_values[field_obj.name] = None
+
+                    # Debug: Check what values we extracted
+                    print(f"DEBUG: Extracted field_values for {name}: {field_values}")
+
+                    # Create new instance of the same lazy type with preserved values
+                    current_value = type(current_value)(**field_values)
+
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
@@ -164,6 +193,17 @@ class StepParameterEditorWidget(QScrollArea):
             # Get the properly converted value from the form manager
             # The form manager handles all type conversions including List[Enum]
             final_value = self.form_manager.get_current_values().get(param_name, value)
+
+            # Debug: Check what we're actually saving
+            if param_name == 'materialization_config':
+                print(f"DEBUG: Saving materialization_config, type: {type(final_value)}")
+                print(f"DEBUG: Raw value from form manager: {value}")
+                print(f"DEBUG: Final value from get_current_values(): {final_value}")
+                if hasattr(final_value, '__dataclass_fields__'):
+                    from dataclasses import fields
+                    for field_obj in fields(final_value):
+                        raw_value = object.__getattribute__(final_value, field_obj.name)
+                        print(f"DEBUG: Field {field_obj.name} = {raw_value}")
 
             # Update step attribute
             setattr(self.step, param_name, final_value)

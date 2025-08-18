@@ -58,59 +58,7 @@ def _get_generic_config_imports():
     return get_current_global_config, set_current_global_config
 
 
-# Global context stacks for hierarchical resolution (3-level hierarchy support)
-_global_context_stacks: Dict[Type, List[Any]] = {}
-_context_stack_lock = threading.RLock()
-
-
-def push_context(config_type: Type, context: Any) -> None:
-    """Push a context onto the stack for hierarchical resolution."""
-    with _context_stack_lock:
-        if config_type not in _global_context_stacks:
-            _global_context_stacks[config_type] = []
-        _global_context_stacks[config_type].append(context)
-        logger.debug(f"Pushed context for {config_type.__name__}, stack depth: {len(_global_context_stacks[config_type])}")
-
-
-def pop_context(config_type: Type) -> Optional[Any]:
-    """Pop the top context from the stack."""
-    with _context_stack_lock:
-        stack = _global_context_stacks.get(config_type, [])
-        if stack:
-            context = stack.pop()
-            logger.debug(f"Popped context for {config_type.__name__}, remaining depth: {len(stack)}")
-            return context
-        return None
-
-
-def get_context_stack(config_type: Type) -> List[Any]:
-    """Get a copy of the current context stack."""
-    with _context_stack_lock:
-        return list(_global_context_stacks.get(config_type, []))
-
-
-def set_context_stack(config_type: Type, context_stack: List[Any]) -> None:
-    """Set the context stack for a given config type (for temporary context restoration)."""
-    with _context_stack_lock:
-        _global_context_stacks[config_type] = list(context_stack)
-        logger.debug(f"Set context stack for {config_type.__name__}, depth: {len(context_stack)}")
-
-
-def get_current_context_from_stack(config_type: Type) -> Optional[Any]:
-    """Get the current (top) context from the stack without popping it."""
-    with _context_stack_lock:
-        stack = _global_context_stacks.get(config_type, [])
-        return stack[-1] if stack else None
-
-
-@contextmanager
-def orchestrator_context(config_type: Type, context: Any):
-    """Context manager for safe orchestrator context management."""
-    push_context(config_type, context)
-    try:
-        yield
-    finally:
-        pop_context(config_type)
+# Context stack system removed - using simple thread-local storage approach
 
 
 # No strategy pattern needed - just use instance provider functions directly
@@ -691,14 +639,16 @@ def rebuild_lazy_config_with_new_global_reference(
         # Use object.__getattribute__ to get raw stored value (None or concrete value)
         raw_value = object.__getattribute__(existing_lazy_config, field_obj.name)
 
-        # If the field is a concrete nested dataclass, rebuild it with new global reference
+        # If the field is a concrete nested dataclass, recursively rebuild it
         if raw_value is not None and hasattr(raw_value, '__dataclass_fields__'):
-            # This is a concrete nested dataclass - get the corresponding field from new global config
+            # This is a concrete nested dataclass - recursively rebuild to preserve concrete values
             try:
-                new_nested_value = getattr(new_global_config, field_obj.name)
-                current_field_values[field_obj.name] = new_nested_value
-            except AttributeError:
-                # Field doesn't exist in new global config, keep original value
+                rebuilt_nested_value = rebuild_lazy_config_with_new_global_reference(
+                    raw_value, new_global_config, global_config_type
+                )
+                current_field_values[field_obj.name] = rebuilt_nested_value
+            except Exception:
+                # If recursive rebuild fails, keep original value
                 current_field_values[field_obj.name] = raw_value
         else:
             # Regular field (None or non-dataclass value) - preserve as-is
@@ -709,19 +659,4 @@ def rebuild_lazy_config_with_new_global_reference(
     # Nested dataclasses are updated to reference new global config
     lazy_class_type = type(existing_lazy_config)
     return lazy_class_type(**current_field_values)
-
-
-
-
-
-
-
-
-
-
-
-
-# This module is now completely generic and contains no pipeline-specific logic.
-# Pipeline-specific lazy classes are created in openhcs.core.pipeline_config module.
-
 
