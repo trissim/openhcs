@@ -427,28 +427,17 @@ class ParameterFormService:
         Get the actual default value for a dataclass field by creating a default instance.
 
         This ensures we get the real defaults (like num_workers=16) instead of hardcoded primitives.
+
+        Raises:
+            ValueError: If dataclass creation fails or field doesn't exist
         """
         try:
             # Create a default instance of the dataclass to get actual field defaults
             default_instance = dataclass_type()
-            return getattr(default_instance, param_name, None)
-        except Exception:
-            # Fallback to primitive defaults if dataclass creation fails
-            param_type = None
-            for field in dataclasses.fields(dataclass_type):
-                if field.name == param_name:
-                    param_type = field.type
-                    break
-
-            if param_type:
-                if dataclasses.is_dataclass(param_type):
-                    return param_type()  # Use dataclass default constructor
-                elif param_type == bool:
-                    return False
-                elif param_type == int:
-                    return 0
-                elif param_type == float:
-                    return 0.0
-                elif param_type == str:
-                    return ""
-            return None
+            if not hasattr(default_instance, param_name):
+                raise ValueError(f"Field '{param_name}' not found in dataclass {dataclass_type.__name__}")
+            return getattr(default_instance, param_name)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to get default value for field '{param_name}' in dataclass {dataclass_type.__name__}: {e}"
+            ) from e

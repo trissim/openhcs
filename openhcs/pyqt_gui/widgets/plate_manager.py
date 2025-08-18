@@ -463,13 +463,15 @@ class PlateManagerWidget(QWidget):
 
         # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
         # PipelineConfig already imported from openhcs.core.config
+        # CRITICAL FIX: Pass orchestrator reference for context persistence
         self._open_config_window(
             config_class=PipelineConfig,
             current_config=current_plate_config,
-            on_save_callback=handle_config_save
+            on_save_callback=handle_config_save,
+            orchestrator=representative_orchestrator  # Pass orchestrator for context persistence
         )
 
-    def _open_config_window(self, config_class, current_config, on_save_callback, is_global_config_editing=False):
+    def _open_config_window(self, config_class, current_config, on_save_callback, orchestrator=None):
         """
         Open configuration window with specified config class and current config.
 
@@ -477,7 +479,7 @@ class PlateManagerWidget(QWidget):
             config_class: Configuration class type (PipelineConfig or GlobalPipelineConfig)
             current_config: Current configuration instance
             on_save_callback: Function to call when config is saved
-            is_global_config_editing: Whether this is global config editing (affects placeholder behavior)
+            orchestrator: Optional orchestrator reference for context persistence
         """
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
 
@@ -487,7 +489,7 @@ class PlateManagerWidget(QWidget):
             on_save_callback,       # on_save_callback
             self.color_scheme,      # color_scheme
             self,                   # parent
-            is_global_config_editing  # is_global_config_editing
+            orchestrator=orchestrator  # Pass orchestrator for context persistence
         )
         # Show as non-modal window (like main window configuration)
         config_window.show()
@@ -528,8 +530,7 @@ class PlateManagerWidget(QWidget):
         self._open_config_window(
             config_class=GlobalPipelineConfig,
             current_config=current_global_config,
-            on_save_callback=handle_global_config_save,
-            is_global_config_editing=True
+            on_save_callback=handle_global_config_save
         )
 
     def _save_global_config_to_cache(self, config: GlobalPipelineConfig):

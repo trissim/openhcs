@@ -568,6 +568,25 @@ class HierarchicalResolutionProvider:
         from openhcs.core.config import get_current_global_config
         from openhcs.core.lazy_config import FieldPathNavigator, create_static_defaults_fallback, get_context_stack
 
+        def _get_raw_field_value(obj: Any, field_name: str) -> Any:
+            """
+            Get raw field value bypassing lazy property getters to prevent infinite recursion.
+
+            Uses object.__getattribute__() to access stored values directly without triggering
+            lazy resolution, which would create circular dependencies in the resolution chain.
+
+            Args:
+                obj: Object to get field from
+                field_name: Name of field to access
+
+            Returns:
+                Raw field value or None if field doesn't exist
+
+            Raises:
+                AttributeError: If field doesn't exist (fail-loud behavior)
+            """
+            return object.__getattribute__(obj, field_name) if hasattr(obj, field_name) else None
+
         # Get the hierarchy chain for this config type
         hierarchy_chain = self.registry.get_resolution_chain(config_type)
 
@@ -576,17 +595,12 @@ class HierarchicalResolutionProvider:
         # Add context stack resolver as first priority (3-level hierarchy support)
         def context_stack_resolver(field_name: str) -> Any:
             """Resolve field from context stack (Step → Orchestrator → Global)."""
-            try:
-                context_stack = get_context_stack(config_type)
-                # Traverse stack from top (most specific) to bottom (most general)
-                for context in reversed(context_stack):
-                    if hasattr(context, field_name):
-                        value = getattr(context, field_name)
-                        if value is not None:
-                            return value
-            except Exception:
-                # Continue to next resolver on any error
-                pass
+            context_stack = get_context_stack(config_type)
+            # Traverse stack from top (most specific) to bottom (most general)
+            for context in reversed(context_stack):
+                value = _get_raw_field_value(context, field_name)
+                if value is not None:
+                    return value
             return None
 
         resolution_functions.append(context_stack_resolver)
@@ -602,9 +616,7 @@ class HierarchicalResolutionProvider:
                 # Root level - resolve from thread-local global config
                 def root_resolver(field_name: str, root_type=node.config_type) -> Any:
                     current_config = get_current_global_config(root_type)
-                    if current_config is not None:
-                        return getattr(current_config, field_name, None)
-                    return None
+                    return _get_raw_field_value(current_config, field_name) if current_config else None
 
                 resolution_functions.append(root_resolver)
             else:
@@ -619,8 +631,7 @@ class HierarchicalResolutionProvider:
                         config_instance = FieldPathNavigator.navigate_to_instance(
                             current_config, node.field_path
                         )
-                        if config_instance is not None:
-                            return getattr(config_instance, field_name, None)
+                        return _get_raw_field_value(config_instance, field_name) if config_instance else None
                     return None
 
                 resolution_functions.append(child_resolver)

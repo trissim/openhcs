@@ -64,9 +64,9 @@ class StepParameterEditorWidget(QScrollArea):
         # Create parameter form manager (reuses Textual TUI logic)
         from openhcs.core.config import GlobalPipelineConfig
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "step", param_info,
+            parameters, parameter_types, "step", GlobalPipelineConfig,
+            param_info,
             color_scheme=self.color_scheme,
-            global_config_type=GlobalPipelineConfig,
             placeholder_prefix="Pipeline default"
         )
         self.param_defaults = param_defaults

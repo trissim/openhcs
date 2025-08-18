@@ -33,6 +33,9 @@ from openhcs.core.lazy_config import LazyDataclassFactory
 from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
 
 
+
+
+
 class NoneAwareLineEdit(QLineEdit):
     """QLineEdit that properly handles None values for lazy dataclass contexts."""
 
@@ -65,27 +68,23 @@ class ParameterFormManager(QWidget):
     parameter_changed = pyqtSignal(str, object)  # param_name, value
 
     def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type],
-                 field_id: str, parameter_info: Dict = None, parent=None, use_scroll_area: bool = True,
-                 function_target=None, color_scheme: Optional[PyQt6ColorScheme] = None,
-                 dataclass_type: Optional[Type] = None,
-                 placeholder_prefix: str = None, is_global_config_editing: bool = None,
-                 global_config_type: Optional[Type] = None):
+                 field_id: str, dataclass_type: Type, parameter_info: Dict = None, parent=None,
+                 use_scroll_area: bool = True, function_target=None,
+                 color_scheme: Optional[PyQt6ColorScheme] = None, placeholder_prefix: str = None):
         """
-        Initialize PyQt parameter form manager with backward-compatible API.
+        Initialize PyQt parameter form manager with mathematically elegant single-parameter design.
 
         Args:
             parameters: Dictionary of parameter names to current values
             parameter_types: Dictionary of parameter names to types
             field_id: Unique identifier for the form
+            dataclass_type: The dataclass type that deterministically controls all form behavior
             parameter_info: Optional parameter information dictionary
             parent: Optional parent widget
             use_scroll_area: Whether to use scroll area
             function_target: Optional function target for docstring fallback
             color_scheme: Optional PyQt color scheme
-            dataclass_type: The specific dataclass type for placeholder resolution
             placeholder_prefix: Prefix for placeholder text
-            is_global_config_editing: Whether this is global config editing mode
-            global_config_type: Type of global configuration being edited
         """
         import time
         import logging
@@ -100,24 +99,9 @@ class ParameterFormManager(QWidget):
         QWidget.__init__(self, parent)
         logger.info(f"🔍 QWidget.__init__ completed in {(time.time() - init_start)*1000:.1f}ms")
 
-        # Store critical configuration parameters
+        # Store configuration parameters - dataclass_type is the single source of truth
         self.dataclass_type = dataclass_type
         self.placeholder_prefix = placeholder_prefix or CONSTANTS.DEFAULT_PLACEHOLDER_PREFIX
-
-        # Handle context determination with explicit vs auto-detection
-        if is_global_config_editing is not None:
-            # Explicit context provided
-            self.is_global_config_editing = is_global_config_editing
-            self._explicit_context_set = True
-        else:
-            # Auto-detect context based on dataclass type for backward compatibility
-            if dataclass_type:
-                self.is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
-            else:
-                self.is_global_config_editing = False
-            self._explicit_context_set = False
-
-        self.global_config_type = global_config_type
 
         # Convert old API to new config object internally
         if color_scheme is None:
@@ -132,8 +116,8 @@ class ParameterFormManager(QWidget):
         config.parameter_info = parameter_info
         config.dataclass_type = dataclass_type
         config.placeholder_prefix = placeholder_prefix
-        config.is_global_config_editing = is_global_config_editing
-        config.global_config_type = global_config_type
+        config.is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
+        # global_config_type is no longer needed - dataclass_type determines all behavior
 
         # Initialize core attributes directly (avoid abstract class instantiation)
         self.parameters = parameters.copy()
@@ -348,13 +332,13 @@ class ParameterFormManager(QWidget):
             {p.name: p.current_value for p in nested_structure.parameters},
             {p.name: p.type for p in nested_structure.parameters},
             nested_structure.field_id,
+            nested_dataclass_type,  # Single parameter determines all behavior
             self.parameter_info,
             group_box,  # parent
             False,  # use_scroll_area - nested forms don't use scroll areas
             self.function_target,
             self.color_scheme,
-            nested_dataclass_type,  # Use lazy dataclass type for proper inheritance
-            self.placeholder_prefix # Pass through placeholder prefix
+            self.placeholder_prefix  # Pass through placeholder prefix
         )
         
         # Store reference for updates
@@ -412,31 +396,24 @@ class ParameterFormManager(QWidget):
         return widget
 
     def _apply_placeholder_with_lazy_context(self, widget: QWidget, param_name: str, current_value: Any) -> None:
-        """Apply placeholder using simplified approach that leverages shared infrastructure."""
+        """Apply placeholder using mathematically elegant single service call - fail loud on invalid setup."""
         # Only apply placeholder if value is None
         if current_value is not None:
             return
 
-        # Use the service layer to get placeholder text with generic API
-        if self.dataclass_type:
-            placeholder_text = self.service.get_placeholder_text(
-                param_name,
-                self.dataclass_type,
-                self.placeholder_prefix
-            )
-        else:
-            # Fallback if no dataclass type provided
-            placeholder_text = None
+        # Single service call - dataclass_type determines all behavior, fail naturally on invalid setup
+        placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
+            self.dataclass_type, param_name, placeholder_prefix=self.placeholder_prefix
+        )
 
-        if placeholder_text:
-            # Block signals to prevent placeholder application from triggering parameter updates
-            widget.blockSignals(True)
-            try:
-                # Apply placeholder using PyQt6 widget strategies
-                PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
-            finally:
-                # Always restore signal connections
-                widget.blockSignals(False)
+        # Block signals to prevent placeholder application from triggering parameter updates
+        widget.blockSignals(True)
+        try:
+            # Apply placeholder using PyQt6 widget strategies
+            PyQt6WidgetEnhancer.apply_placeholder_text(widget, placeholder_text)
+        finally:
+            # Always restore signal connections
+            widget.blockSignals(False)
 
 
 
@@ -470,21 +447,21 @@ class ParameterFormManager(QWidget):
             nested_params,
             nested_types,
             field_ids['nested_field_id'],
+            self.dataclass_type,    # Pass through dataclass type
             None,  # parameter_info
             None,  # parent
             False,  # use_scroll_area
             None,   # function_target
             PyQt6ColorScheme(),  # color_scheme
-            self.dataclass_type,    # Pass through dataclass type
             self.placeholder_prefix # Pass through placeholder prefix
         )
     
     def update_widget_value(self, widget: QWidget, value: Any) -> None:
-        """Update a widget's value using framework-specific methods without triggering signals."""
+        """Update a widget's value using simplified widget handling."""
         # Block signals to prevent widget changes from triggering parameter updates
         widget.blockSignals(True)
         try:
-            # Handle QComboBox specifically (for enum values)
+            # Handle common widget types with simplified logic
             if isinstance(widget, QComboBox):
                 if value is not None:
                     # Find the index of the enum value in the combo box
@@ -494,41 +471,35 @@ class ParameterFormManager(QWidget):
                             break
                 else:
                     # For None values, set to -1 to indicate no selection
-                    # This allows placeholder text to be displayed properly
                     widget.setCurrentIndex(-1)
-            # Handle QCheckBox specifically
-            elif hasattr(widget, CONSTANTS.SET_CHECKED_METHOD):
-                getattr(widget, CONSTANTS.SET_CHECKED_METHOD)(bool(value) if value is not None else False)
-            elif hasattr(widget, CONSTANTS.SET_VALUE_METHOD):
-                getattr(widget, CONSTANTS.SET_VALUE_METHOD)(value)
-            elif hasattr(widget, CONSTANTS.SET_TEXT_METHOD):
-                getattr(widget, CONSTANTS.SET_TEXT_METHOD)(str(value))
-            elif isinstance(widget, QLabel):
+            elif hasattr(widget, 'setChecked'):  # QCheckBox
+                widget.setChecked(bool(value) if value is not None else False)
+            elif hasattr(widget, 'setValue'):  # Spinboxes
+                widget.setValue(value if value is not None else 0)
+            elif hasattr(widget, 'setText'):  # Line edits, labels
                 widget.setText(str(value) if value is not None else "")
+            elif hasattr(widget, 'set_value'):  # NoneAwareLineEdit
+                widget.set_value(value)
         finally:
             # Always restore signal connections
             widget.blockSignals(False)
     
     def get_widget_value(self, widget: QWidget) -> Any:
-        """Get a widget's current value using framework-specific methods."""
-        # Handle QComboBox specifically (for enum values)
+        """Get a widget's current value using simplified widget handling."""
+        # Handle common widget types with simplified logic
         if isinstance(widget, QComboBox):
             current_index = widget.currentIndex()
-            if current_index >= 0:
-                return widget.itemData(current_index)
-            else:
-                # No selection (index -1) means None value
+            return widget.itemData(current_index) if current_index >= 0 else None
+        elif hasattr(widget, 'get_value'):  # NoneAwareLineEdit
+            return widget.get_value()
+        elif hasattr(widget, 'isChecked'):  # QCheckBox
+            return widget.isChecked()
+        elif hasattr(widget, 'value'):  # Spinboxes
+            # Handle spinboxes with placeholder text
+            if hasattr(widget, 'specialValueText') and widget.value() == widget.minimum() and widget.specialValueText():
                 return None
-        elif hasattr(widget, CONSTANTS.GET_VALUE_METHOD):
-            return getattr(widget, CONSTANTS.GET_VALUE_METHOD)()
-        elif hasattr(widget, 'value') and hasattr(widget, 'minimum') and hasattr(widget, 'specialValueText'):
-            # Handle spinboxes with placeholder text (QSpinBox, QDoubleSpinBox)
-            # If the widget is at minimum value and has special value text, it's showing a placeholder for None
-            if widget.value() == widget.minimum() and widget.specialValueText():
-                return None
-            else:
-                return widget.value()
-        elif hasattr(widget, 'text'):
+            return widget.value()
+        elif hasattr(widget, 'text'):  # Line edits, labels
             return widget.text()
         return None
 
@@ -594,9 +565,11 @@ class ParameterFormManager(QWidget):
         # Delegate to service layer for reset value determination using generic API
         if self.dataclass_type:
             param_type = self.parameter_types.get(param_name)
+            # Compute context from dataclass_type - fail naturally on invalid input
+            is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
             # Pass explicit context to service layer
             reset_value = self.service.get_reset_value_for_parameter(
-                param_name, param_type, self.dataclass_type, self.is_global_config_editing
+                param_name, param_type, self.dataclass_type, is_global_config
             )
         else:
             # Fallback if no dataclass type provided
@@ -629,28 +602,19 @@ class ParameterFormManager(QWidget):
 
 
     def _update_widget_value_with_context(self, widget: QWidget, value: Any, param_name: str) -> None:
-        """Update widget value with context-aware placeholder handling using existing infrastructure."""
-        # Use explicit context from constructor, with auto-detection as fallback
-        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
-            is_global_config_editing = self.is_global_config_editing
-        else:
-            # Fallback to auto-detection for backward compatibility
-            is_global_config_editing = False
-            if self.dataclass_type:
-                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        """Update widget value with context-aware placeholder handling."""
+        # Determine context from dataclass_type
+        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
-        # For static contexts (global config editing), set actual values and clear placeholder styling
-        # Exception: when value is None (from reset), always use placeholder behavior
-        if (is_global_config_editing or value is not None) and value is not None:
-            # Clear any existing placeholder state using existing infrastructure
+        # For non-None values or global config editing, set actual values
+        if value is not None or is_global_config:
+            # Clear any existing placeholder state
             PyQt6WidgetEnhancer._clear_placeholder_state(widget)
             # Set the actual value
             self.update_widget_value(widget, value)
         else:
-            # For lazy contexts with None values, only apply placeholder styling
-            # Do NOT call update_widget_value as it can trigger signals that overwrite the None value
+            # For None values in lazy context, apply placeholder
             self._clear_widget_text(widget)
-            # Use the same placeholder application as initial form creation for all widgets
             self._apply_placeholder_with_lazy_context(widget, param_name, value)
 
 
@@ -747,19 +711,14 @@ class ParameterFormManager(QWidget):
         if param_value is None or ParameterTypeUtils.is_lazy_dataclass(param_value):
             return param_value
 
-        # Use explicit context from constructor, with auto-detection as fallback
-        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
-            is_global_config_editing = self.is_global_config_editing
-        else:
-            # Fallback to auto-detection for backward compatibility
-            is_global_config_editing = False
-            if self.dataclass_type:
-                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        # Determine context from dataclass_type
+        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
-        if is_global_config_editing:
+        # Global config editing: return value as-is
+        if is_global_config:
             return param_value
 
-        # Check if this should be converted to lazy dataclass
+        # Lazy context: convert to lazy dataclass if needed
         param_type = ParameterTypeUtils.get_dataclass_type_for_param(param_name, self.parameter_types)
         if param_type is None:
             return param_value
@@ -770,6 +729,11 @@ class ParameterFormManager(QWidget):
         """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
         # Use existing shared utility for field path determination
         field_path = _get_field_path_for_nested_form(param_type, {}, GlobalPipelineConfig)
+        if field_path is None:
+            raise ValueError(
+                f"Cannot determine field path for type {param_type.__name__} in GlobalPipelineConfig. "
+                f"Add field path mapping or ensure proper lazy dataclass configuration."
+            )
 
         lazy_type = LazyDataclassFactory.make_lazy_thread_local(
             base_class=param_type,
@@ -807,16 +771,10 @@ class ParameterFormManager(QWidget):
         Returns:
             Reconstructed dataclass instance with lazy structure preserved
         """
-        # Use explicit context from constructor, with auto-detection as fallback
-        if hasattr(self, '_explicit_context_set') and self._explicit_context_set:
-            is_global_config_editing = self.is_global_config_editing
-        else:
-            # Fallback to auto-detection for backward compatibility
-            is_global_config_editing = False
-            if self.dataclass_type:
-                is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+        # Determine context from dataclass_type
+        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
-        if is_global_config_editing:
+        if is_global_config:
             # Global config editing: filter out None values and use concrete dataclass
             filtered_values = {k: v for k, v in nested_values.items() if v is not None}
             if filtered_values:
@@ -825,23 +783,23 @@ class ParameterFormManager(QWidget):
                 return nested_type()
         else:
             # Lazy context: preserve None values and create lazy dataclass if needed
-            # Check if this nested type should be lazy
             if LazyDefaultPlaceholderService.has_lazy_resolution(nested_type):
                 # Already a lazy type, create instance with all values (including None)
                 return nested_type(**nested_values)
             else:
                 # Convert to lazy dataclass to preserve lazy structure
                 field_path = _get_field_path_for_nested_form(nested_type, {}, GlobalPipelineConfig)
-                if field_path:
-                    lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                        base_class=nested_type,
-                        global_config_type=GlobalPipelineConfig,
-                        field_path=field_path,
-                        lazy_class_name=f"Nested{nested_type.__name__}"
+                if field_path is None:
+                    raise ValueError(
+                        f"Cannot determine field path for nested type {nested_type.__name__} "
+                        f"in parameter '{param_name}' for GlobalPipelineConfig. "
+                        f"Add field path mapping or use concrete dataclass in global config editing."
                     )
-                    return lazy_nested_type(**nested_values)
-                else:
-                    # Fallback to concrete dataclass if field path cannot be determined
-                    return nested_type(**nested_values)
 
-
+                lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
+                    base_class=nested_type,
+                    global_config_type=GlobalPipelineConfig,
+                    field_path=field_path,
+                    lazy_class_name=f"Nested{nested_type.__name__}"
+                )
+                return lazy_nested_type(**nested_values)

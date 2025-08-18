@@ -444,8 +444,7 @@ class OpenHCSMainWindow(QMainWindow):
             self.service_adapter.get_global_config(),  # current_config (concrete instance)
             handle_config_save,    # on_save_callback
             self.service_adapter.get_current_color_scheme(),  # color_scheme
-            self,                  # parent
-            is_global_config_editing=True  # ConfigWindow still uses this parameter internally
+            self                   # parent
         )
         # Show as non-modal window (like plate manager and pipeline editor)
         config_window.show()

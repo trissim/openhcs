@@ -24,6 +24,7 @@ from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnaly
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
+from openhcs.core.config import GlobalPipelineConfig
 
 # Import PyQt6 help components
 from openhcs.pyqt_gui.widgets.shared.clickable_help_components import GroupBoxWithHelp, LabelWithHelp
@@ -250,7 +251,7 @@ class ConfigWindow(QDialog):
     def __init__(self, config_class: Type, current_config: Any,
                  on_save_callback: Optional[Callable] = None,
                  color_scheme: Optional[PyQt6ColorScheme] = None, parent=None,
-                 is_global_config_editing: bool = False):
+                 orchestrator=None):
         """
         Initialize the configuration window.
 
@@ -260,6 +261,7 @@ class ConfigWindow(QDialog):
             on_save_callback: Function to call when config is saved
             color_scheme: Color scheme for styling (optional, uses default if None)
             parent: Parent widget
+            orchestrator: Optional orchestrator reference for context persistence
         """
         super().__init__(parent)
 
@@ -267,6 +269,7 @@ class ConfigWindow(QDialog):
         self.config_class = config_class
         self.current_config = current_config
         self.on_save_callback = on_save_callback
+        self.orchestrator = orchestrator  # Store orchestrator reference for context persistence
 
         # Initialize color scheme and style generator
         self.color_scheme = color_scheme or PyQt6ColorScheme()
@@ -299,13 +302,15 @@ class ConfigWindow(QDialog):
         self.parameter_info = param_info
 
         # Create parameter form manager (reuses Textual TUI logic)
-        # Determine placeholder prefix based on editing mode
-        placeholder_prefix = "Default" if is_global_config_editing else "Pipeline default"
+        # Determine placeholder prefix based on dataclass type
+        from openhcs.core.config import LazyDefaultPlaceholderService
+        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(config_class)
+        placeholder_prefix = "Default" if is_global_config else "Pipeline default"
 
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "config", param_info,
+            parameters, parameter_types, "config", config_class,
+            param_info,
             color_scheme=self.color_scheme,
-            dataclass_type=config_class,  # Use the config class directly as dataclass type
             placeholder_prefix=placeholder_prefix
         )
 

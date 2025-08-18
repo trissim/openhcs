@@ -926,8 +926,9 @@ class PipelineOrchestrator:
         """
         Apply per-orchestrator configuration using context stacking for 3-level hierarchy.
 
-        This method now uses context stacking instead of replacing the global context,
-        enabling true Step → Orchestrator → Global resolution.
+        This method uses context stacking to enable true Step → Orchestrator → Global resolution.
+        The orchestrator's effective config is pushed onto the context stack so that step-level
+        lazy configurations can resolve values through the hierarchy.
         """
         if not isinstance(pipeline_config, PipelineConfig):
             raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
@@ -935,8 +936,12 @@ class PipelineOrchestrator:
         self.pipeline_config = pipeline_config
         effective_config = self.get_effective_config()
 
+        # Push orchestrator context onto the stack for 3-level hierarchy resolution
+        from openhcs.core.lazy_config import push_context
+        from openhcs.core.config import GlobalPipelineConfig
+        push_context(GlobalPipelineConfig, effective_config)
+
         # Store effective config for orchestrator-level resolution
-        # No context stacking needed - the hierarchical resolver will handle this
         self._effective_orchestrator_config = effective_config
 
         logger.info(f"Applied orchestrator context for plate: {self.plate_path}")
@@ -948,7 +953,13 @@ class PipelineOrchestrator:
         return self.global_config
 
     def clear_pipeline_config(self) -> None:
-        """Clear per-orchestrator configuration."""
+        """Clear per-orchestrator configuration and context stack."""
+        # Pop orchestrator context from the stack if it was pushed
+        if self.pipeline_config is not None:
+            from openhcs.core.lazy_config import pop_context
+            from openhcs.core.config import GlobalPipelineConfig
+            pop_context(GlobalPipelineConfig)
+
         # Clear stored orchestrator config
         if hasattr(self, '_effective_orchestrator_config'):
             delattr(self, '_effective_orchestrator_config')

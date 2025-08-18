@@ -350,7 +350,14 @@ class LazyDefaultPlaceholderService:
         else:
             # Use existing lazy class (thread-local resolution)
             temp_instance = dataclass_type()
-            resolved_value = getattr(temp_instance, field_name)
+
+            # For hierarchical lazy classes, use the proper resolution mechanism
+            if hasattr(temp_instance, '_resolve_field_value'):
+                # This is a hierarchical lazy class - use its resolution method
+                resolved_value = temp_instance._resolve_field_value(field_name)
+            else:
+                # Regular lazy class - use getattr
+                resolved_value = getattr(temp_instance, field_name)
 
         if resolved_value is not None:
             # Format nested dataclasses with key field values

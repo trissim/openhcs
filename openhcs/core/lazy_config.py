@@ -89,6 +89,13 @@ def get_context_stack(config_type: Type) -> List[Any]:
         return list(_global_context_stacks.get(config_type, []))
 
 
+def set_context_stack(config_type: Type, context_stack: List[Any]) -> None:
+    """Set the context stack for a given config type (for temporary context restoration)."""
+    with _context_stack_lock:
+        _global_context_stacks[config_type] = list(context_stack)
+        logger.debug(f"Set context stack for {config_type.__name__}, depth: {len(context_stack)}")
+
+
 def get_current_context_from_stack(config_type: Type) -> Optional[Any]:
     """Get the current (top) context from the stack without popping it."""
     with _context_stack_lock:
@@ -158,14 +165,8 @@ class ResolutionConfig:
 
     def _try_primary(self, field_name: str) -> Any:
         """Attempt resolution from primary instance."""
-        try:
-            instance = self.instance_provider()
-            if instance and hasattr(instance, field_name):
-                value = object.__getattribute__(instance, field_name)
-                return value if value is not None else None
-        except (AttributeError, Exception):
-            pass
-        return None
+        instance = self.instance_provider()
+        return _get_raw_field_value(instance, field_name) if instance else None
 
     def _try_fallbacks(self, field_name: str) -> Any:
         """Attempt resolution through fallback chain."""
@@ -180,18 +181,38 @@ class ResolutionConfig:
 
 
 # Functional fallback strategies
+def _get_raw_field_value(obj: Any, field_name: str) -> Any:
+    """
+    Get raw field value bypassing lazy property getters to prevent infinite recursion.
+
+    Uses object.__getattribute__() to access stored values directly without triggering
+    lazy resolution, which would create circular dependencies in the resolution chain.
+
+    Args:
+        obj: Object to get field from
+        field_name: Name of field to access
+
+    Returns:
+        Raw field value or None if field doesn't exist
+
+    Raises:
+        AttributeError: If field doesn't exist (fail-loud behavior)
+    """
+    return object.__getattribute__(obj, field_name) if hasattr(obj, field_name) else None
+
+
 def create_static_defaults_fallback(base_class: Type) -> Callable[[str], Any]:
     """Create fallback that resolves to static dataclass defaults."""
     default_instance = base_class()
-    return lambda field_name: getattr(default_instance, field_name, None)
+    return lambda field_name: _get_raw_field_value(default_instance, field_name)
 
 
 def create_instance_fallback(instance_provider: Callable[[], Any]) -> Callable[[str], Any]:
     """Create fallback that resolves from specific instance."""
-    return lambda field_name: (
-        getattr(instance_provider(), field_name, None)
-        if (instance := instance_provider()) else None
-    )
+    def instance_fallback(field_name: str) -> Any:
+        instance = instance_provider()
+        return _get_raw_field_value(instance, field_name) if instance else None
+    return instance_fallback
 
 
 @dataclass(frozen=True)
@@ -304,11 +325,8 @@ class LazyDataclassFactory:
         else:
             # For non-recursive resolution, create a safe fallback that handles None instance provider
             def safe_instance_fallback(field_name: str) -> Any:
-                try:
-                    instance = instance_provider()
-                    return getattr(instance, field_name, None) if instance is not None else None
-                except (AttributeError, Exception):
-                    return None
+                instance = instance_provider()
+                return _get_raw_field_value(instance, field_name) if instance else None
 
             resolution_config = ResolutionConfig(
                 instance_provider=instance_provider,
