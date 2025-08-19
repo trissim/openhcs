@@ -253,179 +253,93 @@ class ParameterFormManager(QWidget):
 
     def _create_parameter_widget_unified(self, param_info) -> QWidget:
         """Unified widget creation handling all parameter types."""
-        if param_info.is_optional and param_info.is_nested:
-            return self._create_optional_dataclass_section(param_info)
-        elif param_info.is_nested:
-            return self._create_nested_dataclass_section(param_info)
-        else:
-            return self._create_regular_parameter_section(param_info)
+        return self._create_parameter_section(param_info)
 
-    def _create_nested_dataclass_section(self, param_info) -> QWidget:
-        """Handle both lazy and concrete nested dataclasses with unified logic."""
-        # Determine if this is a lazy dataclass
-        is_lazy = LazyDefaultPlaceholderService.has_lazy_resolution(param_info.type)
-        current_value = self.parameters.get(param_info.name)
-
-        # Get display information from service (consolidated pattern)
+    def _create_parameter_section(self, param_info) -> QWidget:
+        """Unified scaffolding - consolidates all common patterns, injects differences through return values."""
         display_info = self.service.get_parameter_display_info(
-            param_info.name, param_info.type, param_info.description
-        )
-
-        # Create group box with help (consolidated pattern)
-        group_box = GroupBoxWithHelp(
-            title=display_info['field_label'],
-            help_target=param_info.type,
-            color_scheme=self.config.color_scheme or PyQt6ColorScheme()
-        )
-
-        if is_lazy:
-            # Lazy dataclass handling (from _create_lazy_dataclass_widget)
-
-            # Create nested ParameterFormManager using from_dataclass_instance (like old method)
-            # This properly handles lazy dataclass creation and None value preservation
-            nested_manager = ParameterFormManager.from_dataclass_instance(
-                dataclass_instance=current_value or param_info.type(),
-                field_id=f"nested_{param_info.name}",
-                placeholder_prefix=self.placeholder_prefix,
-                parent=group_box,
-                use_scroll_area=False,  # Nested forms don't need scroll areas
-                color_scheme=self.config.color_scheme
-            )
-
-            # Store nested manager
-            self.nested_managers[param_info.name] = nested_manager
-
-            # Connect parameter changes to reconstruct dataclass and emit change
-            def handle_nested_change(nested_param_name, nested_value):
-                # Get updated dataclass instance from nested manager (preserves lazy behavior)
-                updated_dataclass = nested_manager.dataclass_type(**nested_manager.get_current_values())
-                self.parameters[param_info.name] = updated_dataclass
-                self.parameter_changed.emit(param_info.name, updated_dataclass)
-
-            nested_manager.parameter_changed.connect(handle_nested_change)
-
-            # Add nested manager to group box
-            group_box.content_layout.addWidget(nested_manager)
-        else:
-            # Concrete dataclass handling (from _create_nested_dataclass_widget)
-            # Get field IDs from service
-            field_ids = self.service.generate_field_ids(self.config.field_id, param_info.name)
-
-            # Create nested form
-            nested_form = self._create_nested_form_inline(param_info.name, param_info.type, current_value)
-            group_box.content_layout.addWidget(nested_form)
-
-        # Store widget and return (consolidated pattern)
-        self.widgets[param_info.name] = group_box
-        return group_box
-
-    def _create_regular_parameter_section(self, param_info) -> QWidget:
-        """Create widget for regular (non-dataclass) parameter - consolidated from _create_regular_parameter_widget."""
-        # Get display information and field IDs from service (consolidated pattern)
-        display_info = self.service.get_parameter_display_info(
-            param_info.name, param_info.type, param_info.description
-        )
+            param_info.name, param_info.type, param_info.description)
         field_ids = self.service.generate_field_ids(self.config.field_id, param_info.name)
 
-        # Create container widget
+        if param_info.is_optional and param_info.is_nested:
+            container, widgets = self._build_optional_content(param_info, display_info, field_ids)
+        elif param_info.is_nested:
+            container, widgets = self._build_nested_content(param_info, display_info, field_ids)
+        else:
+            container, widgets = self._build_regular_content(param_info, display_info, field_ids)
+
+        self.widgets[param_info.name] = widgets['main']
+        if 'reset_button' in widgets:
+            self.reset_buttons[param_info.name] = widgets['reset_button']
+
+        if 'widget' in widgets:
+            PyQt6WidgetEnhancer.connect_change_signal(widgets['widget'], param_info.name, self._emit_parameter_change)
+
+        return container
+
+    def _build_regular_content(self, param_info, display_info, field_ids):
         container = QWidget()
         layout = QHBoxLayout(container)
-
-        # Parameter label with help
         label = LabelWithHelp(
-            text=display_info['field_label'],
-            param_name=param_info.name,
-            param_description=display_info['description'],
-            param_type=param_info.type,
+            text=display_info['field_label'], param_name=param_info.name,
+            param_description=display_info['description'], param_type=param_info.type,
             color_scheme=self.config.color_scheme or PyQt6ColorScheme()
         )
         layout.addWidget(label)
-
-        # Create parameter widget using form abstraction
         current_value = self.parameters.get(param_info.name)
         widget = self.form_abstraction.create_widget_for_parameter(param_info.name, param_info.type, current_value)
-
-        # Apply placeholder for lazy dataclass context
         if current_value is None and self.dataclass_type:
             self._apply_placeholder_with_lazy_context(widget, param_info.name, current_value)
-
-        # Connect widget changes to parameter updates
-        PyQt6WidgetEnhancer.connect_change_signal(widget, param_info.name, self._emit_parameter_change)
-
-        # Set object name for identification
-        widget.setObjectName(self.service.generate_field_ids(self.config.field_id, param_info.name)['widget_id'])
-
-        layout.addWidget(widget, 1)  # Stretch factor 1
-
-        # Add reset button
+        widget.setObjectName(field_ids['widget_id'])
+        layout.addWidget(widget, 1)
         reset_button = QPushButton(CONSTANTS.RESET_BUTTON_TEXT)
         reset_button.setObjectName(field_ids['reset_button_id'])
         reset_button.setMaximumWidth(60)
         reset_button.clicked.connect(lambda: self.reset_parameter(param_info.name))
         layout.addWidget(reset_button)
+        return container, {'main': widget, 'widget': widget, 'reset_button': reset_button}
 
-        # Store widgets and return (consolidated pattern)
-        self.widgets[param_info.name] = widget
-        self.reset_buttons[param_info.name] = reset_button
-        return container
-
-    def _create_optional_dataclass_section(self, param_info) -> QWidget:
-        """Create checkbox + dataclass widget for Optional[dataclass] parameters."""
-        # Get the inner dataclass type from Optional[dataclass]
-        inner_dataclass_type = ParameterTypeUtils.get_optional_inner_type(param_info.type)
-
-        # Get display information and field IDs from service (consolidated pattern)
-        display_info = self.service.get_parameter_display_info(
-            param_info.name, param_info.type, param_info.description
+    def _build_nested_content(self, param_info, display_info, field_ids):
+        group_box = GroupBoxWithHelp(
+            title=display_info['field_label'], help_target=param_info.type,
+            color_scheme=self.config.color_scheme or PyQt6ColorScheme()
         )
-        field_ids = self.service.generate_field_ids(self.config.field_id, param_info.name)
+        current_value = self.parameters.get(param_info.name)
+        if LazyDefaultPlaceholderService.has_lazy_resolution(param_info.type):
+            nested_manager = ParameterFormManager.from_dataclass_instance(
+                dataclass_instance=current_value or param_info.type(),
+                field_id=f"nested_{param_info.name}", placeholder_prefix=self.placeholder_prefix,
+                parent=group_box, use_scroll_area=False, color_scheme=self.config.color_scheme
+            )
+            self.nested_managers[param_info.name] = nested_manager
+            nested_manager.parameter_changed.connect(
+                lambda name, value: self._handle_nested_parameter_change(param_info.name, name, value)
+            )
+            group_box.content_layout.addWidget(nested_manager)
+        else:
+            nested_form = self._create_nested_form_inline(param_info.name, param_info.type, current_value)
+            group_box.content_layout.addWidget(nested_form)
+        return group_box, {'main': group_box}
 
-        # Create container
+    def _build_optional_content(self, param_info, display_info, field_ids):
         container = QWidget()
         layout = QVBoxLayout(container)
-
-        # Create checkbox for optional parameter
         checkbox = QCheckBox(display_info['field_label'])
         current_value = self.parameters.get(param_info.name)
         checkbox.setChecked(current_value is not None)
         layout.addWidget(checkbox)
-
-        # Create nested param_info for the inner dataclass type (not the Optional type)
-        nested_param_info = ParameterInfo(
-            name=param_info.name,
-            type=inner_dataclass_type,  # Use inner type, not Optional[type]
-            current_value=current_value,
-            is_nested=True,
-            is_optional=False  # The inner dataclass itself is not optional
-        )
-
-        # Create nested dataclass widget (always rendered, but enabled/disabled based on checkbox)
-        nested_widget = self._create_nested_dataclass_section(nested_param_info)
-        nested_widget.setEnabled(current_value is not None)  # Use setEnabled instead of setVisible
+        inner_type = ParameterTypeUtils.get_optional_inner_type(param_info.type)
+        nested_param_info = ParameterInfo(param_info.name, inner_type, current_value, True, False)
+        nested_widget, nested_widgets = self._build_nested_content(nested_param_info, display_info, field_ids)
+        nested_widget.setEnabled(current_value is not None)
         layout.addWidget(nested_widget)
-
-        # Toggle logic for checkbox
-        def toggle_dataclass(state: int):
-            # Convert Qt checkbox state (0=unchecked, 2=checked) to boolean
-            is_checked = state == 2
-            nested_widget.setEnabled(is_checked)  # Make it uninteractable when unchecked
-
-            if is_checked:
-                # Create default instance if checked
-                if param_info.name not in self.parameters or self.parameters[param_info.name] is None:
-                    default_instance = inner_dataclass_type()  # Use inner type, not param_info.type
-                    self.parameters[param_info.name] = default_instance
-                    self.parameter_changed.emit(param_info.name, default_instance)
-            else:
-                # Set to None if unchecked
-                self.parameters[param_info.name] = None
-                self.parameter_changed.emit(param_info.name, None)
-
-        checkbox.stateChanged.connect(toggle_dataclass)
-
-        # Store widget and return (consolidated pattern)
-        self.widgets[param_info.name] = container
-        return container
+        def toggle(state):
+            enabled = state == 2
+            nested_widget.setEnabled(enabled)
+            self.parameters[param_info.name] = inner_type() if enabled else None
+            self.parameter_changed.emit(param_info.name, self.parameters[param_info.name])
+        checkbox.stateChanged.connect(toggle)
+        return container, {'main': container}
 
     def _create_nested_form_inline(self, param_name: str, param_type: Type, current_value: Any) -> Any:
         """Create nested form - inlined from create_nested_form."""
