@@ -169,7 +169,7 @@ setup(
 
         # Storage and serialization
         "PyYAML>=6.0.2",
-        "zarr>=2.18.7",
+        "zarr>=2.18.7,<3.0",
         "ome-zarr>=0.11.1",
         "dill>=0.4.0",
 
