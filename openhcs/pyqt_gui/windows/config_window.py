@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+# SignatureAnalyzer import removed - no longer needed with ResetOperation approach
 from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
 from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
@@ -610,24 +610,18 @@ class ConfigWindow(QDialog):
             widget.blockSignals(False)
     
     def reset_to_defaults(self):
-        """Reset all parameters using individual field reset logic for consistency."""
-        # Use the same logic as individual reset buttons to ensure consistency
-        # This delegates to the form manager's lazy-aware reset logic
-        if hasattr(self.form_manager, 'reset_all_parameters'):
-            # For form managers that support lazy-aware reset_all_parameters
-            self.form_manager.reset_all_parameters()
-        else:
-            # Fallback: reset each parameter individually using the same logic as reset buttons
-            param_info = SignatureAnalyzer.analyze(self.config_class)
-            for param_name in param_info.keys():
-                if hasattr(self.form_manager, '_reset_parameter'):
-                    # Use the individual reset logic (PyQt form manager)
-                    self.form_manager._reset_parameter(param_name)
-                elif hasattr(self.form_manager, 'reset_parameter'):
-                    # Use the individual reset logic (Textual form manager)
-                    self.form_manager.reset_parameter(param_name)
+        """Reset all parameters including nested dataclass fields using proper reset operation."""
+        # Use the sophisticated ResetOperation that handles nested dataclass fields properly
+        reset_operation = ResetOperation.create_lazy_aware_reset(self.config_class, self.current_config)
 
-        logger.debug("Reset all parameters using individual field reset logic")
+        # Apply the reset operation to the form manager - this handles both top-level and nested parameters
+        reset_operation.apply_to_form_manager(self.form_manager)
+
+        # Refresh placeholder text to ensure UI shows correct defaults
+        if hasattr(self.form_manager, 'refresh_placeholder_text'):
+            self.form_manager.refresh_placeholder_text()
+
+        logger.debug("Reset all parameters including nested fields using ResetOperation")
 
     def save_config(self):
         """Save the configuration preserving lazy behavior for unset fields."""
