@@ -382,54 +382,61 @@ class PlateManagerWidget(QWidget):
         self.update_plate_list()
         self.status_message.emit(f"Deleted {len(paths_to_delete)} plate(s)")
     
+    def _validate_plates_for_operation(self, plates, operation_type):
+        """Unified functional validator for all plate operations."""
+        # Functional validation mapping
+        validators = {
+            'init': lambda p: True,  # Init can work on any plates
+            'compile': lambda p: (
+                self.orchestrators.get(p['path']) and
+                self._get_current_pipeline_definition(p['path'])
+            ),
+            'run': lambda p: (
+                self.orchestrators.get(p['path']) and
+                self.orchestrators[p['path']].state in ['COMPILED', 'COMPLETED']
+            )
+        }
+
+        # Functional pattern: filter invalid plates in one pass
+        validator = validators.get(operation_type, lambda p: True)
+        return [p for p in plates if not validator(p)]
+
     async def action_init_plate(self):
-        """Handle Initialize Plate button (extracted from Textual version)."""
+        """Handle Initialize Plate button with unified validation."""
         selected_items = self.get_selected_plates()
 
-        if not selected_items:
-            self.service_adapter.show_error_dialog("No plates selected for initialization.")
-            return
-        
-        # Use signal for thread-safe progress start
+        # Unified validation - let it fail if no plates
+        invalid_plates = self._validate_plates_for_operation(selected_items, 'init')
+
         self.progress_started.emit(len(selected_items))
-        
-        for i, plate in enumerate(selected_items):
+
+        # Functional pattern: async map with enumerate
+        async def init_single_plate(i, plate):
             plate_path = plate['path']
-            
-            try:
-                # Initialize orchestrator (heavy operation)
-                def init_orchestrator():
-                    return PipelineOrchestrator(
-                        plate_path=plate_path,
-                        global_config=self.global_config,
-                        storage_registry=self.file_manager.registry
-                    ).initialize()
-                
-                # Run in executor to avoid blocking UI (works in Qt thread)
-                import asyncio
-                loop = asyncio.get_event_loop()
-                orchestrator = await loop.run_in_executor(None, init_orchestrator)
-                
-                # Store orchestrator
-                self.orchestrators[plate_path] = orchestrator
-                self.orchestrator_state_changed.emit(plate_path, "READY")
+            orchestrator = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: PipelineOrchestrator(
+                    plate_path=plate_path,
+                    global_config=self.global_config,
+                    storage_registry=self.file_manager.registry
+                ).initialize()
+            )
 
-                # Auto-select this plate if no plate is currently selected
-                if not self.selected_plate_path:
-                    self.selected_plate_path = plate_path
-                    self.plate_selected.emit(plate_path)
-                    # Note: UI selection update removed - not safe from async thread
-                    # The UI will update automatically when orchestrator state changes
+            self.orchestrators[plate_path] = orchestrator
+            self.orchestrator_state_changed.emit(plate_path, "READY")
 
-                # Use signal for thread-safe progress update
-                self.progress_updated.emit(i + 1)
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize plate {plate['name']}: {e}")
-                # Use signal for thread-safe error reporting
-                self.initialization_error.emit(plate['name'], str(e))
-        
-        # Use signal for thread-safe progress completion
+            if not self.selected_plate_path:
+                self.selected_plate_path = plate_path
+                self.plate_selected.emit(plate_path)
+
+            self.progress_updated.emit(i + 1)
+
+        # Process all plates functionally
+        await asyncio.gather(*[
+            init_single_plate(i, plate)
+            for i, plate in enumerate(selected_items)
+        ])
+
         self.progress_finished.emit()
         self.status_message.emit(f"Initialized {len(selected_items)} plate(s)")
     
@@ -597,45 +604,13 @@ class PlateManagerWidget(QWidget):
             logger.warning("No plates available for compilation")
             return
 
-        # Validate all selected plates are ready for compilation
-        not_ready = []
-        for item in selected_items:
-            plate_path = item['path']
-            orchestrator = self.orchestrators.get(plate_path)
-            # Allow READY, COMPILE_FAILED, EXEC_FAILED, COMPILED, and COMPLETED states to be compiled/recompiled
-            if orchestrator is None or orchestrator.state not in [
-                OrchestratorState.READY, OrchestratorState.COMPILE_FAILED,
-                OrchestratorState.EXEC_FAILED, OrchestratorState.COMPILED,
-                OrchestratorState.COMPLETED
-            ]:
-                not_ready.append(item)
+        # Unified validation using functional validator
+        invalid_plates = self._validate_plates_for_operation(selected_items, 'compile')
 
-        if not_ready:
-            names = [item['name'] for item in not_ready]
-            # More accurate error message based on actual state
-            if any(self.orchestrators.get(item['path']) is None for item in not_ready):
-                error_msg = f"Cannot compile plates that haven't been initialized: {', '.join(names)}"
-            elif any(self.orchestrators.get(item['path']).state == OrchestratorState.EXECUTING for item in not_ready):
-                error_msg = f"Cannot compile plates that are currently executing: {', '.join(names)}"
-            else:
-                error_msg = f"Cannot compile plates in current state: {', '.join(names)}"
-
-            logger.warning(error_msg)
-            self.service_adapter.show_error_dialog(error_msg)
-            return
-
-        # Validate all selected plates have pipelines
-        no_pipeline = []
-        for item in selected_items:
-            pipeline = self._get_current_pipeline_definition(item['path'])
-            if not pipeline:
-                no_pipeline.append(item)
-
-        if no_pipeline:
-            names = [item['name'] for item in no_pipeline]
-            error_msg = f"Cannot compile plates without pipelines: {', '.join(names)}"
-            self.status_message.emit(error_msg)
-            self.service_adapter.show_error_dialog(error_msg)
+        # Let validation failures bubble up as status messages
+        if invalid_plates:
+            invalid_names = [p['name'] for p in invalid_plates]
+            self.status_message.emit(f"Cannot compile invalid plates: {', '.join(invalid_names)}")
             return
 
         # Start async compilation
@@ -1147,18 +1122,22 @@ class PlateManagerWidget(QWidget):
                         self._refresh_widget_parameter_forms(widget)
 
     def _refresh_widget_parameter_forms(self, widget) -> None:
-        """Recursively refresh parameter forms in a widget and its children."""
+        """Recursively refresh parameter forms using functional patterns."""
         # Check if this widget has a parameter form manager
         if hasattr(widget, 'form_manager') and hasattr(widget.form_manager, 'refresh_placeholder_text'):
             widget.form_manager.refresh_placeholder_text()
 
-        # Recursively check child widgets
+        # Functional pattern: process children with filter and map
         if hasattr(widget, 'children'):
-            for child in widget.children():
-                if hasattr(child, 'refresh_placeholder_text'):
-                    child.refresh_placeholder_text()
-                else:
-                    self._refresh_widget_parameter_forms(child)
+            # Direct refresh for widgets with refresh_placeholder_text
+            [child.refresh_placeholder_text()
+             for child in widget.children()
+             if hasattr(child, 'refresh_placeholder_text')]
+
+            # Recursive refresh for other widgets
+            [self._refresh_widget_parameter_forms(child)
+             for child in widget.children()
+             if not hasattr(child, 'refresh_placeholder_text')]
 
     # ========== Helper Methods ==========
 

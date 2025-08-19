@@ -258,17 +258,19 @@ class ParameterFormManager(QWidget):
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         
-        # Iterate through analyzed parameter structure
-        for param_info in self.form_structure.parameters:
+        # Functional pattern: unified widget factory with single creation function
+        def create_widget_unified(param_info):
+            """Unified widget creation function combining all widget types."""
             if param_info.is_optional and param_info.is_nested:
-                widget = self._create_optional_dataclass_widget(param_info)
+                return self._create_optional_dataclass_widget(param_info)
             elif param_info.is_nested:
-                widget = self._create_nested_dataclass_widget(param_info)
+                return self._create_nested_dataclass_widget(param_info)
             else:
-                widget = self._create_regular_parameter_widget(param_info)
-            
-            if widget:
-                content_layout.addWidget(widget)
+                return self._create_regular_parameter_widget(param_info)
+
+        # Functional pattern: map-filter-apply in one pipeline
+        [content_layout.addWidget(widget)
+         for widget in filter(None, map(create_widget_unified, self.form_structure.parameters))]
         
         return content_widget
     
@@ -603,25 +605,24 @@ class ParameterFormManager(QWidget):
         # Block signals to prevent widget changes from triggering parameter updates
         widget.blockSignals(True)
         try:
-            # Handle common widget types with simplified logic
-            if isinstance(widget, QComboBox):
-                if value is not None:
-                    # Find the index of the enum value in the combo box
-                    for i in range(widget.count()):
-                        if widget.itemData(i) == value:
-                            widget.setCurrentIndex(i)
-                            break
-                else:
-                    # For None values, set to -1 to indicate no selection
-                    widget.setCurrentIndex(-1)
-            elif hasattr(widget, 'setChecked'):  # QCheckBox
-                widget.setChecked(bool(value) if value is not None else False)
-            elif hasattr(widget, 'setValue'):  # Spinboxes
-                widget.setValue(value if value is not None else 0)
-            elif hasattr(widget, 'setText'):  # Line edits, labels
-                widget.setText(str(value) if value is not None else "")
-            elif hasattr(widget, 'set_value'):  # NoneAwareLineEdit
-                widget.set_value(value)
+            # Functional pattern: widget type to update function mapping
+            widget_updaters = [
+                (QComboBox, lambda w, v: w.setCurrentIndex(
+                    next((i for i in range(w.count()) if w.itemData(i) == v), -1)
+                    if v is not None else -1
+                )),
+                ('setChecked', lambda w, v: w.setChecked(bool(v) if v is not None else False)),
+                ('setValue', lambda w, v: w.setValue(v if v is not None else 0)),
+                ('setText', lambda w, v: w.setText(str(v) if v is not None else "")),
+                ('set_value', lambda w, v: w.set_value(v))
+            ]
+
+            # Functional pattern: find and apply first matching updater
+            for matcher, updater in widget_updaters:
+                if (isinstance(matcher, type) and isinstance(widget, matcher)) or \
+                   (isinstance(matcher, str) and hasattr(widget, matcher)):
+                    updater(widget, value)
+                    break
         finally:
             # Always restore signal connections
             widget.blockSignals(False)
@@ -648,13 +649,13 @@ class ParameterFormManager(QWidget):
     # Framework-specific methods for backward compatibility
 
     def reset_all_parameters(self) -> None:
-        """Reset all parameters using individual field reset logic for consistency."""
+        """Reset all parameters using functional pattern for consistency."""
         self.debugger.log_form_manager_operation("reset_all_parameters", {
             "parameter_count": len(self.parameters)
         })
 
-        for param_name in self.parameters.keys():
-            self.reset_parameter(param_name)
+        # Functional pattern: apply reset to all parameters
+        [self.reset_parameter(param_name) for param_name in self.parameters.keys()]
 
     def reset_parameter_by_path(self, parameter_path: str) -> None:
         """
