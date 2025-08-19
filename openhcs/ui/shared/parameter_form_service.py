@@ -378,17 +378,12 @@ class ParameterFormService:
         # Automatically derive editing mode from dataclass type capabilities
         is_global_config_editing = not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type)
 
-        # Use the existing _get_thread_local_placeholder function directly
-        from openhcs.ui.shared.parameter_form_abstraction import _get_thread_local_placeholder
-
-        return _get_thread_local_placeholder(
-            dataclass_type=dataclass_type,
-            param_name=param_name,
-            is_global_config_editing=is_global_config_editing,
-            field_path=None,  # Root level
-            global_config_type=dataclass_type,
-            placeholder_prefix=placeholder_prefix
-        )
+    def reset_nested_managers(self, nested_managers: Dict[str, Any],
+                            dataclass_type: Type, current_config: Any) -> None:
+        """Reset all nested managers - fail loud, no defensive programming."""
+        for nested_manager in nested_managers.values():
+            # All nested managers must have reset_all_parameters method
+            nested_manager.reset_all_parameters()
 
     def get_reset_value_for_parameter(self, param_name: str, param_type: Type,
                                     dataclass_type: Type, is_global_config_editing: Optional[bool] = None) -> Any:

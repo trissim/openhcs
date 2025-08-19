@@ -507,14 +507,7 @@ class ParameterFormManager(QWidget):
         # This will cause get_current_values() to rebuild the nested dataclass with current values
         self.parameter_changed.emit(parent_param_name, nested_value)
 
-    def _is_lazy_dataclass_parameter(self, param_type: Type) -> bool:
-        """Check if parameter type is a lazy dataclass that should use LazyDataclassEditor."""
-        return LazyDefaultPlaceholderService.has_lazy_resolution(param_type)
 
-
-
-    # Abstract method implementations (dramatically simplified)
-    
 
 
     def _apply_placeholder_with_lazy_context(self, widget: QWidget, param_name: str, current_value: Any) -> None:
@@ -672,11 +665,14 @@ class ParameterFormManager(QWidget):
             # Apply reset
             self.reset_parameter(param_name, reset_value)
 
-        # Reset nested managers recursively
-        if self.dataclass_type:
+        # Reset nested managers using clean service method
+        if self.dataclass_type and self.nested_managers:
             current_config = self._get_current_config_instance()
             if current_config:
-                self._reset_nested_parameters_recursively(self.dataclass_type, current_config)
+                # Direct service call - clean, fail-loud architecture
+                self.service.reset_nested_managers(
+                    self.nested_managers, self.dataclass_type, current_config
+                )
 
 
     def _get_current_config_instance(self) -> Any:
@@ -716,76 +712,16 @@ class ParameterFormManager(QWidget):
         # Delegate to standard reset logic
         self.reset_parameter(param_name)
 
-    def _reset_nested_parameters_recursively(self, config_class: Type, current_config: Any) -> None:
+    def reset_nested_managers(self, nested_managers: Dict[str, Any],
+                            dataclass_type: Type, current_config: Any) -> None:
         """
-        Apply reset values to nested form managers recursively.
+        Reset nested managers using service layer - clean interface for recursion.
 
-        Migrated from FormManagerUpdater.apply_nested_reset_recursively() in config window.
-        This is the critical method that handles nested dataclass reset functionality.
+        This method provides a clean interface that the service can call recursively.
+        All nested managers are expected to have this same interface.
         """
-        import dataclasses
-        from dataclasses import fields
-
-        if not hasattr(self, 'nested_managers'):
-            return
-
-        for nested_param_name, nested_manager in self.nested_managers.items():
-            # Get the nested dataclass type and current instance
-            nested_field = next(
-                (f for f in fields(config_class) if f.name == nested_param_name),
-                None
-            )
-
-            if nested_field and dataclasses.is_dataclass(nested_field.type):
-                nested_config_class = nested_field.type
-                nested_current_config = getattr(current_config, nested_param_name, None) if current_config else None
-
-                # Generate reset values for nested dataclass with mixed state support
-                if nested_current_config and LazyDefaultPlaceholderService.has_lazy_resolution(nested_current_config.__class__):
-                    # Lazy dataclass: support mixed states - preserve individual field lazy behavior
-                    nested_reset_values = {}
-                    for field in fields(nested_config_class):
-                        # For lazy dataclasses, always reset to None to preserve lazy behavior
-                        # This allows individual fields to maintain placeholder behavior
-                        nested_reset_values[field.name] = None
-                else:
-                    # Regular concrete dataclass: reset to static defaults
-                    nested_reset_values = self._get_static_defaults_inline(nested_config_class)
-
-                # Apply reset values to nested manager
-                self._apply_values_to_nested_manager(nested_manager, nested_reset_values)
-
-                # Recurse for deeper nesting
-                if hasattr(nested_manager, '_reset_nested_parameters_recursively'):
-                    nested_manager._reset_nested_parameters_recursively(nested_config_class, nested_current_config)
-            else:
-                # Fallback: reset using parameter info
-                self._reset_manager_to_parameter_defaults(nested_manager)
-
-    def _apply_values_to_nested_manager(self, nested_manager: Any, values: Dict[str, Any]) -> None:
-        """Apply values to a nested manager, handling different manager types."""
-        if hasattr(nested_manager, 'update_parameter'):
-            # Standard form manager interface
-            for param_name, value in values.items():
-                nested_manager.update_parameter(param_name, value)
-        elif hasattr(nested_manager, 'textual_form_manager'):
-            # Wrapper with textual form manager
-            for param_name, value in values.items():
-                nested_manager.textual_form_manager.update_parameter(param_name, value)
-
-    def _reset_manager_to_parameter_defaults(self, manager: Any) -> None:
-        """
-        Reset a manager to its parameter defaults.
-
-        Migrated from FormManagerUpdater._reset_manager_to_parameter_defaults() in config window.
-        """
-        if (hasattr(manager, 'textual_form_manager') and
-            hasattr(manager.textual_form_manager, 'parameter_info')):
-            default_values = {
-                param_name: param_info.default_value
-                for param_name, param_info in manager.textual_form_manager.parameter_info.items()
-            }
-            self._apply_values_to_nested_manager(manager, default_values)
+        # Delegate to service - no complex logic in form manager
+        self.service.reset_nested_managers(nested_managers, dataclass_type, current_config)
 
     # Core parameter management methods (using shared service layer)
 
