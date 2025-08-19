@@ -177,22 +177,15 @@ class ParameterFormManager(QWidget):
             parameters = {}
             parameter_types = {}
             for field_obj in fields(editing_config):
-                # Get raw stored value (preserves None vs concrete distinction)
-                raw_value = object.__getattribute__(editing_config, field_obj.name)
-                parameters[field_obj.name] = raw_value
+                parameters[field_obj.name] = object.__getattribute__(editing_config, field_obj.name)
                 parameter_types[field_obj.name] = field_obj.type
-
-            # CRITICAL: Use the editing config type for proper thread-local resolution
-            # The editing config has the correct context setup for the current thread-local state
             dataclass_type = type(editing_config)
         else:
             # Regular dataclass - extract parameters normally
             parameters = {}
             parameter_types = {}
-
             for field_obj in fields(dataclass_instance):
-                current_value = getattr(dataclass_instance, field_obj.name)
-                parameters[field_obj.name] = current_value
+                parameters[field_obj.name] = getattr(dataclass_instance, field_obj.name)
                 parameter_types[field_obj.name] = field_obj.type
 
             dataclass_type = type(dataclass_instance)
@@ -513,92 +506,22 @@ class ParameterFormManager(QWidget):
     # Framework-specific methods for backward compatibility
 
     def reset_all_parameters(self) -> None:
-        """Reset all parameters with integrated context-aware logic."""
-        # Get reset values for all parameters
-        if self.dataclass_type:
-            current_config = self._get_current_config_instance()
-
-            if current_config and LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
-                # For lazy dataclasses, reset all to None
-                reset_values = {name: None for name in self.parameters.keys()}
-            else:
-                # For concrete dataclasses, use static defaults
-                reset_values = self._get_static_defaults_inline(self.dataclass_type)
-        else:
-            # Fallback to empty dict
-            reset_values = {}
-
-        # Apply reset values to all parameters
+        """Reset all parameters - let reset_parameter handle everything."""
         for param_name in self.parameters.keys():
-            reset_value = reset_values.get(param_name)
+            self.reset_parameter(param_name)
 
-            # Function parameter fallback
-            if reset_value is None and self._is_function_parameter(param_name):
-                reset_value = (self.parameter_info.get(param_name).default_value
-                              if self.parameter_info and param_name in self.parameter_info
-                              and hasattr(self.parameter_info[param_name], 'default_value')
-                              else None)
-
-            # Apply reset
-            self.reset_parameter(param_name, reset_value)
-
-        # Reset nested managers using clean service method
+        # Handle nested managers once at the end
         if self.dataclass_type and self.nested_managers:
-            current_config = self._get_current_config_instance()
+            current_config = getattr(self, '_current_config_instance', None)
             if current_config:
-                # Direct service call - clean, fail-loud architecture
-                self.service.reset_nested_managers(
-                    self.nested_managers, self.dataclass_type, current_config
-                )
+                self.service.reset_nested_managers(self.nested_managers, self.dataclass_type, current_config)
 
 
-    def _get_current_config_instance(self) -> Any:
-        """Get current config instance for reset operations."""
-        if hasattr(self, '_current_config_instance'):
-            return self._current_config_instance
-
-        # Try to reconstruct from current parameters if dataclass_type is available
-        if self.dataclass_type:
-            try:
-                # Create instance with current parameter values
-                return self.dataclass_type(**{k: v for k, v in self.parameters.items() if v is not None})
-            except Exception:
-                # Fallback to default instance
-                try:
-                    return self.dataclass_type()
-                except Exception:
-                    return None
-        return None
-
-    def reset_parameter_by_path(self, parameter_path: str) -> None:
-        """
-        Reset a parameter by its full path (supports nested parameters).
-
-        Args:
-            parameter_path: Full path to parameter (e.g., "config.nested.param")
-        """
 
 
-        # Handle nested parameter paths
-        if CONSTANTS.DOT_SEPARATOR in parameter_path:
-            parts = parameter_path.split(CONSTANTS.DOT_SEPARATOR)
-            param_name = CONSTANTS.FIELD_ID_SEPARATOR.join(parts)
-        else:
-            param_name = parameter_path
 
-        # Delegate to standard reset logic
-        self.reset_parameter(param_name)
 
-    def reset_nested_managers(self, nested_managers: Dict[str, Any],
-                            dataclass_type: Type, current_config: Any) -> None:
-        """
-        Reset nested managers using service layer - clean interface for recursion.
 
-        This method provides a clean interface that the service can call recursively.
-        All nested managers are expected to have this same interface.
-        """
-        # Delegate to service - no complex logic in form manager
-        self.service.reset_nested_managers(nested_managers, dataclass_type, current_config)
 
     # Core parameter management methods (using shared service layer)
 
@@ -619,11 +542,6 @@ class ParameterFormManager(QWidget):
 
             # Emit signal for PyQt6 compatibility
             self.parameter_changed.emit(param_name, converted_value)
-
-
-
-
-
 
 
     def _is_function_parameter(self, param_name: str) -> bool:
@@ -693,26 +611,6 @@ class ParameterFormManager(QWidget):
         # Emit parameter change signal
         self.parameter_changed.emit(param_name, reset_value)
 
-    def _get_static_defaults_inline(self, config_class: Type) -> Dict[str, Any]:
-        """Get static default values for dataclass fields - inlined from _get_static_defaults."""
-        import dataclasses
-
-        defaults = {}
-
-        if hasattr(config_class, '__dataclass_fields__'):
-            for field_name, field in config_class.__dataclass_fields__.items():
-                if field.default is not dataclasses.MISSING:
-                    defaults[field_name] = field.default
-                elif field.default_factory is not dataclasses.MISSING:
-                    try:
-                        defaults[field_name] = field.default_factory()
-                    except:
-                        defaults[field_name] = None
-                else:
-                    defaults[field_name] = None
-
-        return defaults
-
     def get_current_values(self) -> Dict[str, Any]:
         """
         Get current parameter values preserving lazy dataclass structure.
@@ -725,36 +623,14 @@ class ParameterFormManager(QWidget):
 
         # First, collect values from nested managers and rebuild nested dataclass instances
         # This must happen BEFORE applying lazy structure preservation to avoid overwriting
-        for param_name, nested_manager in self.nested_managers.items():
-            nested_values = nested_manager.get_current_values()
-            nested_type = self.parameter_types.get(param_name)
-
-            if nested_type and nested_values:
-                # Handle Optional[DataClass] types
-                if self.service._type_utils.is_optional_dataclass(nested_type):
-                    nested_type = self.service._type_utils.get_optional_inner_type(nested_type)
-
-                # Rebuild nested dataclass instance with current values
-                rebuilt_instance = self._rebuild_nested_dataclass_instance(
-                    nested_values, nested_type, param_name
-                )
-
-                current_values[param_name] = rebuilt_instance
+        self._apply_to_nested_managers(
+            lambda name, manager: self._process_nested_values(name, manager.get_current_values(), current_values)
+        )
 
         # Lazy dataclasses are now handled by LazyDataclassEditor, so no structure preservation needed
         return current_values
 
-    def get_dataclass_instance(self) -> Any:
-        """
-        Reconstruct dataclass instance from current form values.
 
-        This method is required for backward compatibility with external callers
-        like ConfigWindow.save_config().
-        """
-        if not self.dataclass_type:
-            raise ValueError("No dataclass type specified - cannot reconstruct instance")
-
-        return self.dataclass_type(**self.get_current_values())
 
 
 
@@ -781,8 +657,7 @@ class ParameterFormManager(QWidget):
                 self._apply_placeholder_with_lazy_context(widget, param_name, current_value)
 
         # Recursively refresh nested managers
-        for nested_manager in self.nested_managers.values():
-            nested_manager.refresh_placeholder_text()
+        self._apply_to_nested_managers(lambda name, manager: manager.refresh_placeholder_text())
 
 
 
@@ -817,3 +692,17 @@ class ParameterFormManager(QWidget):
         else:
             # Non-lazy nested dataclass in lazy context: create instance with all values
             return nested_type(**nested_values)
+
+    def _apply_to_nested_managers(self, operation_func: callable) -> None:
+        """Apply operation to all nested managers."""
+        for param_name, nested_manager in self.nested_managers.items():
+            operation_func(param_name, nested_manager)
+
+    def _process_nested_values(self, param_name: str, nested_values: Dict[str, Any], current_values: Dict[str, Any]) -> None:
+        """Process nested values and rebuild dataclass instance."""
+        nested_type = self.parameter_types.get(param_name)
+        if nested_type and nested_values:
+            if self.service._type_utils.is_optional_dataclass(nested_type):
+                nested_type = self.service._type_utils.get_optional_inner_type(nested_type)
+            rebuilt_instance = self._rebuild_nested_dataclass_instance(nested_values, nested_type, param_name)
+            current_values[param_name] = rebuilt_instance

@@ -253,8 +253,9 @@ class ConfigWindow(QDialog):
     def save_config(self):
         """Save the configuration preserving lazy behavior for unset fields."""
         try:
-            # Always use form manager to get dataclass instance (unified approach)
-            new_config = self.form_manager.get_dataclass_instance()
+            # ConfigWindow owns dataclass reconstruction - proper separation of concerns
+            current_values = self.form_manager.get_current_values()
+            new_config = self.config_class(**current_values)
 
             # Emit signal and call callback
             self.config_saved.emit(new_config)
