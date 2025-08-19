@@ -269,6 +269,7 @@ class FunctionPaneWidget(QWidget):
                 parameters=self.form_manager.parameters,
                 parameter_types=self.form_manager.parameter_types,
                 field_id=f"func_{self.index}",
+                dataclass_type=None,  # Function parameters, not dataclass fields
                 parameter_info=self.form_manager.parameter_info,
                 use_scroll_area=False,  # Don't use scroll area in function panes
                 function_target=self.func,  # Pass function for docstring fallback

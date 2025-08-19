@@ -611,6 +611,7 @@ class ParameterFormManager(QWidget):
                     next((i for i in range(w.count()) if w.itemData(i) == v), -1)
                     if v is not None else -1
                 )),
+                ('get_selected_values', lambda w, v: self._update_checkbox_group(w, v)),
                 ('setChecked', lambda w, v: w.setChecked(bool(v) if v is not None else False)),
                 ('setValue', lambda w, v: w.setValue(v if v is not None else 0)),
                 ('setText', lambda w, v: w.setText(str(v) if v is not None else "")),
@@ -633,6 +634,8 @@ class ParameterFormManager(QWidget):
         if isinstance(widget, QComboBox):
             current_index = widget.currentIndex()
             return widget.itemData(current_index) if current_index >= 0 else None
+        elif hasattr(widget, 'get_selected_values'):  # Checkbox group for List[Enum]
+            return widget.get_selected_values()
         elif hasattr(widget, 'get_value'):  # NoneAwareLineEdit
             return widget.get_value()
         elif hasattr(widget, 'isChecked'):  # QCheckBox
@@ -738,6 +741,21 @@ class ParameterFormManager(QWidget):
 
         # Fallback to None if no default found
         return None
+
+    def _update_checkbox_group(self, widget, value):
+        """Update checkbox group widget with list of enum values."""
+        if not hasattr(widget, '_checkboxes'):
+            return
+
+        # First, uncheck all checkboxes
+        for checkbox in widget._checkboxes.values():
+            checkbox.setChecked(False)
+
+        # Then check the ones in the value list
+        if value and isinstance(value, list):
+            for enum_value in value:
+                if enum_value in widget._checkboxes:
+                    widget._checkboxes[enum_value].setChecked(True)
 
     def _is_function_parameter(self, param_name: str) -> bool:
         """

@@ -171,6 +171,9 @@ class ParameterFormService:
         
         # Handle list of enums
         if self._type_utils.is_list_of_enums(param_type):
+            # If value is already a list (from checkbox group widget), return as-is
+            if isinstance(value, list):
+                return value
             enum_type = self._type_utils.get_enum_from_list_type(param_type)
             if enum_type:
                 return [enum_type(value)]

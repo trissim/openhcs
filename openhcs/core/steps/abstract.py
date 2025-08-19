@@ -27,7 +27,7 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
-from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS
+from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS, DEFAULT_GROUP_BY
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import PathPlanningConfig
 
@@ -130,7 +130,7 @@ class AbstractStep(abc.ABC):
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
         variable_components: List[VariableComponents] = DEFAULT_VARIABLE_COMPONENTS,
-        group_by: Optional[GroupBy] = None,
+        group_by: Optional[GroupBy] = DEFAULT_GROUP_BY,
         __input_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         __output_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         input_source: InputSource = InputSource.PREVIOUS_STEP,

@@ -117,11 +117,9 @@ class MagicGuiWidgetFactory:
             extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
             return create_enum_widget_unified(enum_type, extracted_value)
 
-        # Handle direct List[Enum] types
+        # Handle direct List[Enum] types - create multi-selection checkbox group
         if TypeCheckers.is_list_of_enums(resolved_type):
-            enum_type = TypeCheckers.get_enum_from_list(resolved_type)
-            extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
-            return create_enum_widget_unified(enum_type, extracted_value)
+            return self._create_checkbox_group_widget(param_name, resolved_type, current_value)
 
         # Extract enum from list wrapper for other cases
         extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
@@ -180,6 +178,37 @@ class MagicGuiWidgetFactory:
         # Functional configuration dispatch
         configurator = CONFIGURATION_REGISTRY.get(resolved_type, lambda w: w)
         configurator(widget)
+
+        return widget
+
+    def _create_checkbox_group_widget(self, param_name: str, param_type: Type, current_value: Any):
+        """Create multi-selection checkbox group for List[Enum] parameters."""
+        from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QCheckBox
+
+        enum_type = TypeCheckers.get_enum_from_list(param_type)
+        widget = QGroupBox(param_name.replace('_', ' ').title())
+        layout = QVBoxLayout(widget)
+
+        # Store checkboxes for value retrieval
+        widget._checkboxes = {}
+
+        for enum_value in enum_type:
+            checkbox = QCheckBox(enum_value.value)
+            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
+            widget._checkboxes[enum_value] = checkbox
+            layout.addWidget(checkbox)
+
+        # Set current values (check boxes for items in the list)
+        if current_value and isinstance(current_value, list):
+            for enum_value in current_value:
+                if enum_value in widget._checkboxes:
+                    widget._checkboxes[enum_value].setChecked(True)
+
+        # Add method to get selected values
+        def get_selected_values():
+            return [enum_val for enum_val, checkbox in widget._checkboxes.items()
+                   if checkbox.isChecked()]
+        widget.get_selected_values = get_selected_values
 
         return widget
 
@@ -461,6 +490,9 @@ SIGNAL_CONNECTION_REGISTRY: Dict[str, callable] = {
     # Magicgui-specific widget signals
     'changed': lambda widget, param_name, callback:
         widget.changed.connect(lambda: callback(param_name, widget.value)),
+    # Checkbox group signal (custom attribute for multi-selection widgets)
+    'get_selected_values': lambda widget, param_name, callback:
+        PyQt6WidgetEnhancer._connect_checkbox_group_signals(widget, param_name, callback),
 }
 
 
@@ -558,6 +590,16 @@ class PyQt6WidgetEnhancer:
             connector(widget, param_name, placeholder_aware_callback)
         else:
             raise ValueError(f"Widget {type(widget).__name__} has no supported change signal")
+
+    @staticmethod
+    def _connect_checkbox_group_signals(widget: Any, param_name: str, callback: Any) -> None:
+        """Connect signals for checkbox group widgets."""
+        if hasattr(widget, '_checkboxes'):
+            # Connect to each checkbox's stateChanged signal
+            for checkbox in widget._checkboxes.values():
+                checkbox.stateChanged.connect(
+                    lambda: callback(param_name, widget.get_selected_values())
+                )
 
     @staticmethod
     def _clear_placeholder_state(widget: Any) -> None:

@@ -186,16 +186,34 @@ def create_pyqt6_widget(param_name: str, param_type: Type, current_value: Any, w
         QVBoxLayout(group_box)
         return group_box
     elif is_list_of_enums(param_type):
+        # Create multi-selection checkbox group for List[Enum] parameters
+        from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QCheckBox
+
         enum_type = get_enum_from_list(param_type)
-        widget = QComboBox()
+        widget = QGroupBox(param_name.replace('_', ' ').title())
+        layout = QVBoxLayout(widget)
+
+        # Store checkboxes for value retrieval
+        widget._checkboxes = {}
+
         for enum_value in enum_type:
-            widget.addItem(enum_value.value, enum_value)
-        if current_value and isinstance(current_value, list) and current_value:
-            first_item = current_value[0]
-            for i in range(widget.count()):
-                if widget.itemData(i) == first_item:
-                    widget.setCurrentIndex(i)
-                    break
+            checkbox = QCheckBox(enum_value.value)
+            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
+            widget._checkboxes[enum_value] = checkbox
+            layout.addWidget(checkbox)
+
+        # Set current values (check boxes for items in the list)
+        if current_value and isinstance(current_value, list):
+            for enum_value in current_value:
+                if enum_value in widget._checkboxes:
+                    widget._checkboxes[enum_value].setChecked(True)
+
+        # Add method to get selected values
+        def get_selected_values():
+            return [enum_val for enum_val, checkbox in widget._checkboxes.items()
+                   if checkbox.isChecked()]
+        widget.get_selected_values = get_selected_values
+
         return widget
     else:
         widget = QLineEdit()
