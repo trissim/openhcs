@@ -383,7 +383,7 @@ class ParameterFormManager(QWidget):
         reset_button = QPushButton(CONSTANTS.RESET_BUTTON_TEXT)
         reset_button.setObjectName(field_ids['reset_button_id'])
         reset_button.setMaximumWidth(60)
-        reset_button.clicked.connect(lambda: self._reset_parameter(param_info.name))
+        reset_button.clicked.connect(lambda: self.reset_parameter(param_info.name))
         layout.addWidget(reset_button)
 
         # Store widgets
@@ -604,69 +604,43 @@ class ParameterFormManager(QWidget):
     # Framework-specific methods for backward compatibility
 
     def reset_all_parameters(self) -> None:
-        """
-        Reset all parameters using sophisticated logic migrated from config window infrastructure.
-
-        This method now contains ALL the sophisticated reset functionality previously in
-        config window classes (LazyAwareResetStrategy, FormManagerUpdater, etc.).
-        """
-
-
-        # Use sophisticated reset logic migrated from config window infrastructure
+        """Reset all parameters with integrated context-aware logic."""
+        # Get reset values for all parameters
         if self.dataclass_type:
-            # Generate reset values using lazy-aware strategy (migrated from LazyAwareResetStrategy)
-            reset_values = self._generate_reset_values_by_context(self.dataclass_type, self._get_current_config_instance())
+            current_config = self._get_current_config_instance()
 
-            # Apply values to form manager (migrated from FormManagerUpdater.apply_values_to_form_manager)
-            self._apply_values_to_form_manager(reset_values)
-
-            # Apply nested reset recursively (migrated from FormManagerUpdater.apply_nested_reset_recursively)
-            self._reset_nested_parameters_recursively(self.dataclass_type, self._get_current_config_instance())
+            if current_config and LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+                # For lazy dataclasses, reset all to None
+                reset_values = {name: None for name in self.parameters.keys()}
+            else:
+                # For concrete dataclasses, use static defaults
+                reset_values = self._get_static_defaults_inline(self.dataclass_type)
         else:
-            # Fallback for function parameters (non-dataclass context)
-            [self.reset_parameter(param_name) for param_name in self.parameters.keys()]
+            # Fallback to empty dict
+            reset_values = {}
 
-    def _generate_reset_values_by_context(self, config_class: Type, current_config: Any) -> Dict[str, Any]:
-        """
-        Generate reset values based on lazy vs concrete dataclass context.
+        # Apply reset values to all parameters
+        for param_name in self.parameters.keys():
+            reset_value = reset_values.get(param_name)
 
-        Migrated from LazyAwareResetStrategy.generate_reset_values() in config window.
-        """
-        from dataclasses import fields
+            # Function parameter fallback
+            if reset_value is None and self._is_function_parameter(param_name):
+                reset_value = self._get_function_parameter_default(param_name)
 
-        # Use LazyDefaultPlaceholderService instead of DataclassIntrospector.is_lazy_dataclass
-        if current_config and LazyDefaultPlaceholderService.has_lazy_resolution(current_config.__class__):
-            # For lazy dataclasses, return None values to trigger proper placeholder behavior
-            # This ensures reset all behaves the same as individual reset buttons
-            return {field.name: None for field in fields(config_class)}
-        else:
-            # Regular dataclass: reset to static default values
-            return self._get_static_defaults(config_class)
+            # Apply reset
+            self.reset_parameter(param_name, reset_value)
 
-    def _get_static_defaults(self, config_class: Type) -> Dict[str, Any]:
-        """
-        Get static default values from dataclass definition.
+        # Reset nested managers recursively
+        if self.dataclass_type:
+            current_config = self._get_current_config_instance()
+            if current_config:
+                self._reset_nested_parameters_recursively(self.dataclass_type, current_config)
 
-        Migrated from DataclassIntrospector.get_static_defaults() in config window.
-        """
-        from dataclasses import fields, MISSING
 
-        return {
-            field.name: field.default if field.default is not MISSING
-                       else field.default_factory() if field.default_factory is not MISSING
-                       else None
-            for field in fields(config_class)
-        }
 
-    def _apply_values_to_form_manager(self, values: Dict[str, Any]) -> None:
-        """
-        Apply values to form manager.
 
-        Migrated from FormManagerUpdater.apply_values_to_form_manager() in config window.
-        """
-        for param_name, value in values.items():
-            if param_name in self.parameters:
-                self.update_parameter(param_name, value)
+
+
 
     def _get_current_config_instance(self) -> Any:
         """Get current config instance for reset operations."""
@@ -739,7 +713,7 @@ class ParameterFormManager(QWidget):
                         nested_reset_values[field.name] = None
                 else:
                     # Regular concrete dataclass: reset to static defaults
-                    nested_reset_values = self._get_static_defaults(nested_config_class)
+                    nested_reset_values = self._get_static_defaults_inline(nested_config_class)
 
                 # Apply reset values to nested manager
                 self._apply_values_to_nested_manager(nested_manager, nested_reset_values)
@@ -796,32 +770,7 @@ class ParameterFormManager(QWidget):
             # Emit signal for PyQt6 compatibility
             self.parameter_changed.emit(param_name, converted_value)
 
-    def _reset_parameter(self, param_name: str) -> None:
-        """Reset parameter with caller responsibility for context detection."""
 
-
-        # Simple logic: dataclass fields use service, function parameters use signature defaults
-        if self.dataclass_type:
-            # Dataclass fields use service with proper context
-            param_type = self.parameter_types.get(param_name)
-            is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-            reset_value = self.service.get_reset_value_for_parameter(
-                param_name, param_type, self.dataclass_type, is_global_config
-            )
-        else:
-            # Function parameters: reset to constructor default value
-            reset_value = self._get_function_parameter_default(param_name)
-
-        # Update parameter in data model
-        self.parameters[param_name] = reset_value
-
-        # Update corresponding widget if it exists
-        if param_name in self.widgets:
-            widget = self.widgets[param_name]
-            self._update_widget_value_with_context(widget, reset_value, param_name)
-
-        # Emit signal to notify other components of the parameter change
-        self.parameter_changed.emit(param_name, reset_value)
 
     def _get_function_parameter_default(self, param_name: str) -> Any:
         """Get the default value for a function parameter from parameter_info."""
@@ -873,19 +822,64 @@ class ParameterFormManager(QWidget):
         return False
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
-        """Reset parameter to default value (public API for backward compatibility)."""
+        """Enhanced reset parameter with integrated logic from 4 consolidated methods."""
+        # Integrated logic from _reset_parameter, _generate_reset_values_by_context, _get_static_defaults
 
+        if param_name not in self.parameters:
+            return
 
-        if param_name in self.parameters:
-            # Use provided default or delegate to sophisticated reset logic
-            if default_value is not None:
-                reset_value = default_value
-                self.update_parameter(param_name, reset_value)
+        # Determine reset value based on context
+        reset_value = default_value
+
+        if reset_value is None:
+            # Use the same logic as the old _reset_parameter method
+            if self.dataclass_type:
+                # Dataclass fields use service with proper context
+                param_type = self.parameter_types.get(param_name)
+                is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+                reset_value = self.service.get_reset_value_for_parameter(
+                    param_name, param_type, self.dataclass_type, is_global_config
+                )
             else:
-                # Use sophisticated reset logic
-                self._reset_parameter(param_name)
+                # Function parameters: reset to constructor default value
+                reset_value = self._get_function_parameter_default(param_name)
 
+        # Apply reset value (integrated from _apply_values_to_form_manager)
+        self.parameters[param_name] = reset_value
 
+        # Update widget if it exists
+        if param_name in self.widgets:
+            widget = self.widgets[param_name]
+            self._update_widget_value_with_context(widget, reset_value, param_name)
+
+        # Handle nested managers
+        if param_name in self.nested_managers:
+            nested_manager = self.nested_managers[param_name]
+            if hasattr(nested_manager, 'reset_all_parameters'):
+                nested_manager.reset_all_parameters()
+
+        # Emit parameter change signal
+        self.parameter_changed.emit(param_name, reset_value)
+
+    def _get_static_defaults_inline(self, config_class: Type) -> Dict[str, Any]:
+        """Get static default values for dataclass fields - inlined from _get_static_defaults."""
+        import dataclasses
+
+        defaults = {}
+
+        if hasattr(config_class, '__dataclass_fields__'):
+            for field_name, field in config_class.__dataclass_fields__.items():
+                if field.default is not dataclasses.MISSING:
+                    defaults[field_name] = field.default
+                elif field.default_factory is not dataclasses.MISSING:
+                    try:
+                        defaults[field_name] = field.default_factory()
+                    except:
+                        defaults[field_name] = None
+                else:
+                    defaults[field_name] = None
+
+        return defaults
 
     def _update_widget_value_with_context(self, widget: QWidget, value: Any, param_name: str) -> None:
         """Update widget value with context-aware placeholder handling."""
