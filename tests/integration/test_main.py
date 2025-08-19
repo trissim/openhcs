@@ -17,7 +17,7 @@ from typing import Dict, List, Union
 from openhcs.constants.constants import VariableComponents
 from openhcs.constants.input_source import InputSource
 from openhcs.core.config import (
-    GlobalPipelineConfig, MaterializationBackend, MaterializationPathConfig,
+    GlobalPipelineConfig, MaterializationBackend, StepMaterializationConfig,
     PathPlanningConfig, VFSConfig, ZarrConfig
 )
 from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
@@ -108,12 +108,12 @@ def create_test_pipeline() -> Pipeline:
                 name="Z-Stack Flattening",
                 func=(create_projection, {'method': 'max_projection'}),
                 variable_components=[VariableComponents.Z_INDEX],
-                materialization_config=MaterializationPathConfig()
+                materialization_config=StepMaterializationConfig()
             ),
             Step(
                 name="Image Enhancement Processing",
                 func=[(stack_percentile_normalize, {'low_percentile': 0.5, 'high_percentile': 99.5})],
-                materialization_config=MaterializationPathConfig()
+                materialization_config=StepMaterializationConfig()
             ),
             Step(name="Position Computation", func=position_func),
             Step(
@@ -154,8 +154,8 @@ def _validate_metadata_structure(metadata: Dict) -> List[str]:
 
 
 def _get_materialization_subdir() -> str:
-    """Get the actual subdirectory name used by MaterializationPathConfig."""
-    return MaterializationPathConfig().sub_dir
+    """Get the actual subdirectory name used by StepMaterializationConfig."""
+    return StepMaterializationConfig().sub_dir
 
 
 def _validate_subdirectory_fields(metadata: Dict) -> None:
