@@ -16,7 +16,7 @@ from openhcs.core.lazy_config import (
     LazyDataclassFactory, create_config_for_editing,
     ensure_global_config_context, CONSTANTS
 )
-from openhcs.core.config_hierarchy import create_openhcs_hierarchy
+
 
 
 def set_current_pipeline_config(config: GlobalPipelineConfig) -> None:
@@ -105,8 +105,7 @@ def create_editing_config_from_existing_lazy_config(
 
 
 
-# Create OpenHCS hierarchy and generate lazy configuration classes
-_openhcs_hierarchy = create_openhcs_hierarchy()
+
 
 # Generate pipeline-specific lazy configuration classes using thread-local resolution
 PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(

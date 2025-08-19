@@ -420,66 +420,7 @@ class LazyDataclassFactory:
             global_config_type, field_path
         )
 
-    @staticmethod
-    def make_lazy_hierarchical(
-        base_class: Type,
-        hierarchy_registry: 'ConfigHierarchyRegistry',
-        lazy_class_name: str = None,
-        use_recursive_resolution: bool = True
-    ) -> Type:
-        """
-        Create lazy dataclass using hierarchical configuration registry.
 
-        This method creates a lazy class that automatically resolves through
-        the N-level hierarchy defined in the registry. The registry must be
-        provided by the caller to maintain generic design.
-
-        Args:
-            base_class: The dataclass type to make lazy
-            hierarchy_registry: Required registry containing the hierarchy definition
-            lazy_class_name: Optional name for the generated lazy class
-            use_recursive_resolution: Whether to use recursive resolution for None values
-
-        Returns:
-            Generated lazy dataclass with hierarchical resolution
-
-        Examples:
-            # Create registry first
-            registry = create_openhcs_hierarchy()
-
-            # Create lazy class with explicit registry
-            LazyStepConfig = LazyDataclassFactory.make_lazy_hierarchical(
-                StepMaterializationConfig,
-                hierarchy_registry=registry
-            )
-        """
-        # Import here to avoid circular imports
-        from openhcs.core.config_hierarchy import HierarchicalResolutionProvider
-
-        # Generate class name if not provided
-        if lazy_class_name is None:
-            lazy_class_name = f"Hierarchical{base_class.__name__}"
-
-        # Create hierarchical resolution provider
-        resolver = HierarchicalResolutionProvider(hierarchy_registry)
-
-        # Get the resolution chain for this type
-        resolution_functions = resolver.create_resolution_chain(base_class)
-
-        # Create instance provider (not used for hierarchical resolution)
-        def hierarchical_instance_provider() -> Any:
-            # For hierarchical resolution, we don't use a single instance provider
-            # Instead, we use the resolution chain in the fallback_chain
-            return None
-
-        return LazyDataclassFactory._create_lazy_dataclass_unified(
-            base_class,
-            hierarchical_instance_provider,
-            lazy_class_name,
-            "HIERARCHICAL LAZY FIELD: {field_name} - original={original_type}, has_default={has_default}, final={final_type}",
-            use_recursive_resolution,
-            resolution_functions
-        )
 
     # Deprecated methods removed - use make_lazy_thread_local() with explicit field_path
 
