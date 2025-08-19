@@ -2,8 +2,12 @@
 import os
 import pytest
 
-# Import pytest-qt for proper PyQt6 testing support
-pytest_plugins = ["pytestqt"]
+# Conditionally import pytest-qt only when not in CPU-only mode
+CPU_ONLY_MODE = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+if not CPU_ONLY_MODE:
+    pytest_plugins = ["pytestqt"]
+else:
+    pytest_plugins = []
 
 
 def pytest_addoption(parser):
