@@ -552,8 +552,49 @@ class ParameterFormManager(QWidget):
 
 
     
-    def update_widget_value(self, widget: QWidget, value: Any) -> None:
-        """Update a widget's value using simplified widget handling."""
+    def update_widget_value(self, widget: QWidget, value: Any, param_name: str = None) -> None:
+        """Enhanced widget value update with integrated context handling."""
+        # Integrated logic from _update_widget_value_with_context, _clear_widget_text, _update_checkbox_group
+
+        # Handle None values with context-aware clearing (integrated from _clear_widget_text)
+        if value is None:
+            # Clear widget text (don't clear checkboxes in lazy context)
+            if not hasattr(widget, 'setChecked'):
+                widget.blockSignals(True)
+                try:
+                    if isinstance(widget, QComboBox):
+                        widget.setCurrentIndex(-1)  # Show placeholder state
+                    elif hasattr(widget, 'clear'):
+                        widget.clear()
+                    elif hasattr(widget, 'setText'):
+                        widget.setText("")
+                finally:
+                    widget.blockSignals(False)
+
+            # Apply placeholder for lazy dataclasses (from _update_widget_value_with_context)
+            if param_name and self.dataclass_type and LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+                self._apply_placeholder_with_lazy_context(widget, param_name, value)
+            return
+
+        # Context-aware widget updating (integrated from _update_widget_value_with_context)
+        if param_name and self.dataclass_type:
+            # Clear any existing placeholder state for non-None values
+            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+
+        # Handle checkbox groups (integrated from _update_checkbox_group)
+        if hasattr(widget, 'get_selected_values') and isinstance(value, list):
+            # Checkbox group widget (integrated logic)
+            if hasattr(widget, '_checkboxes'):
+                # First, uncheck all checkboxes
+                for checkbox in widget._checkboxes.values():
+                    checkbox.setChecked(False)
+                # Then check the ones in the value list
+                for enum_value in value:
+                    if enum_value in widget._checkboxes:
+                        widget._checkboxes[enum_value].setChecked(True)
+            return
+
+        # Standard widget value updates
         # Block signals to prevent widget changes from triggering parameter updates
         widget.blockSignals(True)
         try:
@@ -563,7 +604,6 @@ class ParameterFormManager(QWidget):
                     next((i for i in range(w.count()) if w.itemData(i) == v), -1)
                     if v is not None else -1
                 )),
-                ('get_selected_values', lambda w, v: self._update_checkbox_group(w, v)),
                 ('setChecked', lambda w, v: w.setChecked(bool(v) if v is not None else False)),
                 ('setValue', lambda w, v: w.setValue(v if v is not None else 0)),
                 ('setText', lambda w, v: w.setText(str(v) if v is not None else "")),
@@ -579,7 +619,9 @@ class ParameterFormManager(QWidget):
         finally:
             # Always restore signal connections
             widget.blockSignals(False)
-    
+
+
+
     def get_widget_value(self, widget: QWidget) -> Any:
         """Get a widget's current value using simplified widget handling."""
         # Handle common widget types with simplified logic
@@ -635,11 +677,6 @@ class ParameterFormManager(QWidget):
             current_config = self._get_current_config_instance()
             if current_config:
                 self._reset_nested_parameters_recursively(self.dataclass_type, current_config)
-
-
-
-
-
 
 
     def _get_current_config_instance(self) -> Any:
@@ -782,20 +819,7 @@ class ParameterFormManager(QWidget):
         # Fallback to None if no default found
         return None
 
-    def _update_checkbox_group(self, widget, value):
-        """Update checkbox group widget with list of enum values."""
-        if not hasattr(widget, '_checkboxes'):
-            return
 
-        # First, uncheck all checkboxes
-        for checkbox in widget._checkboxes.values():
-            checkbox.setChecked(False)
-
-        # Then check the ones in the value list
-        if value and isinstance(value, list):
-            for enum_value in value:
-                if enum_value in widget._checkboxes:
-                    widget._checkboxes[enum_value].setChecked(True)
 
     def _is_function_parameter(self, param_name: str) -> bool:
         """
@@ -850,7 +874,7 @@ class ParameterFormManager(QWidget):
         # Update widget if it exists
         if param_name in self.widgets:
             widget = self.widgets[param_name]
-            self._update_widget_value_with_context(widget, reset_value, param_name)
+            self.update_widget_value(widget, reset_value, param_name)
 
         # Handle nested managers
         if param_name in self.nested_managers:
@@ -881,47 +905,11 @@ class ParameterFormManager(QWidget):
 
         return defaults
 
-    def _update_widget_value_with_context(self, widget: QWidget, value: Any, param_name: str) -> None:
-        """Update widget value with context-aware placeholder handling."""
-        # Determine context from dataclass_type
-        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-
-        # For non-None values or global config editing, set actual values
-        if value is not None or is_global_config:
-            # Clear any existing placeholder state
-            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
-            # Set the actual value
-            self.update_widget_value(widget, value)
-        else:
-            # For None values in lazy context, apply placeholder
-            self._clear_widget_text(widget)
-            self._apply_placeholder_with_lazy_context(widget, param_name, value)
 
 
 
-    def _clear_widget_text(self, widget: QWidget) -> None:
-        """Clear widget text content without triggering signals."""
-        # For boolean widgets in lazy context, don't change the widget state
-        # The widget should show the placeholder state, not False
-        if hasattr(widget, 'setChecked'):
-            # Don't change checkbox state for lazy context - leave it as is
-            # The placeholder styling will indicate the lazy state
-            return
 
-        # Block signals to prevent widget changes from triggering parameter updates
-        widget.blockSignals(True)
-        try:
-            if isinstance(widget, QComboBox):
-                # For QComboBox, set to no selection (-1) to show placeholder state
-                # Don't call clear() as it removes all items
-                widget.setCurrentIndex(-1)
-            elif hasattr(widget, 'clear'):
-                widget.clear()
-            elif hasattr(widget, 'setText'):
-                widget.setText("")
-        finally:
-            # Always restore signal connections
-            widget.blockSignals(False)
+
 
 
 
