@@ -699,24 +699,24 @@ class ParameterFormManager(QWidget):
             self.parameter_changed.emit(param_name, converted_value)
 
     def _reset_parameter(self, param_name: str) -> None:
-        """Reset parameter using service layer for sophisticated context-aware logic."""
+        """Reset parameter with caller responsibility for context detection."""
         self.debugger.log_form_manager_operation("reset_parameter", {
             "param_name": param_name,
-            "dataclass_type": self.dataclass_type.__name__ if self.dataclass_type else None
+            "dataclass_type": self.dataclass_type.__name__ if self.dataclass_type else None,
+            "function_target": self.function_target.__name__ if self.function_target else None
         })
 
-        # Delegate to service layer for reset value determination using generic API
+        # Simple logic: dataclass fields use service, function parameters use signature defaults
         if self.dataclass_type:
+            # Dataclass fields use service with proper context
             param_type = self.parameter_types.get(param_name)
-            # Compute context from dataclass_type - fail naturally on invalid input
             is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-            # Pass explicit context to service layer
             reset_value = self.service.get_reset_value_for_parameter(
                 param_name, param_type, self.dataclass_type, is_global_config
             )
         else:
-            # Fallback if no dataclass type provided
-            reset_value = None
+            # Function parameters: reset to constructor default value
+            reset_value = self._get_function_parameter_default(param_name)
 
         # Update parameter in data model
         self.parameters[param_name] = reset_value
@@ -728,6 +728,40 @@ class ParameterFormManager(QWidget):
 
         # Emit signal to notify other components of the parameter change
         self.parameter_changed.emit(param_name, reset_value)
+
+    def _get_function_parameter_default(self, param_name: str) -> Any:
+        """Get the default value for a function parameter from parameter_info."""
+        if self.parameter_info and param_name in self.parameter_info:
+            param_info = self.parameter_info[param_name]
+            if hasattr(param_info, 'default_value'):
+                return param_info.default_value
+
+        # Fallback to None if no default found
+        return None
+
+    def _is_function_parameter(self, param_name: str) -> bool:
+        """
+        Detect if parameter is a function parameter vs dataclass field.
+
+        Function parameters should not be reset against dataclass types.
+        This prevents the critical bug where step editor tries to reset
+        function parameters like 'group_by' against GlobalPipelineConfig.
+        """
+        if not self.function_target or not self.dataclass_type:
+            return False
+
+        # Check if parameter exists in dataclass fields
+        try:
+            import dataclasses
+            if dataclasses.is_dataclass(self.dataclass_type):
+                field_names = {field.name for field in dataclasses.fields(self.dataclass_type)}
+                # If parameter is NOT in dataclass fields, it's a function parameter
+                return param_name not in field_names
+        except Exception:
+            # If we can't determine, assume it's a function parameter to be safe
+            return True
+
+        return False
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
         """Reset parameter to default value (public API for backward compatibility)."""

@@ -62,11 +62,10 @@ class StepParameterEditorWidget(QScrollArea):
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
         
-        # Create parameter form manager (reuses Textual TUI logic)
-        # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
-        from openhcs.core.config import GlobalPipelineConfig
+        # Create parameter form manager for function parameters
+        # Function parameters don't belong to any dataclass, so pass None
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "step", GlobalPipelineConfig,
+            parameters, parameter_types, "step", None,
             param_info,
             color_scheme=self.color_scheme,
             placeholder_prefix="Pipeline default"
