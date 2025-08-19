@@ -246,22 +246,6 @@ def get_current_global_config(config_type: Type) -> Optional[Any]:
     context = _global_config_contexts.get(config_type)
     return getattr(context, 'value', None) if context else None
 
-def get_current_materialization_defaults() -> StepMaterializationConfig:
-    """
-    Get current step materialization config from orchestrator's effective config.
-
-    Steps must resolve against their orchestrator's effective config, which contains
-    the Global → Orchestrator resolution chain. No fallback - steps cannot exist
-    without an orchestrator.
-    """
-    current_config = get_current_global_config(GlobalPipelineConfig)
-    if current_config is None:
-        raise RuntimeError(
-            "No orchestrator config found in thread-local storage. "
-            "Steps cannot exist without an orchestrator context."
-        )
-    return current_config.materialization_defaults
-
 
 # Type registry for lazy dataclass to base class mapping
 _lazy_type_registry: Dict[Type, Type] = {}
