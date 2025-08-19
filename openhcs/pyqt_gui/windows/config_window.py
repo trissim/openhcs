@@ -86,38 +86,14 @@ class LazyAwareResetStrategy(ResetStrategy):
 
     def generate_reset_values(self, config_class: Type, current_config: Any) -> Dict[str, Any]:
         if DataclassIntrospector.is_lazy_dataclass(current_config):
-            # For lazy dataclasses, we need to resolve to actual static defaults
-            # instead of trying to create a new lazy instance with None values
-
-            # Get the base class that the lazy dataclass is based on
-            base_class = self._get_base_class_from_lazy(config_class)
-
-            # Create a fresh instance of the base class to get static defaults
-            static_defaults_instance = base_class()
-
-            # Extract the field values from the static defaults
-            resolved_values = {}
-            for field in fields(config_class):
-                resolved_values[field.name] = getattr(static_defaults_instance, field.name)
-
-            return resolved_values
+            # For lazy dataclasses, return None values to trigger proper placeholder behavior
+            # This ensures reset all behaves the same as individual reset buttons
+            return {field.name: None for field in fields(config_class)}
         else:
             # Regular dataclass: reset to static default values
             return DataclassIntrospector.get_static_defaults(config_class)
 
-    def _get_base_class_from_lazy(self, lazy_class: Type) -> Type:
-        """Extract the base class from a lazy dataclass."""
-        # For PipelineConfig, the base class is GlobalPipelineConfig
-        # We can determine this from the to_base_config method
-        if hasattr(lazy_class, 'to_base_config'):
-            # Create a dummy instance to inspect the to_base_config method
-            dummy_instance = lazy_class()
-            base_instance = dummy_instance.to_base_config()
-            return type(base_instance)
 
-        # Fallback: assume the lazy class name pattern and import the base class
-        from openhcs.core.config import GlobalPipelineConfig
-        return GlobalPipelineConfig
 
 
 class FormManagerUpdater:
