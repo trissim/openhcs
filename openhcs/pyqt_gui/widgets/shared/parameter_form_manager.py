@@ -305,9 +305,7 @@ class ParameterFormManager(QWidget):
                 parent=group_box, use_scroll_area=False, color_scheme=self.config.color_scheme
             )
             self.nested_managers[param_info.name] = nested_manager
-            nested_manager.parameter_changed.connect(
-                lambda name, value: self._handle_nested_parameter_change(param_info.name, name, value)
-            )
+
             group_box.content_layout.addWidget(nested_manager)
         else:
             nested_form = self._create_nested_form_inline(param_info.name, param_info.type, current_value)
@@ -363,23 +361,7 @@ class ParameterFormManager(QWidget):
 
         return nested_manager
 
-    def _handle_nested_parameter_change(self, parent_param_name: str, nested_param_name: str, nested_value: Any):
-        """
-        Handle parameter changes from nested form managers.
 
-        This ensures that when you change a field in a nested dataclass form (like materialization_config),
-        the parent form manager knows about it and can properly rebuild the nested dataclass instance.
-
-        Args:
-            parent_param_name: Name of the parent parameter (e.g., 'materialization_config')
-            nested_param_name: Name of the nested field that changed (e.g., 'well_filter')
-            nested_value: New value for the nested field
-        """
-
-
-        # Trigger a parameter change for the parent parameter
-        # This will cause get_current_values() to rebuild the nested dataclass with current values
-        self.parameter_changed.emit(parent_param_name, nested_value)
 
     def _apply_placeholder_with_lazy_context(self, widget: QWidget, param_name: str, current_value: Any) -> None:
         """Apply placeholder using mathematically elegant single service call - fail loud on invalid setup."""
@@ -413,95 +395,69 @@ class ParameterFormManager(QWidget):
         self.parameter_changed.emit(param_name, converted_value)
     
     def update_widget_value(self, widget: QWidget, value: Any, param_name: str = None) -> None:
-        """Enhanced widget value update with integrated context handling."""
-        # Integrated logic from _update_widget_value_with_context, _clear_widget_text, _update_checkbox_group
+        """Update widget value using functional dispatch."""
+        dispatch_table = [
+            (QComboBox, self._update_combo_box),
+            ('get_selected_values', self._update_checkbox_group),
+            ('setChecked', lambda w, v: w.setChecked(bool(v))),
+            ('setValue', lambda w, v: w.setValue(v or 0)),
+            ('set_value', lambda w, v: w.set_value(v)),
+            ('setText', lambda w, v: w.setText(str(v or ""))),
+            ('clear', lambda w, v: v is None and w.clear())
+        ]
 
-        # Handle None values with context-aware clearing (integrated from _clear_widget_text)
-        if value is None:
-            # Clear widget text (don't clear checkboxes in lazy context)
-            if not hasattr(widget, 'setChecked'):
-                widget.blockSignals(True)
-                try:
-                    if isinstance(widget, QComboBox):
-                        widget.setCurrentIndex(-1)  # Show placeholder state
-                    elif hasattr(widget, 'clear'):
-                        widget.clear()
-                    elif hasattr(widget, 'setText'):
-                        widget.setText("")
-                finally:
-                    widget.blockSignals(False)
+        self._execute_with_signal_blocking(widget, lambda: next(
+            (updater(widget, value) for matcher, updater in dispatch_table
+             if (isinstance(widget, matcher) if isinstance(matcher, type) else hasattr(widget, matcher))), None
+        ))
+        self._apply_context_behavior(widget, value, param_name)
 
-            # Apply placeholder for lazy dataclasses (from _update_widget_value_with_context)
-            if param_name and self.dataclass_type and LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
-                self._apply_placeholder_with_lazy_context(widget, param_name, value)
-            return
+    def _update_combo_box(self, widget: QComboBox, value: Any) -> None:
+        """Update combo box with value matching."""
+        widget.setCurrentIndex(-1 if value is None else
+                             next((i for i in range(widget.count()) if widget.itemData(i) == value), -1))
 
-        # Context-aware widget updating (integrated from _update_widget_value_with_context)
-        if param_name and self.dataclass_type:
-            # Clear any existing placeholder state for non-None values
-            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
+    def _update_checkbox_group(self, widget: QWidget, value: Any) -> None:
+        """Update checkbox group using functional operations."""
+        if hasattr(widget, '_checkboxes') and isinstance(value, list):
+            # Functional: reset all, then set selected
+            [cb.setChecked(False) for cb in widget._checkboxes.values()]
+            [widget._checkboxes[v].setChecked(True) for v in value if v in widget._checkboxes]
 
-        # Handle checkbox groups (integrated from _update_checkbox_group)
-        if hasattr(widget, 'get_selected_values') and isinstance(value, list):
-            # Checkbox group widget (integrated logic)
-            if hasattr(widget, '_checkboxes'):
-                # First, uncheck all checkboxes
-                for checkbox in widget._checkboxes.values():
-                    checkbox.setChecked(False)
-                # Then check the ones in the value list
-                for enum_value in value:
-                    if enum_value in widget._checkboxes:
-                        widget._checkboxes[enum_value].setChecked(True)
-            return
-
-        # Standard widget value updates
-        # Block signals to prevent widget changes from triggering parameter updates
+    def _execute_with_signal_blocking(self, widget: QWidget, operation: callable) -> None:
+        """Execute operation with signal blocking - stateless utility."""
         widget.blockSignals(True)
-        try:
-            # Functional pattern: widget type to update function mapping
-            widget_updaters = [
-                (QComboBox, lambda w, v: w.setCurrentIndex(
-                    next((i for i in range(w.count()) if w.itemData(i) == v), -1)
-                    if v is not None else -1
-                )),
-                ('setChecked', lambda w, v: w.setChecked(bool(v) if v is not None else False)),
-                ('setValue', lambda w, v: w.setValue(v if v is not None else 0)),
-                ('setText', lambda w, v: w.setText(str(v) if v is not None else "")),
-                ('set_value', lambda w, v: w.set_value(v))
-            ]
+        operation()
+        widget.blockSignals(False)
 
-            # Functional pattern: find and apply first matching updater
-            for matcher, updater in widget_updaters:
-                if (isinstance(matcher, type) and isinstance(widget, matcher)) or \
-                   (isinstance(matcher, str) and hasattr(widget, matcher)):
-                    updater(widget, value)
-                    break
-        finally:
-            # Always restore signal connections
-            widget.blockSignals(False)
+    def _apply_context_behavior(self, widget: QWidget, value: Any, param_name: str) -> None:
+        """Apply lazy placeholder context behavior - pure function of inputs."""
+        if not param_name or not self.dataclass_type:
+            return
+
+        if value is None and LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+            self._apply_placeholder_with_lazy_context(widget, param_name, value)
+        elif value is not None:
+            PyQt6WidgetEnhancer._clear_placeholder_state(widget)
 
 
 
     def get_widget_value(self, widget: QWidget) -> Any:
-        """Get a widget's current value using simplified widget handling."""
-        # Handle common widget types with simplified logic
-        if isinstance(widget, QComboBox):
-            current_index = widget.currentIndex()
-            return widget.itemData(current_index) if current_index >= 0 else None
-        elif hasattr(widget, 'get_selected_values'):  # Checkbox group for List[Enum]
-            return widget.get_selected_values()
-        elif hasattr(widget, 'get_value'):  # NoneAwareLineEdit
-            return widget.get_value()
-        elif hasattr(widget, 'isChecked'):  # QCheckBox
-            return widget.isChecked()
-        elif hasattr(widget, 'value'):  # Spinboxes
-            # Handle spinboxes with placeholder text
-            if hasattr(widget, 'specialValueText') and widget.value() == widget.minimum() and widget.specialValueText():
-                return None
-            return widget.value()
-        elif hasattr(widget, 'text'):  # Line edits, labels
-            return widget.text()
-        return None
+        """Get widget value using functional dispatch."""
+        dispatch_table = [
+            (QComboBox, lambda w: w.itemData(w.currentIndex()) if w.currentIndex() >= 0 else None),
+            ('get_selected_values', lambda w: w.get_selected_values()),
+            ('get_value', lambda w: w.get_value()),
+            ('isChecked', lambda w: w.isChecked()),
+            ('value', lambda w: None if (hasattr(w, 'specialValueText') and w.value() == w.minimum() and w.specialValueText()) else w.value()),
+            ('text', lambda w: w.text())
+        ]
+
+        return next(
+            (extractor(widget) for matcher, extractor in dispatch_table
+             if (isinstance(widget, matcher) if isinstance(matcher, type) else hasattr(widget, matcher))),
+            None
+        )
 
     # Framework-specific methods for backward compatibility
 
@@ -515,11 +471,6 @@ class ParameterFormManager(QWidget):
             current_config = getattr(self, '_current_config_instance', None)
             if current_config:
                 self.service.reset_nested_managers(self.nested_managers, self.dataclass_type, current_config)
-
-
-
-
-
 
 
 
@@ -569,47 +520,28 @@ class ParameterFormManager(QWidget):
         return False
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
-        """Enhanced reset parameter with integrated logic from 4 consolidated methods."""
-        # Integrated logic from _reset_parameter, _generate_reset_values_by_context, _get_static_defaults
-
+        """Reset parameter with streamlined logic."""
         if param_name not in self.parameters:
             return
 
-        # Determine reset value based on context
-        reset_value = default_value
+        # Resolve reset value using dispatch
+        reset_value = default_value or self._get_reset_value(param_name)
 
-        if reset_value is None:
-            # Use the same logic as the old _reset_parameter method
-            if self.dataclass_type:
-                # Dataclass fields use service with proper context
-                param_type = self.parameter_types.get(param_name)
-                is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-                reset_value = self.service.get_reset_value_for_parameter(
-                    param_name, param_type, self.dataclass_type, is_global_config
-                )
-            else:
-                # Function parameters: reset to constructor default value
-                reset_value = (self.parameter_info.get(param_name).default_value
-                              if self.parameter_info and param_name in self.parameter_info
-                              and hasattr(self.parameter_info[param_name], 'default_value')
-                              else None)
-
-        # Apply reset value (integrated from _apply_values_to_form_manager)
+        # Apply reset with functional operations
         self.parameters[param_name] = reset_value
-
-        # Update widget if it exists
-        if param_name in self.widgets:
-            widget = self.widgets[param_name]
-            self.update_widget_value(widget, reset_value, param_name)
-
-        # Handle nested managers
-        if param_name in self.nested_managers:
-            nested_manager = self.nested_managers[param_name]
-            if hasattr(nested_manager, 'reset_all_parameters'):
-                nested_manager.reset_all_parameters()
-
-        # Emit parameter change signal
+        self.widgets.get(param_name) and self.update_widget_value(self.widgets[param_name], reset_value, param_name)
+        self.nested_managers.get(param_name) and hasattr(self.nested_managers[param_name], 'reset_all_parameters') and self.nested_managers[param_name].reset_all_parameters()
         self.parameter_changed.emit(param_name, reset_value)
+
+    def _get_reset_value(self, param_name: str) -> Any:
+        """Get reset value using context dispatch."""
+        if self.dataclass_type:
+            return self.service.get_reset_value_for_parameter(
+                param_name, self.parameter_types.get(param_name), self.dataclass_type,
+                not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type))
+
+        return (getattr(self.parameter_info.get(param_name, object()), 'default_value', None)
+                if self.parameter_info and param_name in self.parameter_info else None)
 
     def get_current_values(self) -> Dict[str, Any]:
         """
