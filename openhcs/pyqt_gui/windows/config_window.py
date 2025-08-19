@@ -13,8 +13,8 @@ from functools import partial
 from abc import ABC, abstractmethod
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QScrollArea, QWidget, QFormLayout, QGroupBox, QFrame,
+    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QScrollArea, QWidget, QFrame,
     QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QComboBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -26,8 +26,7 @@ from openhcs.pyqt_gui.shared.style_generator import StyleSheetGenerator
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 from openhcs.core.config import GlobalPipelineConfig
 
-# Import PyQt6 help components
-from openhcs.pyqt_gui.widgets.shared.clickable_help_components import GroupBoxWithHelp, LabelWithHelp
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,18 +57,7 @@ class DataclassIntrospector:
             for field in fields(config_class)
         }
 
-    @staticmethod
-    def get_lazy_reset_values(config_class: Type) -> Dict[str, Any]:
-        """Get reset values for lazy dataclass (all None for lazy loading)."""
-        return {field.name: None for field in fields(config_class)}
 
-    @staticmethod
-    def extract_field_values(dataclass_instance: Any) -> Dict[str, Any]:
-        """Extract field values from a dataclass instance."""
-        return {
-            field.name: getattr(dataclass_instance, field.name)
-            for field in fields(dataclass_instance)
-        }
 
 
 class ResetStrategy(ABC):
@@ -335,149 +323,11 @@ class ConfigWindow(QDialog):
         # Apply centralized styling
         self.setStyleSheet(self.style_generator.generate_config_window_style())
     
-    def create_parameter_form(self) -> QWidget:
-        """
-        Create the parameter form using extracted business logic.
-        
-        Returns:
-            Widget containing parameter form
-        """
-        form_widget = QWidget()
-        main_layout = QVBoxLayout(form_widget)
-        
-        # Group parameters by category (simplified grouping)
-        basic_params = {}
-        advanced_params = {}
-        
-        for param_name, param_info in self.parameter_info.items():
-            # Simple categorization based on parameter name
-            if any(keyword in param_name.lower() for keyword in ['debug', 'verbose', 'advanced', 'experimental']):
-                advanced_params[param_name] = param_info
-            else:
-                basic_params[param_name] = param_info
-        
-        # Create basic parameters group
-        if basic_params:
-            basic_group = self.create_parameter_group("Basic Settings", basic_params)
-            main_layout.addWidget(basic_group)
-        
-        # Create advanced parameters group
-        if advanced_params:
-            advanced_group = self.create_parameter_group("Advanced Settings", advanced_params)
-            main_layout.addWidget(advanced_group)
-        
-        main_layout.addStretch()
-        return form_widget
-    
-    def create_parameter_group(self, group_name: str, parameters: Dict) -> QGroupBox:
-        """
-        Create a parameter group.
-        
-        Args:
-            group_name: Name of the parameter group
-            parameters: Dictionary of parameters
-            
-        Returns:
-            QGroupBox containing the parameters
-        """
-        group_box = QGroupBox(group_name)
-        layout = QFormLayout(group_box)
-        
-        for param_name, param_info in parameters.items():
-            # Get current value - preserve None values for lazy dataclasses
-            if hasattr(self.current_config, '_resolve_field_value'):
-                current_value = object.__getattribute__(self.current_config, param_name) if hasattr(self.current_config, param_name) else param_info.default_value
-            else:
-                current_value = getattr(self.current_config, param_name, param_info.default_value)
-            
-            # Create parameter widget
-            widget = self.create_parameter_widget(param_name, param_info.param_type, current_value)
-            if widget:
-                # Parameter label with help functionality
-                label_text = param_name.replace('_', ' ').title()
-                param_description = param_info.description
 
-                # Use LabelWithHelp for parameter help
-                label_with_help = LabelWithHelp(
-                    text=label_text,
-                    param_name=param_name,
-                    param_description=param_description,
-                    param_type=param_info.param_type,
-                    color_scheme=self.color_scheme
-                )
-                label_with_help.setStyleSheet(f"color: {self.color_scheme.to_hex(self.color_scheme.text_secondary)}; font-weight: normal;")
-                
-                # Add to form
-                layout.addRow(label_with_help, widget)
-                self.parameter_widgets[param_name] = widget
-        
-        return group_box
     
-    def create_parameter_widget(self, param_name: str, param_type: type, current_value: Any) -> Optional[QWidget]:
-        """
-        Create parameter widget based on type.
-        
-        Args:
-            param_name: Parameter name
-            param_type: Parameter type
-            current_value: Current parameter value
-            
-        Returns:
-            Widget for parameter editing or None
-        """
-        try:
-            # Boolean parameters
-            if param_type == bool:
-                widget = QCheckBox()
-                widget.setChecked(bool(current_value))
-                widget.toggled.connect(lambda checked: self.handle_parameter_change(param_name, checked))
-                return widget
-            
-            # Integer parameters
-            elif param_type == int:
-                widget = QSpinBox()
-                widget.setRange(-999999, 999999)
-                widget.setValue(int(current_value) if current_value is not None else 0)
-                widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
-                return widget
-            
-            # Float parameters
-            elif param_type == float:
-                widget = QDoubleSpinBox()
-                widget.setRange(-999999.0, 999999.0)
-                widget.setDecimals(6)
-                widget.setValue(float(current_value) if current_value is not None else 0.0)
-                widget.valueChanged.connect(lambda value: self.handle_parameter_change(param_name, value))
-                return widget
-            
-            # Enum parameters
-            elif any(base.__name__ == 'Enum' for base in param_type.__bases__):
-                widget = QComboBox()
-                for enum_value in param_type:
-                    widget.addItem(str(enum_value.value), enum_value)
-                
-                # Set current value
-                if current_value is not None:
-                    for i in range(widget.count()):
-                        if widget.itemData(i) == current_value:
-                            widget.setCurrentIndex(i)
-                            break
-                
-                widget.currentIndexChanged.connect(
-                    lambda index: self.handle_parameter_change(param_name, widget.itemData(index))
-                )
-                return widget
-            
-            # String and other parameters
-            else:
-                widget = QLineEdit()
-                widget.setText(str(current_value) if current_value is not None else "")
-                widget.textChanged.connect(lambda text: self.handle_parameter_change(param_name, text))
-                return widget
-                
-        except Exception as e:
-            logger.warning(f"Failed to create widget for parameter {param_name}: {e}")
-            return None
+
+    
+
     
     def create_button_panel(self) -> QWidget:
         """
