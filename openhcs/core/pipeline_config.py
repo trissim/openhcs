@@ -119,10 +119,17 @@ PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
 
 # Generate step-level lazy class using thread-local resolution
 # No recursive resolution to avoid circular dependencies with PathPlanningConfig inheritance
+
+# Automatically detect field path instead of hardcoding
+from openhcs.core.hierarchy_introspection import FieldPathDetector
+_step_materialization_field_path = FieldPathDetector.find_field_path_for_type(
+    GlobalPipelineConfig, StepMaterializationConfig
+)
+
 LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_thread_local(
     base_class=StepMaterializationConfig,
     global_config_type=GlobalPipelineConfig,
-    field_path="materialization_defaults",
+    field_path=_step_materialization_field_path,
     lazy_class_name="LazyStepMaterializationConfig",
     use_recursive_resolution=False  # Disable to prevent recursion with inherited fields
 )
