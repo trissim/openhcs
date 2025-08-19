@@ -53,44 +53,17 @@ class StepParameterEditorWidget(QScrollArea):
         parameters = {}
         parameter_types = {}
         param_defaults = {}
-        
+
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
+            # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
             current_value = getattr(self.step, name, info.default_value)
-
-            # Generic handling for any lazy dataclass parameter - use the SAME pattern as pipeline editor
-            if current_value is not None:
-                from openhcs.core.lazy_config import get_base_type_for_lazy
-                from openhcs.core.config import get_current_global_config, GlobalPipelineConfig
-                from dataclasses import fields
-
-                # Check if it's a lazy dataclass that needs proper editing preparation
-                if get_base_type_for_lazy(type(current_value)) is not None:
-                    # Use the EXACT SAME pattern as create_editing_config_from_existing_lazy_config
-                    # Extract field values, preserving user-set values as concrete values
-                    field_values = {}
-                    for field_obj in fields(current_value):
-                        # Get raw stored value without triggering lazy resolution
-                        raw_value = object.__getattribute__(current_value, field_obj.name)
-
-                        if raw_value is not None:
-                            # User has explicitly set this field - preserve as concrete value
-                            field_values[field_obj.name] = raw_value
-                        else:
-                            # Field is None - keep as None for placeholder behavior
-                            field_values[field_obj.name] = None
-
-                    # Debug: Check what values we extracted
-                    print(f"DEBUG: Extracted field_values for {name}: {field_values}")
-
-                    # Create new instance of the same lazy type with preserved values
-                    current_value = type(current_value)(**field_values)
-
             parameters[name] = current_value
             parameter_types[name] = info.param_type
             param_defaults[name] = info.default_value
         
         # Create parameter form manager (reuses Textual TUI logic)
+        # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
         from openhcs.core.config import GlobalPipelineConfig
         self.form_manager = ParameterFormManager(
             parameters, parameter_types, "step", GlobalPipelineConfig,
@@ -123,6 +96,7 @@ class StepParameterEditorWidget(QScrollArea):
         layout.addWidget(header_label)
         
         # Parameter form (using shared form manager)
+        # ParameterFormManager automatically routes lazy dataclass parameters to LazyDataclassEditor
         form_frame = QFrame()
         form_frame.setFrameStyle(QFrame.Shape.Box)
         form_frame.setStyleSheet(f"""
@@ -133,12 +107,12 @@ class StepParameterEditorWidget(QScrollArea):
                 padding: 10px;
             }}
         """)
-        
+
         form_layout = QVBoxLayout(form_frame)
-        
+
         # Add parameter form manager
         form_layout.addWidget(self.form_manager)
-        
+
         layout.addWidget(form_frame)
         
         # Action buttons (mirrors Textual TUI)

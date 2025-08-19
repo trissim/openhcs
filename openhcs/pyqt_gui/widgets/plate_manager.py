@@ -462,13 +462,17 @@ class PlateManagerWidget(QWidget):
         # Load existing config or create new one for editing
         representative_orchestrator = selected_orchestrators[0]
 
+        # Set up thread-local context for pipeline config editing
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        set_current_global_config(GlobalPipelineConfig, self.global_config)
+
         # Create config for editing based on whether orchestrator has existing config
         if representative_orchestrator.pipeline_config is not None:
             # Existing config - use the editing function that preserves user values
             from openhcs.core.pipeline_config import create_editing_config_from_existing_lazy_config
             current_plate_config = create_editing_config_from_existing_lazy_config(
                 representative_orchestrator.pipeline_config,
-                self.global_config  # Use current global config for updated placeholders
+                None  # Use thread-local context set up above
             )
         else:
             # Create new config with placeholders using current global config

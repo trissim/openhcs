@@ -202,22 +202,27 @@ class LazyDataclassFactory:
     """Generic factory for creating lazy dataclasses with flexible resolution."""
 
     @staticmethod
-    def _introspect_dataclass_fields(base_class: Type, debug_template: str) -> List[Tuple[str, Type, None]]:
+    def _introspect_dataclass_fields(base_class: Type, debug_template: str,
+                                    global_config_type: Type = None,
+                                    parent_field_path: str = None) -> List[Tuple[str, Type, None]]:
         """
         Unified field introspection logic for lazy dataclass creation.
 
         Analyzes dataclass fields to determine appropriate types for lazy loading,
         preserving original types for fields with defaults while making fields
-        without defaults Optional for lazy resolution.
+        without defaults Optional for lazy resolution. Converts nested dataclass
+        fields to their lazy equivalents.
 
         Args:
             base_class: The dataclass to introspect
             debug_template: Template string for debug logging
+            global_config_type: Global config type for creating lazy nested types
+            parent_field_path: Field path prefix for nested lazy types
 
         Returns:
             List of (field_name, field_type, default_value) tuples for make_dataclass
         """
-        from dataclasses import MISSING
+        from dataclasses import MISSING, is_dataclass
 
         base_fields = fields(base_class)
         lazy_field_definitions = []
@@ -232,21 +237,35 @@ class LazyDataclassFactory:
             has_default = (field.default is not MISSING or
                          field.default_factory is not MISSING)
 
+            # Check if field type is a dataclass that should be made lazy
+            field_type = field.type
+            if is_dataclass(field.type) and global_config_type is not None:
+                # Create lazy version of nested dataclass
+                nested_field_path = f"{parent_field_path}.{field.name}" if parent_field_path else field.name
+                lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
+                    base_class=field.type,
+                    global_config_type=global_config_type,
+                    field_path=nested_field_path,
+                    lazy_class_name=f"Lazy{field.type.__name__}"
+                )
+                field_type = lazy_nested_type
+                logger.debug(f"Converted nested dataclass {field.name}: {field.type} -> {lazy_nested_type}")
+
             if is_already_optional or not has_default:
                 # Field is already Optional or has no default - make it Optional for lazy loading
-                field_type = Union[field.type, type(None)] if not is_already_optional else field.type
+                final_field_type = Union[field_type, type(None)] if not is_already_optional else field_type
             else:
-                # Field has default - preserve original type (don't make Optional)
-                field_type = field.type
+                # Field has default - preserve type (don't make Optional)
+                final_field_type = field_type
 
-            lazy_field_definitions.append((field.name, field_type, None))
+            lazy_field_definitions.append((field.name, final_field_type, None))
 
             # Debug logging with provided template (reduced to DEBUG level to reduce log pollution)
             logger.debug(debug_template.format(
                 field_name=field.name,
                 original_type=field.type,
                 has_default=has_default,
-                final_type=field_type
+                final_type=final_field_type
             ))
 
         return lazy_field_definitions
@@ -258,7 +277,9 @@ class LazyDataclassFactory:
         lazy_class_name: str,
         debug_template: str,
         use_recursive_resolution: bool = False,
-        fallback_chain: Optional[List[Callable[[str], Any]]] = None
+        fallback_chain: Optional[List[Callable[[str], Any]]] = None,
+        global_config_type: Type = None,
+        parent_field_path: str = None
     ) -> Type:
         """Create lazy dataclass with declarative configuration."""
         if not is_dataclass(base_class):
@@ -284,7 +305,9 @@ class LazyDataclassFactory:
         # Create lazy dataclass with introspected fields
         lazy_class = make_dataclass(
             lazy_class_name,
-            LazyDataclassFactory._introspect_dataclass_fields(base_class, debug_template),
+            LazyDataclassFactory._introspect_dataclass_fields(
+                base_class, debug_template, global_config_type, parent_field_path
+            ),
             frozen=True
         )
 
@@ -393,7 +416,8 @@ class LazyDataclassFactory:
 
         return LazyDataclassFactory._create_lazy_dataclass_unified(
             base_class, thread_local_instance_provider, lazy_class_name,
-            CONSTANTS.THREAD_LOCAL_FIELD_DEBUG_TEMPLATE, use_recursive_resolution, fallback_chain
+            CONSTANTS.THREAD_LOCAL_FIELD_DEBUG_TEMPLATE, use_recursive_resolution, fallback_chain,
+            global_config_type, field_path
         )
 
     @staticmethod

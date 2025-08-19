@@ -29,7 +29,6 @@ from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
 
 # Import OpenHCS core components
 from openhcs.core.config import LazyDefaultPlaceholderService, GlobalPipelineConfig
-from openhcs.core.lazy_config import LazyDataclassFactory
 from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
 
 
@@ -156,6 +155,80 @@ class ParameterFormManager(QWidget):
         
         # Set up UI
         self.setup_ui()
+
+    @classmethod
+    def from_dataclass_instance(cls, dataclass_instance: Any, field_id: str,
+                              placeholder_prefix: str = "Default",
+                              parent=None, use_scroll_area: bool = True,
+                              function_target=None, color_scheme=None):
+        """
+        Create ParameterFormManager for editing entire dataclass instance.
+
+        This replaces LazyDataclassEditor functionality by automatically extracting
+        parameters from the dataclass instance and creating the form manager.
+
+        Args:
+            dataclass_instance: The dataclass instance to edit
+            field_id: Unique identifier for the form
+            placeholder_prefix: Prefix for placeholder text
+            parent: Parent widget
+            use_scroll_area: Whether to use scroll area
+            function_target: Optional function target
+            color_scheme: Optional color scheme
+
+        Returns:
+            ParameterFormManager configured for dataclass editing
+        """
+        from dataclasses import fields, is_dataclass
+
+        if not is_dataclass(dataclass_instance):
+            raise ValueError(f"{type(dataclass_instance)} is not a dataclass")
+
+        # Handle lazy dataclasses properly using the editing config pattern
+        if hasattr(dataclass_instance, '_resolve_field_value'):
+            # Lazy dataclass - use create_editing_config_from_existing_lazy_config
+            from openhcs.core.pipeline_config import create_editing_config_from_existing_lazy_config
+            editing_config = create_editing_config_from_existing_lazy_config(
+                dataclass_instance, None  # Use existing thread-local context
+            )
+
+            # Extract parameters from editing config
+            parameters = {}
+            parameter_types = {}
+            for field_obj in fields(editing_config):
+                # Get raw stored value (preserves None vs concrete distinction)
+                raw_value = object.__getattribute__(editing_config, field_obj.name)
+                parameters[field_obj.name] = raw_value
+                parameter_types[field_obj.name] = field_obj.type
+
+            # CRITICAL: Use the editing config type for proper thread-local resolution
+            # The editing config has the correct context setup for the current thread-local state
+            dataclass_type = type(editing_config)
+        else:
+            # Regular dataclass - extract parameters normally
+            parameters = {}
+            parameter_types = {}
+
+            for field_obj in fields(dataclass_instance):
+                current_value = getattr(dataclass_instance, field_obj.name)
+                parameters[field_obj.name] = current_value
+                parameter_types[field_obj.name] = field_obj.type
+
+            dataclass_type = type(dataclass_instance)
+
+        # Create ParameterFormManager with extracted data
+        return cls(
+            parameters=parameters,
+            parameter_types=parameter_types,
+            field_id=field_id,
+            dataclass_type=dataclass_type,  # Use determined dataclass type
+            parameter_info=None,
+            parent=parent,
+            use_scroll_area=use_scroll_area,
+            function_target=function_target,
+            color_scheme=color_scheme,
+            placeholder_prefix=placeholder_prefix
+        )
     
     def setup_ui(self):
         """Set up the UI layout."""
@@ -299,22 +372,27 @@ class ParameterFormManager(QWidget):
         return container
 
     def _create_nested_dataclass_widget(self, param_info) -> QWidget:
-        """Create widget for nested dataclass parameter."""
+        """Create widget for nested dataclass parameter, routing lazy dataclasses to LazyDataclassEditor."""
+        # Check if this is a lazy dataclass that should use LazyDataclassEditor
+        if self._is_lazy_dataclass_parameter(param_info.type):
+            return self._create_lazy_dataclass_widget(param_info)
+
+        # Traditional nested dataclass handling for non-lazy types
         # Get display information
         display_info = self.service.get_parameter_display_info(
             param_info.name, param_info.type, param_info.description
         )
-        
+
         # Create group box with help
         group_box = GroupBoxWithHelp(
             title=display_info['group_title'],
             help_target=param_info.type,
             color_scheme=self.config.color_scheme or PyQt6ColorScheme()
         )
-        
+
         # Get nested form structure from pre-analyzed structure
         nested_structure = self.form_structure.nested_forms[param_info.name]
-        
+
         # Create nested form manager using simplified constructor
         nested_config = pyqt_config(
             field_id=nested_structure.field_id,
@@ -340,7 +418,7 @@ class ParameterFormManager(QWidget):
             self.color_scheme,
             self.placeholder_prefix  # Pass through placeholder prefix
         )
-        
+
         # Store reference for updates
         self.nested_managers[param_info.name] = nested_manager
 
@@ -354,7 +432,49 @@ class ParameterFormManager(QWidget):
 
         # Add nested form to group box
         group_box.content_layout.addWidget(nested_manager)
-        
+
+        return group_box
+
+    def _create_lazy_dataclass_widget(self, param_info) -> QWidget:
+        """Create nested ParameterFormManager for lazy dataclass parameter - unified approach."""
+        # Get display information
+        display_info = self.service.get_parameter_display_info(
+            param_info.name, param_info.type, param_info.description
+        )
+
+        # Create group box with help
+        group_box = GroupBoxWithHelp(
+            title=display_info['group_title'],
+            help_target=param_info.type,
+            color_scheme=self.config.color_scheme or PyQt6ColorScheme()
+        )
+
+        # Create nested ParameterFormManager using unified approach
+        # With recursive lazy dataclass conversion, nested instances should already be lazy types
+        nested_manager = ParameterFormManager.from_dataclass_instance(
+            dataclass_instance=param_info.current_value or param_info.type(),
+            field_id=f"nested_{param_info.name}",
+            placeholder_prefix=self.placeholder_prefix,
+            parent=group_box,
+            use_scroll_area=False,  # Nested forms don't need scroll areas
+            color_scheme=self.config.color_scheme
+        )
+
+        # Connect parameter changes to reconstruct dataclass and emit change
+        def handle_nested_change(nested_param_name, nested_value):
+            # Get updated dataclass instance from nested manager
+            updated_dataclass = nested_manager.get_dataclass_instance()
+            # Emit change for the parent parameter
+            self.parameter_changed.emit(param_info.name, updated_dataclass)
+
+        nested_manager.parameter_changed.connect(handle_nested_change)
+
+        # Add nested manager to group box
+        group_box.content_layout.addWidget(nested_manager)
+
+        # Store nested manager for refresh operations
+        self.nested_managers[param_info.name] = nested_manager
+
         return group_box
 
     def _handle_nested_parameter_change(self, parent_param_name: str, nested_param_name: str, nested_value: Any):
@@ -377,32 +497,26 @@ class ParameterFormManager(QWidget):
         # This will cause get_current_values() to rebuild the nested dataclass with current values
         self.parameter_changed.emit(parent_param_name, nested_value)
 
+    def _is_lazy_dataclass_parameter(self, param_type: Type) -> bool:
+        """Check if parameter type is a lazy dataclass that should use LazyDataclassEditor."""
+        from openhcs.core.config import LazyDefaultPlaceholderService
+        result = LazyDefaultPlaceholderService.has_lazy_resolution(param_type)
+        print(f"DEBUG: _is_lazy_dataclass_parameter({param_type}) = {result}")
+        if hasattr(param_type, '_resolve_field_value'):
+            print(f"DEBUG: {param_type} has _resolve_field_value")
+        if hasattr(param_type, 'to_base_config'):
+            print(f"DEBUG: {param_type} has to_base_config")
+        return result
+
     def _resolve_nested_dataclass_type(self, nested_type: Type, param_name: str) -> Type:
         """
-        Resolve appropriate dataclass type for nested forms using existing OpenHCS utilities.
+        Resolve dataclass type for nested forms.
 
-        For lazy parent contexts, creates lazy nested dataclass types that resolve from
-        global config. For non-lazy contexts, returns the original type.
-
-        Raises:
-            ValueError: If field path cannot be determined for lazy nested type
+        Note: Lazy dataclasses are now routed to LazyDataclassEditor and don't reach this method.
+        This method only handles non-lazy nested dataclasses.
         """
-        # Use existing utility to check if parent form is in lazy context
-        if not self.dataclass_type or not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
-            return nested_type
-
-        # Use existing utility to determine field path - fail loud if not found
-        field_path = _get_field_path_for_nested_form(nested_type, {}, GlobalPipelineConfig)
-        if field_path is None:
-            raise ValueError(f"Cannot determine field path for nested type {nested_type.__name__} in GlobalPipelineConfig")
-
-        # Create lazy dataclass using existing factory - let any errors bubble up
-        return LazyDataclassFactory.make_lazy_thread_local(
-            base_class=nested_type,
-            global_config_type=GlobalPipelineConfig,
-            field_path=field_path,
-            lazy_class_name=f"Nested{nested_type.__name__}"
-        )
+        # Simplified: just return the original type since lazy dataclasses are routed elsewhere
+        return nested_type
 
     # Abstract method implementations (dramatically simplified)
     
@@ -689,10 +803,6 @@ class ParameterFormManager(QWidget):
             nested_values = nested_manager.get_current_values()
             nested_type = self.parameter_types.get(param_name)
 
-            # Debug: Check what nested values we got from the nested manager
-            if param_name == 'materialization_config':
-                print(f"DEBUG: Nested values from nested manager: {nested_values}")
-
             if nested_type and nested_values:
                 # Handle Optional[DataClass] types
                 if self.service._type_utils.is_optional_dataclass(nested_type):
@@ -703,24 +813,29 @@ class ParameterFormManager(QWidget):
                     nested_values, nested_type, param_name
                 )
 
-                # Debug: Check what we rebuilt
-                if param_name == 'materialization_config':
-                    print(f"DEBUG: Rebuilt instance: {rebuilt_instance}")
-                    if hasattr(rebuilt_instance, '__dataclass_fields__'):
-                        from dataclasses import fields
-                        for field_obj in fields(rebuilt_instance):
-                            raw_value = object.__getattribute__(rebuilt_instance, field_obj.name)
-                            print(f"DEBUG: Rebuilt field {field_obj.name} = {raw_value}")
-
                 current_values[param_name] = rebuilt_instance
 
-        # Then apply lazy structure preservation to all parameters (including rebuilt nested ones)
-        final_values = {
-            param_name: self._preserve_lazy_structure_if_needed(param_name, param_value)
-            for param_name, param_value in current_values.items()
-        }
+        # Lazy dataclasses are now handled by LazyDataclassEditor, so no structure preservation needed
+        return current_values
 
-        return final_values
+    def get_dataclass_instance(self) -> Any:
+        """
+        Reconstruct dataclass instance from current form values.
+
+        This replaces LazyDataclassEditor.save_config() functionality by creating
+        a new dataclass instance with the current form values.
+
+        Returns:
+            New dataclass instance with current form values
+        """
+        if not self.dataclass_type:
+            raise ValueError("No dataclass type specified - cannot reconstruct instance")
+
+        # Get current values from form
+        form_values = self.get_current_values()
+
+        # Create new dataclass instance
+        return self.dataclass_type(**form_values)
 
     def refresh_placeholder_text(self) -> None:
         """
@@ -748,63 +863,14 @@ class ParameterFormManager(QWidget):
         for nested_manager in self.nested_managers.values():
             nested_manager.refresh_placeholder_text()
 
-    def _preserve_lazy_structure_if_needed(self, param_name: str, param_value: Any) -> Any:
-        """Preserve lazy dataclass structure for dataclass parameters in lazy contexts."""
-        # Early returns for simple cases
-        if param_value is None or ParameterTypeUtils.is_lazy_dataclass(param_value):
-            return param_value
 
-        # Determine context from dataclass_type
-        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-
-        # Global config editing: return value as-is
-        if is_global_config:
-            return param_value
-
-        # Lazy context: convert to lazy dataclass if needed
-        param_type = ParameterTypeUtils.get_dataclass_type_for_param(param_name, self.parameter_types)
-        if param_type is None:
-            return param_value
-
-        return self._convert_to_lazy_dataclass(param_value, param_type)
-
-    def _convert_to_lazy_dataclass(self, param_value: Any, param_type: Type) -> Any:
-        """Convert concrete dataclass or dict to lazy dataclass preserving field values."""
-        # Use existing shared utility for field path determination
-        field_path = _get_field_path_for_nested_form(param_type, {}, GlobalPipelineConfig)
-        if field_path is None:
-            raise ValueError(
-                f"Cannot determine field path for type {param_type.__name__} in GlobalPipelineConfig. "
-                f"Add field path mapping or ensure proper lazy dataclass configuration."
-            )
-
-        lazy_type = LazyDataclassFactory.make_lazy_thread_local(
-            base_class=param_type,
-            global_config_type=GlobalPipelineConfig,
-            field_path=field_path,
-            lazy_class_name=f"Mixed{param_type.__name__}"
-        )
-
-        # Extract field values based on input type
-        if ParameterTypeUtils.has_dataclass_fields(param_value):
-            # Concrete dataclass - extract field values
-            field_values = {
-                field.name: getattr(param_value, field.name)
-                for field in dataclasses.fields(param_value)
-            }
-        elif isinstance(param_value, dict):
-            # Dict from nested form manager
-            field_values = param_value
-        else:
-            # Fallback: return value as-is
-            return param_value
-
-        return lazy_type(**field_values)
 
     def _rebuild_nested_dataclass_instance(self, nested_values: Dict[str, Any],
                                          nested_type: Type, param_name: str) -> Any:
         """
-        Rebuild nested dataclass instance from current values, preserving lazy structure.
+        Rebuild nested dataclass instance from current values for non-lazy dataclasses.
+
+        Note: Lazy dataclasses are now handled by LazyDataclassEditor and should not reach this method.
 
         Args:
             nested_values: Current values from nested manager
@@ -812,8 +878,11 @@ class ParameterFormManager(QWidget):
             param_name: Parameter name for debugging
 
         Returns:
-            Reconstructed dataclass instance with lazy structure preserved
+            Reconstructed dataclass instance
         """
+        # Simplified logic for non-lazy dataclasses only
+        # Lazy dataclasses are routed to LazyDataclassEditor in _create_nested_dataclass_widget
+
         # Determine context from dataclass_type
         is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
 
@@ -825,24 +894,5 @@ class ParameterFormManager(QWidget):
             else:
                 return nested_type()
         else:
-            # Lazy context: preserve None values and create lazy dataclass if needed
-            if LazyDefaultPlaceholderService.has_lazy_resolution(nested_type):
-                # Already a lazy type, create instance with all values (including None)
-                return nested_type(**nested_values)
-            else:
-                # Convert to lazy dataclass to preserve lazy structure
-                field_path = _get_field_path_for_nested_form(nested_type, {}, GlobalPipelineConfig)
-                if field_path is None:
-                    raise ValueError(
-                        f"Cannot determine field path for nested type {nested_type.__name__} "
-                        f"in parameter '{param_name}' for GlobalPipelineConfig. "
-                        f"Add field path mapping or use concrete dataclass in global config editing."
-                    )
-
-                lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                    base_class=nested_type,
-                    global_config_type=GlobalPipelineConfig,
-                    field_path=field_path,
-                    lazy_class_name=f"Nested{nested_type.__name__}"
-                )
-                return lazy_nested_type(**nested_values)
+            # Non-lazy nested dataclass in lazy context: create instance with all values
+            return nested_type(**nested_values)

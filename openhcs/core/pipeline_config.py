@@ -45,17 +45,19 @@ def create_pipeline_config_for_editing(
     Returns:
         PipelineConfig instance with appropriate field initialization
     """
-    return create_config_for_editing(
-        GlobalPipelineConfig,
+    # Create lazy PipelineConfig instance for editing with placeholder behavior
+    from openhcs.core.lazy_config import create_dataclass_for_editing
+    return create_dataclass_for_editing(
+        PipelineConfig,  # Use lazy PipelineConfig type, not GlobalPipelineConfig
         source_config,
         preserve_values=preserve_values,
-        placeholder_prefix="Pipeline default"
+        context_provider=lambda config: ensure_pipeline_config_context(config)
     )
 
 
 def create_editing_config_from_existing_lazy_config(
     existing_lazy_config: Any,
-    global_config: Any
+    global_config: Optional[Any] = None  # NEW: Optional parameter
 ) -> Any:
     """
     Create an editing config from existing lazy config with user-set values preserved as actual field values.
@@ -67,7 +69,8 @@ def create_editing_config_from_existing_lazy_config(
 
     Args:
         existing_lazy_config: Existing lazy config with user customizations
-        global_config: Global config for thread-local context setup
+        global_config: Optional global config for thread-local context setup.
+                      If None, uses existing thread-local context (caller-responsible pattern).
 
     Returns:
         New lazy config suitable for editing with preserved user values
@@ -75,10 +78,13 @@ def create_editing_config_from_existing_lazy_config(
     if existing_lazy_config is None:
         return None
 
-    # Set up thread-local context with updated global config
-    from openhcs.core.config import GlobalPipelineConfig
-    from openhcs.core.lazy_config import ensure_global_config_context
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    # Set up thread-local context only if global_config is provided
+    if global_config is not None:
+        # Legacy behavior - caller provides global_config
+        from openhcs.core.config import GlobalPipelineConfig
+        from openhcs.core.lazy_config import ensure_global_config_context
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+    # Otherwise use existing thread-local context (caller-responsible pattern)
 
     # Extract field values, preserving user-set values as concrete values
     field_values = {}
@@ -94,7 +100,7 @@ def create_editing_config_from_existing_lazy_config(
             # Field is None - keep as None for placeholder behavior
             field_values[field_obj.name] = None
 
-    return PipelineConfig(**field_values)
+    return type(existing_lazy_config)(**field_values)
 
 
 
@@ -102,20 +108,23 @@ def create_editing_config_from_existing_lazy_config(
 # Create OpenHCS hierarchy and generate lazy configuration classes
 _openhcs_hierarchy = create_openhcs_hierarchy()
 
-# Generate pipeline-specific lazy configuration classes using the new generic system
-PipelineConfig = LazyDataclassFactory.make_lazy_hierarchical(
-    GlobalPipelineConfig,
-    _openhcs_hierarchy.registry
+# Generate pipeline-specific lazy configuration classes using thread-local resolution
+PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
+    base_class=GlobalPipelineConfig,
+    global_config_type=GlobalPipelineConfig,
+    field_path=None,
+    lazy_class_name="PipelineConfig",
+    use_recursive_resolution=True
 )
 
-# Create 3-level step materialization hierarchy
-from openhcs.core.config_hierarchy import create_step_materialization_hierarchy
-_step_hierarchy = create_step_materialization_hierarchy()
-
-# Generate step-level lazy class that uses 3-level hierarchy
-LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_hierarchical(
-    StepMaterializationConfig,
-    _step_hierarchy.registry
+# Generate step-level lazy class using thread-local resolution
+# No recursive resolution to avoid circular dependencies with PathPlanningConfig inheritance
+LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_thread_local(
+    base_class=StepMaterializationConfig,
+    global_config_type=GlobalPipelineConfig,
+    field_path="materialization_defaults",
+    lazy_class_name="LazyStepMaterializationConfig",
+    use_recursive_resolution=False  # Disable to prevent recursion with inherited fields
 )
 
 
@@ -123,11 +132,21 @@ def _add_to_base_config_method(lazy_class: Type, base_class: Type) -> None:
     """Add to_base_config method to lazy dataclass for orchestrator integration."""
     def to_base_config(self):
         """Convert lazy config to base config, resolving None values to current defaults."""
-        # Get all field values, resolving None values through lazy loading
         resolved_values = {}
         for field in fields(self):
-            value = getattr(self, field.name)  # This triggers lazy resolution for None values
-            resolved_values[field.name] = value
+            # Get raw value first to avoid triggering lazy resolution on nested lazy dataclasses
+            raw_value = object.__getattribute__(self, field.name)
+
+            if raw_value is not None:
+                # User has set this field - use the raw value
+                # If it's a nested lazy dataclass, convert it to base config recursively
+                if hasattr(raw_value, 'to_base_config'):
+                    resolved_values[field.name] = raw_value.to_base_config()
+                else:
+                    resolved_values[field.name] = raw_value
+            else:
+                # Field is None - resolve lazily (safe because it goes to concrete global config)
+                resolved_values[field.name] = getattr(self, field.name)
 
         return base_class(**resolved_values)
 

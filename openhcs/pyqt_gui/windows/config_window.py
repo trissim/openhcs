@@ -275,44 +275,22 @@ class ConfigWindow(QDialog):
         self.color_scheme = color_scheme or PyQt6ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
 
-        # Create config form using shared parameter form manager (mirrors Textual TUI)
-        param_info = SignatureAnalyzer.analyze(config_class)
-
-        # Get current parameter values from config instance
-        parameters = {}
-        parameter_types = {}
-
-        logger.info("=== CONFIG WINDOW PARAMETER LOADING ===")
-        for name, info in param_info.items():
-            # For lazy dataclasses, always preserve None values for consistent placeholder behavior
-            if hasattr(current_config, '_resolve_field_value'):
-                # This is a lazy dataclass - use object.__getattribute__ to preserve None values
-                # This ensures ALL fields show placeholder behavior regardless of Optional status
-                current_value = object.__getattribute__(current_config, name) if hasattr(current_config, name) else info.default_value
-                logger.info(f"Lazy field {name}: stored={current_value}, default={info.default_value}")
-            else:
-                # Regular dataclass - use normal getattr
-                current_value = getattr(current_config, name, info.default_value)
-                logger.info(f"Regular field {name}: value={current_value}")
-            parameters[name] = current_value
-            parameter_types[name] = info.param_type
-            logger.info(f"Final parameter value for {name}: {parameters[name]}")
-
-        # Store parameter info
-        self.parameter_info = param_info
-
-        # Create parameter form manager (reuses Textual TUI logic)
         # Determine placeholder prefix based on dataclass type
         from openhcs.core.config import LazyDefaultPlaceholderService
-        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(config_class)
-        placeholder_prefix = "Default" if is_global_config else "Pipeline default"
+        is_lazy_dataclass = LazyDefaultPlaceholderService.has_lazy_resolution(config_class)
+        placeholder_prefix = "Pipeline default" if is_lazy_dataclass else "Default"
 
-        self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "config", config_class,
-            param_info,
+        # Always use ParameterFormManager with dataclass editing mode - unified approach
+        self.form_manager = ParameterFormManager.from_dataclass_instance(
+            dataclass_instance=current_config,
+            field_id="config",
+            placeholder_prefix=placeholder_prefix,
             color_scheme=self.color_scheme,
-            placeholder_prefix=placeholder_prefix
+            use_scroll_area=True
         )
+
+        # No config_editor needed - everything goes through form_manager
+        self.config_editor = None
 
         # Setup UI
         self.setup_ui()
@@ -326,8 +304,8 @@ class ConfigWindow(QDialog):
         # This ensures dataclass fields show in full as requested
         if dataclasses.is_dataclass(self.config_class):
             field_count = len(dataclasses.fields(self.config_class))
-            # Use scroll area only for complex configs with many fields
-            return field_count > 15
+            # Use scroll area for configs with more than 8 fields (PipelineConfig has ~12 fields)
+            return field_count > 8
 
         # For non-dataclass configs, use scroll area
         return True
@@ -362,7 +340,7 @@ class ConfigWindow(QDialog):
         header_layout.addStretch()
         layout.addWidget(header_widget)
         
-        # Parameter form - use scroll area only for complex configs, not simple dataclasses
+        # Parameter form - always use form_manager (unified approach)
         if self._should_use_scroll_area():
             scroll_area = QScrollArea()
             scroll_area.setWidgetResizable(True)
@@ -577,7 +555,7 @@ class ConfigWindow(QDialog):
         self.config_saved.connect(self.on_config_saved)
         self.config_cancelled.connect(self.on_config_cancelled)
 
-        # Connect form manager parameter changes
+        # Always use form manager parameter changes (unified approach)
         self.form_manager.parameter_changed.connect(self._handle_parameter_change)
 
     def _handle_parameter_change(self, param_name: str, value):
@@ -654,15 +632,8 @@ class ConfigWindow(QDialog):
     def save_config(self):
         """Save the configuration preserving lazy behavior for unset fields."""
         try:
-            # Get current values from form manager
-            form_values = self.form_manager.get_current_values()
-
-            # For lazy dataclasses, use form values directly
-            # The form manager already maintains None vs concrete distinction correctly
-            config_values = form_values
-
-            # Create new config instance
-            new_config = self.config_class(**config_values)
+            # Always use form manager to get dataclass instance (unified approach)
+            new_config = self.form_manager.get_dataclass_instance()
 
             # Emit signal and call callback
             self.config_saved.emit(new_config)
