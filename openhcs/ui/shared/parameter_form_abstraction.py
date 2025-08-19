@@ -190,7 +190,7 @@ def _get_field_path_for_nested_form(dataclass_type: Type, parameter_types: Dict[
                                    global_config_type: Optional[Type] = None) -> Optional[str]:
     """Determine the field path for nested form placeholder generation."""
     # Use consolidated field path detection utility
-    from openhcs.core.hierarchy_introspection import FieldPathDetector
+    from openhcs.core.field_path_detection import FieldPathDetector
 
     # If no global config type specified, use default
     if global_config_type is None:

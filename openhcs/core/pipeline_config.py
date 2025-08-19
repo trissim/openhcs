@@ -120,7 +120,7 @@ PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
 # No recursive resolution to avoid circular dependencies with PathPlanningConfig inheritance
 
 # Automatically detect field path instead of hardcoding
-from openhcs.core.hierarchy_introspection import FieldPathDetector
+from openhcs.core.field_path_detection import FieldPathDetector
 _step_materialization_field_path = FieldPathDetector.find_field_path_for_type(
     GlobalPipelineConfig, StepMaterializationConfig
 )

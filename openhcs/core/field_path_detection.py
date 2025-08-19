@@ -1,9 +1,9 @@
 """
-Consolidated automatic field path detection utility for OpenHCS configuration hierarchies.
+Automatic field path detection utility for OpenHCS configuration types.
 
-This module consolidates scattered field path detection implementations from parameter
-form managers into reusable utilities that eliminate code duplication and provide
-a single source of truth for type introspection logic.
+This module provides utilities for automatically detecting field paths in dataclass
+types, eliminating hardcoded field names and providing a single source of truth
+for type introspection logic across the UI system.
 """
 
 import dataclasses
@@ -13,7 +13,7 @@ from dataclasses import fields
 
 
 class FieldPathDetector:
-    """Consolidated automatic field path detection utility."""
+    """Automatic field path detection utility for dataclass type introspection."""
 
     @staticmethod
     def find_field_path_for_type(parent_type: Type, child_type: Type) -> Optional[str]:
