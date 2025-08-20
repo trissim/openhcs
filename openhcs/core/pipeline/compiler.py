@@ -46,10 +46,11 @@ logger = logging.getLogger(__name__)
 def _normalize_step_attributes(pipeline_definition: List[AbstractStep]) -> None:
     """Backwards compatibility: Set missing step attributes to constructor defaults."""
     sig = inspect.signature(AbstractStep.__init__)
+    # Include ALL parameters with defaults, even None values
     defaults = {name: param.default for name, param in sig.parameters.items()
-                if name != 'self' and param.default != inspect.Parameter.empty}
+                if name != 'self' and param.default is not inspect.Parameter.empty}
 
-    for step in pipeline_definition:
+    for i, step in enumerate(pipeline_definition):
         for attr_name, default_value in defaults.items():
             if not hasattr(step, attr_name):
                 setattr(step, attr_name, default_value)
@@ -516,10 +517,6 @@ class PipelineCompiler:
                 compiled_contexts[well_id] = context
                 logger.debug(f"Compilation finished for well: {well_id}")
 
-            # After processing all wells, strip attributes and finalize
-            logger.info("Stripping attributes from pipeline definition steps.")
-            StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
-
             # Log path planning summary once per plate
             if compiled_contexts:
                 first_context = next(iter(compiled_contexts.values()))
@@ -536,6 +533,10 @@ class PipelineCompiler:
 
                 for step_name, mat_path in materialization_steps:
                     logger.info(f"   Materialization {step_name}: {mat_path}")
+
+            # After processing all wells, strip attributes and finalize
+            logger.info("Stripping attributes from pipeline definition steps.")
+            StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
 
             orchestrator._state = OrchestratorState.COMPILED
             logger.info(f"🏁 COMPILATION COMPLETE: {len(compiled_contexts)} wells compiled successfully")

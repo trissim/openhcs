@@ -129,8 +129,8 @@ class ParameterFormManager(QWidget):
             parameters, parameter_types, config.field_id, config.parameter_info, self.dataclass_type
         )
 
-        # Initialize direct widget registry for widget creation
-        self.widget_registry = create_pyqt6_registry()
+        # Get widget creator from registry
+        self.create_widget = create_pyqt6_registry()
 
         
         # Set up UI
@@ -279,7 +279,7 @@ class ParameterFormManager(QWidget):
         )
         layout.addWidget(label)
         current_value = self.parameters.get(param_info.name)
-        widget = self.widget_registry.create_widget(
+        widget = self.create_widget(
             param_info.name, param_info.type, current_value,
             f"{self.field_id}_{param_info.name}",
             self.parameter_info.get(param_info.name)

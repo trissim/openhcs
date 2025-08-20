@@ -15,7 +15,7 @@ from openhcs.pyqt_gui.widgets.shared.no_scroll_spinbox import (
 )
 from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
-from .widget_creation_registry import WidgetRegistry, TypeCheckers, TypeResolution
+from .widget_creation_registry import resolve_optional, is_enum, is_list_of_enums, get_enum_from_list
 
 logger = logging.getLogger(__name__)
 
@@ -109,23 +109,19 @@ class MagicGuiWidgetFactory:
     def create_widget(self, param_name: str, param_type: Type, current_value: Any,
                      widget_id: str, parameter_info: Any = None) -> Any:
         """Create widget using functional registry dispatch."""
-        resolved_type = TypeResolution.resolve_optional(param_type)
-
-        # Handle list-wrapped enum pattern in Union
-        if TypeCheckers.is_union_with_list_wrapped_enum(resolved_type):
-            enum_type = TypeCheckers.extract_enum_type_from_union(resolved_type)
-            extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
-            return create_enum_widget_unified(enum_type, extracted_value)
+        resolved_type = resolve_optional(param_type)
 
         # Handle direct List[Enum] types - create multi-selection checkbox group
-        if TypeCheckers.is_list_of_enums(resolved_type):
+        if is_list_of_enums(resolved_type):
             return self._create_checkbox_group_widget(param_name, resolved_type, current_value)
 
         # Extract enum from list wrapper for other cases
-        extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
+        extracted_value = (current_value[0] if isinstance(current_value, list) and
+                          len(current_value) == 1 and isinstance(current_value[0], Enum)
+                          else current_value)
 
         # Handle direct enum types
-        if TypeCheckers.is_enum(resolved_type):
+        if is_enum(resolved_type):
             return create_enum_widget_unified(resolved_type, extracted_value)
 
         # Check for OpenHCS custom widget replacements
@@ -185,7 +181,7 @@ class MagicGuiWidgetFactory:
         """Create multi-selection checkbox group for List[Enum] parameters."""
         from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QCheckBox
 
-        enum_type = TypeCheckers.get_enum_from_list(param_type)
+        enum_type = get_enum_from_list(param_type)
         widget = QGroupBox(param_name.replace('_', ' ').title())
         layout = QVBoxLayout(widget)
 
@@ -213,24 +209,7 @@ class MagicGuiWidgetFactory:
         return widget
 
 
-def create_pyqt6_registry() -> WidgetRegistry:
-    """Create PyQt6 widget registry leveraging magicgui's automatic type system."""
-    register_openhcs_widgets()
-
-    registry = WidgetRegistry()
-    factory = MagicGuiWidgetFactory()
-
-    # Register single factory for all types - let magicgui handle type dispatch
-    all_types = [bool, int, float, str, Path]
-    for type_key in all_types:
-        registry.register(type_key, factory.create_widget)
-
-    # Register for complex types that magicgui handles automatically
-    complex_type_checkers = [TypeCheckers.is_enum, dataclasses.is_dataclass, TypeCheckers.is_list_of_enums]
-    for checker in complex_type_checkers:
-        registry.register(checker, factory.create_widget)
-
-    return registry
+# Registry pattern removed - use create_pyqt6_widget from widget_creation_registry.py instead
 
 
 class PlaceholderConfig:
