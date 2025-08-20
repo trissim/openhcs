@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
 from openhcs.constants import Microscope
-from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig, set_current_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -881,6 +881,8 @@ class PipelineOrchestrator:
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
         if self.pipeline_config:
+            # Ensure thread-local context is set up for lazy resolution in to_base_config()
+            set_current_global_config(GlobalPipelineConfig, self.global_config)
             return self.pipeline_config.to_base_config()
         return self.global_config
 

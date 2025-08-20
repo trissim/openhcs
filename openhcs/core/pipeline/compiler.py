@@ -93,6 +93,14 @@ class PipelineCompiler:
         if not hasattr(context, 'step_plans') or context.step_plans is None:
             context.step_plans = {} # Ensure step_plans dict exists
 
+        # === THREAD-LOCAL CONTEXT SETUP ===
+        # Set thread-local context for lazy resolution during compilation
+        # Use orchestrator's current effective config instead of potentially stale context.global_config
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+        effective_config = orchestrator.get_effective_config()
+        set_current_global_config(GlobalPipelineConfig, effective_config)
+        logger.debug("🔧 THREAD-LOCAL: Set thread-local context for lazy resolution using orchestrator effective config")
+
         # === BACKWARDS COMPATIBILITY PREPROCESSING ===
         # Ensure all steps have complete attribute sets based on AbstractStep constructor
         # This must happen before any other compilation logic to eliminate defensive programming
@@ -410,7 +418,7 @@ class PipelineCompiler:
                 logger.info(f"Global visualizer override: Step '{plan['step_name']}' marked for visualization.")
 
     @staticmethod
-    def resolve_lazy_dataclasses_for_context(context: ProcessingContext) -> None:
+    def resolve_lazy_dataclasses_for_context(context: ProcessingContext, orchestrator) -> None:
         """
         Resolve all lazy dataclass instances in step plans to their base configurations.
 
@@ -419,14 +427,15 @@ class PipelineCompiler:
 
         Args:
             context: ProcessingContext to process
+            orchestrator: PipelineOrchestrator to get current effective config from
         """
         from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
         from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
 
-        # Ensure thread-local context is available for lazy resolution
-        # This is critical because lazy dataclasses need access to global config for None value resolution
-        if hasattr(context, 'global_config') and context.global_config is not None:
-            set_current_global_config(GlobalPipelineConfig, context.global_config)
+        # Use orchestrator's current effective config as authoritative source
+        # This ensures compilation resolves the same values as UI placeholders
+        effective_config = orchestrator.get_effective_config()
+        set_current_global_config(GlobalPipelineConfig, effective_config)
 
         # Use the shared recursive resolution function to handle nested structures
         for step_index, step_plan in context.step_plans.items():
@@ -501,7 +510,7 @@ class PipelineCompiler:
                     PipelineCompiler.apply_global_visualizer_override_for_context(context, True)
 
                 # Resolve all lazy dataclasses before freezing to ensure multiprocessing compatibility
-                PipelineCompiler.resolve_lazy_dataclasses_for_context(context)
+                PipelineCompiler.resolve_lazy_dataclasses_for_context(context, orchestrator)
 
                 context.freeze()
                 compiled_contexts[well_id] = context
@@ -511,8 +520,25 @@ class PipelineCompiler:
             logger.info("Stripping attributes from pipeline definition steps.")
             StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
 
+            # Log path planning summary once per plate
+            if compiled_contexts:
+                first_context = next(iter(compiled_contexts.values()))
+                logger.info(f"📁 PATH PLANNING SUMMARY:")
+                logger.info(f"   Main pipeline output: {first_context.output_plate_root}")
+
+                # Check for materialization steps in first context
+                materialization_steps = []
+                for step_id, plan in first_context.step_plans.items():
+                    if 'materialized_output_dir' in plan:
+                        step_name = plan.get('step_name', f'step_{step_id}')
+                        mat_path = plan['materialized_output_dir']
+                        materialization_steps.append((step_name, mat_path))
+
+                for step_name, mat_path in materialization_steps:
+                    logger.info(f"   Materialization {step_name}: {mat_path}")
+
             orchestrator._state = OrchestratorState.COMPILED
-            logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
+            logger.info(f"🏁 COMPILATION COMPLETE: {len(compiled_contexts)} wells compiled successfully")
             return compiled_contexts
         except Exception as e:
             orchestrator._state = OrchestratorState.COMPILE_FAILED

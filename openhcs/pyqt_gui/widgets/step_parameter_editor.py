@@ -8,9 +8,10 @@ Handles FunctionStep parameter editing with nested dataclass support.
 import logging
 from typing import Any, Optional
 from pathlib import Path
+from contextlib import contextmanager
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QScrollArea, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -35,14 +36,15 @@ class StepParameterEditorWidget(QScrollArea):
     # Signals
     step_parameter_changed = pyqtSignal()
     
-    def __init__(self, step: FunctionStep, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
+    def __init__(self, step: FunctionStep, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, orchestrator=None, parent=None):
         super().__init__(parent)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or PyQt6ColorScheme()
-        
+
         self.step = step
         self.service_adapter = service_adapter
+        self.orchestrator = orchestrator  # Store orchestrator reference for context management
         
         # Analyze AbstractStep signature to get all inherited parameters (mirrors Textual TUI)
         from openhcs.core.steps.abstract import AbstractStep
@@ -74,8 +76,10 @@ class StepParameterEditorWidget(QScrollArea):
         
         self.setup_ui()
         self.setup_connections()
-        
+
         logger.debug(f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}")
+
+
     
     def setup_ui(self):
         """Setup the user interface."""

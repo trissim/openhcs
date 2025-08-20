@@ -308,7 +308,11 @@ class ParameterFormManager(QWidget):
                 parent=group_box, use_scroll_area=False, color_scheme=self.config.color_scheme
             )
             self.nested_managers[param_info.name] = nested_manager
-
+            # Connect nested parameter changes to trigger parent parameter updates
+            # This ensures LazyStepMaterializationConfig changes are properly saved
+            nested_manager.parameter_changed.connect(
+                lambda name, value, parent_name=param_info.name: self.parameter_changed.emit(parent_name, value)
+            )
             group_box.content_layout.addWidget(nested_manager)
         else:
             nested_form = self._create_nested_form_inline(param_info.name, param_info.type, current_value)
@@ -599,9 +603,10 @@ class ParameterFormManager(QWidget):
     def _rebuild_nested_dataclass_instance(self, nested_values: Dict[str, Any],
                                          nested_type: Type, param_name: str) -> Any:
         """
-        Rebuild nested dataclass instance from current values for non-lazy dataclasses.
+        Rebuild nested dataclass instance from current values.
 
-        Note: Lazy dataclasses are now handled by LazyDataclassEditor and should not reach this method.
+        This method handles both lazy and non-lazy dataclasses by checking the nested_type
+        itself rather than the parent dataclass type.
 
         Args:
             nested_values: Current values from nested manager
@@ -611,22 +616,21 @@ class ParameterFormManager(QWidget):
         Returns:
             Reconstructed dataclass instance
         """
-        # Simplified logic for non-lazy dataclasses only
-        # Lazy dataclasses are routed to LazyDataclassEditor in _create_nested_dataclass_widget
+        # Check if the nested type itself is a lazy dataclass
+        # This is the correct check - we need to examine the nested type, not the parent
+        nested_type_is_lazy = LazyDefaultPlaceholderService.has_lazy_resolution(nested_type)
 
-        # Determine context from dataclass_type
-        is_global_config = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
-
-        if is_global_config:
-            # Global config editing: filter out None values and use concrete dataclass
+        if nested_type_is_lazy:
+            # Lazy dataclass: preserve None values for lazy resolution, include concrete values
+            # This maintains the "lazy mixed" pattern where some fields are concrete and others are None
+            return nested_type(**nested_values)
+        else:
+            # Non-lazy dataclass: filter out None values and use concrete dataclass
             filtered_values = {k: v for k, v in nested_values.items() if v is not None}
             if filtered_values:
                 return nested_type(**filtered_values)
             else:
                 return nested_type()
-        else:
-            # Non-lazy nested dataclass in lazy context: create instance with all values
-            return nested_type(**nested_values)
 
     def _apply_to_nested_managers(self, operation_func: callable) -> None:
         """Apply operation to all nested managers."""

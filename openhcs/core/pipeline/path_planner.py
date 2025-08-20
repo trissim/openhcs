@@ -75,6 +75,8 @@ class PathPlanner:
             self.ctx.output_plate_root = self.build_output_plate_root(self.plate_path, self.cfg, is_per_step_materialization=False)
             self.ctx.sub_dir = self.cfg.sub_dir
 
+
+
         return self.plans
 
     def _plan_step(self, step: AbstractStep, i: int, pipeline: List):
@@ -216,6 +218,8 @@ class PathPlanner:
         Returns:
             Path to plate root directory (e.g., "/data/results/plate001_processed")
         """
+
+
         base = Path(path_config.global_output_folder) if path_config.global_output_folder else plate_path.parent
 
         # Handle empty suffix differently for per-step vs pipeline-level materialization
@@ -224,11 +228,11 @@ class PathPlanner:
                 # Per-step materialization: use exact path without automatic suffix
                 return base / plate_path.name
             else:
-                # Pipeline-level materialization: use main pipeline output directory
-                main_output_path = base / f"{plate_path.name}_outputs"
-                return main_output_path
+                # Pipeline-level materialization: trust lazy inheritance system
+                return base / plate_path.name
 
-        return base / f"{plate_path.name}{path_config.output_dir_suffix}"
+        result = base / f"{plate_path.name}{path_config.output_dir_suffix}"
+        return result
 
     def _build_output_path(self, path_config=None) -> Path:
         """Build complete output path: plate_root + sub_dir"""
