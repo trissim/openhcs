@@ -104,26 +104,7 @@ def _configure_worker_logging(log_file_base: str):
 _worker_log_file_base = None
 
 
-def _ensure_step_ids_for_multiprocessing(
-    frozen_context: ProcessingContext,
-    pipeline_definition: List[AbstractStep],
-    well_id: str
-) -> None:
-    """
-    Helper function to update step IDs after multiprocessing pickle/unpickle.
-    
-    When contexts are pickled/unpickled for multiprocessing, step objects get
-    new memory addresses, changing their IDs. This remaps the step_plans.
-    """
-    from openhcs.core.pipeline.compiler import PipelineCompiler
-    try:
-        logger.debug(f"🔥 MULTIPROCESSING: Updating step IDs for well {well_id}")
-        PipelineCompiler.update_step_ids_for_multiprocessing(frozen_context, pipeline_definition)
-        logger.debug(f"🔥 MULTIPROCESSING: Step IDs updated successfully for well {well_id}")
-    except Exception as remap_error:
-        error_msg = f"🔥 MULTIPROCESSING ERROR: Failed to remap step IDs for well {well_id}: {remap_error}"
-        logger.error(error_msg, exc_info=True)
-        raise RuntimeError(error_msg) from remap_error
+
 
 
 class PipelineOrchestrator:
@@ -398,25 +379,22 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
 
-        # MULTIPROCESSING FIX: Update step IDs after pickle/unpickle
-        _ensure_step_ids_for_multiprocessing(frozen_context, pipeline_definition, well_id)
+        # Step IDs are consistent since pipeline_definition comes from UI (no remapping needed)
 
         logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
 
         for step_index, step in enumerate(pipeline_definition):
-            # Generate step_id from object reference (elegant stateless approach)
-            step_id = get_step_id(step)
             step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
 
-            logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_id} ({step_name}) for well {well_id}")
+            logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_name} for well {well_id}")
 
             if not hasattr(step, 'process'):
-                error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_id} missing process method for well {well_id}"
+                error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} missing process method for well {well_id}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            step.process(frozen_context)
-            logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
+            step.process(frozen_context, step_index)
+            logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_name} completed for well {well_id}")
 
     #        except Exception as step_error:
     #            import traceback
@@ -427,20 +405,20 @@ class PipelineOrchestrator:
     #            raise RuntimeError(error_msg) from step_error
 
             if visualizer:
-                step_plan = frozen_context.step_plans[step_id]
+                step_plan = frozen_context.step_plans[step_index]
                 if step_plan['visualize']:
                     output_dir = step_plan['output_dir']
                     write_backend = step_plan['write_backend']
                     if output_dir:
-                        logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                        logger.debug(f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for well {well_id}")
                         visualizer.visualize_path(
-                            step_id=step_id,
+                            step_id=f"step_{step_index}",
                             path=str(output_dir),
                             backend=write_backend,
                             well_id=well_id
                         )
                     else:
-                        logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+                        logger.warning(f"Step {step_index} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
         
         logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
         return {"status": "success", "well_id": well_id}
@@ -610,13 +588,13 @@ class PipelineOrchestrator:
                     results_dir = None
                     for well_id, context in compiled_contexts.items():
                         # Look for any step that has an output_dir - this is where materialization happens
-                        for step_id, step_plan in context.step_plans.items():
+                        for step_index, step_plan in context.step_plans.items():
                             if 'output_dir' in step_plan:
                                 # Found an output directory, check if it has a results subdirectory
                                 potential_results_dir = Path(step_plan['output_dir']) / self.global_config.materialization_results_path
                                 if potential_results_dir.exists():
                                     results_dir = potential_results_dir
-                                    logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_id}: {results_dir}")
+                                    logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_index}: {results_dir}")
                                     break
                         if results_dir:
                             break

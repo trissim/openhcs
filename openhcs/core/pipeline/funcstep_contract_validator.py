@@ -116,8 +116,8 @@ class FuncStepContractValidator:
                 )
 
             # Check that materialization planner has run by verifying read_backend/write_backend exist
-            sample_step_id = next(iter(pipeline_context.step_plans.keys()))
-            sample_plan = pipeline_context.step_plans[sample_step_id]
+            sample_step_index = next(iter(pipeline_context.step_plans.keys()))
+            sample_plan = pipeline_context.step_plans[sample_step_index]
             if 'read_backend' not in sample_plan or 'write_backend' not in sample_plan:
                 raise AssertionError(
                     "Clause 101 Violation: Materialization planner must run before FuncStepContractValidator. "
@@ -149,7 +149,7 @@ class FuncStepContractValidator:
                     ) from e
 
                 memory_types = FuncStepContractValidator.validate_funcstep(step, orchestrator)
-                step_memory_types[step.step_id] = memory_types
+                step_memory_types[i] = memory_types  # Use step index instead of step_id
 
 
 

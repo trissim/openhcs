@@ -80,8 +80,8 @@ class GPUMemoryTypeValidator:
 
     @staticmethod
     def validate_step_plans(
-        step_plans: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
+        step_plans: Dict[int, Dict[str, Any]]
+    ) -> Dict[int, Dict[str, Any]]:
         """
         Validate GPU memory types in step plans and assign GPU IDs.
 
@@ -90,10 +90,10 @@ class GPUMemoryTypeValidator:
         assigned during planning/compilation, not during execution.
 
         Args:
-            step_plans: Dictionary mapping step IDs to step plans
+            step_plans: Dictionary mapping step indices to step plans
 
         Returns:
-            Dictionary mapping step IDs to dictionaries containing GPU assignments
+            Dictionary mapping step indices to dictionaries containing GPU assignments
 
         Raises:
             ValueError: If no GPUs are available
@@ -102,7 +102,7 @@ class GPUMemoryTypeValidator:
         requires_gpu = False
         required_libraries = set()
 
-        for step_id, step_plan in step_plans.items():
+        for step_index, step_plan in step_plans.items():
             input_memory_type = step_plan.get('input_memory_type')
             output_memory_type = step_plan.get('output_memory_type')
 
@@ -146,7 +146,7 @@ class GPUMemoryTypeValidator:
 
         # Assign GPU ID to step plans
         gpu_assignments = {}
-        for step_id, step_plan in step_plans.items():
+        for step_index, step_plan in step_plans.items():
             input_memory_type = step_plan.get('input_memory_type')
             output_memory_type = step_plan.get('output_memory_type')
 
@@ -154,12 +154,12 @@ class GPUMemoryTypeValidator:
                 output_memory_type in VALID_GPU_MEMORY_TYPES):
                 # Assign GPU ID to step plan
                 step_plan['gpu_id'] = gpu_id
-                gpu_assignments[step_id] = {"gpu_id": gpu_id}
+                gpu_assignments[step_index] = {"gpu_id": gpu_id}
 
                 # Log assignment for debugging
                 logger.debug(
                     "Step %s assigned gpu_id %s for memory types: %s/%s",
-                    step_id, gpu_id, input_memory_type, output_memory_type
+                    step_index, gpu_id, input_memory_type, output_memory_type
                 )
 
         return gpu_assignments

@@ -174,9 +174,9 @@ class AbstractStep(abc.ABC):
         logger_instance.debug(f"Created step '{self.name}' (type: {self.__class__.__name__}) with ID {self.step_id}")
 
     @abc.abstractmethod
-    def process(self, context: 'ProcessingContext') -> None:
+    def process(self, context: 'ProcessingContext', step_index: int) -> None:
         """
-        Process the step with the given context.
+        Process the step with the given context and step index.
 
         This method must be implemented by all step subclasses.
         During execution, the step instance is stateless. All necessary

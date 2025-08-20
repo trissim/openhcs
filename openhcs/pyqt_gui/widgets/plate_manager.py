@@ -719,11 +719,14 @@ class PlateManagerWidget(QWidget):
 
             plate_paths_to_run = [item['path'] for item in ready_items]
 
-            # Pass definition pipeline steps - subprocess will make fresh copy and compile
+            # Pass both pipeline definition and pre-compiled contexts to subprocess
             pipeline_data = {}
             for plate_path in plate_paths_to_run:
-                definition_pipeline = self._get_current_pipeline_definition(plate_path)
-                pipeline_data[plate_path] = definition_pipeline
+                execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
+                pipeline_data[plate_path] = {
+                    'pipeline_definition': execution_pipeline,  # Use execution pipeline (stripped)
+                    'compiled_contexts': compiled_contexts      # Pre-compiled contexts
+                }
 
             logger.info(f"Starting subprocess for {len(plate_paths_to_run)} plates")
 

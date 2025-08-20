@@ -19,6 +19,8 @@ import atexit
 import os
 from pathlib import Path
 from typing import Dict, List, Any
+from openhcs.core.steps.abstract import AbstractStep
+from openhcs.core.context.processing_context import ProcessingContext
 
 # Enable subprocess mode - this single variable controls all subprocess behavior
 os.environ['OPENHCS_SUBPROCESS_MODE'] = '1'
@@ -68,16 +70,15 @@ def setup_subprocess_logging(log_file_path: str):
 
 # Status and result files removed - log file is single source of truth
 
-def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
-                    logger, log_file_base: str = None):
+def run_single_plate(plate_path: str, pipeline_definition: List, compiled_contexts: Dict,
+                    global_config, logger, log_file_base: str = None):
     """
-    Run a single plate using the integration test pattern.
+    Run a single plate using pre-compiled contexts from UI.
 
-    This follows the exact same pattern as test_main.py:
+    This follows the pattern:
     1. Initialize GPU registry
     2. Create orchestrator and initialize
-    3. Get wells and compile pipelines
-    4. Execute compiled plate
+    3. Execute pre-compiled plate (no compilation needed)
     """
     import psutil
     import os
@@ -278,40 +279,8 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
             print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
             raise RuntimeError(error_msg)
 
-        logger.info(f"🔥 SUBPROCESS: Pipeline has {len(pipeline_steps)} steps")
-        logger.info(f"🔥 SUBPROCESS: COMPILING plate {plate_path}")
-        
-        # Step 4: Compilation phase (like test_main.py)
-        logger.info("🔥 SUBPROCESS: Starting compilation phase...")
-        
-        # Make fresh copy of pipeline steps and fix IDs (like TUI does)
-        import copy
-        from openhcs.constants.constants import VariableComponents
-        execution_pipeline = copy.deepcopy(pipeline_steps)
-        
-        # Fix step IDs after deep copy to match new object IDs
-        for step in execution_pipeline:
-            step.step_id = str(id(step))
-            # Ensure variable_components is never None
-            if step.variable_components is None:
-                logger.warning(f"🔥 Step '{step.name}' has None variable_components, setting default")
-                step.variable_components = [VariableComponents.SITE]
-            elif not step.variable_components:
-                logger.warning(f"🔥 Step '{step.name}' has empty variable_components, setting default")
-                step.variable_components = [VariableComponents.SITE]
-        
-        compiled_contexts = orchestrator.compile_pipelines(
-            pipeline_definition=execution_pipeline,
-            well_filter=wells
-        )
-        logger.info("🔥 SUBPROCESS: Compilation completed!")
-        
-        # Verify compilation (like test_main.py)
-        if not compiled_contexts:
-            raise RuntimeError("🔥 COMPILATION FAILED: No compiled contexts returned!")
-        if len(compiled_contexts) != len(wells):
-            raise RuntimeError(f"🔥 COMPILATION FAILED: Expected {len(wells)} contexts, got {len(compiled_contexts)}")
-        logger.info(f"🔥 SUBPROCESS: Compilation SUCCESS: {len(compiled_contexts)} contexts compiled")
+        logger.info(f"🔥 SUBPROCESS: Pipeline has {len(pipeline_definition)} steps")
+        logger.info(f"🔥 SUBPROCESS: Using pre-compiled contexts from UI")
         logger.info(f"🔥 SUBPROCESS: EXECUTING plate {plate_path}")
         
         # Step 5: Execution phase with multiprocessing (like test_main.py but with processes)
@@ -412,7 +381,7 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
 
         try:
             logger.info("🔥 SUBPROCESS: About to call execute_compiled_plate...")
-            logger.info(f"🔥 SUBPROCESS: Pipeline has {len(execution_pipeline)} steps")
+            logger.info(f"🔥 SUBPROCESS: Pipeline has {len(pipeline_definition)} steps")
             logger.info(f"🔥 SUBPROCESS: Compiled contexts for {len(compiled_contexts)} wells")
             logger.info("🔥 SUBPROCESS: Calling execute_compiled_plate NOW...")
 
@@ -428,8 +397,8 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
                 print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
                 raise RuntimeError(error_msg)
 
-            if execution_pipeline is None:
-                error_msg = "🔥 CRITICAL: execution_pipeline is None!"
+            if pipeline_definition is None:
+                error_msg = "🔥 CRITICAL: pipeline_definition is None!"
                 logger.error(error_msg)
                 print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
                 raise RuntimeError(error_msg)
@@ -440,17 +409,17 @@ def run_single_plate(plate_path: str, pipeline_steps: List, global_config,
                 print(f"🔥 SUBPROCESS STDOUT CRITICAL: {error_msg}")
                 raise RuntimeError(error_msg)
 
-            logger.info(f"🔥 SUBPROCESS: PRE-EXECUTION OK - pipeline:{len(execution_pipeline)}, contexts:{len(compiled_contexts)}")
-            print(f"🔥 SUBPROCESS STDOUT: PRE-EXECUTION OK - pipeline:{len(execution_pipeline)}, contexts:{len(compiled_contexts)}")
+            logger.info(f"🔥 SUBPROCESS: PRE-EXECUTION OK - pipeline:{len(pipeline_definition)}, contexts:{len(compiled_contexts)}")
+            print(f"🔥 SUBPROCESS STDOUT: PRE-EXECUTION OK - pipeline:{len(pipeline_definition)}, contexts:{len(compiled_contexts)}")
 
             # NUCLEAR EXECUTION WRAPPER: Force any error to surface
-            death_marker("BEFORE_EXECUTION_CALL", f"pipeline_steps={len(execution_pipeline)}, contexts={len(compiled_contexts)}")
+            death_marker("BEFORE_EXECUTION_CALL", f"pipeline_steps={len(pipeline_definition)}, contexts={len(compiled_contexts)}")
             logger.info("🔥 SUBPROCESS: CALLING NUCLEAR EXECUTION WRAPPER...")
             print("🔥 SUBPROCESS STDOUT: CALLING NUCLEAR EXECUTION WRAPPER...")
 
             death_marker("ENTERING_FORCE_ERROR_DETECTION")
             results = force_error_detection("execute_compiled_plate", orchestrator.execute_compiled_plate,
-                pipeline_definition=execution_pipeline,
+                pipeline_definition=pipeline_definition,
                 compiled_contexts=compiled_contexts,
                 max_workers=max_workers,  # Use global config num_workers setting
                 visualizer=None,    # No visualization in subprocess
@@ -735,12 +704,15 @@ def main():
 
         # Process each plate (like test_main.py but for multiple plates)
         for plate_path in plate_paths:
-            pipeline_steps = pipeline_data[plate_path]
-            logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(pipeline_steps)} steps")
+            plate_data = pipeline_data[plate_path]
+            pipeline_definition = plate_data['pipeline_definition']
+            compiled_contexts = plate_data['compiled_contexts']
+            logger.info(f"🔥 SUBPROCESS: Processing plate {plate_path} with {len(pipeline_definition)} steps")
 
             run_single_plate(
                 plate_path=plate_path,
-                pipeline_steps=pipeline_steps,
+                pipeline_definition=pipeline_definition,
+                compiled_contexts=compiled_contexts,
                 global_config=global_config,
                 logger=logger,
                 log_file_base=log_file_base
