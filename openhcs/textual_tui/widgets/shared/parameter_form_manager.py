@@ -83,12 +83,10 @@ class ParameterFormManager(ParameterFormManagerBase):
             parameters, parameter_types, config.field_id, config.parameter_info
         )
 
-        # Initialize legacy abstraction layer for compatibility
-        from openhcs.ui.shared.parameter_form_abstraction import ParameterFormAbstraction
-        from openhcs.ui.shared.widget_creation_registry import create_textual_registry
-        self.form_abstraction = ParameterFormAbstraction(
-            parameters, parameter_types, field_id, create_textual_registry(), parameter_info
-        )
+
+
+
+
 
         # Initialize tracking attributes for backward compatibility
         self.nested_managers = {}

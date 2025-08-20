@@ -14,7 +14,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from openhcs.ui.shared.parameter_form_service import ParameterFormService, ParameterInfo
 from openhcs.ui.shared.parameter_form_config_factory import pyqt_config
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
-from openhcs.ui.shared.parameter_form_abstraction import ParameterFormAbstraction, _get_field_path_for_nested_form
+
 from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
 from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
 from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
@@ -129,10 +129,9 @@ class ParameterFormManager(QWidget):
             parameters, parameter_types, config.field_id, config.parameter_info, self.dataclass_type
         )
 
-        # Initialize form abstraction layer for proper widget creation and placeholders
-        self.form_abstraction = ParameterFormAbstraction(
-            parameters, parameter_types, field_id, create_pyqt6_registry(), parameter_info
-        )
+        # Initialize direct widget registry for widget creation
+        self.widget_registry = create_pyqt6_registry()
+
         
         # Set up UI
         self.setup_ui()
@@ -280,7 +279,11 @@ class ParameterFormManager(QWidget):
         )
         layout.addWidget(label)
         current_value = self.parameters.get(param_info.name)
-        widget = self.form_abstraction.create_widget_for_parameter(param_info.name, param_info.type, current_value)
+        widget = self.widget_registry.create_widget(
+            param_info.name, param_info.type, current_value,
+            f"{self.field_id}_{param_info.name}",
+            self.parameter_info.get(param_info.name)
+        )
         if current_value is None and self.dataclass_type:
             self._apply_placeholder_with_lazy_context(widget, param_info.name, current_value)
         widget.setObjectName(field_ids['widget_id'])

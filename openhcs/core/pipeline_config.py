@@ -162,6 +162,7 @@ def _add_to_base_config_method(lazy_class: Type, base_class: Type) -> None:
 
 # Add to_base_config method for orchestrator integration
 _add_to_base_config_method(PipelineConfig, GlobalPipelineConfig)
+_add_to_base_config_method(LazyStepMaterializationConfig, StepMaterializationConfig)
 
 # Register type mappings for the placeholder service
 register_lazy_type_mapping(PipelineConfig, GlobalPipelineConfig)

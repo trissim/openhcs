@@ -12,10 +12,17 @@ from typing import FrozenSet
 @dataclass(frozen=True)
 class ParameterFormConstants:
     """
-    Centralized constants for parameter form managers.
-    
-    This frozen dataclass contains all magic strings used throughout the parameter form
-    system, organized by functional area for easy maintenance and discovery.
+    Centralized constants for parameter form implementations.
+
+    This dataclass eliminates magic strings throughout the parameter form system
+    by providing a single source of truth for all hardcoded values used in both
+    PyQt and Textual implementations.
+
+    Categories:
+    - UI text and formatting patterns
+    - Widget identification and naming
+    - Framework-specific constants
+    - Debug and validation settings
     """
     
     # Field ID generation patterns
