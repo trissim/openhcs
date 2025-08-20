@@ -16,7 +16,7 @@ from openhcs.ui.shared.parameter_form_config_factory import pyqt_config
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
 
 from openhcs.ui.shared.widget_creation_registry import create_pyqt6_registry
-from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
+from openhcs.ui.shared.ui_utils import format_param_name, format_field_id, format_reset_button_id
 from openhcs.ui.shared.pyqt6_widget_strategies import PyQt6WidgetEnhancer
 
 # Import PyQt-specific components

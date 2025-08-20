@@ -29,7 +29,7 @@ class EnumRadioSet(RadioSet):
     
     def compose(self) -> ComposeResult:
         """Create radio buttons for each enum option."""
-        from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+        from openhcs.ui.shared.ui_utils import format_enum_display
 
         for enum_member in self.enum_class:
             # Create button with enum value as ID
@@ -37,7 +37,7 @@ class EnumRadioSet(RadioSet):
             is_pressed = (self.current_value == enum_member.value)
 
             yield RadioButton(
-                label=EnumDisplayFormatter.get_display_text(enum_member),
+                label=format_enum_display(enum_member),
                 value=is_pressed,
                 id=button_id
             )

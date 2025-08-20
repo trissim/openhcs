@@ -10,10 +10,8 @@ from typing import Any, Dict, Type, Optional, List
 from dataclasses import dataclass
 
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
-from openhcs.ui.shared.field_id_generator import FieldIdGenerator
 from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
-from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
-from openhcs.ui.shared.debug_config import get_debugger, DebugConfig
+from openhcs.ui.shared.ui_utils import debug_param
 
 
 @dataclass
@@ -110,16 +108,7 @@ class ParameterFormManagerBase(ABC):
         self.config = config
         
         # Initialize shared utilities
-        self.field_id_generator = FieldIdGenerator()
         self.type_utils = ParameterTypeUtils()
-        self.name_formatter = ParameterNameFormatter()
-        
-        # Initialize debug system
-        debug_config = DebugConfig(
-            enabled=config.enable_debug,
-            target_params=config.debug_target_params or set()
-        )
-        self.debugger = get_debugger(debug_config)
         
         # Track nested managers and widgets
         self.nested_managers = {}

@@ -11,11 +11,9 @@ from dataclasses import dataclass
 from typing import Dict, Any, Type, Optional, List, Tuple
 
 from openhcs.core.config import LazyDefaultPlaceholderService
-from openhcs.ui.shared.debug_config import get_debugger, DebugConfig
-from openhcs.ui.shared.field_id_generator import FieldIdGenerator
 from openhcs.ui.shared.parameter_form_constants import CONSTANTS
-from openhcs.ui.shared.parameter_name_formatter import ParameterNameFormatter
 from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
+from openhcs.ui.shared.ui_utils import debug_param, format_field_id, format_param_name, format_reset_button_id
 
 
 @dataclass
@@ -69,17 +67,11 @@ class ParameterFormService:
     dependencies and providing a clean separation of concerns.
     """
     
-    def __init__(self, debug_config: Optional[DebugConfig] = None):
+    def __init__(self):
         """
         Initialize the parameter form service.
-        
-        Args:
-            debug_config: Optional debug configuration
         """
-        self.debugger = get_debugger(debug_config)
-        self._field_id_generator = FieldIdGenerator()
         self._type_utils = ParameterTypeUtils()
-        self._name_formatter = ParameterNameFormatter()
     
     def analyze_parameters(self, parameters: Dict[str, Any], parameter_types: Dict[str, Type],
                           field_id: str, parameter_info: Optional[Dict] = None,
@@ -100,10 +92,7 @@ class ParameterFormService:
         Returns:
             Complete form structure information
         """
-        self.debugger.log_form_manager_operation("analyze_parameters", {
-            "field_id": field_id,
-            "parameter_count": len(parameters)
-        })
+        debug_param("analyze_parameters", f"field_id={field_id}, parameter_count={len(parameters)}")
         
         param_infos = []
         nested_forms = {}
@@ -120,7 +109,7 @@ class ParameterFormService:
             
             # Check for nested dataclasses
             if param_info.is_nested:
-                nested_field_id = self._field_id_generator.nested_field_id(field_id, param_name)
+                nested_field_id = f"nested_{format_field_id(field_id, param_name)}"
                 nested_structure = self._analyze_nested_dataclass(
                     param_name, param_type, current_value, nested_field_id, parent_dataclass_type
                 )
@@ -152,11 +141,7 @@ class ParameterFormService:
         Returns:
             The converted value
         """
-        self.debugger.log_form_manager_operation("convert_value", {
-            "param_name": param_name,
-            "input_type": type(value).__name__,
-            "target_type": param_type.__name__ if hasattr(param_type, '__name__') else str(param_type)
-        })
+        debug_param("convert_value", f"param={param_name}, input_type={type(value).__name__}, target_type={param_type.__name__ if hasattr(param_type, '__name__') else str(param_type)}")
         
         if value is None:
             return None
@@ -218,12 +203,12 @@ class ParameterFormService:
             Dictionary with display information
         """
         return {
-            'display_name': self._name_formatter.to_display_name(param_name),
-            'field_label': self._name_formatter.to_field_label(param_name),
-            'checkbox_label': self._name_formatter.to_checkbox_label(param_name),
-            'group_title': self._name_formatter.to_group_title(param_name),
-            'description': self._name_formatter.to_parameter_description(param_name, description),
-            'tooltip': self._name_formatter.to_tooltip_text(param_name, description, param_type)
+            'display_name': format_param_name(param_name),
+            'field_label': f"{format_param_name(param_name)}:",
+            'checkbox_label': f"Enable {format_param_name(param_name)}",
+            'group_title': format_param_name(param_name),
+            'description': description or f"Parameter: {format_param_name(param_name)}",
+            'tooltip': f"{format_param_name(param_name)} ({param_type.__name__ if hasattr(param_type, '__name__') else str(param_type)})"
         }
     
     def generate_field_ids(self, base_field_id: str, param_name: str) -> Dict[str, str]:
@@ -237,14 +222,14 @@ class ParameterFormService:
         Returns:
             Dictionary with all generated field IDs
         """
-        widget_id = self._field_id_generator.widget_id(base_field_id, param_name)
-        
+        widget_id = format_field_id(base_field_id, param_name)
+
         return {
             'widget_id': widget_id,
-            'reset_button_id': self._field_id_generator.reset_button_id(widget_id),
-            'optional_checkbox_id': self._field_id_generator.optional_checkbox_id(base_field_id, param_name),
-            'nested_field_id': self._field_id_generator.nested_field_id(base_field_id, param_name),
-            'nested_static_id': self._field_id_generator.nested_static_field_id(param_name)
+            'reset_button_id': format_reset_button_id(widget_id),
+            'optional_checkbox_id': f"{base_field_id}_{param_name}_enabled",
+            'nested_field_id': f"nested_{base_field_id}_{param_name}",
+            'nested_static_id': f"nested_static_{param_name}"
         }
     
     def should_use_concrete_values(self, current_value: Any, is_global_editing: bool = False) -> bool:

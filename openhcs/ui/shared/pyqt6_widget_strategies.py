@@ -73,11 +73,11 @@ def create_string_fallback_widget(current_value: Any, **kwargs) -> QLineEdit:
 
 def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) -> QComboBox:
     """Unified enum widget creator with consistent display text."""
-    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+    from openhcs.ui.shared.ui_utils import format_enum_display
 
     widget = NoScrollComboBox()
     for enum_value in enum_type:
-        display_text = EnumDisplayFormatter.get_display_text(enum_value)
+        display_text = format_enum_display(enum_value)
         widget.addItem(display_text, enum_value)
 
     # Set current selection
@@ -546,8 +546,8 @@ class PyQt6WidgetEnhancer:
 
                 # Format the placeholder text appropriately for different types
                 if hasattr(field_value, 'name'):  # Enum
-                    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
-                    placeholder_text = EnumDisplayFormatter.get_placeholder_text(field_value)
+                    from openhcs.ui.shared.ui_utils import format_enum_placeholder
+                    placeholder_text = format_enum_placeholder(field_value)
                 else:
                     placeholder_text = f"Pipeline default: {field_value}"
 

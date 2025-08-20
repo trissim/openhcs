@@ -29,11 +29,11 @@ class DifferentValuesRadioSet(RadioSet):
             **kwargs: Additional arguments passed to RadioSet
         """
         # Create radio buttons for each enum value
-        from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+        from openhcs.ui.shared.ui_utils import format_enum_display
 
         radio_buttons = []
         for enum_value in enum_type:
-            radio_buttons.append(EnumDisplayFormatter.get_display_text(enum_value))
+            radio_buttons.append(format_enum_display(enum_value))
         
         super().__init__(*radio_buttons, **kwargs)
         

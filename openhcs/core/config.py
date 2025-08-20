@@ -421,8 +421,8 @@ class LazyDefaultPlaceholderService:
 
                 # Format different value types appropriately
                 if hasattr(value, 'value') and hasattr(value, 'name'):  # Enum
-                    from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
-                    formatted_value = EnumDisplayFormatter.get_display_text(value)
+                    from openhcs.ui.shared.ui_utils import format_enum_display
+                    formatted_value = format_enum_display(value)
                 elif isinstance(value, str) and len(value) > 20:  # Long strings
                     formatted_value = f"{value[:17]}..."
                 elif dataclasses.is_dataclass(value):  # Nested dataclass
