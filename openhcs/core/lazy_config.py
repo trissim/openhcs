@@ -202,6 +202,124 @@ class LazyDataclassFactory:
     """Generic factory for creating lazy dataclasses with flexible resolution."""
 
     @staticmethod
+    def _has_dataclass_inheritance(dataclass_type: Type) -> bool:
+        """
+        Check if a dataclass inherits from another dataclass.
+
+        Args:
+            dataclass_type: The dataclass type to check
+
+        Returns:
+            True if the dataclass inherits from another dataclass, False otherwise
+        """
+        from dataclasses import is_dataclass
+
+        if not is_dataclass(dataclass_type):
+            return False
+
+        # Check all base classes (excluding object)
+        for base in dataclass_type.__bases__:
+            if base != object and is_dataclass(base):
+                return True
+
+        return False
+
+    @staticmethod
+    def _create_generic_inheritance_aware_lazy_class(
+        base_class: Type,
+        global_config_type: Type,
+        field_name: str,
+        lazy_class_name: str
+    ) -> Type:
+        """
+        Create a generic inheritance-aware lazy class for any dataclass that inherits from another dataclass.
+
+        This method creates a lazy class that handles None values by inheriting from parent dataclass fields,
+        implementing the same inheritance logic as the specific StepMaterializationConfig implementation
+        but in a generic way that works for any dataclass inheritance hierarchy.
+
+        Args:
+            base_class: The dataclass type that inherits from another dataclass
+            global_config_type: The global config type for thread-local resolution
+            field_name: The field name in the parent config
+            lazy_class_name: Name for the generated lazy class
+
+        Returns:
+            Generated lazy dataclass with inheritance-aware resolution
+        """
+        from dataclasses import fields, is_dataclass
+
+        def create_generic_inheritance_aware_provider():
+            """Create inheritance-aware instance provider for any inherited dataclass."""
+            from openhcs.core.config import get_current_global_config
+
+            # Get the parent dataclass (first dataclass in the inheritance chain)
+            parent_dataclass = None
+            for base in base_class.__bases__:
+                if base != object and is_dataclass(base):
+                    parent_dataclass = base
+                    break
+
+            if parent_dataclass is None:
+                raise ValueError(f"No parent dataclass found for {base_class}")
+
+            # Pre-compute field classifications
+            parent_fields = frozenset(f.name for f in fields(parent_dataclass))
+            child_fields = frozenset(f.name for f in fields(base_class))
+            inherited_fields = parent_fields & child_fields
+            own_fields = child_fields - parent_fields
+
+            def inheritance_aware_provider() -> Any:
+                current_config = get_current_global_config(global_config_type)
+
+                # Get the child config instance from the field
+                child_config = getattr(current_config, field_name)
+
+                # Find the parent config field by looking for a field with the parent dataclass type
+                parent_config = None
+                for field in fields(current_config):
+                    if field.type == parent_dataclass:
+                        parent_config = getattr(current_config, field.name)
+                        break
+
+                if parent_config is None:
+                    # Fallback: use static defaults if no parent config found
+                    parent_config = parent_dataclass()
+
+                class GenericInheritanceAwareConfig:
+                    def __init__(self):
+                        # Handle inherited fields with override capability
+                        for field_name in inherited_fields:
+                            child_value = getattr(child_config, field_name)
+
+                            if child_value is None or child_value == "":  # Inherit from parent
+                                parent_value = getattr(parent_config, field_name)
+                                setattr(self, field_name, parent_value)
+                            else:  # Use explicit child value (override)
+                                setattr(self, field_name, child_value)
+
+                        # Populate own fields from child config
+                        for field_name in own_fields:
+                            value = getattr(child_config, field_name)
+                            setattr(self, field_name, value)
+
+                return GenericInheritanceAwareConfig()
+
+            return inheritance_aware_provider
+
+        # Create the lazy class using the unified method
+        return LazyDataclassFactory._create_lazy_dataclass_unified(
+            base_class=base_class,
+            instance_provider=create_generic_inheritance_aware_provider(),
+            lazy_class_name=lazy_class_name,
+            debug_template=f"Generic inheritance-aware lazy resolution for {base_class.__name__}",
+            use_recursive_resolution=False,
+            fallback_chain=[create_static_defaults_fallback(base_class)],
+            global_config_type=global_config_type,
+            parent_field_path="inheritance_aware"
+        )
+
+    @staticmethod
     def _introspect_dataclass_fields(base_class: Type, debug_template: str,
                                     global_config_type: Type = None,
                                     parent_field_path: str = None) -> List[Tuple[str, Type, None]]:
@@ -240,16 +358,31 @@ class LazyDataclassFactory:
             # Check if field type is a dataclass that should be made lazy
             field_type = field.type
             if is_dataclass(field.type) and global_config_type is not None:
-                # Create lazy version of nested dataclass
-                nested_field_path = f"{parent_field_path}.{field.name}" if parent_field_path else field.name
-                lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
-                    base_class=field.type,
-                    global_config_type=global_config_type,
-                    field_path=nested_field_path,
-                    lazy_class_name=f"Lazy{field.type.__name__}"
-                )
-                field_type = lazy_nested_type
-                logger.debug(f"Converted nested dataclass {field.name}: {field.type} -> {lazy_nested_type}")
+                # Check if this dataclass inherits from another dataclass
+                has_inheritance = LazyDataclassFactory._has_dataclass_inheritance(field.type)
+
+                if has_inheritance:
+                    # Use inheritance-aware resolution for dataclasses that inherit from other dataclasses
+                    # This creates a lazy class that handles None values by inheriting from parent dataclass fields
+                    lazy_nested_type = LazyDataclassFactory._create_generic_inheritance_aware_lazy_class(
+                        base_class=field.type,
+                        global_config_type=global_config_type,
+                        field_name=field.name,
+                        lazy_class_name=f"Lazy{field.type.__name__}"
+                    )
+                    field_type = lazy_nested_type
+                    logger.debug(f"Created inheritance-aware lazy class for {field.name}: {field.type} -> {lazy_nested_type}")
+                else:
+                    # Standard field-path resolution for non-inherited dataclasses
+                    nested_field_path = f"{parent_field_path}.{field.name}" if parent_field_path else field.name
+                    lazy_nested_type = LazyDataclassFactory.make_lazy_thread_local(
+                        base_class=field.type,
+                        global_config_type=global_config_type,
+                        field_path=nested_field_path,
+                        lazy_class_name=f"Lazy{field.type.__name__}"
+                    )
+                    field_type = lazy_nested_type
+                    logger.debug(f"Created standard lazy class for {field.name}: {field.type} -> {lazy_nested_type}")
 
             if is_already_optional or not has_default:
                 # Field is already Optional or has no default - make it Optional for lazy loading

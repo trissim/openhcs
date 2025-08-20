@@ -107,16 +107,8 @@ def create_editing_config_from_existing_lazy_config(
 
 
 
-# Generate pipeline-specific lazy configuration classes using thread-local resolution
-PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
-    base_class=GlobalPipelineConfig,
-    global_config_type=GlobalPipelineConfig,
-    field_path=None,
-    lazy_class_name="PipelineConfig",
-    use_recursive_resolution=True
-)
-
-# Generate step-level lazy class with inheritance-aware resolution
+# Generate step-level lazy class with inheritance-aware resolution FIRST
+# This must be created before PipelineConfig so it can be used in nested resolution
 
 def _create_inheritance_aware_instance_provider():
     """Complete inheritance-aware instance provider with override capability."""
@@ -155,7 +147,7 @@ def _create_inheritance_aware_instance_provider():
 
     return inheritance_aware_provider
 
-# Replace LazyStepMaterializationConfig creation with inheritance-aware approach
+# Create LazyStepMaterializationConfig with inheritance-aware approach
 from openhcs.core.lazy_config import create_static_defaults_fallback
 
 LazyStepMaterializationConfig = LazyDataclassFactory._create_lazy_dataclass_unified(
@@ -167,6 +159,15 @@ LazyStepMaterializationConfig = LazyDataclassFactory._create_lazy_dataclass_unif
     fallback_chain=[create_static_defaults_fallback(StepMaterializationConfig)],
     global_config_type=GlobalPipelineConfig,
     parent_field_path="inheritance_aware"
+)
+
+# Generate pipeline-specific lazy configuration classes using thread-local resolution
+PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
+    base_class=GlobalPipelineConfig,
+    global_config_type=GlobalPipelineConfig,
+    field_path=None,
+    lazy_class_name="PipelineConfig",
+    use_recursive_resolution=True
 )
 
 

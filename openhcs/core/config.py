@@ -336,11 +336,18 @@ class LazyDefaultPlaceholderService:
                 resolved_value = getattr(temp_instance, field_name)
 
         if resolved_value is not None:
-            # Format nested dataclasses with key field values
+            # Handle nested dataclasses
             if hasattr(resolved_value, '__dataclass_fields__'):
-                # For nested dataclasses, show key field values instead of generic info
-                summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
-                return f"{placeholder_prefix}{summary}" if placeholder_prefix else summary
+                # Check if this is a nested lazy dataclass that needs recursive resolution
+                if LazyDefaultPlaceholderService.has_lazy_resolution(type(resolved_value)):
+                    # This is a nested lazy dataclass - resolve the specific field recursively
+                    return LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
+                        type(resolved_value), field_name, app_config, force_static_defaults, placeholder_prefix
+                    )
+                else:
+                    # Regular dataclass - show summary of all field values
+                    summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
+                    return f"{placeholder_prefix}{summary}" if placeholder_prefix else summary
             else:
                 # Handle prefix formatting - avoid double colons
                 if placeholder_prefix:
