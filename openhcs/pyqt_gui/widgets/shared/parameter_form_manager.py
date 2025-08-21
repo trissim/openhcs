@@ -575,52 +575,38 @@ class ParameterFormManager(QWidget):
         return current_values
 
     def _get_optional_checkbox_state(self, param_name: str) -> Optional[bool]:
-        """Get checkbox state for optional dataclass parameter. Returns None if not applicable."""
+        """Get checkbox state for optional dataclass parameter."""
         param_type = self.parameter_types.get(param_name)
         if not (param_type and self.service._type_utils.is_optional_dataclass(param_type)):
             return None
 
         widget = self.widgets.get(param_name)
-        if not widget:
-            return None
-
-        checkbox = self._find_checkbox_in_container(widget)
+        checkbox = self._find_checkbox_in_container(widget) if widget else None
         return checkbox.isChecked() if checkbox else None
 
     def _validate_optional_dataclass_checkbox_states(self, current_values: Dict[str, Any]) -> None:
-        """Validate optional dataclass checkbox states using functional approach."""
-        # Functional pattern: apply checkbox validation to all parameters
+        """Update parameter values based on checkbox states."""
         for param_name in self.widgets.keys():
             checkbox_state = self._get_optional_checkbox_state(param_name)
-            if checkbox_state is not None:
-                if checkbox_state:
-                    # Checkbox checked - ensure value exists
-                    if current_values[param_name] is None:
-                        param_type = self.parameter_types[param_name]
-                        inner_type = self.service._type_utils.get_optional_inner_type(param_type)
-                        current_values[param_name] = inner_type()
-                else:
-                    # Checkbox unchecked - set to None
-                    current_values[param_name] = None
+            if checkbox_state is True and current_values[param_name] is None:
+                # Create default instance when checkbox is checked
+                param_type = self.parameter_types[param_name]
+                inner_type = self.service._type_utils.get_optional_inner_type(param_type)
+                current_values[param_name] = inner_type()
+            elif checkbox_state is False:
+                # Clear value when checkbox is unchecked
+                current_values[param_name] = None
 
     def _process_nested_values_if_checkbox_enabled(self, param_name: str, manager: Any,
                                                  current_values: Dict[str, Any]) -> None:
-        """Process nested values only if optional dataclass checkbox is enabled."""
-        checkbox_state = self._get_optional_checkbox_state(param_name)
-        if checkbox_state is False:
-            return  # Skip processing if checkbox is unchecked
-
-        # Process nested values normally
-        self._process_nested_values(param_name, manager.get_current_values(), current_values)
+        """Process nested values only if checkbox is enabled."""
+        if self._get_optional_checkbox_state(param_name) is not False:
+            self._process_nested_values(param_name, manager.get_current_values(), current_values)
 
     def _handle_nested_parameter_change(self, parent_name: str, value: Any) -> None:
-        """Handle nested parameter changes with optional dataclass checkbox validation."""
-        checkbox_state = self._get_optional_checkbox_state(parent_name)
-        if checkbox_state is False:
-            return  # Don't emit changes if checkbox is unchecked
-
-        # Emit the change for the parent parameter
-        self.parameter_changed.emit(parent_name, value)
+        """Handle nested parameter changes respecting checkbox state."""
+        if self._get_optional_checkbox_state(parent_name) is not False:
+            self.parameter_changed.emit(parent_name, value)
 
     def _find_checkbox_in_container(self, container: QWidget) -> Optional['QCheckBox']:
         """Find the checkbox widget within an optional dataclass container."""
