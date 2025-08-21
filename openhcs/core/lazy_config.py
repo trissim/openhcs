@@ -600,32 +600,15 @@ def create_field_level_hierarchy_provider(
 
     def field_level_provider():
         """Provider that implements field-level inheritance logic with auto-discovered hierarchy."""
-        # Use context provider if available, otherwise fall back to global config
         if context_provider:
             current_config = context_provider()
         else:
             get_current_global_config, _ = _get_generic_config_imports()
             current_config = get_current_global_config(global_config_type)
 
-        # Get actual global config for multi-level resolution
-        from openhcs.core.config import get_default_global_config
-        actual_global_config = get_default_global_config()
-
-        # Try to get user config from app if available
-        try:
-            from PyQt6.QtWidgets import QApplication
-            app = QApplication.instance()
-            if app and hasattr(app, 'global_config'):
-                actual_global_config = app.global_config
-        except ImportError:
-            try:
-                from textual.app import App
-                app = App.get_running_app()
-                if app and hasattr(app, 'global_config'):
-                    actual_global_config = app.global_config
-            except (ImportError, RuntimeError):
-                pass
-
+        # Get actual global config from app
+        from PyQt6.QtWidgets import QApplication
+        actual_global_config = QApplication.instance().global_config
         is_pipeline_context = current_config is not actual_global_config
 
 
@@ -692,6 +675,9 @@ def ensure_global_config_context(global_config_type: Type, global_config_instanc
     """Ensure proper thread-local storage setup for any global config type."""
     _, set_current_global_config = _get_generic_config_imports()
     set_current_global_config(global_config_type, global_config_instance)
+
+
+
 
 
 
