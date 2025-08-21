@@ -96,7 +96,11 @@ class FieldPathNavigator:
         for field in field_path.split('.'):
             if instance is None:
                 return None
-            instance = getattr(instance, field, None)
+            # Use object.__getattribute__ to avoid triggering lazy resolution during navigation
+            try:
+                instance = object.__getattribute__(instance, field)
+            except AttributeError:
+                return None
 
         return instance
 
@@ -146,7 +150,10 @@ def _get_raw_field_value(obj: Any, field_name: str) -> Any:
     Raises:
         AttributeError: If field doesn't exist (fail-loud behavior)
     """
-    return object.__getattribute__(obj, field_name) if hasattr(obj, field_name) else None
+    try:
+        return object.__getattribute__(obj, field_name)
+    except AttributeError:
+        return None
 
 
 def create_static_defaults_fallback(base_class: Type) -> Callable[[str], Any]:
@@ -177,9 +184,28 @@ class LazyMethodBindings:
         """Create lazy __getattribute__ method."""
         def __getattribute__(self: Any, name: str) -> Any:
             value = object.__getattribute__(self, name)
-            return (self._resolve_field_value(name)
-                   if value is None and name in {f.name for f in fields(self.__class__)}
-                   else value)
+            if value is None and name in {f.name for f in fields(self.__class__)}:
+                # Check if this field has a lazy dataclass type
+                field_obj = next((f for f in fields(self.__class__) if f.name == name), None)
+                if field_obj:
+                    field_type = field_obj.type
+                    # Handle Optional[LazyType] by unwrapping
+                    if hasattr(field_type, '__origin__') and field_type.__origin__ is Union:
+                        args = getattr(field_type, '__args__', ())
+                        if len(args) == 2 and type(None) in args:
+                            field_type = args[0] if args[1] is type(None) else args[1]
+
+                    # Check if field type is a lazy dataclass (has _resolve_field_value method)
+                    if hasattr(field_type, '_resolve_field_value') or (
+                        hasattr(field_type, '__name__') and field_type.__name__.startswith('Lazy')
+                    ):
+                        # Create instance of lazy nested class
+                        return field_type()
+
+                # Fall back to standard resolution for non-lazy fields
+                return self._resolve_field_value(name)
+            else:
+                return value
         return __getattribute__
 
     @staticmethod
@@ -204,81 +230,60 @@ class LazyDataclassFactory:
 
 
     @staticmethod
-    def _create_unified_lazy_class(base_class: Type, global_config_type: Type, field_name: str, lazy_class_name: str, parent_field_path: str = None) -> Type:
-        """Create lazy class with automatic inheritance detection and appropriate resolution strategy."""
-        from dataclasses import fields, is_dataclass
-        from openhcs.core.config import get_current_global_config
+    def _create_unified_lazy_class(
+        base_class: Type,
+        global_config_type: Type,
+        field_name: str,
+        lazy_class_name: str,
+        parent_field_path: str = None,
+        parent_instance_provider: Optional[Callable[[], Any]] = None
+    ) -> Type:
+        """Create lazy class with automatic field-level hierarchy discovery and context propagation."""
 
-        # Check for dataclass inheritance
-        parent_dataclass = next((base for base in base_class.__bases__ if base != object and is_dataclass(base)), None)
+        # CRITICAL FIX: Construct proper field path from field_name and parent_field_path
+        # In recursive resolution context, field_name is just the local field name (e.g., "materialization_defaults")
+        # but we need the full path from global config root for proper hierarchy discovery
+        full_field_path = f"{parent_field_path}.{field_name}" if parent_field_path else field_name
 
-        if parent_dataclass:
-            # Use inheritance-aware resolution
-            parent_fields = frozenset(f.name for f in fields(parent_dataclass))
-            child_fields = frozenset(f.name for f in fields(base_class))
-            inherited_fields = parent_fields & child_fields
-            own_fields = child_fields - parent_fields
+        # Create context provider that uses parent instance if available
+        def nested_context_provider():
+            if parent_instance_provider:
+                return parent_instance_provider()
 
-            def inheritance_aware_provider():
-                current_config = get_current_global_config(global_config_type)
-                child_config = getattr(current_config, field_name)
+            # Fall back to global config
+            get_current_global_config, _ = _get_generic_config_imports()
+            return get_current_global_config(global_config_type)
 
-                # Find parent config by type matching
-                parent_config = next(
-                    (getattr(current_config, f.name) for f in fields(current_config) if f.type == parent_dataclass),
-                    parent_dataclass()
-                )
-
-                class InheritanceAwareConfig:
-                    def __init__(self):
-                        # Inherited fields: use parent value if child is None/empty, otherwise override
-                        for fname in inherited_fields:
-                            child_value = getattr(child_config, fname)
-                            setattr(self, fname, getattr(parent_config, fname) if child_value in (None, "") else child_value)
-
-                        # Own fields: use child values directly
-                        for fname in own_fields:
-                            setattr(self, fname, getattr(child_config, fname))
-
-                return InheritanceAwareConfig()
-
-            return LazyDataclassFactory._create_lazy_dataclass_unified(
-                base_class=base_class,
-                instance_provider=inheritance_aware_provider,
-                lazy_class_name=lazy_class_name,
-                debug_template=f"Inheritance-aware lazy resolution for {base_class.__name__}",
-                use_recursive_resolution=False,
-                fallback_chain=[create_static_defaults_fallback(base_class)],
-                global_config_type=global_config_type,
-                parent_field_path="inheritance_aware"
-            )
-        else:
-            # Use standard field-path resolution
-            nested_field_path = f"{parent_field_path}.{field_name}" if parent_field_path else field_name
-            return LazyDataclassFactory.make_lazy_thread_local(
-                base_class=base_class,
-                global_config_type=global_config_type,
-                field_path=nested_field_path,
-                lazy_class_name=lazy_class_name
-            )
+        return LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+            base_class=base_class,
+            global_config_type=global_config_type,
+            field_path=full_field_path,  # Use constructed full path, not just field_name
+            lazy_class_name=lazy_class_name,
+            context_provider=nested_context_provider  # Pass context provider
+        )
 
     @staticmethod
-    def _introspect_dataclass_fields(base_class: Type, debug_template: str,
-                                    global_config_type: Type = None,
-                                    parent_field_path: str = None) -> List[Tuple[str, Type, None]]:
+    def _introspect_dataclass_fields(
+        base_class: Type,
+        debug_template: str,
+        global_config_type: Type = None,
+        parent_field_path: str = None,
+        parent_instance_provider: Optional[Callable[[], Any]] = None
+    ) -> List[Tuple[str, Type, None]]:
         """
         Unified field introspection logic for lazy dataclass creation.
 
         Analyzes dataclass fields to determine appropriate types for lazy loading,
         preserving original types for fields with defaults while making fields
         without defaults Optional for lazy resolution. Converts nested dataclass
-        fields to their lazy equivalents.
+        fields to their lazy equivalents with context propagation.
 
         Args:
             base_class: The dataclass to introspect
             debug_template: Template string for debug logging
             global_config_type: Global config type for creating lazy nested types
             parent_field_path: Field path prefix for nested lazy types
+            parent_instance_provider: Optional parent context provider for nested lazy types
 
         Returns:
             List of (field_name, field_type, default_value) tuples for make_dataclass
@@ -301,13 +306,14 @@ class LazyDataclassFactory:
             # Check if field type is a dataclass that should be made lazy
             field_type = field.type
             if is_dataclass(field.type) and global_config_type is not None:
-                # Create lazy version with automatic inheritance detection
+                # Create lazy version with automatic inheritance detection and context propagation
                 lazy_nested_type = LazyDataclassFactory._create_unified_lazy_class(
                     base_class=field.type,
                     global_config_type=global_config_type,
                     field_name=field.name,
                     lazy_class_name=f"Lazy{field.type.__name__}",
-                    parent_field_path=parent_field_path
+                    parent_field_path=parent_field_path,
+                    parent_instance_provider=parent_instance_provider
                 )
                 field_type = lazy_nested_type
                 logger.debug(f"Created lazy class for {field.name}: {field.type} -> {lazy_nested_type}")
@@ -340,7 +346,8 @@ class LazyDataclassFactory:
         use_recursive_resolution: bool = False,
         fallback_chain: Optional[List[Callable[[str], Any]]] = None,
         global_config_type: Type = None,
-        parent_field_path: str = None
+        parent_field_path: str = None,
+        parent_instance_provider: Optional[Callable[[], Any]] = None
     ) -> Type:
         """Create lazy dataclass with declarative configuration."""
         if not is_dataclass(base_class):
@@ -367,7 +374,7 @@ class LazyDataclassFactory:
         lazy_class = make_dataclass(
             lazy_class_name,
             LazyDataclassFactory._introspect_dataclass_fields(
-                base_class, debug_template, global_config_type, parent_field_path
+                base_class, debug_template, global_config_type, parent_field_path, parent_instance_provider
             ),
             frozen=True
         )
@@ -481,9 +488,179 @@ class LazyDataclassFactory:
             global_config_type, field_path
         )
 
+    @staticmethod
+    def make_lazy_with_field_level_auto_hierarchy(
+        base_class: Type,
+        global_config_type: Type,
+        field_path: str = None,
+        lazy_class_name: str = None,
+        context_provider: Optional[Callable[[], Any]] = None
+    ) -> Type:
+        """
+        Create lazy dataclass with automatically discovered field-level hierarchy resolution.
 
+        Preserves sophisticated field-level inheritance while using automatic type introspection
+        to discover hierarchy relationships, eliminating the need for manual configuration.
+        Now supports context-aware resolution for sibling inheritance within instances.
+
+        Args:
+            base_class: The dataclass type to make lazy
+            global_config_type: The global config type for thread-local resolution
+            field_path: Optional field path for the current instance
+            lazy_class_name: Optional name for the generated lazy class
+            context_provider: Optional function that provides the resolution context.
+                             If None, uses global config. If provided, uses the returned instance.
+
+        Returns:
+            Generated lazy dataclass with field-level auto-hierarchy resolution
+        """
+        # Generate class name if not provided
+        if lazy_class_name is None:
+            lazy_class_name = f"Lazy{base_class.__name__}"
+
+        # Create field-level hierarchy provider with context support
+        field_level_provider = create_field_level_hierarchy_provider(
+            base_class=base_class,
+            global_config_type=global_config_type,
+            current_field_path=field_path,
+            context_provider=context_provider
+        )
+
+        # Use field-level provider with static defaults fallback
+        fallback_chain = [create_static_defaults_fallback(base_class)]
+
+        # Create parent instance provider for context propagation
+        def parent_instance_provider_for_nested():
+            if context_provider:
+                return context_provider()
+            return None
+
+        return LazyDataclassFactory._create_lazy_dataclass_unified(
+            base_class=base_class,
+            instance_provider=field_level_provider,
+            lazy_class_name=lazy_class_name,
+            debug_template=f"Field-level auto-hierarchy resolution for {base_class.__name__}",
+            use_recursive_resolution=False,
+            fallback_chain=fallback_chain,
+            global_config_type=global_config_type,
+            parent_field_path=field_path,
+            parent_instance_provider=parent_instance_provider_for_nested
+        )
 
     # Deprecated methods removed - use make_lazy_thread_local() with explicit field_path
+
+
+def create_field_level_hierarchy_provider(
+    base_class: Type,
+    global_config_type: Type,
+    current_field_path: str = None,
+    context_provider: Optional[Callable[[], Any]] = None
+):
+    """
+    Create field-level hierarchy provider that preserves sophisticated inheritance logic.
+
+    This maintains the current field-by-field inheritance behavior while using
+    automatic hierarchy discovery to replace manual fallback chain configuration.
+    Now supports context-aware resolution for sibling inheritance within instances.
+
+    Args:
+        base_class: The dataclass type to create hierarchy provider for
+        global_config_type: The global config type for thread-local resolution
+        current_field_path: Optional field path for the current instance
+        context_provider: Optional function that provides the resolution context.
+                         If None, uses global config. If provided, uses the returned instance.
+
+    Returns:
+        Provider function that creates instances with field-level hierarchy resolution
+    """
+    from openhcs.core.field_path_detection import FieldPathDetector
+    from dataclasses import fields
+
+    # Auto-discover hierarchy paths
+    all_field_paths = FieldPathDetector.find_all_field_paths_for_type(
+        global_config_type, base_class
+    )
+    parent_types = FieldPathDetector.find_inheritance_relationships(base_class)
+    sibling_paths = []
+    for parent_type in parent_types:
+        sibling_paths.extend(
+            FieldPathDetector.find_all_field_paths_for_type(global_config_type, parent_type)
+        )
+
+    # Determine field classifications for sophisticated inheritance
+    if parent_types:
+        parent_dataclass = parent_types[0]  # Primary parent
+        parent_fields = frozenset(f.name for f in fields(parent_dataclass))
+        child_fields = frozenset(f.name for f in fields(base_class))
+        inherited_fields = parent_fields & child_fields
+        own_fields = child_fields - parent_fields
+    else:
+        inherited_fields = frozenset()
+        own_fields = frozenset(f.name for f in fields(base_class))
+
+    def field_level_provider():
+        """Provider that implements field-level inheritance logic with auto-discovered hierarchy."""
+        # Use context provider if available, otherwise fall back to global config
+        if context_provider:
+            current_config = context_provider()
+        else:
+            get_current_global_config, _ = _get_generic_config_imports()
+            current_config = get_current_global_config(global_config_type)
+
+        class FieldLevelInheritanceConfig:
+            def __init__(self):
+                # Build complete hierarchy path list with inheritance logic
+                hierarchy_paths = self._build_hierarchy_paths(
+                    current_field_path, all_field_paths, sibling_paths
+                )
+
+                # Process all fields using unified resolution
+                for field_name in inherited_fields | own_fields:
+                    is_inherited = field_name in inherited_fields
+                    field_value = self._resolve_field_through_hierarchy(
+                        field_name, current_config, hierarchy_paths, is_inherited
+                    )
+                    setattr(self, field_name, field_value)
+
+            def _build_hierarchy_paths(self, current_path, same_type_paths, parent_paths):
+                """Build ordered hierarchy path list for resolution."""
+                hierarchy = []
+
+                # 1. Current field path (if specified)
+                if current_path:
+                    hierarchy.append(current_path)
+
+                # 2. Other instances of same type
+                for path in same_type_paths:
+                    if path != current_path:
+                        hierarchy.append(path)
+
+                # 3. Sibling inheritance paths (parent types)
+                hierarchy.extend(parent_paths)
+
+                return hierarchy
+
+            def _resolve_field_through_hierarchy(self, field_name, config, hierarchy_paths, is_inherited):
+                """Resolve field through hierarchy with inheritance-aware logic."""
+                for path in hierarchy_paths:
+                    instance = FieldPathNavigator.navigate_to_instance(config, path)
+                    if instance:
+                        value = _get_raw_field_value(instance, field_name)
+
+                        if is_inherited:
+                            # Inherited field: check for override vs inherit
+                            if value is not None and value != "":
+                                return value  # Found non-empty value
+                        else:
+                            # Own field: any non-None value is valid
+                            if value is not None:
+                                return value
+
+                return None  # No value found in hierarchy
+
+        return FieldLevelInheritanceConfig()
+
+    return field_level_provider
 
 
 # Generic utility functions for clean thread-local storage management

@@ -69,3 +69,74 @@ class FieldPathDetector:
 
         # Return the type as-is if not a generic/optional type
         return field_type
+
+    @staticmethod
+    def find_all_field_paths_for_type(parent_type: Type, target_type: Type) -> list[str]:
+        """
+        Find ALL field paths that contain the target type in the parent config structure.
+
+        This enables automatic hierarchy discovery for lazy resolution by recursively
+        searching through nested dataclass structures to find all instances of a
+        target type.
+
+        Args:
+            parent_type: The parent dataclass type to search within
+            target_type: The target dataclass type to find all field paths for
+
+        Returns:
+            List of field paths (e.g., ['materialization_defaults', 'nested.path'])
+
+        Examples:
+            >>> FieldPathDetector.find_all_field_paths_for_type(
+            ...     GlobalPipelineConfig, StepMaterializationConfig
+            ... )
+            ['materialization_defaults']
+        """
+        paths = []
+
+        def _recursive_search(current_type: Type, current_path: str = ""):
+            if not dataclasses.is_dataclass(current_type):
+                return
+
+            for field in dataclasses.fields(current_type):
+                field_type = FieldPathDetector._unwrap_optional_type(field.type)
+                field_path = f"{current_path}.{field.name}" if current_path else field.name
+
+                # Direct type match
+                if field_type == target_type:
+                    paths.append(field_path)
+                # Recursive search in nested dataclasses
+                elif dataclasses.is_dataclass(field_type):
+                    _recursive_search(field_type, field_path)
+
+        _recursive_search(parent_type)
+        return paths
+
+    @staticmethod
+    def find_inheritance_relationships(target_type: Type) -> list[Type]:
+        """
+        Find all parent dataclasses that target_type inherits from.
+
+        This method recursively traverses the inheritance chain to discover
+        all dataclass parents, enabling automatic sibling inheritance detection
+        for lazy configuration resolution.
+
+        Args:
+            target_type: The dataclass type to analyze for inheritance relationships
+
+        Returns:
+            List of parent dataclass types in inheritance order
+
+        Examples:
+            >>> FieldPathDetector.find_inheritance_relationships(StepMaterializationConfig)
+            [PathPlanningConfig]
+        """
+        inheritance_chain = []
+
+        for base in target_type.__bases__:
+            if base != object and dataclasses.is_dataclass(base):
+                inheritance_chain.append(base)
+                # Recursively find parent relationships
+                inheritance_chain.extend(FieldPathDetector.find_inheritance_relationships(base))
+
+        return inheritance_chain

@@ -866,11 +866,36 @@ class PipelineOrchestrator:
 
         self.pipeline_config = pipeline_config
 
-        # Set up thread-local context FIRST so to_base_config() can resolve None values correctly
+        # Set up thread-local context for sibling inheritance
+        # The existing lazy config system already handles sibling inheritance automatically
+        # We just need to provide the pipeline config instance as the context
         from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        set_current_global_config(GlobalPipelineConfig, self.global_config)
+        from dataclasses import fields
 
-        # Now get_effective_config() can resolve None values against proper context
+        # Create a merged config that combines global defaults with pipeline overrides
+        # This provides the context for the existing sibling inheritance system
+        merged_config_values = {}
+
+        for field in fields(GlobalPipelineConfig):
+            try:
+                # Get raw value from pipeline config
+                raw_value = object.__getattribute__(pipeline_config, field.name)
+                if raw_value is not None:
+                    # Use the override value
+                    merged_config_values[field.name] = raw_value
+                else:
+                    # Use global default for None values
+                    merged_config_values[field.name] = getattr(self.global_config, field.name)
+            except AttributeError:
+                # Field doesn't exist in pipeline config, use global default
+                merged_config_values[field.name] = getattr(self.global_config, field.name)
+
+        # Create merged config for thread-local context
+        # The existing sibling inheritance system will handle the rest automatically
+        merged_config = GlobalPipelineConfig(**merged_config_values)
+        set_current_global_config(GlobalPipelineConfig, merged_config)
+
+        # Now get_effective_config() can resolve None values against proper sibling context
         effective_config = self.get_effective_config()
 
         # Update thread-local storage with the correctly resolved effective config
@@ -881,8 +906,8 @@ class PipelineOrchestrator:
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
         if self.pipeline_config:
-            # Ensure thread-local context is set up for lazy resolution in to_base_config()
-            set_current_global_config(GlobalPipelineConfig, self.global_config)
+            # Thread-local context should already be set up by apply_pipeline_config()
+            # Don't override it here as it may contain merged config for sibling inheritance
             return self.pipeline_config.to_base_config()
         return self.global_config
 

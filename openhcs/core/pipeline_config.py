@@ -107,58 +107,12 @@ def create_editing_config_from_existing_lazy_config(
 
 
 
-# Generate step-level lazy class with inheritance-aware resolution FIRST
-# This must be created before PipelineConfig so it can be used in nested resolution
-
-def _create_inheritance_aware_instance_provider():
-    """Complete inheritance-aware instance provider with override capability."""
-    from openhcs.core.config import get_current_global_config, GlobalPipelineConfig, PathPlanningConfig
-    from openhcs.core.config import StepMaterializationConfig
-    from dataclasses import fields
-
-    # Pre-compute field classifications
-    path_planning_fields = frozenset(f.name for f in fields(PathPlanningConfig))
-    step_materialization_fields = frozenset(f.name for f in fields(StepMaterializationConfig))
-    inherited_fields = path_planning_fields & step_materialization_fields
-    own_fields = step_materialization_fields - path_planning_fields
-
-    def inheritance_aware_provider() -> Any:
-        """Resolve fields with inheritance and override capability - fail loud."""
-        current_config = get_current_global_config(GlobalPipelineConfig)
-
-        class InheritanceAwareConfig:
-            def __init__(self):
-                # Handle inherited fields with override capability
-                for field_name in inherited_fields:
-                    child_value = getattr(current_config.materialization_defaults, field_name)
-
-                    if child_value is None or child_value == "":  # Inherit from parent
-                        parent_value = getattr(current_config.path_planning, field_name)
-                        setattr(self, field_name, parent_value)
-                    else:  # Use explicit child value (override)
-                        setattr(self, field_name, child_value)
-
-                # Populate own fields from materialization_defaults
-                for field_name in own_fields:
-                    value = getattr(current_config.materialization_defaults, field_name)
-                    setattr(self, field_name, value)
-
-        return InheritanceAwareConfig()
-
-    return inheritance_aware_provider
-
-# Create LazyStepMaterializationConfig with inheritance-aware approach
-from openhcs.core.lazy_config import create_static_defaults_fallback
-
-LazyStepMaterializationConfig = LazyDataclassFactory._create_lazy_dataclass_unified(
+# Create LazyStepMaterializationConfig with field-level auto-hierarchy
+LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
     base_class=StepMaterializationConfig,
-    instance_provider=_create_inheritance_aware_instance_provider(),
-    lazy_class_name="LazyStepMaterializationConfig",
-    debug_template="Inheritance-aware lazy resolution for StepMaterializationConfig",
-    use_recursive_resolution=False,
-    fallback_chain=[create_static_defaults_fallback(StepMaterializationConfig)],
     global_config_type=GlobalPipelineConfig,
-    parent_field_path="inheritance_aware"
+    field_path="materialization_defaults",
+    lazy_class_name="LazyStepMaterializationConfig"
 )
 
 # Generate pipeline-specific lazy configuration classes using thread-local resolution
