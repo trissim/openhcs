@@ -895,11 +895,10 @@ class PipelineOrchestrator:
         merged_config = GlobalPipelineConfig(**merged_config_values)
         set_current_global_config(GlobalPipelineConfig, merged_config)
 
-        # Now get_effective_config() can resolve None values against proper sibling context
-        effective_config = self.get_effective_config()
-
-        # Update thread-local storage with the correctly resolved effective config
-        set_current_global_config(GlobalPipelineConfig, effective_config)
+        # CRITICAL FIX: Do NOT overwrite context with effective_config
+        # The merged_config preserves None values needed for sibling inheritance
+        # Overwriting with effective_config resolves None values to concrete values,
+        # breaking the inheritance chain (materialization_defaults → path_planning)
 
         logger.info(f"Applied orchestrator config for plate: {self.plate_path}")
 

@@ -95,12 +95,26 @@ class PipelineCompiler:
             context.step_plans = {} # Ensure step_plans dict exists
 
         # === THREAD-LOCAL CONTEXT SETUP ===
-        # Set thread-local context for lazy resolution during compilation
-        # Use orchestrator's current effective config instead of potentially stale context.global_config
-        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        effective_config = orchestrator.get_effective_config()
-        set_current_global_config(GlobalPipelineConfig, effective_config)
-        logger.debug("🔧 THREAD-LOCAL: Set thread-local context for lazy resolution using orchestrator effective config")
+        # CRITICAL FIX: Use existing thread-local context set by orchestrator.apply_pipeline_config()
+        # The orchestrator should have already set up merged_config that preserves None values
+        # for sibling inheritance. Do NOT overwrite with pipeline_config or effective_config.
+        from openhcs.core.config import get_current_global_config, GlobalPipelineConfig
+        current_context = get_current_global_config(GlobalPipelineConfig)
+        logger.debug(f"🔧 THREAD-LOCAL: Current context: {current_context}")
+        logger.debug(f"🔧 THREAD-LOCAL: Orchestrator pipeline_config: {orchestrator.pipeline_config}")
+
+        if current_context is None:
+            # Check if orchestrator has pipeline config that should be applied
+            if orchestrator.pipeline_config:
+                logger.debug("🔧 THREAD-LOCAL: Applying orchestrator pipeline config")
+                orchestrator.apply_pipeline_config(orchestrator.pipeline_config)
+            else:
+                # Fallback: if no context exists, use orchestrator's global config (not effective config)
+                from openhcs.core.config import set_current_global_config
+                set_current_global_config(GlobalPipelineConfig, orchestrator.global_config)
+                logger.debug("🔧 THREAD-LOCAL: Set fallback context using orchestrator global config")
+        else:
+            logger.debug("🔧 THREAD-LOCAL: Using existing thread-local context (preserves None values for sibling inheritance)")
 
         # === BACKWARDS COMPATIBILITY PREPROCESSING ===
         # Ensure all steps have complete attribute sets based on AbstractStep constructor
