@@ -470,6 +470,7 @@ class PlateManagerWidget(QWidget):
         representative_orchestrator = selected_orchestrators[0]
 
         # Set up thread-local context for pipeline config editing
+        # Use global config to ensure proper reset behavior (None values resolve to inheritance chain)
         from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
         set_current_global_config(GlobalPipelineConfig, self.global_config)
 
@@ -494,6 +495,14 @@ class PlateManagerWidget(QWidget):
                 # Emit signal for UI components to refresh
                 effective_config = orchestrator.get_effective_config()
                 self.orchestrator_config_changed.emit(str(orchestrator.plate_path), effective_config)
+
+            # CRITICAL FIX: Restore orchestrator context after config save
+            # This ensures step editors continue to work with orchestrator-specific context
+            if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+                current_orchestrator = self.orchestrators[self.selected_plate_path]
+                current_orchestrator.apply_pipeline_config(current_orchestrator.pipeline_config or PipelineConfig())
+                logger.debug(f"Restored orchestrator context after config save: {self.selected_plate_path}")
+
             count = len(selected_orchestrators)
             # Success message dialog removed for test automation compatibility
 
