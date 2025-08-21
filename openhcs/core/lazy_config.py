@@ -607,6 +607,29 @@ def create_field_level_hierarchy_provider(
             get_current_global_config, _ = _get_generic_config_imports()
             current_config = get_current_global_config(global_config_type)
 
+        # Get actual global config for multi-level resolution
+        from openhcs.core.config import get_default_global_config
+        actual_global_config = get_default_global_config()
+
+        # Try to get user config from app if available
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app and hasattr(app, 'global_config'):
+                actual_global_config = app.global_config
+        except ImportError:
+            try:
+                from textual.app import App
+                app = App.get_running_app()
+                if app and hasattr(app, 'global_config'):
+                    actual_global_config = app.global_config
+            except (ImportError, RuntimeError):
+                pass
+
+        is_pipeline_context = current_config is not actual_global_config
+
+
+
         class FieldLevelInheritanceConfig:
             def __init__(self):
                 # Build complete hierarchy path list with inheritance logic
@@ -618,45 +641,46 @@ def create_field_level_hierarchy_provider(
                 for field_name in inherited_fields | own_fields:
                     is_inherited = field_name in inherited_fields
                     field_value = self._resolve_field_through_hierarchy(
-                        field_name, current_config, hierarchy_paths, is_inherited
+                        field_name, current_config, actual_global_config, hierarchy_paths, is_inherited
                     )
                     setattr(self, field_name, field_value)
 
             def _build_hierarchy_paths(self, current_path, same_type_paths, parent_paths):
-                """Build ordered hierarchy path list for resolution."""
+                """Build hierarchy with current and global contexts."""
                 hierarchy = []
 
-                # 1. Current field path (if specified)
+                # Current context paths
                 if current_path:
-                    hierarchy.append(current_path)
+                    hierarchy.append(('current', current_path))
+                hierarchy.extend(('current', path) for path in parent_paths)
 
-                # 2. Other instances of same type
-                for path in same_type_paths:
-                    if path != current_path:
-                        hierarchy.append(path)
-
-                # 3. Sibling inheritance paths (parent types)
-                hierarchy.extend(parent_paths)
+                # Global context paths (if different from current)
+                if is_pipeline_context:
+                    if current_path:
+                        hierarchy.append(('global', current_path))
+                    hierarchy.extend(('global', path) for path in parent_paths)
+                else:
+                    hierarchy.extend(('current', path) for path in same_type_paths if path != current_path)
 
                 return hierarchy
 
-            def _resolve_field_through_hierarchy(self, field_name, config, hierarchy_paths, is_inherited):
+            def _resolve_field_through_hierarchy(self, field_name, current_config, actual_global_config, hierarchy_paths, is_inherited):
                 """Resolve field through hierarchy with inheritance-aware logic."""
-                for path in hierarchy_paths:
+                for context_type, path in hierarchy_paths:
+                    config = current_config if context_type == 'current' else actual_global_config
                     instance = FieldPathNavigator.navigate_to_instance(config, path)
+
                     if instance:
                         value = _get_raw_field_value(instance, field_name)
 
                         if is_inherited:
-                            # Inherited field: check for override vs inherit
                             if value is not None and value != "":
-                                return value  # Found non-empty value
+                                return value
                         else:
-                            # Own field: any non-None value is valid
                             if value is not None:
                                 return value
 
-                return None  # No value found in hierarchy
+                return None
 
         return FieldLevelInheritanceConfig()
 
@@ -668,6 +692,9 @@ def ensure_global_config_context(global_config_type: Type, global_config_instanc
     """Ensure proper thread-local storage setup for any global config type."""
     _, set_current_global_config = _get_generic_config_imports()
     set_current_global_config(global_config_type, global_config_instance)
+
+
+
 
 
 def resolve_lazy_configurations_for_serialization(data: Any) -> Any:
