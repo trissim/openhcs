@@ -310,21 +310,9 @@ class ParameterFormManager(QWidget):
             self.nested_managers[param_info.name] = nested_manager
             # Connect nested parameter changes to trigger parent parameter updates
             # This ensures LazyStepMaterializationConfig changes are properly saved
-            def handle_nested_change(name, value, parent_name=param_info.name):
-                # For optional dataclass parameters, only emit changes if the checkbox is checked
-                if self.service._type_utils.is_optional_dataclass(self.parameter_types.get(parent_name)):
-                    # Check if the checkbox is still checked before emitting the change
-                    parent_widget = self.widgets.get(parent_name)
-                    if parent_widget:
-                        checkbox = self._find_checkbox_in_container(parent_widget)
-                        if checkbox and not checkbox.isChecked():
-                            # Checkbox is unchecked, don't emit nested changes
-                            return
-
-                # Emit the change for the parent parameter
-                self.parameter_changed.emit(parent_name, value)
-
-            nested_manager.parameter_changed.connect(handle_nested_change)
+            nested_manager.parameter_changed.connect(
+                lambda name, value, parent_name=param_info.name: self._handle_nested_parameter_change(parent_name, value)
+            )
             group_box.content_layout.addWidget(nested_manager)
         else:
             nested_form = self._create_nested_form_inline(param_info.name, param_info.type, current_value)
@@ -348,7 +336,6 @@ class ParameterFormManager(QWidget):
             nested_widget.setEnabled(enabled)
             new_value = inner_type() if enabled else None
             self.parameters[param_info.name] = new_value
-            print(f"DEBUG: Checkbox toggle for {param_info.name}: enabled={enabled}, new_value={new_value}")
             self.parameter_changed.emit(param_info.name, new_value)
         checkbox.stateChanged.connect(toggle)
         return container, {'main': container}
@@ -570,53 +557,70 @@ class ParameterFormManager(QWidget):
 
         This fixes the lazy default materialization override saving issue by ensuring
         that lazy dataclasses maintain their structure when values are retrieved.
-
-        For optional dataclass parameters, this method reads the actual checkbox state
-        to determine if the parameter should be None or not.
         """
         # Start with a copy of current parameters
         current_values = self.parameters.copy()
 
-        # Read actual widget values for optional dataclass parameters
-        # This fixes the bug where unchecking a checkbox doesn't persist
-        for param_name, widget in self.widgets.items():
-            param_type = self.parameter_types.get(param_name)
-            if param_type and self.service._type_utils.is_optional_dataclass(param_type):
-                # For optional dataclass, check if the container has a checkbox
-                checkbox = self._find_checkbox_in_container(widget)
-                if checkbox is not None:
-                    if checkbox.isChecked():
-                        # Checkbox is checked - keep current value or create default instance
-                        if current_values[param_name] is None:
-                            inner_type = self.service._type_utils.get_optional_inner_type(param_type)
-                            current_values[param_name] = inner_type()
-                        print(f"DEBUG: get_current_values - {param_name} checkbox CHECKED, value={current_values[param_name]}")
-                    else:
-                        # Checkbox is unchecked - set to None
-                        current_values[param_name] = None
-                        print(f"DEBUG: get_current_values - {param_name} checkbox UNCHECKED, set to None")
+        # Validate optional dataclass checkbox states
+        self._validate_optional_dataclass_checkbox_states(current_values)
 
-        # First, collect values from nested managers and rebuild nested dataclass instances
-        # This must happen BEFORE applying lazy structure preservation to avoid overwriting
-        # Skip optional dataclass parameters that have unchecked checkboxes
-        def process_nested_if_enabled(name, manager):
-            param_type = self.parameter_types.get(name)
-            if param_type and self.service._type_utils.is_optional_dataclass(param_type):
-                # Check if the checkbox is checked before processing nested values
-                parent_widget = self.widgets.get(name)
-                if parent_widget:
-                    checkbox = self._find_checkbox_in_container(parent_widget)
-                    if checkbox and not checkbox.isChecked():
-                        # Checkbox is unchecked, don't process nested values
-                        return
-
-            # Process nested values normally
-            self._process_nested_values(name, manager.get_current_values(), current_values)
-
-        self._apply_to_nested_managers(process_nested_if_enabled)
+        # Collect values from nested managers, respecting optional dataclass checkbox states
+        self._apply_to_nested_managers(
+            lambda name, manager: self._process_nested_values_if_checkbox_enabled(
+                name, manager, current_values
+            )
+        )
 
         # Lazy dataclasses are now handled by LazyDataclassEditor, so no structure preservation needed
         return current_values
+
+    def _get_optional_checkbox_state(self, param_name: str) -> Optional[bool]:
+        """Get checkbox state for optional dataclass parameter. Returns None if not applicable."""
+        param_type = self.parameter_types.get(param_name)
+        if not (param_type and self.service._type_utils.is_optional_dataclass(param_type)):
+            return None
+
+        widget = self.widgets.get(param_name)
+        if not widget:
+            return None
+
+        checkbox = self._find_checkbox_in_container(widget)
+        return checkbox.isChecked() if checkbox else None
+
+    def _validate_optional_dataclass_checkbox_states(self, current_values: Dict[str, Any]) -> None:
+        """Validate optional dataclass checkbox states using functional approach."""
+        # Functional pattern: apply checkbox validation to all parameters
+        for param_name in self.widgets.keys():
+            checkbox_state = self._get_optional_checkbox_state(param_name)
+            if checkbox_state is not None:
+                if checkbox_state:
+                    # Checkbox checked - ensure value exists
+                    if current_values[param_name] is None:
+                        param_type = self.parameter_types[param_name]
+                        inner_type = self.service._type_utils.get_optional_inner_type(param_type)
+                        current_values[param_name] = inner_type()
+                else:
+                    # Checkbox unchecked - set to None
+                    current_values[param_name] = None
+
+    def _process_nested_values_if_checkbox_enabled(self, param_name: str, manager: Any,
+                                                 current_values: Dict[str, Any]) -> None:
+        """Process nested values only if optional dataclass checkbox is enabled."""
+        checkbox_state = self._get_optional_checkbox_state(param_name)
+        if checkbox_state is False:
+            return  # Skip processing if checkbox is unchecked
+
+        # Process nested values normally
+        self._process_nested_values(param_name, manager.get_current_values(), current_values)
+
+    def _handle_nested_parameter_change(self, parent_name: str, value: Any) -> None:
+        """Handle nested parameter changes with optional dataclass checkbox validation."""
+        checkbox_state = self._get_optional_checkbox_state(parent_name)
+        if checkbox_state is False:
+            return  # Don't emit changes if checkbox is unchecked
+
+        # Emit the change for the parent parameter
+        self.parameter_changed.emit(parent_name, value)
 
     def _find_checkbox_in_container(self, container: QWidget) -> Optional['QCheckBox']:
         """Find the checkbox widget within an optional dataclass container."""
