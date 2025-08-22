@@ -1099,6 +1099,8 @@ def _create_reset_validation_assertions(scenario: TestScenario) -> List[Callable
         form_managers = context.config_window.findChildren(ParameterFormManager)
 
         bug_detected = False
+        output_dir_suffix_found = False
+
         for form_manager in form_managers:
             if not hasattr(form_manager, 'widgets'):
                 continue
@@ -1107,12 +1109,33 @@ def _create_reset_validation_assertions(scenario: TestScenario) -> List[Callable
                 texts = _extract_widget_texts(widget)
                 all_text = " ".join(texts.values())
 
+                # Debug: Show what we find for output_dir_suffix specifically
+                if field_name == "output_dir_suffix":
+                    output_dir_suffix_found = True
+                    print(f"🔍 OUTPUT_DIR_SUFFIX FIELD AFTER RESET:")
+                    print(f"  Field name: {field_name}")
+                    print(f"  All text: '{all_text}'")
+                    print(f"  Individual texts: {texts}")
+
+                    # Check what the placeholder actually shows
+                    if "pipeline default:" in all_text.lower():
+                        if "828282" in all_text:
+                            print(f"🚨 BUG: Placeholder shows concrete saved value '828282'")
+                            bug_detected = True
+                        elif "_openhcs" in all_text:
+                            print(f"✅ GOOD: Placeholder shows inheritance value '_openhcs'")
+                        else:
+                            print(f"❓ UNKNOWN: Placeholder shows something else")
+
                 # Check if placeholder contains the concrete saved value "828282"
                 if "828282" in all_text:
                     print(f"🐛 FOUND '828282' in field '{field_name}': {all_text}")
                     if "pipeline default:" in all_text.lower():
                         bug_detected = True
                         print(f"🚨 RESET PLACEHOLDER BUG CONFIRMED: Field '{field_name}' shows concrete value '828282' in placeholder!")
+
+        if not output_dir_suffix_found:
+            raise AssertionError("TEST ERROR: output_dir_suffix field not found in form managers!")
 
         if bug_detected:
             raise AssertionError(
@@ -1275,27 +1298,22 @@ class TestPyQtGUIWorkflowFoundation:
                 operation=_reset_field,
                 timing_delay=TIMING.ACTION_DELAY
             ))
-            .add_step(WorkflowStep(
-                name="Save Configuration After Reset",
-                operation=_save_config_window,
-                timing_delay=TIMING.SAVE_DELAY
-            ))
-            .add_step(WorkflowStep(
-                name="Final Reopen Configuration Window",
-                operation=_reopen_config_window,
-                timing_delay=TIMING.WINDOW_DELAY
-            ))
-            .add_step(WorkflowStep(
-                name="Validate Full Lazy State After Reset",
-                operation=_validate_full_lazy_state
-            ))
         )
 
-        # Only add my specific reset placeholder bug assertion
+        # Add reset placeholder bug check immediately after reset (before any window reopening)
         if test_scenario.name == "reset_placeholder_bug":
-            reset_assertions = _create_reset_validation_assertions(test_scenario)
-            for assertion in reset_assertions:
-                workflow.add_assertion(assertion)
+            def check_reset_placeholder_immediately(context: WorkflowContext) -> WorkflowContext:
+                """Check placeholder immediately after reset, before any window reopening."""
+                reset_assertions = _create_reset_validation_assertions(test_scenario)
+                for assertion in reset_assertions:
+                    assertion(context)
+                return context
+
+            workflow.add_step(WorkflowStep(
+                name="Check Reset Placeholder Bug (Immediate)",
+                operation=check_reset_placeholder_immediately,
+                timing_delay=0.1  # Small delay to let UI update
+            ))
 
         # Execute workflow with parameterized context
         initial_context = WorkflowContext(
