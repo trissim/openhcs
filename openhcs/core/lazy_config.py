@@ -612,6 +612,7 @@ def create_field_level_hierarchy_provider(
             current_config = get_current_global_config(global_config_type)
 
         # Get actual global config from app (if PyQt6 app is running)
+        actual_global_config = None
         try:
             from PyQt6.QtWidgets import QApplication
             app_instance = QApplication.instance()
