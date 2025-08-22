@@ -452,13 +452,14 @@ class PipelineCompiler:
         effective_config = orchestrator.get_effective_config()
         set_current_global_config(GlobalPipelineConfig, effective_config)
 
-        # Resolve global_config if it's a lazy dataclass
-        if hasattr(context, 'global_config') and context.global_config is not None:
-            context.global_config = resolve_lazy_configurations_for_serialization(context.global_config)
+        # Resolve the entire context recursively to catch all lazy dataclass instances
+        # This ensures that any lazy configs in any part of the context are resolved
+        resolved_context_dict = resolve_lazy_configurations_for_serialization(vars(context))
 
-        # Use the shared recursive resolution function to handle nested structures
-        for step_index, step_plan in context.step_plans.items():
-            context.step_plans[step_index] = resolve_lazy_configurations_for_serialization(step_plan)
+        # Update context attributes with resolved values
+        for attr_name, resolved_value in resolved_context_dict.items():
+            if not attr_name.startswith('_'):  # Skip private attributes
+                setattr(context, attr_name, resolved_value)
 
     @staticmethod
     def compile_pipelines(
