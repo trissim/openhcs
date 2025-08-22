@@ -46,6 +46,11 @@ def create_textual_registry():
 
 def create_pyqt6_registry():
     """Return PyQt6 widget creator function."""
-    from openhcs.ui.shared.pyqt6_widget_strategies import MagicGuiWidgetFactory
-    factory = MagicGuiWidgetFactory()
-    return factory.create_widget
+    try:
+        from openhcs.pyqt_gui.widgets.shared.widget_strategies import MagicGuiWidgetFactory
+        factory = MagicGuiWidgetFactory()
+        return factory.create_widget
+    except ImportError:
+        def fallback_creator(*args, **kwargs):
+            raise ImportError("PyQt6 not available - install with pip install 'openhcs[gui]'")
+        return fallback_creator

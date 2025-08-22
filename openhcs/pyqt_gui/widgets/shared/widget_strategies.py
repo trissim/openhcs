@@ -15,7 +15,7 @@ from openhcs.pyqt_gui.widgets.shared.no_scroll_spinbox import (
 )
 from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
-from .widget_creation_registry import resolve_optional, is_enum, is_list_of_enums, get_enum_from_list
+from openhcs.ui.shared.widget_creation_registry import resolve_optional, is_enum, is_list_of_enums, get_enum_from_list
 
 logger = logging.getLogger(__name__)
 

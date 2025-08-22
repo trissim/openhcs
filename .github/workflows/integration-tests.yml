@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,gui,dev-gui]"
+          pip install -e ".[dev]"
 
       - name: Run CPU-only integration tests
         if: github.event.inputs.test_mode == 'cpu-only' || github.event.inputs.test_mode == ''
@@ -76,7 +76,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,gui,dev-gui]"
+          pip install -e ".[dev]"
 
       - name: Run focused CPU-only integration tests (default 4 combinations)
         env:
