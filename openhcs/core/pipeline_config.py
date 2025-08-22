@@ -107,11 +107,18 @@ def create_editing_config_from_existing_lazy_config(
 
 
 
-# Create LazyStepMaterializationConfig with field-level auto-hierarchy
+# Create LazyStepMaterializationConfig with field-level auto-hierarchy using automatic field path detection
+from openhcs.core.field_path_detection import FieldPathDetector
+
+# Use automatic field path detection instead of hardcoded string
+_materialization_field_path = FieldPathDetector.find_field_path_for_type(
+    GlobalPipelineConfig, StepMaterializationConfig
+)
+
 LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
     base_class=StepMaterializationConfig,
     global_config_type=GlobalPipelineConfig,
-    field_path="materialization_defaults",
+    field_path=_materialization_field_path,
     lazy_class_name="LazyStepMaterializationConfig"
 )
 
