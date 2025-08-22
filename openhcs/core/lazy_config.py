@@ -381,6 +381,11 @@ class LazyDataclassFactory:
 
         # Bind methods declaratively
         LazyDataclassFactory._bind_methods_to_class(lazy_class, base_class, resolution_config)
+
+        # Automatically register the lazy dataclass with the type registry
+        from openhcs.core.config import register_lazy_type_mapping
+        register_lazy_type_mapping(lazy_class, base_class)
+
         return lazy_class
 
     @staticmethod

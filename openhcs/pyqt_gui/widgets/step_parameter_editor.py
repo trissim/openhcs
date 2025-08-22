@@ -65,13 +65,28 @@ class StepParameterEditorWidget(QScrollArea):
             param_defaults[name] = info.default_value
         
         # Create parameter form manager for function parameters
-        # Function parameters don't belong to any dataclass, so pass None
-        self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "step", None,
-            param_info,
-            color_scheme=self.color_scheme,
-            placeholder_prefix="Pipeline default"
-        )
+        # Use orchestrator context if available for proper inheritance resolution
+        if self.orchestrator and self.orchestrator.pipeline_config:
+            # Apply the orchestrator's pipeline config to set up proper inheritance context
+            # This creates a merged config that preserves None values for sibling inheritance
+            # (materialization_defaults → path_planning)
+            self.orchestrator.apply_pipeline_config(self.orchestrator.pipeline_config)
+
+            # Create form manager within the orchestrator's inheritance context
+            self.form_manager = ParameterFormManager(
+                parameters, parameter_types, "step", None,
+                param_info,
+                color_scheme=self.color_scheme,
+                placeholder_prefix="Pipeline default"
+            )
+        else:
+            # No orchestrator context available, use global context
+            self.form_manager = ParameterFormManager(
+                parameters, parameter_types, "step", None,
+                param_info,
+                color_scheme=self.color_scheme,
+                placeholder_prefix="Pipeline default"
+            )
         self.param_defaults = param_defaults
         
         self.setup_ui()

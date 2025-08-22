@@ -1354,7 +1354,8 @@ class TestPyQtGUIWorkflowFoundation:
                 # Find the path_planning output_dir_suffix field
                 form_managers = context.config_window.findChildren(ParameterFormManager)
 
-                concrete_value = "_CONCRETE_VALUE"
+                # Use the scenario's modification value instead of hardcoded "_CONCRETE_VALUE"
+                concrete_value = test_scenario.field_to_test.modification_value
                 field_found = False
 
                 for form_manager in form_managers:
