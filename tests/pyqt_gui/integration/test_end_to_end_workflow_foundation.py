@@ -23,7 +23,7 @@ import pytest
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Callable, Union
 from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QMessageBox, QLabel
+from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QMessageBox, QLabel, QWidget
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from PyQt6.QtTest import QTest
 
@@ -45,9 +45,9 @@ from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopy
 @dataclass(frozen=True)
 class TimingConfig:
     """Timing configuration for GUI operations."""
-    ACTION_DELAY: float = 1.0
-    WINDOW_DELAY: float = 1.0
-    SAVE_DELAY: float = 1.0
+    ACTION_DELAY: float = 0.5
+    WINDOW_DELAY: float = 0.5
+    SAVE_DELAY: float = 0.5
 
     @classmethod
     def from_environment(cls) -> 'TimingConfig':
@@ -117,12 +117,14 @@ RESET_PLACEHOLDER_BUG_SCENARIO = TestScenario(
     orchestrator_config={
         "output_dir_suffix": "828282",  # This concrete value should NOT appear in reset placeholders
         "sub_dir": "images",
-        "well_filter": 5
+        "well_filter": 5,
+        "num_workers": 1  # This concrete value should NOT appear in reset placeholders (default is 16)
     },
     expected_values={
         "output_dir_suffix": "828282",
         "sub_dir": "images",
-        "well_filter": 5
+        "well_filter": 5,
+        "num_workers": 1
     },
     field_to_test=FieldModificationSpec(
         field_name="output_dir_suffix",  # Test the problematic field
@@ -1100,6 +1102,7 @@ def _create_reset_validation_assertions(scenario: TestScenario) -> List[Callable
 
         bug_detected = False
         output_dir_suffix_found = False
+        num_workers_found = False
 
         for form_manager in form_managers:
             if not hasattr(form_manager, 'widgets'):
@@ -1127,6 +1130,24 @@ def _create_reset_validation_assertions(scenario: TestScenario) -> List[Callable
                         else:
                             print(f"❓ UNKNOWN: Placeholder shows something else")
 
+                # Debug: Show what we find for num_workers specifically
+                if field_name == "num_workers":
+                    num_workers_found = True
+                    print(f"🔍 NUM_WORKERS FIELD AFTER RESET:")
+                    print(f"  Field name: {field_name}")
+                    print(f"  All text: '{all_text}'")
+                    print(f"  Individual texts: {texts}")
+
+                    # Check what the placeholder actually shows
+                    if "pipeline default:" in all_text.lower():
+                        if "16" in all_text:
+                            print(f"🚨 BUG: Placeholder shows static default '16' instead of saved value '1'")
+                            bug_detected = True
+                        elif "1" in all_text:
+                            print(f"✅ GOOD: Placeholder shows saved value '1'")
+                        else:
+                            print(f"❓ UNKNOWN: Placeholder shows something else")
+
                 # Check if placeholder contains the concrete saved value "828282"
                 if "828282" in all_text:
                     print(f"🐛 FOUND '828282' in field '{field_name}': {all_text}")
@@ -1137,13 +1158,17 @@ def _create_reset_validation_assertions(scenario: TestScenario) -> List[Callable
         if not output_dir_suffix_found:
             raise AssertionError("TEST ERROR: output_dir_suffix field not found in form managers!")
 
+        if not num_workers_found:
+            raise AssertionError("TEST ERROR: num_workers field not found in form managers!")
+
         if bug_detected:
             raise AssertionError(
-                f"RESET PLACEHOLDER BUG DETECTED: One or more fields show concrete value '828282' "
-                f"in placeholder after reset. Placeholder should show inheritance chain value, not concrete saved value."
+                f"RESET PLACEHOLDER BUG DETECTED: One or more fields show wrong values in placeholder after reset. "
+                f"output_dir_suffix should show inheritance value '_openhcs', not concrete saved value '828282'. "
+                f"num_workers should show saved value '1', not static default '16'."
             )
         else:
-            print(f"✅ No reset placeholder bug detected - '828282' not found in any placeholders")
+            print(f"✅ No reset placeholder bug detected - both output_dir_suffix and num_workers show correct values")
 
     return [assert_no_concrete_values_in_reset_placeholders]
 
@@ -1313,6 +1338,192 @@ class TestPyQtGUIWorkflowFoundation:
                 name="Check Reset Placeholder Bug (Immediate)",
                 operation=check_reset_placeholder_immediately,
                 timing_delay=0.1  # Small delay to let UI update
+            ))
+
+            # Step 1: Set Concrete Path Planning Value
+            workflow.add_step(WorkflowStep(
+                name="Reopen Configuration Window",
+                operation=_reopen_config_window,
+                timing_delay=1.0
+            ))
+
+            def set_concrete_path_planning_value(context: WorkflowContext) -> WorkflowContext:
+                """Set a concrete value in path_planning.output_dir_suffix for inheritance test."""
+                print(f"\n🔧 Setting concrete value in path_planning.output_dir_suffix...")
+
+                # Find the path_planning output_dir_suffix field
+                form_managers = context.config_window.findChildren(ParameterFormManager)
+
+                concrete_value = "_CONCRETE_VALUE"
+                field_found = False
+
+                for form_manager in form_managers:
+                    if not hasattr(form_manager, 'widgets'):
+                        continue
+
+                    for field_name, widget in form_manager.widgets.items():
+                        if field_name == "output_dir_suffix":
+                            print(f"🔧 Setting {field_name} = {concrete_value}")
+
+                            # Set the concrete value
+                            if hasattr(widget, 'setText'):
+                                widget.setText(concrete_value)
+                            elif hasattr(widget, 'setValue'):
+                                widget.setValue(concrete_value)
+
+                            # Update form manager parameters
+                            form_manager.parameters[field_name] = concrete_value
+                            field_found = True
+                            break
+
+                    if field_found:
+                        break
+
+                if not field_found:
+                    raise AssertionError("path_planning.output_dir_suffix field not found")
+
+                # Save the configuration
+                print(f"🔧 Saving configuration with concrete value...")
+                context.config_window.save_config()
+
+                # Close configuration window
+                print(f"🔧 Closing configuration window...")
+                context.config_window.close()
+                context.config_window = None
+
+                return context
+
+            workflow.add_step(WorkflowStep(
+                name="Set Concrete Path Planning Value",
+                operation=set_concrete_path_planning_value,
+                timing_delay=1.0
+            ))
+
+            # Step 2: Test Step Editor Inheritance
+            def test_step_editor_inheritance(context: WorkflowContext) -> WorkflowContext:
+                """Open step editor and verify materialization_config inherits from path_planning."""
+                print(f"\n🔍 Testing step editor materialization inheritance...")
+
+                # Access pipeline editor (should already be open)
+                if "pipeline_editor" not in context.main_window.floating_windows:
+                    raise AssertionError("Pipeline editor window not found in floating_windows")
+
+                pipeline_editor_window = context.main_window.floating_windows["pipeline_editor"]
+
+                # Find the actual pipeline editor widget
+                pipeline_editor = None
+                for child in pipeline_editor_window.findChildren(QWidget):
+                    if hasattr(child, 'pipeline_steps'):
+                        pipeline_editor = child
+                        break
+
+                if not pipeline_editor:
+                    raise AssertionError("Pipeline editor widget not found")
+
+                # Click "Add Step" to open step editor
+                if not hasattr(pipeline_editor, 'buttons') or "add_step" not in pipeline_editor.buttons:
+                    raise AssertionError("Add Step button not found in pipeline editor buttons")
+
+                add_step_button = pipeline_editor.buttons["add_step"]
+
+                print(f"🔧 Clicking Add Step button...")
+                add_step_button.click()
+                QApplication.processEvents()
+
+                # Wait a moment for step editor to open
+                QTimer.singleShot(500, lambda: None)
+                QApplication.processEvents()
+
+                # Find the step editor window (DualEditorWindow)
+                step_editor_window = None
+                for widget in QApplication.topLevelWidgets():
+                    if hasattr(widget, 'step_editor') and hasattr(widget, 'editing_step'):
+                        step_editor_window = widget
+                        break
+
+                if not step_editor_window:
+                    raise AssertionError("Step editor window (DualEditorWindow) not found")
+
+                print(f"🔍 Found step editor window, checking materialization_config placeholders...")
+
+                # Access the step parameter editor widget within the DualEditorWindow
+                step_param_editor = step_editor_window.step_editor
+                if not step_param_editor:
+                    raise AssertionError("Step parameter editor widget not found in DualEditorWindow")
+
+                # Find the form manager in the step parameter editor
+                if not hasattr(step_param_editor, 'form_manager'):
+                    raise AssertionError("Form manager not found in step parameter editor")
+
+                form_manager = step_param_editor.form_manager
+
+                # Look for materialization_config nested form managers
+                materialization_inheritance_verified = False
+
+                # Check if there are nested managers for materialization_config
+                if hasattr(form_manager, 'nested_managers') and 'materialization_config' in form_manager.nested_managers:
+                    nested_manager = form_manager.nested_managers['materialization_config']
+
+                    if hasattr(nested_manager, 'widgets') and 'output_dir_suffix' in nested_manager.widgets:
+                        widget = nested_manager.widgets['output_dir_suffix']
+                        texts = _extract_widget_texts(widget)
+                        all_text = " ".join(texts.values())
+
+                        print(f"🔍 STEP MATERIALIZATION output_dir_suffix:")
+                        print(f"  Field name: output_dir_suffix")
+                        print(f"  All text: '{all_text}'")
+                        print(f"  Individual texts: {texts}")
+
+                        # Check if placeholder shows the concrete value from path_planning
+                        if "pipeline default:" in all_text.lower():
+                            if "_CONCRETE_VALUE" in all_text:
+                                print(f"✅ GOOD: Step materialization placeholder shows inherited concrete value '_CONCRETE_VALUE'")
+                                materialization_inheritance_verified = True
+                            else:
+                                print(f"🚨 BUG: Step materialization placeholder should show '_CONCRETE_VALUE' from path_planning")
+                                raise AssertionError(
+                                    f"Step materialization inheritance bug: output_dir_suffix placeholder should show "
+                                    f"'Pipeline default: _CONCRETE_VALUE' (inherited from path_planning), but shows: '{all_text}'"
+                                )
+                        else:
+                            print(f"🔍 No placeholder found, checking if field shows inherited value directly...")
+                            if "_CONCRETE_VALUE" in all_text:
+                                print(f"✅ GOOD: Step materialization field shows inherited concrete value '_CONCRETE_VALUE'")
+                                materialization_inheritance_verified = True
+
+                if not materialization_inheritance_verified:
+                    # Try to find any form managers with output_dir_suffix
+                    all_form_managers = step_editor_window.findChildren(ParameterFormManager)
+                    print(f"🔍 Found {len(all_form_managers)} form managers, searching for output_dir_suffix...")
+
+                    for i, fm in enumerate(all_form_managers):
+                        if hasattr(fm, 'widgets'):
+                            print(f"🔍 Form manager {i} has widgets: {list(fm.widgets.keys())}")
+                            if 'output_dir_suffix' in fm.widgets:
+                                widget = fm.widgets['output_dir_suffix']
+                                texts = _extract_widget_texts(widget)
+                                all_text = " ".join(texts.values())
+                                print(f"🔍 Found output_dir_suffix in form manager {i}: '{all_text}'")
+
+                                if "_CONCRETE_VALUE" in all_text:
+                                    print(f"✅ GOOD: Found inherited concrete value '_CONCRETE_VALUE' in form manager {i}")
+                                    materialization_inheritance_verified = True
+                                    break
+
+                    if not materialization_inheritance_verified:
+                        raise AssertionError("Step materialization output_dir_suffix field not found or inheritance not verified")
+
+                # Close step editor
+                print(f"🔧 Closing step editor...")
+                step_editor_window.close()
+                QApplication.processEvents()
+
+                return context
+
+            workflow.add_step(WorkflowStep(
+                name="Test Step Editor Inheritance",
+                operation=test_step_editor_inheritance,
+                timing_delay=1.0
             ))
 
         # Execute workflow with parameterized context
