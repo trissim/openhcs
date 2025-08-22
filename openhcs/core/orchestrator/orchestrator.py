@@ -44,6 +44,66 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _execute_single_well_static(
+    pipeline_definition: List[AbstractStep],
+    frozen_context: 'ProcessingContext',
+    visualizer: Optional['NapariVisualizerType']
+) -> Dict[str, Any]:
+    """
+    Static version of _execute_single_well for multiprocessing compatibility.
+
+    This function is identical to PipelineOrchestrator._execute_single_well but doesn't
+    require an orchestrator instance, making it safe for pickling in ProcessPoolExecutor.
+    """
+    well_id = frozen_context.well_id
+    logger.info(f"🔥 SINGLE_WELL: Starting execution for well {well_id}")
+
+    # NUCLEAR VALIDATION
+    if not frozen_context.is_frozen():
+        error_msg = f"🔥 SINGLE_WELL ERROR: Context for well {well_id} is not frozen before execution"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    if not pipeline_definition:
+        error_msg = f"🔥 SINGLE_WELL ERROR: Empty pipeline_definition for well {well_id}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    # Execute each step in the pipeline
+    for step_index, step in enumerate(pipeline_definition):
+        step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+
+        logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_name} for well {well_id}")
+
+        if not hasattr(step, 'process'):
+            error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} missing process method for well {well_id}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        step.process(frozen_context, step_index)
+        logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_name} completed for well {well_id}")
+
+        # Handle visualization if requested
+        if visualizer:
+            step_plan = frozen_context.step_plans[step_index]
+            if step_plan['visualize']:
+                output_dir = step_plan['output_dir']
+                write_backend = step_plan['write_backend']
+                if output_dir:
+                    logger.debug(f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                    visualizer.visualize_path(
+                        step_id=f"step_{step_index}",
+                        path=str(output_dir),
+                        backend=write_backend,
+                        well_id=well_id
+                    )
+                else:
+                    logger.warning(f"Step {step_index} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+
+    logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
+    return {"status": "success", "well_id": well_id}
+
+
 def _configure_worker_logging(log_file_base: str):
     """
     Configure logging and import hook for worker process.
@@ -524,13 +584,27 @@ class PipelineOrchestrator:
                 contexts_snapshot = dict(compiled_contexts.items())
                 logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
 
+                # CRITICAL FIX: Resolve all lazy dataclass instances before multiprocessing
+                # This ensures that the contexts are safe for pickling in ProcessPoolExecutor
+                # Note: Don't resolve pipeline_definition as it may overwrite collision-resolved configs
+                logger.info("🔥 ORCHESTRATOR: Resolving lazy dataclasses for multiprocessing compatibility")
+                from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+                contexts_snapshot = resolve_lazy_configurations_for_serialization(contexts_snapshot)
+                logger.info("🔥 ORCHESTRATOR: Lazy dataclass resolution completed")
+
                 logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
                 future_to_well_id = {}
                 for well_id, context in contexts_snapshot.items():
                     try:
                         logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
                         logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
-                        future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
+                        # Resolve all arguments before passing to ProcessPoolExecutor
+                        resolved_context = resolve_lazy_configurations_for_serialization(context)
+                        resolved_visualizer = resolve_lazy_configurations_for_serialization(visualizer)
+
+                        # Use static function to avoid pickling the orchestrator instance
+                        # Note: Use original pipeline_definition to preserve collision-resolved configs
+                        future = executor.submit(_execute_single_well_static, pipeline_definition, resolved_context, resolved_visualizer)
                         future_to_well_id[future] = well_id
                         logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
                         logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
