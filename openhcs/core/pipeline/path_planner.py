@@ -75,11 +75,13 @@ class PathPlanner:
             self.ctx.output_plate_root = self.build_output_plate_root(self.plate_path, self.cfg, is_per_step_materialization=False)
             self.ctx.sub_dir = self.cfg.sub_dir
 
+
+
         return self.plans
 
     def _plan_step(self, step: AbstractStep, i: int, pipeline: List):
         """Plan one step - no duplicate logic."""
-        sid = step.step_id
+        sid = i  # Use step index instead of step_id
 
         # Get paths with unified logic
         input_dir = self._get_dir(step, i, pipeline, 'input')
@@ -173,14 +175,14 @@ class PathPlanner:
 
             # If zarr conversion occurred, redirect input_dir to zarr store
             if self.vfs.materialization_backend == MaterializationBackend.ZARR and pipeline:
-                first_step_plan = self.plans.get(pipeline[0].step_id, {})
+                first_step_plan = self.plans.get(0, {})  # Use step index 0 instead of step_id
                 if "input_conversion_dir" in first_step_plan:
                     self.plans[sid]['input_dir'] = first_step_plan['input_conversion_dir']
 
     def _get_dir(self, step: AbstractStep, i: int, pipeline: List,
                  dir_type: str, fallback: Path = None) -> Path:
         """Unified directory resolution - no duplication."""
-        sid = step.step_id
+        sid = i  # Use step index instead of step_id
 
         # Check overrides (same for input/output)
         if override := self.plans.get(sid, {}).get(f'{dir_type}_dir'):
@@ -192,8 +194,8 @@ class PathPlanner:
         if dir_type == 'input':
             if i == 0 or getattr(step, 'input_source', None) == InputSource.PIPELINE_START:
                 return self.initial_input
-            prev_sid = pipeline[i-1].step_id
-            return Path(self.plans[prev_sid]['output_dir'])
+            prev_step_index = i - 1  # Use previous step index instead of step_id
+            return Path(self.plans[prev_step_index]['output_dir'])
         else:  # output
             if i == 0 or getattr(step, 'input_source', None) == InputSource.PIPELINE_START:
                 return self._build_output_path()
@@ -216,6 +218,8 @@ class PathPlanner:
         Returns:
             Path to plate root directory (e.g., "/data/results/plate001_processed")
         """
+
+
         base = Path(path_config.global_output_folder) if path_config.global_output_folder else plate_path.parent
 
         # Handle empty suffix differently for per-step vs pipeline-level materialization
@@ -224,11 +228,11 @@ class PathPlanner:
                 # Per-step materialization: use exact path without automatic suffix
                 return base / plate_path.name
             else:
-                # Pipeline-level materialization: use main pipeline output directory
-                main_output_path = base / f"{plate_path.name}_outputs"
-                return main_output_path
+                # Pipeline-level materialization: trust lazy inheritance system
+                return base / plate_path.name
 
-        return base / f"{plate_path.name}{path_config.output_dir_suffix}"
+        result = base / f"{plate_path.name}{path_config.output_dir_suffix}"
+        return result
 
     def _build_output_path(self, path_config=None) -> Path:
         """Build complete output path: plate_root + sub_dir"""
@@ -246,10 +250,10 @@ class PathPlanner:
         """Calculate input conversion path using custom PathPlanningConfig."""
         return self._build_output_path(conversion_config)
 
-    def _get_optional_path(self, config_key: str, step_id: str) -> Optional[Path]:
+    def _get_optional_path(self, config_key: str, step_index: int) -> Optional[Path]:
         """Get optional path if config exists."""
-        if config_key in self.plans[step_id]:
-            config = self.plans[step_id][config_key]
+        if config_key in self.plans[step_index]:
+            config = self.plans[step_index][config_key]
             return self._build_output_path(config)
         return None
 
@@ -327,11 +331,11 @@ class PathPlanner:
             curr, prev = pipeline[i], pipeline[i-1]
             if getattr(curr, 'input_source', None) == InputSource.PIPELINE_START:
                 continue
-            curr_in = self.plans[curr.step_id]['input_dir']
-            prev_out = self.plans[prev.step_id]['output_dir']
+            curr_in = self.plans[i]['input_dir']  # Use step index i
+            prev_out = self.plans[i-1]['output_dir']  # Use step index i-1
             if curr_in != prev_out:
-                has_special = any(inp.get('source_step_id') == prev.step_id
-                                for inp in self.plans[curr.step_id].get('special_inputs', {}).values())
+                has_special = any(inp.get('source_step_id') in [i-1, 'prev']  # Check both step index and 'prev'
+                                for inp in self.plans[i].get('special_inputs', {}).values())  # Use step index i
                 if not has_special:
                     raise ValueError(f"Disconnect: {prev.name} -> {curr.name}")
 
@@ -345,8 +349,8 @@ class PathPlanner:
 
         # Collect all materialization steps with their paths and positions
         mat_steps = [
-            (step, self.plans.get(step.step_id, {}).get('pipeline_position', 0), self._build_output_path(step.materialization_config))
-            for step in pipeline if step.materialization_config
+            (step, self.plans.get(i, {}).get('pipeline_position', 0), self._build_output_path(step.materialization_config))
+            for i, step in enumerate(pipeline) if step.materialization_config
         ]
 
         # Group by path for conflict detection
@@ -379,7 +383,7 @@ class PathPlanner:
         resolved_path = self._build_output_path(step.materialization_config)
 
         # Update step plans for metadata generation
-        if step_plan := self.plans.get(step.step_id):
+        if step_plan := self.plans.get(position):  # Use position (step index) instead of step_id
             if 'materialized_output_dir' in step_plan:
                 step_plan['materialized_output_dir'] = str(resolved_path)
                 step_plan['materialized_sub_dir'] = new_sub_dir  # Update stored sub_dir
@@ -432,7 +436,7 @@ def register_metadata_resolver(key: str, resolver: Callable, description: str):
 
 # ===== SCOPE PROMOTION (separate concern) =====
 
-def _apply_scope_promotion_rules(dict_pattern, special_outputs, declared_outputs, step_id, position):
+def _apply_scope_promotion_rules(dict_pattern, special_outputs, declared_outputs, step_index, position):
     """Scope promotion for single-key dict patterns - 15 lines."""
     if len(dict_pattern) != 1:
         return special_outputs, declared_outputs
@@ -447,7 +451,7 @@ def _apply_scope_promotion_rules(dict_pattern, special_outputs, declared_outputs
                 raise ValueError(f"Collision: {promoted_key} already exists")
             promoted_out[promoted_key] = special_outputs[out_key]
             promoted_decl[promoted_key] = {
-                "step_id": step_id, "position": position,
+                "step_index": step_index, "position": position,
                 "path": special_outputs[out_key]["path"]
             }
 

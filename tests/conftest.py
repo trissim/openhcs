@@ -2,6 +2,13 @@
 import os
 import pytest
 
+# Conditionally import pytest-qt only when not in CPU-only mode
+CPU_ONLY_MODE = os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true'
+if not CPU_ONLY_MODE:
+    pytest_plugins = ["pytestqt"]
+else:
+    pytest_plugins = []
+
 
 def pytest_addoption(parser):
     """Add command-line options for integration test configuration."""

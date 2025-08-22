@@ -436,7 +436,7 @@ def _execute_chain_core(
     well_id: str,  # Add well_id parameter
     device_id: int,
     input_memory_type: str,
-    step_id: str,  # Add step_id for funcplan lookup
+    step_index: int,  # Add step_index for funcplan lookup
     dict_key: str = "default"  # Add dict_key for funcplan lookup
 ) -> Any:
     current_stack = initial_data_stack
@@ -465,7 +465,7 @@ def _execute_chain_core(
         )
 
         # Use funcplan to determine which outputs this function should save
-        funcplan = context.step_plans[step_id].get("funcplan", {})
+        funcplan = context.step_plans[step_index].get("funcplan", {})
         func_name = getattr(actual_callable, '__name__', 'unknown')
 
         # Construct execution key: function_name_dict_key_chain_position
@@ -522,7 +522,7 @@ def _process_single_pattern_group(
     special_outputs_map: TypingOrderedDict[str, str],
     zarr_config: Optional[Dict[str, Any]],
     variable_components: Optional[List[str]] = None,
-    step_id: Optional[str] = None  # Add step_id for funcplan lookup
+    step_index: Optional[int] = None  # Add step_index for funcplan lookup
 ) -> None:
     start_time = time.time()
     pattern_repr = str(pattern_group_info)[:100]
@@ -582,7 +582,7 @@ def _process_single_pattern_group(
         final_base_kwargs = base_func_args.copy()
 
         # Get step function from step plan
-        step_func = context.step_plans[step_id]["func"]
+        step_func = context.step_plans[step_index]["func"]
 
         if isinstance(step_func, dict):
             dict_key_for_funcplan = component_value  # Use actual dict key for dict patterns
@@ -593,7 +593,7 @@ def _process_single_pattern_group(
             processed_stack = _execute_chain_core(
                 main_data_stack, executable_func_or_chain, context,
                 special_inputs_map, special_outputs_map, well_id,
-                device_id, input_memory_type_from_plan, step_id, dict_key_for_funcplan
+                device_id, input_memory_type_from_plan, step_index, dict_key_for_funcplan
             )
         elif callable(executable_func_or_chain):
             # For single functions, we don't need chain execution, but we still need the right dict_key
@@ -734,10 +734,9 @@ class FunctionStep(AbstractStep):
         super().__init__(**kwargs)
         self.func = func # This is used by prepare_patterns_and_functions at runtime
 
-    def process(self, context: 'ProcessingContext') -> None:
-        # Generate step_id from object reference (elegant stateless approach)
-        step_id = get_step_id(self)
-        step_plan = context.step_plans[step_id]
+    def process(self, context: 'ProcessingContext', step_index: int) -> None:
+        # Access step plan by index (step_plans keyed by index, not step_id)
+        step_plan = context.step_plans[step_index]
 
         # Get step name for logging
         step_name = step_plan['step_name']
@@ -784,22 +783,22 @@ class FunctionStep(AbstractStep):
                         # Ensure variable_components is never None - use default if missing
             if variable_components is None:
                 variable_components = [VariableComponents.SITE]  # Default fallback
-                logger.warning(f"Step {step_id} ({step_name}) had None variable_components, using default [SITE]")
+                logger.warning(f"Step {step_index} ({step_name}) had None variable_components, using default [SITE]")
             if requires_gpu:
                 device_id = step_plan['gpu_id']
-                logger.debug(f"🔥 DEBUG: Step {step_id} gpu_id from plan: {device_id}, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+                logger.debug(f"🔥 DEBUG: Step {step_index} gpu_id from plan: {device_id}, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
             else:
                 device_id = None  # CPU-only step
-                logger.debug(f"🔥 DEBUG: Step {step_id} is CPU-only, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
+                logger.debug(f"🔥 DEBUG: Step {step_index} is CPU-only, input_mem: {input_mem_type}, output_mem: {output_mem_type}")
 
-            logger.debug(f"🔥 DEBUG: Step {step_id} read_backend: {read_backend}, write_backend: {write_backend}")
+            logger.debug(f"🔥 DEBUG: Step {step_index} read_backend: {read_backend}, write_backend: {write_backend}")
 
             if not all([well_id, step_input_dir, step_output_dir]):
-                raise ValueError(f"Plan missing essential keys for step {step_id}")
+                raise ValueError(f"Plan missing essential keys for step {step_index}")
 
             same_dir = str(step_input_dir) == str(step_output_dir)
-            logger.info(f"Step {step_id} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
-            logger.info(f"Step {step_id} ({step_name}) Paths: input_dir='{step_input_dir}', output_dir='{step_output_dir}', same_dir={same_dir}")
+            logger.info(f"Step {step_index} ({step_name}) I/O: read='{read_backend}', write='{write_backend}'.")
+            logger.info(f"Step {step_index} ({step_name}) Paths: input_dir='{step_input_dir}', output_dir='{step_output_dir}', same_dir={same_dir}")
 
             # 🔄 MATERIALIZATION READ: Bulk preload if not reading from memory
             if read_backend != Backend.MEMORY.value:
@@ -845,7 +844,7 @@ class FunctionStep(AbstractStep):
 
             if well_id not in patterns_by_well:
                 raise ValueError(
-                    f"No patterns detected for well '{well_id}' in step '{step_name}' (ID: {step_id}). "
+                    f"No patterns detected for well '{well_id}' in step '{step_name}' (index: {step_index}). "
                     f"This indicates either: (1) no image files found for this well, "
                     f"(2) image files don't match the expected naming pattern, or "
                     f"(3) pattern detection failed. Check input directory: {step_input_dir}"
@@ -860,7 +859,7 @@ class FunctionStep(AbstractStep):
                 logger.debug(f"🔥 STEP: Found {len(patterns_by_well[well_id])} ungrouped patterns: {patterns_by_well[well_id]}")
 
             if func_from_plan is None:
-                raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (ID: {step_id})")
+                raise ValueError(f"Step plan missing 'func' for step: {step_plan.get('step_name', 'Unknown')} (index: {step_index})")
 
             grouped_patterns, comp_to_funcs, comp_to_base_args = prepare_patterns_and_functions(
                 patterns_by_well[well_id], func_from_plan, component=group_by.value if group_by else None
@@ -885,7 +884,7 @@ class FunctionStep(AbstractStep):
                         device_id, same_dir,
                         special_inputs, special_outputs, # Pass the maps from step_plan
                         step_plan["zarr_config"],
-                        variable_components, step_id  # Pass step_id for funcplan lookup
+                        variable_components, step_index  # Pass step_index for funcplan lookup
                     )
             logger.info(f"🔥 STEP: Completed processing for '{step_name}' well {well_id}.")
 
@@ -916,7 +915,7 @@ class FunctionStep(AbstractStep):
 
                 logger.info(f"🔬 Materialized {len(materialized_paths)} files to {materialized_output_dir}")
 
-            logger.info(f"FunctionStep {step_id} ({step_name}) completed for well {well_id}.")
+            logger.info(f"FunctionStep {step_index} ({step_name}) completed for well {well_id}.")
 
             # 📄 OPENHCS METADATA: Create metadata file automatically after step completion
             # Track which backend was actually used for writing files
@@ -964,8 +963,8 @@ class FunctionStep(AbstractStep):
         except Exception as e:
             import traceback
             full_traceback = traceback.format_exc()
-            logger.error(f"Error in FunctionStep {step_id} ({step_name}): {e}", exc_info=True)
-            logger.error(f"Full traceback for FunctionStep {step_id} ({step_name}):\n{full_traceback}")
+            logger.error(f"Error in FunctionStep {step_index} ({step_name}): {e}", exc_info=True)
+            logger.error(f"Full traceback for FunctionStep {step_index} ({step_name}):\n{full_traceback}")
 
 
 

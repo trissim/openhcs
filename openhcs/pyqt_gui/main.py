@@ -444,8 +444,7 @@ class OpenHCSMainWindow(QMainWindow):
             self.service_adapter.get_global_config(),  # current_config (concrete instance)
             handle_config_save,    # on_save_callback
             self.service_adapter.get_current_color_scheme(),  # color_scheme
-            self,                  # parent
-            is_global_config_editing=True  # This is global config editing
+            self                   # parent
         )
         # Show as non-modal window (like plate manager and pipeline editor)
         config_window.show()
@@ -468,6 +467,9 @@ class OpenHCSMainWindow(QMainWindow):
             if plate_manager_widget:
                 # Connect plate selection signal to pipeline editor (mirrors Textual TUI)
                 plate_manager_widget.plate_selected.connect(pipeline_widget.set_current_plate)
+
+                # Connect orchestrator config changed signal for placeholder refresh
+                plate_manager_widget.orchestrator_config_changed.connect(pipeline_widget.on_orchestrator_config_changed)
 
                 # Set pipeline editor reference in plate manager
                 if hasattr(plate_manager_widget, 'set_pipeline_editor'):
@@ -499,6 +501,9 @@ class OpenHCSMainWindow(QMainWindow):
             if pipeline_editor_widget:
                 # Connect plate selection signal to pipeline editor (mirrors Textual TUI)
                 plate_manager_widget.plate_selected.connect(pipeline_editor_widget.set_current_plate)
+
+                # Connect orchestrator config changed signal for placeholder refresh
+                plate_manager_widget.orchestrator_config_changed.connect(pipeline_editor_widget.on_orchestrator_config_changed)
 
                 # Set pipeline editor reference in plate manager
                 if hasattr(plate_manager_widget, 'set_pipeline_editor'):

@@ -8,9 +8,10 @@ Handles FunctionStep parameter editing with nested dataclass support.
 import logging
 from typing import Any, Optional
 from pathlib import Path
+from contextlib import contextmanager
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QScrollArea, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -35,14 +36,15 @@ class StepParameterEditorWidget(QScrollArea):
     # Signals
     step_parameter_changed = pyqtSignal()
     
-    def __init__(self, step: FunctionStep, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
+    def __init__(self, step: FunctionStep, service_adapter=None, color_scheme: Optional[PyQt6ColorScheme] = None, orchestrator=None, parent=None):
         super().__init__(parent)
 
         # Initialize color scheme
         self.color_scheme = color_scheme or PyQt6ColorScheme()
-        
+
         self.step = step
         self.service_adapter = service_adapter
+        self.orchestrator = orchestrator  # Store orchestrator reference for context management
         
         # Analyze AbstractStep signature to get all inherited parameters (mirrors Textual TUI)
         from openhcs.core.steps.abstract import AbstractStep
@@ -53,29 +55,134 @@ class StepParameterEditorWidget(QScrollArea):
         parameters = {}
         parameter_types = {}
         param_defaults = {}
-        
+
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
+            # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
             current_value = getattr(self.step, name, info.default_value)
+
+            # Generic handling for any optional lazy dataclass parameter that exists in PipelineConfig
+            if current_value is None and self._is_optional_lazy_dataclass_in_pipeline(info.param_type, name):
+                # Create step-level config for proper inheritance hierarchy
+                step_level_config = self._create_step_level_config(name, info.param_type)
+                current_value = step_level_config
+                param_defaults[name] = step_level_config
+                # Mark this as a step-level config for special handling
+                if not hasattr(self, '_step_level_configs'):
+                    self._step_level_configs = {}
+                self._step_level_configs[name] = True
+            else:
+                param_defaults[name] = info.default_value
+
             parameters[name] = current_value
             parameter_types[name] = info.param_type
-            param_defaults[name] = info.default_value
         
-        # Create parameter form manager (reuses Textual TUI logic)
-        from openhcs.core.config import GlobalPipelineConfig
+        # Create parameter form manager for function parameters
+        # Note: Step editor needs special context setup to show step-level inheritance
+
         self.form_manager = ParameterFormManager(
-            parameters, parameter_types, "step", param_info,
+            parameters, parameter_types, "step", None,
+            param_info,
+            parent=self,  # Pass self as parent so form manager can access _step_level_configs
             color_scheme=self.color_scheme,
-            global_config_type=GlobalPipelineConfig,
-            placeholder_prefix="Pipeline default"
+            placeholder_prefix="Pipeline default",
+            param_defaults=param_defaults
         )
-        self.param_defaults = param_defaults
         
         self.setup_ui()
         self.setup_connections()
-        
+
         logger.debug(f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}")
-    
+
+    def _is_optional_lazy_dataclass_in_pipeline(self, param_type, param_name):
+        """
+        Check if parameter is an optional lazy dataclass that exists in PipelineConfig.
+
+        This enables automatic step-level config creation for any parameter that:
+        1. Is Optional[SomeDataclass]
+        2. SomeDataclass exists as a field type in PipelineConfig (type-based matching)
+        3. The dataclass has lazy resolution capabilities
+
+        No manual mappings needed - uses type-based discovery.
+        """
+        from openhcs.core.pipeline_config import PipelineConfig
+        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
+        import dataclasses
+
+        # Check if parameter is Optional[dataclass]
+        if not ParameterTypeUtils.is_optional_dataclass(param_type):
+            return False
+
+        # Get the inner dataclass type
+        inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
+
+        # Find if this type exists as a field in PipelineConfig (type-based matching)
+        pipeline_field_name = self._find_pipeline_field_by_type(inner_type)
+        if not pipeline_field_name:
+            return False
+
+        # Check if the dataclass has lazy resolution capabilities
+        try:
+            # Try to create an instance to see if it's a lazy dataclass
+            test_instance = inner_type()
+            # Check for lazy dataclass methods
+            return hasattr(test_instance, '_resolve_field_value') or hasattr(test_instance, '_lazy_resolution_config')
+        except:
+            return False
+
+    def _find_pipeline_field_by_type(self, target_type):
+        """
+        Find the field in PipelineConfig that matches the target type.
+
+        This is type-based discovery - no manual mappings needed.
+        """
+        from openhcs.core.pipeline_config import PipelineConfig
+        import dataclasses
+
+        for field in dataclasses.fields(PipelineConfig):
+            # Use string comparison to handle type identity issues
+            if str(field.type) == str(target_type):
+                return field.name
+        return None
+
+    def _create_step_level_config(self, param_name, param_type):
+        """
+        Generic method to create step-level config for any lazy dataclass parameter.
+
+        Uses type-based discovery to find the corresponding pipeline field as defaults source.
+        """
+        from openhcs.core.lazy_config import LazyDataclassFactory
+        from openhcs.core.config import GlobalPipelineConfig, get_current_global_config
+        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
+
+        # Get the inner dataclass type
+        inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
+
+        # Find the corresponding pipeline field by type (no manual mapping needed)
+        pipeline_field_name = self._find_pipeline_field_by_type(inner_type)
+        if not pipeline_field_name:
+            # Fallback to standard lazy config if no matching type found
+            return inner_type()
+
+        # Get pipeline's corresponding field as defaults source
+        pipeline_config = get_current_global_config(GlobalPipelineConfig)
+        if pipeline_config and hasattr(pipeline_config, pipeline_field_name):
+            pipeline_field_value = getattr(pipeline_config, pipeline_field_name)
+            if pipeline_field_value:
+                # Create step-level config that inherits from pipeline's field
+                StepLevelConfig = LazyDataclassFactory.create_lazy_dataclass(
+                    defaults_source=pipeline_field_value,
+                    lazy_class_name=f"StepLevel{inner_type.__name__}",
+                    use_recursive_resolution=False
+                )
+                return StepLevelConfig()
+
+        # Fallback to standard lazy config if no pipeline context
+        return inner_type()
+
+
+
+
     def setup_ui(self):
         """Setup the user interface."""
         self.setWidgetResizable(True)
@@ -94,6 +201,7 @@ class StepParameterEditorWidget(QScrollArea):
         layout.addWidget(header_label)
         
         # Parameter form (using shared form manager)
+        # ParameterFormManager automatically routes lazy dataclass parameters to LazyDataclassEditor
         form_frame = QFrame()
         form_frame.setFrameStyle(QFrame.Shape.Box)
         form_frame.setStyleSheet(f"""
@@ -104,12 +212,12 @@ class StepParameterEditorWidget(QScrollArea):
                 padding: 10px;
             }}
         """)
-        
+
         form_layout = QVBoxLayout(form_frame)
-        
+
         # Add parameter form manager
         form_layout.addWidget(self.form_manager)
-        
+
         layout.addWidget(form_frame)
         
         # Action buttons (mirrors Textual TUI)
@@ -164,6 +272,17 @@ class StepParameterEditorWidget(QScrollArea):
             # Get the properly converted value from the form manager
             # The form manager handles all type conversions including List[Enum]
             final_value = self.form_manager.get_current_values().get(param_name, value)
+
+            # Debug: Check what we're actually saving
+            if param_name == 'materialization_config':
+                print(f"DEBUG: Saving materialization_config, type: {type(final_value)}")
+                print(f"DEBUG: Raw value from form manager: {value}")
+                print(f"DEBUG: Final value from get_current_values(): {final_value}")
+                if hasattr(final_value, '__dataclass_fields__'):
+                    from dataclasses import fields
+                    for field_obj in fields(final_value):
+                        raw_value = object.__getattribute__(final_value, field_obj.name)
+                        print(f"DEBUG: Field {field_obj.name} = {raw_value}")
 
             # Update step attribute
             setattr(self.step, param_name, final_value)

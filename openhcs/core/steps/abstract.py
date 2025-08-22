@@ -27,9 +27,12 @@ from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Union
 
-from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS
+from openhcs.constants.constants import VariableComponents, GroupBy, DEFAULT_VARIABLE_COMPONENTS, DEFAULT_GROUP_BY
 from openhcs.constants.input_source import InputSource
-from openhcs.core.config import PathPlanningConfig, MaterializationPathConfig
+from openhcs.core.config import PathPlanningConfig
+
+# Import LazyStepMaterializationConfig for type hints
+from openhcs.core.pipeline_config import LazyStepMaterializationConfig
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -127,11 +130,11 @@ class AbstractStep(abc.ABC):
         *,  # Force keyword-only arguments
         name: Optional[str] = None,
         variable_components: List[VariableComponents] = DEFAULT_VARIABLE_COMPONENTS,
-        group_by: Optional[GroupBy] = None,
+        group_by: Optional[GroupBy] = DEFAULT_GROUP_BY,
         __input_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         __output_dir__: Optional[Union[str,Path]] = None, # Internal: Used during path planning
         input_source: InputSource = InputSource.PREVIOUS_STEP,
-        materialization_config: Optional['MaterializationPathConfig'] = None
+        materialization_config: Optional['LazyStepMaterializationConfig'] = None
     ) -> None:
         """
         Initialize a step. These attributes are primarily used during the
@@ -150,10 +153,10 @@ class AbstractStep(abc.ABC):
             input_source: Input source strategy for this step. Defaults to PREVIOUS_STEP
                          for normal pipeline chaining. Use PIPELINE_START to access
                          original input data (replaces @chain_breaker decorator).
-            materialization_config: Optional PathPlanningConfig or MaterializationPathConfig for per-step materialized output.
+            materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output
                                    to custom location in addition to normal memory backend processing.
-                                   Use MaterializationPathConfig() for safe defaults that prevent path collisions.
+                                   Use LazyStepMaterializationConfig() for safe defaults that prevent path collisions.
         """
         self.name = name or self.__class__.__name__
         self.variable_components = variable_components
@@ -171,9 +174,9 @@ class AbstractStep(abc.ABC):
         logger_instance.debug(f"Created step '{self.name}' (type: {self.__class__.__name__}) with ID {self.step_id}")
 
     @abc.abstractmethod
-    def process(self, context: 'ProcessingContext') -> None:
+    def process(self, context: 'ProcessingContext', step_index: int) -> None:
         """
-        Process the step with the given context.
+        Process the step with the given context and step index.
 
         This method must be implemented by all step subclasses.
         During execution, the step instance is stateless. All necessary

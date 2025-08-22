@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Set
 
 from openhcs.constants.constants import Backend, DEFAULT_WORKSPACE_DIR_SUFFIX, DEFAULT_IMAGE_EXTENSIONS, GroupBy, OrchestratorState
 from openhcs.constants import Microscope
-from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig
+from openhcs.core.config import GlobalPipelineConfig, get_default_global_config, PipelineConfig, set_current_global_config
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.pipeline.step_attribute_stripper import StepAttributeStripper
@@ -42,6 +42,66 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _execute_single_well_static(
+    pipeline_definition: List[AbstractStep],
+    frozen_context: 'ProcessingContext',
+    visualizer: Optional['NapariVisualizerType']
+) -> Dict[str, Any]:
+    """
+    Static version of _execute_single_well for multiprocessing compatibility.
+
+    This function is identical to PipelineOrchestrator._execute_single_well but doesn't
+    require an orchestrator instance, making it safe for pickling in ProcessPoolExecutor.
+    """
+    well_id = frozen_context.well_id
+    logger.info(f"🔥 SINGLE_WELL: Starting execution for well {well_id}")
+
+    # NUCLEAR VALIDATION
+    if not frozen_context.is_frozen():
+        error_msg = f"🔥 SINGLE_WELL ERROR: Context for well {well_id} is not frozen before execution"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    if not pipeline_definition:
+        error_msg = f"🔥 SINGLE_WELL ERROR: Empty pipeline_definition for well {well_id}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    # Execute each step in the pipeline
+    for step_index, step in enumerate(pipeline_definition):
+        step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
+
+        logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_name} for well {well_id}")
+
+        if not hasattr(step, 'process'):
+            error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} missing process method for well {well_id}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        step.process(frozen_context, step_index)
+        logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_name} completed for well {well_id}")
+
+        # Handle visualization if requested
+        if visualizer:
+            step_plan = frozen_context.step_plans[step_index]
+            if step_plan['visualize']:
+                output_dir = step_plan['output_dir']
+                write_backend = step_plan['write_backend']
+                if output_dir:
+                    logger.debug(f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                    visualizer.visualize_path(
+                        step_id=f"step_{step_index}",
+                        path=str(output_dir),
+                        backend=write_backend,
+                        well_id=well_id
+                    )
+                else:
+                    logger.warning(f"Step {step_index} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+
+    logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
+    return {"status": "success", "well_id": well_id}
 
 
 def _configure_worker_logging(log_file_base: str):
@@ -104,26 +164,7 @@ def _configure_worker_logging(log_file_base: str):
 _worker_log_file_base = None
 
 
-def _ensure_step_ids_for_multiprocessing(
-    frozen_context: ProcessingContext,
-    pipeline_definition: List[AbstractStep],
-    well_id: str
-) -> None:
-    """
-    Helper function to update step IDs after multiprocessing pickle/unpickle.
-    
-    When contexts are pickled/unpickled for multiprocessing, step objects get
-    new memory addresses, changing their IDs. This remaps the step_plans.
-    """
-    from openhcs.core.pipeline.compiler import PipelineCompiler
-    try:
-        logger.debug(f"🔥 MULTIPROCESSING: Updating step IDs for well {well_id}")
-        PipelineCompiler.update_step_ids_for_multiprocessing(frozen_context, pipeline_definition)
-        logger.debug(f"🔥 MULTIPROCESSING: Step IDs updated successfully for well {well_id}")
-    except Exception as remap_error:
-        error_msg = f"🔥 MULTIPROCESSING ERROR: Failed to remap step IDs for well {well_id}: {remap_error}"
-        logger.error(error_msg, exc_info=True)
-        raise RuntimeError(error_msg) from remap_error
+
 
 
 class PipelineOrchestrator:
@@ -157,7 +198,13 @@ class PipelineOrchestrator:
             self.global_config = global_config
 
         # Initialize per-orchestrator configuration
-        self.pipeline_config = pipeline_config  # Per-orchestrator overrides
+        # Always ensure orchestrator has a pipeline config - create default if none provided
+        if pipeline_config is None:
+            from openhcs.core.pipeline_config import PipelineConfig
+            self.pipeline_config = PipelineConfig()
+            logger.info("PipelineOrchestrator created default pipeline configuration.")
+        else:
+            self.pipeline_config = pipeline_config
 
 
 
@@ -398,25 +445,22 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
 
-        # MULTIPROCESSING FIX: Update step IDs after pickle/unpickle
-        _ensure_step_ids_for_multiprocessing(frozen_context, pipeline_definition, well_id)
+        # Step IDs are consistent since pipeline_definition comes from UI (no remapping needed)
 
         logger.info(f"🔥 SINGLE_WELL: Processing {len(pipeline_definition)} steps for well {well_id}")
 
         for step_index, step in enumerate(pipeline_definition):
-            # Generate step_id from object reference (elegant stateless approach)
-            step_id = get_step_id(step)
             step_name = getattr(step, 'name', 'N/A') if hasattr(step, 'name') else 'N/A'
 
-            logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_id} ({step_name}) for well {well_id}")
+            logger.info(f"🔥 SINGLE_WELL: Executing step {step_index+1}/{len(pipeline_definition)} - {step_name} for well {well_id}")
 
             if not hasattr(step, 'process'):
-                error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_id} missing process method for well {well_id}"
+                error_msg = f"🔥 SINGLE_WELL ERROR: Step {step_index+1} missing process method for well {well_id}"
                 logger.error(error_msg)
                 raise RuntimeError(error_msg)
 
-            step.process(frozen_context)
-            logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_id} completed for well {well_id}")
+            step.process(frozen_context, step_index)
+            logger.info(f"🔥 SINGLE_WELL: Step {step_index+1}/{len(pipeline_definition)} - {step_name} completed for well {well_id}")
 
     #        except Exception as step_error:
     #            import traceback
@@ -427,20 +471,20 @@ class PipelineOrchestrator:
     #            raise RuntimeError(error_msg) from step_error
 
             if visualizer:
-                step_plan = frozen_context.step_plans[step_id]
+                step_plan = frozen_context.step_plans[step_index]
                 if step_plan['visualize']:
                     output_dir = step_plan['output_dir']
                     write_backend = step_plan['write_backend']
                     if output_dir:
-                        logger.debug(f"Visualizing output for step {step_id} from path {output_dir} (backend: {write_backend}) for well {well_id}")
+                        logger.debug(f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for well {well_id}")
                         visualizer.visualize_path(
-                            step_id=step_id,
+                            step_id=f"step_{step_index}",
                             path=str(output_dir),
                             backend=write_backend,
                             well_id=well_id
                         )
                     else:
-                        logger.warning(f"Step {step_id} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
+                        logger.warning(f"Step {step_index} in well {well_id} flagged for visualization but 'output_dir' is missing in its plan.")
         
         logger.info(f"🔥 SINGLE_WELL: Pipeline execution completed successfully for well {well_id}")
         return {"status": "success", "well_id": well_id}
@@ -540,13 +584,27 @@ class PipelineOrchestrator:
                 contexts_snapshot = dict(compiled_contexts.items())
                 logger.info(f"🔥 ORCHESTRATOR: Created contexts snapshot with {len(contexts_snapshot)} items")
 
+                # CRITICAL FIX: Resolve all lazy dataclass instances before multiprocessing
+                # This ensures that the contexts are safe for pickling in ProcessPoolExecutor
+                # Note: Don't resolve pipeline_definition as it may overwrite collision-resolved configs
+                logger.info("🔥 ORCHESTRATOR: Resolving lazy dataclasses for multiprocessing compatibility")
+                from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+                contexts_snapshot = resolve_lazy_configurations_for_serialization(contexts_snapshot)
+                logger.info("🔥 ORCHESTRATOR: Lazy dataclass resolution completed")
+
                 logger.info("🔥 DEATH_MARKER: BEFORE_TASK_SUBMISSION_LOOP")
                 future_to_well_id = {}
                 for well_id, context in contexts_snapshot.items():
                     try:
                         logger.info(f"🔥 DEATH_MARKER: SUBMITTING_TASK_FOR_WELL_{well_id}")
                         logger.info(f"🔥 ORCHESTRATOR: Submitting task for well {well_id}")
-                        future = executor.submit(self._execute_single_well, pipeline_definition, context, visualizer)
+                        # Resolve all arguments before passing to ProcessPoolExecutor
+                        resolved_context = resolve_lazy_configurations_for_serialization(context)
+                        resolved_visualizer = resolve_lazy_configurations_for_serialization(visualizer)
+
+                        # Use static function to avoid pickling the orchestrator instance
+                        # Note: Use original pipeline_definition to preserve collision-resolved configs
+                        future = executor.submit(_execute_single_well_static, pipeline_definition, resolved_context, resolved_visualizer)
                         future_to_well_id[future] = well_id
                         logger.info(f"🔥 ORCHESTRATOR: Task submitted for well {well_id}")
                         logger.info(f"🔥 DEATH_MARKER: TASK_SUBMITTED_FOR_WELL_{well_id}")
@@ -610,13 +668,13 @@ class PipelineOrchestrator:
                     results_dir = None
                     for well_id, context in compiled_contexts.items():
                         # Look for any step that has an output_dir - this is where materialization happens
-                        for step_id, step_plan in context.step_plans.items():
+                        for step_index, step_plan in context.step_plans.items():
                             if 'output_dir' in step_plan:
                                 # Found an output directory, check if it has a results subdirectory
                                 potential_results_dir = Path(step_plan['output_dir']) / self.global_config.materialization_results_path
                                 if potential_results_dir.exists():
                                     results_dir = potential_results_dir
-                                    logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_id}: {results_dir}")
+                                    logger.info(f"🔍 CONSOLIDATION: Found results directory from step {step_index}: {results_dir}")
                                     break
                         if results_dir:
                             break
@@ -874,82 +932,83 @@ class PipelineOrchestrator:
         self._metadata_cache.clear()
         logger.info("Cleared metadata cache")
 
-    async def apply_new_global_config(self, new_config: GlobalPipelineConfig):
-        """
-        Apply global configuration and rebuild orchestrator-specific config if needed.
-
-        This method:
-        1. Updates the global config reference
-        2. Rebuilds any existing orchestrator-specific config to reference the new global config
-        3. Preserves all user-set field values while updating lazy resolution defaults
-        4. Re-initializes components that depend on config (if already initialized)
-        """
-        from openhcs.core.config import GlobalPipelineConfig as GlobalPipelineConfigType
-        if not isinstance(new_config, GlobalPipelineConfigType):
-            raise TypeError(f"Expected GlobalPipelineConfig, got {type(new_config)}")
-
-        old_global_config = self.global_config
-        self.global_config = new_config
-
-        # Rebuild orchestrator-specific config if it exists
-        if self.pipeline_config is not None:
-            from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
-            self.pipeline_config = rebuild_lazy_config_with_new_global_reference(
-                self.pipeline_config,
-                new_config,
-                GlobalPipelineConfigType
-            )
-            logger.info(f"Rebuilt orchestrator-specific config for plate: {self.plate_path}")
-
-        # Update thread-local storage to reflect the new effective configuration
-        from openhcs.core.config import set_current_global_config
-        effective_config = self.get_effective_config()
-        set_current_global_config(GlobalPipelineConfigType, effective_config)
-
-        # Re-initialize components that depend on config if orchestrator was already initialized
-        if self.is_initialized():
-            logger.info(f"Re-initializing orchestrator components for plate: {self.plate_path}")
-            try:
-                # Reset initialization state to allow re-initialization
-                self._initialized = False
-                self._state = OrchestratorState.CREATED
-
-                # Re-initialize with new config
-                self.initialize()
-                logger.info(f"Successfully re-initialized orchestrator for plate: {self.plate_path}")
-            except Exception as e:
-                logger.error(f"Failed to re-initialize orchestrator for plate {self.plate_path}: {e}")
-                self._state = OrchestratorState.INIT_FAILED
-                raise
+    # Global config management removed - handled by UI layer
 
     def apply_pipeline_config(self, pipeline_config: PipelineConfig) -> None:
         """
-        Apply per-orchestrator configuration - affects only this orchestrator.
-        Does not modify global configuration or affect other orchestrators.
+        Apply per-orchestrator configuration using thread-local storage.
+
+        This method sets the orchestrator's effective config in thread-local storage
+        for step-level lazy configurations to resolve against.
         """
         if not isinstance(pipeline_config, PipelineConfig):
             raise TypeError(f"Expected PipelineConfig, got {type(pipeline_config)}")
+
         self.pipeline_config = pipeline_config
 
-
-
-        # Update thread-local storage to reflect the new effective configuration
-        # This ensures MaterializationPathConfig uses the updated defaults
+        # Set up thread-local context for sibling inheritance
+        # The existing lazy config system already handles sibling inheritance automatically
+        # We just need to provide the pipeline config instance as the context
         from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        effective_config = self.get_effective_config()
-        set_current_global_config(GlobalPipelineConfig, effective_config)
+        from dataclasses import fields
+
+        # Create a merged config that combines global defaults with pipeline overrides
+        # This provides the context for the existing sibling inheritance system
+        merged_config_values = {}
+
+        for field in fields(GlobalPipelineConfig):
+            try:
+                # Get raw value from pipeline config
+                raw_value = object.__getattribute__(pipeline_config, field.name)
+                if raw_value is not None:
+                    # Use the override value
+                    merged_config_values[field.name] = raw_value
+                else:
+                    # Use global default for None values
+                    merged_config_values[field.name] = getattr(self.global_config, field.name)
+            except AttributeError:
+                # Field doesn't exist in pipeline config, use global default
+                merged_config_values[field.name] = getattr(self.global_config, field.name)
+
+        # Create merged config for thread-local context
+        # The existing sibling inheritance system will handle the rest automatically
+        merged_config = GlobalPipelineConfig(**merged_config_values)
+        set_current_global_config(GlobalPipelineConfig, merged_config)
+
+        # CRITICAL FIX: Do NOT overwrite context with effective_config
+        # The merged_config preserves None values needed for sibling inheritance
+        # Overwriting with effective_config resolves None values to concrete values,
+        # breaking the inheritance chain (materialization_defaults → path_planning)
+
+        logger.info(f"Applied orchestrator config for plate: {self.plate_path}")
 
     def get_effective_config(self) -> GlobalPipelineConfig:
         """Get effective configuration for this orchestrator."""
         if self.pipeline_config:
+            # Thread-local context should already be set up by apply_pipeline_config()
+            # Don't override it here as it may contain merged config for sibling inheritance
             return self.pipeline_config.to_base_config()
         return self.global_config
 
     def clear_pipeline_config(self) -> None:
         """Clear per-orchestrator configuration."""
+        # Reset thread-local storage to global config
+        if self.pipeline_config is not None:
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, self.global_config)
+
         self.pipeline_config = None
         logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
 
-        # Update thread-local storage to reflect global config
-        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        set_current_global_config(GlobalPipelineConfig, self.global_config)
+    def cleanup_pipeline_config(self) -> None:
+        """Clean up orchestrator context when done (for backward compatibility)."""
+        self.clear_pipeline_config()
+
+    def __del__(self):
+        """Ensure config cleanup on orchestrator destruction."""
+        try:
+            # Clear any stored configuration references
+            self.clear_pipeline_config()
+        except Exception:
+            # Ignore errors during cleanup in destructor to prevent cascading failures
+            pass

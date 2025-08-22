@@ -246,14 +246,6 @@ def get_current_global_config(config_type: Type) -> Optional[Any]:
     context = _global_config_contexts.get(config_type)
     return getattr(context, 'value', None) if context else None
 
-def get_current_materialization_defaults() -> StepMaterializationConfig:
-    """Get current step materialization config from pipeline config."""
-    current_config = get_current_global_config(GlobalPipelineConfig)
-    if current_config:
-        return current_config.materialization_defaults
-    # Fallback to default instance if no pipeline config is set
-    return StepMaterializationConfig()
-
 
 # Type registry for lazy dataclass to base class mapping
 _lazy_type_registry: Dict[Type, Type] = {}
@@ -274,12 +266,22 @@ class LazyDefaultPlaceholderService:
     Provides consistent placeholder pattern for both static and dynamic lazy configuration classes.
     """
 
-    # Configurable placeholder prefix - set to empty string for cleaner appearance
-    PLACEHOLDER_PREFIX = ""
+    # Configurable placeholder prefix - default for when no prefix is explicitly provided
+    PLACEHOLDER_PREFIX = "Default"
 
     @staticmethod
     def has_lazy_resolution(dataclass_type: type) -> bool:
         """Check if dataclass has lazy resolution methods (created by factory)."""
+        # Handle Optional[LazyDataclass] types by unwrapping them first
+        from typing import get_origin, get_args, Union
+
+        # Unwrap Optional types (Union[Type, None])
+        if get_origin(dataclass_type) is Union:
+            args = get_args(dataclass_type)
+            if len(args) == 2 and type(None) in args:
+                # Get the non-None type from Optional[Type]
+                dataclass_type = next(arg for arg in args if arg is not type(None))
+
         return (hasattr(dataclass_type, '_resolve_field_value') and
                 hasattr(dataclass_type, 'to_base_config'))
 
@@ -288,7 +290,8 @@ class LazyDefaultPlaceholderService:
         dataclass_type: type,
         field_name: str,
         app_config: Optional[Any] = None,
-        force_static_defaults: bool = False
+        force_static_defaults: bool = False,
+        placeholder_prefix: Optional[str] = None
     ) -> Optional[str]:
         """
         Get placeholder text for lazy-resolved field with flexible resolution.
@@ -298,10 +301,15 @@ class LazyDefaultPlaceholderService:
             field_name: Name of the field to resolve
             app_config: Optional app config for dynamic resolution
             force_static_defaults: If True, always use static defaults regardless of thread-local context
+            placeholder_prefix: Custom prefix to use instead of the class default
 
         Returns:
             Placeholder text with configurable prefix for consistent UI experience.
         """
+        # Use provided prefix or fall back to class default
+        if placeholder_prefix is None:
+            placeholder_prefix = LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX
+
         if not LazyDefaultPlaceholderService.has_lazy_resolution(dataclass_type):
             return None
 
@@ -328,18 +336,53 @@ class LazyDefaultPlaceholderService:
         else:
             # Use existing lazy class (thread-local resolution)
             temp_instance = dataclass_type()
-            resolved_value = getattr(temp_instance, field_name)
+            print(f"🎨 PLACEHOLDER DEBUG: Created temp_instance of {dataclass_type}")
+
+            # For hierarchical lazy classes, use the proper resolution mechanism
+            if hasattr(temp_instance, '_resolve_field_value'):
+                # This is a hierarchical lazy class - use its resolution method
+                resolved_value = temp_instance._resolve_field_value(field_name)
+                print(f"🎨 PLACEHOLDER DEBUG: Hierarchical resolution for {field_name}: {resolved_value}")
+            else:
+                # Regular lazy class - use getattr
+                resolved_value = getattr(temp_instance, field_name)
+                print(f"🎨 PLACEHOLDER DEBUG: Regular getattr for {field_name}: {resolved_value}")
 
         if resolved_value is not None:
-            # Format nested dataclasses with key field values
+            # Handle nested dataclasses
             if hasattr(resolved_value, '__dataclass_fields__'):
-                # For nested dataclasses, show key field values instead of generic info
-                summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
-                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{summary}"
+                # Check if this is a nested lazy dataclass that needs recursive resolution
+                if LazyDefaultPlaceholderService.has_lazy_resolution(type(resolved_value)):
+                    # This is a nested lazy dataclass - resolve the specific field recursively
+                    return LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
+                        type(resolved_value), field_name, app_config, force_static_defaults, placeholder_prefix
+                    )
+                else:
+                    # Regular dataclass - show summary of all field values
+                    summary = LazyDefaultPlaceholderService._format_nested_dataclass_summary(resolved_value)
+                    return f"{placeholder_prefix}{summary}" if placeholder_prefix else summary
             else:
-                return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}{resolved_value}"
+                # Handle prefix formatting - avoid double colons
+                if placeholder_prefix:
+                    if placeholder_prefix.endswith(': '):
+                        return f"{placeholder_prefix}{resolved_value}"
+                    elif placeholder_prefix.endswith(':'):
+                        return f"{placeholder_prefix} {resolved_value}"
+                    else:
+                        return f"{placeholder_prefix}: {resolved_value}"
+                else:
+                    return str(resolved_value)
         else:
-            return f"{LazyDefaultPlaceholderService.PLACEHOLDER_PREFIX}(none)"
+            # Handle prefix formatting for None values - avoid double colons
+            if placeholder_prefix:
+                if placeholder_prefix.endswith(': '):
+                    return f"{placeholder_prefix}(none)"
+                elif placeholder_prefix.endswith(':'):
+                    return f"{placeholder_prefix} (none)"
+                else:
+                    return f"{placeholder_prefix}: (none)"
+            else:
+                return "(none)"
 
     @staticmethod
     def _get_base_class_from_lazy(lazy_class: Type) -> Type:
@@ -390,10 +433,9 @@ class LazyDefaultPlaceholderService:
                     continue
 
                 # Format different value types appropriately
-                if hasattr(value, 'value'):  # Enum
-                    formatted_value = value.value
-                elif hasattr(value, 'name'):  # Enum with name
-                    formatted_value = value.name
+                if hasattr(value, 'value') and hasattr(value, 'name'):  # Enum
+                    from openhcs.ui.shared.ui_utils import format_enum_display
+                    formatted_value = format_enum_display(value)
                 elif isinstance(value, str) and len(value) > 20:  # Long strings
                     formatted_value = f"{value[:17]}..."
                 elif dataclasses.is_dataclass(value):  # Nested dataclass
@@ -414,8 +456,7 @@ class LazyDefaultPlaceholderService:
             return f"{class_name} (default settings)"
 
 
-# MaterializationPathConfig is now LazyStepMaterializationConfig from lazy_config.py
-# Import moved to avoid circular dependency - use lazy import pattern
+# LazyStepMaterializationConfig is imported from pipeline_config.py to avoid circular dependency
 
 
 @dataclass(frozen=True)
@@ -577,10 +618,9 @@ def get_default_global_config() -> GlobalPipelineConfig:
 
 # Import pipeline-specific classes - circular import solved by moving import to end
 from openhcs.core.pipeline_config import (
-    LazyStepMaterializationConfig as MaterializationPathConfig,
+    LazyStepMaterializationConfig,
     PipelineConfig,
     set_current_pipeline_config,
     ensure_pipeline_config_context,
-    create_pipeline_config_for_editing,
-    create_editing_config_from_existing_lazy_config
+    create_pipeline_config_for_editing
 )

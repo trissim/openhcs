@@ -46,10 +46,11 @@ logger = logging.getLogger(__name__)
 def _normalize_step_attributes(pipeline_definition: List[AbstractStep]) -> None:
     """Backwards compatibility: Set missing step attributes to constructor defaults."""
     sig = inspect.signature(AbstractStep.__init__)
+    # Include ALL parameters with defaults, even None values
     defaults = {name: param.default for name, param in sig.parameters.items()
-                if name != 'self' and param.default != inspect.Parameter.empty}
+                if name != 'self' and param.default is not inspect.Parameter.empty}
 
-    for step in pipeline_definition:
+    for i, step in enumerate(pipeline_definition):
         for attr_name, default_value in defaults.items():
             if not hasattr(step, attr_name):
                 setattr(step, attr_name, default_value)
@@ -93,6 +94,28 @@ class PipelineCompiler:
         if not hasattr(context, 'step_plans') or context.step_plans is None:
             context.step_plans = {} # Ensure step_plans dict exists
 
+        # === THREAD-LOCAL CONTEXT SETUP ===
+        # CRITICAL FIX: Use existing thread-local context set by orchestrator.apply_pipeline_config()
+        # The orchestrator should have already set up merged_config that preserves None values
+        # for sibling inheritance. Do NOT overwrite with pipeline_config or effective_config.
+        from openhcs.core.config import get_current_global_config, GlobalPipelineConfig
+        current_context = get_current_global_config(GlobalPipelineConfig)
+        logger.debug(f"🔧 THREAD-LOCAL: Current context: {current_context}")
+        logger.debug(f"🔧 THREAD-LOCAL: Orchestrator pipeline_config: {orchestrator.pipeline_config}")
+
+        if current_context is None:
+            # Check if orchestrator has pipeline config that should be applied
+            if orchestrator.pipeline_config:
+                logger.debug("🔧 THREAD-LOCAL: Applying orchestrator pipeline config")
+                orchestrator.apply_pipeline_config(orchestrator.pipeline_config)
+            else:
+                # Fallback: if no context exists, use orchestrator's global config (not effective config)
+                from openhcs.core.config import set_current_global_config
+                set_current_global_config(GlobalPipelineConfig, orchestrator.global_config)
+                logger.debug("🔧 THREAD-LOCAL: Set fallback context using orchestrator global config")
+        else:
+            logger.debug("🔧 THREAD-LOCAL: Using existing thread-local context (preserves None values for sibling inheritance)")
+
         # === BACKWARDS COMPATIBILITY PREPROCESSING ===
         # Ensure all steps have complete attribute sets based on AbstractStep constructor
         # This must happen before any other compilation logic to eliminate defensive programming
@@ -106,10 +129,10 @@ class PipelineCompiler:
         _resolve_step_well_filters(steps_definition, context, orchestrator)
 
         # Pre-initialize step_plans with basic entries for each step
-        # This ensures step_plans is not empty when path planner checks it
-        for step in steps_definition:
-            if step.step_id not in context.step_plans:
-                context.step_plans[step.step_id] = {
+        # Use step index as key instead of step_id for multiprocessing compatibility
+        for step_index, step in enumerate(steps_definition):
+            if step_index not in context.step_plans:
+                context.step_plans[step_index] = {
                     "step_name": step.name,
                     "step_type": step.__class__.__name__,
                     "well_id": context.well_id,
@@ -139,7 +162,7 @@ class PipelineCompiler:
                         global_output_folder=plate_path.parent,  # Parent of plate
                         sub_dir=path_config.sub_dir  # Use same sub_dir (e.g., "images")
                     )
-                    context.step_plans[first_step.step_id]["input_conversion_config"] = conversion_config
+                    context.step_plans[0]["input_conversion_config"] = conversion_config
                     logger.debug(f"Input conversion to zarr enabled for first step: {first_step.name}")
 
         # The well_id and base_input_dir are available from the context object.
@@ -150,15 +173,14 @@ class PipelineCompiler:
 
         # Loop to supplement step_plans with non-I/O, non-path attributes
         # after PipelinePathPlanner has fully populated them with I/O info.
-        for step in steps_definition:
-            step_id = step.step_id
-            if step_id not in context.step_plans:
+        for step_index, step in enumerate(steps_definition):
+            if step_index not in context.step_plans:
                 logger.error(
-                    f"Critical error: Step {step.name} (ID: {step_id}) "
+                    f"Critical error: Step {step.name} (index: {step_index}) "
                     f"not found in step_plans after path planning phase. Clause 504."
                 )
                 # Create a minimal error plan
-                context.step_plans[step_id] = {
+                context.step_plans[step_index] = {
                      "step_name": step.name,
                      "step_type": step.__class__.__name__,
                      "well_id": context.well_id, # Use context.well_id
@@ -167,7 +189,7 @@ class PipelineCompiler:
                 }
                 continue
 
-            current_plan = context.step_plans[step_id]
+            current_plan = context.step_plans[step_index]
 
             # Ensure basic metadata (PathPlanner should set most of this)
             current_plan["step_name"] = step.name
@@ -244,12 +266,12 @@ class PipelineCompiler:
 
         vfs_config = context.get_vfs_config()
 
-        for step in steps_definition:
-            step_plan = context.step_plans[step.step_id]
+        for step_index, step in enumerate(steps_definition):
+            step_plan = context.step_plans[step_index]
 
             will_use_zarr = (
                 vfs_config.materialization_backend == MaterializationBackend.ZARR and
-                steps_definition.index(step) == len(steps_definition) - 1
+                step_index == len(steps_definition) - 1
             )
 
             if will_use_zarr:
@@ -286,20 +308,19 @@ class PipelineCompiler:
         )
 
         # Post-check (optional, but good for ensuring contracts are met by the planner)
-        for step in steps_definition:
-            step_id = step.step_id
-            if step_id not in context.step_plans:
+        for step_index, step in enumerate(steps_definition):
+            if step_index not in context.step_plans:
                  # This should not happen if prepare_pipeline_flags guarantees plans for all steps
-                logger.error(f"Step {step.name} (ID: {step_id}) missing from step_plans after materialization planning.")
+                logger.error(f"Step {step.name} (index: {step_index}) missing from step_plans after materialization planning.")
                 continue
 
-            plan = context.step_plans[step_id]
+            plan = context.step_plans[step_index]
             # Check for keys that FunctionStep actually uses during execution
             required_keys = [READ_BACKEND, WRITE_BACKEND]
             if not all(k in plan for k in required_keys):
                 missing_keys = [k for k in required_keys if k not in plan]
                 logger.error(
-                    f"Materialization flag planning incomplete for step {step.name} (ID: {step_id}). "
+                    f"Materialization flag planning incomplete for step {step.name} (index: {step_index}). "
                     f"Missing required keys: {missing_keys} (Clause 273)."
                 )
 
@@ -328,24 +349,23 @@ class PipelineCompiler:
             orchestrator=orchestrator # Pass orchestrator for dict pattern key validation
         )
 
-        for step_id, memory_types in step_memory_types.items():
+        for step_index, memory_types in step_memory_types.items():
             if "input_memory_type" not in memory_types or "output_memory_type" not in memory_types:
-                step_name = context.step_plans[step_id]["step_name"]
+                step_name = context.step_plans[step_index]["step_name"]
                 raise AssertionError(
-                    f"Memory type validation must set input/output_memory_type for FunctionStep {step_name} (ID: {step_id}) (Clause 101)."
+                    f"Memory type validation must set input/output_memory_type for FunctionStep {step_name} (index: {step_index}) (Clause 101)."
                 )
-            if step_id in context.step_plans:
-                context.step_plans[step_id].update(memory_types)
+            if step_index in context.step_plans:
+                context.step_plans[step_index].update(memory_types)
             else:
-                logger.warning(f"Step ID {step_id} found in memory_types but not in context.step_plans. Skipping.")
+                logger.warning(f"Step index {step_index} found in memory_types but not in context.step_plans. Skipping.")
 
         # Apply memory type override: Any step with disk output must use numpy for disk writing
-        for i, step in enumerate(steps_definition):
+        for step_index, step in enumerate(steps_definition):
             if isinstance(step, FunctionStep):
-                step_id = step.step_id
-                if step_id in context.step_plans:
-                    step_plan = context.step_plans[step_id]
-                    is_last_step = (i == len(steps_definition) - 1)
+                if step_index in context.step_plans:
+                    step_plan = context.step_plans[step_index]
+                    is_last_step = (step_index == len(steps_definition) - 1)
                     write_backend = step_plan['write_backend']
 
                     if write_backend == 'disk':
@@ -367,7 +387,7 @@ class PipelineCompiler:
 
         gpu_assignments = GPUMemoryTypeValidator.validate_step_plans(context.step_plans)
 
-        for step_id, step_plan_val in context.step_plans.items(): # Renamed step_plan to step_plan_val to avoid conflict
+        for step_index, step_plan_val in context.step_plans.items(): # Renamed step_plan to step_plan_val to avoid conflict
             is_gpu_step = False
             input_type = step_plan_val["input_memory_type"]
             if input_type in VALID_GPU_MEMORY_TYPES:
@@ -378,21 +398,21 @@ class PipelineCompiler:
                 is_gpu_step = True
 
             if is_gpu_step:
-                # Ensure gpu_assignments has an entry for this step_id if it's a GPU step
+                # Ensure gpu_assignments has an entry for this step_index if it's a GPU step
                 # And that entry contains a 'gpu_id'
-                step_gpu_assignment = gpu_assignments[step_id]
+                step_gpu_assignment = gpu_assignments[step_index]
                 if "gpu_id" not in step_gpu_assignment:
                     step_name = step_plan_val["step_name"]
                     raise AssertionError(
-                        f"GPU validation must assign gpu_id for step {step_name} (ID: {step_id}) "
+                        f"GPU validation must assign gpu_id for step {step_name} (index: {step_index}) "
                         f"with GPU memory types (Clause 295)."
                     )
 
-        for step_id, gpu_assignment in gpu_assignments.items():
-            if step_id in context.step_plans:
-                context.step_plans[step_id].update(gpu_assignment)
+        for step_index, gpu_assignment in gpu_assignments.items():
+            if step_index in context.step_plans:
+                context.step_plans[step_index].update(gpu_assignment)
             else:
-                logger.warning(f"Step ID {step_id} found in gpu_assignments but not in context.step_plans. Skipping.")
+                logger.warning(f"Step index {step_index} found in gpu_assignments but not in context.step_plans. Skipping.")
 
     @staticmethod
     def apply_global_visualizer_override_for_context(
@@ -408,12 +428,12 @@ class PipelineCompiler:
 
         if global_enable_visualizer:
             if not context.step_plans: return # Guard against empty step_plans
-            for step_id, plan in context.step_plans.items():
+            for step_index, plan in context.step_plans.items():
                 plan["visualize"] = True
                 logger.info(f"Global visualizer override: Step '{plan['step_name']}' marked for visualization.")
 
     @staticmethod
-    def resolve_lazy_dataclasses_for_context(context: ProcessingContext) -> None:
+    def resolve_lazy_dataclasses_for_context(context: ProcessingContext, orchestrator) -> None:
         """
         Resolve all lazy dataclass instances in step plans to their base configurations.
 
@@ -422,12 +442,24 @@ class PipelineCompiler:
 
         Args:
             context: ProcessingContext to process
+            orchestrator: PipelineOrchestrator to get current effective config from
         """
         from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
 
-        # Use the shared recursive resolution function to handle nested structures
-        for step_id, step_plan in context.step_plans.items():
-            context.step_plans[step_id] = resolve_lazy_configurations_for_serialization(step_plan)
+        # Use orchestrator's current effective config as authoritative source
+        # This ensures compilation resolves the same values as UI placeholders
+        effective_config = orchestrator.get_effective_config()
+        set_current_global_config(GlobalPipelineConfig, effective_config)
+
+        # Resolve the entire context recursively to catch all lazy dataclass instances
+        # This ensures that any lazy configs in any part of the context are resolved
+        resolved_context_dict = resolve_lazy_configurations_for_serialization(vars(context))
+
+        # Update context attributes with resolved values
+        for attr_name, resolved_value in resolved_context_dict.items():
+            if not attr_name.startswith('_'):  # Skip private attributes
+                setattr(context, attr_name, resolved_value)
 
     @staticmethod
     def compile_pipelines(
@@ -498,77 +530,51 @@ class PipelineCompiler:
                     PipelineCompiler.apply_global_visualizer_override_for_context(context, True)
 
                 # Resolve all lazy dataclasses before freezing to ensure multiprocessing compatibility
-                PipelineCompiler.resolve_lazy_dataclasses_for_context(context)
+                PipelineCompiler.resolve_lazy_dataclasses_for_context(context, orchestrator)
 
                 context.freeze()
                 compiled_contexts[well_id] = context
                 logger.debug(f"Compilation finished for well: {well_id}")
+
+            # Log path planning summary once per plate
+            if compiled_contexts:
+                first_context = next(iter(compiled_contexts.values()))
+                logger.info(f"📁 PATH PLANNING SUMMARY:")
+                logger.info(f"   Main pipeline output: {first_context.output_plate_root}")
+
+                # Check for materialization steps in first context
+                materialization_steps = []
+                for step_id, plan in first_context.step_plans.items():
+                    if 'materialized_output_dir' in plan:
+                        step_name = plan.get('step_name', f'step_{step_id}')
+                        mat_path = plan['materialized_output_dir']
+                        materialization_steps.append((step_name, mat_path))
+
+                for step_name, mat_path in materialization_steps:
+                    logger.info(f"   Materialization {step_name}: {mat_path}")
+
+            # Resolve lazy dataclasses in pipeline definition steps before stripping
+            logger.info("Resolving lazy dataclasses in pipeline definition steps.")
+            from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+            resolved_pipeline_definition = resolve_lazy_configurations_for_serialization(pipeline_definition)
+
+            # Update the pipeline_definition list in-place to maintain references
+            pipeline_definition.clear()
+            pipeline_definition.extend(resolved_pipeline_definition)
 
             # After processing all wells, strip attributes and finalize
             logger.info("Stripping attributes from pipeline definition steps.")
             StepAttributeStripper.strip_step_attributes(pipeline_definition, {})
 
             orchestrator._state = OrchestratorState.COMPILED
-            logger.info(f"Plate compilation finished for {len(compiled_contexts)} wells.")
+            logger.info(f"🏁 COMPILATION COMPLETE: {len(compiled_contexts)} wells compiled successfully")
             return compiled_contexts
         except Exception as e:
             orchestrator._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")
             raise
 
-    @staticmethod
-    def update_step_ids_for_multiprocessing(
-        context: ProcessingContext,
-        steps_definition: List[AbstractStep]
-    ) -> None:
-        """
-        Updates step IDs in a frozen context after multiprocessing pickle/unpickle.
 
-        When contexts are pickled/unpickled for multiprocessing, step objects get
-        new memory addresses, changing their IDs. This method remaps the step_plans
-        from old IDs to new IDs while preserving all plan data.
-
-        SPECIAL PRIVILEGE: This method can modify frozen contexts since it's part
-        of the compilation process and maintains data integrity.
-        
-        Args:
-            context: Frozen ProcessingContext with old step IDs
-            steps_definition: Step objects with new IDs after pickle/unpickle
-        """
-        if not context.is_frozen():
-            logger.warning("update_step_ids_for_multiprocessing called on unfrozen context - skipping")
-            return
-            
-        # Create mapping from old step positions to new step IDs
-        if len(steps_definition) != len(context.step_plans):
-            raise RuntimeError(
-                f"Step count mismatch: {len(steps_definition)} steps vs {len(context.step_plans)} plans. "
-                f"Cannot safely remap step IDs."
-            )
-        
-        # Get old step IDs in order (assuming same order as steps_definition)
-        old_step_ids = list(context.step_plans.keys())
-        
-        # Generate new step IDs using get_step_id (handles stripped step objects)
-        from openhcs.core.steps.abstract import get_step_id
-        new_step_ids = [get_step_id(step) for step in steps_definition]
-        
-        logger.debug(f"Remapping step IDs for multiprocessing:")
-        for old_id, new_id in zip(old_step_ids, new_step_ids):
-            logger.debug(f"  {old_id} → {new_id}")
-        
-        # Create new step_plans dict with updated IDs
-        new_step_plans = {}
-        for old_id, new_id in zip(old_step_ids, new_step_ids):
-            new_step_plans[new_id] = context.step_plans[old_id].copy()
-        
-        # SPECIAL PRIVILEGE: Temporarily unfreeze to update step_plans, then refreeze
-        object.__setattr__(context, '_is_frozen', False)
-        try:
-            context.step_plans = new_step_plans
-            logger.info(f"Updated {len(new_step_plans)} step plans for multiprocessing compatibility")
-        finally:
-            object.__setattr__(context, '_is_frozen', True)
 
 # The monolithic compile() method is removed.
 # Orchestrator will call the static methods above in sequence.
@@ -601,7 +607,7 @@ def _resolve_step_well_filters(steps_definition: List[AbstractStep], context, or
         context.step_well_filters = {}
 
     # Process each step that has materialization config with well filter
-    for step in steps_definition:
+    for step_index, step in enumerate(steps_definition):
         if (hasattr(step, 'materialization_config') and
             step.materialization_config and
             step.materialization_config.well_filter is not None):
@@ -615,7 +621,7 @@ def _resolve_step_well_filters(steps_definition: List[AbstractStep], context, or
 
                 # Store resolved wells in context for path planner
                 # Use structure expected by path planner
-                context.step_well_filters[step.step_id] = {
+                context.step_well_filters[step_index] = {  # Use step_index instead of step.step_id
                     'resolved_wells': sorted(resolved_wells),
                     'filter_mode': step.materialization_config.well_filter_mode,
                     'original_filter': step.materialization_config.well_filter

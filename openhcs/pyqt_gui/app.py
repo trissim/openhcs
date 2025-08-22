@@ -70,11 +70,18 @@ class OpenHCSPyQtApp(QApplication):
         setup_global_gpu_registry(global_config=self.global_config)
         logger.info("GPU registry setup completed")
 
+        # CRITICAL FIX: Establish global config context for lazy dataclass resolution
+        # This was missing and caused placeholder resolution to fall back to static defaults
+        from openhcs.core.lazy_config import ensure_global_config_context
+        from openhcs.core.config import GlobalPipelineConfig
+        ensure_global_config_context(GlobalPipelineConfig, self.global_config)
+        logger.info("Global configuration context established for lazy dataclass resolution")
+
         # Set application icon (if available)
         icon_path = Path(__file__).parent / "resources" / "openhcs_icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        
+
         # Setup exception handling
         sys.excepthook = self.handle_exception
     

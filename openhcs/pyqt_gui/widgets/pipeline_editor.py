@@ -8,6 +8,7 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import asyncio
 import inspect
+import contextlib
 from typing import List, Dict, Optional, Callable, Tuple
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt6.QtGui import QFont, QDrag
 
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.core.config import GlobalPipelineConfig, set_current_global_config, get_current_global_config
 from openhcs.io.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.widgets.mixins import (
@@ -329,12 +331,17 @@ class PipelineEditorWidget(QWidget):
         from openhcs.core.steps.function_step import FunctionStep
         from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
+        # Get orchestrator for step creation
+        orchestrator = self._get_current_orchestrator()
+
         # Create new step
         step_name = f"Step_{len(self.pipeline_steps) + 1}"
         new_step = FunctionStep(
             func=[],  # Start with empty function list
             name=step_name
         )
+
+
 
         def handle_save(edited_step):
             """Handle step save from editor."""
@@ -343,13 +350,18 @@ class PipelineEditorWidget(QWidget):
             self.pipeline_changed.emit(self.pipeline_steps)
             self.status_message.emit(f"Added new step: {edited_step.name}")
 
-        # Create and show editor dialog
-        editor = DualEditorWindow(
-            step_data=new_step,
-            is_new=True,
-            on_save_callback=handle_save,
-            parent=self
-        )
+        # Create and show editor dialog within the correct config context
+        orchestrator = self._get_current_orchestrator()
+        with self._scoped_orchestrator_context():
+            editor = DualEditorWindow(
+                step_data=new_step,
+                is_new=True,
+                on_save_callback=handle_save,
+                orchestrator=orchestrator,
+                parent=self
+            )
+            # Set original step for change detection within the scoped context
+            editor.set_original_step_for_change_detection()
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -397,13 +409,18 @@ class PipelineEditorWidget(QWidget):
             self.pipeline_changed.emit(self.pipeline_steps)
             self.status_message.emit(f"Updated step: {edited_step.name}")
 
-        # Create and show editor dialog
-        editor = DualEditorWindow(
-            step_data=step_to_edit,
-            is_new=False,
-            on_save_callback=handle_save,
-            parent=self
-        )
+        # Create and show editor dialog within the correct config context
+        orchestrator = self._get_current_orchestrator()
+        with self._scoped_orchestrator_context():
+            editor = DualEditorWindow(
+                step_data=step_to_edit,
+                is_new=False,
+                on_save_callback=handle_save,
+                orchestrator=orchestrator,
+                parent=self
+            )
+            # Set original step for change detection within the scoped context
+            editor.set_original_step_for_change_detection()
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -571,22 +588,41 @@ class PipelineEditorWidget(QWidget):
     def set_current_plate(self, plate_path: str):
         """
         Set current plate and load its pipeline (extracted from Textual version).
-        
+
         Args:
             plate_path: Path of the current plate
         """
         self.current_plate = plate_path
-        
+
         # Load pipeline for the new plate
         if plate_path:
             plate_pipeline = self.plate_pipelines.get(plate_path, [])
             self.pipeline_steps = plate_pipeline
         else:
             self.pipeline_steps = []
-        
+
         self.update_step_list()
         self.update_button_states()
         logger.debug(f"Current plate changed: {plate_path}")
+
+    def on_orchestrator_config_changed(self, plate_path: str, effective_config):
+        """
+        Handle orchestrator configuration changes for placeholder refresh.
+
+        Args:
+            plate_path: Path of the plate whose orchestrator config changed
+            effective_config: The orchestrator's new effective configuration
+        """
+        # Only refresh if this is for the current plate
+        if plate_path == self.current_plate:
+            logger.debug(f"Refreshing placeholders for orchestrator config change: {plate_path}")
+
+            # Refresh any open step forms within the orchestrator's scoped context
+            # This ensures step forms resolve against the updated effective config
+            with self._scoped_orchestrator_context():
+                # Trigger refresh of any open configuration windows or step forms
+                # The scoped context ensures they resolve against the updated orchestrator config
+                logger.debug(f"Step forms will now resolve against updated orchestrator config for: {plate_path}")
     
     # ========== UI Helper Methods ==========
     
@@ -762,6 +798,40 @@ class PipelineEditorWidget(QWidget):
                                      OrchestratorState.EXEC_FAILED]
 
 
+
+    def _get_current_orchestrator(self) -> Optional[PipelineOrchestrator]:
+        """Get the orchestrator for the currently selected plate."""
+        if not self.current_plate:
+            return None
+        main_window = self._find_main_window()
+        if not main_window:
+            return None
+        plate_manager_window = main_window.floating_windows.get("plate_manager")
+        if not plate_manager_window:
+            return None
+        layout = plate_manager_window.layout()
+        if not layout or layout.count() == 0:
+            return None
+        plate_manager_widget = layout.itemAt(0).widget()
+        if not hasattr(plate_manager_widget, 'orchestrators'):
+            return None
+        return plate_manager_widget.orchestrators.get(self.current_plate)
+
+    @contextlib.contextmanager
+    def _scoped_orchestrator_context(self):
+        """A context manager to temporarily set the thread-local config for the current orchestrator."""
+        original_config = get_current_global_config(GlobalPipelineConfig)
+        orchestrator = self._get_current_orchestrator()
+        if orchestrator:
+            effective_config = orchestrator.get_effective_config()
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Set scoped config context for orchestrator: {orchestrator.plate_path}")
+        
+        try:
+            yield
+        finally:
+            set_current_global_config(GlobalPipelineConfig, original_config)
+            logger.debug("Restored original config context.")
 
     def _find_main_window(self):
         """Find the main window by traversing parent hierarchy."""

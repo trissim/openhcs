@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from openhcs.textual_tui.services.pattern_data_manager import PatternDataManager
-from openhcs.textual_tui.widgets.shared.parameter_form_manager import ParameterFormManager as TextualParameterFormManager
+from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import ParameterFormManager
 from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
 
 # Import PyQt6 help components (using same pattern as Textual TUI)
@@ -72,7 +72,14 @@ class FunctionPaneWidget(QWidget):
             parameters = {name: self.kwargs.get(name, info.default_value) for name, info in param_info.items()}
             parameter_types = {name: info.param_type for name, info in param_info.items()}
             
-            self.form_manager = TextualParameterFormManager(parameters, parameter_types, f"func_{index}", param_info)
+            self.form_manager = ParameterFormManager(
+                parameters=parameters,
+                parameter_types=parameter_types,
+                field_id=f"func_{index}",
+                dataclass_type=None,  # Function parameters, not dataclass
+                parameter_info=param_info,
+                parent=self
+            )
             self.param_defaults = {name: info.default_value for name, info in param_info.items()}
         else:
             self.form_manager = None
@@ -269,6 +276,7 @@ class FunctionPaneWidget(QWidget):
                 parameters=self.form_manager.parameters,
                 parameter_types=self.form_manager.parameter_types,
                 field_id=f"func_{self.index}",
+                dataclass_type=None,  # Function parameters, not dataclass fields
                 parameter_info=self.form_manager.parameter_info,
                 use_scroll_area=False,  # Don't use scroll area in function panes
                 function_target=self.func,  # Pass function for docstring fallback
@@ -492,7 +500,14 @@ class FunctionPaneWidget(QWidget):
             parameters = {name: self.kwargs.get(name, info.default_value) for name, info in param_info.items()}
             parameter_types = {name: info.param_type for name, info in param_info.items()}
             
-            self.form_manager = TextualParameterFormManager(parameters, parameter_types, f"func_{self.index}", param_info)
+            self.form_manager = ParameterFormManager(
+                parameters=parameters,
+                parameter_types=parameter_types,
+                field_id=f"func_{self.index}",
+                dataclass_type=None,  # Function parameters, not dataclass
+                parameter_info=param_info,
+                parent=self
+            )
             self.param_defaults = {name: info.default_value for name, info in param_info.items()}
         else:
             self.form_manager = None

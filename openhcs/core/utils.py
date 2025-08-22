@@ -453,8 +453,21 @@ class WellFilterProcessor:
             return set(available_wells[:well_filter])
 
         elif isinstance(well_filter, str):
-            # Pass available wells to pattern parsing for format-agnostic support
-            return WellFilterProcessor._parse_well_pattern(well_filter, available_wells)
+            # Check if string is a numeric value (common UI input issue)
+            if well_filter.strip().isdigit():
+                # Convert numeric string to integer and process as max count
+                numeric_value = int(well_filter.strip())
+                if numeric_value <= 0:
+                    raise ValueError(f"Max count must be positive, got: {numeric_value}")
+                if numeric_value > len(available_wells):
+                    raise ValueError(
+                        f"Requested {numeric_value} wells but only {len(available_wells)} available"
+                    )
+                return set(available_wells[:numeric_value])
+
+            else:
+                # Non-numeric string - pass to pattern parsing for format-agnostic support
+                return WellFilterProcessor._parse_well_pattern(well_filter, available_wells)
 
         else:
             raise ValueError(f"Unsupported well filter type: {type(well_filter)}")

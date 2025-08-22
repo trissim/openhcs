@@ -204,8 +204,16 @@ class LibraryRegistryBase(ABC):
 
     def _classify_dual_support(self, result_3d):
         """Classify functions that work on both 3D and 2D inputs."""
-        if result_3d is not None and result_3d.ndim == 2:
-            return ProcessingContract.VOLUMETRIC_TO_SLICE
+        if result_3d is not None:
+            # Handle tuple results (some functions return multiple arrays)
+            if isinstance(result_3d, tuple):
+                # Check the first element if it's a tuple
+                first_result = result_3d[0] if len(result_3d) > 0 else None
+                if hasattr(first_result, 'ndim') and first_result.ndim == 2:
+                    return ProcessingContract.VOLUMETRIC_TO_SLICE
+            # Handle single array results
+            elif hasattr(result_3d, 'ndim') and result_3d.ndim == 2:
+                return ProcessingContract.VOLUMETRIC_TO_SLICE
         return ProcessingContract.FLEXIBLE
 
     @abstractmethod

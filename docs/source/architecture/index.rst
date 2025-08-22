@@ -42,6 +42,9 @@ Core Infrastructure
    memory_backend_system
    microscope_handler_integration
    configuration_management_system
+   configuration-resolution
+   lazy-class-system
+   service-layer-architecture
    concurrency_model
    system_integration
 

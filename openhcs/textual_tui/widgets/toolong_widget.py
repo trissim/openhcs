@@ -158,6 +158,7 @@ class ToolongWidget(Widget):
         if not hasattr(self.watcher, '_thread') or self.watcher._thread is None:
             self.watcher.start()
         else:
+            pass  # Watcher already running
 
         # Focus LogLines (no tabs in dropdown structure)
         try:

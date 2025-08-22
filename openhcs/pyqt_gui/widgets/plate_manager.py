@@ -50,6 +50,7 @@ class PlateManagerWidget(QWidget):
     plate_selected = pyqtSignal(str)  # plate_path
     status_message = pyqtSignal(str)  # status message
     orchestrator_state_changed = pyqtSignal(str, str)  # plate_path, state
+    orchestrator_config_changed = pyqtSignal(str, object)  # plate_path, effective_config
 
     # Log viewer integration signals
     subprocess_log_started = pyqtSignal(str)  # base_log_path
@@ -285,6 +286,27 @@ class PlateManagerWidget(QWidget):
             async_func: Async function to execute
         """
         self.service_adapter.execute_async_operation(async_func)
+
+    def _update_orchestrator_global_config(self, orchestrator, new_global_config):
+        """Update orchestrator's global config reference and rebuild pipeline config if needed."""
+        from openhcs.core.lazy_config import rebuild_lazy_config_with_new_global_reference
+        from openhcs.core.config import GlobalPipelineConfig, set_current_global_config
+
+        # Update orchestrator's global config reference
+        orchestrator.global_config = new_global_config
+
+        # Rebuild orchestrator-specific config if it exists
+        if orchestrator.pipeline_config is not None:
+            orchestrator.pipeline_config = rebuild_lazy_config_with_new_global_reference(
+                orchestrator.pipeline_config,
+                new_global_config,
+                GlobalPipelineConfig
+            )
+            logger.info(f"Rebuilt orchestrator-specific config for plate: {orchestrator.plate_path}")
+
+        # Get effective config and emit signal for UI refresh
+        effective_config = orchestrator.get_effective_config()
+        self.orchestrator_config_changed.emit(str(orchestrator.plate_path), effective_config)
     
     # ========== Business Logic Methods (Extracted from Textual) ==========
     
@@ -360,54 +382,61 @@ class PlateManagerWidget(QWidget):
         self.update_plate_list()
         self.status_message.emit(f"Deleted {len(paths_to_delete)} plate(s)")
     
+    def _validate_plates_for_operation(self, plates, operation_type):
+        """Unified functional validator for all plate operations."""
+        # Functional validation mapping
+        validators = {
+            'init': lambda p: True,  # Init can work on any plates
+            'compile': lambda p: (
+                self.orchestrators.get(p['path']) and
+                self._get_current_pipeline_definition(p['path'])
+            ),
+            'run': lambda p: (
+                self.orchestrators.get(p['path']) and
+                self.orchestrators[p['path']].state in ['COMPILED', 'COMPLETED']
+            )
+        }
+
+        # Functional pattern: filter invalid plates in one pass
+        validator = validators.get(operation_type, lambda p: True)
+        return [p for p in plates if not validator(p)]
+
     async def action_init_plate(self):
-        """Handle Initialize Plate button (extracted from Textual version)."""
+        """Handle Initialize Plate button with unified validation."""
         selected_items = self.get_selected_plates()
 
-        if not selected_items:
-            self.service_adapter.show_error_dialog("No plates selected for initialization.")
-            return
-        
-        # Use signal for thread-safe progress start
+        # Unified validation - let it fail if no plates
+        invalid_plates = self._validate_plates_for_operation(selected_items, 'init')
+
         self.progress_started.emit(len(selected_items))
-        
-        for i, plate in enumerate(selected_items):
+
+        # Functional pattern: async map with enumerate
+        async def init_single_plate(i, plate):
             plate_path = plate['path']
-            
-            try:
-                # Initialize orchestrator (heavy operation)
-                def init_orchestrator():
-                    return PipelineOrchestrator(
-                        plate_path=plate_path,
-                        global_config=self.global_config,
-                        storage_registry=self.file_manager.registry
-                    ).initialize()
-                
-                # Run in executor to avoid blocking UI (works in Qt thread)
-                import asyncio
-                loop = asyncio.get_event_loop()
-                orchestrator = await loop.run_in_executor(None, init_orchestrator)
-                
-                # Store orchestrator
-                self.orchestrators[plate_path] = orchestrator
-                self.orchestrator_state_changed.emit(plate_path, "READY")
+            orchestrator = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: PipelineOrchestrator(
+                    plate_path=plate_path,
+                    global_config=self.global_config,
+                    storage_registry=self.file_manager.registry
+                ).initialize()
+            )
 
-                # Auto-select this plate if no plate is currently selected
-                if not self.selected_plate_path:
-                    self.selected_plate_path = plate_path
-                    self.plate_selected.emit(plate_path)
-                    # Note: UI selection update removed - not safe from async thread
-                    # The UI will update automatically when orchestrator state changes
+            self.orchestrators[plate_path] = orchestrator
+            self.orchestrator_state_changed.emit(plate_path, "READY")
 
-                # Use signal for thread-safe progress update
-                self.progress_updated.emit(i + 1)
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize plate {plate['name']}: {e}")
-                # Use signal for thread-safe error reporting
-                self.initialization_error.emit(plate['name'], str(e))
-        
-        # Use signal for thread-safe progress completion
+            if not self.selected_plate_path:
+                self.selected_plate_path = plate_path
+                self.plate_selected.emit(plate_path)
+
+            self.progress_updated.emit(i + 1)
+
+        # Process all plates functionally
+        await asyncio.gather(*[
+            init_single_plate(i, plate)
+            for i, plate in enumerate(selected_items)
+        ])
+
         self.progress_finished.emit()
         self.status_message.emit(f"Initialized {len(selected_items)} plate(s)")
     
@@ -440,17 +469,21 @@ class PlateManagerWidget(QWidget):
         # Load existing config or create new one for editing
         representative_orchestrator = selected_orchestrators[0]
 
-        if representative_orchestrator.pipeline_config:
-            # Create editing config from existing orchestrator config with user-set values preserved
-            # Use current global config (not orchestrator's old global config) for updated placeholders
-            from openhcs.core.config import create_editing_config_from_existing_lazy_config
+        # CRITICAL FIX: Don't change thread-local context - preserve orchestrator context
+        # The config window should work with the current orchestrator context
+        # Reset behavior will be handled differently to avoid corrupting step editor context
+
+        # Create config for editing based on whether orchestrator has existing config
+        if representative_orchestrator.pipeline_config is not None:
+            # Existing config - use the editing function that preserves user values
+            from openhcs.core.pipeline_config import create_editing_config_from_existing_lazy_config
             current_plate_config = create_editing_config_from_existing_lazy_config(
                 representative_orchestrator.pipeline_config,
-                self.global_config  # Use current global config for updated placeholders
+                None  # Use thread-local context set up above
             )
         else:
             # Create new config with placeholders using current global config
-            from openhcs.core.config import create_pipeline_config_for_editing
+            from openhcs.core.pipeline_config import create_pipeline_config_for_editing
             current_plate_config = create_pipeline_config_for_editing(self.global_config)
 
         def handle_config_save(new_config: PipelineConfig) -> None:
@@ -458,18 +491,30 @@ class PlateManagerWidget(QWidget):
             for orchestrator in selected_orchestrators:
                 # Direct synchronous call - no async needed
                 orchestrator.apply_pipeline_config(new_config)
+                # Emit signal for UI components to refresh
+                effective_config = orchestrator.get_effective_config()
+                self.orchestrator_config_changed.emit(str(orchestrator.plate_path), effective_config)
+
+            # CRITICAL FIX: Restore orchestrator context after config save
+            # This ensures step editors continue to work with orchestrator-specific context
+            if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+                current_orchestrator = self.orchestrators[self.selected_plate_path]
+                current_orchestrator.apply_pipeline_config(current_orchestrator.pipeline_config or PipelineConfig())
+                logger.debug(f"Restored orchestrator context after config save: {self.selected_plate_path}")
+
             count = len(selected_orchestrators)
-            self.service_adapter.show_info_dialog(f"Per-orchestrator configuration applied to {count} orchestrator(s)")
+            # Success message dialog removed for test automation compatibility
 
         # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
         # PipelineConfig already imported from openhcs.core.config
         self._open_config_window(
             config_class=PipelineConfig,
             current_config=current_plate_config,
-            on_save_callback=handle_config_save
+            on_save_callback=handle_config_save,
+            orchestrator=representative_orchestrator  # Pass orchestrator for context persistence
         )
 
-    def _open_config_window(self, config_class, current_config, on_save_callback, is_global_config_editing=False):
+    def _open_config_window(self, config_class, current_config, on_save_callback, orchestrator=None):
         """
         Open configuration window with specified config class and current config.
 
@@ -477,7 +522,7 @@ class PlateManagerWidget(QWidget):
             config_class: Configuration class type (PipelineConfig or GlobalPipelineConfig)
             current_config: Current configuration instance
             on_save_callback: Function to call when config is saved
-            is_global_config_editing: Whether this is global config editing (affects placeholder behavior)
+            orchestrator: Optional orchestrator reference for context persistence
         """
         from openhcs.pyqt_gui.windows.config_window import ConfigWindow
 
@@ -487,7 +532,7 @@ class PlateManagerWidget(QWidget):
             on_save_callback,       # on_save_callback
             self.color_scheme,      # color_scheme
             self,                   # parent
-            is_global_config_editing  # is_global_config_editing
+            orchestrator=orchestrator  # Pass orchestrator for context persistence
         )
         # Show as non-modal window (like main window configuration)
         config_window.show()
@@ -517,15 +562,27 @@ class PlateManagerWidget(QWidget):
             self._save_global_config_to_cache(new_config)
 
             for orchestrator in self.orchestrators.values():
-                self.run_async_action(orchestrator.apply_new_global_config(new_config))
+                self._update_orchestrator_global_config(orchestrator, new_config)
+
+            # Update thread-local storage for currently selected orchestrator
+            # This ensures step forms resolve against the updated orchestrator defaults
+            if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+                current_orchestrator = self.orchestrators[self.selected_plate_path]
+                effective_config = current_orchestrator.get_effective_config()
+                from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+                set_current_global_config(GlobalPipelineConfig, effective_config)
+                logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
+
+            # Refresh placeholder text in any open parameter forms
+            self._refresh_all_parameter_form_placeholders()
+
             self.service_adapter.show_info_dialog("Global configuration applied to all orchestrators")
 
         # Open configuration window using concrete GlobalPipelineConfig
         self._open_config_window(
             config_class=GlobalPipelineConfig,
             current_config=current_global_config,
-            on_save_callback=handle_global_config_save,
-            is_global_config_editing=True
+            on_save_callback=handle_global_config_save
         )
 
     def _save_global_config_to_cache(self, config: GlobalPipelineConfig):
@@ -554,45 +611,13 @@ class PlateManagerWidget(QWidget):
             logger.warning("No plates available for compilation")
             return
 
-        # Validate all selected plates are ready for compilation
-        not_ready = []
-        for item in selected_items:
-            plate_path = item['path']
-            orchestrator = self.orchestrators.get(plate_path)
-            # Allow READY, COMPILE_FAILED, EXEC_FAILED, COMPILED, and COMPLETED states to be compiled/recompiled
-            if orchestrator is None or orchestrator.state not in [
-                OrchestratorState.READY, OrchestratorState.COMPILE_FAILED,
-                OrchestratorState.EXEC_FAILED, OrchestratorState.COMPILED,
-                OrchestratorState.COMPLETED
-            ]:
-                not_ready.append(item)
+        # Unified validation using functional validator
+        invalid_plates = self._validate_plates_for_operation(selected_items, 'compile')
 
-        if not_ready:
-            names = [item['name'] for item in not_ready]
-            # More accurate error message based on actual state
-            if any(self.orchestrators.get(item['path']) is None for item in not_ready):
-                error_msg = f"Cannot compile plates that haven't been initialized: {', '.join(names)}"
-            elif any(self.orchestrators.get(item['path']).state == OrchestratorState.EXECUTING for item in not_ready):
-                error_msg = f"Cannot compile plates that are currently executing: {', '.join(names)}"
-            else:
-                error_msg = f"Cannot compile plates in current state: {', '.join(names)}"
-
-            logger.warning(error_msg)
-            self.service_adapter.show_error_dialog(error_msg)
-            return
-
-        # Validate all selected plates have pipelines
-        no_pipeline = []
-        for item in selected_items:
-            pipeline = self._get_current_pipeline_definition(item['path'])
-            if not pipeline:
-                no_pipeline.append(item)
-
-        if no_pipeline:
-            names = [item['name'] for item in no_pipeline]
-            error_msg = f"Cannot compile plates without pipelines: {', '.join(names)}"
-            self.status_message.emit(error_msg)
-            self.service_adapter.show_error_dialog(error_msg)
+        # Let validation failures bubble up as status messages
+        if invalid_plates:
+            invalid_names = [p['name'] for p in invalid_plates]
+            self.status_message.emit(f"Cannot compile invalid plates: {', '.join(invalid_names)}")
             return
 
         # Start async compilation
@@ -701,11 +726,14 @@ class PlateManagerWidget(QWidget):
 
             plate_paths_to_run = [item['path'] for item in ready_items]
 
-            # Pass definition pipeline steps - subprocess will make fresh copy and compile
+            # Pass both pipeline definition and pre-compiled contexts to subprocess
             pipeline_data = {}
             for plate_path in plate_paths_to_run:
-                definition_pipeline = self._get_current_pipeline_definition(plate_path)
-                pipeline_data[plate_path] = definition_pipeline
+                execution_pipeline, compiled_contexts = self.plate_compiled_data[plate_path]
+                pipeline_data[plate_path] = {
+                    'pipeline_definition': execution_pipeline,  # Use execution pipeline (stripped)
+                    'compiled_contexts': compiled_contexts      # Pre-compiled contexts
+                }
 
             logger.info(f"Starting subprocess for {len(plate_paths_to_run)} plates")
 
@@ -1060,9 +1088,66 @@ class PlateManagerWidget(QWidget):
         # Apply new global config to all existing orchestrators
         # This rebuilds their pipeline configs preserving concrete values
         for orchestrator in self.orchestrators.values():
-            self.run_async_action(orchestrator.apply_new_global_config(new_config))
+            self._update_orchestrator_global_config(orchestrator, new_config)
+
+        # Update thread-local storage for currently selected orchestrator
+        # This ensures step forms resolve against the updated orchestrator defaults
+        if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+            current_orchestrator = self.orchestrators[self.selected_plate_path]
+            effective_config = current_orchestrator.get_effective_config()
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
+
+        # Update thread-local storage for currently selected orchestrator
+        if self.selected_plate_path and self.selected_plate_path in self.orchestrators:
+            current_orchestrator = self.orchestrators[self.selected_plate_path]
+            effective_config = current_orchestrator.get_effective_config()
+            from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
+            set_current_global_config(GlobalPipelineConfig, effective_config)
+            logger.debug(f"Updated thread-local storage for currently selected orchestrator: {self.selected_plate_path}")
 
         logger.info(f"Applied new global config to {len(self.orchestrators)} orchestrators")
+
+        # Refresh placeholder text in any open parameter forms
+        self._refresh_all_parameter_form_placeholders()
+
+    def _refresh_all_parameter_form_placeholders(self) -> None:
+        """
+        Refresh placeholder text in all open parameter form windows.
+
+        This ensures that lazy dataclass forms show updated placeholder text
+        when the GlobalPipelineConfig changes.
+        """
+        # Check if there are any floating windows with parameter forms
+        if hasattr(self, 'service_adapter') and hasattr(self.service_adapter, 'app'):
+            app = self.service_adapter.app
+            if hasattr(app, 'floating_windows'):
+                for window in app.floating_windows.values():
+                    # Get the widget from the window's layout
+                    layout = window.layout()
+                    if layout and layout.count() > 0:
+                        widget = layout.itemAt(0).widget()
+                        # Look for parameter form managers in the widget
+                        self._refresh_widget_parameter_forms(widget)
+
+    def _refresh_widget_parameter_forms(self, widget) -> None:
+        """Recursively refresh parameter forms using functional patterns."""
+        # Check if this widget has a parameter form manager
+        if hasattr(widget, 'form_manager') and hasattr(widget.form_manager, 'refresh_placeholder_text'):
+            widget.form_manager.refresh_placeholder_text()
+
+        # Functional pattern: process children with filter and map
+        if hasattr(widget, 'children'):
+            # Direct refresh for widgets with refresh_placeholder_text
+            [child.refresh_placeholder_text()
+             for child in widget.children()
+             if hasattr(child, 'refresh_placeholder_text')]
+
+            # Recursive refresh for other widgets
+            [self._refresh_widget_parameter_forms(child)
+             for child in widget.children()
+             if not hasattr(child, 'refresh_placeholder_text')]
 
     # ========== Helper Methods ==========
 

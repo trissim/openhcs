@@ -4,7 +4,7 @@ import dataclasses
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Type, Callable
+from typing import Any, Dict, Type, Callable, Optional, Union
 
 from PyQt6.QtWidgets import QCheckBox, QLineEdit, QComboBox, QGroupBox, QVBoxLayout, QSpinBox, QDoubleSpinBox
 from magicgui.widgets import create_widget
@@ -15,7 +15,7 @@ from openhcs.pyqt_gui.widgets.shared.no_scroll_spinbox import (
 )
 from openhcs.pyqt_gui.widgets.enhanced_path_widget import EnhancedPathWidget
 from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
-from .widget_creation_registry import WidgetRegistry, TypeCheckers, TypeResolution
+from openhcs.ui.shared.widget_creation_registry import resolve_optional, is_enum, is_list_of_enums, get_enum_from_list
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +72,13 @@ def create_string_fallback_widget(current_value: Any, **kwargs) -> QLineEdit:
 
 
 def create_enum_widget_unified(enum_type: Type, current_value: Any, **kwargs) -> QComboBox:
-    """Unified enum widget creator."""
+    """Unified enum widget creator with consistent display text."""
+    from openhcs.ui.shared.ui_utils import format_enum_display
+
     widget = NoScrollComboBox()
     for enum_value in enum_type:
-        widget.addItem(enum_value.value, enum_value)
+        display_text = format_enum_display(enum_value)
+        widget.addItem(display_text, enum_value)
 
     # Set current selection
     if current_value and hasattr(current_value, '__class__') and isinstance(current_value, enum_type):
@@ -106,25 +109,19 @@ class MagicGuiWidgetFactory:
     def create_widget(self, param_name: str, param_type: Type, current_value: Any,
                      widget_id: str, parameter_info: Any = None) -> Any:
         """Create widget using functional registry dispatch."""
-        resolved_type = TypeResolution.resolve_optional(param_type)
+        resolved_type = resolve_optional(param_type)
 
-        # Handle list-wrapped enum pattern in Union
-        if TypeCheckers.is_union_with_list_wrapped_enum(resolved_type):
-            enum_type = TypeCheckers.extract_enum_type_from_union(resolved_type)
-            extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
-            return create_enum_widget_unified(enum_type, extracted_value)
-
-        # Handle direct List[Enum] types
-        if TypeCheckers.is_list_of_enums(resolved_type):
-            enum_type = TypeCheckers.get_enum_from_list(resolved_type)
-            extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
-            return create_enum_widget_unified(enum_type, extracted_value)
+        # Handle direct List[Enum] types - create multi-selection checkbox group
+        if is_list_of_enums(resolved_type):
+            return self._create_checkbox_group_widget(param_name, resolved_type, current_value)
 
         # Extract enum from list wrapper for other cases
-        extracted_value = TypeCheckers.extract_enum_from_list_value(current_value)
+        extracted_value = (current_value[0] if isinstance(current_value, list) and
+                          len(current_value) == 1 and isinstance(current_value[0], Enum)
+                          else current_value)
 
         # Handle direct enum types
-        if TypeCheckers.is_enum(resolved_type):
+        if is_enum(resolved_type):
             return create_enum_widget_unified(resolved_type, extracted_value)
 
         # Check for OpenHCS custom widget replacements
@@ -180,25 +177,39 @@ class MagicGuiWidgetFactory:
 
         return widget
 
+    def _create_checkbox_group_widget(self, param_name: str, param_type: Type, current_value: Any):
+        """Create multi-selection checkbox group for List[Enum] parameters."""
+        from PyQt6.QtWidgets import QGroupBox, QVBoxLayout, QCheckBox
 
-def create_pyqt6_registry() -> WidgetRegistry:
-    """Create PyQt6 widget registry leveraging magicgui's automatic type system."""
-    register_openhcs_widgets()
+        enum_type = get_enum_from_list(param_type)
+        widget = QGroupBox(param_name.replace('_', ' ').title())
+        layout = QVBoxLayout(widget)
 
-    registry = WidgetRegistry()
-    factory = MagicGuiWidgetFactory()
+        # Store checkboxes for value retrieval
+        widget._checkboxes = {}
 
-    # Register single factory for all types - let magicgui handle type dispatch
-    all_types = [bool, int, float, str, Path]
-    for type_key in all_types:
-        registry.register(type_key, factory.create_widget)
+        for enum_value in enum_type:
+            checkbox = QCheckBox(enum_value.value)
+            checkbox.setObjectName(f"{param_name}_{enum_value.value}")
+            widget._checkboxes[enum_value] = checkbox
+            layout.addWidget(checkbox)
 
-    # Register for complex types that magicgui handles automatically
-    complex_type_checkers = [TypeCheckers.is_enum, dataclasses.is_dataclass, TypeCheckers.is_list_of_enums]
-    for checker in complex_type_checkers:
-        registry.register(checker, factory.create_widget)
+        # Set current values (check boxes for items in the list)
+        if current_value and isinstance(current_value, list):
+            for enum_value in current_value:
+                if enum_value in widget._checkboxes:
+                    widget._checkboxes[enum_value].setChecked(True)
 
-    return registry
+        # Add method to get selected values
+        def get_selected_values():
+            return [enum_val for enum_val, checkbox in widget._checkboxes.items()
+                   if checkbox.isChecked()]
+        widget.get_selected_values = get_selected_values
+
+        return widget
+
+
+# Registry pattern removed - use create_pyqt6_widget from widget_creation_registry.py instead
 
 
 class PlaceholderConfig:
@@ -231,6 +242,30 @@ def _extract_default_value(placeholder_text: str) -> str:
             return parts[1]
 
     return value
+
+
+def _extract_numeric_value_from_placeholder(placeholder_text: str) -> Optional[Union[int, float]]:
+    """
+    Extract numeric value from placeholder text for integer/float fields.
+
+    Args:
+        placeholder_text: Full placeholder text like "Pipeline default: 42"
+
+    Returns:
+        Numeric value if found and valid, None otherwise
+    """
+    try:
+        # Extract the value part after the prefix
+        value_str = placeholder_text.replace(PlaceholderConfig.PLACEHOLDER_PREFIX, "").strip()
+
+        # Try to parse as int first, then float
+        if value_str.isdigit() or (value_str.startswith('-') and value_str[1:].isdigit()):
+            return int(value_str)
+        else:
+            # Try float parsing
+            return float(value_str)
+    except (ValueError, AttributeError):
+        return None
 
 
 def _apply_placeholder_styling(widget: Any, interaction_hint: str, placeholder_text: str) -> None:
@@ -277,9 +312,16 @@ def _apply_lineedit_placeholder(widget: Any, text: str) -> None:
 
 
 def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
-    """Apply placeholder to spinbox using special value text and visual styling."""
-    # Set special value text for the minimum value
-    widget.setSpecialValueText(_extract_default_value(text))
+    """Apply placeholder to spinbox using numeric-only special value text."""
+    # Extract numeric value from placeholder text for integer/float fields
+    numeric_value = _extract_numeric_value_from_placeholder(text)
+
+    # For numeric fields, show only the number, not the full text
+    if numeric_value is not None:
+        widget.setSpecialValueText(str(numeric_value))
+    else:
+        # Fallback to full text for non-numeric placeholders
+        widget.setSpecialValueText(text)
 
     # Set widget to minimum value to show the special value text
     if hasattr(widget, 'minimum'):
@@ -289,15 +331,20 @@ def _apply_spinbox_placeholder(widget: Any, text: str) -> None:
     _apply_placeholder_styling(
         widget,
         'change value to set your own',
-        text
+        text  # Keep full text in tooltip
     )
 
 
 def _apply_checkbox_placeholder(widget: QCheckBox, placeholder_text: str) -> None:
-    """Apply placeholder to checkbox with visual preview."""
+    """Apply placeholder to checkbox with visual preview without triggering signals."""
     try:
         default_value = _extract_default_value(placeholder_text).lower() == 'true'
-        widget.setChecked(default_value)
+        # Block signals to prevent checkbox state changes from triggering parameter updates
+        widget.blockSignals(True)
+        try:
+            widget.setChecked(default_value)
+        finally:
+            widget.blockSignals(False)
         _apply_placeholder_styling(
             widget,
             PlaceholderConfig.INTERACTION_HINTS['checkbox'],
@@ -381,6 +428,7 @@ WIDGET_PLACEHOLDER_STRATEGIES: Dict[Type, Callable[[Any, str], None]] = {
     NoScrollSpinBox: _apply_spinbox_placeholder,
     NoScrollDoubleSpinBox: _apply_spinbox_placeholder,
     NoScrollComboBox: _apply_combobox_placeholder,
+    QLineEdit: _apply_lineedit_placeholder,  # Add standard QLineEdit support
 }
 
 # Add Path widget support dynamically to avoid import issues
@@ -392,8 +440,17 @@ def _register_path_widget_strategy():
     except ImportError:
         pass  # Path widget not available
 
-# Register Path widget strategy
+def _register_none_aware_lineedit_strategy():
+    """Register NoneAwareLineEdit strategy dynamically to avoid circular imports."""
+    try:
+        from openhcs.pyqt_gui.widgets.shared.parameter_form_manager import NoneAwareLineEdit
+        WIDGET_PLACEHOLDER_STRATEGIES[NoneAwareLineEdit] = _apply_lineedit_placeholder
+    except ImportError:
+        pass  # NoneAwareLineEdit not available
+
+# Register widget strategies
 _register_path_widget_strategy()
+_register_none_aware_lineedit_strategy()
 
 # Functional signal connection registry
 SIGNAL_CONNECTION_REGISTRY: Dict[str, callable] = {
@@ -412,6 +469,9 @@ SIGNAL_CONNECTION_REGISTRY: Dict[str, callable] = {
     # Magicgui-specific widget signals
     'changed': lambda widget, param_name, callback:
         widget.changed.connect(lambda: callback(param_name, widget.value)),
+    # Checkbox group signal (custom attribute for multi-selection widgets)
+    'get_selected_values': lambda widget, param_name, callback:
+        PyQt6WidgetEnhancer._connect_checkbox_group_signals(widget, param_name, callback),
 }
 
 
@@ -465,7 +525,8 @@ class PyQt6WidgetEnhancer:
 
                 # Format the placeholder text appropriately for different types
                 if hasattr(field_value, 'name'):  # Enum
-                    placeholder_text = f"Pipeline default: {field_value.name}"
+                    from openhcs.ui.shared.ui_utils import format_enum_placeholder
+                    placeholder_text = format_enum_placeholder(field_value)
                 else:
                     placeholder_text = f"Pipeline default: {field_value}"
 
@@ -508,6 +569,16 @@ class PyQt6WidgetEnhancer:
             connector(widget, param_name, placeholder_aware_callback)
         else:
             raise ValueError(f"Widget {type(widget).__name__} has no supported change signal")
+
+    @staticmethod
+    def _connect_checkbox_group_signals(widget: Any, param_name: str, callback: Any) -> None:
+        """Connect signals for checkbox group widgets."""
+        if hasattr(widget, '_checkboxes'):
+            # Connect to each checkbox's stateChanged signal
+            for checkbox in widget._checkboxes.values():
+                checkbox.stateChanged.connect(
+                    lambda: callback(param_name, widget.get_selected_values())
+                )
 
     @staticmethod
     def _clear_placeholder_state(widget: Any) -> None:

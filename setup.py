@@ -29,13 +29,18 @@ def get_version():
 
 # Define extras_require with programmatic "all" extra
 extras_require = {
-    # Development dependencies
+    # Development dependencies (CPU-only testing)
     "dev": [
         "pytest>=7.4.0",
         "pytest-cov>=4.1.0",
         "coverage>=7.3.2",
         "genbadge[coverage]",
         "pytest-asyncio>=0.21.0",
+    ],
+
+    # GUI testing dependencies
+    "dev-gui": [
+        "pytest-qt>=4.2.0",  # PyQt6 testing framework
     ],
 
     # Terminal User Interface (TUI) dependencies
@@ -108,7 +113,7 @@ extras_require = {
 # This avoids duplication and is automatically maintained
 all_deps = []
 for extra_name, deps in extras_require.items():
-    if extra_name != "dev":  # Exclude dev dependencies from "all"
+    if extra_name not in ["dev", "dev-gui"]:  # Exclude dev dependencies from "all"
         all_deps.extend(deps)
 
 # Remove duplicates while preserving order (psutil/GPUtil appear in both tui and gui)
@@ -168,7 +173,7 @@ setup(
 
         # Storage and serialization
         "PyYAML>=6.0.2",
-        "zarr>=2.18.7",
+        "zarr>=2.18.7,<3.0",
         "ome-zarr>=0.11.1",
         "dill>=0.4.0",
 

@@ -2,23 +2,25 @@
 Pipeline-specific configuration classes and utilities.
 
 This module contains all pipeline-specific logic that was previously mixed
-into the generic lazy configuration system.
+into the generic lazy configuration system. Now uses the new generic hierarchy
+system while maintaining backward compatibility.
 """
 
 from typing import Any, Type, Optional
 from dataclasses import fields
 from openhcs.core.config import (
-    GlobalPipelineConfig, StepMaterializationConfig, 
+    GlobalPipelineConfig, StepMaterializationConfig,
     set_current_global_config, register_lazy_type_mapping
 )
 from openhcs.core.lazy_config import (
-    LazyDataclassFactory, create_config_for_editing, 
+    LazyDataclassFactory, create_config_for_editing,
     ensure_global_config_context, CONSTANTS
 )
 
 
+
 def set_current_pipeline_config(config: GlobalPipelineConfig) -> None:
-    """Set the current pipeline config for MaterializationPathConfig defaults."""
+    """Set the current pipeline config for LazyStepMaterializationConfig defaults."""
     set_current_global_config(GlobalPipelineConfig, config)
 
 
@@ -43,17 +45,19 @@ def create_pipeline_config_for_editing(
     Returns:
         PipelineConfig instance with appropriate field initialization
     """
-    return create_config_for_editing(
-        GlobalPipelineConfig,
+    # Create lazy PipelineConfig instance for editing with placeholder behavior
+    from openhcs.core.lazy_config import create_dataclass_for_editing
+    return create_dataclass_for_editing(
+        PipelineConfig,  # Use lazy PipelineConfig type, not GlobalPipelineConfig
         source_config,
         preserve_values=preserve_values,
-        placeholder_prefix="Pipeline default"
+        context_provider=lambda config: ensure_pipeline_config_context(config)
     )
 
 
 def create_editing_config_from_existing_lazy_config(
     existing_lazy_config: Any,
-    global_config: Any
+    global_config: Optional[Any] = None  # NEW: Optional parameter
 ) -> Any:
     """
     Create an editing config from existing lazy config with user-set values preserved as actual field values.
@@ -65,7 +69,8 @@ def create_editing_config_from_existing_lazy_config(
 
     Args:
         existing_lazy_config: Existing lazy config with user customizations
-        global_config: Global config for thread-local context setup
+        global_config: Optional global config for thread-local context setup.
+                      If None, uses existing thread-local context (caller-responsible pattern).
 
     Returns:
         New lazy config suitable for editing with preserved user values
@@ -73,10 +78,13 @@ def create_editing_config_from_existing_lazy_config(
     if existing_lazy_config is None:
         return None
 
-    # Set up thread-local context with updated global config
-    from openhcs.core.config import GlobalPipelineConfig
-    from openhcs.core.lazy_config import ensure_global_config_context
-    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    # Set up thread-local context only if global_config is provided
+    if global_config is not None:
+        # Legacy behavior - caller provides global_config
+        from openhcs.core.config import GlobalPipelineConfig
+        from openhcs.core.lazy_config import ensure_global_config_context
+        ensure_global_config_context(GlobalPipelineConfig, global_config)
+    # Otherwise use existing thread-local context (caller-responsible pattern)
 
     # Extract field values, preserving user-set values as concrete values
     field_values = {}
@@ -92,23 +100,43 @@ def create_editing_config_from_existing_lazy_config(
             # Field is None - keep as None for placeholder behavior
             field_values[field_obj.name] = None
 
-    return PipelineConfig(**field_values)
+    return type(existing_lazy_config)(**field_values)
 
 
-# Generate pipeline-specific lazy configuration classes
+
+
+
+
+# Auto-create lazy configs for all dataclass fields in GlobalPipelineConfig
+import dataclasses
+from openhcs.core.field_path_detection import FieldPathDetector
+
+_step_lazy_configs = {}
+
+for field in dataclasses.fields(GlobalPipelineConfig):
+    if dataclasses.is_dataclass(field.type):
+        field_path = FieldPathDetector.find_field_path_for_type(GlobalPipelineConfig, field.type)
+        if field_path:
+            lazy_name = f"Lazy{field.type.__name__}"
+            lazy_config = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+                base_class=field.type,
+                global_config_type=GlobalPipelineConfig,
+                field_path=field_path,
+                lazy_class_name=lazy_name
+            )
+            _step_lazy_configs[lazy_name] = lazy_config
+            globals()[lazy_name] = lazy_config
+
+# Export for backward compatibility
+LazyStepMaterializationConfig = _step_lazy_configs.get("LazyStepMaterializationConfig")
+
+# Generate pipeline-specific lazy configuration classes using thread-local resolution
 PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
     base_class=GlobalPipelineConfig,
     global_config_type=GlobalPipelineConfig,
-    field_path=None,  # Root instance
-    lazy_class_name=CONSTANTS.PIPELINE_CONFIG_NAME,
+    field_path=None,
+    lazy_class_name="PipelineConfig",
     use_recursive_resolution=True
-)
-
-LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_thread_local(
-    base_class=StepMaterializationConfig,
-    global_config_type=GlobalPipelineConfig,
-    field_path=CONSTANTS.MATERIALIZATION_DEFAULTS_PATH,
-    lazy_class_name=CONSTANTS.LAZY_STEP_MATERIALIZATION_CONFIG_NAME
 )
 
 
@@ -116,11 +144,21 @@ def _add_to_base_config_method(lazy_class: Type, base_class: Type) -> None:
     """Add to_base_config method to lazy dataclass for orchestrator integration."""
     def to_base_config(self):
         """Convert lazy config to base config, resolving None values to current defaults."""
-        # Get all field values, resolving None values through lazy loading
         resolved_values = {}
         for field in fields(self):
-            value = getattr(self, field.name)  # This triggers lazy resolution for None values
-            resolved_values[field.name] = value
+            # Get raw value first to avoid triggering lazy resolution on nested lazy dataclasses
+            raw_value = object.__getattribute__(self, field.name)
+
+            if raw_value is not None:
+                # User has set this field - use the raw value
+                # If it's a nested lazy dataclass, convert it to base config recursively
+                if hasattr(raw_value, 'to_base_config'):
+                    resolved_values[field.name] = raw_value.to_base_config()
+                else:
+                    resolved_values[field.name] = raw_value
+            else:
+                # Field is None - resolve lazily (safe because it goes to concrete global config)
+                resolved_values[field.name] = getattr(self, field.name)
 
         return base_class(**resolved_values)
 
@@ -130,6 +168,7 @@ def _add_to_base_config_method(lazy_class: Type, base_class: Type) -> None:
 
 # Add to_base_config method for orchestrator integration
 _add_to_base_config_method(PipelineConfig, GlobalPipelineConfig)
+_add_to_base_config_method(LazyStepMaterializationConfig, StepMaterializationConfig)
 
 # Register type mappings for the placeholder service
 register_lazy_type_mapping(PipelineConfig, GlobalPipelineConfig)

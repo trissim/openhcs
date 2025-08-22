@@ -29,9 +29,11 @@ class DifferentValuesRadioSet(RadioSet):
             **kwargs: Additional arguments passed to RadioSet
         """
         # Create radio buttons for each enum value
+        from openhcs.ui.shared.ui_utils import format_enum_display
+
         radio_buttons = []
         for enum_value in enum_type:
-            radio_buttons.append(enum_value.value.upper())
+            radio_buttons.append(format_enum_display(enum_value))
         
         super().__init__(*radio_buttons, **kwargs)
         
@@ -88,11 +90,13 @@ class DifferentValuesRadioSet(RadioSet):
     
     def set_value(self, value: Enum) -> None:
         """Set a specific value (not from click-to-default)."""
+        from openhcs.ui.shared.enum_display_formatter import EnumDisplayFormatter
+
         # Clear current selection
         self._clear_selection()
-        
+
         # Set the new value
-        target_label = value.value.upper()
+        target_label = EnumDisplayFormatter.get_display_text(value)
         for button in self.query('RadioButton'):
             if hasattr(button, 'label') and str(button.label).upper() == target_label:
                 button.value = True

@@ -53,7 +53,11 @@ class CupyRegistry(LibraryRegistryBase):
 
     # ===== HOOK IMPLEMENTATIONS =====
     def _create_array(self, shape: Tuple[int, ...], dtype):
-        return cp.random.rand(*shape).astype(dtype)
+        try:
+            return cp.random.rand(*shape).astype(dtype)
+        except Exception as e:
+            # If CUDA initialization fails, raise a more descriptive error
+            raise RuntimeError(f"CUDA initialization failed during CuPy array creation: {e}") from e
 
     def _check_first_parameter(self, first_param, func_name: str) -> bool:
         return first_param.name.lower() in {'image', 'input', 'array', 'img'}
