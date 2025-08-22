@@ -57,5 +57,11 @@ def test_dataclass():
 @pytest.fixture
 def mock_color_scheme():
     """Provide a mock color scheme for testing."""
+    import os
+
+    # Skip PyQt6 imports in CPU-only mode
+    if os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true':
+        pytest.skip("PyQt6 GUI tests skipped in CPU-only mode")
+
     from openhcs.pyqt_gui.shared.color_scheme import PyQt6ColorScheme
     return PyQt6ColorScheme()

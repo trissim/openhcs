@@ -19,10 +19,16 @@ Architecture:
 - TestOrchestrator: Central coordinator for complex test scenarios
 """
 
+import os
 import pytest
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Callable, Union
 from pathlib import Path
+
+# Skip entire module in CPU-only mode to avoid PyQt6 imports
+if os.getenv('OPENHCS_CPU_ONLY', 'false').lower() == 'true':
+    pytest.skip("PyQt6 GUI tests skipped in CPU-only mode", allow_module_level=True)
+
 from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QMessageBox, QLabel, QWidget, QCheckBox
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from PyQt6.QtTest import QTest
