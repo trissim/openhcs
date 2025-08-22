@@ -611,10 +611,19 @@ def create_field_level_hierarchy_provider(
             get_current_global_config, _ = _get_generic_config_imports()
             current_config = get_current_global_config(global_config_type)
 
-        # Get actual global config from app
-        from PyQt6.QtWidgets import QApplication
-        actual_global_config = QApplication.instance().global_config
-        is_pipeline_context = current_config is not actual_global_config
+        # Get actual global config from app (if PyQt6 app is running)
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app_instance = QApplication.instance()
+            if app_instance and hasattr(app_instance, 'global_config'):
+                actual_global_config = app_instance.global_config
+                is_pipeline_context = current_config is not actual_global_config
+            else:
+                # No PyQt6 app running or no global_config - assume pipeline context
+                is_pipeline_context = True
+        except ImportError:
+            # PyQt6 not available - assume pipeline context
+            is_pipeline_context = True
 
 
 
