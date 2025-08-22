@@ -192,8 +192,18 @@ Benefits
 --------
 
 - **Framework Independence**: Same business logic works across PyQt6 and Textual
-- **Code Reuse**: Eliminates duplication between UI implementations  
+- **Code Reuse**: Eliminates duplication between UI implementations
 - **Testability**: Business logic can be unit tested without UI dependencies
 - **Maintainability**: Changes to logic don't require UI modifications
 - **Separation of Concerns**: Clear boundary between business logic and presentation
 - **Context Awareness**: Services adapt behavior based on usage context
+
+See Also
+--------
+
+- :doc:`configuration-resolution` - Thread-local context management used by services
+- :doc:`lazy-class-system` - Lazy dataclass patterns that services work with
+- :doc:`step-editor-generalization` - Step editors that use service layer patterns
+- :doc:`field-path-detection` - Type discovery services used by UI frameworks
+- :doc:`../development/ui-patterns` - UI patterns that leverage service layer architecture
+- :doc:`../development/ui-utilities-migration` - Functional utilities that complement services

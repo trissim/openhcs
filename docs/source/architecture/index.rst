@@ -45,6 +45,8 @@ Core Infrastructure
    configuration-resolution
    lazy-class-system
    service-layer-architecture
+   step-editor-generalization
+   field-path-detection
    concurrency_model
    system_integration
 

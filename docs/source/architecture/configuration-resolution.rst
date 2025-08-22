@@ -241,6 +241,217 @@ Lazy dataclasses require thread-local for resolution:
                     return getattr(nested_value, field_name)
             return self._get_static_default(field_name)
 
+Advanced Thread Safety Patterns
+-------------------------------
+
+The UI refactor introduced sophisticated thread safety mechanisms that go beyond basic thread-local storage.
+
+Multi-Threaded Safety Guarantees
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The system provides strong isolation guarantees across different execution contexts:
+
+.. code-block:: python
+
+    # Thread isolation example
+    import threading
+
+    def worker_thread_1():
+        # Thread 1: UI editing context
+        set_current_global_config(GlobalPipelineConfig, ui_config)
+        step_config = LazyStepMaterializationConfig()
+        value1 = step_config.output_dir_suffix  # Resolves from ui_config
+
+    def worker_thread_2():
+        # Thread 2: Compilation context
+        set_current_global_config(GlobalPipelineConfig, compilation_config)
+        step_config = LazyStepMaterializationConfig()
+        value2 = step_config.output_dir_suffix  # Resolves from compilation_config
+
+    # Both threads operate independently with different resolution contexts
+    threading.Thread(target=worker_thread_1).start()
+    threading.Thread(target=worker_thread_2).start()
+
+**Thread Safety Implementation:**
+
+.. code-block:: python
+
+    # Each thread gets its own threading.local() instance
+    _global_config_contexts: Dict[Type, threading.local] = {}
+
+    def set_current_global_config(config_type: Type, config_instance: Any) -> None:
+        """Thread-safe configuration setting."""
+        if config_type not in _global_config_contexts:
+            # Create new threading.local() for this config type
+            _global_config_contexts[config_type] = threading.local()
+
+        # Each thread gets its own 'value' attribute
+        _global_config_contexts[config_type].value = config_instance
+
+Context Provider Mechanisms
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Advanced context resolution using custom context providers for specialized scenarios:
+
+.. code-block:: python
+
+    def create_context_aware_lazy_class(parent_instance):
+        """Create lazy class with custom context resolution."""
+
+        def context_provider():
+            # Custom resolution: use specific parent instance
+            return parent_instance
+
+        return LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+            base_class=StepMaterializationConfig,
+            global_config_type=GlobalPipelineConfig,
+            field_path="materialization_defaults",
+            context_provider=context_provider  # Override thread-local
+        )
+
+**Context Provider Pattern:**
+
+.. code-block:: python
+
+    # Standard thread-local resolution
+    def standard_context_provider():
+        return get_current_global_config(GlobalPipelineConfig)
+
+    # Custom parent-based resolution
+    def parent_context_provider(parent_instance):
+        def provider():
+            return parent_instance if parent_instance else standard_context_provider()
+        return provider
+
+    # Nested context propagation
+    def nested_context_provider(parent_instance_provider):
+        def provider():
+            if parent_instance_provider:
+                parent = parent_instance_provider()
+                if parent:
+                    return parent
+            return get_current_global_config(GlobalPipelineConfig)
+        return provider
+
+Context Cleanup and Lifecycle Management
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Proper context lifecycle management prevents memory leaks and ensures clean state transitions:
+
+.. code-block:: python
+
+    class LazyConfigContext:
+        """Context manager for safe lazy config context handling."""
+
+        def __init__(self, config_instance, config_type=GlobalPipelineConfig):
+            self.config_instance = config_instance
+            self.config_type = config_type
+            self.previous_config = None
+
+        def __enter__(self):
+            # Save current context
+            self.previous_config = get_current_global_config(self.config_type)
+            # Set new context
+            set_current_global_config(self.config_type, self.config_instance)
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            # Restore previous context
+            if self.previous_config is not None:
+                set_current_global_config(self.config_type, self.previous_config)
+            else:
+                # Clear context if no previous context existed
+                _global_config_contexts.get(self.config_type, None)
+
+**Usage Pattern:**
+
+.. code-block:: python
+
+    # Safe context switching
+    with LazyConfigContext(pipeline_config):
+        # All lazy resolution happens in pipeline_config context
+        step_config = LazyStepMaterializationConfig()
+        value = step_config.output_dir_suffix
+    # Context automatically restored
+
+Integration with Lazy Dataclass Resolution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Thread-local contexts integrate seamlessly with the lazy dataclass resolution system:
+
+.. code-block:: python
+
+    def field_level_provider_with_context_support():
+        """Provider that uses context-aware resolution."""
+
+        # Check for custom context provider first
+        if context_provider:
+            current_config = context_provider()
+        else:
+            # Fall back to thread-local context
+            current_config = get_current_global_config(global_config_type)
+
+        # Use current_config for resolution hierarchy
+        class FieldLevelInheritanceConfig:
+            def _resolve_field_through_hierarchy(self, field_name, hierarchy_paths):
+                for context_type, path in hierarchy_paths:
+                    if context_type == 'current':
+                        config = current_config  # Context-aware resolution
+                    else:
+                        config = get_actual_global_config()  # Real global config
+
+                    instance = FieldPathNavigator.navigate_to_instance(config, path)
+                    if instance:
+                        value = _get_raw_field_value(instance, field_name)
+                        if value is not None:
+                            return value
+                return None
+
+Debugging Context Resolution
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The system provides debugging capabilities for troubleshooting context resolution issues:
+
+.. code-block:: python
+
+    def debug_context_resolution(config_type=GlobalPipelineConfig):
+        """Debug current thread-local context state."""
+        context = _global_config_contexts.get(config_type)
+
+        if context is None:
+            print(f"❌ No context registered for {config_type.__name__}")
+            return
+
+        if not hasattr(context, 'value'):
+            print(f"❌ No value set in context for {config_type.__name__}")
+            return
+
+        current_config = context.value
+        print(f"✅ Active context for {config_type.__name__}:")
+        print(f"   Thread: {threading.current_thread().name}")
+        print(f"   Config type: {type(current_config).__name__}")
+
+        # Show key configuration values
+        if hasattr(current_config, 'materialization_defaults'):
+            mat_config = current_config.materialization_defaults
+            print(f"   materialization_defaults.output_dir_suffix: {mat_config.output_dir_suffix}")
+
+**Context Resolution Tracing:**
+
+.. code-block:: python
+
+    def traced_get_current_global_config(config_type):
+        """Traced version for debugging context access."""
+        result = get_current_global_config(config_type)
+
+        if result:
+            print(f"🔍 Thread-local access: {config_type.__name__}")
+            print(f"   Thread: {threading.current_thread().name}")
+        else:
+            print(f"❌ No thread-local context for {config_type.__name__}")
+
+        return result
+
 Benefits
 --------
 
@@ -254,3 +465,16 @@ Benefits
 - **Lazy Loading Foundation**: Provides the ambient context necessary for clean lazy resolution
 - **Context Isolation**: Different operations can have different configuration contexts
 - **Testability**: Easy to set up test contexts without complex mocking
+- **Multi-Threaded Safety**: Strong isolation guarantees across execution contexts
+- **Custom Context Providers**: Flexible resolution for specialized scenarios
+- **Lifecycle Management**: Proper context cleanup prevents memory leaks
+- **Debug Support**: Comprehensive debugging and tracing capabilities
+
+See Also
+--------
+
+- :doc:`lazy-class-system` - Dynamic dataclass generation that uses thread-local contexts
+- :doc:`step-editor-generalization` - Step editors that rely on context-aware resolution
+- :doc:`service-layer-architecture` - Service layer patterns for context management
+- :doc:`../development/integration-testing` - Testing framework with context management patterns
+- :doc:`../development/ui-patterns` - UI patterns that leverage configuration resolution
