@@ -807,8 +807,6 @@ This comprehensive example demonstrates:
 See Also
 --------
 
-- :doc:`ui-utilities-migration` - Migration guide for adopting functional patterns
-- :doc:`integration-testing` - Testing framework that validates UI patterns
 - :doc:`../architecture/step-editor-generalization` - Step editors that use functional dispatch
 - :doc:`../architecture/service-layer-architecture` - Service layer patterns for UI development
 - :doc:`../architecture/field-path-detection` - Type introspection that enables dispatch patterns

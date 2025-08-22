@@ -476,5 +476,4 @@ See Also
 - :doc:`lazy-class-system` - Dynamic dataclass generation that uses thread-local contexts
 - :doc:`step-editor-generalization` - Step editors that rely on context-aware resolution
 - :doc:`service-layer-architecture` - Service layer patterns for context management
-- :doc:`../development/integration-testing` - Testing framework with context management patterns
 - :doc:`../development/ui-patterns` - UI patterns that leverage configuration resolution

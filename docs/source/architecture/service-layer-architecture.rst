@@ -206,4 +206,3 @@ See Also
 - :doc:`step-editor-generalization` - Step editors that use service layer patterns
 - :doc:`field-path-detection` - Type discovery services used by UI frameworks
 - :doc:`../development/ui-patterns` - UI patterns that leverage service layer architecture
-- :doc:`../development/ui-utilities-migration` - Functional utilities that complement services

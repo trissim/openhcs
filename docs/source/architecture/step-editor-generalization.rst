@@ -593,4 +593,3 @@ See Also
 - :doc:`configuration-resolution` - Thread-local context management for step editors
 - :doc:`service-layer-architecture` - Framework-agnostic service patterns used in step editors
 - :doc:`../development/ui-patterns` - UI patterns and functional dispatch used in implementation
-- :doc:`../development/ui-utilities-migration` - Functional utilities used by step editors
