@@ -403,8 +403,9 @@ class ParameterFormService:
             # Users expect to see concrete defaults when editing global configuration
             return self._get_actual_dataclass_field_default(param_name, dataclass_type)
         else:
-            # Parameter form editing: Reset to None for placeholder behavior
-            # This ensures consistent enum reset and placeholder behavior
+            # CRITICAL FIX: For lazy config editing, always return None
+            # This ensures reset shows inheritance chain values (like compiler resolution)
+            # instead of concrete values from thread-local context
             return None
 
     def _get_actual_dataclass_field_default(self, param_name: str, dataclass_type: Type) -> Any:

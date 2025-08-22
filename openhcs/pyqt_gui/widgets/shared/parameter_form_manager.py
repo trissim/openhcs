@@ -6,9 +6,12 @@ by leveraging the comprehensive shared infrastructure we've built.
 """
 
 import dataclasses
+import logging
 from typing import Any, Dict, Type, Optional
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox
 from PyQt6.QtCore import Qt, pyqtSignal
+
+logger = logging.getLogger(__name__)
 
 # Import our comprehensive shared infrastructure
 from openhcs.ui.shared.parameter_form_service import ParameterFormService, ParameterInfo
@@ -372,15 +375,20 @@ class ParameterFormManager(QWidget):
 
 
     def _apply_placeholder_with_lazy_context(self, widget: QWidget, param_name: str, current_value: Any) -> None:
-        """Apply placeholder using mathematically elegant single service call - fail loud on invalid setup."""
+        """Apply placeholder using current form state, not saved thread-local state."""
         # Only apply placeholder if value is None
         if current_value is not None:
             return
 
-        # Single service call - dataclass_type determines all behavior, fail naturally on invalid setup
-        placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
-            self.dataclass_type, param_name, placeholder_prefix=self.placeholder_prefix
-        )
+        # Create placeholder using current form state instead of saved thread-local state
+        placeholder_text = self._get_form_state_resolved_placeholder(param_name)
+
+        if placeholder_text is None:
+            return
+
+        # Apply the placeholder text to the widget
+        if hasattr(widget, 'setPlaceholderText'):
+            widget.setPlaceholderText(placeholder_text)
 
         # Block signals to prevent placeholder application from triggering parameter updates
         widget.blockSignals(True)
@@ -390,6 +398,184 @@ class ParameterFormManager(QWidget):
         finally:
             # Always restore signal connections
             widget.blockSignals(False)
+
+    def _get_form_state_resolved_placeholder(self, param_name: str) -> Optional[str]:
+        """
+        Get placeholder text using current form state instead of saved thread-local state.
+
+        This creates a temporary instance using the current form values (including None
+        for reset fields) to show what the resolved value would be if we saved now.
+        """
+        if not self.dataclass_type or not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+            return None
+
+        try:
+            # Get current form state from parameters attribute
+            current_form_data = self.parameters.copy()
+
+            # CRITICAL FIX: Build form-state config instead of clearing all context
+            # This preserves saved values for root fields while using form state for resolution
+            from openhcs.core.config import get_current_global_config, set_current_global_config, get_base_type_for_lazy
+
+            # Get the appropriate global config type for this dataclass
+            global_config_type = get_base_type_for_lazy(self.dataclass_type)
+            if global_config_type is None:
+                # Fallback to GlobalPipelineConfig for backward compatibility
+                from openhcs.core.config import GlobalPipelineConfig
+                global_config_type = GlobalPipelineConfig
+
+            # Save current context
+            original_global = get_current_global_config(global_config_type)
+
+            # Build config from form state that preserves saved root values
+            form_config = self._build_form_state_config(current_form_data, original_global)
+
+            # Set form-state context
+            set_current_global_config(global_config_type, form_config)
+
+            # Create a temporary instance with current form state in form context
+            temp_instance = self.dataclass_type()
+
+            # Get the resolved value for this field
+            resolved_value = getattr(temp_instance, param_name)
+
+            # Restore original context
+            set_current_global_config(global_config_type, original_global)
+
+            # Format as placeholder text
+            if resolved_value is not None:
+                return f"{self.placeholder_prefix}: {resolved_value}"
+            else:
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to resolve placeholder for {param_name}: {e}")
+            return None
+
+    def _build_form_state_config(self, current_form_data: dict, original_global: Any) -> Any:
+        """
+        Build a config that combines form state with preserved saved values.
+
+        This preserves saved root-level values while using form state for nested configs
+        to show proper inheritance. Works generically for any lazy dataclass type.
+        """
+        from openhcs.core.config import get_base_type_for_lazy
+
+        # Get the global config type for this lazy dataclass
+        global_config_type = get_base_type_for_lazy(self.dataclass_type)
+
+        if global_config_type is not None:
+            # Generic handling for any lazy dataclass with a global config mapping
+            from dataclasses import fields
+
+            # Get valid field names for the global config type
+            valid_field_names = {f.name for f in fields(global_config_type)}
+
+            if original_global is not None:
+                # Start with saved config to preserve root values
+                config_dict = original_global.__dict__.copy()
+
+                # Override with form state values where they exist and are not None
+                # Only include fields that are valid for this global config type
+                for field_name, form_value in current_form_data.items():
+                    if form_value is not None and field_name in valid_field_names:
+                        config_dict[field_name] = form_value
+
+                return global_config_type(**config_dict)
+            else:
+                # No saved config, use form state directly
+                # Only include fields that are valid for this global config type
+                filtered_form_data = {
+                    field_name: form_value
+                    for field_name, form_value in current_form_data.items()
+                    if field_name in valid_field_names
+                }
+                return global_config_type(**filtered_form_data)
+        else:
+            # No global config mapping found, use the original approach
+            return None
+
+    def _get_compiler_resolved_placeholder(self, param_name: str) -> Optional[str]:
+        """
+        Get placeholder text using the automatic hierarchy resolution system with custom context.
+
+        Creates a custom context provider that masks the specific field being reset,
+        allowing the automatic hierarchy system to resolve through the inheritance chain.
+        """
+        if not self.dataclass_type or not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type):
+            return None
+
+        try:
+            # CRITICAL FIX: Use the automatic system generically - no hardcoding
+            from openhcs.core.lazy_config import LazyDataclassFactory
+            from openhcs.core.config import get_current_global_config, GlobalPipelineConfig
+            from dataclasses import replace
+
+            logger.info(f"🔍 COMPILER DEBUG: Creating generic masked context for {param_name} reset")
+            logger.info(f"🔍 COMPILER DEBUG: Dataclass type: {self.dataclass_type}")
+            logger.info(f"🔍 COMPILER DEBUG: Available attributes: {dir(self.dataclass_type)}")
+
+            # Get the field path and base class automatically from the lazy dataclass
+            field_path = getattr(self.dataclass_type, '_field_path', None)
+            base_class = getattr(self.dataclass_type, '_base_class', None)
+
+            logger.info(f"🔍 COMPILER DEBUG: field_path={field_path}, base_class={base_class}")
+
+            if not field_path or not base_class:
+                logger.info(f"🔍 COMPILER DEBUG: Missing field_path ({field_path}) or base_class ({base_class})")
+                return None
+
+            # Create custom context provider that masks the specific field generically
+            def reset_context_provider():
+                current_config = get_current_global_config(GlobalPipelineConfig)
+                if current_config is None:
+                    return None
+
+                if hasattr(current_config, field_path):
+                    # Get the nested config and mask the specific field
+                    nested_config = getattr(current_config, field_path)
+                    if hasattr(nested_config, param_name):
+                        # Create modified config with the field set to None
+                        modified_nested = replace(nested_config, **{param_name: None})
+                        modified_config = replace(current_config, **{field_path: modified_nested})
+                        logger.info(f"🔍 COMPILER DEBUG: Masked {param_name} in {field_path}")
+                        return modified_config
+
+                return current_config
+
+            # Create temporary lazy class with custom context using the automatic attributes
+            temp_lazy_class = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+                base_class=base_class,
+                global_config_type=GlobalPipelineConfig,
+                field_path=field_path,
+                context_provider=reset_context_provider
+            )
+
+            # Create instance and resolve
+            temp_instance = temp_lazy_class()
+            if hasattr(temp_instance, '_resolve_field_value'):
+                logger.info(f"🔍 COMPILER DEBUG: Resolving {param_name} with masked context")
+                resolved_value = temp_instance._resolve_field_value(param_name)
+                logger.info(f"🔍 COMPILER DEBUG: Masked context returned: {resolved_value}")
+
+                if resolved_value is not None:
+                    # Format the resolved value as placeholder text
+                    from openhcs.core.config import EnumDisplayFormatter
+                    if hasattr(resolved_value, '__class__') and hasattr(resolved_value.__class__, '__name__'):
+                        if 'Enum' in str(type(resolved_value)):
+                            formatted_value = EnumDisplayFormatter.get_code_representation(resolved_value)
+                        else:
+                            formatted_value = str(resolved_value)
+                    else:
+                        formatted_value = str(resolved_value)
+
+                    return f"{self.placeholder_prefix}: {formatted_value}"
+
+        except Exception as e:
+            # If custom context resolution fails, fall back to original method
+            logger.info(f"🔍 COMPILER DEBUG: Custom context failed for {param_name}: {e}")
+
+        return None
 
     def _emit_parameter_change(self, param_name: str, value: Any) -> None:
         """Handle parameter change from widget and update parameter data model."""
@@ -529,14 +715,24 @@ class ParameterFormManager(QWidget):
 
     def reset_parameter(self, param_name: str, default_value: Any = None) -> None:
         """Reset parameter with streamlined logic."""
+        print(f"🔄 RESET DEBUG: reset_parameter called for {param_name}")
+
         if param_name not in self.parameters:
+            print(f"🔄 RESET DEBUG: {param_name} not in parameters, returning")
             return
 
         # Resolve reset value using dispatch
         reset_value = default_value or self._get_reset_value(param_name)
 
+        print(f"🔄 RESET DEBUG: Resetting {param_name}")
+        print(f"🔄 RESET DEBUG: Current value: {self.parameters.get(param_name)}")
+        print(f"🔄 RESET DEBUG: Reset value: {reset_value}")
+        print(f"🔄 RESET DEBUG: Dataclass type: {self.dataclass_type}")
+
         # Apply reset with functional operations
         self.parameters[param_name] = reset_value
+        print(f"🔄 RESET DEBUG: After setting parameters[{param_name}] = {self.parameters[param_name]}")
+
         self.widgets.get(param_name) and self.update_widget_value(self.widgets[param_name], reset_value, param_name)
         self.nested_managers.get(param_name) and hasattr(self.nested_managers[param_name], 'reset_all_parameters') and self.nested_managers[param_name].reset_all_parameters()
         self.parameter_changed.emit(param_name, reset_value)
@@ -544,9 +740,17 @@ class ParameterFormManager(QWidget):
     def _get_reset_value(self, param_name: str) -> Any:
         """Get reset value using context dispatch."""
         if self.dataclass_type:
-            return self.service.get_reset_value_for_parameter(
-                param_name, self.parameter_types.get(param_name), self.dataclass_type,
-                not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type))
+            is_static = not LazyDefaultPlaceholderService.has_lazy_resolution(self.dataclass_type)
+            print(f"🔄 RESET DEBUG: Getting reset value for {param_name}")
+            print(f"🔄 RESET DEBUG: Parameter type: {self.parameter_types.get(param_name)}")
+            print(f"🔄 RESET DEBUG: Dataclass type: {self.dataclass_type}")
+            print(f"🔄 RESET DEBUG: Is static (not lazy): {is_static}")
+
+            reset_value = self.service.get_reset_value_for_parameter(
+                param_name, self.parameter_types.get(param_name), self.dataclass_type, is_static)
+
+            print(f"🔄 RESET DEBUG: Service returned reset value: {reset_value}")
+            return reset_value
 
         return (getattr(self.parameter_info.get(param_name, object()), 'default_value', None)
                 if self.parameter_info and param_name in self.parameter_info else None)

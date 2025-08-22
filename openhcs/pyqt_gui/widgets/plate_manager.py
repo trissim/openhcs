@@ -469,10 +469,9 @@ class PlateManagerWidget(QWidget):
         # Load existing config or create new one for editing
         representative_orchestrator = selected_orchestrators[0]
 
-        # Set up thread-local context for pipeline config editing
-        # Use global config to ensure proper reset behavior (None values resolve to inheritance chain)
-        from openhcs.core.config import set_current_global_config, GlobalPipelineConfig
-        set_current_global_config(GlobalPipelineConfig, self.global_config)
+        # CRITICAL FIX: Don't change thread-local context - preserve orchestrator context
+        # The config window should work with the current orchestrator context
+        # Reset behavior will be handled differently to avoid corrupting step editor context
 
         # Create config for editing based on whether orchestrator has existing config
         if representative_orchestrator.pipeline_config is not None:
@@ -508,7 +507,6 @@ class PlateManagerWidget(QWidget):
 
         # Open configuration window using PipelineConfig (not GlobalPipelineConfig)
         # PipelineConfig already imported from openhcs.core.config
-        # CRITICAL FIX: Pass orchestrator reference for context persistence
         self._open_config_window(
             config_class=PipelineConfig,
             current_config=current_plate_config,

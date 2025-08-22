@@ -326,14 +326,17 @@ class LazyDefaultPlaceholderService:
         else:
             # Use existing lazy class (thread-local resolution)
             temp_instance = dataclass_type()
+            print(f"🎨 PLACEHOLDER DEBUG: Created temp_instance of {dataclass_type}")
 
             # For hierarchical lazy classes, use the proper resolution mechanism
             if hasattr(temp_instance, '_resolve_field_value'):
                 # This is a hierarchical lazy class - use its resolution method
                 resolved_value = temp_instance._resolve_field_value(field_name)
+                print(f"🎨 PLACEHOLDER DEBUG: Hierarchical resolution for {field_name}: {resolved_value}")
             else:
                 # Regular lazy class - use getattr
                 resolved_value = getattr(temp_instance, field_name)
+                print(f"🎨 PLACEHOLDER DEBUG: Regular getattr for {field_name}: {resolved_value}")
 
         if resolved_value is not None:
             # Handle nested dataclasses
