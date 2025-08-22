@@ -36,14 +36,17 @@ class DualEditorWindow(QDialog):
     changes_detected = pyqtSignal(bool)  # has_changes
     
     def __init__(self, step_data: Optional[FunctionStep] = None, is_new: bool = False,
-                 on_save_callback: Optional[Callable] = None, color_scheme: Optional[PyQt6ColorScheme] = None, parent=None):
+                 on_save_callback: Optional[Callable] = None, color_scheme: Optional[PyQt6ColorScheme] = None,
+                 orchestrator=None, parent=None):
         """
         Initialize the dual editor window.
-        
+
         Args:
             step_data: FunctionStep to edit (None for new step)
             is_new: Whether this is a new step
             on_save_callback: Function to call when step is saved
+            color_scheme: Color scheme for UI components
+            orchestrator: Orchestrator instance for context management
             parent: Parent widget
         """
         super().__init__(parent)
@@ -53,10 +56,11 @@ class DualEditorWindow(QDialog):
 
         # Initialize color scheme
         self.color_scheme = color_scheme or PyQt6ColorScheme()
-        
+
         # Business logic state (extracted from Textual version)
         self.is_new = is_new
         self.on_save_callback = on_save_callback
+        self.orchestrator = orchestrator  # Store orchestrator for context management
         
         # Pattern management (extracted from Textual version)
         self.pattern_manager = PatternDataManager()
@@ -65,9 +69,9 @@ class DualEditorWindow(QDialog):
             self.editing_step = step_data
         else:
             self.editing_step = self.pattern_manager.create_new_step()
-        
-        # Store original for change detection
-        self.original_step = self.pattern_manager.clone_pattern(self.editing_step)
+
+        # Store original for change detection - will be set by caller within proper context
+        self.original_step = None
         
         # Change tracking
         self.has_changes = False
@@ -83,7 +87,11 @@ class DualEditorWindow(QDialog):
         self.setup_connections()
         
         logger.debug(f"Dual editor window initialized (new={is_new})")
-    
+
+    def set_original_step_for_change_detection(self):
+        """Set the original step for change detection. Must be called within proper context."""
+        self.original_step = self.pattern_manager.clone_pattern(self.editing_step)
+
     def setup_ui(self):
         """Setup the user interface."""
         title = "New Step" if self.is_new else f"Edit Step: {getattr(self.editing_step, 'name', 'Unknown')}"
@@ -147,7 +155,13 @@ class DualEditorWindow(QDialog):
         from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
 
         # Create step parameter editor widget (mirrors Textual TUI)
-        self.step_editor = StepParameterEditorWidget(self.editing_step, service_adapter=None, color_scheme=self.color_scheme)
+        # Pass orchestrator for proper inheritance context
+        self.step_editor = StepParameterEditorWidget(
+            self.editing_step,
+            service_adapter=None,
+            color_scheme=self.color_scheme,
+            orchestrator=self.orchestrator
+        )
 
         # Connect parameter changes
         self.step_editor.step_parameter_changed.connect(self.detect_changes)

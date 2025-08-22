@@ -331,12 +331,17 @@ class PipelineEditorWidget(QWidget):
         from openhcs.core.steps.function_step import FunctionStep
         from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
 
+        # Get orchestrator for step creation
+        orchestrator = self._get_current_orchestrator()
+
         # Create new step
         step_name = f"Step_{len(self.pipeline_steps) + 1}"
         new_step = FunctionStep(
             func=[],  # Start with empty function list
             name=step_name
         )
+
+
 
         def handle_save(edited_step):
             """Handle step save from editor."""
@@ -346,13 +351,17 @@ class PipelineEditorWidget(QWidget):
             self.status_message.emit(f"Added new step: {edited_step.name}")
 
         # Create and show editor dialog within the correct config context
+        orchestrator = self._get_current_orchestrator()
         with self._scoped_orchestrator_context():
             editor = DualEditorWindow(
                 step_data=new_step,
                 is_new=True,
                 on_save_callback=handle_save,
+                orchestrator=orchestrator,
                 parent=self
             )
+            # Set original step for change detection within the scoped context
+            editor.set_original_step_for_change_detection()
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -401,13 +410,17 @@ class PipelineEditorWidget(QWidget):
             self.status_message.emit(f"Updated step: {edited_step.name}")
 
         # Create and show editor dialog within the correct config context
+        orchestrator = self._get_current_orchestrator()
         with self._scoped_orchestrator_context():
             editor = DualEditorWindow(
                 step_data=step_to_edit,
                 is_new=False,
                 on_save_callback=handle_save,
+                orchestrator=orchestrator,
                 parent=self
             )
+            # Set original step for change detection within the scoped context
+            editor.set_original_step_for_change_detection()
         editor.show()
         editor.raise_()
         editor.activateWindow()

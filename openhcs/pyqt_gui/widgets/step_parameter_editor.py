@@ -60,42 +60,70 @@ class StepParameterEditorWidget(QScrollArea):
             # All AbstractStep parameters are relevant for editing
             # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
             current_value = getattr(self.step, name, info.default_value)
+
+            # Special handling for materialization_config: create step-level config that inherits from pipeline
+            # when step has None, establishing proper 3-level hierarchy: step -> pipeline -> global
+            if name == 'materialization_config' and current_value is None:
+                # Create step-level config for proper inheritance hierarchy
+                step_level_config = self._create_step_level_materialization_config()
+                current_value = step_level_config
+                param_defaults[name] = step_level_config
+                # Mark this as a step-level config for special handling
+                if not hasattr(self, '_step_level_configs'):
+                    self._step_level_configs = {}
+                self._step_level_configs[name] = True
+            else:
+                param_defaults[name] = info.default_value
+
             parameters[name] = current_value
             parameter_types[name] = info.param_type
-            param_defaults[name] = info.default_value
         
         # Create parameter form manager for function parameters
-        # Use orchestrator context if available for proper inheritance resolution
-        if self.orchestrator and self.orchestrator.pipeline_config:
-            # Apply the orchestrator's pipeline config to set up proper inheritance context
-            # This creates a merged config that preserves None values for sibling inheritance
-            # (materialization_defaults → path_planning)
-            self.orchestrator.apply_pipeline_config(self.orchestrator.pipeline_config)
+        # Note: Step editor needs special context setup to show step-level inheritance
 
-            # Create form manager within the orchestrator's inheritance context
-            self.form_manager = ParameterFormManager(
-                parameters, parameter_types, "step", None,
-                param_info,
-                color_scheme=self.color_scheme,
-                placeholder_prefix="Pipeline default"
-            )
-        else:
-            # No orchestrator context available, use global context
-            self.form_manager = ParameterFormManager(
-                parameters, parameter_types, "step", None,
-                param_info,
-                color_scheme=self.color_scheme,
-                placeholder_prefix="Pipeline default"
-            )
-        self.param_defaults = param_defaults
+        self.form_manager = ParameterFormManager(
+            parameters, parameter_types, "step", None,
+            param_info,
+            parent=self,  # Pass self as parent so form manager can access _step_level_configs
+            color_scheme=self.color_scheme,
+            placeholder_prefix="Pipeline default",
+            param_defaults=param_defaults
+        )
         
         self.setup_ui()
         self.setup_connections()
 
         logger.debug(f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}")
 
+    def _create_step_level_materialization_config(self):
+        """
+        Create step-level config using OpenHCS's simplest elegant approach.
 
-    
+        The key insight: use create_lazy_dataclass with the pipeline's materialization_defaults
+        as the defaults source. This creates a step-level config that directly inherits from
+        the pipeline level without any complex field path detection.
+
+        Hierarchy: step (None values) -> pipeline (materialization_defaults instance)
+        """
+        from openhcs.core.lazy_config import LazyDataclassFactory
+        from openhcs.core.config import GlobalPipelineConfig, get_current_global_config
+
+        # Get pipeline's materialization_defaults as the defaults source
+        pipeline_config = get_current_global_config(GlobalPipelineConfig)
+        if pipeline_config and pipeline_config.materialization_defaults:
+            # Create step-level config that inherits directly from pipeline's materialization_defaults
+            StepEditorMaterializationConfig = LazyDataclassFactory.create_lazy_dataclass(
+                defaults_source=pipeline_config.materialization_defaults,
+                lazy_class_name="StepEditorMaterializationConfig",
+                use_recursive_resolution=False
+            )
+            return StepEditorMaterializationConfig()
+        else:
+            # Fallback to standard lazy config if no pipeline context
+            from openhcs.core.pipeline_config import LazyStepMaterializationConfig
+            return LazyStepMaterializationConfig()
+
+
     def setup_ui(self):
         """Setup the user interface."""
         self.setWidgetResizable(True)

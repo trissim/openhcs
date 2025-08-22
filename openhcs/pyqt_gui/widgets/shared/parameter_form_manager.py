@@ -68,7 +68,8 @@ class ParameterFormManager(QWidget):
     def __init__(self, parameters: Dict[str, Any], parameter_types: Dict[str, type],
                  field_id: str, dataclass_type: Type, parameter_info: Dict = None, parent=None,
                  use_scroll_area: bool = True, function_target=None,
-                 color_scheme: Optional[PyQt6ColorScheme] = None, placeholder_prefix: str = None):
+                 color_scheme: Optional[PyQt6ColorScheme] = None, placeholder_prefix: str = None,
+                 param_defaults: Dict[str, Any] = None):
         """
         Initialize PyQt parameter form manager with mathematically elegant single-parameter design.
 
@@ -87,6 +88,7 @@ class ParameterFormManager(QWidget):
         QWidget.__init__(self, parent)
 
         # Store configuration parameters - dataclass_type is the single source of truth
+        self.parent = parent  # Store parent for step-level config detection
         self.dataclass_type = dataclass_type
         self.placeholder_prefix = placeholder_prefix or CONSTANTS.DEFAULT_PLACEHOLDER_PREFIX
 
@@ -110,6 +112,7 @@ class ParameterFormManager(QWidget):
         self.parameters = parameters.copy()
         self.parameter_types = parameter_types
         self.config = config
+        self.param_defaults = param_defaults or {}
 
         # Initialize service layer for business logic
         self.service = ParameterFormService()
@@ -327,12 +330,32 @@ class ParameterFormManager(QWidget):
         layout = QVBoxLayout(container)
         checkbox = QCheckBox(display_info['field_label'])
         current_value = self.parameters.get(param_info.name)
-        checkbox.setChecked(current_value is not None)
+        # Check if this is a step-level config that should start unchecked
+        is_step_level_config = (hasattr(self, 'parent') and
+                               hasattr(self.parent, '_step_level_configs') and
+                               param_info.name in getattr(self.parent, '_step_level_configs', {}))
+
+        if is_step_level_config:
+            # Step-level configs start unchecked even if current_value is not None
+            checkbox.setChecked(False)
+            # Store the step-level config for later use
+            if not hasattr(self, '_step_level_config_values'):
+                self._step_level_config_values = {}
+            self._step_level_config_values[param_info.name] = current_value
+            # Set current_value to None for the form logic
+            current_value = None
+        else:
+            checkbox.setChecked(current_value is not None)
         layout.addWidget(checkbox)
         inner_type = ParameterTypeUtils.get_optional_inner_type(param_info.type)
-        nested_param_info = ParameterInfo(param_info.name, inner_type, current_value, True, False)
+        # For step-level configs, use the stored config for nested content but keep checkbox unchecked
+        nested_current_value = current_value
+        if is_step_level_config and hasattr(self, '_step_level_config_values'):
+            nested_current_value = self._step_level_config_values[param_info.name]
+
+        nested_param_info = ParameterInfo(param_info.name, inner_type, nested_current_value, True, False)
         nested_widget, nested_widgets = self._build_nested_content(nested_param_info, display_info, field_ids)
-        nested_widget.setEnabled(current_value is not None)
+        nested_widget.setEnabled(checkbox.isChecked())
         layout.addWidget(nested_widget)
         def toggle(state):
             enabled = state == 2
@@ -406,8 +429,6 @@ class ParameterFormManager(QWidget):
                         # Create a new instance with the specific field masked
                         # Since the config is frozen, we need to create a new instance
                         nested_config = getattr(original_config, field_path)
-                        print(f"🎨 MASKING DEBUG: nested_config.{param_name} before masking: {getattr(nested_config, param_name, 'NOT_FOUND')}")
-
                         # Create a new nested config with the field masked
                         masked_nested = replace(nested_config, **{param_name: None})
 
@@ -702,10 +723,18 @@ class ParameterFormManager(QWidget):
         for param_name in self.widgets.keys():
             checkbox_state = self._get_optional_checkbox_state(param_name)
             if checkbox_state is True and current_values[param_name] is None:
-                # Create default instance when checkbox is checked
-                param_type = self.parameter_types[param_name]
-                inner_type = self.service._type_utils.get_optional_inner_type(param_type)
-                current_values[param_name] = inner_type()
+                # Check if we have a stored step-level config
+                if hasattr(self, '_step_level_config_values') and param_name in self._step_level_config_values:
+                    # Use stored step-level config
+                    current_values[param_name] = self._step_level_config_values[param_name]
+                elif hasattr(self, 'param_defaults') and param_name in self.param_defaults:
+                    # Step editor provides step-level configs in param_defaults
+                    current_values[param_name] = self.param_defaults[param_name]
+                else:
+                    # Standard behavior: create default instance
+                    param_type = self.parameter_types[param_name]
+                    inner_type = self.service._type_utils.get_optional_inner_type(param_type)
+                    current_values[param_name] = inner_type()
             elif checkbox_state is False:
                 # Clear value when checkbox is unchecked
                 current_values[param_name] = None

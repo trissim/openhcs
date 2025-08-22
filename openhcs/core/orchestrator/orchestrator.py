@@ -138,7 +138,13 @@ class PipelineOrchestrator:
             self.global_config = global_config
 
         # Initialize per-orchestrator configuration
-        self.pipeline_config = pipeline_config  # Per-orchestrator overrides
+        # Always ensure orchestrator has a pipeline config - create default if none provided
+        if pipeline_config is None:
+            from openhcs.core.pipeline_config import PipelineConfig
+            self.pipeline_config = PipelineConfig()
+            logger.info("PipelineOrchestrator created default pipeline configuration.")
+        else:
+            self.pipeline_config = pipeline_config
 
 
 

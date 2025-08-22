@@ -23,7 +23,7 @@ import pytest
 from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, Callable, Union
 from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QMessageBox, QLabel, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QMessageBox, QLabel, QWidget, QCheckBox
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from PyQt6.QtTest import QTest
 
@@ -45,9 +45,9 @@ from openhcs.tests.generators.generate_synthetic_data import SyntheticMicroscopy
 @dataclass(frozen=True)
 class TimingConfig:
     """Timing configuration for GUI operations."""
-    ACTION_DELAY: float = 0.5
-    WINDOW_DELAY: float = 0.5
-    SAVE_DELAY: float = 0.5
+    ACTION_DELAY: float = 0.2
+    WINDOW_DELAY: float = 0.2
+    SAVE_DELAY: float = 0.2
 
     @classmethod
     def from_environment(cls) -> 'TimingConfig':
@@ -711,6 +711,8 @@ def _apply_orchestrator_config(context: WorkflowContext) -> WorkflowContext:
     )
     orchestrator.apply_pipeline_config(orchestrator_config)
     _wait_for_gui(TIMING.ACTION_DELAY)
+
+
 
     return context.with_updates(orchestrator=orchestrator)
 
@@ -1620,6 +1622,28 @@ class TestPyQtGUIWorkflowFoundation:
                             # The inherited value should be the test scenario's modification value
                             if expected_value in all_text:
                                 print(f"✅ GOOD: Step materialization placeholder shows inherited concrete value '{expected_value}' from {modified_section}")
+
+                                # Also verify that the checkbox is unchecked (key part of the fix)
+                                checkboxes = step_editor_window.findChildren(QCheckBox)
+                                materialization_checkbox = None
+                                for checkbox in checkboxes:
+                                    # Find the checkbox associated with materialization_config
+                                    if checkbox.text() and "materialization" in checkbox.text().lower():
+                                        materialization_checkbox = checkbox
+                                        break
+
+                                if materialization_checkbox:
+                                    if not materialization_checkbox.isChecked():
+                                        print(f"✅ GOOD: Step materialization checkbox is unchecked (as expected)")
+                                    else:
+                                        print(f"🚨 BUG: Step materialization checkbox should be unchecked but is checked")
+                                        raise AssertionError(
+                                            f"Step materialization checkbox should start unchecked but is checked. "
+                                            f"This indicates the step-level config logic is not working properly."
+                                        )
+                                else:
+                                    print(f"⚠️  WARNING: Could not find materialization checkbox to verify state")
+
                                 materialization_inheritance_verified = True
                             else:
                                 print(f"🚨 BUG: Step materialization placeholder should show '{expected_value}' from {modified_section}")
