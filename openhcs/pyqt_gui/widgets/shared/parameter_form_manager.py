@@ -331,6 +331,7 @@ class ParameterFormManager(QWidget):
         checkbox = QCheckBox(display_info['field_label'])
         current_value = self.parameters.get(param_info.name)
         # Check if this is a step-level config that should start unchecked
+        # This now works generically for any optional lazy dataclass parameter
         is_step_level_config = (hasattr(self, 'parent') and
                                hasattr(self.parent, '_step_level_configs') and
                                param_info.name in getattr(self.parent, '_step_level_configs', {}))

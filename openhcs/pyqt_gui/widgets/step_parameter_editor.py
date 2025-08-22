@@ -61,11 +61,10 @@ class StepParameterEditorWidget(QScrollArea):
             # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
             current_value = getattr(self.step, name, info.default_value)
 
-            # Special handling for materialization_config: create step-level config that inherits from pipeline
-            # when step has None, establishing proper 3-level hierarchy: step -> pipeline -> global
-            if name == 'materialization_config' and current_value is None:
+            # Generic handling for any optional lazy dataclass parameter that exists in PipelineConfig
+            if current_value is None and self._is_optional_lazy_dataclass_in_pipeline(info.param_type, name):
                 # Create step-level config for proper inheritance hierarchy
-                step_level_config = self._create_step_level_materialization_config()
+                step_level_config = self._create_step_level_config(name, info.param_type)
                 current_value = step_level_config
                 param_defaults[name] = step_level_config
                 # Mark this as a step-level config for special handling
@@ -95,33 +94,93 @@ class StepParameterEditorWidget(QScrollArea):
 
         logger.debug(f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}")
 
-    def _create_step_level_materialization_config(self):
+    def _is_optional_lazy_dataclass_in_pipeline(self, param_type, param_name):
         """
-        Create step-level config using OpenHCS's simplest elegant approach.
+        Check if parameter is an optional lazy dataclass that exists in PipelineConfig.
 
-        The key insight: use create_lazy_dataclass with the pipeline's materialization_defaults
-        as the defaults source. This creates a step-level config that directly inherits from
-        the pipeline level without any complex field path detection.
+        This enables automatic step-level config creation for any parameter that:
+        1. Is Optional[SomeDataclass]
+        2. SomeDataclass exists as a field type in PipelineConfig (type-based matching)
+        3. The dataclass has lazy resolution capabilities
 
-        Hierarchy: step (None values) -> pipeline (materialization_defaults instance)
+        No manual mappings needed - uses type-based discovery.
+        """
+        from openhcs.core.pipeline_config import PipelineConfig
+        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
+        import dataclasses
+
+        # Check if parameter is Optional[dataclass]
+        if not ParameterTypeUtils.is_optional_dataclass(param_type):
+            return False
+
+        # Get the inner dataclass type
+        inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
+
+        # Find if this type exists as a field in PipelineConfig (type-based matching)
+        pipeline_field_name = self._find_pipeline_field_by_type(inner_type)
+        if not pipeline_field_name:
+            return False
+
+        # Check if the dataclass has lazy resolution capabilities
+        try:
+            # Try to create an instance to see if it's a lazy dataclass
+            test_instance = inner_type()
+            # Check for lazy dataclass methods
+            return hasattr(test_instance, '_resolve_field_value') or hasattr(test_instance, '_lazy_resolution_config')
+        except:
+            return False
+
+    def _find_pipeline_field_by_type(self, target_type):
+        """
+        Find the field in PipelineConfig that matches the target type.
+
+        This is type-based discovery - no manual mappings needed.
+        """
+        from openhcs.core.pipeline_config import PipelineConfig
+        import dataclasses
+
+        for field in dataclasses.fields(PipelineConfig):
+            # Use string comparison to handle type identity issues
+            if str(field.type) == str(target_type):
+                return field.name
+        return None
+
+    def _create_step_level_config(self, param_name, param_type):
+        """
+        Generic method to create step-level config for any lazy dataclass parameter.
+
+        Uses type-based discovery to find the corresponding pipeline field as defaults source.
         """
         from openhcs.core.lazy_config import LazyDataclassFactory
         from openhcs.core.config import GlobalPipelineConfig, get_current_global_config
+        from openhcs.ui.shared.parameter_type_utils import ParameterTypeUtils
 
-        # Get pipeline's materialization_defaults as the defaults source
+        # Get the inner dataclass type
+        inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
+
+        # Find the corresponding pipeline field by type (no manual mapping needed)
+        pipeline_field_name = self._find_pipeline_field_by_type(inner_type)
+        if not pipeline_field_name:
+            # Fallback to standard lazy config if no matching type found
+            return inner_type()
+
+        # Get pipeline's corresponding field as defaults source
         pipeline_config = get_current_global_config(GlobalPipelineConfig)
-        if pipeline_config and pipeline_config.materialization_defaults:
-            # Create step-level config that inherits directly from pipeline's materialization_defaults
-            StepEditorMaterializationConfig = LazyDataclassFactory.create_lazy_dataclass(
-                defaults_source=pipeline_config.materialization_defaults,
-                lazy_class_name="StepEditorMaterializationConfig",
-                use_recursive_resolution=False
-            )
-            return StepEditorMaterializationConfig()
-        else:
-            # Fallback to standard lazy config if no pipeline context
-            from openhcs.core.pipeline_config import LazyStepMaterializationConfig
-            return LazyStepMaterializationConfig()
+        if pipeline_config and hasattr(pipeline_config, pipeline_field_name):
+            pipeline_field_value = getattr(pipeline_config, pipeline_field_name)
+            if pipeline_field_value:
+                # Create step-level config that inherits from pipeline's field
+                StepLevelConfig = LazyDataclassFactory.create_lazy_dataclass(
+                    defaults_source=pipeline_field_value,
+                    lazy_class_name=f"StepLevel{inner_type.__name__}",
+                    use_recursive_resolution=False
+                )
+                return StepLevelConfig()
+
+        # Fallback to standard lazy config if no pipeline context
+        return inner_type()
+
+
 
 
     def setup_ui(self):
