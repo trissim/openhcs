@@ -452,6 +452,10 @@ class PipelineCompiler:
         effective_config = orchestrator.get_effective_config()
         set_current_global_config(GlobalPipelineConfig, effective_config)
 
+        # Resolve global_config if it's a lazy dataclass
+        if hasattr(context, 'global_config') and context.global_config is not None:
+            context.global_config = resolve_lazy_configurations_for_serialization(context.global_config)
+
         # Use the shared recursive resolution function to handle nested structures
         for step_index, step_plan in context.step_plans.items():
             context.step_plans[step_index] = resolve_lazy_configurations_for_serialization(step_plan)
@@ -547,6 +551,15 @@ class PipelineCompiler:
 
                 for step_name, mat_path in materialization_steps:
                     logger.info(f"   Materialization {step_name}: {mat_path}")
+
+            # Resolve lazy dataclasses in pipeline definition steps before stripping
+            logger.info("Resolving lazy dataclasses in pipeline definition steps.")
+            from openhcs.core.lazy_config import resolve_lazy_configurations_for_serialization
+            resolved_pipeline_definition = resolve_lazy_configurations_for_serialization(pipeline_definition)
+
+            # Update the pipeline_definition list in-place to maintain references
+            pipeline_definition.clear()
+            pipeline_definition.extend(resolved_pipeline_definition)
 
             # After processing all wells, strip attributes and finalize
             logger.info("Stripping attributes from pipeline definition steps.")
