@@ -1476,19 +1476,20 @@ class TestPyQtGUIWorkflowFoundation:
 
                         # Check if placeholder shows the concrete value from path_planning
                         if "pipeline default:" in all_text.lower():
-                            if "_CONCRETE_VALUE" in all_text:
-                                print(f"✅ GOOD: Step materialization placeholder shows inherited concrete value '_CONCRETE_VALUE'")
+                            # The inherited value should be "828282" from the earlier path planning config
+                            if "828282" in all_text:
+                                print(f"✅ GOOD: Step materialization placeholder shows inherited concrete value '828282'")
                                 materialization_inheritance_verified = True
                             else:
-                                print(f"🚨 BUG: Step materialization placeholder should show '_CONCRETE_VALUE' from path_planning")
+                                print(f"🚨 BUG: Step materialization placeholder should show '828282' from path_planning")
                                 raise AssertionError(
                                     f"Step materialization inheritance bug: output_dir_suffix placeholder should show "
-                                    f"'Pipeline default: _CONCRETE_VALUE' (inherited from path_planning), but shows: '{all_text}'"
+                                    f"'Pipeline default: 828282' (inherited from path_planning), but shows: '{all_text}'"
                                 )
                         else:
                             print(f"🔍 No placeholder found, checking if field shows inherited value directly...")
-                            if "_CONCRETE_VALUE" in all_text:
-                                print(f"✅ GOOD: Step materialization field shows inherited concrete value '_CONCRETE_VALUE'")
+                            if "828282" in all_text:
+                                print(f"✅ GOOD: Step materialization field shows inherited concrete value '828282'")
                                 materialization_inheritance_verified = True
 
                 if not materialization_inheritance_verified:
