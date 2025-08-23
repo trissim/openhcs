@@ -1,18 +1,18 @@
 Step Editor Generalization Architecture
 =======================================
 
-Generic step editor patterns that work with any dataclass parameter automatically, eliminating hardcoded parameter handling through type-based discovery and automatic configuration.
+Generic step editor patterns that automatically adapt to AbstractStep constructor changes, eliminating hardcoded parameter handling through type-based discovery and automatic configuration.
 
 Overview
 --------
 
-The step editor generalization system solves a fundamental problem in UI development: how do you create editors that work with any step constructor signature without hardcoding parameter mappings?
+The step editor generalization system solves a fundamental problem in UI development: how do you create editors that automatically adapt when the AbstractStep constructor signature changes?
 
-**The Challenge:** OpenHCS has many different step types with varying constructor parameters. Traditional approaches require manual mapping of each parameter type to UI widgets and configuration sources. This creates maintenance overhead and breaks when new step types are added.
+**The Challenge:** OpenHCS has one step type (FunctionStep) that inherits from AbstractStep. The AbstractStep constructor may change to have different configs or additional parameters in the future. Traditional approaches require manual mapping of each parameter type to UI widgets, creating maintenance overhead when the constructor evolves.
 
-**The Solution:** A generic system that uses type introspection to automatically detect parameter types, create appropriate UI widgets, and establish inheritance relationships with pipeline configuration. The system works with any step constructor signature without modification.
+**The Solution:** A generic system that uses type introspection to automatically detect AbstractStep constructor parameters, create appropriate UI widgets, and establish inheritance relationships with pipeline configuration. The system adapts automatically when the constructor signature changes.
 
-**Real-World Impact:** Eliminated hardcoded parameter handling, reduced step editor code by 60%, and enabled automatic support for new step types without code changes.
+**Real-World Impact:** Eliminated hardcoded parameter handling, reduced step editor code by 60%, and enabled automatic adaptation to AbstractStep constructor changes without code modifications.
 
 Generic Step Editor Patterns
 -----------------------------
@@ -22,18 +22,18 @@ The system uses several key patterns to achieve complete generalization.
 Automatic Parameter Detection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The step editor automatically analyzes any step constructor to extract parameter information:
+The step editor automatically analyzes the AbstractStep constructor to extract parameter information:
 
 .. code-block:: python
 
-    # Automatic parameter analysis for any step type
+    # Automatic parameter analysis of AbstractStep constructor
     param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
-    
+
     # Extract all parameters with type information
     parameters = {}
     parameter_types = {}
     param_defaults = {}
-    
+
     for name, info in param_info.items():
         current_value = getattr(step, name, info.default_value)
         parameters[name] = current_value
@@ -96,82 +96,84 @@ Parameters are automatically classified based on their type annotations:
                 widget_type=self._determine_widget_type(param_type)
             )
 
-Universal Step Constructor Support
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Current AbstractStep Parameter Handling
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The system works with any step constructor signature through generic parameter handling:
-
-.. code-block:: python
-
-    # Example step constructors - all handled automatically:
-    
-    class ImageProcessingStep(AbstractStep):
-        def __init__(self, func: Callable, 
-                     materialization_config: Optional[StepMaterializationConfig] = None,
-                     custom_param: str = "default"):
-            # Automatically detected: 3 parameters
-            # - func: Callable (primitive)
-            # - materialization_config: Optional[dataclass] (checkbox + inheritance)
-            # - custom_param: str (primitive)
-    
-    class AnalysisStep(AbstractStep):
-        def __init__(self, analysis_config: AnalysisConfig,
-                     output_format: OutputFormat = OutputFormat.CSV):
-            # Automatically detected: 2 parameters
-            # - analysis_config: dataclass (nested form)
-            # - output_format: Enum (dropdown)
-    
-    class CustomStep(AbstractStep):
-        def __init__(self, **kwargs):
-            # Even dynamic parameters are handled through inspection
-
-**Generic Parameter Processing:**
+The system handles the current AbstractStep constructor signature automatically:
 
 .. code-block:: python
 
-    # Works for any step type without modification
+    # Current AbstractStep constructor (as of this documentation):
+    class AbstractStep(abc.ABC):
+        def __init__(
+            self,
+            *,  # Force keyword-only arguments
+            name: Optional[str] = None,
+            variable_components: List[VariableComponents] = DEFAULT_VARIABLE_COMPONENTS,
+            group_by: Optional[GroupBy] = DEFAULT_GROUP_BY,
+            __input_dir__: Optional[Union[str,Path]] = None, # Internal
+            __output_dir__: Optional[Union[str,Path]] = None, # Internal
+            input_source: InputSource = InputSource.PREVIOUS_STEP,
+            materialization_config: Optional['LazyStepMaterializationConfig'] = None
+        ) -> None:
+            # Automatically detected parameters:
+            # - name: Optional[str] → Text input widget
+            # - variable_components: List[VariableComponents] → Multi-select widget
+            # - group_by: Optional[GroupBy] → Dropdown widget
+            # - input_source: InputSource → Radio button widget
+            # - materialization_config: Optional[LazyStepMaterializationConfig] →
+            #   Checkbox + nested form with pipeline inheritance
+
+**Automatic Parameter Processing:**
+
+.. code-block:: python
+
+    # Works with current AbstractStep constructor and adapts to changes
     for name, info in param_info.items():
         # Generic handling based on type classification
         if self._is_optional_lazy_dataclass_in_pipeline(info.param_type, name):
-            # Automatic step-level config creation
+            # Automatic step-level config creation (e.g., materialization_config)
             step_level_config = self._create_step_level_config(name, info.param_type)
             current_value = step_level_config
         else:
-            # Standard parameter handling
+            # Standard parameter handling (e.g., name, variable_components)
             current_value = getattr(step, name, info.default_value)
-        
+
         parameters[name] = current_value
         parameter_types[name] = info.param_type
 
-Zero-Hardcoding Principle Implementation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Evolution-Proof Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The system eliminates all hardcoded parameter mappings through type-based discovery:
+The system eliminates hardcoded parameter mappings to adapt automatically when AbstractStep constructor changes:
 
 **Before (Hardcoded Approach):**
 
 .. code-block:: python
 
-    # Manual mapping for each parameter type
+    # Manual mapping that breaks when AbstractStep constructor changes
     if param_name == "materialization_config":
         return self._create_materialization_widget()
-    elif param_name == "analysis_config":
-        return self._create_analysis_widget()
-    elif param_name == "custom_param":
+    elif param_name == "variable_components":
+        return self._create_variable_components_widget()
+    elif param_name == "name":
         return self._create_string_widget()
-    # ... manual mapping for every parameter
+    # ... breaks when new parameters added to AbstractStep
 
-**After (Zero-Hardcoding Approach):**
+**After (Type-Based Discovery):**
 
 .. code-block:: python
 
-    # Automatic handling based on type introspection
-    def _is_optional_lazy_dataclass_in_pipeline(self, param_type, param_name):
-        """Generic check for any optional lazy dataclass parameter."""
-        
-        # 1. Check if parameter is Optional[dataclass]
-        if not ParameterTypeUtils.is_optional_dataclass(param_type):
-            return False
+    # Automatic widget creation based on type annotations
+    widget_type = self._classify_parameter_type(param_info.param_type)
+
+    if widget_type == ParameterType.OPTIONAL_DATACLASS:
+        return self._create_optional_dataclass_widget(param_info)
+    elif widget_type == ParameterType.ENUM:
+        return self._create_enum_widget(param_info)
+    elif widget_type == ParameterType.PRIMITIVE:
+        return self._create_primitive_widget(param_info)
+    # ... adapts automatically to AbstractStep constructor changes
         
         # 2. Get inner dataclass type
         inner_type = ParameterTypeUtils.get_optional_inner_type(param_type)
@@ -316,274 +318,162 @@ The system automatically maps step parameters to pipeline configuration fields u
 
         return mappings
 
-Real-World Usage Examples
--------------------------
+Real-World Usage Example
+------------------------
 
-These examples show how the generalized system handles different step types automatically.
+This example shows how the system handles the actual FunctionStep constructor automatically.
 
-Example 1: Image Processing Step
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-    class GaussianBlurStep(AbstractStep):
-        def __init__(self,
-                     sigma: float = 1.0,
-                     materialization_config: Optional[StepMaterializationConfig] = None):
-            super().__init__()
-            self.sigma = sigma
-            self.materialization_config = materialization_config
-
-    # Automatic step editor behavior:
-    # 1. sigma: float → Number input widget
-    # 2. materialization_config: Optional[StepMaterializationConfig] →
-    #    - Checkbox: "Enable Materialization Config"
-    #    - Form: StepMaterializationConfig fields with pipeline inheritance
-    #    - Placeholder: "Pipeline default: {pipeline.materialization_defaults.value}"
-
-Example 2: Analysis Step with Custom Config
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Current FunctionStep Usage
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-    class CellCountingStep(AbstractStep):
-        def __init__(self,
-                     threshold: float = 0.5,
-                     analysis_config: Optional[AnalysisConfig] = None,
-                     output_format: OutputFormat = OutputFormat.CSV):
-            super().__init__()
-            self.threshold = threshold
-            self.analysis_config = analysis_config
-            self.output_format = output_format
+    # Creating a FunctionStep (the only step type in OpenHCS)
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.processing.backends.processors.cupy_processor import tophat
+    from openhcs.constants.constants import VariableComponents
 
-    # Automatic step editor behavior:
-    # 1. threshold: float → Number input widget
-    # 2. analysis_config: Optional[AnalysisConfig] →
-    #    - Checkbox: "Enable Analysis Config"
-    #    - Form: AnalysisConfig fields (if AnalysisConfig exists in PipelineConfig)
-    #    - Inheritance: Automatic if pipeline.analysis_defaults exists
-    # 3. output_format: OutputFormat → Dropdown with enum values
+    step = FunctionStep(
+        func=tophat,
+        name="morphological_opening",
+        variable_components=[VariableComponents.CHANNEL],
+        materialization_config=None  # Will be handled by step editor
+    )
 
-Example 3: Complex Multi-Config Step
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Step editor automatically detects AbstractStep parameters:
+    # - name: Optional[str] → Text input widget
+    # - variable_components: List[VariableComponents] → Multi-select widget
+    # - group_by: Optional[GroupBy] → Dropdown widget
+    # - input_source: InputSource → Radio button widget
+    # - materialization_config: Optional[LazyStepMaterializationConfig] →
+    #   Checkbox + nested form with pipeline inheritance
+
+Future Evolution Scenarios
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The system is designed to handle potential AbstractStep constructor changes automatically:
 
 .. code-block:: python
 
-    class AdvancedProcessingStep(AbstractStep):
-        def __init__(self,
-                     algorithm: str = "default",
-                     materialization_config: Optional[StepMaterializationConfig] = None,
-                     vfs_config: Optional[VFSConfig] = None,
-                     custom_params: Dict[str, Any] = None):
-            super().__init__()
-            self.algorithm = algorithm
-            self.materialization_config = materialization_config
-            self.vfs_config = vfs_config
-            self.custom_params = custom_params or {}
+    # Hypothetical future AbstractStep constructor changes:
 
-    # Automatic step editor behavior:
-    # 1. algorithm: str → Text input widget
-    # 2. materialization_config: Optional[StepMaterializationConfig] →
-    #    - Checkbox + form with pipeline.materialization_defaults inheritance
-    # 3. vfs_config: Optional[VFSConfig] →
-    #    - Checkbox + form with pipeline.vfs inheritance
-    # 4. custom_params: Dict[str, Any] → JSON editor widget
+    # Scenario 1: New optional config parameter added
+    class AbstractStep(abc.ABC):
+        def __init__(self,
+                     # ... existing parameters ...
+                     analysis_config: Optional[AnalysisConfig] = None):  # NEW
+            # Step editor automatically detects and creates:
+            # - Checkbox: "Enable Analysis Config"
+            # - Nested form with pipeline inheritance
+            # - No code changes required
+
+    # Scenario 2: Parameter type changed
+    class AbstractStep(abc.ABC):
+        def __init__(self,
+                     # ... existing parameters ...
+                     variable_components: VariableComponents = VariableComponents.SITE):  # Changed from List
+            # Step editor automatically adapts:
+            # - Changes from multi-select to single dropdown
+            # - No manual widget mapping updates needed
 
 Benefits
 --------
 
-- **Universal Compatibility**: Works with any step constructor signature
-- **Zero Maintenance**: New step types work automatically without code changes
-- **Type Safety**: Automatic type detection prevents configuration errors
-- **Inheritance Support**: Automatic pipeline configuration inheritance
+- **Evolution-Proof**: Adapts automatically when AbstractStep constructor changes
+- **Zero Maintenance**: Constructor changes don't require UI code updates
+- **Type Safety**: Uses actual Python type system rather than manual mappings
+- **Inheritance Support**: Automatic pipeline configuration inheritance for lazy dataclasses
 - **Fail-Loud**: Type mismatches surface immediately during development
 - **Code Reduction**: 60% reduction in step editor implementation code
 - **Extensibility**: Easy to add new parameter type handlers
 - **Consistency**: Same patterns work across PyQt6 and Textual frameworks
 - **Automatic Mapping**: Type-based parameter-to-pipeline field discovery
-- **Checkbox Logic**: Sophisticated optional parameter handling
+- **Future-Proof**: Handles new parameter types without code changes
 - **Context Awareness**: Step-level configs with proper inheritance chains
 
-Comprehensive Integration Example
----------------------------------
+Actual Implementation Example
+----------------------------
 
-This example shows how all the new architectural patterns work together in a complete step editor implementation.
+This example shows how the step editor actually works with the current FunctionStep.
 
-End-to-End Step Editor Implementation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Real Step Editor Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-    # Complete step editor using all new patterns
-    class UniversalStepEditor:
-        """Step editor that integrates all new architectural patterns."""
+    # Actual step editor implementation (simplified)
+    class StepParameterEditor:
+        """Step editor that handles AbstractStep parameters automatically."""
 
-        def __init__(self, step_type: Type, pipeline_config: PipelineConfig):
-            self.step_type = step_type
-            self.pipeline_config = pipeline_config
+        def __init__(self, step: FunctionStep):
+            self.step = step
 
-            # Use field path detection for automatic discovery
-            self.field_detector = FieldPathDetector()
+            # Analyze AbstractStep constructor automatically
+            from openhcs.textual_tui.widgets.shared.signature_analyzer import SignatureAnalyzer
+            from openhcs.core.steps.abstract import AbstractStep
 
-            # Use service layer for framework-agnostic logic
-            self.parameter_service = ParameterFormService()
+            param_info = SignatureAnalyzer.analyze(AbstractStep.__init__)
 
-            # Use functional utilities for UI operations
-            from openhcs.ui.shared.ui_utils import (
-                format_param_name, format_field_id, format_checkbox_label
+            # Extract current parameter values
+            self.parameters = {}
+            self.parameter_types = {}
+
+            for name, info in param_info.items():
+                current_value = getattr(self.step, name, info.default_value)
+                self.parameters[name] = current_value
+                self.parameter_types[name] = info.param_type
+
+            # Create parameter form manager for UI generation
+            from openhcs.ui.shared.parameter_form_service import ParameterFormService
+            self.service = ParameterFormService()
+
+        def build_form(self):
+            """Build step parameter form automatically."""
+
+            # Service layer analyzes parameters and creates form structure
+            form_structure = self.service.analyze_parameters(
+                self.parameters,
+                self.parameter_types,
+                "step_editor"
             )
-            self.ui_utils = {
-                'format_name': format_param_name,
-                'format_id': format_field_id,
-                'format_checkbox': format_checkbox_label
-            }
 
-        def create_step_editor(self) -> Dict[str, Any]:
-            """Create complete step editor using integrated patterns."""
+            # Create widgets based on parameter types
+            widgets = []
+            for param_info in form_structure.parameters:
+                if param_info.is_optional and param_info.is_nested:
+                    # Optional dataclass → checkbox + nested form
+                    widget = self._create_optional_dataclass_widget(param_info)
+                elif param_info.param_type == str:
+                    # String → text input
+                    widget = self._create_text_widget(param_info)
+                elif hasattr(param_info.param_type, '__bases__') and Enum in param_info.param_type.__bases__:
+                    # Enum → dropdown or radio buttons
+                    widget = self._create_enum_widget(param_info)
+                # ... automatic widget creation for all parameter types
 
-            # 1. Automatic parameter detection (step editor generalization)
-            parameters = self._detect_step_parameters()
-
-            # 2. Automatic field path discovery (field path detection)
-            field_mappings = self._discover_field_mappings(parameters)
-
-            # 3. Lazy config creation (lazy class system)
-            step_configs = self._create_step_level_configs(parameters, field_mappings)
-
-            # 4. Context-aware resolution (configuration resolution)
-            with set_current_pipeline_config(self.pipeline_config):
-                widgets = self._create_widgets_with_inheritance(parameters, step_configs)
-
-            # 5. Functional dispatch for widget operations (UI patterns)
-            configured_widgets = self._apply_functional_dispatch(widgets)
-
-            return {
-                'widgets': configured_widgets,
-                'step_configs': step_configs,
-                'field_mappings': field_mappings
-            }
-
-        def _detect_step_parameters(self) -> Dict[str, ParameterInfo]:
-            """Use SignatureAnalyzer for automatic parameter detection."""
-            analyzer = SignatureAnalyzer()
-            signature_info = analyzer.analyze_signature(self.step_type)
-
-            parameters = {}
-            for param_name, param_info in signature_info.parameters.items():
-                # Skip non-configurable parameters
-                if param_name in ['func', 'name', 'variable_components']:
-                    continue
-
-                parameters[param_name] = param_info
-
-            return parameters
-
-        def _discover_field_mappings(self, parameters: Dict[str, ParameterInfo]) -> Dict[str, str]:
-            """Use field path detection for automatic mapping discovery."""
-            field_mappings = {}
-
-            for param_name, param_info in parameters.items():
-                if self._is_optional_lazy_dataclass_in_pipeline(param_info.param_type, param_name):
-                    # Automatically discover pipeline field path
-                    inner_type = self._extract_inner_type(param_info.param_type)
-                    pipeline_field = self.field_detector.find_field_path_for_type(
-                        PipelineConfig, inner_type
-                    )
-                    if pipeline_field:
-                        field_mappings[param_name] = pipeline_field
-
-            return field_mappings
-
-        def _create_step_level_configs(self, parameters: Dict[str, ParameterInfo],
-                                     field_mappings: Dict[str, str]) -> Dict[str, Any]:
-            """Create lazy step-level configs using LazyDataclassFactory."""
-            step_configs = {}
-
-            for param_name, pipeline_field in field_mappings.items():
-                param_info = parameters[param_name]
-                inner_type = self._extract_inner_type(param_info.param_type)
-
-                # Create lazy config with automatic inheritance
-                lazy_config = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
-                    base_class=inner_type,
-                    global_config_type=GlobalPipelineConfig,
-                    field_path=pipeline_field,
-                    lazy_class_name=f"Step{inner_type.__name__}"
-                )
-
-                step_configs[param_name] = lazy_config()
-
-            return step_configs
-
-        def _create_widgets_with_inheritance(self, parameters: Dict[str, ParameterInfo],
-                                           step_configs: Dict[str, Any]) -> Dict[str, Any]:
-            """Create widgets with proper inheritance using context resolution."""
-            widgets = {}
-
-            for param_name, param_info in parameters.items():
-                if param_name in step_configs:
-                    # Create checkbox and form for optional lazy dataclass
-                    checkbox_id = self.ui_utils['format_id']("enable", param_name)
-                    checkbox_label = self.ui_utils['format_checkbox'](param_name)
-
-                    # Create form with inheritance-aware placeholders
-                    form_widgets = self._create_dataclass_form(
-                        step_configs[param_name], param_name
-                    )
-
-                    widgets[param_name] = {
-                        'checkbox': {'id': checkbox_id, 'label': checkbox_label},
-                        'form': form_widgets,
-                        'step_config': step_configs[param_name]
-                    }
-                else:
-                    # Regular parameter widget
-                    widget_id = self.ui_utils['format_id']("param", param_name)
-                    display_name = self.ui_utils['format_name'](param_name)
-
-                    widgets[param_name] = {
-                        'id': widget_id,
-                        'label': display_name,
-                        'type': param_info.param_type
-                    }
+                widgets.append(widget)
 
             return widgets
 
-        def _apply_functional_dispatch(self, widgets: Dict[str, Any]) -> Dict[str, Any]:
-            """Apply functional dispatch patterns for widget configuration."""
 
-            # Widget configuration dispatch table
-            CONFIG_DISPATCH = {
-                int: lambda w: setattr(w, 'range', (-999999, 999999)),
-                float: lambda w: (setattr(w, 'range', (-999999.0, 999999.0)),
-                                setattr(w, 'decimals', 6)),
-                str: lambda w: setattr(w, 'placeholder', 'Enter text...'),
-            }
+Architectural Impact
+--------------------
 
-            # Apply configurations using functional dispatch
-            for param_name, widget_info in widgets.items():
-                if 'type' in widget_info:
-                    param_type = widget_info['type']
-                    configurator = CONFIG_DISPATCH.get(param_type)
-                    if configurator:
-                        configurator(widget_info)
+The step editor generalization system provides a foundation for maintainable UI development in OpenHCS:
 
-            return widgets
+**Evolution Preparedness**
+    The system automatically adapts when AbstractStep constructor changes, eliminating the need for manual UI updates and reducing maintenance overhead.
 
-Integration Benefits Demonstrated
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Type-Safe UI Generation**
+    By using actual Python type annotations rather than manual mappings, the system prevents configuration errors and provides compile-time validation.
 
-This comprehensive example demonstrates how all patterns work together:
+**Framework Independence**
+    The same parameter analysis logic works across both PyQt6 and Textual frameworks, ensuring consistent behavior and reducing code duplication.
 
-1. **Step Editor Generalization** - Automatically detects parameters from any step type
-2. **Field Path Detection** - Discovers pipeline field mappings without hardcoding
-3. **Lazy Class System** - Creates step-level configs with proper inheritance
-4. **Configuration Resolution** - Provides context-aware placeholder resolution
-5. **Service Layer Architecture** - Uses framework-agnostic business logic
-6. **Functional Dispatch** - Applies widget configurations using dispatch tables
-7. **UI Utilities** - Uses functional utilities for consistent formatting
+**Configuration Integration**
+    Automatic detection and handling of lazy dataclass parameters enables sophisticated configuration inheritance without hardcoded mappings.
 
-**Result**: A step editor that works with any step type, requires zero hardcoding, provides proper inheritance, and uses all the new architectural patterns seamlessly.
+This architecture ensures that OpenHCS UI development remains maintainable and extensible as the system evolves.
 
 See Also
 --------
