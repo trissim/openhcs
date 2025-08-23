@@ -24,24 +24,27 @@ interface:
 .. code:: python
 
    # Same API regardless of where data is stored
-   filemanager.save(data, "path/to/data", "memory")
-   filemanager.save(data, "path/to/data", "disk")
-   filemanager.save(data, "path/to/data", "zarr")
+   filemanager.save(data, "path/to/data", Backend.MEMORY)
+   filemanager.save(data, "path/to/data", Backend.DISK)
+   filemanager.save(data, "path/to/data", Backend.ZARR)
 
    # Load from any backend
-   data = filemanager.load("path/to/data", "memory")
-   data = filemanager.load("path/to/data", "disk")
+   data = filemanager.load("path/to/data", Backend.MEMORY)
+   data = filemanager.load("path/to/data", Backend.DISK)
 
 Path Virtualization
 ~~~~~~~~~~~~~~~~~~~
 
-VFS paths are logical paths that can be mapped to different physical
-storage locations:
+VFS provides a unified path interface where the same logical path works
+across all backends:
 
--  **Logical Path**: ``/pipeline/step1/output/processed_images``
--  **Physical Path (Memory)**: In-memory object store
--  **Physical Path (Disk)**:
-   ``/workspace/A01/step1_out/processed_images.tif``
+-  **Unified Path**: ``/pipeline/step1/output/processed_images``
+-  **Memory Backend**: Stores in-memory using the same path as key
+-  **Disk Backend**: Maps to physical file using the same path structure
+-  **Zarr Backend**: Creates zarr store using the same path structure
+
+The key principle is that **paths are identical across all backends** -
+the VFS handles the backend-specific storage implementation transparently.
 
 Backend Types
 ~~~~~~~~~~~~~
@@ -92,10 +95,10 @@ Core Interface
 .. code:: python
 
    class FileManager:
-       def save(self, data: Any, path: str, backend: str) -> None:
+       def save(self, data: Any, path: str, backend: Backend) -> None:
            """Save data to specified path and backend."""
-           
-       def load(self, path: str, backend: str) -> Any:
+
+       def load(self, path: str, backend: Backend) -> Any:
            """Load data from specified path and backend."""
            
        def exists(self, path: str, backend: str) -> bool:
@@ -287,49 +290,52 @@ Backend Selection Strategy
 
 .. code:: python
 
-   def select_backend(step_position, step_type, data_size, memory_available):
-       """Intelligent backend selection."""
-       if step_position == 0:  # First step
-           return "disk"  # Must read input images
-       
-       if step_position == last_position:  # Last step
-           return "disk"  # Must write final outputs
-           
-       if data_size > memory_available * 0.8:
-           return "disk"  # Too large for memory
-           
-       if step_type == "FunctionStep":
-           return "memory"  # Fast intermediate storage
-           
-       return "disk"  # Conservative default
+   # Backend selection is predetermined during compilation, not dynamic:
 
-Error Handling
---------------
+   # First step: Always reads from disk/zarr (input images)
+   # Intermediate steps: Always use memory backend between steps
+   # Last step: Always writes to materialization backend (disk/zarr)
+   # Per-step materialization: Uses materialization backend when StepMaterializationConfig provided
 
-Backend Failures
-~~~~~~~~~~~~~~~~
+   # No runtime switching - backends determined at compile time
+
+Materialization Configuration
+-----------------------------
+
+StepMaterializationConfig
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-step materialization is controlled by ``StepMaterializationConfig``:
 
 .. code:: python
 
-   try:
-       data = filemanager.load("path", "memory")
-   except BackendError as e:
-       # Fallback to disk backend
-       data = filemanager.load("path", "disk")
+   from openhcs.core.pipeline_config import LazyStepMaterializationConfig
+
+   # Step with materialization - writes to materialization backend
+   step = FunctionStep(
+       func=my_function,
+       materialization_config=LazyStepMaterializationConfig(
+           sub_dir="analysis_results",
+           well_filter=["A01", "A02"]  # Only materialize specific wells
+       )
+   )
 
 Path Resolution
 ~~~~~~~~~~~~~~~
 
 .. code:: python
 
-   def resolve_path(logical_path, backend):
-       """Resolve logical path to physical path."""
-       if backend == "memory":
-           return logical_path  # Use as-is for memory
-       elif backend == "disk":
-           return workspace_path / logical_path
-       else:
-           raise ValueError(f"Unknown backend: {backend}")
+   # VFS provides unified path interface - same path works for all backends
+   path = "/pipeline/step1/output/processed_images"
+
+   # Same path used across all backends
+   filemanager.save(data, path, Backend.MEMORY)
+   filemanager.save(data, path, Backend.DISK)
+   filemanager.save(data, path, Backend.ZARR)
+
+   # Load using same path regardless of backend
+   data = filemanager.load(path, Backend.MEMORY)
+   data = filemanager.load(path, Backend.DISK)
 
 Data Validation
 ~~~~~~~~~~~~~~~
@@ -402,13 +408,13 @@ Backend Selection
 -  Consider data lifetime and access patterns
 -  Monitor memory usage and adjust accordingly
 
-Error Recovery
-~~~~~~~~~~~~~~
+Backend Usage Patterns
+~~~~~~~~~~~~~~~~~~~~~~
 
--  Implement fallback strategies for backend failures
--  Validate data integrity after loading
--  Use checksums for critical data
--  Log all VFS operations for debugging
+-  **Memory**: Always used between pipeline steps for fast intermediate storage
+-  **Disk/Zarr**: Used for first step input, last step output, and per-step materialization
+-  **No fallbacks**: Backend selection is predetermined, no runtime switching
+-  **Fail-loud**: VFS operations fail immediately on errors, no silent fallbacks
 
 Performance Optimization
 ~~~~~~~~~~~~~~~~~~~~~~~~

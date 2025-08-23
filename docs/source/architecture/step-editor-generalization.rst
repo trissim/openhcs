@@ -8,11 +8,11 @@ Overview
 
 The step editor generalization system solves a fundamental problem in UI development: how do you create editors that automatically adapt when the AbstractStep constructor signature changes?
 
-**The Challenge:** OpenHCS has one step type (FunctionStep) that inherits from AbstractStep. The AbstractStep constructor may change to have different configs or additional parameters in the future. Traditional approaches require manual mapping of each parameter type to UI widgets, creating maintenance overhead when the constructor evolves.
+OpenHCS has one step type (FunctionStep) that inherits from AbstractStep. The AbstractStep constructor may change to have different configs or additional parameters in the future. Traditional approaches require manual mapping of each parameter type to UI widgets, creating maintenance overhead when the constructor evolves.
 
-**The Solution:** A generic system that uses type introspection to automatically detect AbstractStep constructor parameters, create appropriate UI widgets, and establish inheritance relationships with pipeline configuration. The system adapts automatically when the constructor signature changes.
+A generic system uses type introspection to automatically detect AbstractStep constructor parameters, create appropriate UI widgets, and establish inheritance relationships with pipeline configuration. The system adapts automatically when the constructor signature changes.
 
-**Real-World Impact:** Eliminated hardcoded parameter handling, reduced step editor code by 60%, and enabled automatic adaptation to AbstractStep constructor changes without code modifications.
+This eliminated hardcoded parameter handling, reduced step editor code, and enabled automatic adaptation to AbstractStep constructor changes without code modifications.
 
 Generic Step Editor Patterns
 -----------------------------

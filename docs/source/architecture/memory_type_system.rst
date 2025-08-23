@@ -4,10 +4,10 @@ Memory Type System and Stack Utils
 Overview
 --------
 
-OpenHCS implements a sophisticated memory type system that enables
-seamless conversion between different array libraries (NumPy, PyTorch,
-CuPy, TensorFlow, JAX, pyclesperanto) while maintaining strict
-dimensional constraints and GPU device discipline.
+OpenHCS implements a memory type system that enables conversion between
+different array libraries (NumPy, PyTorch, CuPy, TensorFlow, JAX,
+pyclesperanto) while maintaining dimensional constraints and GPU device
+management.
 
 **Note**: All code examples reflect the actual OpenHCS implementation
 and are verified against the current codebase.

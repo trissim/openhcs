@@ -4,17 +4,17 @@ OpenHCS Concurrency Model
 Overview
 --------
 
-OpenHCS implements a **well-level parallelism** model with **thread
-isolation** and **immutable compilation artifacts**. This design
-provides excellent performance while maintaining thread safety through
-architectural constraints rather than complex locking mechanisms.
+OpenHCS implements a well-level parallelism model with thread isolation
+and immutable compilation artifacts. This design provides performance
+while maintaining thread safety through architectural constraints rather
+than complex locking mechanisms.
 
 **Note**: This document describes the actual concurrency implementation.
 Some advanced features like runtime GPU slot management are planned for
 future development.
 
-**🎯 Core Concurrency Philosophy**
-----------------------------------
+Core Concurrency Philosophy
+----------------------------
 
 **Well-Level Parallelism**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -36,8 +36,8 @@ future development.
 -  **Stateless Steps**: Step objects stripped of mutable state after
    compilation
 
-**🏗️ Concurrency Architecture**
--------------------------------
+Concurrency Architecture
+------------------------
 
 **Two-Phase Execution Model**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

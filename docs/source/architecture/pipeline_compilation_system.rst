@@ -4,7 +4,7 @@ Pipeline Compilation System Architecture
 Overview
 --------
 
-OpenHCS implements a **declarative, compile-time pipeline system** that
+OpenHCS implements a declarative, compile-time pipeline system that
 treats configuration as a first-class compilation target. This
 architecture separates pipeline definition from execution, enabling
 compile-time validation, resource optimization, and reproducible
@@ -29,7 +29,7 @@ data processing pipelines.
 Multi-Pass Compiler Architecture
 --------------------------------
 
-The pipeline compiler operates in **five sequential phases**, each building
+The pipeline compiler operates in five sequential phases, each building
 upon the previous:
 
 Phase 1: Path Planning (``PipelinePathPlanner``)

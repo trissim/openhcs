@@ -150,6 +150,65 @@ Complete configuration from gold standard script:
         global_config=production_config
     )
 
+PyQt GUI Configuration
+---------------------
+
+PyQtGUIConfig
+^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from openhcs.pyqt_gui.config import PyQtGUIConfig, PerformanceMonitorConfig, WindowConfig
+
+    # GUI configuration for PyQt6 interface
+    gui_config = PyQtGUIConfig(
+        performance_monitor=PerformanceMonitorConfig(
+            update_fps=5.0,
+            history_duration_seconds=60.0,
+            enable_gpu_monitoring=True
+        ),
+        window=WindowConfig(
+            default_width=1200,
+            default_height=800,
+            remember_window_state=True,
+            floating_by_default=True
+        ),
+        enable_debug_mode=False,
+        check_for_updates=True
+    )
+
+PerformanceMonitorConfig
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Configuration for system performance monitoring in the GUI:
+
+.. code-block:: python
+
+    monitor_config = PerformanceMonitorConfig(
+        update_fps=5.0,                    # Monitor refresh rate
+        history_duration_seconds=60.0,     # Data history length
+        enable_gpu_monitoring=True,        # GPU metrics
+        gpu_temperature_monitoring=True,   # GPU temperature
+        cpu_frequency_monitoring=True,     # CPU frequency
+        detailed_memory_info=True          # Detailed memory stats
+    )
+
+WindowConfig
+^^^^^^^^^^^^
+
+Configuration for main window behavior:
+
+.. code-block:: python
+
+    window_config = WindowConfig(
+        default_width=1200,
+        default_height=800,
+        remember_window_state=True,        # Save window state
+        floating_by_default=True,          # Non-tiled window
+        confirm_close=True,                # Close confirmation
+        auto_save_interval_minutes=5       # Auto-save interval
+    )
+
 Configuration Enums
 -------------------
 

@@ -4,12 +4,12 @@ Code/UI Interconversion System
 Overview
 --------
 
-OpenHCS provides a **bidirectional code/UI interconversion system** that enables seamless editing between the TUI interface and generated Python code. This system addresses a common limitation in scientific computing tools where users must choose between GUI convenience or code flexibility.
+OpenHCS provides a bidirectional code/UI interconversion system that enables editing between the TUI interface and generated Python code. This system addresses the limitation in scientific computing tools where users must choose between GUI convenience or code flexibility.
 
-**Technical Innovation**: Unlike most scientific tools that provide one-way export (GUI → code), OpenHCS implements true bidirectional conversion with round-trip fidelity preservation between representations.
+The system implements bidirectional conversion with round-trip fidelity preservation between representations.
 
-Core Innovation
----------------
+Core Functionality
+------------------
 
 The system enables three critical workflows:
 
@@ -62,15 +62,15 @@ The code generation system follows OpenHCS's encapsulation pattern with three hi
     pipeline_steps = []
     
     step_1 = FunctionStep(
-        func=gaussian_filter(sigma=2.0, preserve_dtype=True),
+        func=(gaussian_filter, {'sigma': 2.0, 'preserve_dtype': True}),
         name="gaussian_filter",
         variable_components=[VariableComponents.PLATE]
     )
     pipeline_steps.append(step_1)
-    
+
     step_2 = FunctionStep(
-        func=count_cells(method="watershed"),
-        name="count_cells", 
+        func=(count_cells, {'method': 'watershed'}),
+        name="count_cells",
         variable_components=[VariableComponents.PLATE]
     )
     pipeline_steps.append(step_2)

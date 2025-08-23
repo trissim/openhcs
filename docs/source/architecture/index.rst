@@ -8,7 +8,7 @@ This section provides detailed technical documentation of OpenHCS's architecture
 
 **For Integration**: See :doc:`../guides/index` for practical integration guides that combine these architectural concepts.
 
-OpenHCS evolved from EZStitcher while preserving core architectural patterns and adding revolutionary new capabilities for GPU-native scientific computing.
+OpenHCS evolved from EZStitcher while preserving core architectural patterns and adding capabilities for GPU-native scientific computing.
 
 Core Systems
 ============
@@ -75,8 +75,8 @@ Development and Research
 System Overview
 ===============
 
-OpenHCS Architecture Innovations
---------------------------------
+OpenHCS Architecture Components
+-------------------------------
 
 **Memory Type System**: Automatic conversion between NumPy↔CuPy↔PyTorch↔TensorFlow↔JAX with zero-copy GPU operations and compile-time validation.
 
@@ -86,7 +86,7 @@ OpenHCS Architecture Innovations
 
 **Special I/O System**: Cross-step communication for analysis results (cell counts, measurements) using declarative decorators.
 
-**TUI System**: Production-grade terminal interface for scientific computing with SSH compatibility and real-time monitoring.
+**TUI System**: Terminal interface for scientific computing with SSH compatibility and real-time monitoring.
 
 **VFS Backend**: Memory overlay with ZARR storage for 100GB+ dataset handling and automatic materialization.
 
@@ -110,4 +110,4 @@ OpenHCS represents the evolution of EZStitcher from a CPU-based stitching tool i
 - **Enhanced**: GPU processing, memory type safety, production TUI, large dataset support  
 - **Added**: Special I/O, function registry, compilation system, advanced validation
 
-This architecture enables researchers to build complex bioimage analysis workflows with the same ease as the original stitching operations, while gaining access to cutting-edge GPU acceleration and production-grade tooling.
+This architecture enables researchers to build complex bioimage analysis workflows with the same ease as the original stitching operations, while gaining access to GPU acceleration and advanced tooling.

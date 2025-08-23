@@ -27,9 +27,9 @@ Storage Backend Registry
 
    # Backend registry with three implementations:
    storage_registry = {
-       "memory": MemoryStorageBackend(),    # In-memory object store
-       "disk": DiskStorageBackend(),        # File system storage
-       "zarr": ZarrStorageBackend()         # OME-ZARR compressed storage
+       Backend.MEMORY: MemoryStorageBackend(),    # In-memory object store
+       Backend.DISK: DiskStorageBackend(),        # File system storage
+       Backend.ZARR: ZarrStorageBackend()         # OME-ZARR compressed storage
    }
 
    filemanager = FileManager(storage_registry)
@@ -41,13 +41,13 @@ Manual Backend Selection
 
    # Explicit backend selection for different use cases:
    # Fast processing - use memory backend
-   filemanager.save(data, "intermediate/step1_output", "memory")
+   filemanager.save(data, "intermediate/step1_output", Backend.MEMORY)
 
    # Persistent storage - use disk backend
-   filemanager.save(data, "results/final_output.tif", "disk")
+   filemanager.save(data, "results/final_output.tif", Backend.DISK)
 
    # Large datasets - use zarr backend with compression
-   filemanager.save(data, "results/large_dataset", "zarr")
+   filemanager.save(data, "results/large_dataset", Backend.ZARR)
 
 Unified API Across Backends
 ---------------------------
@@ -58,13 +58,13 @@ Location Transparency
 .. code:: python
 
    # Same code works with any backend - location transparency:
-   filemanager.save(data, "processed/image.tif", "memory")    # RAM storage
-   filemanager.save(data, "processed/image.tif", "disk")      # File system
-   filemanager.save(data, "processed/image.tif", "zarr")      # OME-ZARR
+   filemanager.save(data, "processed/image.tif", Backend.MEMORY)    # RAM storage
+   filemanager.save(data, "processed/image.tif", Backend.DISK)      # File system
+   filemanager.save(data, "processed/image.tif", Backend.ZARR)      # OME-ZARR
 
    # Load from any backend with automatic type conversion:
-   data = filemanager.load("processed/image.tif", "memory")   # Returns numpy array
-   data = filemanager.load("processed/image.tif", "zarr")     # Returns zarr array
+   data = filemanager.load("processed/image.tif", Backend.MEMORY)   # Returns numpy array
+   data = filemanager.load("processed/image.tif", Backend.ZARR)     # Returns zarr array
 
    # Backend switching is transparent:
    # Same logical path, different physical storage

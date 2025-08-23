@@ -64,8 +64,7 @@ The Virtual File System (VFS) allows seamless backend switching:
     # Configure VFS for large dataset processing
     vfs_config = VFSConfig(
         intermediate_backend=Backend.MEMORY,      # Fast intermediate storage
-        materialization_backend=MaterializationBackend.ZARR,  # Compressed final storage
-        memory_limit_gb=32                        # Auto-switch to ZARR when exceeded
+        materialization_backend=MaterializationBackend.ZARR  # Compressed final storage
     )
 
     global_config = GlobalPipelineConfig(

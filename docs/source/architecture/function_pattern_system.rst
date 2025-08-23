@@ -1,13 +1,12 @@
-The Function Pattern System: OpenHCS Architectural Innovation
-=============================================================
+The Function Pattern System
+============================
 
 Overview
 --------
 
-One of the most sophisticated innovations in OpenHCS is the function
-pattern system, evolved from EZStitcher. This system solves one of the
-hardest problems in scientific computing: **how to compose heterogeneous
-functions into flexible, type-safe processing pipelines**.
+The function pattern system evolved from EZStitcher. This system addresses
+the problem of composing heterogeneous functions into flexible, type-safe
+processing pipelines.
 
 OpenHCS implements four fundamental patterns that provide a unified
 interface for different execution strategies, allowing the same
@@ -31,11 +30,11 @@ interfaces, argument patterns, and execution models:
 -  **Sequential processing chains** (multi-step operations)
 
 Traditional approaches require manual adaptation, wrapper functions, or
-complex orchestration code. The function pattern system makes all of
-this **transparent and automatic**.
+complex orchestration code. The function pattern system automates this
+process.
 
-The Four Sacred Patterns
-------------------------
+The Four Function Patterns
+--------------------------
 
 1. Single Function Pattern
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

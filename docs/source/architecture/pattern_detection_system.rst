@@ -4,10 +4,10 @@ Pattern Detection and Microscope Integration System
 Overview
 --------
 
-OpenHCS implements a sophisticated pattern detection system that
-automatically discovers image file patterns across different microscope
-formats. This system coordinates filename parsing, directory structure
-analysis, and pattern grouping to enable flexible pipeline processing.
+OpenHCS implements a pattern detection system that automatically
+discovers image file patterns across different microscope formats. This
+system coordinates filename parsing, directory structure analysis, and
+pattern grouping to enable flexible pipeline processing.
 
 Architecture Components
 -----------------------

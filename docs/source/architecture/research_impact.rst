@@ -9,8 +9,8 @@ research problems in neuroscience with datasets that break traditional
 tools. This document outlines the real-world research impact, production
 deployment characteristics, and scientific contributions of OpenHCS.
 
-Beyond Academic Demos
----------------------
+Research Applications
+--------------------
 
 The Reality of Scientific Software
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -28,7 +28,7 @@ Most academic software suffers from the “demo dataset problem”:
    ❌ Format-specific, vendor lock-in
    ❌ Maintenance-free assumptions
 
-**OpenHCS was designed for production research from day one.**
+OpenHCS was designed for production research environments.
 
 Massive Dataset Handling
 ------------------------
@@ -178,8 +178,8 @@ Research Workflow Integration
 Publication-Grade Results
 -------------------------
 
-Target: Nature Methods Publication
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Research Contributions
+~~~~~~~~~~~~~~~~~~~~~~
 
 **Research Contributions**:
 

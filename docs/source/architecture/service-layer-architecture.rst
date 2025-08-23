@@ -8,11 +8,11 @@ Overview
 
 The service layer architecture emerged from a practical problem: OpenHCS supports both PyQt6 and Textual UIs, but the business logic for parameter forms was duplicated between them. Every time we fixed a bug or added a feature, we had to implement it twice.
 
-**The Problem:** UI frameworks naturally encourage mixing presentation logic with business logic. PyQt6 widgets know how to display themselves, so it's tempting to put parameter analysis logic directly in the widget creation code. But this creates tight coupling and makes code reuse impossible.
+UI frameworks naturally encourage mixing presentation logic with business logic. PyQt6 widgets know how to display themselves, so it's tempting to put parameter analysis logic directly in the widget creation code. But this creates tight coupling and makes code reuse impossible.
 
-**The Solution:** Extract all business logic into framework-agnostic service classes. UI frameworks become thin presentation layers that consume services. The same service can power both PyQt6 and Textual implementations.
+The solution extracts all business logic into framework-agnostic service classes. UI frameworks become thin presentation layers that consume services. The same service can power both PyQt6 and Textual implementations.
 
-**Measurable Impact:** This pattern eliminated ~500 lines of duplicated code and reduced parameter form bugs by 80% (since fixes only need to be made once).
+This pattern eliminated duplicated code and reduced parameter form bugs since fixes only need to be made once.
 
 Core Service Pattern
 --------------------

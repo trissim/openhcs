@@ -4,11 +4,10 @@ Architectural Evolution: From EZStitcher to OpenHCS
 Overview
 --------
 
-OpenHCS represents a fundamental evolution from its predecessor
-EZStitcher, transforming from a CPU-based image stitching tool into a
-GPU-native, production-grade scientific computing platform. This
-document traces the architectural innovations and design decisions that
-enabled this transformation.
+OpenHCS evolved from its predecessor EZStitcher, transforming from a
+CPU-based image stitching tool into a GPU-native scientific computing
+platform. This document traces the architectural changes and design
+decisions that enabled this transformation.
 
 EZStitcher: The Architectural Foundation
 ----------------------------------------
@@ -16,8 +15,7 @@ EZStitcher: The Architectural Foundation
 Core Innovations That Carried Forward
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-EZStitcher established several breakthrough concepts that remain central
-to OpenHCS:
+EZStitcher established several concepts that remain central to OpenHCS:
 
 1. Pipeline Architecture Hierarchy
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -37,8 +35,7 @@ simple, reusable components.
 2. Variable Components Pattern
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-**The Breakthrough**: Intelligent file grouping based on microscopy
-metadata patterns.
+Intelligent file grouping based on microscopy metadata patterns.
 
 .. code:: python
 

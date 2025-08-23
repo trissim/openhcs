@@ -4,25 +4,19 @@ Function Registry System
 Overview
 --------
 
-OpenHCS implements a revolutionary unified function registry system that
-automatically discovers and unifies 574+ functions from multiple GPU
-libraries with type-safe contracts. This creates the most comprehensive
-GPU imaging function ecosystem available in scientific computing.
+OpenHCS implements a unified function registry system that automatically
+discovers and unifies 574+ functions from multiple GPU libraries with
+type-safe contracts.
 
-**Major Update (August 2025)**: The registry system has been completely
-refactored with a unified architecture that eliminates over 1,000 lines
-of duplicated code while maintaining 100% backward compatibility.
+**Note**: The registry system has been refactored with a unified architecture
+that eliminates code duplication while maintaining backward compatibility.
 
 **Note**: OpenHCS functions are used as function objects in
 FunctionStep, not string names. Examples show the real API patterns used
 in production pipelines.
 
-The Innovation
---------------
-
-**What Makes It Unique**: No other scientific computing platform
-automatically discovers and unifies this many GPU imaging libraries with
-unified contracts and type safety.
+Architecture
+------------
 
 Unified Registry Architecture (New)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -8,40 +8,94 @@ Overview
 
 The lazy class system solves a fundamental problem in configuration management: how do you create objects that can get their values from different sources depending on context, while still preserving user edits?
 
-**The Challenge:** OpenHCS has complex configuration hierarchies. A pipeline step might get its configuration from global defaults, pipeline-specific overrides, or user edits. Traditional dataclasses are static - once created, their values don't change. But we needed objects that could dynamically resolve values based on the current context.
+OpenHCS has complex configuration hierarchies. A pipeline step might get its configuration from global defaults, pipeline-specific overrides, or user edits. Traditional dataclasses are static - once created, their values don't change. The system needed objects that could dynamically resolve values based on the current context.
 
-**The Solution:** Lazy dataclasses are generated at runtime with custom resolution logic. They look like normal dataclasses to consuming code, but behind the scenes they can resolve field values from thread-local contexts, preserve user edits, and maintain proper hierarchy relationships.
+Lazy dataclasses are generated at runtime with custom resolution logic. They look like normal dataclasses to consuming code, but can resolve field values from thread-local contexts, preserve user edits, and maintain proper hierarchy relationships.
 
-**Real-World Impact:** This system eliminated the "lost edits" bug where user changes would revert to defaults, and made it possible to have context-aware placeholder text throughout the UI.
+This system eliminated the "lost edits" bug where user changes would revert to defaults, and enabled context-aware placeholder text throughout the UI.
 
 LazyDataclassFactory
 --------------------
 
 The LazyDataclassFactory is the heart of the system. It takes a regular dataclass and generates a new class that has the same interface but with lazy resolution behavior.
 
-**Why a Factory?** We can't modify existing dataclasses (they might be from external libraries), and we need different resolution strategies for different use cases. The factory pattern lets us generate customized lazy classes on demand.
+The factory pattern is used because existing dataclasses cannot be modified (they might be from external libraries), and different resolution strategies are needed for different use cases. The factory generates customized lazy classes on demand.
 
-Core Factory Methods
-~~~~~~~~~~~~~~~~~~~~
+Two Constructor Approaches
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The factory provides two main creation methods, each optimized for different use cases:
+The factory provides two distinct constructors for different resolution strategies:
+
+**1. Thread-Local Constructor** (`make_lazy_thread_local`)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Simple path-based resolution from thread-local storage. Used for main configuration classes:
 
 .. code-block:: python
 
-    # Thread-local lazy dataclass
+    # Root thread-local instance (main PipelineConfig)
     PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
         base_class=GlobalPipelineConfig,
         global_config_type=GlobalPipelineConfig,
         field_path=None,  # Root instance
+        lazy_class_name="PipelineConfig",
         use_recursive_resolution=True
     )
-    
-    # Nested field lazy dataclass  
-    LazyStepConfig = LazyDataclassFactory.make_lazy_thread_local(
-        base_class=StepMaterializationConfig,
-        global_config_type=GlobalPipelineConfig,
-        field_path="materialization_defaults"
-    )
+
+**2. Auto-Hierarchy Constructor** (`make_lazy_with_field_level_auto_hierarchy`)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sophisticated field-level inheritance with automatic hierarchy discovery. Used for nested configs:
+
+.. code-block:: python
+
+    # Auto-generated lazy configs with field-level hierarchy
+    for field in dataclasses.fields(GlobalPipelineConfig):
+        if dataclasses.is_dataclass(field.type):
+            field_path = FieldPathDetector.find_field_path_for_type(GlobalPipelineConfig, field.type)
+            if field_path:
+                lazy_config = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+                    base_class=field.type,
+                    global_config_type=GlobalPipelineConfig,
+                    field_path=field_path,  # Automatically detected
+                    lazy_class_name=f"Lazy{field.type.__name__}"
+                )
+
+Key Differences Between Constructors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Thread-Local vs Auto-Hierarchy:**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - Aspect
+     - Thread-Local
+     - Auto-Hierarchy
+   * - **Resolution Strategy**
+     - Simple field path navigation
+     - Field-level inheritance discovery
+   * - **Use Case**
+     - Main config classes (PipelineConfig)
+     - Nested configs (LazyStepMaterializationConfig)
+   * - **Hierarchy Support**
+     - Basic recursive resolution
+     - Sophisticated sibling inheritance
+   * - **Context Provider**
+     - Thread-local only
+     - Supports custom context providers
+   * - **Field Path Detection**
+     - Manual explicit paths
+     - Automatic introspection
+   * - **Current Usage**
+     - Root PipelineConfig creation
+     - All auto-generated lazy configs
+
+**When to Use Which:**
+
+- **Thread-Local**: For root configuration classes that resolve directly from thread-local storage
+- **Auto-Hierarchy**: For nested configurations that need sophisticated inheritance relationships
 
 Dynamic Class Generation
 ~~~~~~~~~~~~~~~~~~~~~~~~

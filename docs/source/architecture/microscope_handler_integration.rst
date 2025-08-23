@@ -581,14 +581,12 @@ Caching Strategy
 Future Enhancements
 -------------------
 
-Planned Features
-~~~~~~~~~~~~~~~~
+Additional Microscope Support
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **Plugin Architecture**: Dynamic loading of new microscope handlers
-2. **Parallel Processing**: Multi-threaded workspace processing for
-   large datasets
-3. **Incremental Processing**: Process only changed files in workspace
-4. **Advanced Validation**: Deep validation of microscope format
-   compliance
-5. **Metadata Caching**: Persistent caching of parsed metadata for
-   performance
+The primary enhancement goal is expanding microscope format support:
+
+- **Additional Vendors**: Support for more microscope manufacturers
+- **Format Variants**: Handle vendor-specific format variations
+- **Legacy Formats**: Support for older microscope file formats
+- **Custom Formats**: Framework for laboratory-specific formats

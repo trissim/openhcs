@@ -11,7 +11,7 @@ The ``ProcessingContext`` is the canonical state manager for OpenHCS pipeline ex
 
 * **Immutable After Compilation**: Context is frozen after compilation to ensure thread-safe execution
 * **VFS Integration**: All file operations go through the FileManager instance
-* **Configuration Management**: Provides access to GlobalPipelineConfig and step-specific plans
+* **Configuration Access**: Provides access to GlobalPipelineConfig; configs are used during compilation to fill step_plans
 * **Well-Specific State**: Each well gets its own context instance for parallel processing
 
 **Real-World Usage** (from TUI-generated scripts):
@@ -47,9 +47,9 @@ The ProcessingContext contains several key attributes for pipeline execution:
 
     # Context attributes (read-only after freezing)
     context.well_id              # Well identifier (e.g., "A01")
-    context.global_config        # GlobalPipelineConfig instance
+    context.global_config        # GlobalPipelineConfig instance (reference only)
     context.filemanager          # FileManager for VFS operations
-    context.step_plans           # Dict mapping step IDs to execution plans
+    context.step_plans           # Dict mapping step indices to compiled execution plans
     context.outputs              # Step outputs (VFS-centric model)
     context.intermediates        # Intermediate results
     context.current_step         # Currently executing step ID
@@ -95,11 +95,14 @@ OpenHCS ProcessingContext follows a strict lifecycle to ensure thread-safe paral
         filemanager=filemanager
     )
 
-    # Step plans are injected during compilation
-    context.inject_plan("step_1", {
+    # Step plans are compiled from configs and injected during compilation
+    # Configs are used to fill step_plans, not stored directly in context
+    context.inject_plan(0, {  # Uses step index, not step_id
         "func": normalize_function,
-        "parameters": {"low_percentile": 1.0},
-        "variable_components": ["site"]
+        "input_dir": "/path/to/input",
+        "output_dir": "/path/to/output",
+        "read_backend": "disk",
+        "write_backend": "memory"
     })
 
 **Phase 2: Freezing for Execution**:

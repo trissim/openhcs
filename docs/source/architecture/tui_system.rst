@@ -4,21 +4,15 @@ TUI System Architecture
 Overview
 --------
 
-OpenHCS provides a sophisticated terminal user interface (TUI) built
-with the Textual framework - unprecedented for scientific computing
-tools. This production-grade interface works anywhere a terminal works,
-including remote servers, containers, and SSH connections.
+OpenHCS provides a terminal user interface (TUI) built with the Textual
+framework. This interface works in terminal environments, including
+remote servers, containers, and SSH connections.
 
 **Note**: This document describes the actual TUI implementation. Some
 features are aspirational and marked as “Future Enhancements”.
 
-The Innovation
---------------
-
-**What Makes It Unique**: Most scientific tools are either command-line
-only or have basic desktop GUIs. OpenHCS provides a **production-grade
-terminal interface** that maintains full functionality in any terminal
-environment.
+Architecture
+------------
 
 Core Components
 ---------------
