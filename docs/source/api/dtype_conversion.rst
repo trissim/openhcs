@@ -11,11 +11,11 @@ The dtype conversion system automatically handles data type conversions for func
 Module Structure
 ----------------
 
-.. code:: python
+.. code:: text
 
    openhcs/processing/backends/analysis/
    ├── pyclesperanto_registry.py    # Pyclesperanto dtype conversion
-   ├── scikit_image_registry.py     # Scikit-image dtype conversion  
+   ├── scikit_image_registry.py     # Scikit-image dtype conversion
    ├── cupy_registry.py             # CuPy dtype conversion
    └── cache_utils.py               # Cache registration with dtype conversion
 
@@ -187,32 +187,32 @@ Performance Characteristics
 Conversion Overhead
 ~~~~~~~~~~~~~~~~~~~
 
-.. code:: python
+.. code:: text
 
    # Performance impact by function type:
-   
+
    Functions requiring no conversion: 569+ functions
    ├── Overhead: 0% (no conversion applied)
    └── Performance: Native library speed
-   
-   Functions requiring binary conversion: 2 functions  
+
+   Functions requiring binary conversion: 2 functions
    ├── Overhead: ~1-2% (threshold + type conversion)
    └── Operations: threshold, multiply, astype
-   
+
    Functions requiring uint8 conversion: 3 functions
-   ├── Overhead: ~1-2% (clip + scale + type conversion)  
+   ├── Overhead: ~1-2% (clip + scale + type conversion)
    └── Operations: clip, multiply, astype
 
 Memory Usage
 ~~~~~~~~~~~~
 
-.. code:: python
+.. code:: text
 
    # Memory overhead:
    ├── Temporary conversion arrays: 1x input size
-   ├── Result conversion arrays: 1x output size  
+   ├── Result conversion arrays: 1x output size
    └── Peak usage: 2x normal (input + converted input)
-   
+
    # Optimization:
    ✅ Conversions happen in-place where possible
    ✅ Temporary arrays are garbage collected immediately
@@ -223,7 +223,7 @@ Testing and Validation
 
 The dtype conversion system includes comprehensive testing to ensure correctness:
 
-.. code:: python
+.. code:: text
 
    # Test coverage:
    ✅ Binary threshold accuracy (0.5 threshold point)
@@ -238,7 +238,7 @@ Error Handling
 
 The system includes robust error handling for edge cases:
 
-.. code:: python
+.. code:: text
 
    # Handled edge cases:
    ├── NaN values: Converted to 0

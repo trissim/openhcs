@@ -32,20 +32,22 @@ Multi-Pass Compiler Architecture
 The pipeline compiler operates in five sequential phases, each building
 upon the previous:
 
-Phase 1: Path Planning (``PipelinePathPlanner``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Phase 1: Step Plan Initialization (``initialize_step_plans_for_context``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Purpose**: Establishes the data flow topology of the pipeline
+**Purpose**: Establishes the data flow topology and initializes step plans
 
 -  **Input**: Step definitions + ProcessingContext (well_id, input_dir)
--  **Output**: Basic ``step_plans`` with input/output directories and
+-  **Output**: Initialized ``step_plans`` with input/output directories and
    special I/O paths
 -  **Responsibilities**:
 
+   -  Creates basic step plan structure for each step
+   -  Calls ``PipelinePathPlanner.prepare_pipeline_paths()`` for path resolution
    -  Determines input/output directories for each step
    -  Creates VFS paths for special I/O (cross-step communication)
    -  Links special outputs from one step to special inputs of another
-   -  Handles chain breaker logic
+   -  Handles chain breaker logic and input source detection
 
 **Key Error**:
 ``"Context step_plans must be initialized before path planning"`` -
@@ -53,21 +55,26 @@ Indicates this phase failed to properly initialize the step_plans
 structure
 
 Phase 2: ZARR Store Declaration (``declare_zarr_stores_for_context``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Declares ZARR stores for steps that will use ZARR backend
 
 -  **Input**: ``step_plans`` from Phase 1 with path information
--  **Output**: ZARR store declarations in step plans
+-  **Output**: ZARR store declarations in step plans (``zarr_config`` entries)
 -  **Responsibilities**:
 
    -  Identifies steps that will use ZARR materialization backend
-   -  Declares ZARR stores with appropriate configuration
-   -  Sets up OME-ZARR metadata structures
-   -  Configures compression and chunking strategies
+   -  Declares ZARR stores with appropriate configuration metadata
+   -  Sets up well coordination information for multi-well ZARR stores
+   -  Provides configuration for runtime store creation
 
-Phase 3: Materialization Planning (``MaterializationFlagPlanner``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Key Insight**: This phase doesn't create ZARR stores - it declares
+which steps will need them and provides the metadata for runtime store
+creation. The actual ZARR stores are created during execution when the
+first well writes data.
+
+Phase 3: Materialization Planning (``plan_materialization_flags_for_context``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Decides where data lives (VFS backend strategy)
 
@@ -81,8 +88,8 @@ Phase 3: Materialization Planning (``MaterializationFlagPlanner``)
    -  FunctionSteps: Can use intermediate backends
    -  Non-FunctionSteps: Must use persistent backends
 
-Phase 4: Memory Contract Validation (``FuncStepContractValidator``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Phase 4: Memory Contract Validation (``validate_memory_contracts_for_context``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Ensures memory type compatibility across the pipeline AND
 stores function patterns
@@ -93,6 +100,7 @@ stores function patterns
    injection into step_plans
 -  **Key Responsibility**: **Stores the function pattern (potentially
    modified by path planner) in ``step_plans['func']``**
+-  **Implementation**: Uses ``FuncStepContractValidator`` internally
 -  **Validation**:
 
    -  All functions must have explicit memory type declarations
@@ -102,13 +110,14 @@ stores function patterns
 -  **Storage**: Returns
    ``{'input_memory_type': ..., 'output_memory_type': ..., 'func': func_pattern}``
 
-Phase 5: GPU Resource Assignment (``GPUMemoryTypeValidator``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Phase 5: GPU Resource Assignment (``assign_gpu_resources_for_context``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Purpose**: Resource allocation for GPU-accelerated steps
 
 -  **Input**: ``step_plans`` with memory types
 -  **Output**: GPU device assignments
+-  **Implementation**: Uses ``GPUMemoryTypeValidator`` internally
 -  **Logic**:
 
    -  Identifies steps requiring GPU memory types

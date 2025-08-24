@@ -6,10 +6,6 @@ OpenHCS is built on a modular, object-oriented architecture that separates conce
 Core Components
 ---------------
 
-.. image:: ../_static/architecture_overview.png
-   :alt: EZStitcher Architecture Overview
-   :width: 600px
-
 PipelineOrchestrator
 ^^^^^^^^^^^^^^^^^^^^^
 

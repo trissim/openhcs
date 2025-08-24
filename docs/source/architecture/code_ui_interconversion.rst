@@ -307,7 +307,7 @@ See Also
 
 - :doc:`function_pattern_system` - Function pattern architecture
 - :doc:`pipeline_compilation_system` - Pipeline compilation integration
-- :doc:`configuration_management_system` - Configuration system integration
+- :doc:`configuration_system_architecture` - Configuration system integration
 
 **Practical Usage**:
 

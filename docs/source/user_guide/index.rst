@@ -23,6 +23,13 @@ This production script demonstrates every major OpenHCS feature with real parame
    :maxdepth: 2
    :hidden:
 
+   introduction
+   basic_usage
+   intermediate_usage
+   advanced_usage
+   integration
+   best_practices
+   production_examples
    code_ui_editing
    dtype_conversion
 

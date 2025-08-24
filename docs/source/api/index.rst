@@ -45,7 +45,6 @@ Discover the 574+ available processing functions organized by computational back
    image_processing_functions
    stitching_functions
    dtype_conversion
-   unified_registry
 
 **Processing Backends**: GPU-accelerated functions for image processing, analysis, and assembly. Includes automatic memory type conversion between NumPy, CuPy, PyTorch, JAX, and pyclesperanto.
 
@@ -85,6 +84,7 @@ Core pipeline components for building and executing OpenHCS workflows.
 
    step_system
    pipeline
+   pipeline_orchestrator
    tui_system
 
 **Step System**: Complete step architecture including AbstractStep base class and FunctionStep implementation. Covers function patterns, variable components, and GPU integration.

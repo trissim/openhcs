@@ -83,6 +83,7 @@ Quick Start Guide
    :maxdepth: 2
    :caption: Core Concepts
 
+   concepts/index
    concepts/basic_microscopy
    concepts/architecture_overview
    concepts/pipeline_orchestrator

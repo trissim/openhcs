@@ -201,8 +201,6 @@ Benefits
 See Also
 --------
 
-- :doc:`configuration-resolution` - Thread-local context management used by services
-- :doc:`lazy-class-system` - Lazy dataclass patterns that services work with
+- :doc:`configuration_system_architecture` - Configuration system architecture used by services
 - :doc:`step-editor-generalization` - Step editors that use service layer patterns
-- :doc:`field-path-detection` - Type discovery services used by UI frameworks
 - :doc:`../development/ui-patterns` - UI patterns that leverage service layer architecture

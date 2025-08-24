@@ -407,7 +407,7 @@ See Also
 
 - :doc:`pipeline_compilation_system` - TUI integration with pipeline compilation
 - :doc:`function_registry_system` - TUI function discovery and help system
-- :doc:`configuration_management_system` - TUI configuration management
+- :doc:`configuration_system_architecture` - TUI configuration management
 
 **Practical Usage**:
 
