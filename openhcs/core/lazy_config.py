@@ -426,10 +426,10 @@ class LazyDataclassFactory:
         use_recursive_resolution: bool = False
     ) -> Type:
         """
-        Create lazy dataclass that resolves from thread-local instance using explicit field paths.
+        DEPRECATED: Use make_lazy_with_field_level_auto_hierarchy() instead.
 
-        This unified approach eliminates algorithmic field name conversion bugs by using
-        explicit dot-separated paths to navigate the thread-local configuration structure.
+        This method is deprecated in favor of the superior auto-hierarchy approach
+        which provides the same functionality plus sophisticated field-level inheritance.
 
         Args:
             base_class: The dataclass type to make lazy (the target type for lazy resolution)
@@ -454,19 +454,25 @@ class LazyDataclassFactory:
             global_config_type=GlobalPipelineConfig).
 
         Examples:
-            # Root thread-local instance with recursive resolution
-            PipelineConfig = make_lazy_thread_local(
+            # Root instance with auto-hierarchy resolution
+            PipelineConfig = make_lazy_with_field_level_auto_hierarchy(
                 GlobalPipelineConfig,
-                field_path=None,
-                use_recursive_resolution=True
+                field_path=None
             )
 
-            # Nested field from thread-local instance
-            LazyStepMaterializationConfig = make_lazy_thread_local(
+            # Nested field with auto-hierarchy resolution
+            LazyStepMaterializationConfig = make_lazy_with_field_level_auto_hierarchy(
                 StepMaterializationConfig,
                 field_path="materialization_defaults"
             )
         """
+        import warnings
+        warnings.warn(
+            "make_lazy_thread_local() is deprecated. Use make_lazy_with_field_level_auto_hierarchy() instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         # Generate class name if not provided
         if lazy_class_name is None:
             lazy_class_name = f"{CONSTANTS.LAZY_CLASS_NAME_PREFIX}{base_class.__name__}"
@@ -531,8 +537,37 @@ class LazyDataclassFactory:
             context_provider=context_provider
         )
 
-        # Use field-level provider with static defaults fallback
-        fallback_chain = [create_static_defaults_fallback(base_class)]
+        # Use field-level provider with optional static defaults fallback
+        # Static fallbacks should only be used in specific contexts (tests, serialization, etc.)
+        # In normal app operation, thread-local storage should always be available
+        def context_aware_static_fallback(field_name: str) -> Any:
+            """Static fallback that warns when used in contexts where thread-local storage should exist."""
+            import logging
+            logger = logging.getLogger(__name__)
+
+            # Check if we're in a context where thread-local storage should exist
+            get_current_global_config, _ = _get_generic_config_imports()
+            current_context = get_current_global_config(global_config_type)
+
+            if current_context is None:
+                # Check if we're in a PyQt app context where this shouldn't happen
+                try:
+                    from PyQt6.QtWidgets import QApplication
+                    app_instance = QApplication.instance()
+                    if app_instance and hasattr(app_instance, 'global_config'):
+                        logger.warning(
+                            f"🚨 ARCHITECTURE WARNING: Static fallback used for {base_class.__name__}.{field_name} "
+                            f"in PyQt app context where thread-local storage should be available. "
+                            f"This indicates a context management bug."
+                        )
+                except ImportError:
+                    pass  # PyQt not available, this is expected in some contexts
+
+            # Use static default
+            default_instance = base_class()
+            return _get_raw_field_value(default_instance, field_name)
+
+        fallback_chain = [context_aware_static_fallback]
 
         # Create parent instance provider for context propagation
         def parent_instance_provider_for_nested():
@@ -552,7 +587,7 @@ class LazyDataclassFactory:
             parent_instance_provider=parent_instance_provider_for_nested
         )
 
-    # Deprecated methods removed - use make_lazy_thread_local() with explicit field_path
+    # Deprecated methods removed - use make_lazy_with_field_level_auto_hierarchy() for all use cases
 
 
 def create_field_level_hierarchy_provider(
@@ -664,6 +699,20 @@ def create_field_level_hierarchy_provider(
 
             def _resolve_field_through_hierarchy(self, field_name, current_config, actual_global_config, hierarchy_paths, is_inherited):
                 """Resolve field through hierarchy with inheritance-aware logic."""
+                # Special case: if no hierarchy paths (e.g., top-level config), resolve directly from current context
+                if not hierarchy_paths:
+                    # First try current config (might be masked)
+                    if current_config:
+                        value = _get_raw_field_value(current_config, field_name)
+                        if value is not None:
+                            return value
+
+                    # If current config is None or masked, try actual global config
+                    if actual_global_config:
+                        value = _get_raw_field_value(actual_global_config, field_name)
+                        if value is not None:
+                            return value
+
                 for context_type, path in hierarchy_paths:
                     config = current_config if context_type == 'current' else actual_global_config
                     instance = FieldPathNavigator.navigate_to_instance(config, path)

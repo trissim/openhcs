@@ -462,13 +462,39 @@ class ParameterFormManager(QWidget):
                             placeholder_prefix=self.placeholder_prefix
                         )
                 else:
-                    print(f"🎨 MASKING DEBUG: No field path found, falling back to normal resolution")
-                    # No field path found, fall back to normal resolution
-                    placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
-                        self.dataclass_type,
-                        param_name,
-                        placeholder_prefix=self.placeholder_prefix
-                    )
+                    print(f"🎨 MASKING DEBUG: No field path found, handling as top-level config")
+                    # No field path found - this is a top-level config (field_path=None)
+                    # For auto-hierarchy lazy classes, we should still use hierarchy resolution
+                    original_config = get_current_global_config(GlobalPipelineConfig)
+                    if original_config:
+                        try:
+                            # For top-level configs, create masked config at root level
+                            masked_config = replace(original_config, **{param_name: None})
+                            print(f"🎨 MASKING DEBUG: Successfully masked root-level {param_name}")
+
+                            # Temporarily set the masked context
+                            set_current_global_config(GlobalPipelineConfig, masked_config)
+
+                            # Create instance and resolve with masked context
+                            temp_instance = self.dataclass_type()
+                            resolved_value = temp_instance._resolve_field_value(param_name)
+                            print(f"🎨 MASKING DEBUG: Root-level masked resolution for {param_name}: {resolved_value}")
+
+                            if resolved_value is not None:
+                                placeholder_text = f"{self.placeholder_prefix}: {resolved_value}"
+                            else:
+                                placeholder_text = None
+                        finally:
+                            # Always restore original context
+                            set_current_global_config(GlobalPipelineConfig, original_config)
+                    else:
+                        print(f"🎨 MASKING DEBUG: No global context, falling back to normal resolution")
+                        # No global context, fall back to normal resolution
+                        placeholder_text = LazyDefaultPlaceholderService.get_lazy_resolved_placeholder(
+                            self.dataclass_type,
+                            param_name,
+                            placeholder_prefix=self.placeholder_prefix
+                        )
             else:
                 print(f"🎨 MASKING DEBUG: Not auto-hierarchy lazy class, falling back to normal resolution")
                 # Not an auto-hierarchy lazy class, use normal resolution
