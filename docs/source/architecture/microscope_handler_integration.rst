@@ -363,49 +363,65 @@ The OpenHCS handler represents a special case that leverages existing handler co
 
 .. code-block:: python
 
-   class OpenHCSHandler(MicroscopeHandler):
-       """Handler for OpenHCS native format with JSON metadata."""
+   class OpenHCSMicroscopeHandler(MicroscopeHandler):
+       """Handler for OpenHCS pre-processed format with JSON metadata."""
 
-       def __init__(self):
-           self._parser = OpenHCSParser()  # Reuses existing parser logic
-           self._metadata_handler = OpenHCSMetadataHandler()
+       def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
+           self.filemanager = filemanager
+           self.metadata_handler = OpenHCSMetadataHandler(filemanager)
+           self._parser: Optional[FilenameParser] = None
+           self.plate_folder: Optional[Path] = None
+           self.pattern_format = pattern_format
+
+           # Parser is loaded dynamically based on metadata
+           super().__init__(parser=None, metadata_handler=self.metadata_handler)
 
        @property
        def parser(self) -> FilenameParser:
+           """Dynamically load parser based on metadata."""
+           if self._parser is None:
+               parser_name = self.metadata_handler.get_source_filename_parser_name(self.plate_folder)
+               available_parsers = _get_available_filename_parsers()
+               ParserClass = available_parsers.get(parser_name)
+
+               if not ParserClass:
+                   raise ValueError(f"Unknown parser '{parser_name}' in metadata")
+
+               self._parser = ParserClass(pattern_format=self.pattern_format)
+
            return self._parser
 
-       @property
-       def metadata_handler(self) -> MetadataHandler:
-           return self._metadata_handler
-
-       def _prepare_workspace(self, input_dir: Path, workspace_dir: Path):
-           """OpenHCS format is already normalized, minimal preparation needed."""
-           # Read metadata to understand file organization
-           metadata_file = input_dir / "openhcsmetadata.json"
-           with open(metadata_file) as f:
-               metadata = json.load(f)
-
-           # Create symlinks based on metadata file organization
-           for file_info in metadata['files']:
-               source_path = input_dir / file_info['path']
-               workspace_link = workspace_dir / file_info['filename']
-               workspace_link.symlink_to(source_path)
+       def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
+           """OpenHCS format is already normalized, no preparation needed."""
+           # Ensure plate_folder is set for dynamic parser loading
+           if self.plate_folder is None:
+               self.plate_folder = Path(workspace_path)
+           return workspace_path
 
    class OpenHCSMetadataHandler(MetadataHandler):
        """Handles OpenHCS JSON metadata format."""
 
-       def read_plate_metadata(self, plate_dir: Path) -> PlateMetadata:
-           metadata_file = plate_dir / "openhcsmetadata.json"
-           with open(metadata_file) as f:
-               data = json.load(f)
+       METADATA_FILENAME = "openhcs_metadata.json"
 
-           return PlateMetadata(
-               plate_name=data['plate']['name'],
-               wells=data['plate']['wells'],
-               sites_per_well=data['acquisition']['sites_per_well'],
-               channels=data['acquisition']['channels'],
-               acquisition_date=data['acquisition']['timestamp']
-           )
+       def get_source_filename_parser_name(self, plate_path: Path) -> str:
+           """Get the original filename parser used for this plate."""
+           metadata = self._load_metadata(plate_path)
+           return metadata.get("source_filename_parser_name")
+
+       def determine_main_subdirectory(self, plate_path: Path) -> str:
+           """Determine which subdirectory contains the main input images."""
+           metadata_dict = self._load_metadata_dict(plate_path)
+
+           # Handle subdirectory-keyed format
+           if subdirs := metadata_dict.get("subdirectories"):
+               # Find subdirectory marked as main, or use first available
+               for subdir, subdir_metadata in subdirs.items():
+                   if subdir_metadata.get("main", False):
+                       return subdir
+               return next(iter(subdirs.keys()))  # Fallback to first
+
+           # Legacy format fallback
+           return "images"
 
 **Key Architectural Features**:
 
@@ -415,38 +431,46 @@ The OpenHCS handler represents a special case that leverages existing handler co
 - **Self-describing datasets**: Datasets carry their own metadata, making them portable and self-contained
 
 **OpenHCS Metadata Structure**:
-The `openhcsmetadata.json` file contains:
+The `openhcs_metadata.json` file uses a subdirectory-keyed format to organize metadata by processing step:
 
 .. code-block:: json
 
    {
-     "plate": {
-       "name": "Experiment_001",
-       "wells": ["A01", "A02", "B01", "B02"],
-       "layout": "96-well"
-     },
-     "acquisition": {
-       "sites_per_well": 4,
-       "channels": [1, 2, 3],
-       "timestamp": "2024-01-15T10:30:00Z",
-       "microscope": "ImageXpress"
-     },
-     "files": [
-       {
-         "filename": "A01_s1_w1.tif",
-         "path": "images/A01_s1_w1.tif",
-         "well": "A01",
-         "site": 1,
-         "channel": 1
+     "subdirectories": {
+       "images": {
+         "microscope_handler_name": "imagexpress",
+         "source_filename_parser_name": "ImageXpressFilenameParser",
+         "grid_dimensions": [2048, 2048],
+         "pixel_size": 0.325,
+         "image_files": [
+           "images/A01_s1_w1.tif",
+           "images/A01_s1_w2.tif",
+           "images/A01_s2_w1.tif"
+         ],
+         "channels": {"1": "DAPI", "2": "GFP"},
+         "wells": {"A01": "Control", "A02": "Treatment"},
+         "sites": {"1": "Site1", "2": "Site2"},
+         "z_indexes": null,
+         "available_backends": {"disk": true},
+         "main": true
+       },
+       "processed": {
+         "microscope_handler_name": "imagexpress",
+         "source_filename_parser_name": "ImageXpressFilenameParser",
+         "grid_dimensions": [2048, 2048],
+         "pixel_size": 0.325,
+         "image_files": [
+           "processed/A01_s1_w1_filtered.tif",
+           "processed/A01_s1_w2_filtered.tif"
+         ],
+         "channels": {"1": "DAPI", "2": "GFP"},
+         "wells": {"A01": "Control"},
+         "sites": {"1": "Site1"},
+         "z_indexes": null,
+         "available_backends": {"disk": true},
+         "main": false
        }
-     ],
-     "processing_history": [
-       {
-         "step": "background_subtraction",
-         "timestamp": "2024-01-15T11:00:00Z",
-         "parameters": {"method": "rolling_ball", "radius": 50}
-       }
-     ]
+     }
    }
 
 This approach enables OpenHCS to create fully self-describing datasets that can be processed consistently regardless of the original microscope platform.
