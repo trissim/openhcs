@@ -11,3 +11,5 @@ This section provides information for developers who want to contribute to OpenH
    extending
    testing
    contributing
+   parameter_analysis_audit
+   unified_parameter_analyzer_migration
