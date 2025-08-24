@@ -20,6 +20,7 @@ The core systems every OpenHCS developer needs to understand.
    pipeline_compilation_system
    special_io_system
    function_registry_system
+   microscope_handler_integration
    system_integration
    ezstitcher_to_openhcs_evolution
 
@@ -34,7 +35,6 @@ Deep technical dives for developers working on specific systems.
    compilation_system_detailed
    gpu_resource_management
    tui_system
-   microscope_handler_integration
 
 Development Tools
 =================
@@ -44,7 +44,6 @@ Practical guides for OpenHCS development workflows.
 .. toctree::
    :maxdepth: 1
 
-   pipeline_debugging_guide
    code_ui_interconversion
    step-editor-generalization
 
