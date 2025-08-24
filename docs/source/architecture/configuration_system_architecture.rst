@@ -295,35 +295,14 @@ The LazyDataclassFactory is a key component of the configuration system's flexib
 
 **The Solution**: The LazyDataclassFactory generates runtime dataclasses with custom resolution logic. They appear as normal dataclasses to consuming code (same API, same type hints, same behavior) but can resolve field values from thread-local contexts while preserving user edits. This provides predictable APIs for developers and context-aware behavior for users.
 
-Two Constructor Approaches
+Auto-Hierarchy Constructor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The LazyDataclassFactory provides two different approaches for creating lazy dataclasses, each optimized for different use cases in the configuration hierarchy.
-
-**1. Thread-Local Constructor** (`make_lazy_thread_local`)
-
-This approach creates lazy dataclasses that resolve values directly from thread-local storage. It's used for root-level configurations where the entire configuration object is stored in thread-local context.
+The LazyDataclassFactory uses an auto-hierarchy approach for creating lazy dataclasses with sophisticated field-level inheritance that can resolve values from multiple sources in the configuration hierarchy. It automatically discovers field paths and enables sibling inheritance patterns.
 
 .. code:: python
 
-   # Root thread-local instance (main PipelineConfig)
-   PipelineConfig = LazyDataclassFactory.make_lazy_thread_local(
-       base_class=GlobalPipelineConfig,
-       global_config_type=GlobalPipelineConfig,
-       field_path=None,  # Root instance
-       lazy_class_name="PipelineConfig",
-       use_recursive_resolution=True
-   )
-
-**Use Case**: Creating the main pipeline configuration object that serves as the root of the configuration hierarchy.
-
-**2. Auto-Hierarchy Constructor** (`make_lazy_with_field_level_auto_hierarchy`)
-
-This approach creates lazy dataclasses with field-level inheritance that can resolve values from multiple sources in the configuration hierarchy. It automatically discovers the field path and enables sibling inheritance.
-
-.. code:: python
-
-   # Nested config with field-level inheritance
+   # Auto-hierarchy lazy config with field-level inheritance
    LazyStepMaterializationConfig = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
        base_class=StepMaterializationConfig,
        global_config_type=GlobalPipelineConfig,
@@ -332,7 +311,20 @@ This approach creates lazy dataclasses with field-level inheritance that can res
        context_provider=None  # Optional context provider
    )
 
-**Use Case**: Creating nested configuration objects that need to inherit from multiple sources and support sibling inheritance patterns.
+   # Root-level config (field_path=None for top-level configs)
+   PipelineConfig = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
+       base_class=GlobalPipelineConfig,
+       global_config_type=GlobalPipelineConfig,
+       field_path=None,  # Root instance
+       lazy_class_name="PipelineConfig"
+   )
+
+**Key Features**:
+
+- **Automatic Field Path Discovery**: Uses type introspection to find configuration relationships
+- **Sibling Inheritance**: Supports inheritance between related configuration objects
+- **Context-Aware Resolution**: Resolves values from thread-local storage with hierarchy fallbacks
+- **Universal Algorithm**: Works for any dataclass structure without manual configuration
 
 **Additional Factory Methods**: The LazyDataclassFactory provides several convenience methods for common use cases:
 
@@ -342,10 +334,11 @@ This approach creates lazy dataclasses with field-level inheritance that can res
    def create_config_for_editing(config_type: Type, current_config: Any) -> Any:
        """Create a lazy configuration instance for UI editing."""
        set_current_global_config(GlobalPipelineConfig, current_config)
-       return LazyDataclassFactory.make_lazy_thread_local(
+       return LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
            base_class=config_type,
            global_config_type=GlobalPipelineConfig,
-           field_path=FieldPathDetector.find_field_path_for_type(GlobalPipelineConfig, config_type)
+           field_path=FieldPathDetector.find_field_path_for_type(GlobalPipelineConfig, config_type),
+           lazy_class_name=f"Lazy{config_type.__name__}"
        )()
 
    # Context management
@@ -670,12 +663,13 @@ The configuration system's integration with UI frameworks demonstrates how archi
        set_current_global_config(GlobalPipelineConfig, current_config)
 
        # Create lazy dataclass for editing
-       lazy_config = LazyDataclassFactory.make_lazy_thread_local(
+       lazy_config = LazyDataclassFactory.make_lazy_with_field_level_auto_hierarchy(
            base_class=dataclass_type,
            global_config_type=GlobalPipelineConfig,
            field_path=FieldPathDetector.find_field_path_for_type(
                GlobalPipelineConfig, dataclass_type
-           )
+           ),
+           lazy_class_name=f"Lazy{dataclass_type.__name__}"
        )
 
        return lazy_config()
