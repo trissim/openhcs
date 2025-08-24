@@ -80,6 +80,50 @@ Handlers work seamlessly with OpenHCS's VFS system, supporting both disk and mem
 - **Pattern detection** works across different storage backends
 - **File discovery** respects backend-specific optimizations
 
+### Metaclass Registration System
+
+OpenHCS uses a metaclass-based registration system that automatically registers new handler classes:
+
+.. code:: python
+
+   class MicroscopeHandler(ABC, metaclass=MicroscopeHandlerMeta):
+       """Base class with automatic registration."""
+
+The metaclass automatically:
+
+- **Registers handlers** upon class definition (no manual registration needed)
+- **Validates implementation** of required abstract methods
+- **Maintains handler registry** for factory pattern selection
+- **Enables automatic detection** based on handler capabilities
+
+This design ensures that new microscope formats are automatically available to the system once their handler class is defined.
+
+### OpenHCS Native Handler
+
+The OpenHCS handler represents a special case that leverages existing handler components while using OpenHCS-specific metadata:
+
+.. code:: python
+
+   class OpenHCSHandler(MicroscopeHandler):
+       """Handler for OpenHCS native format with JSON metadata."""
+
+**Key Architectural Features**:
+
+- **Component reuse**: Leverages existing parser and metadata handler infrastructure
+- **JSON-based metadata**: Uses `openhcsmetadata.json` instead of microscope-specific formats
+- **Structured metadata**: Standardized JSON schema for plate layout, acquisition parameters, and file organization
+- **Self-describing datasets**: Datasets carry their own metadata, making them portable and self-contained
+
+**OpenHCS Metadata Structure**:
+The `openhcsmetadata.json` file contains:
+
+- **Plate layout**: Well positions, field coordinates, channel information
+- **Acquisition parameters**: Microscope settings, imaging conditions, timestamps
+- **File organization**: Directory structure, filename patterns, data relationships
+- **Processing history**: Applied transformations, analysis results, provenance tracking
+
+This approach enables OpenHCS to create fully self-describing datasets that can be processed consistently regardless of the original microscope platform.
+
 ## Extensibility: Adding New Microscope Formats
 
 The handler architecture makes adding support for new microscope formats straightforward:
