@@ -62,7 +62,7 @@ OpenHCS follows a clean, hierarchical module organization optimized for GPU-acce
     │   ├── steps/                  # FunctionStep and step implementations
     │   ├── config/                 # Configuration classes and management
     │   └── context/                # ProcessingContext and state management
-    ├── processing/                 # 574+ GPU-accelerated processing functions
+    ├── processing/                 # Integrated Python image processing libraries
     │   └── backends/               # Organized by computational backend
     │       ├── processors/         # Image processing functions
     │       ├── analysis/           # Analysis and measurement functions
@@ -110,7 +110,7 @@ The ``core/`` module contains the fundamental orchestration and pipeline managem
 processing/backends/
 ^^^^^^^^^^^^^^^^^^^^
 
-The ``processing/backends/`` module contains 574+ GPU-accelerated processing functions organized by computational backend:
+The ``processing/backends/`` module provides seamless integration with major Python image processing libraries, organized by computational backend:
 
 - **processors/**: Image processing functions (torch, cupy, numpy)
 - **analysis/**: Analysis and measurement functions

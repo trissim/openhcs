@@ -1,7 +1,7 @@
 Function Library
 ================
 
-OpenHCS provides 574+ processing functions across multiple computational backends, all unified under a consistent 3D array interface. Understanding this function library is essential for building effective analysis pipelines.
+OpenHCS provides seamless integration with major Python image processing libraries, all unified under a consistent 3D array interface. Understanding this function library is essential for building effective analysis pipelines.
 
 The 3D Array Contract
 ---------------------
@@ -48,58 +48,74 @@ Many image processing libraries provide 2D functions. OpenHCS automatically wrap
 
 **How it works**: OpenHCS detects 2D functions and automatically applies them to each slice in the Z-dimension, then restacks the results into a 3D output.
 
-Available Function Categories
-----------------------------
+Supported Python Libraries
+--------------------------
 
-Image Processing Functions
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+OpenHCS provides native integration with major Python image processing libraries through its unified registry system:
 
-**Filtering and Enhancement**: ~150 functions
+Scikit-Image Integration
+~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: python
-
-   from openhcs.processing.backends.processors.cupy_processor import (
-       gaussian_filter, tophat, enhance_contrast, edge_magnitude
-   )
-   
-   # Noise reduction and enhancement
-   step = FunctionStep(func=(gaussian_filter, {'sigma': 2.0}))
-   step = FunctionStep(func=(tophat, {'selem_radius': 25}))
-
-**Morphological Operations**: ~80 functions
+**Modules**: filters, morphology, segmentation, feature, measure, transform, restoration, exposure
 
 .. code-block:: python
 
-   from openhcs.processing.backends.processors.cupy_processor import (
-       binary_opening, binary_closing, binary_erosion, binary_dilation
-   )
-   
-   # Shape-based processing
-   step = FunctionStep(func=(binary_opening, {'footprint_radius': 3}))
+   from skimage import filters, morphology, segmentation
 
-**Segmentation and Thresholding**: ~60 functions
+   # All scikit-image functions work seamlessly in OpenHCS
+   step = FunctionStep(func=(filters.gaussian, {'sigma': 2.0}))
+   step = FunctionStep(func=(morphology.opening, {'footprint': morphology.disk(3)}))
+   step = FunctionStep(func=(segmentation.watershed, {}))
+
+**Benefits**: CPU-compatible, extensive documentation, mature algorithms
+
+CuCIM Integration (GPU-Accelerated Scikit-Image)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Modules**: filters, morphology, measure, segmentation, feature, restoration, transform, exposure
 
 .. code-block:: python
 
-   from openhcs.processing.backends.processors.cupy_processor import (
-       threshold_otsu, watershed, label_connected_components
-   )
-   
-   # Object detection and segmentation
-   step = FunctionStep(func=(threshold_otsu, {'binary': True}))
+   from cucim import skimage as cusk
 
-Analysis Functions
-~~~~~~~~~~~~~~~~~
+   # GPU-accelerated versions of scikit-image functions
+   step = FunctionStep(func=(cusk.filters.gaussian, {'sigma': 2.0}))
+   step = FunctionStep(func=(cusk.morphology.opening, {}))
+   step = FunctionStep(func=(cusk.segmentation.watershed, {}))
 
-**Cell Counting and Detection**: ~40 functions
+**Benefits**: 10-100x faster than CPU, identical API to scikit-image
+
+Pyclesperanto Integration (OpenCL GPU)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Coverage**: Comprehensive GPU image processing library
+
+.. code-block:: python
+
+   import pyclesperanto as cle
+
+   # OpenCL GPU acceleration (works with AMD, Intel, NVIDIA)
+   step = FunctionStep(func=(cle.gaussian_blur, {'sigma_x': 2.0, 'sigma_y': 2.0}))
+   step = FunctionStep(func=(cle.opening_box, {'radius_x': 3, 'radius_y': 3}))
+   step = FunctionStep(func=(cle.watershed, {}))
+
+**Benefits**: Cross-platform GPU support, optimized for image processing
+
+OpenHCS-Specific Functions
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Specialized Analysis**: Cell counting, neurite tracing, feature extraction
 
 .. code-block:: python
 
    from openhcs.processing.backends.analysis.cell_counting_cpu import (
        count_cells_single_channel, DetectionMethod
    )
-   
-   # Automated cell counting
+   from openhcs.processing.backends.analysis.skan_axon_analysis import (
+       skan_axon_skeletonize_and_analyze, AnalysisDimension
+   )
+
+   # Specialized analysis functions built for HCS workflows
    step = FunctionStep(
        func=(count_cells_single_channel, {
            'detection_method': DetectionMethod.WATERSHED,
@@ -108,57 +124,20 @@ Analysis Functions
        })
    )
 
-**Neurite and Structure Analysis**: ~30 functions
-
-.. code-block:: python
-
-   from openhcs.processing.backends.analysis.skan_axon_analysis import (
-       skan_axon_skeletonize_and_analyze, AnalysisDimension
-   )
-   
-   # Neurite tracing and measurement
-   step = FunctionStep(
-       func=(skan_axon_skeletonize_and_analyze, {
-           'analysis_dimension': AnalysisDimension.TWO_D,
-           'min_branch_length': 10.0
-       })
-   )
-
-**Feature Measurement**: ~50 functions
-
-.. code-block:: python
-
-   from openhcs.processing.backends.analysis.feature_extraction import (
-       measure_intensity_features, measure_morphology_features
-   )
-   
-   # Quantitative measurements
-   step = FunctionStep(func=(measure_intensity_features, {}))
-
-Assembly Functions
-~~~~~~~~~~~~~~~~~
-
-**Image Stitching**: ~25 functions
+**Image Assembly**: Stitching, projection, compositing
 
 .. code-block:: python
 
    from openhcs.processing.backends.assemblers.assemble_stack_cupy import (
        assemble_stack_cupy
    )
-   
-   # Combine multiple images into larger field of view
-   step = FunctionStep(func=(assemble_stack_cupy, {}))
-
-**Projection and Compositing**: ~35 functions
-
-.. code-block:: python
-
-   from openhcs.processing.backends.processors.cupy_processor import (
-       max_projection, mean_projection, create_composite
+   from openhcs.processing.backends.processors.torch_processor import (
+       max_projection, stack_percentile_normalize
    )
-   
-   # Combine Z-stacks or create multi-channel composites
-   step = FunctionStep(func=(max_projection, {}))
+
+   # HCS-optimized assembly and processing
+   step = FunctionStep(func=(assemble_stack_cupy, {}))
+   step = FunctionStep(func=(stack_percentile_normalize, {}))
 
 Memory Type System
 ------------------
@@ -296,4 +275,15 @@ All function parameters can be specified in the FunctionStep:
 - **Function parameters**: Passed to the processing function
 - **Step parameters**: Control OpenHCS behavior (name, variable_components, etc.)
 
-The function library provides a comprehensive toolkit for bioimage analysis while maintaining consistency and performance across different computational backends. The 3D array contract and automatic memory management enable complex analysis workflows without manual data type coordination.
+The function library provides seamless access to the Python image processing ecosystem while maintaining consistency and performance across different computational backends. The 3D array contract and automatic memory management enable complex analysis workflows without manual data type coordination.
+
+Key Benefits of Library Integration
+----------------------------------
+
+**Unified Interface**: All functions follow the same 3D array contract regardless of underlying library
+
+**Automatic Memory Management**: OpenHCS handles conversions between NumPy, CuPy, PyTorch, and pyclesperanto arrays
+
+**Performance Optimization**: GPU-accelerated versions automatically used when available
+
+**Ecosystem Leverage**: Access to the full Python image processing ecosystem without vendor lock-in
