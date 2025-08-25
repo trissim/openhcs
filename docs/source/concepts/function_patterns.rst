@@ -112,21 +112,19 @@ The ``group_by`` parameter is essential for dictionary patterns. It tells OpenHC
        group_by=GroupBy.CHANNEL
    )
 
-   # group_by=GroupBy.WELL means keys correspond to well IDs
+   # group_by=GroupBy.CHANNEL means keys correspond to channel numbers
    step = FunctionStep(
        func={
-           'A01': (process_control, {}),    # Processes well A01
-           'A02': (process_treatment, {})   # Processes well A02
+           '1': (process_dapi, {}),     # Processes channel 1 data
+           '2': (process_gfp, {}),      # Processes channel 2 data
+           '3': (process_rfp, {})       # Processes channel 3 data
        },
-       group_by=GroupBy.WELL
+       group_by=GroupBy.CHANNEL
    )
 
 **Available Group By Options**:
 
-- ``GroupBy.CHANNEL``: Route by fluorescence channel
-- ``GroupBy.WELL``: Route by well position
-- ``GroupBy.SITE``: Route by imaging site
-- ``GroupBy.Z_INDEX``: Route by Z-plane
+- ``GroupBy.CHANNEL``: Route by fluorescence channel (most common)
 
 Pattern Selection Guide
 ----------------------

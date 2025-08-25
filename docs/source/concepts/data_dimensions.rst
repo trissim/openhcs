@@ -84,21 +84,21 @@ Process Each Channel Separately
 
 **When to use**: Operations that combine data across sites for each channel (creating channel composites, channel-specific normalization).
 
-Process Each Well Separately
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Process Each Z-Plane Separately
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Process each well independently
+   # Process each Z-plane independently for 3D analysis
    step = FunctionStep(
-       func=(analyze_well_summary, {}),
-       variable_components=[VariableComponents.WELL],
-       name="well_analysis"
+       func=(max_projection_across_sites, {}),
+       variable_components=[VariableComponents.Z_INDEX],
+       name="z_projection"
    )
 
-**What this does**: Groups all files from each well together.
+**What this does**: Groups files by (well, site, channel) and processes each Z-plane separately.
 
-**When to use**: Well-level analysis, summary statistics, or operations that need all data from one experimental condition.
+**When to use**: 3D imaging where you need to combine or analyze across Z-planes, such as creating maximum projections.
 
 Multiple Variable Components
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -160,10 +160,7 @@ Available Group By Options
 
 .. code-block:: python
 
-   GroupBy.CHANNEL   # Route by channel number
-   GroupBy.WELL      # Route by well ID  
-   GroupBy.SITE      # Route by site number
-   GroupBy.Z_INDEX   # Route by Z-plane
+   GroupBy.CHANNEL   # Route by channel number (primary use case)
 
 Common Data Organization Patterns
 ---------------------------------
@@ -205,25 +202,25 @@ Different analysis for different fluorescent markers:
 
 **Use cases**: Multi-marker experiments where each channel represents different biological features.
 
-Condition-Specific Processing
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Multi-Channel Processing
+~~~~~~~~~~~~~~~~~~~~~~~
 
-Different processing for different experimental conditions:
+Different processing for different fluorescent markers:
 
 .. code-block:: python
 
-   # Different preprocessing for different treatments
+   # Different preprocessing for different channels
    step = FunctionStep(
        func={
-           'A01': (control_preprocessing, {}),     # Control wells
-           'A02': (treatment_preprocessing, {})    # Treatment wells
+           '1': [(gaussian_filter, {'sigma': 1.0}), (tophat, {'selem_radius': 15})],     # DAPI preprocessing
+           '2': [(gaussian_filter, {'sigma': 2.0}), (enhance_contrast, {'percentile_range': (1, 99)})]    # GFP preprocessing
        },
-       group_by=GroupBy.WELL,
+       group_by=GroupBy.CHANNEL,
        variable_components=[VariableComponents.SITE],
-       name="condition_preprocessing"
+       name="channel_preprocessing"
    )
 
-**Use cases**: Experiments where different conditions require different analysis approaches.
+**Use cases**: Multi-marker experiments where each channel requires different preprocessing approaches.
 
 Z-Stack Processing
 ~~~~~~~~~~~~~~~~~

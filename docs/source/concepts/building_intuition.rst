@@ -130,43 +130,47 @@ Different analysis for different fluorescent markers:
 
 **Mental model**: Common preparation followed by specialized analysis based on what each channel shows.
 
-Condition-Specific Processing
+Multi-Channel Processing Workflows
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Different processing for different experimental conditions:
+Different processing for different fluorescent markers:
 
 .. code-block:: python
 
-   # Different preprocessing based on experimental condition
+   # Different preprocessing for different channels
    pipeline = Pipeline([
        FunctionStep(
            func={
-               'control': [
+               '1': [  # DAPI channel
                    (gaussian_filter, {'sigma': 1.0}),
                    (tophat, {'selem_radius': 25})
                ],
-               'treatment': [
+               '2': [  # GFP channel
                    (gaussian_filter, {'sigma': 1.5}),
                    (enhance_contrast, {'percentile_range': (2, 98)}),
                    (tophat, {'selem_radius': 30})
                ]
            },
-           group_by=GroupBy.WELL,
+           group_by=GroupBy.CHANNEL,
            variable_components=[VariableComponents.SITE],
-           name="condition_preprocessing"
+           name="channel_preprocessing"
        ),
        
-       # Same analysis for all conditions
+       # Channel-specific analysis
        FunctionStep(
-           func=analyze_morphology,
+           func={
+               '1': (count_nuclei, {}),      # DAPI analysis
+               '2': (trace_neurites, {})     # GFP analysis
+           },
+           group_by=GroupBy.CHANNEL,
            variable_components=[VariableComponents.SITE],
            name="analyze"
        )
    ])
 
-**When to use**: Experiments where different conditions require different processing approaches.
+**When to use**: Multi-marker experiments where each channel requires different processing and analysis.
 
-**Mental model**: Adaptive preprocessing that adjusts to experimental conditions, followed by standardized analysis.
+**Mental model**: Channel-specific preprocessing and analysis pipelines that run in parallel.
 
 Memory-to-Disk Materialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
