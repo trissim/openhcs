@@ -1,112 +1,54 @@
 API Reference
 =============
 
-This section provides comprehensive API documentation for OpenHCS. Use this reference to understand the classes, functions, and modules available for building bioimage analysis workflows.
+The API reference documentation is currently being updated to reflect the latest OpenHCS architecture and remove outdated content.
 
-🚀 **Complete Working Example**
--------------------------------
+For now, please refer to:
 
-**Before diving into the API, see our complete production example:**
+**Core Concepts**: :doc:`../concepts/index`
+  Understanding pipelines, steps, function patterns, and system architecture
 
-📁 **Gold Standard Script**: `openhcs/debug/example_export.py <https://github.com/trissim/toolong/blob/openhcs/openhcs/debug/example_export.py>`_
+**Getting Started**: :doc:`../getting_started/getting_started`
+  Basic examples and common usage patterns
 
-This script shows **every API component in action** with real parameters and working code. Perfect for agents and developers to understand practical usage patterns.
+**Function Library**: :doc:`../concepts/function_library`
+  Available processing functions and library integrations
 
-**Quick Navigation**:
-- **New to OpenHCS?** Start with :doc:`orchestrator` and :doc:`function_step`
-- **Building pipelines?** See :doc:`processing_backends` for available functions
-- **Managing data?** Check :doc:`io_storage` for file and storage operations
-- **Advanced usage?** Explore :doc:`config` for configuration options
+Key Classes
+-----------
 
-Essential Components
-====================
+**PipelineOrchestrator**
 
-Start here for the core OpenHCS API. These are the main classes you'll use to build bioimage analysis workflows.
+.. code-block:: python
 
-.. toctree::
-   :maxdepth: 2
+    from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+    from openhcs.core.config import GlobalPipelineConfig
 
-   orchestrator
-   function_step
+    orchestrator = PipelineOrchestrator(
+        plate_path="/path/to/data",
+        global_config=GlobalPipelineConfig(num_workers=4)
+    )
 
-**PipelineOrchestrator**: The main execution engine for running pipelines across multiple plates and wells.
+**FunctionStep**
 
-**FunctionStep**: The building block for pipeline steps, supporting flexible function patterns and automatic GPU memory management.
+.. code-block:: python
 
-Processing and Analysis
-=======================
+    from openhcs.core.steps.function_step import FunctionStep
+    from openhcs.constants.constants import VariableComponents
 
-Discover the 574+ available processing functions organized by computational backend and functionality.
+    step = FunctionStep(
+        func=(processing_function, {'param': value}),
+        variable_components=[VariableComponents.SITE],
+        name="step_name"
+    )
 
-.. toctree::
-   :maxdepth: 2
+**Pipeline**
 
-   processing_backends
-   image_processing_functions
-   stitching_functions
-   dtype_conversion
+.. code-block:: python
 
-**Processing Backends**: GPU-accelerated functions for image processing, analysis, and assembly. Includes automatic memory type conversion between NumPy, CuPy, PyTorch, JAX, and pyclesperanto.
+    from openhcs.core.pipeline import Pipeline
 
-**Image Processing Functions**: Core image processing functions across 6 computational backends (NumPy, CuPy, PyTorch, TensorFlow, JAX, pyclesperanto) for filtering, normalization, morphology, and composition.
+    pipeline = Pipeline([step1, step2, step3])
+    orchestrator.run_pipeline(pipeline)
 
-**Stitching Functions**: Complete stitching workflow with GPU-accelerated position generation and image assembly using Ashlar and MIST algorithms.
-
-**Dtype Conversion**: Automatic data type conversion system for GPU libraries with specific dtype requirements. Handles binary and uint8 conversions transparently while maintaining pipeline consistency.
-
-**Unified Registry**: New unified registry system that eliminates 1000+ lines of code duplication while providing clean abstractions for external library function registration. Includes LibraryRegistryBase, ProcessingContract, and intelligent caching.
-
-Data Management
-===============
-
-Handle file I/O, storage backends, and configuration for datasets from MB to 100GB+.
-
-.. toctree::
-   :maxdepth: 2
-
-   io_storage
-   config
-   code_generation
-
-**I/O and Storage**: Unified file operations with automatic backend selection (disk, memory, ZARR). Handles large dataset compression and VFS abstraction.
-
-**Configuration**: Global pipeline configuration, GPU resource management, and system settings.
-
-**Code Generation**: Bidirectional code/UI editing APIs for converting between TUI state and executable Python code.
-
-Pipeline Architecture
-=====================
-
-Core pipeline components for building and executing OpenHCS workflows.
-
-.. toctree::
-   :maxdepth: 2
-
-   step_system
-   pipeline
-   pipeline_orchestrator
-   tui_system
-
-**Step System**: Complete step architecture including AbstractStep base class and FunctionStep implementation. Covers function patterns, variable components, and GPU integration.
-
-**Pipeline**: Core pipeline execution and compilation system.
-
-**TUI System**: Terminal User Interface for interactive pipeline building and execution.
-
-Advanced Components
-===================
-
-Specialized components for advanced usage and system integration.
-
-.. toctree::
-   :maxdepth: 2
-
-   file_system_manager
-   microscope_interfaces
-   microscopes
-
-**File System Manager**: Low-level file operations and VFS backend management.
-
-**Microscope Interfaces**: Interfaces for different microscopy platforms and file formats.
-
-**Microscopes**: Specific microscope implementations and format parsers.
+The complete API reference will be restored with updated examples and correct module paths.
