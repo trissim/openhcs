@@ -260,4 +260,61 @@ Common Patterns in Practice
 
 **Quality Control + Processing**: Function chains that include quality checks followed by conditional processing.
 
+Memory Type Integration
+----------------------
+
+OpenHCS automatically handles memory type conversion between different computational backends within function patterns:
+
+.. code-block:: python
+
+   # Chain functions from different backends - automatic conversion
+   step = FunctionStep(
+       func=[
+           stack_percentile_normalize,  # PyTorch function
+           tophat,                      # CuPy function
+           count_cells_single_channel   # NumPy function
+       ],
+       name="mixed_backend_processing",
+       variable_components=[VariableComponents.SITE]
+   )
+
+**How it works**: OpenHCS detects memory type requirements and automatically converts data between NumPy arrays, CuPy arrays, PyTorch tensors, and pyclesperanto arrays as needed.
+
+**Performance optimization**: Conversions are minimized by grouping operations by memory type when possible.
+
+Advanced Pattern Examples
+-------------------------
+
+Complex Multi-Channel Workflow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # Sophisticated multi-channel analysis with preprocessing chains
+   step = FunctionStep(
+       func={
+           '1': [  # DAPI channel - nuclear analysis
+               (gaussian_filter, {'sigma': 1.0}),
+               (tophat, {'selem_radius': 15}),
+               (threshold_otsu, {}),
+               (count_cells_single_channel, {
+                   'detection_method': DetectionMethod.WATERSHED,
+                   'min_sigma': 1.0,
+                   'max_sigma': 10.0
+               })
+           ],
+           '2': [  # GFP channel - neurite analysis
+               (gaussian_filter, {'sigma': 2.0}),
+               (enhance_contrast, {'percentile_range': (1, 99)}),
+               (skan_axon_skeletonize_and_analyze, {
+                   'analysis_dimension': AnalysisDimension.TWO_D,
+                   'min_branch_length': 10.0
+               })
+           ]
+       },
+       group_by=GroupBy.CHANNEL,
+       variable_components=[VariableComponents.SITE],
+       name="comprehensive_analysis"
+   )
+
 The function pattern system provides a systematic way to organize complex analysis workflows while maintaining clarity and performance. By understanding these patterns, you can build sophisticated analysis pipelines that handle the complexity of modern high-content screening experiments.

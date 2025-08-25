@@ -181,6 +181,46 @@ When you run a pipeline, OpenHCS follows a systematic execution model:
 
 This execution model handles all the complexity of parallel processing, memory management, and file organization, allowing you to focus on defining the analysis logic rather than managing infrastructure.
 
+Pipeline Orchestrator Execution Details
+---------------------------------------
+
+The PipelineOrchestrator is the central execution engine that manages the entire pipeline workflow through a sophisticated compilation and execution process.
+
+Compilation Process
+~~~~~~~~~~~~~~~~~~
+
+The orchestrator transforms your pipeline definition into an optimized execution plan through a 5-phase compilation process:
+
+1. **Step Plan Initialization**: Creates a basic plan for each step, resolving input/output paths within the VFS
+2. **ZARR Store Declaration**: If Zarr is the materialization backend, declares necessary Zarr stores
+3. **Materialization Planning**: Determines which steps require output written to persistent storage
+4. **Memory Validation**: Checks memory requirements against available system resources
+5. **GPU Assignment**: Assigns specific GPU devices to processing tasks for balanced utilization
+
+.. code-block:: python
+
+   # The orchestrator handles compilation automatically
+   orchestrator = PipelineOrchestrator(plate_path, global_config=config)
+
+   # Three-phase execution workflow
+   orchestrator.initialize()                                    # Environment setup
+   compiled_contexts = orchestrator.compile_pipelines(pipeline) # 5-phase compilation
+   results = orchestrator.execute_compiled_plate(              # Parallel execution
+       pipeline_definition=pipeline,
+       compiled_contexts=compiled_contexts,
+       max_workers=config.num_workers
+   )
+
+Parallel Execution Model
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The orchestrator executes pipelines with sophisticated resource management:
+
+- **Multi-well parallelization**: Processes multiple wells simultaneously across worker processes
+- **GPU resource management**: Automatically assigns and balances GPU devices
+- **Memory optimization**: Manages memory usage across parallel workers
+- **Error handling**: Provides detailed error reporting and recovery mechanisms
+
 When to Use Pipelines vs Scripts
 --------------------------------
 

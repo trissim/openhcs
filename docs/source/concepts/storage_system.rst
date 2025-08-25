@@ -198,6 +198,38 @@ Zarr Output Structure
 Storage Configuration Examples
 -----------------------------
 
+VFS Configuration Details
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from openhcs.core.config import VFSConfig, ZarrConfig, GlobalPipelineConfig
+   from openhcs.constants.constants import Backend, MaterializationBackend, ZarrCompressor, ZarrChunkStrategy
+
+   # Complete VFS configuration
+   vfs_config = VFSConfig(
+       intermediate_backend=Backend.MEMORY,              # Fast memory for intermediate steps
+       materialization_backend=MaterializationBackend.ZARR  # ZARR for final results
+   )
+
+   # Detailed ZARR configuration
+   zarr_config = ZarrConfig(
+       store_name="images.zarr",                         # ZARR store filename
+       compressor=ZarrCompressor.ZSTD,                   # Compression algorithm
+       compression_level=1,                              # Compression level (1-9)
+       shuffle=True,                                     # Enable shuffle filter
+       chunk_strategy=ZarrChunkStrategy.SINGLE,          # Chunking strategy
+       ome_zarr_metadata=True,                           # OME-ZARR metadata
+       write_plate_metadata=True                         # Plate-level metadata
+   )
+
+   # Integration with global configuration
+   global_config = GlobalPipelineConfig(
+       vfs=vfs_config,
+       zarr=zarr_config,
+       num_workers=8
+   )
+
 High-Performance Processing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -205,7 +237,7 @@ High-Performance Processing
 
    # Optimize for speed - keep everything in memory
    config.materialization_defaults.backend = Backend.MEMORY
-   
+
    # Only save final results to disk
    final_step = FunctionStep(
        func=generate_final_results,

@@ -60,19 +60,14 @@ Mental models and patterns to help you understand when and how to use different 
 
    building_intuition
 
-Legacy Documentation
+Additional Reference
 ===================
 
-Existing documentation that will be reorganized or updated.
+Additional documentation for advanced users and developers.
 
 .. toctree::
    :maxdepth: 2
 
-   pipeline_orchestrator
-   function_handling
-   step
-   pipeline
-   storage_backends
-   basic_microscopy
-   architecture_overview
    module_structure
+   processing_context
+   directory_structure
