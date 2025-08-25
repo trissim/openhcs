@@ -1,7 +1,7 @@
-Function System
-===============
+Function Library
+================
 
-OpenHCS provides 574+ processing functions across multiple computational backends, all unified under a consistent 3D array interface. Understanding this function system is essential for building effective analysis pipelines.
+OpenHCS provides 574+ processing functions across multiple computational backends, all unified under a consistent 3D array interface. Understanding this function library is essential for building effective analysis pipelines.
 
 The 3D Array Contract
 ---------------------
@@ -296,4 +296,4 @@ All function parameters can be specified in the FunctionStep:
 - **Function parameters**: Passed to the processing function
 - **Step parameters**: Control OpenHCS behavior (name, variable_components, etc.)
 
-The function system provides a comprehensive toolkit for bioimage analysis while maintaining consistency and performance across different computational backends. The 3D array contract and automatic memory management enable complex analysis workflows without manual data type coordination.
+The function library provides a comprehensive toolkit for bioimage analysis while maintaining consistency and performance across different computational backends. The 3D array contract and automatic memory management enable complex analysis workflows without manual data type coordination.

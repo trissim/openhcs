@@ -1,5 +1,5 @@
-Data Organization
-=================
+Data Dimensions
+===============
 
 High-content screening data has multiple dimensions - wells, sites, channels, Z-planes, and timepoints. OpenHCS provides systematic ways to organize processing across these dimensions through variable components and group by parameters.
 
@@ -264,4 +264,4 @@ Choosing the Right Organization
 - **Memory usage**: Fewer variable components = larger data groups = more memory per group
 - **I/O efficiency**: Group organization affects how data is loaded and cached
 
-The data organization system provides systematic control over how your analysis processes the multiple dimensions of HCS data, enabling both simple single-image operations and complex multi-dimensional workflows.
+The data dimensions system provides systematic control over how your analysis processes the multiple dimensions of HCS data, enabling both simple single-image operations and complex multi-dimensional workflows.

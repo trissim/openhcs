@@ -18,20 +18,37 @@ Start here to understand the scientific problems that OpenHCS solves.
 
    domain_fundamentals
 
-Core OpenHCS Concepts
-=====================
+Core Building Blocks
+===================
 
-The fundamental building blocks of OpenHCS - what they are, why they exist, and how they work together.
+The fundamental concepts that define how OpenHCS works.
 
 .. toctree::
    :maxdepth: 1
 
    pipelines_and_steps
    function_patterns
-   data_organization
-   function_system
+   data_dimensions
+
+Processing System
+=================
+
+Understanding what functions are available and how data is stored.
+
+.. toctree::
+   :maxdepth: 1
+
+   function_library
    storage_system
-   directory_structure
+
+Practical Guidance
+==================
+
+Mental models and patterns for effective usage.
+
+.. toctree::
+   :maxdepth: 1
+
    building_intuition
 
 Additional Reference
