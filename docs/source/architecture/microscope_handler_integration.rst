@@ -52,43 +52,64 @@ Each microscope format has unique filename conventions. Parsers extract semantic
 
 .. code-block:: python
 
-   class ImageXpressParser(FilenameParser):
-       """Parser for ImageXpress filename format: A01_s1_w1.tif"""
+   class ImageXpressFilenameParser(FilenameParser):
+       """Parser for ImageXpress filename format with placeholder support."""
 
-       def parse_filename(self, filename: str) -> ParsedFilename:
-           # Extract well, site, wavelength from filename
-           match = re.match(r'([A-Z]\d{2})_s(\d+)_w(\d+)', filename)
-           if not match:
-               raise ValueError(f"Invalid ImageXpress filename: {filename}")
+       # Actual regex pattern from codebase - supports placeholders and optional components
+       _pattern = re.compile(r'(?:.*?_)?([A-Z]\d+)(?:_s(\d+|\{[^\}]*\}))?(?:_w(\d+|\{[^\}]*\}))?(?:_z(\d+|\{[^\}]*\}))?(\.\w+)?$')
 
-           return ParsedFilename(
-               well=match.group(1),        # "A01"
-               site=int(match.group(2)),   # 1
-               wavelength=int(match.group(3))  # 1
-           )
+       def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+           """Parse ImageXpress filename, handling placeholders like {iii}."""
+           basename = Path(str(filename)).name
+           match = self._pattern.match(basename)
 
-       def construct_filename(self, well: str, site: int, wavelength: int) -> str:
-           """Reverse operation: construct filename from components."""
-           return f"{well}_s{site}_w{wavelength}.tif"
+           if match:
+               well, site_str, channel_str, z_str, ext = match.groups()
 
-   class OperaPhenixParser(FilenameParser):
-       """Parser for Opera Phenix format: r01c01f01p01-ch1sk1fk1fl1.tiff"""
+               # Helper to parse components or return None for placeholders
+               parse_comp = lambda s: None if not s or '{' in s else int(s)
 
-       def parse_filename(self, filename: str) -> ParsedFilename:
-           # More complex pattern with row/col encoding
-           pattern = r'r(\d{2})c(\d{2})f(\d{2})p(\d{2})-ch(\d+)sk(\d+)fk(\d+)fl(\d+)'
-           match = re.match(pattern, filename)
-           if not match:
-               raise ValueError(f"Invalid Opera Phenix filename: {filename}")
+               return {
+                   'well': well,
+                   'site': parse_comp(site_str),
+                   'channel': parse_comp(channel_str),
+                   'z_index': parse_comp(z_str),
+                   'extension': ext if ext else '.tif'
+               }
+           return None
 
-           row, col = int(match.group(1)), int(match.group(2))
-           well = f"{chr(64 + row)}{col:02d}"  # Convert to A01 format
+   class OperaPhenixFilenameParser(FilenameParser):
+       """Parser for Opera Phenix format with complex pattern matching."""
 
-           return ParsedFilename(
-               well=well,
-               site=int(match.group(3)),
-               channel=int(match.group(5))
-           )
+       # Actual regex pattern - much more complex than documentation showed
+       _pattern = re.compile(r"r(\d{1,2})c(\d{1,2})f(\d+|\{[^\}]*\})p(\d+|\{[^\}]*\})-ch(\d+|\{[^\}]*\})(?:sk\d+)?(?:fk\d+)?(?:fl\d+)?(\.\w+)$", re.I)
+
+       def parse_filename(self, filename: str) -> Optional[Dict[str, Any]]:
+           """Parse Opera Phenix filename with row/col to well conversion."""
+           basename = os.path.basename(filename)
+           match = self._pattern.match(basename)
+
+           if match:
+               row, col, site_str, z_str, channel_str, ext = match.groups()
+
+               # Helper function for placeholder handling
+               def parse_comp(s):
+                   if not s or '{' in s:
+                       return None
+                   return int(s)
+
+               # Convert row/col to well format (R01C01)
+               well = f"R{int(row):02d}C{int(col):02d}"
+
+               return {
+                   'well': well,
+                   'site': parse_comp(site_str),
+                   'channel': parse_comp(channel_str),
+                   'wavelength': parse_comp(channel_str),  # Backward compatibility
+                   'z_index': parse_comp(z_str),
+                   'extension': ext if ext else '.tif'
+               }
+           return None
 
 Metadata Handler Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -161,42 +182,53 @@ Each microscope format requires different workspace preparation to normalize dir
 .. code-block:: python
 
    class ImageXpressHandler(MicroscopeHandler):
-       def _prepare_workspace(self, input_dir: Path, workspace_dir: Path):
-           """Flatten nested Z-step directories into flat structure."""
-           # ImageXpress organizes files like: TimePoint_1/ZStep_1/A01_s1_w1.tif
-           # We need to flatten this to: workspace/A01_s1_w1.tif
+       @property
+       def common_dirs(self) -> List[str]:
+           """Directories that indicate ImageXpress format."""
+           return ['TimePoint_1']
 
-           for timepoint_dir in input_dir.glob("TimePoint_*"):
-               if timepoint_dir.is_dir():
-                   # Check for Z-step subdirectories
-                   z_dirs = list(timepoint_dir.glob("ZStep_*"))
-                   if z_dirs:
-                       # Flatten Z-step structure
-                       for z_dir in z_dirs:
-                           for image_file in z_dir.glob("*.tif"):
-                               # Create symlink in flat workspace
-                               workspace_link = workspace_dir / image_file.name
-                               workspace_link.symlink_to(image_file)
-                   else:
-                       # No Z-steps, process files directly
-                       for image_file in timepoint_dir.glob("*.tif"):
-                           workspace_link = workspace_dir / image_file.name
-                           workspace_link.symlink_to(image_file)
+       def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
+           """Flatten Z-step directory structure and normalize filenames."""
+           # Find subdirectories using filemanager
+           entries = filemanager.list_dir(workspace_path, Backend.DISK.value)
+           subdirs = [Path(workspace_path) / entry for entry in entries
+                     if (Path(workspace_path) / entry).is_dir()]
+
+           # Check for common directories (TimePoint_1, etc.)
+           common_dir_found = False
+           for subdir in subdirs:
+               if any(common_dir in subdir.name for common_dir in self.common_dirs):
+                   self._flatten_zsteps(subdir, filemanager)
+                   common_dir_found = True
+
+           # If no common directory found, process workspace directly
+           if not common_dir_found:
+               self._flatten_zsteps(workspace_path, filemanager)
+
+           return workspace_path
+
+       def _flatten_zsteps(self, directory: Path, filemanager: FileManager):
+           """Flatten ZStep_N directories and normalize filenames."""
+           # Implementation handles Z-step flattening and filename normalization
+           # Uses filemanager for all file operations to respect VFS boundaries
 
    class OperaPhenixHandler(MicroscopeHandler):
-       def _prepare_workspace(self, input_dir: Path, workspace_dir: Path):
-           """Handle Opera Phenix multi-level organization."""
-           # Opera Phenix may have: Images/r01c01f01p01-ch1sk1fk1fl1.tiff
-           images_dir = input_dir / "Images"
-           if images_dir.exists():
-               for image_file in images_dir.rglob("*.tiff"):
-                   workspace_link = workspace_dir / image_file.name
-                   workspace_link.symlink_to(image_file)
-           else:
-               # Direct structure, create symlinks
-               for image_file in input_dir.glob("*.tiff"):
-                   workspace_link = workspace_dir / image_file.name
-                   workspace_link.symlink_to(image_file)
+       def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
+           """Apply spatial layout remapping to Opera Phenix filenames."""
+           # Check if already processed (temp directory exists)
+           temp_dir_name = "__opera_phenix_temp"
+           entries = filemanager.list_dir(workspace_path, Backend.DISK.value)
+
+           for entry in entries:
+               entry_path = Path(workspace_path) / entry
+               if entry_path.is_dir() and entry_path.name == temp_dir_name:
+                   return workspace_path  # Already processed
+
+           # Apply spatial remapping using XML metadata
+           # Creates temporary directory, processes files, then replaces originals
+           # Uses filemanager for all operations to maintain VFS compliance
+
+           return workspace_path
 
 This workspace preparation ensures pipelines always see a consistent flat structure regardless of the original microscope organization.
 
