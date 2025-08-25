@@ -38,7 +38,10 @@ A step is a ``FunctionStep`` - the basic processing unit in OpenHCS. Each step c
 
    # A step that normalizes images, processing each site separately
    normalize_step = FunctionStep(
-       func=stack_percentile_normalize,
+       func=(stack_percentile_normalize, {
+           'low_percentile': 1.0,
+           'high_percentile': 99.0
+       }),
        name="normalize",
        variable_components=[VariableComponents.SITE]
    )
@@ -68,7 +71,7 @@ Automatic Parallelization
 
    # OpenHCS approach - automatic parallelization
    step = FunctionStep(
-       func=process_image,
+       func=(process_image, {}),
        variable_components=[VariableComponents.SITE]
    )
    # Automatically processes all wells and sites in parallel
@@ -90,7 +93,7 @@ Memory Management
        cpu_result = cpu_function(cpu_data)
 
    # OpenHCS approach - automatic memory management
-   step = FunctionStep(func=gpu_function)  # Automatic GPU memory management
+   step = FunctionStep(func=(gpu_function, {}))  # Automatic GPU memory management
 
 **Benefits**: OpenHCS automatically handles GPU memory allocation, transfers between CPU and GPU, and fallback to CPU when GPU memory is exhausted.
 
@@ -107,7 +110,7 @@ Format Abstraction
    # ... different logic for each format
 
    # OpenHCS approach - format-agnostic
-   step = FunctionStep(func=process_image)  # Works with any format
+   step = FunctionStep(func=(process_image, {}))  # Works with any format
 
 **Benefits**: OpenHCS automatically detects microscope formats and handles file discovery, so your analysis code works with data from any supported microscope.
 
@@ -124,9 +127,10 @@ Reproducibility
 
    # OpenHCS approach - declarative configuration
    step = FunctionStep(
-       func=analyze_cells,
-       threshold=0.5,
-       min_size=100,
+       func=(analyze_cells, {
+           'threshold': 0.5,
+           'min_size': 100
+       }),
        name="cell_analysis"
    )
 
@@ -143,7 +147,7 @@ Scalability
 
    # OpenHCS approach - scalable processing
    step = FunctionStep(
-       func=process_large_image,
+       func=(process_large_image, {}),
        variable_components=[VariableComponents.SITE]
    )
    # Automatically chunks data and manages memory usage
@@ -220,25 +224,5 @@ The orchestrator executes pipelines with sophisticated resource management:
 - **GPU resource management**: Automatically assigns and balances GPU devices
 - **Memory optimization**: Manages memory usage across parallel workers
 - **Error handling**: Provides detailed error reporting and recovery mechanisms
-
-When to Use Pipelines vs Scripts
---------------------------------
-
-**Use OpenHCS Pipelines When**:
-
-- Processing multiple wells, sites, or channels
-- Working with large datasets (>1GB)
-- Need GPU acceleration
-- Want reproducible, shareable analysis
-- Working with multiple microscope formats
-- Need parallel processing
-
-**Use Traditional Scripts When**:
-
-- One-off analysis of single images
-- Exploratory data analysis
-- Custom visualization or plotting
-- Integration with non-OpenHCS tools
-- Simple file manipulation tasks
 
 The pipeline approach scales from simple single-step processing to complex multi-stage analysis workflows, providing a consistent framework that grows with your analysis needs.

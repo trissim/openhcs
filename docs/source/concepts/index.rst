@@ -24,40 +24,14 @@ Core OpenHCS Concepts
 The fundamental building blocks of OpenHCS - what they are, why they exist, and how they work together.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    pipelines_and_steps
    function_patterns
    data_organization
-
-Processing and Functions
-========================
-
-Understanding how OpenHCS processes data and what functions are available.
-
-.. toctree::
-   :maxdepth: 2
-
    function_system
-
-Data Management
-===============
-
-How OpenHCS manages data storage, memory, and results.
-
-.. toctree::
-   :maxdepth: 2
-
    storage_system
-
-Building Intuition
-==================
-
-Mental models and patterns to help you understand when and how to use different OpenHCS features.
-
-.. toctree::
-   :maxdepth: 2
-
+   directory_structure
    building_intuition
 
 Additional Reference
@@ -69,5 +43,3 @@ Additional documentation for advanced users and developers.
    :maxdepth: 2
 
    module_structure
-   processing_context
-   directory_structure

@@ -18,8 +18,7 @@ The simplest pattern applies one function to all data.
 
    # Apply Gaussian filter to all images
    step = FunctionStep(
-       func=gaussian_filter,
-       sigma=2.0,
+       func=(gaussian_filter, {'sigma': 2.0}),
        name="blur"
    )
 
@@ -59,8 +58,8 @@ Routes different data to different functions based on data characteristics.
    # Different analysis for different channels
    step = FunctionStep(
        func={
-           '1': count_cells_single_channel,      # DAPI channel - count nuclei
-           '2': skan_axon_skeletonize_and_analyze # GFP channel - trace neurites
+           '1': (count_cells_single_channel, {}),      # DAPI channel - count nuclei
+           '2': (skan_axon_skeletonize_and_analyze, {}) # GFP channel - trace neurites
        },
        group_by=GroupBy.CHANNEL,
        name="channel_specific_analysis"
@@ -107,8 +106,8 @@ The ``group_by`` parameter is essential for dictionary patterns. It tells OpenHC
    # group_by=GroupBy.CHANNEL means keys correspond to channel numbers
    step = FunctionStep(
        func={
-           '1': process_dapi,     # Processes channel 1 data
-           '2': process_gfp       # Processes channel 2 data
+           '1': (process_dapi, {}),     # Processes channel 1 data
+           '2': (process_gfp, {})       # Processes channel 2 data
        },
        group_by=GroupBy.CHANNEL
    )
@@ -116,8 +115,8 @@ The ``group_by`` parameter is essential for dictionary patterns. It tells OpenHC
    # group_by=GroupBy.WELL means keys correspond to well IDs
    step = FunctionStep(
        func={
-           'A01': process_control,    # Processes well A01
-           'A02': process_treatment   # Processes well A02
+           'A01': (process_control, {}),    # Processes well A01
+           'A02': (process_treatment, {})   # Processes well A02
        },
        group_by=GroupBy.WELL
    )
@@ -140,14 +139,21 @@ Choosing the Right Pattern
 .. code-block:: python
 
    # All images need the same normalization
-   FunctionStep(func=stack_percentile_normalize, low_percentile=1.0, high_percentile=99.0)
+   FunctionStep(func=(stack_percentile_normalize, {
+       'low_percentile': 1.0,
+       'high_percentile': 99.0
+   }))
 
 **Function Chain**: Use for sequential operations that belong together
 
 .. code-block:: python
 
    # Preprocessing pipeline that should be grouped
-   FunctionStep(func=[normalize, filter, enhance])
+   FunctionStep(func=[
+       (normalize, {}),
+       (filter_func, {}),
+       (enhance, {})
+   ])
 
 **Dictionary Pattern**: Use when different data needs different processing
 
@@ -155,7 +161,10 @@ Choosing the Right Pattern
 
    # Different channels need different analysis
    FunctionStep(
-       func={'1': count_nuclei, '2': trace_neurites},
+       func={
+           '1': (count_nuclei, {}),
+           '2': (trace_neurites, {})
+       },
        group_by=GroupBy.CHANNEL
    )
 
@@ -166,8 +175,8 @@ Choosing the Right Pattern
    # Different channels need different preprocessing chains
    FunctionStep(
        func={
-           '1': [normalize_dapi, threshold_dapi],
-           '2': [normalize_gfp, enhance_gfp, trace_gfp]
+           '1': [(normalize_dapi, {}), (threshold_dapi, {})],
+           '2': [(normalize_gfp, {}), (enhance_gfp, {}), (trace_gfp, {})]
        },
        group_by=GroupBy.CHANNEL
    )
@@ -184,23 +193,23 @@ Cell Viability Assay
    pipeline = Pipeline([
        # Preprocessing - same for all channels
        FunctionStep(
-           func=stack_percentile_normalize,
+           func=(stack_percentile_normalize, {}),
            name="normalize"
        ),
-       
+
        # Channel-specific analysis
        FunctionStep(
            func={
-               '1': count_cells_single_channel,     # DAPI - total cells
-               '2': measure_calcein_intensity       # Calcein - live cells
+               '1': (count_cells_single_channel, {}),     # DAPI - total cells
+               '2': (measure_calcein_intensity, {})       # Calcein - live cells
            },
            group_by=GroupBy.CHANNEL,
            name="analyze_viability"
        ),
-       
+
        # Combine results
        FunctionStep(
-           func=calculate_viability_ratio,
+           func=(calculate_viability_ratio, {}),
            name="calculate_ratio"
        )
    ])
@@ -231,7 +240,7 @@ Neurite Outgrowth Analysis
        
        # Same analysis for all conditions
        FunctionStep(
-           func=skan_axon_skeletonize_and_analyze,
+           func=(skan_axon_skeletonize_and_analyze, {}),
            name="trace_neurites"
        )
    ])
@@ -270,9 +279,9 @@ OpenHCS automatically handles memory type conversion between different computati
    # Chain functions from different backends - automatic conversion
    step = FunctionStep(
        func=[
-           stack_percentile_normalize,  # PyTorch function
-           tophat,                      # CuPy function
-           count_cells_single_channel   # NumPy function
+           (stack_percentile_normalize, {}),  # PyTorch function
+           (tophat, {}),                      # CuPy function
+           (count_cells_single_channel, {})   # NumPy function
        ],
        name="mixed_backend_processing",
        variable_components=[VariableComponents.SITE]

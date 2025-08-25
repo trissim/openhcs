@@ -50,7 +50,7 @@ Most Common: Process Each Site Separately
 
    # Process each site independently (most common pattern)
    step = FunctionStep(
-       func=normalize_images,
+       func=(normalize_images, {}),
        variable_components=[VariableComponents.SITE],
        name="normalize"
    )
@@ -71,7 +71,7 @@ Process Each Channel Separately
 
    # Process each channel independently
    step = FunctionStep(
-       func=create_composite,
+       func=(create_composite, {}),
        variable_components=[VariableComponents.CHANNEL],
        name="composite"
    )
@@ -91,7 +91,7 @@ Process Each Well Separately
 
    # Process each well independently
    step = FunctionStep(
-       func=analyze_well_summary,
+       func=(analyze_well_summary, {}),
        variable_components=[VariableComponents.WELL],
        name="well_analysis"
    )
@@ -107,7 +107,7 @@ Multiple Variable Components
 
    # Process each site and channel combination separately
    step = FunctionStep(
-       func=single_image_analysis,
+       func=(single_image_analysis, {}),
        variable_components=[VariableComponents.SITE, VariableComponents.CHANNEL],
        name="single_image"
    )
@@ -128,8 +128,8 @@ The ``group_by`` parameter works with dictionary function patterns to route diff
    # Route different channels to different functions
    step = FunctionStep(
        func={
-           '1': analyze_nuclei,    # Channel 1 → nuclei analysis
-           '2': analyze_neurites   # Channel 2 → neurite analysis
+           '1': (analyze_nuclei, {}),    # Channel 1 → nuclei analysis
+           '2': (analyze_neurites, {})   # Channel 2 → neurite analysis
        },
        group_by=GroupBy.CHANNEL,
        variable_components=[VariableComponents.SITE]
@@ -177,7 +177,7 @@ Most common pattern for standard image processing:
 
    # Process each imaging site independently
    step = FunctionStep(
-       func=segment_cells,
+       func=(segment_cells, {}),
        variable_components=[VariableComponents.SITE],
        name="segmentation"
    )
@@ -194,9 +194,9 @@ Different analysis for different fluorescent markers:
    # Different analysis for each channel
    step = FunctionStep(
        func={
-           '1': count_nuclei,        # DAPI channel
-           '2': measure_intensity,   # GFP channel
-           '3': detect_structures    # RFP channel
+           '1': (count_nuclei, {}),        # DAPI channel
+           '2': (measure_intensity, {}),   # GFP channel
+           '3': (detect_structures, {})    # RFP channel
        },
        group_by=GroupBy.CHANNEL,
        variable_components=[VariableComponents.SITE],
@@ -215,8 +215,8 @@ Different processing for different experimental conditions:
    # Different preprocessing for different treatments
    step = FunctionStep(
        func={
-           'A01': control_preprocessing,     # Control wells
-           'A02': treatment_preprocessing    # Treatment wells  
+           'A01': (control_preprocessing, {}),     # Control wells
+           'A02': (treatment_preprocessing, {})    # Treatment wells
        },
        group_by=GroupBy.WELL,
        variable_components=[VariableComponents.SITE],
@@ -234,7 +234,7 @@ Processing 3D image stacks:
 
    # Combine Z-planes into maximum projection
    step = FunctionStep(
-       func=max_projection,
+       func=(max_projection, {}),
        variable_components=[VariableComponents.Z_INDEX],
        name="z_projection"
    )

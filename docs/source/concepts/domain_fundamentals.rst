@@ -1,12 +1,12 @@
 Domain Fundamentals
 ===================
 
-High-content screening (HCS) is a powerful technique for analyzing biological samples at scale, but it creates significant computational challenges that traditional image analysis tools cannot handle effectively. Understanding these challenges is essential for appreciating why OpenHCS exists and how it solves fundamental problems in microscopy data processing.
+High-content screening (HCS) generates large, complex datasets that create computational challenges for traditional image analysis tools. Understanding these challenges explains why OpenHCS exists and how it addresses fundamental problems in microscopy data processing.
 
 The High-Content Screening Challenge
 -----------------------------------
 
-High-content screening generates massive, complex datasets that push the limits of conventional analysis approaches:
+High-content screening generates large, complex datasets that exceed the capabilities of conventional analysis approaches:
 
 **Scale**: A single experiment can produce 100GB+ of image data across hundreds of wells, thousands of sites, and multiple channels. Traditional tools that work well for small datasets become unusable at this scale.
 

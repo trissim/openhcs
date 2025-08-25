@@ -63,8 +63,8 @@ Image Processing Functions
    )
    
    # Noise reduction and enhancement
-   step = FunctionStep(func=gaussian_filter, sigma=2.0)
-   step = FunctionStep(func=tophat, selem_radius=25)
+   step = FunctionStep(func=(gaussian_filter, {'sigma': 2.0}))
+   step = FunctionStep(func=(tophat, {'selem_radius': 25}))
 
 **Morphological Operations**: ~80 functions
 
@@ -75,7 +75,7 @@ Image Processing Functions
    )
    
    # Shape-based processing
-   step = FunctionStep(func=binary_opening, footprint_radius=3)
+   step = FunctionStep(func=(binary_opening, {'footprint_radius': 3}))
 
 **Segmentation and Thresholding**: ~60 functions
 
@@ -86,7 +86,7 @@ Image Processing Functions
    )
    
    # Object detection and segmentation
-   step = FunctionStep(func=threshold_otsu, binary=True)
+   step = FunctionStep(func=(threshold_otsu, {'binary': True}))
 
 Analysis Functions
 ~~~~~~~~~~~~~~~~~
@@ -101,10 +101,11 @@ Analysis Functions
    
    # Automated cell counting
    step = FunctionStep(
-       func=count_cells_single_channel,
-       detection_method=DetectionMethod.WATERSHED,
-       min_sigma=1.0,
-       max_sigma=10.0
+       func=(count_cells_single_channel, {
+           'detection_method': DetectionMethod.WATERSHED,
+           'min_sigma': 1.0,
+           'max_sigma': 10.0
+       })
    )
 
 **Neurite and Structure Analysis**: ~30 functions
@@ -117,9 +118,10 @@ Analysis Functions
    
    # Neurite tracing and measurement
    step = FunctionStep(
-       func=skan_axon_skeletonize_and_analyze,
-       analysis_dimension=AnalysisDimension.TWO_D,
-       min_branch_length=10.0
+       func=(skan_axon_skeletonize_and_analyze, {
+           'analysis_dimension': AnalysisDimension.TWO_D,
+           'min_branch_length': 10.0
+       })
    )
 
 **Feature Measurement**: ~50 functions
@@ -131,7 +133,7 @@ Analysis Functions
    )
    
    # Quantitative measurements
-   step = FunctionStep(func=measure_intensity_features)
+   step = FunctionStep(func=(measure_intensity_features, {}))
 
 Assembly Functions
 ~~~~~~~~~~~~~~~~~
@@ -145,7 +147,7 @@ Assembly Functions
    )
    
    # Combine multiple images into larger field of view
-   step = FunctionStep(func=assemble_stack_cupy)
+   step = FunctionStep(func=(assemble_stack_cupy, {}))
 
 **Projection and Compositing**: ~35 functions
 
@@ -156,7 +158,7 @@ Assembly Functions
    )
    
    # Combine Z-stacks or create multi-channel composites
-   step = FunctionStep(func=max_projection)
+   step = FunctionStep(func=(max_projection, {}))
 
 Memory Type System
 ------------------
@@ -173,7 +175,7 @@ NumPy Backend (CPU)
    )
    
    # CPU processing - compatible with all systems
-   step = FunctionStep(func=gaussian_filter, sigma=2.0)
+   step = FunctionStep(func=(gaussian_filter, {'sigma': 2.0}))
 
 **When to use**: Compatibility with all systems, small datasets, functions not available on GPU.
 
@@ -187,7 +189,7 @@ CuPy Backend (CUDA GPU)
    )
    
    # CUDA GPU acceleration - 10-100x faster for large images
-   step = FunctionStep(func=gaussian_filter, sigma=2.0)
+   step = FunctionStep(func=(gaussian_filter, {'sigma': 2.0}))
 
 **When to use**: NVIDIA GPUs, large datasets, performance-critical processing.
 
@@ -201,7 +203,7 @@ PyTorch Backend (GPU)
    )
    
    # PyTorch GPU processing with automatic memory management
-   step = FunctionStep(func=stack_percentile_normalize)
+   step = FunctionStep(func=(stack_percentile_normalize, {}))
 
 **When to use**: Deep learning integration, advanced tensor operations, automatic differentiation.
 
@@ -215,7 +217,7 @@ pyclesperanto Backend (OpenCL GPU)
    )
    
    # OpenCL GPU acceleration - works with AMD, Intel, NVIDIA GPUs
-   step = FunctionStep(func=gaussian_filter, sigma=2.0)
+   step = FunctionStep(func=(gaussian_filter, {'sigma': 2.0}))
 
 **When to use**: Non-NVIDIA GPUs, cross-platform GPU acceleration.
 
@@ -229,9 +231,9 @@ OpenHCS automatically converts between memory types when chaining functions from
    # Chain functions from different backends - automatic conversion
    step = FunctionStep(
        func=[
-           gaussian_filter,           # CuPy (GPU)
-           stack_percentile_normalize, # PyTorch (GPU)  
-           count_cells_single_channel  # NumPy (CPU)
+           (gaussian_filter, {}),           # CuPy (GPU)
+           (stack_percentile_normalize, {}), # PyTorch (GPU)
+           (count_cells_single_channel, {})  # NumPy (CPU)
        ],
        name="mixed_backend_chain"
    )
@@ -283,9 +285,10 @@ All function parameters can be specified in the FunctionStep:
 
    # Parameters passed directly to the function
    step = FunctionStep(
-       func=gaussian_filter,
-       sigma=2.0,              # Function parameter
-       truncate=4.0,           # Function parameter
+       func=(gaussian_filter, {
+           'sigma': 2.0,              # Function parameter
+           'truncate': 4.0            # Function parameter
+       }),
        name="blur"             # Step parameter
    )
 
