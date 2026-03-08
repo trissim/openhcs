@@ -251,10 +251,10 @@ theorem poly_composition_bound {X Y Z : Type*} [SizeOf X] [SizeOf Y] [SizeOf Z]
     (c1 k1 : ℕ) (hf : ∀ x, sizeOf (f x) ≤ c1 * (sizeOf x) ^ k1 + c1)
     (c2 k2 : ℕ) (hg : ∀ y, sizeOf (g y) ≤ c2 * (sizeOf y) ^ k2 + c2) :
     ∃ (c k : ℕ), ∀ x, sizeOf (g (f x)) ≤ c * (sizeOf x) ^ k + c := by
-  let rXY : DecisionQuotient.PolyReduction X Y := ⟨f, ⟨c1, k1, hf⟩⟩
-  let rYZ : DecisionQuotient.PolyReduction Y Z := ⟨g, ⟨c2, k2, hg⟩⟩
-  obtain ⟨r, hr⟩ := DecisionQuotient.PolyReduction.comp_exists rXY rYZ
-  rcases r.poly_time with ⟨c, k, hk⟩
+  let rXY : DecisionQuotient.SizeBoundedReduction X Y := ⟨f, ⟨c1, k1, hf⟩⟩
+  let rYZ : DecisionQuotient.SizeBoundedReduction Y Z := ⟨g, ⟨c2, k2, hg⟩⟩
+  obtain ⟨r, hr⟩ := DecisionQuotient.SizeBoundedReduction.comp_exists rXY rYZ
+  rcases r.size_bound with ⟨c, k, hk⟩
   refine ⟨c, k, ?_⟩
   intro x
   simpa [rXY, rYZ, hr, Function.comp] using hk x

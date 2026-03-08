@@ -159,7 +159,7 @@ theorem erasure_destroys_source (item : RustItem) (macro_name : RustId) :
   simp [erase_to_runtime, user_written_item, macro_generated_item]
 
 -- Corollary: Any function on RuntimeItem cannot distinguish macro-generated from user-written
-theorem no_distinguishing_function (item : RustItem) (macro_name : RustId)
+theorem no_distinguishing_function (item : RustItem) (_macro_name : RustId)
     (f : RuntimeItem → α) :
     f { item := item } = f { item := item } := rfl
 
@@ -235,11 +235,11 @@ theorem rust_lacks_introspection : ¬HasIntrospection := by
     simp [user_state, erase_to_runtime, user_written_item]
   have hru_eq : ru = { item := item } := by
     rw [h_singleton] at hru
-    simp [List.mem_singleton] at hru
+    simp at hru
     exact hru
   have hrm_eq : rm = { item := item } := by
     rw [h_singleton] at hrm'
-    simp [List.mem_singleton] at hrm'
+    simp at hrm'
     exact hrm'
   -- Contradiction: same runtime item would need two different sources
   have h_src_eq :

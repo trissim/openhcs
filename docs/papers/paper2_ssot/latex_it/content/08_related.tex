@@ -1,53 +1,22 @@
 \section{Related Work}\label{sec:related}
 %==============================================================================
 
-This section focuses on the information-theoretic lineage. Application-side references appear only where they clarify realizability.
+\subsection{Zero-Error and Side-Information Lineage}\label{sec:related-source-coding}
 
-\subsection{Zero-Error and Multi-Terminal Source Coding}\label{sec:related-source-coding}
+Shannon's zero-error framework and its graph-theoretic refinements by Körner and Lovász provide the closest conceptual starting point~\cite{shannon1956zero,korner1973graphs,lovasz1979shannon}. Witsenhausen's zero-error side-information problem is also directly relevant because it studies exact recovery under side information through graph coloring and label budgets~\cite{witsenhausen1976zero}. Here the confusable objects are reachable states of a modifiable multi-location encoding rather than channel inputs. The threshold $C_0=1$ is therefore a storage/update analogue of a zero-error feasibility boundary.
 
-Our exact-consistency threshold belongs to the intersection of zero-error/confusability theory, side-information source coding, and finite Fano-style converses.
+Slepian--Wolf coding and classical entropy converses supply the second line of influence~\cite{slepian1973noiseless,fano1961transmission,witsenhausen1975conditional,cover2006elements}. Coding-for-computing and functional-compression results are also close neighbors because they study deterministic decoder targets under side information and graph constraints~\cite{orlitsky2001coding,doshi2010functional}. In our setting the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery becomes impossible when the available observation/tag alphabet is too small to separate the remaining alternatives.
 
-\textbf{Zero-Error Capacity.} Shannon~\cite{shannon1956zero} introduced zero-error capacity as exact communication under a confusability constraint; Körner~\cite{korner1973graphs} and Lovász~\cite{lovasz1979shannon} developed the graph-theoretic language for that regime. Our zero-incoherence capacity is a deterministic storage/update analogue: the confusable objects are reachable multi-location states, and exact recovery means resolving them with zero ambiguity. Ambiguity classes and cliques in our model play the role of confusability classes in zero-error communication, while the threshold $C_0=1$ is the storage-side counterpart of a sharp zero-error feasibility boundary.
+\subsection{Consistency-Constrained Storage and Interaction}\label{sec:related-distributed}
 
-\textbf{Multi-Terminal Source Coding and Fano.} Slepian and Wolf~\cite{slepian1973noiseless} characterized distributed encoding with decoder side information, while classical Fano inequalities upper-bound $H(X\mid Y)$ in terms of error probability. Here the side information is not a second stochastic source, but a deterministic transcript produced by a modifiable multi-location encoding. The resulting converse is therefore a deterministic finite-source analogue: the same observation/tag budget controls zero-error resolution, $H(X\mid Y)$, and the entropy of the decoder output. This is closer to finite exact-resolvability with side information than to ordinary vanishing-error distributed compression.
+Consistency-constrained storage problems, including multi-version coding and related distributed-storage converses, show that correctness requirements impose unavoidable information costs~\cite{rashmi2015multiversion}. Here the object under study is a modifiable encoding architecture, and the main question is the exact-consistency cost of multiple independently writable representations of one latent fact.
 
-\textbf{Multi-Version Coding and Interaction.} Rashmi et al.~\cite{rashmi2015multiversion} quantify storage cost under consistency constraints; Ma and Ishwar~\cite{ma2011distributed} and the BIRS interactive-IT agenda~\cite{birs2012interactive} show that interaction can change information requirements. Our setting differs in that the object being constrained is a modifiable encoding itself. That turns exact consistency into a combined zero-error, side-information, and operational-complexity problem.
+\subsection{Computational Realizations}\label{sec:related-meta}
 
-\textbf{Classical Source Coding and Rate-Distortion.} Shannon~\cite{shannon1948mathematical} and Slepian--Wolf~\cite{slepian1973noiseless} provide the source-coding background, while Cover and Thomas~\cite{cover2006elements} supply the standard entropy/rate language. We use that language in a deterministic finite model: provenance observability acts as side information, derivation as perfect dependence, and independent rate governs modification cost rather than ordinary distortion.
+Reflection, metadata systems, and maintenance mechanisms in host platforms provide examples of how the realizability conditions can be instantiated in practice~\cite{kiczales1991art,smith1984reflection}.
 
-\paragraph{Closest prior work and novelty.}
-Prior work supplies the ingredients separately: zero-error/confusability, side-information source coding, Fano inequalities, and consistency-constrained storage. The novelty here is to make them one theorem family in a model with reachable updates: the same exact-consistency obstruction appears as clique separation, a side-information lower bound, a conditional-entropy converse, a decoder-output converse, and a PMF/KL output-gap witness.
+\subsection{Formal Verification}\label{sec:related-formal}
 
-\subsection{Distributed Systems Consistency}\label{sec:related-distributed}
-
-Distributed-systems impossibility results provide useful structural analogies. In particular, our CAP/FLP-style statements isolate how independent updates create ambiguity and how ambiguity blocks internally justified resolution without side information.
-
-\subsection{Computational Reflection and Metaprogramming}\label{sec:related-meta}
-
-\textbf{Metaobject protocols and reflection.} Kiczales et al.~\cite{kiczales1991art} and Smith~\cite{smith1984reflection} provide the classical foundations for systems that can execute code at definition time and introspect their own structure. These mechanisms correspond directly to causal propagation and provenance observability in our realizability theorem, explaining why MOP-equipped languages admit DOF = 1 for structural facts.
-
-\subsection{Application-Level Design Principles}\label{sec:related-software}
-
-Application-level design principles such as DRY~\cite{hunt1999pragmatic}, information hiding~\cite{parnas1972criteria}, and duplication analyses~\cite{fowler1999refactoring,roy2007survey} motivate coherence and single-source design. These links are interpretive only; the proofs do not rely on them.
-
-\subsection{Formal Methods}\label{sec:related-formal}
-
-Our Lean 4~\cite{demoura2021lean4} formalization follows the tradition of mechanized theory (e.g., Pierce~\cite{pierce2002types}, Winskel~\cite{winskel1993semantics}, CompCert~\cite{leroy2009compcert}), but applies it to an information-theoretic encoding model.
-
-\subsection{Novelty and IT Contribution}\label{sec:novelty}
-
-To our knowledge, this is the first work to:
-\begin{enumerate}
-\tightlist
-\item \textbf{Characterize the exact-consistency threshold}--$C_0 = 1$ exactly, with explicit achievability and converse.
-
-\item \textbf{Quantify side information for resolution}--$\geq \log_2 k$ bits for a $k$-way ambiguity class (Theorem~\ref{thm:side-info}).
-
-\item \textbf{Characterize realizability}--causal propagation and provenance observability are necessary and sufficient to realize the threshold in concrete systems (Theorem~\ref{thm:ssot-iff}).
-
-\item \textbf{Establish rate-complexity consequences}--$O(1)$ at rate $1$ versus $\Omega(n)$ above it, with unbounded gap (Theorem~\ref{thm:unbounded-gap}).
-\end{enumerate}
-
-\textbf{What is new:} the modifiable multi-location encoding setting, the exact-consistency threshold for that setting, and the unified converse family tying together ambiguity classes, confusability cliques, deterministic side information, Fano-style entropy bounds, decoder-output entropy bounds, and PMF/KL output-gap witnesses. The application instantiations are corollaries.
+The Lean 4 formalization places the work in the tradition of mechanized mathematics and verified theory development~\cite{demoura2021lean4,leroy2009compcert}.
 
 %==============================================================================

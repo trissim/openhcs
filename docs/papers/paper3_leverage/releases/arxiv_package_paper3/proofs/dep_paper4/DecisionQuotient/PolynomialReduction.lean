@@ -1,19 +1,40 @@
 /-
   Paper 4: Decision-Relevant Uncertainty
 
-  PolynomialReduction.lean - Polynomial-Time Reductions
+  PolynomialReduction.lean - Reduction Correctness Framework
 
-  This file formalizes polynomial-time reductions between decision problems,
-  connecting to Mathlib's computability framework.
+  This file formalizes the CORRECTNESS of reductions between decision problems.
 
-  Key results:
-  - Definition of polynomial-time reduction
-  - Reduction from sufficiency checking to set comparison
-  - Transitivity of polynomial reductions
+  ## Important Note on Polynomial-Time Computability
+
+  A Karp reduction has two parts:
+  1. **Correctness**: ∀ x, x ∈ A ↔ f(x) ∈ B (membership preservation)
+  2. **Efficiency**: f is computable in polynomial time on a Turing machine
+
+  Part (1) can be fully machine-verified in Lean.
+
+  Part (2) — proving that a specific function is polynomial-time computable on
+  an actual Turing machine — is an **open problem in formal verification**.
+  Mathlib defines `TM2ComputableInPolyTime`, but actually proving that concrete
+  functions satisfy this definition requires building explicit TM implementations
+  and proving their runtime bounds. No major formalization project has done this
+  end-to-end for NP-completeness proofs.
+
+  This file takes the honest approach:
+  - **Correctness is fully proved** (zero sorry)
+  - **Polynomial-time computability is an explicit hypothesis** in theorems about
+    complete Karp reductions
+
+  The gap is declared, not hidden.
+
+  ## Key Definitions
+  - `ReductionCorrectness`: The fully-verifiable correctness condition
+  - `valid_karp_reduction`: Theorem schema combining correctness + polytime hypothesis
+  - `SizeBoundedReduction`: Size bounds (weaker than polytime, but provable)
 
   ## Triviality Level
-  TRIVIAL: This wraps standard library reducibility. The nontrivial work is
-  in the specific reduction proofs (Reduction.lean).
+  TRIVIAL for correctness definitions. The nontrivial correctness PROOFS are
+  in Reduction.lean (TAUTOLOGY reduction).
 
   ## Dependencies
   - Chain: AlgorithmComplexity.lean (complexity bounds) → here
@@ -21,22 +42,85 @@
 -/
 
 import DecisionQuotient.AlgorithmComplexity
+import DecisionQuotient.Complexity
 import Mathlib.Computability.Reduce
 import Mathlib.Tactic
 
 namespace DecisionQuotient
 
-/-! ## Polynomial-Time Reduction
+/-! ## Reduction Correctness
 
-A polynomial-time reduction from problem A to problem B is a polynomial-time
-computable function f such that x ∈ A ↔ f(x) ∈ B. -/
+The correctness condition for a many-one reduction: f preserves membership.
+This is the part that CAN be fully verified in Lean. -/
 
-/-- A polynomial-time reduction between decision problems -/
-structure PolyReduction (A B : Type*) [SizeOf A] [SizeOf B] where
+/-- Correctness of a many-one reduction: f preserves membership.
+    This is fully machine-verifiable. -/
+structure ReductionCorrectness {A B : Type*} (f : A → B) (LA : Set A) (LB : Set B) : Prop where
+  /-- The reduction preserves membership -/
+  preserves_membership : ∀ x, x ∈ LA ↔ f x ∈ LB
+
+/-- Convenience constructor for ReductionCorrectness -/
+theorem ReductionCorrectness.mk' {A B : Type*} {f : A → B} {LA : Set A} {LB : Set B}
+    (h : ∀ x, x ∈ LA ↔ f x ∈ LB) : ReductionCorrectness f LA LB :=
+  ⟨h⟩
+
+/-! ## Valid Karp Reductions (Honest Formulation)
+
+A valid Karp reduction requires BOTH correctness AND polynomial-time computability.
+This section provides the honest formulation where polytime is an explicit hypothesis. -/
+
+/-- A valid Karp reduction combines proved correctness with polytime as a hypothesis.
+
+    This theorem captures: "If f preserves membership (proved) AND f is polytime
+    (assumed as hypothesis), then A ≤ₘᵖ B."
+
+    The correctness condition can be fully machine-verified.
+    The polytime condition is stated as an explicit hypothesis because TM verification
+    is an open problem. This makes the gap visible rather than hiding it.
+
+    In papers, state: "The correctness of each reduction is machine-verified.
+    Polynomial-time computability of the reduction functions is a standard claim
+    stated as an explicit hypothesis; full Turing-machine verification of
+    polynomial-time bounds remains an open problem in formal verification." -/
+theorem valid_karp_reduction
+    {α β : Type} (ea : Computability.FinEncoding α) (eb : Computability.FinEncoding β)
+    (A : Set α) (B : Set β) (f : α → β)
+    (hcorrect : ∀ x, x ∈ A ↔ f x ∈ B)  -- Proved: correctness
+    (hpolytime : Complexity.PolyTime ea eb f) :  -- Hypothesis: polytime
+    Complexity.ManyOneReducesPoly ea eb A B :=
+  ⟨f, hpolytime, hcorrect⟩
+
+/-- Variant using `ReductionCorrectness` structure -/
+theorem valid_karp_reduction' {α β : Type}
+    (ea : Computability.FinEncoding α) (eb : Computability.FinEncoding β)
+    (A : Set α) (B : Set β) (f : α → β)
+    (hcorrect : ReductionCorrectness f A B)
+    (hpolytime : Complexity.PolyTime ea eb f) :
+    Complexity.ManyOneReducesPoly ea eb A B :=
+  valid_karp_reduction ea eb A B f hcorrect.preserves_membership hpolytime
+
+/-! ## Size-Bounded Reductions
+
+Size bounds on output are weaker than polynomial-time computability on TMs,
+but they are provable within Lean's type theory. These are useful for:
+- Ensuring the output encoding doesn't blow up exponentially
+- Composing reductions (size bounds compose polynomially)
+
+**Important**: Size bounds are NOT the same as polynomial-time computability.
+A function could have polynomial size bounds but require exponential time to
+compute, or vice versa. However, for most "natural" reductions used in complexity
+theory, polynomial size bounds are a reasonable proxy. -/
+
+/-- A size-bounded reduction: output size is polynomially bounded in input size.
+
+    NOTE: This captures output SIZE bounds, not computation TIME.
+    For actual polynomial-time computability, use `Complexity.PolyTime` which
+    requires a Turing machine witness. -/
+structure SizeBoundedReduction (A B : Type*) [SizeOf A] [SizeOf B] where
   /-- The reduction function -/
   f : A → B
-  /-- The reduction is polynomial-time computable -/
-  poly_time : ∃ (c k : ℕ), ∀ a : A, sizeOf (f a) ≤ c * (sizeOf a) ^ k + c
+  /-- Output size is polynomially bounded in input size -/
+  size_bound : ∃ (c k : ℕ), ∀ a : A, sizeOf (f a) ≤ c * (sizeOf a) ^ k + c
 
 /-- Helper: c * n^k + c ≤ 2c * (n+1)^k for all c, n, k -/
 private lemma poly_inner_bound (c n k : ℕ) : c * n ^ k + c ≤ 2 * c * (n + 1) ^ k := by
@@ -237,12 +321,16 @@ theorem poly_compose_bound (c1 k1 c2 k2 n : ℕ) :
       _ ≤ B ^ (2 * (k1 + 1) * (k2 + 1) + 1) * n ^ K + B ^ (2 * (k1 + 1) * (k2 + 1) + 1) := by
           simp [hK_def, Nat.mul_comm, Nat.mul_left_comm, Nat.mul_assoc]
 
-/-- Polynomial reductions compose: composition of poly-time functions is poly-time. -/
-theorem PolyReduction.comp_exists {A B C : Type*} [SizeOf A] [SizeOf B] [SizeOf C]
-    (r1 : PolyReduction A B) (r2 : PolyReduction B C) :
-    ∃ (r : PolyReduction A C), r.f = r2.f ∘ r1.f := by
-  obtain ⟨c1, k1, h1⟩ := r1.poly_time
-  obtain ⟨c2, k2, h2⟩ := r2.poly_time
+/-- Size-bounded reductions compose: composition preserves polynomial size bounds.
+
+    NOTE: This is about SIZE bounds, not computation TIME. The analogous result
+    for polynomial-time TM computability requires proving TM composition, which
+    is significantly harder in Lean. -/
+theorem SizeBoundedReduction.comp_exists {A B C : Type*} [SizeOf A] [SizeOf B] [SizeOf C]
+    (r1 : SizeBoundedReduction A B) (r2 : SizeBoundedReduction B C) :
+    ∃ (r : SizeBoundedReduction A C), r.f = r2.f ∘ r1.f := by
+  obtain ⟨c1, k1, h1⟩ := r1.size_bound
+  obtain ⟨c2, k2, h2⟩ := r2.size_bound
   refine ⟨⟨r2.f ∘ r1.f, ?_⟩, rfl⟩
   -- Use the larger constants from poly_compose_bound
   use (c1 + c2 + 2) ^ (2 * (k1 + 1) * (k2 + 1) + 1), (k1 + 1) * (k2 + 1)
@@ -257,10 +345,10 @@ theorem PolyReduction.comp_exists {A B C : Type*} [SizeOf A] [SizeOf B] [SizeOf 
         omega
     _ ≤ _ := poly_compose_bound c1 k1 c2 k2 (sizeOf a)
 
-/-- Identity reduction -/
-def PolyReduction.id (A : Type*) [SizeOf A] : PolyReduction A A where
+/-- Identity has polynomial size bounds -/
+def SizeBoundedReduction.id (A : Type*) [SizeOf A] : SizeBoundedReduction A A where
   f := fun a => a
-  poly_time := ⟨2, 1, fun a => by simp only [ge_iff_le, pow_one]; omega⟩
+  size_bound := ⟨2, 1, fun a => by simp only [ge_iff_le, pow_one]; omega⟩
 
 /-! ## Reduction from Sufficiency to Set Comparison
 
@@ -288,35 +376,51 @@ noncomputable def sufficiencyToSetComparison {A S : Type*} [DecidableEq S] [Fint
 
 /-! ## Connection to Mathlib's Computability
 
-We connect our polynomial reductions to Mathlib's reduction framework. -/
+We connect our reduction correctness to Mathlib's reduction framework. -/
 
-/-- Our polynomial reduction implies a many-one reduction exists
+/-- A size-bounded reduction with correctness implies a many-one reduction exists
     (the full Mathlib ≤₁ requires Computable and Injective which need more setup) -/
-theorem poly_reduction_implies_many_one_exists {A B : Type*} [SizeOf A] [SizeOf B]
+theorem size_bounded_reduction_implies_many_one_exists {A B : Type*} [SizeOf A] [SizeOf B]
     (pA : A → Prop) (pB : B → Prop)
-    (r : PolyReduction A B)
+    (r : SizeBoundedReduction A B)
     (h : ∀ a, pA a ↔ pB (r.f a)) :
     ∃ f : A → B, ∀ a, pA a ↔ pB (f a) :=
   ⟨r.f, h⟩
 
 /-! ## Complexity Classes
 
-Abstract definitions connecting to complexity theory. -/
+Abstract definitions connecting to complexity theory.
 
-/-- A problem is in P if it can be decided in polynomial time -/
+NOTE: The `InP` definition below uses step counting on a `Counted` monad,
+which is an abstract model of computation. This is different from (and simpler than)
+full Turing machine polynomial time as defined in `Complexity.PolyTime`. -/
+
+/-- A problem is in P (using abstract step-counting model).
+
+    NOTE: This uses the `Counted` monad for step counting, which is an
+    abstract computational model. For the TM-based definition, see
+    `Complexity.P` in Complexity.lean. -/
 def InP {α : Type*} [SizeOf α] (p : α → Prop) : Prop :=
   ∃ (decide : α → Counted Bool) (c k : ℕ),
     (∀ a, (decide a).steps ≤ c * (sizeOf a) ^ k + c) ∧
     (∀ a, (decide a).result = true ↔ p a)
 
-/-- Polynomial reductions preserve membership in P -/
-theorem poly_reduction_preserves_P {A B : Type*} [SizeOf A] [SizeOf B]
+/-- Size-bounded reductions preserve membership in P (abstract step-counting model).
+
+    NOTE: This theorem uses SIZE bounds as a proxy for TIME bounds. For natural
+    reductions this is reasonable, but it's not formally equivalent to TM polytime.
+    The theorem shows: if f has polynomial output SIZE and pB is in P, then pA is in P.
+
+    The reasoning is: if computing f produces polynomial-sized output, and the decision
+    algorithm for pB runs in time polynomial in its input size, then composing them
+    gives polynomial time overall. This is sound but informal. -/
+theorem size_bounded_reduction_preserves_P {A B : Type*} [SizeOf A] [SizeOf B]
     (pA : A → Prop) (pB : B → Prop)
-    (r : PolyReduction A B)
+    (r : SizeBoundedReduction A B)
     (h : ∀ a, pA a ↔ pB (r.f a))
     (hB : InP pB) : InP pA := by
   obtain ⟨decideB, c, k, htime, hcorrect⟩ := hB
-  obtain ⟨cr, kr, hr⟩ := r.poly_time
+  obtain ⟨cr, kr, hr⟩ := r.size_bound
   use fun a => decideB (r.f a)
   -- The composed algorithm is polynomial; use the generous bound from poly_compose_bound
   use (cr + c + 2) ^ (2 * (kr + 1) * (k + 1) + 1), (kr + 1) * (k + 1)

@@ -1,233 +1,88 @@
-\section{Optimal Encoding Rate (DOF = 1)}\label{sec:ssot}
+\section{Derivation as the Capacity-Achieving Structure}\label{sec:ssot}
 %==============================================================================
 
-Having established the encoding model (Section~\ref{sec:epistemic}), we now prove that DOF = 1 is the unique optimal rate guaranteeing coherence under modification constraints.
+Section~\ref{sec:foundations} identifies the sharp threshold: exact consistency is guaranteed only at independent rate $1$. Here the corresponding structure is \emph{derivation}: one location carries the independent value, while all other representations are deterministic views of that source.
 
-\subsection{DOF = 1 as Optimal Rate}\label{sec:ssot-def}
+\subsection{Rate 1 as the Exact-Consistency Regime}\label{sec:ssot-def}
 
-DOF = 1 is not a design guideline. It is the information-theoretically optimal rate guaranteeing coherence for facts encoded in systems with modification constraints (\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}).
-
-\begin{definition}[Optimal Encoding (DOF = 1)]\label{def:ssot}
-Encoding system $C$ achieves \emph{optimal encoding rate} for fact $F$ iff:
+\begin{definition}[Optimal Encoding (Unit Independent Rate)]\label{def:ssot}
+An encoding system $C$ achieves the \emph{optimal encoding rate} for fact $F$ iff
 \[
-\text{DOF}(C, F) = 1
+\text{DOF}(C,F)=1.
 \]
-Equivalently: exactly one independent encoding location exists for $F$. All other encodings are derived.
 \end{definition}
 
-\textbf{This generalizes the ``Single Source of Truth'' (SSOT) principle from software engineering to universal encoding theory.}
+Rate $1$ is the unique independent rate compatible with zero incoherence in the model. A single authoritative source with deterministic views is the corresponding structural form.
 
-\textbf{Encoding-theoretic interpretation:}
-\begin{itemize}
-\tightlist
-\item DOF = 1 means exactly one independent encoding location
-\item All other locations are derived (cannot diverge from source)
-\item Incoherence is \emph{impossible}, not merely unlikely
-\item The encoding rate is minimized subject to coherence constraint
-\end{itemize}
-
-\begin{corollary}[DOF = 1 Guarantees Determinacy]\label{thm:ssot-determinate}
-If $\text{DOF}(C, F) = 1$, then for all reachable states of $C$, the value of $F$ is determinate: all encodings agree. \emph{(This restates Theorem~\ref{thm:dof-one-coherence} in terms of determinacy.)}
+\begin{corollary}[Unit Rate Guarantees Determinacy]\label{thm:ssot-determinate}
+If $\text{DOF}(C,F)=1$, then the value of $F$ is determinate in every reachable state.
 \end{corollary}
-\leanmeta{\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}}
 
-Hunt \& Thomas's ``single, unambiguous, authoritative representation''~\cite{hunt1999pragmatic} (SSOT principle) corresponds precisely to this encoding-theoretic structure:
-\begin{itemize}
-\tightlist
-\item \textbf{Single:} DOF = 1 (exactly one independent encoding)
-\item \textbf{Unambiguous:} No incoherent states possible (Theorem~\ref{thm:dof-one-coherence})
-\item \textbf{Authoritative:} The source determines all derived values (Definition~\ref{def:derived})
-\end{itemize}
-
-Our contribution is proving that SSOT is not a heuristic but an information-theoretic optimality condition (\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}).
-
-\begin{corollary}[DOF = 1 Achieves $O(1)$ Update]\label{thm:ssot-optimal}
-If $\text{DOF}(C, F) = 1$, then coherence restoration requires $O(1)$ updates: modifying the single source maintains coherence automatically via derivation. \emph{(See Theorem~\ref{thm:upper-bound} for the full rate-complexity bound.)}
+\begin{corollary}[Unit Rate Achieves $O(1)$ Update]\label{thm:ssot-optimal}
+If $\text{DOF}(C,F)=1$, then coherence restoration requires $O(1)$ manual updates.
 \end{corollary}
-\leanmeta{\LH{UNQ1}}
 
-\begin{corollary}[Uniqueness of Optimal Rate]\label{thm:ssot-unique}
-DOF = 1 is the \textbf{unique} rate guaranteeing coherence. DOF = 0 fails to represent $F$; DOF $> 1$ permits incoherence. \emph{(This is the Zero-Incoherence Capacity theorem; see Theorem~\ref{thm:coherence-capacity}.)}
+\begin{corollary}[Uniqueness of the Optimal Rate]\label{thm:ssot-unique}
+DOF $=1$ is the unique rate guaranteeing exact consistency.
 \end{corollary}
-\leanmeta{\LH{L1}, \LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}}
 
 \begin{corollary}[Incoherence Under Redundancy]\label{cor:no-redundancy}
-Multiple independent sources encoding the same fact permit incoherent states. DOF $> 1 \Rightarrow$ incoherence reachable.
+If $\text{DOF}(C,F)>1$, then incoherent states are reachable.
 \end{corollary}
-\leanmeta{\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}}
 
 \begin{proof}
-Direct application of Theorem~\ref{thm:dof-gt-one-incoherence}. With DOF $> 1$, independent locations can be modified separately, reaching states where they disagree.
+Immediate from Theorem~\ref{thm:dof-gt-one-incoherence}.
 \end{proof}
-See the formal Zero-Incoherence Capacity statement in Section~\ref{sec:capacity} (Theorem~\ref{thm:coherence-capacity}, \LH{UNQ1}). A concise proof sketch appears below; the full mechanized proof is provided in Supplement~A.
 
-\subsection{Information-theoretic proof sketches}
-\label{sec:info-sketches}
+\subsection{Counting Converse Interpretation}\label{sec:info-sketches}
 
-We give concise proof sketches connecting the combinatorial DOF arguments to standard information-theoretic tools:
-
+The threshold and the converse fit together in a compact way.
 \begin{itemize}
-\item \textbf{Converse (Fano):} To show that limited side information cannot enable vanishing-error recovery of $F$, apply the Fano-style bound (Theorem~\ref{thm:fano-converse}, \LH{UNQ1}). If the mutual information $I(F;S)$ provided by derived locations is $<\log K - o(1)$ for $K$ possible values, then any estimator has $P_e$ bounded away from zero. Thus perfect recoverability requires $I(F;S)\approx H(F)$, i.e. essentially $\log K$ bits.
-
-\item \textbf{Confusability graph:} Lemma~\ref{lem:confusability-clique} converts combinatorial indistinguishability (cliques) into information lower bounds: in the finite zero-error model, a $k$-clique forces at least $k$ tag values (\LH{UNQ1}, \LH{UNQ1}); globally, the required tag alphabet is lower-bounded by both worst-case fiber size (\LH{UNQ1}) and the observation-alphabet occupancy floor (\LH{UNQ1}), equivalently $|\mathcal V|\le |\mathcal O|\cdot |\mathcal T|$ for any zero-error scheme (\LH{UNQ1}). The Fano refinement upgrades the same obstruction to a mutual-information lower bound for vanishing error (\LH{UNQ1}). This gives a language-independent certificate that side information is insufficient in environments with limited introspection.
-
-\item \textbf{DOF implication:} If side information cannot supply the required mutual information, the system must retain multiple independent encodings (higher DOF) to achieve correctness under modifications. Higher DOF incurs $\Omega(n)$ manual edits (Theorem~\ref{thm:lower-bound}, \LH{UNQ1}), completing the converse chain from information constraints to modification complexity.
+\tightlist
+\item When ambiguity classes are trivial, no auxiliary information is needed and rate $1$ suffices.
+\item When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet.
+\item If that side information is unavailable but exact correctness is still demanded, the architecture must rely on additional independently accessible support, which moves the system above the rate-$1$ regime and leads to the update-cost lower bound of Section~\ref{sec:bounds}.
 \end{itemize}
 
+Derivation is therefore the capacity-achieving dependence structure: it removes independent rate without removing observable views.
 
-\subsection{Rate-Complexity Tradeoff}\label{sec:ssot-vs-m}
+\subsection{Rate--Complexity Tradeoff}\label{sec:ssot-vs-m}
 
-The DOF metric creates a fundamental tradeoff between encoding rate and modification complexity.
-
-\textbf{Question:} When fact $F$ changes, how many manual updates are required to restore coherence?
+The benefit of derivation is operational. An encoding may expose many visible copies of a fact, but only the independent copies govern manual synchronization cost.
 
 \begin{itemize}
 \tightlist
-\item \textbf{DOF = 1:} $O(1)$ updates. The single source determines all derived locations automatically.
-\item \textbf{DOF = $n > 1$:} $\Omega(n)$ updates. Each independent location must be synchronized manually.
+\item \textbf{Independent rate $1$:} one manual update changes the authoritative source; all derived views follow automatically.
+\item \textbf{Independent rate above $1$:} each independent location must be synchronized manually to restore coherence.
 \end{itemize}
 
-This is a \emph{rate-distortion} analog: higher encoding rate (DOF $> 1$) incurs higher modification complexity. DOF = 1 achieves minimal complexity under the coherence constraint.
+This is the architectural meaning of the threshold: independent rate above $1$ creates both ambiguity and manual synchronization burden.
 
-\textbf{Key insight:} Many locations can encode $F$ (high total encoding locations), but if DOF = 1, coherence restoration requires only 1 manual update. The derivation mechanism handles propagation automatically.
-
-\begin{example}[Encoding Rate vs. Modification Complexity]\label{ex:ssot-large-m}
-Consider an encoding system where a fact $F$ = ``all processors must implement operation $P$'' is encoded at 51 locations:
-\begin{itemize}
-\tightlist
-\item 1 abstract specification location
-\item 50 concrete implementation locations
-\end{itemize}
-
-\textbf{Architecture A (DOF = 51):} All 51 locations are independent.
-\begin{itemize}
-\tightlist
-\item Modification complexity: Changing $F$ requires 51 manual updates
-\item Coherence risk: After $k < 51$ updates, system is incoherent (partial updates)
-\item Only after all 51 updates is coherence restored
-\end{itemize}
-
-\textbf{Architecture B (DOF = 1):} The abstract specification is the single source; implementations are derived.
-\begin{itemize}
-\tightlist
-\item Modification complexity: Changing $F$ requires 1 update (the specification)
-\item Coherence guarantee: Derived locations update automatically via enforcement mechanism
-\item The \emph{specification} has a single authoritative source
-\end{itemize}
-
-\textbf{Computational realization (software):} Abstract base classes with enforcement (type checkers, runtime validation) achieve DOF = 1 for contract specifications. Changing the abstract method signature updates the contract; type checkers flag non-compliant implementations.
-
-Note: Implementations are separate facts. DOF = 1 for the contract specification does not eliminate implementation updates--it ensures the specification itself is determinate.
-\end{example}
-
-\subsection{Derivation: The Coherence Mechanism}\label{sec:derivation}
-
-Derivation is the mechanism by which DOF is reduced without losing encodings. A derived location cannot diverge from its source, eliminating it as a source of incoherence.
+\subsection{Derivation: The Relevant Dependence Structure}\label{sec:derivation}
 
 \begin{definition}[Derivation]\label{def:derivation}
-Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fact $F$ iff:
-\[
-\text{updated}(L_{\text{source}}) \rightarrow \text{automatically\_updated}(L_{\text{derived}})
-\]
-No manual intervention is required. Coherence is maintained automatically.
+Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fact $F$ iff an update to $L_{\text{source}}$ determines the value of $L_{\text{derived}}$ without an additional manual edit.
 \end{definition}
 
-Derivation can occur at different times depending on the encoding system:
-
-\begin{center}
-\begin{tabularx}{\linewidth}{lY}
-\toprule
-\textbf{Derivation Time} & \textbf{Examples Across Domains} \\
-\midrule
-Compile/Build time & C++ templates, Rust macros, database schema generation, infrastructure-as-code compilation \\
-Definition time & Python metaclasses, ORM model registration, dynamic schema creation \\
-Query/Access time & Database views, computed columns, lazy evaluation \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\textbf{Structural facts require definition-time derivation.} Structural facts (class existence, schema structure, service topology) are fixed when defined. Compile-time derivation that runs before the definition is fixed is too early (the declarative source is not yet fixed). Runtime is too late (structure already immutable). Definition-time is the unique opportunity for structural derivation---a consequence of timing trichotomy (\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}).
+Derivation may occur at creation time, build time, commit time, or query time depending on the host system. The abstract point is unchanged: a derived location does not contribute an additional independently writable value for the same fact.
 
 \begin{theorem}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
 If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{derived}}$ cannot diverge from $L_{\text{source}}$ and does not contribute to DOF.
 \end{theorem}
-\leanmeta{\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}}
+\leanmeta{\LH{DER2}}
 
 \begin{proof}
-By Definition~\ref{def:derivation}, derived locations are automatically updated when the source changes. Let $L_d$ be derived from $L_s$. If $L_s$ encodes value $v$, then $L_d$ encodes $f(v)$ for some function $f$. When $L_s$ changes to $v'$, $L_d$ automatically changes to $f(v')$.
-
-There is no reachable state where $L_s = v'$ and $L_d = f(v)$ with $v' \neq v$. Divergence is impossible. Therefore, $L_d$ does not contribute to DOF.
+By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.
 \end{proof}
 
-\begin{corollary}[Derivation Achieves Coherence]\label{cor:metaprogramming}
-If all encodings of $F$ except one are derived from that one, then $\text{DOF}(C, F) = 1$ and coherence is guaranteed.
+\begin{corollary}[Derivation Achieves the Threshold]\label{cor:metaprogramming}
+If all encodings of $F$ except one are derived from that one, then $\text{DOF}(C,F)=1$ and exact consistency is guaranteed.
 \end{corollary}
 
 \begin{proof}
-Let $L_s$ be the non-derived encoding. All other encodings $L_1, \ldots, L_k$ are derived from $L_s$. By Theorem~\ref{thm:derivation-excludes}, none can diverge. Only $L_s$ is independent. Therefore, $\text{DOF}(C, F) = 1$, and by Theorem~\ref{thm:dof-one-coherence}, coherence is guaranteed.
+Only one source remains independent; all other encodings are deterministic views. Apply Theorem~\ref{thm:dof-one-coherence}.
 \end{proof}
 
-\subsection{Computational Realizations of DOF = 1}\label{sec:ssot-patterns}
-
-DOF = 1 is achieved across computational domains using definition-time derivation mechanisms. We show examples from software, databases, and configuration systems.
-
-\textbf{Software: Subclass Registration (Python)}
-
-\begin{code}
-class Registry:
-    _registry = {}
-    def __init_subclass__(cls, **kwargs):
-        Registry._registry[cls.__name__] = cls
-
-class PNGHandler(Registry):  # Automatically registered
-    pass
-\end{code}
-
-\textbf{Encoding structure:}
-\begin{itemize}
-\tightlist
-\item Source: Class definition (declared once)
-\item Derived: Registry dictionary entry (computed at definition time via \texttt{\_\_init\_subclass\_\_})
-\item DOF = 1: Registry cannot diverge from class hierarchy
-\end{itemize}
-
-\textbf{Databases: Materialized Views}
-
-\begin{code}
-CREATE TABLE users (id INT, name TEXT, created_at TIMESTAMP);
-CREATE MATERIALIZED VIEW user_count AS
-  SELECT COUNT(*) FROM users;
-\end{code}
-
-\textbf{Encoding structure:}
-\begin{itemize}
-\tightlist
-\item Source: Base table \texttt{users}
-\item Derived: Materialized view \texttt{user\_count} (updated on refresh)
-\item DOF = 1: View cannot diverge from base table (consistency guaranteed by DBMS)
-\end{itemize}
-
-\textbf{Configuration: Infrastructure as Code (Terraform)}
-
-\begin{code}
-resource "aws_instance" "app" {
-  ami = "ami-12345"
-  instance_type = "t2.micro"
-}
-
-output "instance_ip" {
-  value = aws_instance.app.public_ip
-}
-\end{code}
-
-\textbf{Encoding structure:}
-\begin{itemize}
-\tightlist
-\item Source: Resource declaration (authoritative configuration)
-\item Derived: Output value (computed from resource state)
-\item DOF = 1: Output cannot diverge from actual resource (computed at apply time)
-\end{itemize}
-
-\textbf{Common pattern:} In all cases, the source is declared once, and derived locations are computed automatically at definition/build/query time. Manual synchronization is eliminated. Coherence is guaranteed by the system, not developer discipline.
+The same dependence structure can be realized in many host systems, but the theorem is purely about deterministic dependence in the abstract encoding model.
 
 %==============================================================================

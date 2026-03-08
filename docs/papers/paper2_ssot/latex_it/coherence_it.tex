@@ -1,4 +1,10 @@
-\documentclass[journal]{IEEEtran}
+% Format switching: default is two-column journal (print/arXiv).
+% Pass \ITSUBMISSION via pdflatex CLI to get single-column double-spaced review format.
+\ifdefined\ITSUBMISSION
+  \documentclass[12pt, onecolumn, draftclsnofoot]{IEEEtran}
+\else
+  \documentclass[journal]{IEEEtran}
+\fi
 
 % IEEE Transactions on Information Theory Format - IEEEtran class
 \usepackage[utf8]{inputenc}
@@ -13,6 +19,12 @@
 \usepackage{listings}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+
+% IEEE IT review format: single column, double spaced, 1in margins
+\ifdefined\ITSUBMISSION
+  \usepackage{setspace}
+  \usepackage[margin=1in, letterpaper]{geometry}
+\fi
 
 % Allow URLs to break at any character
 \makeatletter
@@ -32,9 +44,10 @@
   citecolor=blue,
   urlcolor=blue
 }
+\IfFileExists{build_submission_hook.tex}{\input{build_submission_hook.tex}}{}
 
 % Title
-\title{Exact Consistency in Interactive Multi-Location Encodings:\\
+\title{Exact Consistency in Multi-Location Encodings:\\
 Zero-Error Thresholds and Side Information Bounds}
 
 % Author block - IEEE format
@@ -43,6 +56,7 @@ Zero-Error Thresholds and Side Information Bounds}
 \thanks{Manuscript received \today.}}
 
 \begin{document}
+\ifdefined\ITSUBMISSION\doublespacing\fi
 
 \maketitle
 

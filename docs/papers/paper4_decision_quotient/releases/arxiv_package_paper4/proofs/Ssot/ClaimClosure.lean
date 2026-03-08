@@ -2,7 +2,7 @@
   SSOT Formalization - Paper-Level Claim Closure Layer
 
   This module provides theorem-level closure handles that map paper claims
-  to mechanized cores (or to explicit classical-information assumptions).
+  to mechanized cores, including the finite zero-error side-information layer.
 -/
 
 import Ssot.Coherence
@@ -10,8 +10,8 @@ import Ssot.Bounds
 import Ssot.Inconsistency
 import Ssot.Requirements
 import Ssot.Completeness
-import Ssot.Entropy
 import Ssot.DependencyBridge
+import Mathlib.Analysis.SpecialFunctions.Log.Basic
 
 namespace ClaimClosure
 
@@ -30,7 +30,7 @@ theorem static_flp_core (oracle : TruthOracle) (s : EncodingSystem) (hinc : s.is
 Conditional CAP-style closure: once a model implies `DOF > 1`, zero incoherence
 cannot hold at that rate.
 -/
-theorem cap_encoding_conditional (n : Nat) (hn : n > 1) :
+theorem cap_encoding_zero_error (n : Nat) (hn : n > 1) :
     ¬zeroIncoherenceAtRate n := by
   intro hzero
   rcases dof_gt_one_incoherence_possible n hn with ⟨s, hs, hinc⟩
@@ -89,43 +89,104 @@ theorem design_necessity (n : Nat) (hn : n > 0) :
 noncomputable def sideInfoBits (k : Nat) : ℝ :=
   Real.log (k : ℝ) / Real.log 2
 
+/-- Direct finite-form lower bound matching the paper's `log_2 k` expression. -/
+theorem side_information_requirement
+    (k : Nat) (_hk : k > 0) :
+    sideInfoBits k ≥ Real.log (k : ℝ) / Real.log 2 := by
+  unfold sideInfoBits
+  exact le_rfl
+
+/-- Log of a base-2 natural power, stated in the form used by `sideInfoBits`. -/
+theorem log_nat_pow_two (L : Nat) :
+    Real.log ((2 ^ L : Nat) : ℝ) = (L : ℝ) * Real.log 2 := by
+  induction L with
+  | zero =>
+      simp
+  | succ L ih =>
+      have hpow_ne : (((2 ^ L : Nat) : ℝ)) ≠ 0 := by
+        positivity
+      calc
+        Real.log ((2 ^ (L + 1) : Nat) : ℝ)
+            = Real.log ((((2 ^ L : Nat) : ℝ) * 2)) := by
+                norm_num [Nat.pow_succ]
+        _ = Real.log (((2 ^ L : Nat) : ℝ)) + Real.log 2 := by
+              rw [Real.log_mul hpow_ne (by norm_num : (2 : ℝ) ≠ 0)]
+        _ = (L : ℝ) * Real.log 2 + Real.log 2 := by rw [ih]
+        _ = ((L : ℝ) + 1) * Real.log 2 := by ring
+        _ = ((L + 1 : Nat) : ℝ) * Real.log 2 := by norm_num
+
+/-- If `k` states are exactly recoverable from `L` bits, then `log_2 k ≤ L`. -/
+theorem sideInfoBits_le_of_card_bound {k L : Nat} (hk : k > 0) (hbound : k ≤ 2 ^ L) :
+    sideInfoBits k ≤ (L : ℝ) := by
+  unfold sideInfoBits
+  have hkR : (0 : ℝ) < (k : ℝ) := by
+    exact_mod_cast hk
+  have hboundR : (k : ℝ) ≤ ((2 ^ L : Nat) : ℝ) := by
+    exact_mod_cast hbound
+  have hlog : Real.log (k : ℝ) ≤ Real.log (((2 ^ L : Nat) : ℝ)) :=
+    Real.log_le_log hkR hboundR
+  have hlog2pos : 0 < Real.log 2 := by
+    exact Real.log_pos (by norm_num : (1 : ℝ) < 2)
+  have hmul : Real.log (k : ℝ) ≤ (L : ℝ) * Real.log 2 := by
+    simpa [log_nat_pow_two] using hlog
+  have hdiv : Real.log (k : ℝ) / Real.log 2 ≤ ((L : ℝ) * Real.log 2) / Real.log 2 := by
+    exact div_le_div_of_nonneg_right hmul (le_of_lt hlog2pos)
+  have hlog2ne : Real.log 2 ≠ 0 := ne_of_gt hlog2pos
+  simpa [hlog2ne, mul_comm] using hdiv
+
 /--
-Classical information-theory assumptions used for conditional paper claims
-(Fano / side-information lower bounds).
+Finite zero-error converse: exact recovery of `K` ambiguous states from an `L`-bit
+tag space requires at least `K ≤ 2^L` distinguishable tags.
+
+This packages the paper-facing finite zero-error counting converse.
 -/
-class ClassicalInfoAssumptions : Prop where
-  side_information_requirement :
-    ∀ {k : Nat}, k > 0 → sideInfoBits k ≥ Real.log (k : ℝ) / Real.log 2
-  fano_converse :
-    ∀ {K : Nat} {I Pe : ℝ}, K > 1 →
-      I ≥ Real.log (K : ℝ) - (Pe + Pe * Real.log ((K - 1 : Nat) : ℝ))
+theorem finite_counting_converse
+    {K L : Nat} {Transcript : Type _}
+    (tag : Fin K → Fin (2 ^ L))
+    (transcript : Fin K → Transcript)
+    (decode : Fin (2 ^ L) → Transcript → Fin K)
+    (htranscript : ∀ c₁ c₂, transcript c₁ = transcript c₂)
+    (hzero : ∀ c, decode (tag c) (transcript c) = c) :
+    K ≤ 2 ^ L :=
+  Ssot.paper1_collision_block_requires_bits tag transcript decode htranscript hzero
 
-theorem side_information_requirement_conditional [ClassicalInfoAssumptions]
-    (k : Nat) (hk : k > 0) :
-    sideInfoBits k ≥ Real.log (k : ℝ) / Real.log 2 :=
-  ClassicalInfoAssumptions.side_information_requirement hk
-
-theorem fano_converse_conditional [ClassicalInfoAssumptions]
-    {K : Nat} {I Pe : ℝ} (hK : K > 1) :
-    I ≥ Real.log (K : ℝ) - (Pe + Pe * Real.log ((K - 1 : Nat) : ℝ)) :=
-  ClassicalInfoAssumptions.fano_converse hK
+/-- Paper-facing finite zero-error side-information theorem. -/
+theorem side_information_bits_from_exact_recovery
+    {K L : Nat} {Transcript : Type _}
+    (hK : K > 0)
+    (tag : Fin K → Fin (2 ^ L))
+    (transcript : Fin K → Transcript)
+    (decode : Fin (2 ^ L) → Transcript → Fin K)
+    (htranscript : ∀ c₁ c₂, transcript c₁ = transcript c₂)
+    (hzero : ∀ c, decode (tag c) (transcript c) = c) :
+    sideInfoBits K ≤ (L : ℝ) := by
+  exact sideInfoBits_le_of_card_bound hK
+    (finite_counting_converse tag transcript decode htranscript hzero)
 
 theorem dof1_zero_side_information : sideInfoBits 1 = 0 := by
   unfold sideInfoBits
   simp
 
-theorem side_information_scales_with_redundancy (n : Nat) (hn : n > 0) :
+theorem side_information_scales_with_redundancy (n : Nat) (_hn : n > 0) :
     sideInfoBits n = sideInfoBits (redundancy n + 1) := by
   have hred : redundancy n + 1 = n := by
     unfold redundancy
     omega
-  simp [hred]
+  rw [hred]
 
-/-- Bridge from conditional information bound to the DOF lower-bound core. -/
-theorem info_dof_conditional [ClassicalInfoAssumptions]
-    {K : Nat} {I Pe : ℝ} (hK : K > 1)
-    (hI : I < Real.log (K : ℝ)) :
-    I < Real.log (K : ℝ) := hI
+/-- Bridge from the finite counting converse to an impossibility contradiction. -/
+theorem info_dof_counting_contradiction
+    {K L : Nat} {Transcript : Type _}
+    (tag : Fin K → Fin (2 ^ L))
+    (transcript : Fin K → Transcript)
+    (decode : Fin (2 ^ L) → Transcript → Fin K)
+    (htranscript : ∀ c₁ c₂, transcript c₁ = transcript c₂)
+    (hzero : ∀ c, decode (tag c) (transcript c) = c)
+    (hoverflow : K > 2 ^ L) :
+    False := by
+  have hbound : K ≤ 2 ^ L :=
+    finite_counting_converse tag transcript decode htranscript hzero
+  omega
 
 theorem operating_regimes_partition (n : Nat) :
     n = 0 ∨ n = 1 ∨ n > 1 := by

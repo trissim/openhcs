@@ -1,0 +1,60 @@
+\section{Sequential Regime Complexity}\label{sec:sequential}
+
+We now move to sequential settings with transitions and observations (POMDP-style). Sufficiency becomes a policy-level invariance condition.
+
+\subsection{Sequential Decision Problems}
+
+\begin{definition}[Sequential Decision Problem]\label{def:sequential-decision-problem}
+A sequential decision problem is a tuple
+\[
+\mathcal{D}_{\mathrm{seq}}=(A,X_1,\ldots,X_n,U,T,O),
+\]
+with state space $S=X_1\times\cdots\times X_n$, transition kernel $T:A\times S\to\Delta(S)$, and observation model $O:S\to\Delta(\Omega)$.
+\end{definition}
+
+\begin{definition}[Sequential Sufficiency]\label{def:sequential-sufficient}
+Coordinate set $I$ is \emph{sequentially sufficient} if the optimal policy using full observation history equals the optimal policy obtained when histories are restricted to $I$-coordinates.
+\end{definition}
+
+\begin{problem}[SEQUENTIAL-SUFFICIENCY-CHECK]\label{prob:sequential-sufficiency}
+\textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$. \\
+\textbf{Question:} Is $I$ sequentially sufficient?
+\end{problem}
+
+\subsection{PSPACE-Completeness}
+
+\begin{theorem}[SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete]\label{thm:sequential-pspace}
+SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
+\end{theorem}
+
+\begin{proof}
+Membership: finite-horizon policy comparison for POMDP-style models is decidable in polynomial space by dynamic programming over belief/state summaries.
+
+Hardness: reduce TQBF. Alternating quantifiers are encoded as alternating controlled/adversarial transitions; terminal reward evaluates the quantified formula. Full-history sufficiency holds exactly when the quantified instance is true.
+\end{proof}
+
+\subsection{Tractable Subcases}
+
+\begin{proposition}[Sequential Tractable Classes]\label{prop:sequential-tractable}
+SEQUENTIAL-SUFFICIENCY-CHECK is polynomial-time solvable under each of the following restrictions:
+\begin{enumerate}
+\item full observability (MDP case),
+\item bounded horizon,
+\item tree-structured transition systems,
+\item deterministic transitions.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+Each restriction reduces policy search to dynamic programming over a polynomially bounded representation.
+\end{proof}
+
+\subsection{Bridge from Stochastic}
+
+\begin{proposition}[Stochastic Sufficiency Does Not Imply Sequential Sufficiency]\label{prop:stochastic-not-sequential}
+There exist instances where $I$ is sufficient in the stochastic one-shot sense but fails to be sufficient once temporal dynamics are introduced.
+\end{proposition}
+
+\begin{proof}
+Construct a process in which the same one-step expected optimizer is preserved under $I$, but hidden-state memory affects future information states and therefore optimal policies. The temporal dependence breaks one-shot sufficiency transfer.
+\end{proof}

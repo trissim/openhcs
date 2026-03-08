@@ -1,10 +1,10 @@
-\section{Engineering Corollaries}\label{sec:engineering-corollaries}
+\section{Hardness Transfers and Exact-Simplification Consequences}\label{sec:engineering-corollaries}
 
-The complexity results of Sections~\ref{sec:hardness}--\ref{sec:tractable} have direct engineering corollaries. This section records consequences of the preceding hardness and tractability theorems when the coordinate model is used to represent configuration, feature, or interface choices.
+The complexity results of Sections~\ref{sec:hardness} through~\ref{sec:tractable} transfer directly to exact simplification tasks. This section records hardness transfers and exact-simplification consequences of the preceding theorems when the coordinate model is used to represent configuration, feature, or interface choices.
 
 Every claim in this section is model-conditional. The conclusions apply when a design problem is faithfully represented as a decision problem with coordinate structure and when the relevant computational cost is the cost of certifying sufficiency or finding a minimal sufficient set.
 
-\subsection{Configuration Simplification as Sufficiency Checking}
+\subsection{Hardness Transfer to Configuration Simplification}
 
 \begin{proposition}[Configuration Simplification as \textsc{Sufficiency-Check}]
 \label{prop:config-sufficiency}
@@ -19,7 +19,7 @@ is an instance of \textsc{Sufficiency-Check}.
 Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking actions $A=B$, coordinate domains $X_i$ equal to the domains of the parameters $p_i$, and defining $U(b,s)=1$ exactly when behavior $b$ is realized or admissible under configuration state $s$. Then $\Opt(s)$ is the behavior set induced by $s$, and coordinate subset $I$ is sufficient exactly when agreement on the parameters in $I$ forces agreement on the induced optimal-behavior set.
 \end{proof}
 
-\subsection{Limits of Exact Minimization}
+\subsection{Exact-Minimization Impossibility}
 
 \begin{corollary}[No General-Purpose Exact Configuration Minimizer]
 \label{cor:no-general-minimizer}
@@ -34,7 +34,7 @@ Such a procedure would solve \textsc{Minimum-Sufficient-Set} in polynomial time 
 This does not rule out useful tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. Domain restrictions of the kind isolated in Section~\ref{sec:tractable} remain viable.
 \end{remark}
 
-\subsection{Why Over-Specification Can Be Rational}
+\subsection{Over-Specification Under Hardness}
 
 \begin{proposition}[Model-Conditional Rationality of Over-Specification]
 \label{prop:rational-overspecification}
@@ -55,11 +55,11 @@ By Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, exact suffici
 The conclusion is not that over-specification is always best. It is that, in the absence of tractable structure, exact minimality need not be a computationally reasonable target.
 \end{remark}
 
-\subsection{Heuristics and Structural Restrictions}
+\subsection{Tractability Boundary for Simplification}
 
 The tractable regimes of Section~\ref{sec:tractable} explain when exact simplification is computationally realistic. When bounded action sets, separable utility, low tensor rank, tree structure, bounded treewidth, or coordinate symmetry are present, exact certification becomes feasible. Outside such regimes, approximate selection, conservative over-inclusion, and domain-specific simplification strategies are often better aligned with the complexity landscape than unconditional demands for exact minimality.
 
-\subsection{Competence by Regime}
+\subsection{Exact-Certification Competence by Regime}
 
 \begin{proposition}[Exact Certification Competence Depends on Regime]
 \label{prop:competence-by-regime}

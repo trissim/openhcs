@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Decision Quotient.
 
-- **Lines:** 33311
-- **Theorems:** 1378
+- **Lines:** 34846
+- **Theorems:** 1449
 - **`sorry` placeholders:** 0
 
 
@@ -54,14 +54,18 @@ lake build
 | `CountingComplexity.lean` | CountingComplexity |
 | `CoveringLowerBound.lean` | CoveringLowerBound |
 | `ETH.lean` | ETH |
+| `MinSufficientApproximation.lean` | MinSufficientApproximation |
 | `QBF.lean` | QBF |
 | `SAT.lean` | SAT |
+| `SetCoverReduction.lean` | SetCoverReduction |
 | `AnchorSufficiency.lean` | AnchorSufficiency |
 | `Summary.lean` | Summary |
 | `VectorE_CoNP.lean` | VectorE_CoNP |
 | `Sigma2PHardness.lean` | Sigma2PHardness |
 | `Hardness.lean` | Hardness |
 | `HardnessDistribution.lean` | HardnessDistribution |
+| `InflationEntropyBridge.lean` | InflationEntropyBridge |
+| `InflationEntropyMinimality.lean` | InflationEntropyMinimality |
 | `RDSrank.lean` | RDSrank |
 | `RateDistortion.lean` | RateDistortion |
 | `Information.lean` | Information |
@@ -122,6 +126,7 @@ lake build
 | `PolynomialReduction.lean` | PolynomialReduction |
 | `QueryComplexity.lean` | QueryComplexity |
 | `Quotient.lean` | Quotient |
+| `SetValued.lean` | SetValued |
 | `SubstrateCost.lean` | SubstrateCost |
 | `Summary.lean` | Summary |
 | `TemporalIntegrity.lean` | TemporalIntegrity |
@@ -147,6 +152,7 @@ lake build
 | `DeclInfoExport.lean` | DeclInfoExport |
 | `DependencyGraph.lean` | DependencyGraph |
 | `GraphExport.lean` | GraphExport |
+| `InflationEntropyDryRun.lean` | InflationEntropyDryRun |
 | `lakefile.lean` | lakefile |
 
 ## Verification

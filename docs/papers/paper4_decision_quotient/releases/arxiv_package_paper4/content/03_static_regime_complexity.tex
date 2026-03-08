@@ -1,0 +1,67 @@
+\section{Static Regime Complexity}\label{sec:hardness}
+
+This section studies the static regime, where the input is a finite coordinate-structured decision problem under the succinct encoding of Section~\ref{sec:encoding}. The core question is whether a candidate coordinate set preserves the optimizer map.
+
+\subsection{Problem Definitions}
+
+\begin{problem}[SUFFICIENCY-CHECK]
+\textbf{Input:} Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and coordinate set $I \subseteq \{1,\ldots,n\}$. \\
+\textbf{Question:} Is $I$ sufficient for $\mathcal{D}$?
+\end{problem}
+
+\begin{problem}[MINIMUM-SUFFICIENT-SET]
+\textbf{Input:} Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and integer $k$. \\
+\textbf{Question:} Does there exist a sufficient set $I$ with $|I| \le k$?
+\end{problem}
+
+\begin{problem}[ANCHOR-SUFFICIENCY]
+\textbf{Input:} Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and fixed coordinate set $I$. \\
+\textbf{Question:} Does there exist an assignment $\alpha$ to $I$ such that $\Opt(s)$ is constant on the fiber $\{s : s_I=\alpha\}$?
+\end{problem}
+
+\subsection{coNP-Completeness Results}
+
+\begin{theorem}[SUFFICIENCY-CHECK is coNP-complete]\label{thm:sufficiency-conp}
+SUFFICIENCY-CHECK is coNP-complete.
+\end{theorem}
+
+\begin{proof}
+Membership: by Proposition~\ref{prop:insufficiency-counterexample}, insufficiency has a polynomial witness $(s,s')$ with $s_I=s'_I$ and $\Opt(s)\ne\Opt(s')$, so the complement is in NP.
+
+Hardness: reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\Opt$ (Proposition~\ref{prop:empty-sufficient-constant}). The reduction is polynomial in formula size.
+\end{proof}
+
+\begin{theorem}[MINIMUM-SUFFICIENT-SET is coNP-complete]\label{thm:minsuff-conp}
+MINIMUM-SUFFICIENT-SET is coNP-complete.
+\end{theorem}
+
+\begin{proof}
+By Proposition~\ref{prop:minimal-relevant-equiv}, the minimum sufficient set is exactly the relevant-coordinate set. Hence the question ``$|I^*|\le k$?'' is equivalent to a coNP check over relevance witnesses. CoNP-hardness follows from the $k=0$ slice, which is exactly SUFFICIENCY-CHECK with $I=\emptyset$.
+\end{proof}
+
+\subsection{$\Sigma_2^P$-Completeness}
+
+\begin{theorem}[ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete]\label{thm:anchor-sigma2p}
+ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete.
+\end{theorem}
+
+\begin{proof}
+Membership is immediate from the quantifier pattern:
+\[
+\exists\alpha\;\forall s\in S:\ (s_I=\alpha)\Rightarrow \Opt(s)=\Opt(s_\alpha).
+\]
+Hardness follows by reduction from $\exists\forall$-SAT: existential variables encode the anchor assignment, and universal variables range over the residual coordinates. Utility values are set so that fiberwise constancy holds exactly when the source formula is true.
+\end{proof}
+
+\subsection{Certificate-Size Lower Bound}
+
+\begin{theorem}[Witness-Checking Duality]\label{thm:witness-checking-duality}
+For Boolean state spaces $S=\{0,1\}^n$, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
+\end{theorem}
+
+\begin{proof}
+Empty-set sufficiency asks whether $\Opt$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary.
+\end{proof}
+
+\paragraph{Mechanization note.}
+The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are formalized in Lean 4 and indexed in Appendix~\ref{app:lean}.

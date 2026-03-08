@@ -709,14 +709,17 @@ theorem structured_elicitation_mechanism
   · intro I; exact structured_isSufficient dp hstruct I
   · exact structured_isSufficient dp hstruct ∅
 
-/-! ### ETH + PolyReduction → Hardness Transfer Bridge (NON-TRIVIAL)
+/-! ### ETH + SizeBoundedReduction → Hardness Transfer Bridge (NON-TRIVIAL)
 
 This is a GENUINE cross-cluster composition:
-- FROM PolynomialReduction.lean: PolyReduction.comp_exists (reductions compose)
-- FROM PolynomialReduction.lean: poly_time field (polynomial size bounds)
-- COMPOSITION: Polynomial reduction composition preserves hardness.
+- FROM PolynomialReduction.lean: SizeBoundedReduction.comp_exists (reductions compose)
+- FROM PolynomialReduction.lean: size_bound field (polynomial size bounds)
+- COMPOSITION: Size-bounded reduction composition preserves hardness.
   If A reduces to B and B reduces to C, then hardness transfers A → C.
-  The composed reduction A → C is also polynomial (closed under composition).
+  The composed reduction A → C is also size-bounded (closed under composition).
+
+NOTE: SizeBoundedReduction captures polynomial SIZE bounds, not polynomial TIME bounds.
+For actual Karp reductions, polytime computability would need to be a separate hypothesis.
 -/
 
 /-- **NON-TRIVIAL BRIDGE**: Polynomial reductions compose and preserve hardness.
@@ -729,25 +732,25 @@ This is a GENUINE cross-cluster composition:
     then A poly-reduces to C with a polynomial bound on the composition.
 
     COMPLEXITY READING:
-    - Both r1 and r2 have polynomial bounds: sizeOf(r.f(a)) ≤ c * sizeOf(a)^k + c
-    - The composition r2.f ∘ r1.f also has a polynomial bound
-    - This is the key to hardness transfer: poly reductions are transitive -/
-theorem poly_reduction_eth_hardness_transfer
+    - Both r1 and r2 have polynomial size bounds: sizeOf(r.f(a)) ≤ c * sizeOf(a)^k + c
+    - The composition r2.f ∘ r1.f also has a polynomial size bound
+    - This is the key to hardness transfer: size-bounded reductions are transitive -/
+theorem size_bounded_reduction_hardness_transfer
     {A B C : Type*} [SizeOf A] [SizeOf B] [SizeOf C]
-    (r1 : PolyReduction A B) (r2 : PolyReduction B C) :
+    (r1 : SizeBoundedReduction A B) (r2 : SizeBoundedReduction B C) :
     -- Part 1: Reductions compose (from PolynomialReduction.lean)
-    (∃ (r : PolyReduction A C), r.f = r2.f ∘ r1.f) ∧
+    (∃ (r : SizeBoundedReduction A C), r.f = r2.f ∘ r1.f) ∧
     -- Part 2: Both original reductions have polynomial bounds
     (∃ (c1 k1 : ℕ), ∀ a : A, sizeOf (r1.f a) ≤ c1 * (sizeOf a) ^ k1 + c1) ∧
     (∃ (c2 k2 : ℕ), ∀ b : B, sizeOf (r2.f b) ≤ c2 * (sizeOf b) ^ k2 + c2) := by
   constructor
   -- Part 1: From PolynomialReduction.lean - composition exists
-  · exact PolyReduction.comp_exists r1 r2
+  · exact SizeBoundedReduction.comp_exists r1 r2
   constructor
-  -- Part 2: r1 has polynomial bound (from its poly_time field)
-  · exact r1.poly_time
-  -- Part 3: r2 has polynomial bound (from its poly_time field)
-  · exact r2.poly_time
+  -- Part 2: r1 has polynomial size bound (from its size_bound field)
+  · exact r1.size_bound
+  -- Part 3: r2 has polynomial size bound (from its size_bound field)
+  · exact r2.size_bound
 
 /-! ### Query Complexity + Structural Rank → Information-Theoretic Lower Bound (NON-TRIVIAL)
 
@@ -1080,7 +1083,7 @@ This is a GENUINE cross-cluster composition:
 
     This theorem composes:
     1. FROM ThermodynamicLift.lean: Energy/carbon scale with bit operations
-    2. FROM ThermodynamicLift.lean: Landauer calibration gives positive per-bit cost
+    2. FROM ThermodynamicLift.lean: Landauer floor gives a positive minimum per-bit cost
     3. FROM StructuralRank.lean: srank determines computational complexity
 
     COMPOSITION: The bit-operation lower bound is 2^srank (from complexity).
@@ -1621,7 +1624,7 @@ These bridges connect the remaining disconnected clusters in Paper 4:
 
 This is a GENUINE cross-cluster composition:
 - FROM LocalityPhysics.lean: landauer_principle (EP1), finite_regional_energy (EP2)
-- FROM ThermodynamicLift.lean: landauerJoulesPerBit, Landauer calibration
+- FROM ThermodynamicLift.lean: landauerJoulesPerBit, Landauer floor
 - COMPOSITION: The empirical axioms (EP1-EP3) ground the thermodynamic cost theory.
   Energy bounds derive from BOTH the physics axioms AND the bit-erasure cost.
 -/
@@ -1835,7 +1838,7 @@ This is a GENUINE cross-cluster composition:
 - FROM LocalityPhysics.lean: second_law_from_counting (derivation from microstate counting)
 - FROM ThermodynamicLift.lean: landauerJoulesPerBit (operational form)
 - COMPOSITION: The second law (entropy increases) derives from counting arguments.
-  Combined with Landauer calibration, this gives the operational energy bounds.
+  Combined with the Landauer floor, this gives the operational energy bounds.
 -/
 
 /-- **NON-TRIVIAL BRIDGE**: Second Law derivation + Landauer = operational thermodynamics.
@@ -1845,7 +1848,7 @@ This is a GENUINE cross-cluster composition:
     2. FROM ThermodynamicLift.lean: Landauer bound (E ≥ kT ln 2 per bit)
 
     COMPOSITION: The second law is DERIVED from counting microstates (not axiomatized).
-    Combined with Landauer calibration, this gives:
+    Combined with the Landauer floor, this gives:
     - Information erasure → entropy increase → minimum energy cost
 
     DERIVATION CHAIN:

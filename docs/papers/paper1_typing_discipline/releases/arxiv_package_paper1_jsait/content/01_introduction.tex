@@ -8,14 +8,14 @@ Consider an encoder-decoder pair communicating about entities from a large unive
 
 This is not reconstruction (the decoder need not recover $v$), but \emph{identification} in the sense of Ahlswede and Dueck \cite{ahlswede1989identification}: the decoder must answer ``which class?'' with zero or bounded error. Our work extends this framework to consider the tradeoff between tag storage, query complexity, and identification accuracy.
 
-We prove three results:
+We prove three core theorem families, and then extend them with finite-block, open-world, and mechanization results:
 \begin{enumerate}
 \item \textbf{Information barrier (identifiability limit).} When the attribute profile $\pi: \mathcal{V} \to \{0,1\}^n$ is not injective on classes, zero-error identification via queries alone is impossible: any decoder produces identical output on colliding classes, so cannot be correct for both.
 \item \textbf{Optimal tagging (achievability).} A tag of $L = \lceil \log_2 k \rceil$ bits achieves zero-error identification with $W = O(1)$ query cost. For maximal-barrier domains ($A_\pi = k$), this is the unique Pareto-optimal point in the $(L, W, D)$ tradeoff space at $D=0$; in general domains, the converse depends on $A_\pi := \max_u |\{c : \pi(c)=u\}|$.
 \item \textbf{Matroid structure (query complexity).} Minimal sufficient query sets form the bases of a matroid. The \emph{distinguishing dimension} (the common cardinality of all minimal sets) is well-defined and lower-bounds the query cost $W$ for any tag-free scheme.
 \end{enumerate}
 
-These results are domain-independent within the stated observation model: the same lower bounds appear in type systems, databases, biological taxonomy, and knowledge graphs. We develop the mathematics in full generality, then give concrete illustrations. In the programming-language setting, the point is not to ``discover'' nominal typing, but to characterize a long-observed design regularity information-theoretically: once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In particular, in maximal-barrier domains the paper shows that nominal tagging is the unique $D=0$ Pareto solution, so the issue is not stylistic preference but which resource a system chooses to spend.
+These results are domain-independent within the stated observation model: the same lower bounds appear across databases, biological taxonomy, knowledge graphs, and software runtimes. Once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In maximal-barrier domains this yields a unique $D=0$ Pareto solution, so the issue is resource feasibility, not domain-specific style conventions.
 
 \subsection{The Observation Model}
 
@@ -26,7 +26,7 @@ Let $\mathcal{V}$ be a set of entities (program objects, database records, biolo
 \end{definition}
 
 \begin{remark}[Terminology]
-We use ``attribute'' for the abstract concept. In type systems, attributes are \emph{interfaces} or \emph{method signatures}. In databases, they are \emph{columns}. In taxonomy, they are \emph{phenotypic characters}. In library science, they are \emph{facets}. The mathematics is identical.
+We use ``attribute'' for the abstract concept. Depending on domain, attributes may be interfaces/signatures, database columns, phenotypic characters, or catalog facets. The mathematics is identical.
 \end{remark}
 
 \begin{definition}[Attribute observation family]
@@ -39,7 +39,7 @@ Let $\Phi_{\mathcal{I}} = \{q_I : I \in \mathcal{I}\}$ denote the attribute obse
 
 \begin{remark}[Notation for size parameters]
 We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion).
-When discussing a particular identification/verification task, we may write $s$ for the number of attributes actually queried/traversed by the procedure (e.g., members/fields checked in a structural type test, phenotypic characters checked in taxonomy), with $s \le n$. The maintenance-only parameter $m$ appears only in Section~\ref{sec:complexity}.
+When discussing a particular identification/verification task, we may write $s$ for the number of attributes actually queried/traversed by the procedure (e.g., interface or schema checks in software/data systems, phenotypic checks in taxonomy), with $s \le n$. The maintenance-only parameter $m$ appears only in Section~\ref{sec:complexity}.
 \end{remark}
 
 \begin{definition}[Attribute profile]
@@ -88,7 +88,7 @@ The barrier is \emph{informational}, not computational. Given unlimited time, me
 \end{remark}
 
 \begin{remark}[Role in the paper]
-Theorem~\ref{thm:information-barrier} is the foundational invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem~\ref{thm:converse}), the Pareto characterization (Theorem~\ref{thm:lwd-optimal}), and the matroid/equicardinality results (Section~\ref{sec:matroid}).
+Theorem~\ref{thm:information-barrier} is the base invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem~\ref{thm:converse}), the Pareto characterization (Theorem~\ref{thm:lwd-optimal}), and the matroid/equicardinality results (Section~\ref{sec:matroid}).
 \end{remark}
 
 \begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
@@ -154,7 +154,7 @@ An adversary can answer the procedure's queries consistently with both $v$ and $
 This paper establishes the following results:
 
 \begin{enumerate}
-\item \textbf{Information Barrier Theorem} (Theorem~\ref{thm:information-barrier}): Attribute-only observers cannot compute any property that varies within $\sim$-equivalence classes. This is an information-theoretic impossibility, not a computational limitation, and it is the source of the downstream rate-query tradeoffs.
+\item \textbf{Information Barrier Theorem} (Theorem~\ref{thm:information-barrier}): Attribute-only observers cannot compute any property that varies within $\sim$-equivalence classes. This is an observational impossibility, not a computational limitation, and it is the source of the downstream rate-query tradeoffs.
 
 \item \textbf{Constant-Witness Theorem} (Theorem~\ref{thm:constant-witness}): Nominal-tag access achieves constant witness cost for class identity. Attribute-only observers have matching lower bound $\Omega(d)$ (Theorem~\ref{thm:interface-lower-bound}), where $d$ is the distinguishing dimension (Definition~\ref{def:distinguishing-dimension}).
 
@@ -162,12 +162,15 @@ This paper establishes the following results:
 
 \item \textbf{Matroid Structure} (Section~\ref{sec:matroid}): Minimal distinguishing query sets form the bases of a matroid. All such sets have equal cardinality, so the distinguishing dimension is an invariant of the observation model rather than an artifact of a particular proof or query order.
 
-\item \textbf{$(L, W, D)$ Optimality} (Section~\ref{sec:lwd}): We characterize the zero-error converse via collision multiplicity $A_\pi$ and prove uniqueness of the nominal point in the maximal-barrier regime ($A_\pi=k$), turning an informal design preference into an explicit Pareto statement.
+\item \textbf{$(L, W, D)$ Optimality} (Section~\ref{sec:lwd}): We characterize the zero-error converse via collision multiplicity $A_\pi$ and prove uniqueness of the nominal point in the maximal-barrier regime ($A_\pi=k$), turning an informal heuristic into an explicit resource law.
 
-\item \textbf{Finite-Block Confusability Law} (Section~\ref{sec:framework}): We prove exact block thresholds for zero-error feasibility in the confusability formulation: at blocklength $k$, feasibility is equivalent to an alphabet threshold $A_\pi^k$, with exact linear log-bit scaling and per-coordinate stabilization.
+\item \textbf{Finite-Block Confusability Law} (Section~\ref{sec:framework}): We prove exact block thresholds for zero-error feasibility in the confusability formulation: at blocklength $t$, feasibility is equivalent to an alphabet threshold $A_\pi^t$, with exact linear log-bit scaling and per-coordinate stabilization.
+
+\item \textbf{Open-World Robustness + Decidability Boundary}: We formalize that barrier-freedom is not extension-stable in open worlds (any finite barrier-free world can be extended to force a collision), and we prove a Rice-style impossibility theorem: no computable certifier can decide barrier existence/freedom for arbitrary generators.
 
 \item \textbf{Machine-Checked Proofs}: All results formalized in Lean 4 (\LeanTotalLines\ lines, \LeanTotalTheorems\ theorem/lemma statements, \LeanTotalSorry\ \texttt{sorry} placeholders).
 \end{enumerate}
+\leanmeta{ \LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2} }
 
 Without the equicardinality result behind the matroid structure, the lower bound would depend on which distinguishing set or query strategy one chose. The matroid theorem is what makes $d$ strategy-independent.
 
@@ -185,9 +188,9 @@ This paper does not develop asymptotic coding theorems or claim new zero-error c
 
 \textbf{Query complexity and communication complexity.} The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity \cite{buhrman2002complexity} and interactive communication \cite{orlitsky1991worst}. The key distinction is that our queries are constrained to a fixed observable family $\mathcal{I}$, not arbitrary predicates.
 
-\textbf{Compression in classification systems.} The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and typed software systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}), with maximal-barrier specialization $L \ge \log_2 k$.
+\textbf{Compression in classification systems.} The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}), with maximal-barrier specialization $L \ge \log_2 k$.
 
-\textbf{Programming-language corollary (secondary).} In nominal-vs-structural typing settings \cite{Cardelli1985, cook1990inheritance}, the model yields a concrete cost statement: under attribute collisions, purely structural identification has worst-case $\Omega(d)$ witness cost, while nominal tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is the paper's PL-facing corollary; the main contribution remains the information-theoretic characterization.
+\textbf{Runtime/schema instantiation (secondary).} In nominal-vs-structural interface settings \cite{Cardelli1985, cook1990inheritance}, the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
 
 \subsection{Paper Organization}
 

@@ -1,4 +1,4 @@
-This paper presents an information-theoretic analysis of classification under observational constraints. We prove three main results:
+This paper presents a resource-based analysis of classification under observational constraints. We establish three core theorem families and accompanying extensions:
 
 \begin{enumerate}
 \item \textbf{Information Barrier}: Observers limited to attribute-membership queries cannot compute properties that vary within indistinguishability classes. This is the structural obstruction from which the later lower bounds and tradeoffs follow.
@@ -17,7 +17,7 @@ Across domains, the same structure recurs:
 
 \item \textbf{Databases}: Column-value queries cannot distinguish rows with identical attributes. Primary keys (nominal tag) provide $O(1)$ identity.
 
-\item \textbf{Type systems}: Attribute observation (interfaces/method signatures in this instantiation) cannot distinguish structurally identical types. Type tags provide $O(1)$ identity.
+\item \textbf{Software runtimes}: Attribute observation cannot distinguish entities that collide on observed capabilities. Runtime identifiers provide $O(1)$ identity.
 \end{itemize}
 
 The information barrier is not a quirk of any particular domain; it is a mathematical necessity arising from the quotient structure induced by limited observations. What varies by domain is not the existence of the constraint, but which resource the system chooses to spend to escape it.
@@ -31,10 +31,13 @@ The information barrier is not a quirk of any particular domain; it is a mathema
 
 \item \textbf{Finite-block confusability laws are exact}: the mechanized graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^k$) and exact linear log-bit scaling across block length.
 
+\item \textbf{Open-world guarantees require explicit tags}: barrier-freedom is not extension-stable under system growth, and deciding barrier existence/freedom for arbitrary generators is not computable (Rice-style). So a persistent $D=0$ guarantee cannot rely on ``currently collision-free'' attribute structure alone.
+
 \item \textbf{Fixed-axis systems are necessarily incomplete outside their axis}: by Corollary~\ref{cor:fixed-axis-incompleteness}, any fixed-axis classifier is complete only for axis-measurable properties and cannot represent properties that vary within an axis fiber unless a new axis or explicit tag is introduced.
 
 \item \textbf{Classification system design is constrained}: the choice of observation family determines which properties are computable.
 \end{itemize}
+\leanmeta{ \LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2} }
 
 \subsection{Future Work}
 
@@ -42,8 +45,10 @@ Natural extensions include other classification domains, witness complexity for 
 
 \subsection{Conclusion}
 
-Classification under observational constraints admits a clean information-theoretic analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem~\ref{thm:lwd-optimal}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
+Classification under observational constraints admits a clean quantitative analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem~\ref{thm:lwd-optimal}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
 
-\subsection*{AI Disclosure}
+\subsection*{Acknowledgment: AI-use Disclosure}
 
-The core mathematical ideas and proof strategies were developed by the author. LLM tools assisted with exposition, formal-draft translation, and proof exploration; all stated claims were checked by the author and, where reported, machine-verified in Lean 4 as an integrity layer before submission.
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no \texttt{sorry} in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.

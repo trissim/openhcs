@@ -115,3 +115,10 @@ lean_lib «DependencyGraph» where
   moreLeanArgs := moreLeanArgs
   weakLeanArgs := weakLeanArgs
   -- Build-time graph export commands shared by graph bridge declarations
+
+@[default_target]
+lean_lib «Paper1IT» where
+  globs := #[.submodules `Paper1IT]
+  moreLeanArgs := moreLeanArgs
+  weakLeanArgs := weakLeanArgs
+  -- Shared information-theoretic modules consumed by downstream papers

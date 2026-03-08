@@ -1,327 +1,104 @@
 \section{Rate-Complexity Bounds}\label{sec:bounds}
 %==============================================================================
 
-We now prove the rate-complexity bounds that make DOF = 1 optimal. The key result: the gap between DOF-1-complete and DOF-1-incomplete architectures is \emph{unbounded}--it grows without limit as encoding systems scale (\LH{UNQ1}).
+The threshold $C_0=1$ has an operational consequence: independent rate governs manual synchronization cost. This section states that consequence in the same finite, deterministic model used for the zero-error theorems.
 
 \subsection{Cost Model}\label{sec:cost-model}
 
 \begin{definition}[Modification Cost Model]\label{def:cost-model}
-Let $\delta_F$ be a modification to fact $F$ in encoding system $C$. The \emph{effective modification complexity} $M_{\text{effective}}(C, \delta_F)$ is the number of syntactically distinct edit operations that must be performed manually. Formally:
-\[
-M_{\text{effective}}(C, \delta_F) = |\{L \in \text{Locations}(C) : \text{requires\_manual\_edit}(L, \delta_F)\}|
-\]
-where $\text{requires\_manual\_edit}(L, \delta_F)$ holds iff location $L$ must be updated manually (not by automatic derivation) to maintain coherence after $\delta_F$.
+Let $\delta_F$ be a modification to fact $F$ in encoding system $C$. The \emph{effective modification complexity} $M_{\mathrm{effective}}(C,\delta_F)$ is the number of locations that must be edited manually to preserve correctness after applying $\delta_F$.
 \end{definition}
 
-\textbf{Unit of cost:} One edit = one syntactic modification to one location. We count locations, not keystrokes or characters. This abstracts over edit complexity to focus on the scaling behavior.
+Only manual edits are counted. Derived locations updated automatically by the host system contribute zero effective cost.
 
-\textbf{What we measure:} Manual edits only. Derived locations that update automatically have zero cost. This distinguishes DOF = 1 systems (where derivation handles propagation) from DOF $>$ 1 systems (where all updates are manual).
+\subsection{Upper Bound at Unit Independent Rate}\label{sec:upper-bound}
 
-\textbf{Asymptotic parameter:} We measure scaling in the number of encoding locations for fact $F$. Let $n = |\{L \in C : \text{encodes}(L, F)\}|$ and $k = \text{DOF}(C, F)$. Bounds of $O(1)$ and $\Omega(n)$ are in this parameter; in particular, the lower bound uses $n = k$ independent locations.
-
-\subsection{Upper Bound: DOF = 1 Achieves O(1)}\label{sec:upper-bound}
-
-\begin{theorem}[DOF = 1 Upper Bound]\label{thm:upper-bound}
-For an encoding system with DOF = 1 for fact $F$:
+\begin{theorem}[Rate-1 Upper Bound]\label{thm:upper-bound}
+If $\text{DOF}(C,F)=1$, then
 \[
-M_{\text{effective}}(C, \delta_F) = O(1)
+M_{\mathrm{effective}}(C,\delta_F)=O(1).
 \]
-Effective modification complexity is constant regardless of system size.
 \end{theorem}
-\leanmeta{\LH{UNQ1}}
+\leanmeta{\LH{BND1}}
 
 \begin{proof}
-Let $\text{DOF}(C, F) = 1$. By Definition~\ref{def:ssot}, $C$ has exactly one independent encoding location. Let $L_s$ be this single independent location.
-
-When $F$ changes:
-\begin{enumerate}
-\tightlist
-\item Update $L_s$ (1 manual edit)
-\item All derived locations $L_1, \ldots, L_k$ are automatically updated by the derivation mechanism
-\item Total manual edits: 1
-\end{enumerate}
-
-The number of derived locations $k$ can grow with system size, but the number of \emph{manual} edits remains 1. Therefore, $M_{\text{effective}}(C, \delta_F) = O(1)$.
+When $\text{DOF}(C,F)=1$, there is exactly one independently writable source location for $F$. Updating that location is one manual edit; every other representation of $F$ is derived and is updated automatically. The number of manual edits therefore stays bounded by a constant independent of the number of visible encodings.
 \end{proof}
 
-\textbf{Note on ``effective'' vs. ``total'' complexity:} Total modification complexity $M(C, \delta_F)$ counts all locations that change. Effective modification complexity counts only manual edits. With DOF = 1, total complexity can be $O(n)$ (many derived locations change), but effective complexity is $O(1)$ (one manual edit).
+\subsection{Lower Bound Above the Threshold}\label{sec:lower-bound}
 
-\subsection{Lower Bound: DOF $>$ 1 Requires \texorpdfstring{$\Omega(n)$}{Omega(n)}}\label{sec:lower-bound}
-
-\begin{theorem}[DOF $>$ 1 Lower Bound]\label{thm:lower-bound}
-For an encoding system with DOF $>$ 1 for fact $F$, if $F$ is encoded at $n$ independent locations:
+\begin{theorem}[Above-Threshold Lower Bound]\label{thm:lower-bound}
+If fact $F$ is encoded at $n$ independent locations, then
 \[
-M_{\text{effective}}(C, \delta_F) = \Omega(n)
+M_{\mathrm{effective}}(C,\delta_F)=\Omega(n).
 \]
 \end{theorem}
-\leanmeta{\LH{UNQ1}}
+\leanmeta{\LH{BND2}}
 
 \begin{proof}
-Let $\text{DOF}(C, F) = n$ where $n > 1$.
-
-By Definition~\ref{def:independent}, the $n$ encoding locations are independent--updating one does not automatically update the others. When $F$ changes:
-\begin{enumerate}
-\tightlist
-\item Each of the $n$ independent locations must be updated manually
-\item No automatic propagation exists between independent locations
-\item Total manual edits: $n$
-\end{enumerate}
-
-Therefore, $M_{\text{effective}}(C, \delta_F) = \Omega(n)$.
+Each independent location can retain an outdated value unless it is edited directly. To restore exact consistency after changing $F$, each of the $n$ independent locations must therefore be synchronized manually. Hence the effective modification complexity grows at least linearly in $n$.
 \end{proof}
 
-\subsection{Information-theoretic converse (mutual information / Fano)}\label{sec:info-converse}
+\subsection{Finite Counting Converse}\label{sec:info-converse}
 
-To make the converse argument explicit in information-theoretic terms we give a concise mutual-information / Fano-style bound showing that insufficient side information forces a non-vanishing error probability when attempting to recover structural facts from distributed encodings (\LH{UNQ1}, \LH{UNQ1}).
+The update-cost lower bound is the operational face of the same information obstruction studied earlier: insufficient side information prevents exact recovery of the correct latent value.
 
-\begin{remark}[Formalization status]
-The results in this subsection apply Fano's inequality, a standard tool in information theory~\cite{cover2006elements}. We state and apply these results without separate Lean formalization; the proofs are direct applications of the classical inequality. The core capacity and complexity theorems (Sections~\ref{sec:capacity}--\ref{sec:requirements}) are fully machine-checked.
-\end{remark}
-
-\begin{theorem}[Fano-style Converse]\label{thm:fano-converse}
-Let $F$ be a discrete fact taking values in a set of size $K$. Let $S$ denote the available side information (derived locations, observations). Let $\hat F(S)$ be any estimator of $F$ based on $S$, and let $P_e = \Pr(\hat F \neq F)$. Then
+\begin{theorem}[Finite Counting Converse]\label{thm:fano-converse}
+Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then
 \[
-I(F;S) \ge H(F) - H_b(P_e) - P_e\log(K-1),
+K \le 2^L.
 \]
-where $H_b(\cdot)$ is the binary entropy. In particular, if $P_e\to 0$ then $I(F;S)\to H(F)$, so $S$ must contain essentially $\log K$ bits about $F$.
+Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
 \end{theorem}
+\leanmeta{\LH{CIA3}}
 
-\begin{proof}[Proof sketch]
-This is the standard Fano inequality. Let $\hat F$ be any estimator formed from $S$. Then
-\[
-\begin{aligned}
-H(F|S)
-&\le H(F|\hat F) + I(F;\hat F|S) \\
-&= H(F|\hat F) \\
-&\le H_b(P_e) + P_e\log(K-1),
-\end{aligned}
-\]
-and $I(F;S)=H(F)-H(F|S)$ yields the stated bound. The terms $H_b(P_e)$ and $P_e\log(K-1)$ vanish as $P_e\to0$, forcing $I(F;S)\approx H(F)$.
+\begin{proof}
+An $L$-bit tag yields at most $2^L$ distinct labels. If the base observation transcript is fixed across the ambiguous states, exact recovery requires the tag assignment to distinguish all $K$ possibilities. Distinct states therefore need distinct tags, which is possible only when $K\le 2^L$.
 \end{proof}
 
-\noindent This inequality formalizes the intuition used in the main text: unless the derived/side-information channels collectively convey essentially the full entropy of the fact, perfect (or vanishing-error) recovery is impossible. Translating this to modification complexity shows that when side-information capacity is limited, systems must retain multiple independent encodings (higher DOF), incurring larger manual update costs.
-
-\subsection{Information-constrained DOF lower bound}
-\label{sec:info-dof}
-
-The following lemma makes the link explicit between mutual-information capacity of side information and the necessity of multiple independent encodings.
-
-\begin{lemma}[Information-constrained DOF Lower Bound]\label{lem:info-dof}
-Let $F$ be a fact uniformly distributed over $K$ values. Let $S$ be the collective side information provided by derived locations. If
-\[I(F;S) < \log K - \delta\]
-for some $\delta>0$, then any encoding system that guarantees vanishing-error recovery of $F$ from $S$ must include at least two independent encoding locations for some subset of values (i.e., DOF $>1$ for those values). Consequently, for facts encoded at $n$ independent locations the effective modification complexity satisfies $M_{\text{effective}}=\Omega(n)$.
+\begin{lemma}[Information-Constrained DOF Lower Bound]\label{lem:info-dof}
+If the available side-information mechanism exposes at most $2^L$ distinguishable tags while the latent ambiguity class has size $K>2^L$, then no zero-error resolver can identify the true state from those tags alone. Any architecture that still guarantees exact correctness must therefore rely on additional independently accessible discriminating support, moving the system above the single-source regime.
 \end{lemma}
+\leanmeta{\LH{CIA4}}
 
-\begin{proof}[Proof sketch]
-By Theorem~\ref{thm:fano-converse}, if $I(F;S)<\log K-\delta$ then any estimator has error probability bounded away from zero for the $K$-ary hypothesis. To achieve correctness despite the insufficient side information, the system must retain additional independent encodings that act as auxiliary sources of information about $F$; these independent encodings increase DOF. Once DOF$>1$ over a set of $n$ independent locations, Theorem~\ref{thm:lower-bound} implies $M_{\text{effective}}=\Omega(n)$, completing the chain from information constraints to modification complexity.
+\begin{proof}
+Theorem~\ref{thm:fano-converse} rules out exact recovery from the available tag budget. If exact correctness is nevertheless required, the architecture must supplement the insufficient side-information channel with additional independently accessible information. In the present model, that means leaving the rate-$1$ regime and paying the synchronization cost of Theorem~\ref{thm:lower-bound}.
 \end{proof}
 
-\subsection{Worked example: numeric mutual-information calculation}
-\label{sec:worked-mi}
+\subsection{Worked Example}\label{sec:worked-mi}
 
-Consider a fact $F$ uniformly distributed over $K=4$ values, so $H(F)=\log_2 4 = 2$ bits. Suppose the collective derived side information $S$ conveys only $I(F;S)=1$ bit about $F$ (for example, a summary or hash with one bit of mutual information).
+Consider a fact with $K=4$ admissible values while the available side-information channel supplies only one bit. Since $2^1 < 4$, Theorem~\ref{thm:fano-converse} rules out zero-error recovery. The architecture must either enlarge the side-information alphabet or expose additional independent support. The theorem does not depend on software; the same logic applies to any host system whose observation transcript leaves four mutually compatible alternatives.
 
-Apply the Fano-style bound (Theorem~\ref{thm:fano-converse}). Let $P_e$ denote the probability of incorrect recovery of $F$ from $S$. Then
-\[
-H(F|S) = H(F)-I(F;S) = 2 - 1 = 1\text{ bit.}
-\]
-Fano's inequality gives
-\[
-H_b(P_e) + P_e\log_2(K-1) \ge H(F|S) = 1.
-\]
-Plugging $K-1=3$ and solving numerically yields a lower bound $P_e \gtrsim 0.19$ (approximately 19\% error). Concretely: $H_b(0.19)\approx 0.695$ and $0.19\log_2 3\approx 0.301$, summing to $\approx 0.996\approx1$.
-\[
-H_b(0.19)\approx 0.695,\qquad
-0.19\log_2 3\approx 0.301,\qquad
-0.996\approx 1.
-\]
+\subsection{Unified Converse Viewpoint}\label{sec:unified-converse}
 
-Interpretation: with only 1 bit of side information for a 2-bit fact, no estimator can recover $F$ with error lower than roughly 19\%; therefore, to guarantee vanishing error one must supply more side information (increase $I(F;S)$) or retain extra independent encodings (increase DOF), which in turn raises manual modification costs per Theorem~\ref{thm:lower-bound}.
+The counting theorem is the basic form of the converse, but it is not the only one. In the deterministic finite model, the same budget obstruction can be restated in several classical languages.
 
-As a second illustration, if $I(F;S)=1.5$ bits then $H(F|S)=0.5$ and Fano's bound requires a much smaller $P_e$ (solve $H_b(P_e)+P_e\log_2 3\ge 0.5$ numerically to obtain $P_e\approx 0.08$), showing the smooth tradeoff between conveyed information and achievable error.
+\begin{theorem}[Unified finite converse, summary form]
+Let $X$ be the latent source, let $Y$ denote the deterministic observation/side-information transcript, and let $\hat X$ be any deterministic decoder output. If $Y$ does not identify the true state exactly, then the same finite budget simultaneously:
+\begin{enumerate}
+\tightlist
+\item lower-bounds zero-error ambiguity resolution and confusability-clique separation,
+\item upper-bounds the conditional entropy $H(X\mid Y)$,
+\item upper-bounds the decoder-output entropy $H(\hat X)$,
+\item and appears as an output-entropy or KL gap relative to the ambient finite alphabets.
+\end{enumerate}
+These are different normal forms of one deterministic finite converse family rather than unrelated lemmas.
+\end{theorem}
 
-
-
-\textbf{Tightness (Achievability + Converse).} Theorems~\ref{thm:upper-bound} and~\ref{thm:lower-bound} form a tight information-theoretic bound: DOF = 1 achieves constant modification cost (achievability), while any encoding with more than one independent location incurs linear cost in the number of independent encodings (converse) (\LH{UNQ1}, \LH{UNQ1}). There is no intermediate regime with sublinear manual edits when $k > 1$ independent encodings are permitted.
+The zero-incoherence threshold identifies the unique exact-consistency regime; the converse family explains how departures from that regime reappear as finite information-budget obstructions.
 
 \subsection{The Unbounded Gap}\label{sec:gap}
 
 \begin{theorem}[Unbounded Gap]\label{thm:unbounded-gap}
-The ratio of modification complexity between DOF-1-incomplete and DOF-1-complete architectures grows without bound:
+The ratio between the modification cost of an architecture with $n$ independent encodings and the modification cost of a rate-$1$ architecture diverges:
 \[
-\lim_{n \to \infty} \frac{M_{\text{DOF}>1}(n)}{M_{\text{DOF}=1}} = \lim_{n \to \infty} \frac{n}{1} = \infty
+\lim_{n\to\infty}\frac{M_{\mathrm{DOF}>1}(n)}{M_{\mathrm{DOF}=1}}=\infty.
 \]
 \end{theorem}
-\leanmeta{\LH{UNQ1}}
+\leanmeta{\LH{BND3}}
 
 \begin{proof}
-By Theorem~\ref{thm:upper-bound}, $M_{\text{DOF}=1} = O(1)$. Specifically, $M_{\text{DOF}=1} = 1$ for any system size.
-
-By Theorem~\ref{thm:lower-bound}, $M_{\text{DOF}>1}(n) = \Omega(n)$ where $n$ is the number of independent encoding locations.
-
-The ratio is:
-\[
-\frac{M_{\text{DOF}>1}(n)}{M_{\text{DOF}=1}} = \frac{n}{1} = n
-\]
-
-As $n \to \infty$, the ratio $\to \infty$. The gap is unbounded.
+By Theorem~\ref{thm:upper-bound}, a rate-$1$ architecture has constant effective modification complexity. By Theorem~\ref{thm:lower-bound}, an architecture with $n$ independent encodings incurs linear cost in $n$. The ratio therefore grows without bound.
 \end{proof}
 
-\begin{corollary}[Arbitrary Reduction Factor]\label{cor:arbitrary-reduction}
-For any constant $k$, there exists a system size $n$ such that DOF = 1 provides at least $k\times$ reduction in modification complexity.
-\end{corollary}
-\leanmeta{\LH{UNQ1}}
-
-\begin{proof}
-Choose $n = k$. Then $M_{\text{DOF}>1}(n) = n = k$ and $M_{\text{DOF}=1} = 1$. The reduction factor is $k/1 = k$.
-\end{proof}
-
-\subsection{The (R, C, P) Tradeoff Space}\label{sec:rcp-tradeoff}
-
-We now formalize the complete tradeoff space, analogous to rate-distortion theory in classical information theory (\LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}).
-
-\begin{definition}[(R, C, P) Tradeoff]\label{def:rcp-tradeoff}
-For an encoding system, define:
-\begin{itemize}
-\tightlist
-\item $R$ = \emph{Rate} (DOF): Number of independent encoding locations
-\item $C$ = \emph{Complexity}: Manual modification cost per change
-\item $P$ = \emph{Coherence indicator}: $P = 1$ iff no incoherent state is reachable; otherwise $P = 0$
-\end{itemize}
-The \emph{(R, C, P) tradeoff space} is the set of achievable $(R, C, P)$ tuples.
-\end{definition}
-
-\begin{theorem}[Operating Regimes]\label{thm:operating-regimes}
-The (R, C, P) space has three distinct operating regimes:
-\begin{center}
-\begin{tabularx}{\linewidth}{cccY}
-\toprule
-\textbf{Rate} & \textbf{Complexity} & \textbf{Coherence} & \textbf{Interpretation} \\
-\midrule
-$R = 0$ & $C = 0$ & $P = $ undefined & Fact not encoded \\
-$R = 1$ & $C = O(1)$ & $P = 1$ & \textbf{Optimal (capacity-achieving)} \\
-$R > 1$ & $C = \Omega(R)$ & $P = 0$ & Above capacity \\
-\bottomrule
-\end{tabularx}
-\end{center}
-\end{theorem}
-\leanmeta{\LH{UNQ1}}
-
-\begin{proof}
-\textbf{$R = 0$:} No encoding exists. Complexity is zero (nothing to modify), but coherence is undefined (nothing to be coherent about).
-
-\textbf{$R = 1$:} By Theorem~\ref{thm:upper-bound}, $C = O(1)$. By Theorem~\ref{thm:coherence-capacity}, $P = 1$ (coherence guaranteed). This is the capacity-achieving regime.
-
-\textbf{$R > 1$:} By Theorem~\ref{thm:lower-bound}, $C = \Omega(R)$. By Theorem~\ref{thm:dof-gt-one-incoherence}, incoherent states are reachable, so $P = 0$.
-\end{proof}
-
-\begin{definition}[Pareto Frontier]\label{def:pareto-frontier}
-A point $(R, C, P)$ is \emph{Pareto optimal} if no other achievable point dominates it (lower $R$, lower $C$, or higher $P$ without worsening another dimension).
-
-The \emph{Pareto frontier} is the set of all Pareto optimal points.
-\end{definition}
-
-\begin{theorem}[Pareto Optimality of DOF = 1]\label{thm:pareto-optimal}
-$(R=1, C=1, P=1)$ is the unique Pareto optimal point for encoding systems requiring coherence ($P = 1$).
-\end{theorem}
-
-\begin{proof}
-We show $(1, 1, 1)$ is Pareto optimal and unique:
-
-\textbf{Existence:} By Theorems~\ref{thm:upper-bound} and \ref{thm:coherence-capacity}, the point $(1, 1, 1)$ is achievable.
-
-\textbf{Optimality:} Consider any other achievable point $(R', C', P')$ with $P' = 1$:
-\begin{itemize}
-\tightlist
-\item If $R' = 0$: Fact is not encoded (excluded by requirement)
-\item If $R' = 1$: Same as $(1, 1, 1)$ (by uniqueness of $C$ at $R=1$)
-\item If $R' > 1$: By Theorem~\ref{thm:dof-gt-one-incoherence}, $P' < 1$, contradicting $P' = 1$
-\end{itemize}
-
-\textbf{Uniqueness:} No other point achieves $P = 1$ except $R = 1$.
-\end{proof}
-
-\textbf{Information-theoretic interpretation.} The Pareto frontier in rate-distortion theory is the curve $R(D)$ of minimum rate achieving distortion $D$. Here, the ``distortion'' is $1 - P$ (indicator of incoherence reachability), and the Pareto frontier collapses to a single point: $R = 1$ is the unique rate achieving $D = 0$.
-
-\begin{corollary}[No Tradeoff at $P = 1$]\label{cor:no-tradeoff}
-Unlike rate-distortion where you can trade rate for distortion, there is no tradeoff at $P = 1$ (perfect coherence). The only option is $R = 1$.
-\end{corollary}
-
-\begin{proof}
-Direct consequence of Theorem~\ref{thm:coherence-capacity}.
-\end{proof}
-
-\textbf{Comparison to rate-distortion.} In rate-distortion theory:
-\begin{itemize}
-\tightlist
-\item You can achieve lower distortion with higher rate (more bits)
-\item The rate-distortion function $R(D)$ is monotonically decreasing
-\item $D = 0$ (lossless) requires $R = H(X)$ (source entropy)
-\end{itemize}
-
-In our framework:
-\begin{itemize}
-\tightlist
-\item You \emph{cannot} achieve higher coherence ($P$) with more independent locations
-\item Higher rate ($R > 1$) \emph{eliminates} coherence guarantees ($P = 0$)
-\item $P = 1$ (perfect coherence) requires $R = 1$ exactly
-\end{itemize}
-
-The key difference: redundancy (higher $R$) \emph{hurts} rather than helps coherence (without coordination). This inverts the intuition from error-correcting codes, where redundancy enables error detection/correction. Here, redundancy without derivation enables errors (incoherence).
-
-\subsection{Practical Implications}\label{sec:practical-implications}
-
-The unbounded gap has practical implications:
-
-\textbf{1. DOF = 1 matters more at scale.} For small systems ($n = 3$), the difference between 3 edits and 1 edit is minor. For large systems ($n = 50$), the difference between 50 edits and 1 edit is significant.
-
-\textbf{2. The gap compounds over time.} Each modification to fact $F$ incurs the complexity cost. If $F$ changes $m$ times over the system lifetime, total cost is $O(mn)$ with DOF $>$ 1 vs. $O(m)$ with DOF = 1.
-
-\textbf{3. The gap affects error rates.} Each manual edit is an opportunity for error. With $n$ edits, the probability of at least one error is $1 - (1-p)^n$ where $p$ is the per-edit error probability. As $n$ grows, this approaches 1.
-
-\begin{example}[Error Rate Calculation]\label{ex:error-rate}
-Assume a 1\% error rate per edit ($p = 0.01$).
-
-\begin{center}
-\begin{tabular}{ccc}
-\toprule
-\textbf{Edits ($n$)} & \textbf{P(at least one error)} & \textbf{Architecture} \\
-\midrule
-1 & 1.0\% & DOF = 1 \\
-10 & 9.6\% & DOF = 10 \\
-50 & 39.5\% & DOF = 50 \\
-100 & 63.4\% & DOF = 100 \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-With 50 independent encoding locations (DOF = 50), there is a 39.5\% chance of introducing an error when modifying fact $F$. With DOF = 1, the chance is 1\%.
-\end{example}
-
-\subsection{Amortized Analysis}\label{sec:amortized}
-
-The complexity bounds assume a single modification. Over the lifetime of an encoding system, facts are modified many times (\LH{UNQ1}).
-
-\begin{theorem}[Amortized Complexity]\label{thm:amortized}
-Let fact $F$ be modified $m$ times over the system lifetime. Let $n$ be the number of independent encoding locations. Total modification cost is:
-\begin{itemize}
-\tightlist
-\item DOF = 1: $O(m)$
-\item DOF = $n > 1$: $O(mn)$
-\end{itemize}
-\end{theorem}
-
-\begin{proof}
-Each modification costs $O(1)$ with DOF = 1 and $O(n)$ with DOF = $n$. Over $m$ modifications, total cost is $m \cdot O(1) = O(m)$ with DOF = 1 and $m \cdot O(n) = O(mn)$ with DOF = $n$.
-\end{proof}
-
-For a fact modified 100 times with 50 independent encoding locations:
-\begin{itemize}
-\tightlist
-\item DOF = 1: 100 edits total
-\item DOF = 50: 5,000 edits total
-\end{itemize}
-
-The 50$\times$ reduction factor applies to every modification, compounding over the system lifetime.
-
-%==============================================================================
+The asymptotic statement has a simple practical reading: once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not merely with the visibility of the fact.

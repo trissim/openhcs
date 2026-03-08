@@ -16,7 +16,8 @@
 
   Physical laws (SR, QM, TD) instantiate "C" with concrete physical content:
     - Energy conservation supplies C = total energy of the bounded region.
-    - Landauer supplies the cost per check (ε = k_B T ln 2).
+    - Landauer supplies a minimum floor for the cost per check.
+      Constrained implementations may dissipate more than that floor.
     - QM supplies the form of each check (discrete eigenstate transition).
     - SR supplies the numerical value of c.
 
@@ -30,8 +31,10 @@
       Supplies the specific form of each acquisition event: discrete quantum jumps.
       Dirac (1930).
 
-  TD. Thermodynamics (Landauer): erasing one bit costs ≥ k_B T ln 2 joules.
-      Supplies the numerical value of ε in the NF premise.
+  TD. Thermodynamics (Landauer floor): erasing one bit costs at least
+      k_B T ln 2 joules.
+      Supplies the minimum floor for ε in the NF premise; actual constrained
+      processes may dissipate more.
       Landauer (1961). Bennett (1982). Bérut et al. (2012).
 
   ## Main Results (in logical order)
@@ -141,9 +144,10 @@ theorem counting_gap_theorem  -- BA10
     This would allow any decision problem to be resolved in zero time and zero
     energy — physically impossible under energy conservation.
 
-    The positivity hCost is therefore derived from Landauer when the system is
-    physical. In the abstract theorem it is left as a premise so the theorem
-    applies to any substrate. The physical content is: TD → hCost > 0. -/
+    The positivity hCost is therefore derived from the Landauer floor when the
+    system is physical. In the abstract theorem it is left as a premise so the
+    theorem applies to any substrate. The physical content is:
+    Landauer floor (or any stricter empirical lower bound) → hCost > 0. -/
 theorem check_requires_positive_cost  -- justification for hCost > 0
     {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T) :
     0 < landauerJoulesPerBit kB T :=
@@ -160,9 +164,10 @@ theorem bounded_system_finite_checks  -- BA10a
   obtain ⟨c_max, hpos, hbound⟩ := counting_gap_theorem 1 totalCapacity Nat.one_pos hC
   exact ⟨c_max, hpos, fun checks h => hbound checks (by simpa using h)⟩
 
-/-- Physical instantiation: costPerCheck = joulesPerBit (Landauer / TD).
+/-- Physical instantiation: costPerCheck = joulesPerBit (Landauer floor / TD).
     This is counting_gap_theorem applied to the physical case.
-    The abstract theorem applies directly; Landauer supplies costPerCheck. -/
+    The abstract theorem applies directly; Landauer supplies a minimum floor for
+    costPerCheck, and any stronger declared lower bound also suffices. -/
 theorem finite_propagation_speed_from_no_free_lunch  -- BA10b
     (joulesPerCount : ℕ) (hJ : 0 < joulesPerCount)
     (totalEnergy : ℕ) (hE : 0 < totalEnergy) :
@@ -335,8 +340,9 @@ This is not calibrated — it is derived from TD applied to BA6.
 
 /-- Energy cost ≥ srank × joulesPerBit.
     Proof: bit operations ≥ srank (BA6) → energy ≥ srank × joulesPerBit (TD).
-    The constant joulesPerBit corresponds to k_B T ln 2 under Landauer calibration
-    (ThermodynamicLift.landauerJoulesPerBit_pos).
+    The constant joulesPerBit is a declared lower-bound conversion constant.
+    It may be set to the Landauer floor or to a stricter empirically justified
+    lower bound when additional entropy-production constraints are imposed.
     Citation: Landauer (1961), Bennett (1982), Bérut et al. (2012). -/
 theorem energy_ge_srank_cost  -- BA7
     {A S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
@@ -446,11 +452,30 @@ theorem physical_grounding_bundle  -- BA9
    energy_ge_srank_cost dp I hI M hJ,
    energy_lower_mandatory M hJ hI_pos⟩
 
-/-- Landauer calibration: joulesPerBit = k_B T ln 2 is not assumed, derived.
-    Under Landauer calibration (ThermodynamicLift.joulesPerBit_pos_of_landauer_calibration),
-    the physical grounding bundle holds with the exact Landauer constant.
-    Citation: Landauer (1961), k_B T ln 2 per bit erasure. -/
-theorem physical_grounding_landauer_calibrated  -- BA9
+/-- Landauer floor version of the physical grounding bundle.
+    If the declared discrete lower-bound constant dominates the Landauer floor,
+    the physical grounding bundle holds. This is the conservative hypothesis:
+    the floor is universal, while constrained implementations may incur
+    additional entropy production above it. -/
+theorem physical_grounding_landauer_floor  -- BA9
+    {A S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
+    (dp : DecisionProblem A S)
+    (I : Finset (Fin n))
+    (hI : dp.isSufficient I)
+    (hI_pos : 0 < I.card)
+    (M : ThermoModel)
+    {kB T : ℝ} (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ)) :
+    dp.srank ≤ I.card ∧
+    M.joulesPerBit * dp.srank ≤ energyLowerBound M I.card ∧
+    0 < energyLowerBound M I.card := by
+  have hJ := joulesPerBit_pos_of_landauer_floor M hkB hT hFloor
+  exact physical_grounding_bundle dp I hI hI_pos M hJ
+
+/-- Exact-calibration specialization of `physical_grounding_landauer_floor`.
+    If the declared lower-bound constant is taken to coincide exactly with the
+    Landauer conversion, the same bundle follows as a special case. -/
+theorem physical_grounding_landauer_calibrated
     {A S : Type*} {n : ℕ} [CoordinateSpace S n] [DecidableEq (Fin n)]
     (dp : DecisionProblem A S)
     (I : Finset (Fin n))
@@ -462,8 +487,9 @@ theorem physical_grounding_landauer_calibrated  -- BA9
     dp.srank ≤ I.card ∧
     M.joulesPerBit * dp.srank ≤ energyLowerBound M I.card ∧
     0 < energyLowerBound M I.card := by
-  have hJ := joulesPerBit_pos_of_landauer_calibration M hkB hT hCal
-  exact physical_grounding_bundle dp I hI hI_pos M hJ
+  have hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ) := by
+    simpa [hCal] using (le_rfl (landauerJoulesPerBit kB T))
+  exact physical_grounding_landauer_floor dp I hI hI_pos M hkB hT hFloor
 
 end BoundedAcquisition
 end Physics

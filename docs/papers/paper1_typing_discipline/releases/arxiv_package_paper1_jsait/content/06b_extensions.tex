@@ -21,7 +21,7 @@ In the noiseless case ($\epsilon = 0$), Theorem~\ref{thm:identification-capacity
 
 \textbf{Open problem (noisy identification cost).} For $\epsilon > 0$ and class-injective $\pi$, zero-error identification is impossible with finite queries (since BSC has nonzero error probability). With bounded error $\delta > 0$, we expect the identification cost to scale as $W = \Theta\left(\frac{\log(1/\delta)}{(1 - 2\epsilon)^2}\right)$ queries per entity. A key observation is that a nominal tag of $L \geq \lceil \log_2 k \rceil$ bits (transmitted noiselessly) should restore $O(1)$ identification regardless of query noise.
 
-The third point is the key insight: \emph{nominal tags provide a noise-free side channel}. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for nominal tagging in noisy environments, precisely the regime where ``duck typing'' would require many repeated queries to achieve confidence.
+The third point is the key insight: \emph{nominal tags provide a noise-free side channel}. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for explicit tagging in noisy environments, precisely the regime where pure attribute-probe schemes would require many repeated queries to achieve confidence.
 
 \textbf{Connection to identification via channels.} The noisy model connects more directly to Ahlswede-Dueck identification \cite{ahlswede1989identification}. In their framework, identification capacity over a noisy channel can exceed Shannon capacity (double-exponential codebook sizes). Our setting differs: we have \emph{adaptive queries} rather than block codes, and the decoder must identify a \emph{class} rather than test a hypothesis. Characterizing the interplay between adaptive query strategies and channel noise is an open problem.
 
@@ -44,8 +44,8 @@ The $(L, W, D)$ tradeoff admits a natural geometric interpretation. In the maxim
 We have treated distortion $D$ as binary (correct identification or not). Richer distortion measures are possible:
 
 \begin{itemize}
-\item \textbf{Hierarchical distortion}: Misidentifying a class within the same genus (biological) or module (type system) is less severe than cross-genus errors.
-\item \textbf{Weighted distortion}: Some misidentifications have higher cost than others (e.g., type errors causing security vulnerabilities vs. benign type confusion).
+\item \textbf{Hierarchical distortion}: Misidentifying a class within the same genus (biological) or within the same subsystem (engineered systems) is less severe than cross-group errors.
+\item \textbf{Weighted distortion}: Some misidentifications have higher cost than others (e.g., safety-critical misrouting vs. benign confusion).
 \end{itemize}
 
 \subsection{Privacy and Security}

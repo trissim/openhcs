@@ -6,18 +6,25 @@ This paper isolates the abstract complexity of decision-relevant information. On
 
 Within the encoding model of Section~\ref{sec:encoding}, we establish:
 \begin{itemize}
-\item \textsc{Sufficiency-Check} is \coNP-complete
-\item \textsc{Minimum-Sufficient-Set} is \coNP-complete
-\item \textsc{Anchor-Sufficiency} is $\SigmaP{2}$-complete
-\item an explicit-state versus succinct dichotomy under which logarithmic-size sufficient sets admit polynomial-time algorithms while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds
-\item tractable subcases under bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry
+\item \textbf{Exact certification hardness:} \textsc{Sufficiency-Check} and \textsc{Minimum-Sufficient-Set} are \coNP-complete, while \textsc{Anchor-Sufficiency} is $\SigmaP{2}$-complete
+\item \textbf{Witness and approximation impossibility:} exact empty-set certification has an exponential witness-checking lower bound; on the shifted hard family, any uniform factor guarantee yields a tautology threshold test; and on a separate explicit gadget family, minimum sufficiency is exactly set cover, so approximation guarantees transfer without loss
+\item \textbf{Encoding-sensitive boundary:} logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime
+\item \textbf{Structured tractability:} bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures
 \end{itemize}
 
 Taken together, these results identify a precise source of difficulty: certifying that information may be discarded can be harder than evaluating the full decision rule once all information is already present.
 
-\subsection*{Engineering Consequences}
+\subsection*{Reliability and Simplification}
 
-The engineering consequences are direct corollaries of the main theorems. Configuration simplification is an instance of sufficiency checking; exact minimization has no general-purpose polynomial-time worst-case solution unless $\Pclass=\coNP$; and in the hard succinct regime, conservative over-specification can be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+The simplification consequences are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $\Pclass=\coNP$. Reliable exact certification is likewise regime-limited: under $\Pclass\neq\coNP$, no polynomial-budget solver can simultaneously maintain integrity and full exact competence on the hard regime. In the hard succinct regime, conservative over-specification can therefore be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+
+\subsection*{Simplicity Tax}
+
+The simplicity-tax section is not an isolated counting exercise. It is the accounting layer induced by the earlier exact-support theory. Once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any architecture $A_M$ partitions that set into centrally handled and omitted coordinates:
+\[
+\mathrm{centralDOF}+\mathrm{simplicityTax}=\mathrm{intrinsicDOF}.
+\]
+The substantive claim is the hardness-conservation consequence: omitted coordinates remain part of the exact decision problem, so they must reappear as local resolution, extra queries, abstentions, or other externalized work. Under the per-site cost model, that externalized cost grows linearly with deployment scale, and under the hard exact regime it cannot be eliminated for free by a polynomial-budget exact certifier.
 
 \subsection*{Mechanization}
 
@@ -25,7 +32,7 @@ The Lean 4 artifact machine-checks the main reduction constructions, hardness tr
 
 \subsection*{Outlook}
 
-Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the foundations-and-complexity presentation.
+Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the structure-and-complexity presentation.
 
 
 \appendix

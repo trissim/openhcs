@@ -38,40 +38,10 @@ L.~Lov{\'a}sz, ``On the shannon capacity of a graph,'' \emph{IEEE Transactions
   on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979, theta function bounds
   Shannon capacity; foundational for zero-error information theory.
 
-\bibitem{rissanen1978mdl}
-J.~Rissanen, ``Modeling by shortest data description,'' \emph{Automatica},
-  vol.~14, no.~5, pp. 465--471, 1978, foundational paper on Minimum Description
-  Length (MDL) principle: total description = model + data given model; optimal
-  model minimizes this sum.
-
-\bibitem{gruenwald2007mdl}
-P.~D. Gr{\"u}nwald, \emph{The Minimum Description Length Principle}.\hskip 1em
-  plus 0.5em minus 0.4em\relax MIT Press, 2007, comprehensive treatment of MDL;
-  DOF=1 (SSOT) can be framed as the MDL-optimal representation for redundant
-  facts.
-
-\bibitem{brewer2000cap}
-E.~A. Brewer, ``Towards robust distributed systems,'' in \emph{Proceedings of
-  the 19th Annual ACM Symposium on Principles of Distributed Computing}.\hskip
-  1em plus 0.5em minus 0.4em\relax ACM, 2000, keynote introducing CAP
-  conjecture: Consistency, Availability, Partition tolerance---pick two.
-
-\bibitem{hunt2002vcdiff}
-J.~J. Hunt, K.-P. Vo, and W.~F. Tichy, ``Delta algorithms: An empirical
-  analysis,'' \emph{ACM Transactions on Software Engineering and Methodology},
-  vol.~7, no.~2, pp. 192--214, 1998, delta compression for version control;
-  coherence under branch divergence.
-
-\bibitem{delaet2010survey}
-T.~Delaet, W.~Joosen, and J.~Van~de Craen, ``A survey of system configuration
-  tools,'' \emph{Proceedings of the 24th Large Installation System
-  Administration Conference (LISA)}, 2010, survey of configuration management
-  systems; coherence challenges in multi-file configurations.
-
-\bibitem{hunt1999pragmatic}
-A.~Hunt and D.~Thomas, \emph{The Pragmatic Programmer: From Journeyman to
-  Master}.\hskip 1em plus 0.5em minus 0.4em\relax Addison-Wesley Professional,
-  1999.
+\bibitem{witsenhausen1976zero}
+H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
+  numbers,'' \emph{IEEE Transactions on Information Theory}, vol.~22, no.~5,
+  pp. 592--593, 1976.
 
 \bibitem{slepian1973noiseless}
 D.~Slepian and J.~K. Wolf, ``Noiseless coding of correlated information
@@ -79,23 +49,35 @@ D.~Slepian and J.~K. Wolf, ``Noiseless coding of correlated information
   pp. 471--480, 1973, distributed source coding with side information; decoder
   uses correlated information to reduce required rate.
 
-\bibitem{birs2012interactive}
-{Banff International Research Station}, ``Interactive information theory
-  (12w5119),'' Workshop Report, 2012, workshop on interactive IT: source
-  coding, channel coding, directed information;
-  \url{https://www.birs.ca/events/2012/5-day-workshops/12w5119}.
-
-\bibitem{ma2011distributed}
-N.~Ma and P.~Ishwar, ``Some results on distributed source coding for
-  interactive function computation,'' \emph{IEEE Transactions on Information
-  Theory}, vol.~57, no.~9, pp. 6180--6195, 2011, interactive distributed source
-  coding; shows interaction can reduce rate for function computation.
-
 \bibitem{cover2006elements}
 T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
   2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006,
   comprehensive textbook covering rate-distortion theory, source coding,
   channel coding.
+
+\bibitem{orlitsky2001coding}
+A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
+  on Information Theory}, vol.~47, no.~3, pp. 903--917, 2001.
+
+\bibitem{doshi2010functional}
+V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
+  through graph coloring,'' \emph{IEEE Transactions on Information Theory},
+  vol.~56, no.~8, pp. 3901--3917, 2010.
+
+\bibitem{fano1961transmission}
+R.~M. Fano, \emph{Transmission of Information: A Statistical Theory of
+  Communications}.\hskip 1em plus 0.5em minus 0.4em\relax Cambridge, MA: MIT
+  Press, 1961.
+
+\bibitem{witsenhausen1975conditional}
+H.~S. Witsenhausen and A.~D. Wyner, ``A conditional entropy bound for a pair of
+  discrete random variables,'' \emph{IEEE Transactions on Information Theory},
+  vol.~21, no.~5, pp. 493--501, 1975.
+
+\bibitem{demoura2021lean4}
+L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
+  language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
+  minus 0.4em\relax Springer, 2021, pp. 625--635.
 
 \bibitem{rashmi2015multiversion}
 K.~V. Rashmi, N.~B. Shah, K.~Ramchandran, and D.~Gu, ``Multi-version
@@ -104,65 +86,6 @@ K.~V. Rashmi, N.~B. Shah, K.~Ramchandran, and D.~Gu, ``Multi-version
   pp. 4111--4128, 2017, information-theoretic framework for consistent
   distributed storage; proves inevitable storage cost for consistency
   guarantees.
-
-\bibitem{demoura2021lean4}
-L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
-  language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
-  minus 0.4em\relax Springer, 2021, pp. 625--635.
-
-\bibitem{heering2015generative}
-J.~Heering, ``Generative software complexity,'' \emph{Science of Computer
-  Programming}, vol.~97, pp. 82--85, 2015, proposes Kolmogorov complexity to
-  measure software structure; the shortest generator for a set of programs
-  indicates maximal complexity reduction.
-
-\bibitem{gilbert2002cap}
-S.~Gilbert and N.~Lynch, ``Brewer's conjecture and the feasibility of
-  consistent, available, partition-tolerant web services,'' \emph{ACM SIGACT
-  News}, vol.~33, no.~2, pp. 51--59, 2002, formal proof of CAP theorem.
-
-\bibitem{flp1985impossibility}
-M.~J. Fischer, N.~A. Lynch, and M.~S. Paterson, ``Impossibility of distributed
-  consensus with one faulty process,'' \emph{Journal of the ACM}, vol.~32,
-  no.~2, pp. 374--382, 1985, fLP impossibility: deterministic consensus
-  impossible in async systems with one failure.
-
-\bibitem{shannon1948mathematical}
-C.~E. Shannon, ``A mathematical theory of communication,'' \emph{Bell System
-  Technical Journal}, vol.~27, no.~3, pp. 379--423, 1948, foundational paper
-  establishing information theory; source coding and channel capacity.
-
-\bibitem{rivest1982wom}
-R.~L. Rivest and A.~Shamir, ``How to reuse a ``write-once'' memory,'' in
-  \emph{Proceedings of the 14th Annual ACM Symposium on Theory of
-  Computing}.\hskip 1em plus 0.5em minus 0.4em\relax ACM, 1982, pp. 105--113,
-  foundational paper on write-once memory codes; capacity for $t$ writes is
-  $\log_2(t+1)$ bits per cell.
-
-\bibitem{wolf1984wom}
-J.~K. Wolf \emph{et~al.}, ``Coding for a write-once memory,'' \emph{AT\&T Bell
-  Laboratories Technical Journal}, vol.~63, no.~6, pp. 1089--1112, 1984,
-  extends WOM codes; establishes capacity results for irreversible storage.
-
-\bibitem{tiobe2024}
-{TIOBE Software BV}, ``{TIOBE} index for programming languages,'' TIOBE
-  Programming Community Index, 2024, online: tiobe.com/tiobe-index/.
-
-\bibitem{xiang2013interactive}
-Y.~Xiang, ``Interactive schemes in information theory and statistics,'' Ph.D.
-  dissertation, University of California, Berkeley, 2013, interactive
-  information theory; feedback channels, distributed inference.
-
-\bibitem{lamport1998paxos}
-L.~Lamport, ``The part-time parliament,'' \emph{ACM Transactions on Computer
-  Systems}, vol.~16, no.~2, pp. 133--169, 1998, paxos consensus algorithm;
-  achieves consistency under partial failure.
-
-\bibitem{ongaro2014raft}
-D.~Ongaro and J.~Ousterhout, ``In search of an understandable consensus
-  algorithm,'' in \emph{Proceedings of the 2014 USENIX Annual Technical
-  Conference}.\hskip 1em plus 0.5em minus 0.4em\relax USENIX, 2014, pp.
-  305--319, raft consensus algorithm; designed for understandability.
 
 \bibitem{kiczales1991art}
 G.~Kiczales, J.~des Rivi{\`e}res, and D.~G. Bobrow, \emph{The Art of the
@@ -173,42 +96,8 @@ B.~C. Smith, ``Reflection and semantics in lisp,'' in \emph{Proceedings of the
   11th ACM SIGACT-SIGPLAN symposium on Principles of programming languages},
   1984, pp. 23--35.
 
-\bibitem{heering2003software}
-J.~Heering, ``Software architecture and software configuration management,'' in
-  \emph{Software Configuration Management}, ser. Lecture Notes in Computer
-  Science.\hskip 1em plus 0.5em minus 0.4em\relax Springer, 2003, vol. 2649,
-  pp. 1--16, introduces generative complexity as structural complexity measure
-  for software.
-
-\bibitem{parnas1972criteria}
-D.~L. Parnas, ``On the criteria to be used in decomposing systems into
-  modules,'' \emph{Communications of the ACM}, vol.~15, no.~12, pp. 1053--1058,
-  1972.
-
-\bibitem{fowler1999refactoring}
-M.~Fowler, \emph{Refactoring: improving the design of existing code}.\hskip 1em
-  plus 0.5em minus 0.4em\relax Addison-Wesley Professional, 1999.
-
-\bibitem{roy2007survey}
-C.~K. Roy and J.~R. Cordy, ``A survey on software clone detection research,''
-  \emph{School of Computing TR 2007-541, Queen's University}, vol. 115, pp.
-  64--68, 2007.
-
-\bibitem{pierce2002types}
-B.~C. Pierce, \emph{Types and programming languages}.\hskip 1em plus 0.5em
-  minus 0.4em\relax MIT press, 2002.
-
-\bibitem{winskel1993semantics}
-G.~Winskel, \emph{The Formal Semantics of Programming Languages: An
-  Introduction}.\hskip 1em plus 0.5em minus 0.4em\relax MIT press, 1993.
-
 \bibitem{leroy2009compcert}
 X.~Leroy, ``Formal verification of a realistic compiler,'' \emph{Communications
   of the ACM}, vol.~52, no.~7, pp. 107--115, 2009.
-
-\bibitem{openhcsLeanProofs}
-T.~Simas, ``Lean 4 formalization: {SSOT} requirements theorems,'' Supplementary
-  material, 2025, 9,369 lines across 29 files, 441 theorems, 0 \texttt{sorry}
-  placeholders. Included with paper submission.
 
 \end{thebibliography}

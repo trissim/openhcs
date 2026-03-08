@@ -44,11 +44,8 @@
 \newtheorem{remark}[theorem]{Remark}
 \newtheorem{observation}[theorem]{Observation}
 
-% Lean-handle helper used by auto-generated mapping blocks.
-% IDs link to entries in content/lean_handle_ids_auto.tex.
-\providecommand{\LH}[1]{\hyperlink{lh:#1}{\texttt{#1}}}
-
-% Lean metadata annotation (shows proof linkage in margin)
+% Lean-handle helpers for terse, reviewer-facing proof navigation.
+\providecommand{\LH}[1]{\nolinkurl{#1}}
 \providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}
 
 % Use filled black square for QED symbol, inline (left-aligned) instead of right-aligned

@@ -1,0 +1,77 @@
+\section{Stochastic Regime Complexity}\label{sec:stochastic}
+
+We now add a distribution over states. This changes sufficiency from a pointwise optimizer-preservation condition to a distribution-conditional optimizer condition.
+
+\subsection{Stochastic Decision Problems}
+
+\begin{definition}[Stochastic Decision Problem]\label{def:stochastic-decision-problem}
+A stochastic decision problem is a tuple
+\[
+\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P),
+\]
+where $P\in\Delta(S)$ is a distribution on $S=X_1\times\cdots\times X_n$.
+\end{definition}
+
+\begin{definition}[Distribution-Conditional Sufficiency]\label{def:stochastic-sufficient}
+A coordinate set $I$ is \emph{stochastically sufficient} if conditioning on $s_I$ never changes the induced optimal-action set:
+\[
+\arg\max_{a\in A}\,\mathbb{E}[U(a,s)\mid s_I]
+=
+\arg\max_{a\in A}\,\mathbb{E}[U(a,s)]
+\]
+for all admissible $I$-fibers.
+\end{definition}
+
+\begin{problem}[STOCHASTIC-SUFFICIENCY-CHECK]\label{prob:stochastic-sufficiency}
+\textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
+\textbf{Question:} Is $I$ stochastically sufficient?
+\end{problem}
+
+\subsection{PP-Completeness}
+
+\begin{theorem}[STOCHASTIC-SUFFICIENCY-CHECK is PP-complete]\label{thm:stochastic-pp}
+STOCHASTIC-SUFFICIENCY-CHECK is PP-complete.
+\end{theorem}
+
+\begin{proof}
+Membership: deciding whether one conditional expected utility dominates another is a majority-style weighted counting comparison, hence in PP.
+
+Hardness: reduce MAJSAT. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{reject}\}$, and utilities
+\[
+U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad U(\mathrm{reject},s)=1/2,
+\]
+with $I=\emptyset$. Then empty-set stochastic sufficiency is equivalent to deciding whether $\mathbb{E}[\varphi]\ge 1/2$, i.e., MAJSAT.
+\end{proof}
+
+\subsection{Tractable Subcases}
+
+\begin{proposition}[Stochastic Tractable Classes]\label{prop:stochastic-tractable}
+STOCHASTIC-SUFFICIENCY-CHECK is polynomial-time solvable under each of the following restrictions:
+\begin{enumerate}
+\item product distributions $P=\bigotimes_i P_i$,
+\item bounded support $|\mathrm{supp}(P)|\le k$,
+\item structured families where conditional expectations are computable in polynomial time (e.g. log-concave models with oracle access).
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+In each case, conditional expected utilities can be computed exactly or reduced to a polynomial number of marginal comparisons.
+\end{proof}
+
+\subsection{Bridge from Static}
+
+\begin{proposition}[Static Sufficiency Does Not Imply Stochastic Sufficiency]\label{prop:static-not-stochastic}
+There exist instances where $I$ is sufficient in the static sense but not stochastically sufficient once a distribution $P$ is fixed.
+\end{proposition}
+
+\begin{proof}
+Choose utilities where optimizer ties are harmless pointwise but are broken in expectation after conditioning. Then static fibers preserve $\Opt$, while conditional expectations shift the optimal action.
+\end{proof}
+
+\begin{proposition}[Transfer Under Product Distributions]\label{prop:static-to-stochastic-product}
+If $P$ factorizes as a product distribution and $I$ is statically sufficient, then $I$ is stochastically sufficient.
+\end{proposition}
+
+\begin{proof}
+Under product factorization, conditioning on $I$ does not introduce cross-coordinate dependence outside the sufficient projection, so optimizer preservation transfers from pointwise to expectation form.
+\end{proof}

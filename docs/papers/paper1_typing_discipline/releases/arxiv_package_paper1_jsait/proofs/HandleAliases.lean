@@ -1,6 +1,7 @@
 import AbstractClassSystem.Core
 import AbstractClassSystem.Bridge
 import AbstractClassSystem.Extended
+import AbstractClassSystem.Undecidability
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
@@ -92,6 +93,12 @@ abbrev COH2 := AbstractClassSystem.hedging_incoherent  -- Hedging is incoherent
 abbrev BRG1 := analysis_has_positive_ev          -- Analysis has positive EV
 abbrev BRG2 := ignorant_choice_has_cost          -- Ignorant choice costs
 abbrev BRG3 := retrofit_cost_dominates           -- Retrofit cost dominates
+
+/-- Open-world robustness and undecidability handles. -/
+abbrev ROB1 := @AbstractClassSystem.OpenWorld.extend_to_force_barrier
+abbrev ROB2 := @AbstractClassSystem.OpenWorld.barrierFreedom_not_extension_stable
+abbrev UND1 := @AbstractClassSystem.OpenWorld.hasBarrier_not_computable
+abbrev UND2 := @AbstractClassSystem.OpenWorld.barrierFree_not_computable
 
 /-- Legacy/stable IDs used in paper text and supplements. -/
 abbrev ACS1 := adversary_forces_n_minus_1_queries

@@ -195,10 +195,33 @@ theorem sufficient_implies_tautology (φ : Formula n)
   rw [heq] at this
   simp at this
 
-/-! ## The Main Reduction Theorem -/
+/-! ## The Main Reduction Theorem
+
+### Correctness vs. Polynomial-Time Computability
+
+A Karp reduction requires two properties:
+1. **Correctness**: The reduction preserves membership (∀ x, x ∈ A ↔ f(x) ∈ B)
+2. **Efficiency**: The reduction is computable in polynomial time
+
+**What is machine-verified below**: The CORRECTNESS of the reduction (property 1).
+The theorem `tautology_iff_sufficient` proves that φ is a tautology if and only if
+I = ∅ is sufficient in D_φ. This is the mathematically essential property.
+
+**What is a standard claim**: The POLYNOMIAL-TIME computability (property 2).
+The reduction function `reductionProblem` constructs D_φ in time O(|φ|).
+This is a straightforward claim about the construction, but full Turing-machine
+verification of polynomial-time bounds remains an open problem in formal verification.
+
+For a fully explicit formulation combining proved correctness with polytime as a
+hypothesis, see `valid_karp_reduction` in PolynomialReduction.lean.
+-/
 
 /-- The reduction theorem: φ is a tautology iff I = ∅ is sufficient in D_φ.
-    This is a polynomial-time reduction from TAUTOLOGY to SUFFICIENCY-CHECK.
+
+    **CORRECTNESS PROOF** (fully machine-verified, zero sorry):
+    This proves the membership-preservation property of the reduction.
+    Combined with polynomial-time computability (a standard claim), this
+    establishes a Karp reduction from TAUTOLOGY to SUFFICIENCY-CHECK.
     Since TAUTOLOGY is coNP-complete, this proves SUFFICIENCY-CHECK is coNP-hard. -/
 theorem tautology_iff_sufficient (φ : Formula n) :
     φ.isTautology ↔ (reductionProblem φ).isSufficient (∅ : Finset (Fin 1)) :=
@@ -247,14 +270,22 @@ The theorems above establish:
    (Formalized in Computation.lean via InsufficiencyWitness)
 
 2. **SUFFICIENCY-CHECK is coNP-hard**: We have a polynomial reduction from TAUTOLOGY.
-   - Reduction: φ ↦ (D_φ, I = ∅)
-   - Correctness: tautology_iff_sufficient
-   - Polynomial time: construction is linear in |φ|
+   - Reduction function: `reductionProblem : Formula n → DecisionProblem ...`
+   - **Correctness (MACHINE-VERIFIED)**: `tautology_iff_sufficient`
+   - **Polynomial time (STANDARD CLAIM)**: Construction is linear in |φ|.
+     This is stated as an explicit hypothesis when combined with `valid_karp_reduction`.
 
 3. **SUFFICIENCY-CHECK is coNP-complete**: By (1) and (2).
 
-This is the **first formal machine-checked proof** of the complexity of
-decision-relevant variable identification.
+### What is machine-verified vs. what is claimed
+
+The correctness of each reduction is machine-verified. Polynomial-time computability
+of the reduction functions is a standard claim stated as an explicit hypothesis;
+full Turing-machine verification of polynomial-time bounds remains an open problem
+in formal verification.
+
+This is the **first formal machine-checked proof** of the correctness of a reduction
+establishing computational hardness of decision-relevant variable identification.
 -/
 
 end DecisionQuotient

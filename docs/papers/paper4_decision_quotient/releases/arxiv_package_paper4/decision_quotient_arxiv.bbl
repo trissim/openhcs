@@ -53,12 +53,6 @@ Andrzej Cichocki, Namgil Lee, Ivan Oseledets, Anh-Huy Phan, Qibin Zhao, and
   Optimization}, volume~9.
 \newblock Now Publishers, 2016.
 
-\bibitem{cook1971complexity}
-Stephen~A. Cook.
-\newblock The complexity of theorem-proving procedures.
-\newblock In {\em Proceedings of the Third Annual ACM Symposium on Theory of
-  Computing}, pages 151--158. ACM, 1971.
-
 \bibitem{dobzinski2012query}
 Shahar Dobzinski and Jan Vondr{\'a}k.
 \newblock From query complexity to computational complexity.
@@ -103,12 +97,6 @@ Ronald~A. Howard.
 Russell Impagliazzo and Ramamohan Paturi.
 \newblock On the complexity of $k$-sat.
 \newblock {\em Journal of Computer and System Sciences}, 62(2):367--375, 2001.
-
-\bibitem{karp1972reducibility}
-Richard~M. Karp.
-\newblock Reducibility among combinatorial problems.
-\newblock In {\em Complexity of Computer Computations}, pages 85--103.
-  Springer, 1972.
 
 \bibitem{kolda2009tensor}
 Tamara~G. Kolda and Brett~W. Bader.
@@ -197,11 +185,6 @@ Ilya~M. Sobol.
 Peter Spirtes, Clark Glymour, and Richard Scheines.
 \newblock {\em Causation, Prediction, and Search}.
 \newblock MIT Press, 2nd edition, 2000.
-
-\bibitem{stockmeyer1976polynomial}
-Larry~J. Stockmeyer.
-\newblock The polynomial-time hierarchy.
-\newblock {\em Theoretical Computer Science}, 3(1):1--22, 1976.
 
 \bibitem{stone1974cross}
 Mervyn Stone.

@@ -1,4 +1,4 @@
-This is BibTeX, Version 0.99e (TeX Live 2026/Arch Linux)
+This is BibTeX, Version 0.99d (TeX Live 2026/dev/Arch Linux)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: coherence_it_submission.aux
 The style file: IEEEtran.bst
@@ -13,44 +13,44 @@ Database file #1: references.bib
 -- See the "IEEEtran_bst_HOWTO.pdf" manual for usage information.
 
 Done.
-You've used 28 entries,
+You've used 15 entries,
             4087 wiz_defined-function locations,
-            1003 strings with 12748 characters,
-and the built_in function-call counts, 19849 in all, are:
-= -- 1706
-> -- 339
-< -- 176
-+ -- 193
-- -- 48
-* -- 909
-:= -- 3114
-add.period$ -- 59
-call.type$ -- 28
-change.case$ -- 41
-chr.to.int$ -- 402
-cite$ -- 28
-duplicate$ -- 1425
-empty$ -- 1601
-format.name$ -- 62
-if$ -- 4620
+            920 strings with 9971 characters,
+and the built_in function-call counts, 11934 in all, are:
+= -- 1020
+> -- 214
+< -- 124
++ -- 123
+- -- 28
+* -- 569
+:= -- 1826
+add.period$ -- 31
+call.type$ -- 15
+change.case$ -- 19
+chr.to.int$ -- 282
+cite$ -- 15
+duplicate$ -- 833
+empty$ -- 918
+format.name$ -- 36
+if$ -- 2778
 int.to.chr$ -- 0
-int.to.str$ -- 28
-missing$ -- 234
-newline$ -- 107
-num.names$ -- 28
-pop$ -- 478
+int.to.str$ -- 15
+missing$ -- 128
+newline$ -- 68
+num.names$ -- 15
+pop$ -- 248
 preamble$ -- 1
 purify$ -- 0
 quote$ -- 2
-skip$ -- 1582
+skip$ -- 939
 stack$ -- 0
-substring$ -- 982
-swap$ -- 1154
-text.length$ -- 42
+substring$ -- 668
+swap$ -- 713
+text.length$ -- 30
 text.prefix$ -- 0
 top$ -- 5
-type$ -- 28
+type$ -- 15
 warning$ -- 0
-while$ -- 97
-width$ -- 30
-write$ -- 300
+while$ -- 64
+width$ -- 17
+write$ -- 175

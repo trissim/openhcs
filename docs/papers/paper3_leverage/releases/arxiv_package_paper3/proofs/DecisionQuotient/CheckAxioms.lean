@@ -3,8 +3,12 @@ import DecisionQuotient.BayesOptimalityProof
 import DecisionQuotient.Hardness
 import DecisionQuotient.WitnessCheckingDuality
 import DecisionQuotient.Quotient
+import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.Information
 import DecisionQuotient.ThermodynamicLift
+import DecisionQuotient.Physics.WolpertMismatch
+import DecisionQuotient.Physics.WolpertConstraints
+import DecisionQuotient.Physics.WolpertDecomposition
 import DecisionQuotient.PhysicalBudgetCrossover
 import DecisionQuotient.Dichotomy
 import DecisionQuotient.FunctionalInformation
@@ -30,6 +34,7 @@ import DecisionQuotient.Physics.PhysicalHardness
 
 -- ── DECISION QUOTIENT UNIVERSAL PROPERTY ────────────────────────────────────
 #print axioms DecisionQuotient.DecisionProblem.opt_factors_through_quotient
+#print axioms DecisionQuotient.DecisionProblem.surjective_abstraction_with_feasible_collapse_map_factors
 
 -- ── INFORMATION / SUFFICIENCY ───────────────────────────────────────────────
 #print axioms DecisionQuotient.relevantSet_isSufficient
@@ -44,8 +49,28 @@ import DecisionQuotient.Physics.PhysicalHardness
 #print axioms DecisionQuotient.ThermodynamicLift.hardness_thermo_bundle_conditional
 -- Neukart-Vinokur duality: dU = λ·dC
 #print axioms DecisionQuotient.ThermodynamicLift.neukart_vinokur_bundle
--- Mandatory cost from Landauer calibration
+-- Mandatory cost from a Landauer floor hypothesis
+#print axioms DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_floor
+-- Exact-calibration specialization of the floor theorem
 #print axioms DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_calibration
+-- Derived KL mismatch branch: strict mismatch positivity is theorem-level
+#print axioms DecisionQuotient.Physics.WolpertMismatch.mismatchKL_pos_of_exists_ne
+-- Derived KL mismatch branch lifted into the Wolpert decomposition interface
+#print axioms DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch
+-- Derived finite residual-asymmetry branch from bidirectional edge-flow KL
+#print axioms DecisionQuotient.Physics.WolpertResidual.pairwiseResidualKL_pos_of_asymmetry
+-- Derived finite residual branch lifted into the Wolpert decomposition interface
+#print axioms DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_pairwise_flow_asymmetry
+-- Exhaustive finite discrete residual branch via reverse-edge case split
+#print axioms DecisionQuotient.Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway
+-- Unified finite discrete residual branch lifted into the Wolpert decomposition interface
+#print axioms DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_discrete_edge_split
+-- Process-level finite discrete residual witness branch
+#print axioms DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness
+-- Wolpert-style constrained-process interface: floor plus explicit overhead
+#print axioms DecisionQuotient.Physics.WolpertConstraints.physical_grounding_bundle_with_wolpert_overhead
+-- Wolpert decomposition interface: mismatch + residual refinement
+#print axioms DecisionQuotient.Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition
 
 -- ── PHYSICAL HARDNESS / P≠NP NO-GO ─────────────────────────────────────────
 -- Core: exponential ops exceed any finite budget

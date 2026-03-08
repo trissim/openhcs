@@ -1,4 +1,4 @@
-The core theorems are domain-agnostic. This section gives brief illustrations showing the same constraint pattern in established systems.
+This section gives brief illustrations showing the same constraint pattern in established systems.
 
 \subsection{Compact Cross-Domain Illustrations}
 
@@ -6,7 +6,7 @@ The core theorems are domain-agnostic. This section gives brief illustrations sh
 
 \textbf{Databases (columns vs keys).} Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary/surrogate keys realize the nominal-tag role and provide constant-cost identity checks \cite{Codd1990}.
 
-\textbf{Software runtimes (structural probes vs type tags).} Structural checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as nominal tags and collapse identity checks to near-constant cost in the model \cite{CPythonDocs,JVMSpec,JavaDocs,TypeScriptDocs,RustDocs}.
+\textbf{Software runtimes (attribute probes vs runtime identifiers).} Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model \cite{CPythonDocs,JVMSpec,JavaDocs,TypeScriptDocs,RustDocs}.
 
 \subsection{Takeaway}
 

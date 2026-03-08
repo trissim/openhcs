@@ -1,59 +1,27 @@
-\section{Application: Programming-Language Instantiation}\label{sec:evaluation}
+\section{Application: Computational Realizations}\label{sec:evaluation}
 %==============================================================================
 
-We instantiate Theorem~\ref{thm:ssot-iff} in the domain of programming languages. This section is intentionally application-level: the abstract IT results are complete without it, and the goal here is only to show how the realizability theorem specializes once a language's definition-time hooks and introspection capabilities are fixed.
+This section records representative computational instantiations of Theorem~\ref{thm:ssot-iff}.
 
-\begin{corollary}[Language Realizability Criterion]\label{cor:lang-realizability}
-A programming language can realize DOF = 1 for structural facts iff it provides both (i) definition-time hooks and (ii) introspectable derivations. This is the direct instantiation of Theorem~\ref{thm:ssot-iff}.
+\begin{corollary}[Computational-Realization Criterion]\label{cor:lang-realizability}
+A computational platform realizes verifiable independent rate $1$ for structural facts if and only if it combines automatic propagation of derived representations with queryable provenance for those representations.
 \end{corollary}
-\leanmeta{\LH{UNQ1}}
+\leanmeta{\LH{LNG1}}
 
-\textbf{Instantiation map.} In the abstract model, an independent encoding is a location that can diverge under edits. In programming languages, structural facts are encoded at definition sites; \emph{definition-time hooks} implement derivation (automatic propagation), and \emph{introspection} implements provenance observability. Thus DEF corresponds to causal propagation and INTRO corresponds to queryable derivations; DOF = 1 is achievable exactly when both are present.
-
-We instantiate this corollary over a representative language class (Definition~\ref{def:mainstream}).
-
-\begin{definition}[Mainstream Language]\label{def:mainstream}
-A language is \emph{mainstream} iff it appears in the top 20 of at least two of the following indices consistently over 5+ years:
-\begin{enumerate}
-\tightlist
-\item TIOBE Index~\cite{tiobe2024} (monthly language popularity)
-\item Stack Overflow Developer Survey (annual)
-\item GitHub Octoverse (annual repository statistics)
-\item RedMonk Programming Language Rankings (quarterly)
-\end{enumerate}
-\end{definition}
-
-\subsection{Evaluation Criteria}\label{sec:criteria}
-
-The abstract realizability conditions (causal update propagation and provenance observability) map directly to concrete language capabilities (definition-time hooks and runtime introspection). We summarize this mapping briefly and defer the full language-by-language evaluation, extended code examples, and detailed rationale to Supplement~A.
-
-\subsection{Summary Classification}\label{sec:classification-summary}
-
-Theorem~\ref{thm:ssot-iff} partitions languages into two classes:
+The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across applications is the implementation of the two required capabilities.
 
 \begin{center}
 \small
 \setlength{\tabcolsep}{3pt}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}YY@{}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.22\linewidth}YY@{}}
 \toprule
-\textbf{Language} & \textbf{Def-time hooks} & \textbf{Introspection} \\
+\textbf{Domain} & \textbf{Authoritative source and derived views} & \textbf{How the theorem specializes} \\
 \midrule
-\multicolumn{3}{@{}l}{\emph{DOF-1-complete (both requirements):}} \\
-Python & \LH{UNQ1} & \LH{UNQ1} \\
-CLOS & \texttt{:after} methods & MOP queries \\
-Smalltalk & class creation protocol & \texttt{subclasses} \\
-\midrule
-\multicolumn{3}{@{}l}{\emph{DOF-1-incomplete (missing $\geq 1$ requirement):}} \\
-Java & -- & reflection \\
-C++ & -- & -- \\
-Rust & proc macros (compile-time) & -- \\
-Go & -- & -- \\
+Language-level artifacts & one declarative definition plus maintained registries, interface views, or metadata projections & definition-time or build-time hooks supply propagation; reflection or metadata APIs supply provenance \\
+Databases & one base relation or schema declaration plus maintained views, indexes, or summaries & transactional maintenance supplies propagation; system catalogs expose provenance \\
+Configuration and deployment systems & one source declaration plus dependency outputs or rendered manifests & dependency-driven recomputation supplies propagation; resource graphs expose provenance \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-\textbf{Interpretation.} DOF-1-complete languages can realize the abstract capacity-achieving structure for structural facts using language-native mechanisms. DOF-1-incomplete languages require external tooling (code generation, IDE refactoring) which operates outside language semantics and can be bypassed (cf.\ Theorem~\ref{thm:independence} on why external tools do not establish derivation).
-
-Viewed after formalization, the two requirements may appear straightforward. In this mainstream set, only Python satisfies both; Java has introspection without definition-time hooks, Rust has compile-time hooks without runtime introspection, and C++ and Go have neither.
-
-Supplement~A contains the complete evaluation with justifications, worked code examples demonstrating each mechanism, and discussion of edge cases.
+Platforms that rely solely on external batch synchronization or opaque code generation do not automatically satisfy the corollary: if propagation can be bypassed or provenance is not available to the host system, exact verification of the single-source regime remains unresolved. Supplement~A contains additional case-study material.

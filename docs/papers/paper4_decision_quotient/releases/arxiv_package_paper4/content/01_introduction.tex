@@ -1,10 +1,10 @@
 \section{Introduction}\label{sec:introduction}
 
-Which coordinates of a system's state determine the optimal action? For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set:
+Which coordinates of a system's state can be safely discarded without changing the optimal action, and how hard is it to certify that claim exactly? For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set:
 \[
 s_I = s'_I \implies \Opt(s) = \Opt(s').
 \]
-This is the basic problem of decision-relevant information: how much of the state must remain visible in order to preserve the decision boundary.
+This is the basic problem of exact relevance certification: how much of the state must remain visible in order to preserve the decision boundary, and what it takes to certify that the rest is irrelevant.
 
 The question is easy to state but not algorithmically benign. Evaluating $U(a,s)$ on a given state is one task; certifying that an entire family of coordinates may be ignored is another. The latter carries universal quantification over state pairs and leads naturally to coNP and $\Sigma_2^P$ phenomena. The optimizer quotient packages the same issue structurally: it is the coarsest abstraction of the state space that preserves optimal-action distinctions.
 
@@ -15,13 +15,15 @@ Section~\ref{sec:encoding} fixes the computational model and the encoding regime
 \subsection{Contributions}
 
 \begin{enumerate}
-\item \textbf{Shared foundations for coordinate sufficiency.} We formalize decision problems with coordinate structure, relevant-coordinate witnesses, exact relevance identification, and the optimizer quotient as the canonical decision-preserving abstraction.
+\item \textbf{Shared setup for coordinate sufficiency.} We formalize decision problems with coordinate structure, relevant-coordinate witnesses, exact relevance identification, and the optimizer quotient as the canonical decision-preserving abstraction.
 
 \item \textbf{Exact complexity classifications.} We prove that \textsc{Sufficiency-Check} is coNP-complete, \textsc{Minimum-Sufficient-Set} is coNP-complete, and \textsc{Anchor-Sufficiency} is $\Sigma_2^P$-complete.
 
 \item \textbf{Encoding-sensitive hardness and tractability.} We prove an explicit-state versus succinct dichotomy, derive ETH-conditioned lower bounds, and isolate natural tractable subcases under structural restrictions.
 
-\item \textbf{Direct engineering corollaries.} We show that exact behavior-preserving minimization inherits the hardness of \textsc{Minimum-Sufficient-Set}, while conservative over-specification can be rational in the hard succinct regime under an explicit cost model.
+\item \textbf{Reliability and approximation impossibility results.} We prove a witness-checking lower bound for exact empty-set certification, approximation-hardness results in which any uniform factor guarantee on the shifted hard family yields tautology detection by thresholding and an exact set-cover equivalence on a separate explicit gadget family yields approximation-ratio transfer, and an integrity-competence impossibility theorem showing that under $\Pclass\neq\coNP$ no polynomial-budget solver is both integrity-preserving and fully competent on the hard exact regime.
+
+\item \textbf{Hardness transfers for exact simplification.} We show that exact behavior-preserving minimization inherits the hardness of \textsc{Minimum-Sufficient-Set}, while conservative over-specification can be rational in the hard succinct regime under an explicit cost model. The simplicity-tax and hardness-conservation section pins a chosen architecture against the canonical relevant-coordinate invariant and derives the resulting externalization and amortization consequences.
 
 \item \textbf{Machine-checked reductions and proof artifacts.} The main reductions and supporting lemmas are mechanized in Lean 4, yielding a reproducible proof artifact for the core complexity claims.
 \end{enumerate}
@@ -33,7 +35,7 @@ The slogan of the paper is simple:
 \textbf{Determining what you need to know can be harder than evaluating the full objective once everything is known.}
 \end{quote}
 
-The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. This difference drives the coNP classification and explains why relevance identification is not just another forward evaluation problem.
+The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. So the object-level task is forward evaluation on a fully specified state, while the meta-level task is universal verification over counterexample pairs. This difference drives the coNP classification and explains why relevance identification is not just another forward evaluation problem.
 
 \subsection{Formalization Snapshot}
 
@@ -54,7 +56,7 @@ The artifact builds with \texttt{lake build}. The purpose of the mechanization h
 
 \subsection{Paper Structure}
 
-Section~\ref{sec:foundations} introduces the abstract foundations and the encoding contract. The hardness theorems are stated in Section~\ref{sec:hardness}. Section~\ref{sec:dichotomy} gives the encoding-sensitive dichotomy and ETH chain, Section~\ref{sec:tractable} records tractable subcases, and Section~\ref{sec:engineering-corollaries} states the resulting engineering corollaries. Section~\ref{sec:related} situates the work within formalized complexity theory and decision-theoretic relevance. Section~\ref{app:lean} summarizes the Lean artifact.
+Section~\ref{sec:formal-setup} introduces the abstract setup and the encoding contract. The hardness theorems are stated in Section~\ref{sec:hardness}. Section~\ref{sec:dichotomy} gives the encoding-sensitive dichotomy and ETH chain, Section~\ref{sec:tractable} records tractable subcases, Section~\ref{sec:engineering-corollaries} gives hardness transfers and exact-simplification consequences, Section~\ref{sec:integrity-competence} gives the integrity-competence impossibility theorem, Section~\ref{sec:witness-duality} gives the witness and approximation consequences, and Section~\ref{sec:simplicity-tax} gives the simplicity-tax and hardness-conservation consequences of omitted exact relevance. Section~\ref{sec:related} situates the work within formalized complexity theory and decision-theoretic relevance. Section~\ref{app:lean} summarizes the Lean artifact.
 
 \subsection{Artifact Availability}
 

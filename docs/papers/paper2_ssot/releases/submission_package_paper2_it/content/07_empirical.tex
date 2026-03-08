@@ -1,17 +1,6 @@
-\section{Corollary: Realizability Patterns (Worked Example)}\label{sec:empirical}
+\section{Application: Supplementary Case Study Pointer}\label{sec:empirical}
 %==============================================================================
 
-This section contained an extended worked example and multiple detailed code snippets illustrating realizability patterns from the OpenHCS case study. For the revised TIT-focused manuscript we move the full worked example, all code excerpts, and the detailed DOF measurements to Supplement~A (``Practical Patterns and Case Study'').
-
-Below we give a short summary and pointer to the supplement; the complete instantiation, PR traces, and verifiable diffs are available in Supplement~A.
-
-\textbf{Summary (short):}
-\begin{itemize}
-\item Four recurring patterns realize DOF = 1: contract enforcement, automatic registration, automatic discovery, and introspection-driven code generation.
-\item A publicly verifiable OpenHCS pull request (PR~44) demonstrates a 47$\to$1 DOF reduction; full diffs and measurements are in Supplement~A.
-\item The worked examples illustrate why both definition-time hooks and runtime introspection are necessary for DOF = 1; language-by-language impossibility notes are in Supplement~A.
-\end{itemize}
-
-For the interested reader, Supplement~A contains the complete before/after code, the methodology, measurement tables, and links to the public PR and repository snapshots.
+Supplement~A contains case-study details, measurement methodology, and before/after traces. The examples realize independent rate $1$ by combining one authoritative representation with automatically maintained derived views, and they exhibit the $O(1)$ versus $\Omega(n)$ rate-complexity gap of Section~\ref{sec:bounds}.
 
 %==============================================================================

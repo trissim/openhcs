@@ -1,405 +1,107 @@
-\section{Information-Theoretic Realizability Requirements}\label{sec:requirements}
+\section{Realizability Requirements for the Capacity-Achieving Regime}\label{sec:requirements}
 %==============================================================================
 
-This section identifies, at an abstract information-theoretic level, the two properties an encoding system must provide to realize DOF = 1. Concrete programming-language and system-level instantiations are presented in the supplementary material; here we present the abstract requirements and their necessity/sufficiency proofs.
+The threshold theorem identifies the unique independent rate compatible with exact consistency. A separate question is whether a concrete host system can realize that rate. This section isolates the two structural properties needed for that purpose.
 
-Informally, an encoding system provides a set of locations holding values and a space of allowed modifications. DOF = 1 is realizable when exactly one independent location exists (the source) and all other encodings are deterministic functions (derivations) of that source so divergence is impossible.
-
-We show that two encoder properties are necessary and sufficient (\LH{SOT1}):
+A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Two capabilities are required:
 \begin{enumerate}
-\item \textbf{Causal update propagation:} updates to the source must automatically propagate to derived locations (eliminating transient incoherence windows);
-\item \textbf{Provenance observability:} the system must expose, to verification procedures, which locations are sources and which are derived (providing the side information necessary to verify DOF = 1).
+\item \textbf{Causal update propagation}: updates to the authoritative source must automatically propagate to derived locations.
+\item \textbf{Provenance observability}: the system must expose enough structural information to verify which locations are authoritative and which are derived.
 \end{enumerate}
 
-The remainder of this section gives formal statements and proofs of necessity and sufficiency for these properties in the abstract model.
+\subsection{Confusability and Side Information}\label{sec:confusability}
 
-\subsection{Confusability and Side-Information}
-\label{sec:confusability}
-
-To connect realizability to the information available at runtime, define the \emph{confusability graph} for a fact $F$: vertices are distinct values of $F$, and an undirected edge joins two values $x,x'$ iff they are indistinguishable given the available side information (i.e., no observation of derived locations can reliably separate $x$ from $x'$).
+To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same kind of zero-error obstruction studied earlier.
 
 \begin{lemma}[Confusability Clique Bound]\label{lem:confusability-clique}
-If the confusability graph for $F$ contains a clique of size $k$, then any side-information channel that yields vanishing error probability for distinguishing all $k$ values must convey at least $\log k$ bits about $F$. Equivalently, if the mutual information between $F$ and side information $S$ satisfies $I(F;S)<\log k - \epsilon$, then the error probability for distinguishing the $k$-clique is bounded away from zero.
+If the confusability graph for $F$ contains a clique of size $k$, then any zero-error side-information scheme distinguishing those $k$ alternatives requires at least $k$ distinct tags, equivalently at least $\log_2 k$ bits of side information.
 \end{lemma}
+\leanmeta{\LH{OBS5}}
 
-\begin{proof}[Proof sketch]
-Restrict $F$ to the $k$ values in the clique; this induces a uniform $k$-ary hypothesis testing problem. Apply the Fano-style bound (Theorem~\ref{thm:fano-converse} in Section~\ref{sec:info-converse}) to conclude that vanishing error requires $I(F;S)\ge\log k - o(1)$. If $I(F;S)$ is strictly smaller than $\log k$, Fano's inequality implies a non-zero lower bound on error probability.
+\begin{proof}
+Within a $k$-clique, every pair of alternatives is confusable under the base observation. A zero-error tag assignment must therefore separate all $k$ states. Distinct states cannot share a tag, so at least $k$ tags are required.
 \end{proof}
 
-\noindent The confusability graph provides a compact combinatorial certificate of necessary side-information: large cliques force large information requirements and hence constrain realizability in languages/environments with limited introspection or definition-time hooks (\LH{CIA3}).
+If a host system does not expose enough structural information to separate the remaining alternatives, exact verification of the rate-$1$ regime is impossible.
 
 \subsection{The Structural Timing Constraint}\label{sec:timing}
 
-For certain classes of facts--\emph{structural facts}--there is a fundamental timing constraint that shapes realizability.
-
 \begin{definition}[Structural Fact]\label{def:structural-fact-req}
-A fact $F$ is \emph{structural} if its encoding locations are fixed at the moment of definition. After definition, the structure cannot be retroactively modified--only new structures can be created.
+A fact $F$ is \emph{structural} if every location encoding $F$ is fixed when the underlying object, declaration, or artifact is created. After that moment, the encoding can be read and compared, but not retroactively re-created without a new edit event.
 \end{definition}
 
-\textbf{Examples across domains:}
-\begin{itemize}
-\tightlist
-\item \textbf{Programming languages}: Class definitions, method signatures, inheritance relationships
-\item \textbf{Databases}: Schema definitions, table structures, foreign key constraints
-\item \textbf{Configuration systems}: Resource declarations, dependency specifications
-\item \textbf{Version control}: Branch structures, commit ancestry
-\end{itemize}
-
-The key property: structural facts have a \emph{definition moment} after which their encoding is immutable. This creates a timing constraint for derivation.
+Structural facts are the natural exact-consistency setting because they expose a clear creation moment. Examples include schema declarations, registry membership rules, dependency metadata, and interface-level constraints.
 
 \begin{theorem}[Timing Constraint for Structural Derivation]\label{thm:timing-forces}
-For structural facts, derivation must occur at or before the moment the structure is fixed.
+For structural facts, derivation must occur no later than the moment at which the relevant encoding locations become fixed.
 \end{theorem}
-\leanmeta{\LH{REQ1}}
 
 \begin{proof}
-Let $F$ be a structural fact. Let $t_{\text{fix}}$ be the moment $F$'s encoding is fixed. Any derivation $D$ that depends on $F$ must execute at some time $t_D$.
-
-\textbf{Case 1}: $t_D < t_{\text{fix}}$. Derivation executes before $F$ is fixed. $D$ cannot derive from $F$ because $F$ does not yet exist.
-
-\textbf{Case 2}: $t_D > t_{\text{fix}}$. Derivation executes after $F$ is fixed. $D$ can read $F$ but cannot modify structures derived from $F$--they are already fixed.
-
-\textbf{Case 3}: $t_D = t_{\text{fix}}$. Derivation executes at the moment $F$ is fixed. $D$ can both read $F$ and create derived structures before they are fixed.
-
-Therefore, structural derivation requires $t_D = t_{\text{fix}}$.
+Let $t_{\mathrm{fix}}$ denote the time at which the structural encoding becomes fixed. A derivation performed strictly before $t_{\mathrm{fix}}$ cannot depend on the completed source value; a derivation performed strictly after $t_{\mathrm{fix}}$ cannot alter the already fixed structural representation. Therefore structural derivation must occur at $t_{\mathrm{fix}}$ or as part of the same creation/update event.
 \end{proof}
 
-This timing constraint is the information-theoretic reason why derivation must be \emph{causal}--triggered by the act of defining the source, not by later access (\LH{REQ1}, \LH{REQ2}).
-
-%==============================================================================
 \subsection{Requirement 1: Causal Update Propagation}\label{sec:causal-propagation}
-%==============================================================================
 
 \begin{definition}[Causal Update Propagation]\label{def:causal-propagation}
-An encoding system has \emph{causal update propagation} if changes to a source location automatically trigger updates to all derived locations, without requiring explicit synchronization commands.
-
-Formally: let $L_s$ be a source location and $L_d$ a derived location. The system has causal propagation iff:
-\[
-\text{update}(L_s, v) \Rightarrow \text{automatically\_updated}(L_d, f(v))
-\]
-where $f$ is the derivation function. No separate ``propagate'' or ``sync'' operation is required.
+An encoding system has \emph{causal update propagation} if every update to a source location automatically updates each location derived from that source, without requiring a separate manual synchronization step.
 \end{definition}
 
-\textbf{Information-theoretic interpretation:} Causal propagation is analogous to \emph{channel coding with feedback}. In classical channel coding, the encoder sends a message and waits for acknowledgment. With feedback, the encoder can immediately react to channel state. Causal propagation provides ``feedback'' from the definition event to the derivation mechanism--the encoder (source) and decoder (derived locations) are coupled in real-time.
+This is the host-system manifestation of deterministic dependence. Without it, a temporal gap appears between source modification and derived-view repair.
 
-\textbf{Connection to multi-version coding:} Rashmi et al.~\cite{rashmi2015multiversion} formalize consistent distributed storage where updates to a source must propagate to replicas while maintaining consistency. Their ``multi-version code'' requires that any $c$ servers can decode the latest common version--a consistency guarantee analogous to our coherence requirement. Causal propagation is the mechanism by which this consistency is maintained under updates.
-
-\textbf{Why causal propagation is necessary:}
-
-Without causal propagation, there exists a temporal window between source modification and derived location update. During this window, the system is incoherent--the source and derived locations encode different values.
-
-\begin{theorem}[Causal Propagation is Necessary for DOF = 1]\label{thm:causal-necessary}
-Achieving DOF = 1 for structural facts requires causal update propagation.
+\begin{theorem}[Causal Propagation is Necessary for Unit Rate]\label{thm:causal-necessary}
+Achieving independent rate $1$ for structural facts requires causal update propagation.
 \end{theorem}
 \leanmeta{\LH{REQ2}}
 
 \begin{proof}
-By Theorem~\ref{thm:timing-forces}, structural derivation must occur at definition time. Without causal propagation, derived locations are not updated when the source is defined. This means:
-\begin{enumerate}
-\tightlist
-\item The source exists with value $v$
-\item Derived locations have not been updated; they either do not exist yet or hold stale values
-\item The system is temporarily incoherent
-\end{enumerate}
-
-For DOF = 1, incoherence must be \emph{impossible}, not merely transient. Causal propagation eliminates the temporal window: derived locations are updated \emph{as part of} the source definition, not after.
-
-Contrapositive: If an encoding system lacks causal propagation, DOF = 1 for structural facts is unrealizable.
+By Theorem~\ref{thm:timing-forces}, structural derivation must occur at the moment the source-side structural encoding is fixed. If causal propagation is absent, then some derived location remains stale until a later manual action. During that interval the source and derived locations disagree, so the architecture does not realize exact consistency. Hence a verifiable rate-$1$ realization for structural facts requires causal propagation.
 \end{proof}
 
-\textbf{Realizations across domains:}
-
-\begin{center}
-\begin{tabularx}{\linewidth}{lX}
-\toprule
-\textbf{Domain} & \textbf{Causal Propagation Mechanism} \\
-\midrule
-Python & \texttt{\_\_init\_subclass\_\_}, metaclass \texttt{\_\_new\_\_} \\
-CLOS & \texttt{:after} methods on class initialization \\
-Smalltalk & Class creation protocol, \texttt{subclass:} method \\
-Databases & Triggers on schema operations (PostgreSQL event triggers) \\
-Distributed systems & Consensus protocols (Paxos, Raft) \\
-Configuration & Terraform dependency graph, reactive bindings \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\textbf{Systems lacking causal propagation:}
-\begin{itemize}
-\tightlist
-\item \textbf{Java}: Annotations are metadata, not executable. No code runs at class definition.
-\item \textbf{C++}: Templates expand at compile time but don't execute arbitrary user code.
-\item \textbf{Go}: No hook mechanism. Interface satisfaction is implicit.
-\item \textbf{Rust}: Proc macros run at compile time but generate static code, not runtime derivation.
-\end{itemize}
-
-%==============================================================================
 \subsection{Requirement 2: Provenance Observability}\label{sec:provenance-observability}
-%==============================================================================
 
 \begin{definition}[Provenance Observability]\label{def:provenance-observability}
-An encoding system has \emph{provenance observability} if the system supports queries about derivation structure:
-\begin{enumerate}
-\tightlist
-\item What locations exist encoding a given fact?
-\item Which locations are sources vs. derived?
-\item What is the derivation relationship (which derived from which)?
-\end{enumerate}
+An encoding system has \emph{provenance observability} if it supports queries that reveal which locations encode a fact, which of those locations are authoritative, and which are derived.
 \end{definition}
 
-\textbf{Information-theoretic interpretation:} Provenance observability is the encoding-system analog of \emph{side information at the decoder}. In Slepian-Wolf coding~\cite{slepian1973noiseless}, the decoder has access to correlated side information that enables decoding at rates below the source entropy. Provenance observability provides ``side information'' about the encoding structure itself--enabling verification that DOF = 1 holds.
+Provenance observability is the structural side information needed to certify that the system is genuinely in the single-source regime rather than merely appearing coherent on a small sample of states.
 
-Without provenance observability, the encoding system is a ``black box''--you can read locations but cannot determine which are sources and which are derived. This makes DOF uncomputable from within the system.
-
-\begin{theorem}[Provenance Observability is Necessary for Verifiable DOF = 1]\label{thm:provenance-necessary}
-Verifying that DOF = 1 holds requires provenance observability.
+\begin{theorem}[Provenance Observability is Necessary for Verifiable Unit Rate]\label{thm:provenance-necessary}
+Verifying that independent rate $1$ holds requires provenance observability.
 \end{theorem}
 \leanmeta{\LH{REQ3}}
 
 \begin{proof}
-Verification of DOF = 1 requires confirming:
-\begin{enumerate}
-\tightlist
-\item All locations encoding fact $F$ are enumerable
-\item Exactly one location is independent (the source)
-\item All other locations are derived from that source
-\end{enumerate}
-
-Step (1) requires querying what structures exist. Step (2) requires distinguishing sources from derived locations. Step (3) requires querying the derivation relationship.
-
-Without provenance observability, none of these queries are answerable from within the system. DOF = 1 can hold but cannot be verified. Bugs in derivation logic go undetected until coherence violations manifest.
+To verify independent rate $1$, one must enumerate the locations encoding the fact, identify the authoritative source, and confirm that every remaining location is derived from it. Without provenance queries, these checks cannot be completed from inside the host system. The architecture may be coherent on observed states, but the single-source claim is not verifiable.
 \end{proof}
 
-\textbf{Connection to coding theory:} In coding theory, a code's structure (generator matrix, parity-check matrix) must be known to the decoder. Provenance observability is analogous: the derivation structure must be queryable for verification.
+\subsection{Independence of the Two Requirements}\label{sec:independence}
 
-\textbf{Realizations across domains:}
-
-\begin{center}
-\begin{tabularx}{\linewidth}{lX}
-\toprule
-\textbf{Domain} & \textbf{Provenance Observability Mechanism} \\
-\midrule
-Python & \texttt{\_\_subclasses\_\_()}, \texttt{\_\_mro\_\_}, \texttt{dir()}, \texttt{vars()} \\
-CLOS & \texttt{class-direct-subclasses}, MOP introspection \\
-Smalltalk & \texttt{subclasses}, \texttt{allSubclasses} \\
-Databases & System catalogs (\texttt{pg\_depend}), query plan introspection \\
-Distributed systems & Vector clocks, provenance tracking, \texttt{etcd} watch \\
-Configuration & Terraform \texttt{graph}, Kubernetes API server \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-\textbf{Systems lacking provenance observability:}
-\begin{itemize}
-\tightlist
-\item \textbf{C++}: Cannot query ``what types instantiated template \texttt{Foo<T>}?''
-\item \textbf{Rust}: Proc macro expansion is opaque at runtime.
-\item \textbf{TypeScript}: Types are erased. Runtime cannot query type relationships.
-\item \textbf{Go}: No type registry. Cannot enumerate interface implementations.
-\end{itemize}
-
-%==============================================================================
-\subsection{Independence of Requirements}\label{sec:independence}
-%==============================================================================
-
-The two requirements--causal propagation and provenance observability--are independent. Neither implies the other (\LH{IND1}, \LH{IND2}).
+The two requirements are logically separate.
 
 \begin{theorem}[Requirements are Independent]\label{thm:independence}
 \begin{enumerate}
 \tightlist
-\item An encoding system can have causal propagation without provenance observability
-\item An encoding system can have provenance observability without causal propagation
+\item An encoding system can have causal propagation without provenance observability.
+\item An encoding system can have provenance observability without causal propagation.
 \end{enumerate}
 \end{theorem}
-\leanmeta{\LH{IND1}}
+\leanmeta{\LH{IND1}, \LH{IND2}}
 
 \begin{proof}
-\textbf{(1) Causal without provenance:} Rust proc macros execute at compile time (causal propagation: definition triggers code generation). But the generated code is opaque at runtime--the program cannot query what was generated (no provenance observability).
-
-\textbf{(2) Provenance without causal:} Java provides reflection (\texttt{Class.getMethods()}, \texttt{Class.getInterfaces()})--provenance observability. But no code executes when a class is defined--no causal propagation.
+For (1), consider a system that automatically refreshes all derived views after each source update but exposes no query interface for its derivation graph. Coherence may hold operationally, but the single-source claim is not inspectable. For (2), consider a system that records complete provenance metadata yet requires users to trigger propagation manually after each change. The derivation structure is visible, but stale views remain reachable. Hence neither property implies the other.
 \end{proof}
 
-This independence means both requirements must be satisfied for DOF = 1 realizability (\LH{SOT1}).
-
-%==============================================================================
 \subsection{The Realizability Theorem}\label{sec:realizability-theorem}
-%==============================================================================
 
 \begin{theorem}[Necessary and Sufficient Realizability Conditions]\label{thm:ssot-iff}
-An encoding system $S$ can achieve verifiable DOF = 1 for structural facts if and only if:
-\begin{enumerate}
-\tightlist
-\item $S$ provides causal update propagation, AND
-\item $S$ provides provenance observability
-\end{enumerate}
+An encoding system can achieve verifiable independent rate $1$ for structural facts if and only if it provides both causal update propagation and provenance observability.
 \end{theorem}
 \leanmeta{\LH{SOT1}}
 
 \begin{proof}
-$(\Rightarrow)$ \textbf{Necessity:} Suppose $S$ achieves verifiable DOF = 1 for structural facts.
-\begin{itemize}
-\tightlist
-\item By Theorem~\ref{thm:causal-necessary}, $S$ must provide causal propagation
-\item By Theorem~\ref{thm:provenance-necessary}, $S$ must provide provenance observability
-\end{itemize}
-
-$(\Leftarrow)$ \textbf{Sufficiency:} Suppose $S$ provides both capabilities.
-\begin{itemize}
-\tightlist
-\item Causal propagation enables derivation at the right moment (when structure is fixed)
-\item Provenance observability enables verification that all secondary encodings are derived
-\item Therefore, DOF = 1 is achievable: create one source, derive all others causally, verify completeness via provenance queries
-\end{itemize}
+Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$.
 \end{proof}
 
-\begin{definition}[DOF-1-Complete Encoding System]\label{def:dof-complete}
-An encoding system is \emph{DOF-1-complete} if it satisfies both causal propagation and provenance observability. Otherwise it is \emph{DOF-1-incomplete}.
-\end{definition}
-
-\textbf{Information-theoretic interpretation:} DOF-1-completeness is analogous to \emph{channel capacity achievability}. A channel achieves capacity if there exist codes that approach the Shannon limit. An encoding system is DOF-1-complete if there exist derivation mechanisms that achieve the coherence-optimal rate (DOF = 1). The two requirements (causal propagation, provenance observability) are the ``channel properties'' that enable capacity achievement.
-
-%==============================================================================
-\subsection{Connection to Write-Once Memory Codes}\label{sec:wom-connection}
-%==============================================================================
-
-Our realizability requirements connect to \emph{write-once memory (WOM) codes}~\cite{rivest1982wom,wolf1984wom}, an established area of coding theory.
-
-A WOM is a storage medium where bits can only transition in one direction (typically $0 \to 1$). Rivest and Shamir~\cite{rivest1982wom} showed that WOMs can store more information than their apparent capacity by encoding multiple ``writes'' cleverly--the capacity for $t$ writes is $\log_2(t+1)$ bits per cell.
-
-The connection to our framework:
-\begin{itemize}
-\tightlist
-\item \textbf{WOM constraint}: Bits can only increase (irreversible state change)
-\item \textbf{Structural fact constraint}: Structure is fixed at definition (irreversible encoding)
-\item \textbf{WOM coding}: Clever encoding enables multiple logical writes despite physical constraints
-\item \textbf{DOF = 1 derivation}: Clever derivation enables multiple logical locations from one physical source
-\end{itemize}
-
-Both settings involve achieving optimal encoding under irreversibility constraints. WOM codes achieve capacity via coding schemes; DOF-1-complete systems achieve coherence via derivation mechanisms.
-
-%==============================================================================
-\subsection{The Logical Chain (Summary)}\label{sec:chain}
-%==============================================================================
-
-\begin{center}
-\fbox{\parbox{0.95\columnwidth}{
-\textbf{Observation:} Structural facts are fixed at definition time (irreversible encoding).
-
-$\downarrow$ (timing analysis)
-
-\textbf{Theorem~\ref{thm:timing-forces}:} Derivation for structural facts must occur at definition time.
-
-$\downarrow$ (requirement derivation)
-
-\textbf{Theorem~\ref{thm:causal-necessary}:} Causal update propagation is necessary for DOF = 1.
-
-\textbf{Theorem~\ref{thm:provenance-necessary}:} Provenance observability is necessary for verifiable DOF = 1.
-
-$\downarrow$ (conjunction)
-
-\textbf{Theorem~\ref{thm:ssot-iff}:} An encoding system achieves DOF = 1 iff it has both properties.
-
-$\downarrow$ (evaluation)
-
-\textbf{Classification:} Python, CLOS, Smalltalk are DOF-1-complete. Java, C++, Rust, Go are DOF-1-incomplete.
-}}
-\end{center}
-
-\textbf{Mechanization status.} The core requirement chain is machine-checked in Lean 4; current build statistics are \LeanTotalLines\ lines, \LeanTotalTheorems\ theorem/lemma statements, and \LeanTotalSorry\ \texttt{sorry} placeholders.
-
-%==============================================================================
-\subsection{Concrete Impossibility Demonstration}\label{sec:impossibility}
-%==============================================================================
-
-We demonstrate exactly why DOF-1-incomplete systems cannot achieve DOF = 1 for structural facts.
-
-\textbf{The structural fact:} ``\texttt{PNGHandler} handles \texttt{.png} files.''
-
-This fact must be encoded in two places:
-\begin{enumerate}
-\tightlist
-\item The handler definition (where the handler is defined)
-\item The registry/dispatcher (where format$\to$handler mapping lives)
-\end{enumerate}
-
-\textbf{Python (DOF-1-complete) achieves DOF = 1:}
-
-\begin{code}
-class ImageHandler:
-    _registry = {}
-
-    def __init_subclass__(cls, format=None, **kwargs):
-        super().__init_subclass__(**kwargs)
-        if format:
-            ImageHandler._registry[format] = cls  # DERIVED (causal)
-
-class PNGHandler(ImageHandler, format="png"):  # SOURCE
-    def load(self, path): ...
-\end{code}
-
-\textbf{Causal propagation:} When \texttt{class PNGHandler} executes, \texttt{\_\_init\_subclass\_\_} fires immediately, adding the registry entry. No temporal gap.
-
-\textbf{Provenance observability:} \texttt{ImageHandler.\_\_subclasses\_\_()} returns all handlers. The derivation structure is queryable.
-
-\textbf{DOF = 1}: The \texttt{format="png"} in the class definition is the single source. The registry entry is derived causally. Adding a new handler requires changing exactly one location.
-
-\textbf{Java (DOF-1-incomplete) cannot achieve DOF = 1:}
-
-\begin{code}
-// File 1: PNGHandler.java
-@Handler(format = "png")  // Metadata, not executable
-public class PNGHandler implements ImageHandler { ... }
-
-// File 2: HandlerRegistry.java (SEPARATE SOURCE)
-public class HandlerRegistry {
-    static { register("png", PNGHandler.class); }  // Manual
-}
-\end{code}
-
-\textbf{No causal propagation:} The \texttt{@Handler} annotation is data, not code. Nothing executes when the class is defined.
-
-\textbf{Provenance partially present:} Java has reflection, but cannot enumerate ``all classes with \texttt{@Handler}'' without classpath scanning.
-
-\textbf{DOF = 2}: The annotation and the registry are independent encodings. Either can be modified without the other. Incoherence is reachable.
-
-\begin{theorem}[Generated Files Are Independent Sources]\label{thm:generated-second}
-A generated source file constitutes an independent encoding, not a derivation. Code generation does not achieve DOF = 1.
-\end{theorem}
-\leanmeta{\LH{GEN1}}
-
-\begin{proof}
-Let $E_1$ be the annotation on \texttt{PNGHandler.java}. Let $E_2$ be the generated \texttt{HandlerRegistry.java}.
-
-Test: If $E_2$ is deleted or modified, does system behavior change? \textbf{Yes}--the handler is not registered.
-
-Test: Can $E_2$ diverge from $E_1$? \textbf{Yes}--$E_2$ is a separate file that can be edited, fail to generate, or be stale.
-
-Therefore, $E_1$ and $E_2$ are independent encodings. The fact that $E_2$ was \emph{generated from} $E_1$ does not make it derived in the DOF sense, because:
-\begin{enumerate}
-\tightlist
-\item $E_2$ exists as a separate artifact that can diverge
-\item The generation process is external to the runtime and can be bypassed
-\item There is no causal coupling--modification of $E_1$ does not automatically update $E_2$
-\end{enumerate}
-
-Contrast with Python: the registry entry exists only in memory, created causally by the class statement. There is no second file. DOF = 1.
-\end{proof}
-
-%==============================================================================
-\subsection{Summary: The Information-Theoretic Requirements}\label{sec:req-summary}
-%==============================================================================
-
-\begin{center}
-\begin{tabularx}{\linewidth}{lYY}
-\toprule
-\textbf{Requirement} & \textbf{IT Interpretation} & \textbf{Why Necessary} \\
-\midrule
-Causal propagation & Channel with feedback; encoder-decoder coupling & Eliminates temporal incoherence window \\
-Provenance observability & Side information at decoder; codebook visibility & Enables DOF verification \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-Both requirements are necessary. Neither is sufficient alone. Together they enable DOF-1-complete encoding systems that achieve the coherence-optimal rate.
+The application section specializes the theorem to computational examples.
 
 %==============================================================================

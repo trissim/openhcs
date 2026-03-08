@@ -55,8 +55,10 @@ The chain: triviality → no information → contradiction with observation.
 No physics required. Pure math: cardinality, sets, logarithms.
 -/
 
-/-- EP1: Bit operations cost energy (Landauer 1961, Bérut 2012).
-    Empirically verified: kT ln 2 ≈ 2.8 × 10⁻²¹ J at 300K. -/
+/-- EP1: Irreversible bit operations carry a positive lower-bound cost.
+    Landauer gives the minimum floor `k_B T ln 2`; actual constrained
+    implementations may dissipate more because additional entropy production
+    can be forced by architectural and dynamical constraints. -/
 axiom landauer_principle : ∃ ε : ℕ, ε > 0 ∧ ∀ bitOp : ℕ, bitOp > 0 → bitOp * ε > 0
 
 /-- EP2: Energy in any region is finite (thermodynamics).

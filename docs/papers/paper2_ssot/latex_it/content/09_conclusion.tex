@@ -1,41 +1,14 @@
 \section{Conclusion}\label{sec:conclusion}
 %==============================================================================
 
-We have studied exact consistency in interactive multi-location encoding systems through an information-theoretic lens. The main conclusion is simple: once ambiguity survives the observation transcript, exact consistency becomes a unified converse problem.
+Exact consistency in modifiable multi-location encodings yields a deterministic finite converse problem. Once the observation transcript leaves a nontrivial ambiguity class, exact recovery requires side information of sufficient cardinality, and the same finite budget reappears in confusability, conditional-entropy, decoder-output, and entropy-gap formulations.
 
-The paper contributes three main claims. First, a $k$-way ambiguity class requires at least $\log_2 k$ bits of side information, and the same finite budget reappears as a conditional-entropy/Fano bound, a decoder-output entropy bound, and an output-side PMF/KL gap witness. Second, zero-incoherence capacity is exactly $1$: one independent source can support arbitrarily many derived views, but any higher independent rate creates reachable ambiguity. Third, this threshold has an operational consequence: modification complexity is $O(1)$ at rate $1$ and $\Omega(n)$ above it, with unbounded gap. The realizability theorem identifies when the capacity-achieving regime is attainable: causal propagation and provenance observability are both necessary and sufficient.
+Exact $k$-way ambiguity requires at least $\log_2 k$ bits of side information. The zero-incoherence capacity of the model is exactly one independent source: one authoritative location with deterministic views achieves exact consistency, while any higher independent rate makes ambiguity reachable. This threshold has an operational consequence: manual update cost is $O(1)$ at rate $1$ and $\Omega(n)$ above it, with an unbounded asymptotic gap. The realizability theorem identifies causal propagation and provenance observability as the conditions for attaining the rate-$1$ regime in host systems.
 
-The broader IT point is that the same obstruction admits several classical descriptions at once: zero-error/confusability structure, side-information insufficiency, conditional-entropy and decoder-output Fano converses, and KL-detectable output non-uniformity. That unification is the main claim of the paper.
+These results describe one obstruction: insufficient information to distinguish competing latent states exactly.
 
-\textbf{Implications:}
-
-\begin{enumerate}
-\item \textbf{For information theorists:} Zero-error, graph-confusability, Fano-style, and KL-gap ideas extend naturally to interactive multi-location encoding with modification constraints. The novelty is that one exact-consistency obstruction admits all of these normal forms in one deterministic finite model.
-
-\item \textbf{For coding theorists:} Derivation is the mechanism that introduces dependence and reduces effective encoding rate. The realizability theorem characterizes when that regime is attainable, while the unified converse identifies what fails when independent rate exceeds the threshold.
-
-\item \textbf{For system designers:} If exact consistency is required, independent rate must be $\leq 1$. Above that threshold, correctness requires external side information or additional operational cost.
-\end{enumerate}
-
-\textbf{Limitations:}
-\begin{itemize}
-\tightlist
-\item Results apply primarily to facts with modification constraints. Streaming data and high-frequency updates have different characteristics.
-\item The complexity bounds are asymptotic. For small encoding systems (DOF $< 5$), the asymptotic gap is numerically small.
-\item Application examples are brief and primarily computational. Richer non-software case studies are left to future work.
-\item Realizability requirements focus on computational systems. Physical and biological encoding systems require separate analysis.
-\end{itemize}
-
-\textbf{Future Work:}
-\begin{itemize}
-\tightlist
-\item \textbf{Probabilistic coherence:} Extend the present finite deterministic converse program to soft constraints where incoherence probability is bounded but non-zero.
-\item \textbf{Network encoding:} Study coherence capacity in networked encoding systems with communication constraints, connecting to network information theory.
-\item \textbf{Rate-complexity extension:} Characterize the full rate-complexity function $R(M)$ beyond the sharp zero-error boundary analyzed here.
-\item \textbf{Interactive capacity:} Study capacity under multi-round modification protocols, connecting to interactive information theory and directed information.
-\item \textbf{Partial correlation:} Characterize coherence guarantees when derivation introduces partial (non-deterministic) correlation, moving closer to classical stochastic side-information models.
-\end{itemize}
+\textbf{Limitations and future work.} The present model is finite and exact. Natural extensions include probabilistic coherence, networked encodings with communication constraints, and partial-correlation regimes that move closer to classical stochastic side-information models.
 
 \subsection{Artifacts}\label{sec:data-availability}
 
-The Lean 4 formalization is included as supplementary material~\cite{openhcsLeanProofs}. The OpenHCS case study and associated code references are provided for the worked instantiation (Section~\ref{sec:empirical}).
+The Lean 4 formalization is included as supplementary material. Sections~\ref{sec:evaluation} and~\ref{sec:empirical} record computational instantiations and case-study material.

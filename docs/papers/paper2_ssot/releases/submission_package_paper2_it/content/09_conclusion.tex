@@ -1,49 +1,14 @@
 \section{Conclusion}\label{sec:conclusion}
 %==============================================================================
 
-We have established a new capacity theorem extending zero-error source coding to interactive multi-location encoding systems. The key contributions are:
+Exact consistency in modifiable multi-location encodings yields a deterministic finite converse problem. Once the observation transcript leaves a nontrivial ambiguity class, exact recovery requires side information of sufficient cardinality, and the same finite budget reappears in confusability, conditional-entropy, decoder-output, and entropy-gap formulations.
 
-\textbf{1. Zero-Incoherence Capacity Theorem:} We define zero-incoherence capacity $C_0$ as the maximum encoding rate guaranteeing zero probability of location disagreement, and prove $C_0 = 1$ exactly (Theorem~\ref{thm:coherence-capacity}). The proof follows the achievability/converse structure of Shannon's channel capacity theorem.
+Exact $k$-way ambiguity requires at least $\log_2 k$ bits of side information. The zero-incoherence capacity of the model is exactly one independent source: one authoritative location with deterministic views achieves exact consistency, while any higher independent rate makes ambiguity reachable. This threshold has an operational consequence: manual update cost is $O(1)$ at rate $1$ and $\Omega(n)$ above it, with an unbounded asymptotic gap. The realizability theorem identifies causal propagation and provenance observability as the conditions for attaining the rate-$1$ regime in host systems.
 
-\textbf{2. Side Information Bound:} We prove that resolution of $k$-way incoherence requires $\geq \log_2 k$ bits of side information (Theorem~\ref{thm:side-info}). This connects to Slepian-Wolf distributed source coding: provenance information acts as decoder side information.
+These results describe one obstruction: insufficient information to distinguish competing latent states exactly.
 
-\textbf{3. Multi-Terminal Interpretation:} We model encoding locations as terminals in a multi-terminal source coding problem. Derivation introduces perfect correlation (deterministic dependence), reducing effective rate. Only complete correlation (all terminals derived from one source) achieves zero incoherence.
-
-\textbf{4. Rate-Complexity Tradeoffs:} We establish tradeoffs analogous to rate-distortion: $O(1)$ modification complexity at capacity vs. $\Omega(n)$ above capacity. The gap is unbounded (Theorem~\ref{thm:unbounded-gap}).
-
-\textbf{5. Encoder Realizability:} Achieving capacity requires two encoder properties: causal propagation (analogous to feedback) and provenance observability (analogous to decoder side information). Both necessary; together sufficient (Theorem~\ref{thm:ssot-iff}).
-
-\textbf{Corollary instantiations.} The abstract theory instantiates across domains (programming languages, distributed databases, configuration systems). Sections~\ref{sec:evaluation} and~\ref{sec:empirical} provide illustrative corollaries; the core theorems are domain-independent.
-
-\textbf{Implications:}
-
-\begin{enumerate}
-\item \textbf{For information theorists:} Zero-error capacity theory extends to interactive multi-location encoding. The setting (modifiable encodings, coherence constraints) is new; the achievability/converse structure and side information bounds connect to established IT.
-
-\item \textbf{For coding theorists:} Derivation is the mechanism that introduces correlation, reducing effective encoding rate. The encoder realizability theorem characterizes what encoder properties enable capacity-achieving codes.
-
-\item \textbf{For system designers:} The capacity theorem is a forcing result: if coherence is required, encoding rate must be $\leq 1$. Systems operating above capacity require external side information for resolution.
-\end{enumerate}
-
-\textbf{Limitations:}
-\begin{itemize}
-\tightlist
-\item Results apply primarily to facts with modification constraints. Streaming data and high-frequency updates have different characteristics.
-\item The complexity bounds are asymptotic. For small encoding systems (DOF $< 5$), the asymptotic gap is numerically small.
-\item Computational realization examples are primarily from software systems. The theory is general, but database and configuration system case studies are limited to canonical examples.
-\item Realizability requirements focus on computational systems. Physical and biological encoding systems require separate analysis.
-\end{itemize}
-
-\textbf{Future Work:}
-\begin{itemize}
-\tightlist
-\item \textbf{Probabilistic coherence:} Extend to soft constraints where incoherence probability is bounded but non-zero, analogous to the transition from zero-error to vanishing-error capacity.
-\item \textbf{Network encoding:} Study coherence capacity in networked encoding systems with communication constraints, connecting to network information theory.
-\item \textbf{Rate-distortion extension:} Characterize the full rate-complexity function $R(M)$ trading encoding rate against modification complexity, analogous to rate-distortion $R(D)$.
-\item \textbf{Interactive capacity:} Study capacity under multi-round modification protocols, connecting to interactive information theory and directed information.
-\item \textbf{Partial correlation:} Characterize coherence guarantees when derivation introduces partial (non-deterministic) correlation, extending beyond the perfect-correlation case.
-\end{itemize}
+\textbf{Limitations and future work.} The present model is finite and exact. Natural extensions include probabilistic coherence, networked encodings with communication constraints, and partial-correlation regimes that move closer to classical stochastic side-information models.
 
 \subsection{Artifacts}\label{sec:data-availability}
 
-The Lean 4 formalization is included as supplementary material~\cite{openhcsLeanProofs}. The OpenHCS case study and associated code references are provided for the worked instantiation (Section~\ref{sec:empirical}).
+The Lean 4 formalization is included as supplementary material. Sections~\ref{sec:evaluation} and~\ref{sec:empirical} record computational instantiations and case-study material.

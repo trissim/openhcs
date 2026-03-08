@@ -53,16 +53,48 @@ theorem landauerJoulesPerBit_pos {kB T : ℝ}
   have hkT : 0 < kB * T := mul_pos hkB hT
   exact mul_pos hkT hlog2
 
-/-- If a discrete thermodynamic model is calibrated to Landauer conversion,
-    positivity of `joulesPerBit` is derived, not postulated. -/
+/-- If a declared discrete thermodynamic model lower-bounds irreversible-bit cost
+    by the Landauer floor, positivity of `joulesPerBit` is derived, not postulated.
+
+    This is the physically conservative statement used in the main artifact:
+    Landauer gives a minimum floor, while actual constrained implementations may
+    dissipate strictly more due to additional entropy production (for example
+    mismatch cost, finite-time forcing, periodic driving, or other architectural
+    constraints discussed by Wolpert et al. 2024, Manzano et al. 2024, and
+    Yadav--Yousef--Wolpert 2026). -/
+theorem joulesPerBit_pos_of_landauer_floor
+    (M : ThermoModel) {kB T : ℝ}
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ)) :
+    0 < M.joulesPerBit := by
+  have hLandauer : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
+  have hCast : 0 < (M.joulesPerBit : ℝ) := lt_of_lt_of_le hLandauer hFloor
+  exact_mod_cast hCast
+
+/-- Stronger empirical premise: if constrained implementations incur a positive
+    overhead above the Landauer floor, the declared discrete lower-bound constant
+    is strictly larger than `k_B T ln 2`. -/
+theorem joulesPerBit_exceeds_landauer_of_positive_overhead
+    (M : ThermoModel) {kB T δ : ℝ}
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hδ : 0 < δ)
+    (hGap : landauerJoulesPerBit kB T + δ ≤ (M.joulesPerBit : ℝ)) :
+    landauerJoulesPerBit kB T < (M.joulesPerBit : ℝ) := by
+  have hStep : landauerJoulesPerBit kB T < landauerJoulesPerBit kB T + δ := by
+    linarith
+  exact lt_of_lt_of_le hStep hGap
+
+/-- Exact-calibration specialization: if a declared discrete thermodynamic model
+    is taken to coincide exactly with the Landauer conversion, positivity of
+    `joulesPerBit` follows as a special case of the floor theorem. -/
 theorem joulesPerBit_pos_of_landauer_calibration
     (M : ThermoModel) {kB T : ℝ}
     (hkB : 0 < kB) (hT : 0 < T)
     (hCal : (M.joulesPerBit : ℝ) = landauerJoulesPerBit kB T) :
     0 < M.joulesPerBit := by
-  have hLandauer : 0 < landauerJoulesPerBit kB T := landauerJoulesPerBit_pos hkB hT
-  have hCast : 0 < (M.joulesPerBit : ℝ) := by simpa [hCal] using hLandauer
-  exact_mod_cast hCast
+  have hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ) := by
+    simpa [hCal] using (le_rfl (landauerJoulesPerBit kB T))
+  exact joulesPerBit_pos_of_landauer_floor M hkB hT hFloor
 
 /-- Carbon lower bound induced by the same bit-operation lower bound. -/
 def carbonLowerBound (M : ThermoModel) (bitOpsLB : ℕ) : ℕ :=
@@ -77,15 +109,31 @@ theorem energy_lower_mandatory
   unfold energyLowerBound
   exact Nat.mul_pos hJ hb
 
-/-- Mandatory energy lower bound derived from Landauer calibration and positive
-    physical constants (`k_B > 0`, `T > 0`). -/
+/-- Mandatory energy lower bound derived from a Landauer floor hypothesis and
+    positive physical constants (`k_B > 0`, `T > 0`). -/
+theorem energy_lower_mandatory_of_landauer_floor
+    (M : ThermoModel) {kB T : ℝ} {b : ℕ}
+    (hkB : 0 < kB) (hT : 0 < T)
+    (hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ))
+    (hb : 0 < b) :
+    0 < energyLowerBound M b := by
+  exact energy_lower_mandatory M (joulesPerBit_pos_of_landauer_floor M hkB hT hFloor) hb
+
+/-- Mandatory energy lower bound derived from the idealized exact-equality
+    specialization `joulesPerBit = landauerJoulesPerBit kB T` together with
+    positive physical constants (`k_B > 0`, `T > 0`). This is a narrower
+    specialization of `energy_lower_mandatory_of_landauer_floor`; constrained
+    processes with extra dissipation are handled by the Wolpert-facing
+    floor-plus-overhead layers. -/
 theorem energy_lower_mandatory_of_landauer_calibration
     (M : ThermoModel) {kB T : ℝ} {b : ℕ}
     (hkB : 0 < kB) (hT : 0 < T)
     (hCal : (M.joulesPerBit : ℝ) = landauerJoulesPerBit kB T)
     (hb : 0 < b) :
     0 < energyLowerBound M b := by
-  exact energy_lower_mandatory M (joulesPerBit_pos_of_landauer_calibration M hkB hT hCal) hb
+  have hFloor : landauerJoulesPerBit kB T ≤ (M.joulesPerBit : ℝ) := by
+    simpa [hCal] using (le_rfl (landauerJoulesPerBit kB T))
+  exact energy_lower_mandatory_of_landauer_floor M hkB hT hFloor hb
 
 /-- Mandatory cost (carbon): under positive per-joule conversion and positive
 energy lower bound, carbon lower bound is strictly positive. -/
@@ -282,7 +330,7 @@ PROOF CHAIN (three steps, no circular reasoning):
     scaled by k_BT. Thermodynamic cost = k_BT per nat of decision information.
 
     Hypotheses:
-    - kB, T > 0 (physical constants, Landauer calibration)
+    - kB, T > 0 (physical constants, Landauer floor)
     - E ≥ srank × k_BT × ln2 (energy bound from bit-operation lower bound)
     - H(D) ≤ srank (entropy-rank inequality, from Information.lean) -/
 theorem energy_ge_kbt_nat_entropy

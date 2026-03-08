@@ -2,326 +2,191 @@
 \providecommand\hyper@newdestlabel[2]{}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
-\citation{shannon1956zero,korner1973graphs,lovasz1979shannon,slepian1973noiseless}
+\citation{shannon1956zero,korner1973graphs,lovasz1979shannon,witsenhausen1976zero,slepian1973noiseless,cover2006elements}
 \citation{shannon1956zero,korner1973graphs,lovasz1979shannon}
-\citation{korner1973graphs,lovasz1979shannon}
-\citation{shannon1956zero}
+\citation{slepian1973noiseless,witsenhausen1976zero}
+\citation{orlitsky2001coding,doshi2010functional}
+\citation{fano1961transmission,witsenhausen1975conditional,cover2006elements}
 \@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
 \newlabel{introduction}{{I}{1}{Introduction}{section.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Zero-Incoherence Capacity}{1}{subsection.1.1}\protected@file@percent }
-\newlabel{sec:encoding-problem}{{\mbox  {I-A}}{1}{Zero-Incoherence Capacity}{subsection.1.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}Why This Is an Information-Theoretic Problem}{1}{subsection.1.2}\protected@file@percent }
-\newlabel{sec:optimal-rate}{{\mbox  {I-B}}{1}{Why This Is an Information-Theoretic Problem}{subsection.1.2}{}}
-\citation{brewer2000cap}
-\citation{hunt2002vcdiff}
-\citation{delaet2010survey}
-\citation{hunt1999pragmatic}
-\citation{slepian1973noiseless}
-\citation{shannon1956zero}
-\citation{korner1973graphs}
-\citation{lovasz1979shannon}
-\citation{birs2012interactive}
-\citation{ma2011distributed}
-\citation{cover2006elements}
-\citation{cover2006elements}
-\citation{slepian1973noiseless}
-\citation{rashmi2015multiversion}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-A}}Problem Formulation}{1}{subsection.1.1}\protected@file@percent }
+\newlabel{sec:encoding-problem}{{\mbox  {I-A}}{1}{Problem Formulation}{subsection.1.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-B}}Relation to Classical Information Theory}{1}{subsection.1.2}\protected@file@percent }
+\newlabel{sec:connection-it}{{\mbox  {I-B}}{1}{Relation to Classical Information Theory}{subsection.1.2}{}}
 \citation{demoura2021lean4}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-C}}Applications Across Domains}{2}{subsection.1.3}\protected@file@percent }
-\newlabel{sec:applications}{{\mbox  {I-C}}{2}{Applications Across Domains}{subsection.1.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-D}}Connection to Classical Information Theory}{2}{subsection.1.4}\protected@file@percent }
-\newlabel{sec:connection-it}{{\mbox  {I-D}}{2}{Connection to Classical Information Theory}{subsection.1.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-E}}Realizability and Applications}{2}{subsection.1.5}\protected@file@percent }
-\newlabel{sec:realizability}{{\mbox  {I-E}}{2}{Realizability and Applications}{subsection.1.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-F}}Paper Organization}{2}{subsection.1.6}\protected@file@percent }
-\newlabel{overview}{{\mbox  {I-F}}{2}{Paper Organization}{subsection.1.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-G}}Core Theorems}{3}{subsection.1.7}\protected@file@percent }
-\newlabel{sec:core-theorems}{{\mbox  {I-G}}{3}{Core Theorems}{subsection.1.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-H}}Scope}{3}{subsection.1.8}\protected@file@percent }
-\newlabel{sec:scope}{{\mbox  {I-H}}{3}{Scope}{subsection.1.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-I}}Contributions}{3}{subsection.1.9}\protected@file@percent }
-\newlabel{sec:contributions}{{\mbox  {I-I}}{3}{Contributions}{subsection.1.9}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {II}Encoding Systems and Coherence}{3}{section.2}\protected@file@percent }
-\newlabel{sec:foundations}{{II}{3}{Encoding Systems and Coherence}{section.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Model assumptions and notation}{4}{subsection.2.1}\protected@file@percent }
-\newlabel{sec:assumptions}{{\mbox  {II-A}}{4}{Model assumptions and notation}{subsection.2.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}The Encoding Model}{4}{subsection.2.2}\protected@file@percent }
-\newlabel{sec:epistemic}{{\mbox  {II-B}}{4}{The Encoding Model}{subsection.2.2}{}}
-\newlabel{def:encoding-system}{{II.1}{4}{Encoding System}{theorem.2.1}{}}
-\newlabel{def:coherence}{{II.2}{4}{Coherence}{theorem.2.2}{}}
-\newlabel{def:incoherence}{{II.3}{4}{Incoherence}{theorem.2.3}{}}
-\newlabel{def:ambiguity-class}{{II.4}{4}{Ambiguity Class}{theorem.2.4}{}}
-\newlabel{thm:oracle-arbitrary}{{II.5}{4}{Oracle Arbitrariness}{theorem.2.5}{}}
-\newlabel{def:dof-epistemic}{{II.6}{4}{Degrees of Freedom}{theorem.2.6}{}}
-\newlabel{thm:dof-one-coherence}{{II.7}{4}{DOF = 1 Guarantees Coherence}{theorem.2.7}{}}
-\newlabel{thm:dof-gt-one-incoherence}{{II.8}{4}{DOF $>$ 1 Permits Incoherence}{theorem.2.8}{}}
-\newlabel{cor:coherence-forces-ssot}{{II.9}{4}{Coherence Forces DOF = 1}{theorem.2.9}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Computational Realizations}{4}{subsection.2.3}\protected@file@percent }
-\newlabel{sec:edit-space}{{\mbox  {II-C}}{4}{Computational Realizations}{subsection.2.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-D}}Facts: Atomic Units of Specification}{5}{subsection.2.4}\protected@file@percent }
-\newlabel{sec:facts}{{\mbox  {II-D}}{5}{Facts: Atomic Units of Specification}{subsection.2.4}{}}
-\newlabel{def:fact}{{II.13}{5}{Fact}{theorem.2.13}{}}
-\newlabel{def:structural-fact}{{II.14}{5}{Structural Fact}{theorem.2.14}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-E}}Encoding: The Correctness Relationship}{5}{subsection.2.5}\protected@file@percent }
-\newlabel{sec:encoding}{{\mbox  {II-E}}{5}{Encoding: The Correctness Relationship}{subsection.2.5}{}}
-\newlabel{def:encodes}{{II.15}{5}{Encodes}{theorem.2.15}{}}
-\newlabel{ex:encoding}{{II.16}{5}{Encoding in Practice}{theorem.2.16}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-F}}Modification Complexity}{5}{subsection.2.6}\protected@file@percent }
-\newlabel{sec:mod-complexity}{{\mbox  {II-F}}{5}{Modification Complexity}{subsection.2.6}{}}
-\newlabel{def:mod-complexity}{{II.17}{5}{Modification Complexity}{theorem.2.17}{}}
-\newlabel{thm:correctness-forcing}{{II.18}{6}{Correctness Forcing}{theorem.2.18}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-G}}Independence and Degrees of Freedom}{6}{subsection.2.7}\protected@file@percent }
-\newlabel{sec:dof}{{\mbox  {II-G}}{6}{Independence and Degrees of Freedom}{subsection.2.7}{}}
-\newlabel{def:independent}{{II.19}{6}{Independent Locations}{theorem.2.19}{}}
-\newlabel{def:derived}{{II.20}{6}{Derived Location}{theorem.2.20}{}}
-\newlabel{ex:independence}{{II.21}{6}{Independent vs. Derived}{theorem.2.21}{}}
-\newlabel{def:dof}{{II.22}{6}{Degrees of Freedom}{theorem.2.22}{}}
-\newlabel{thm:dof-inconsistency}{{II.23}{6}{DOF = Incoherence Potential}{theorem.2.23}{}}
-\newlabel{cor:dof-risk}{{II.24}{6}{DOF $>$ 1 Implies Incoherence Risk}{theorem.2.24}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-H}}The DOF Lattice}{6}{subsection.2.8}\protected@file@percent }
-\newlabel{sec:dof-lattice}{{\mbox  {II-H}}{6}{The DOF Lattice}{subsection.2.8}{}}
-\newlabel{thm:dof-optimal}{{II.25}{6}{DOF = 1 is Uniquely Coherent}{theorem.2.25}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-I}}Encoding-Theoretic CAP and FLP}{6}{subsection.2.9}\protected@file@percent }
-\newlabel{sec:cap-flp}{{\mbox  {II-I}}{6}{Encoding-Theoretic CAP and FLP}{subsection.2.9}{}}
-\newlabel{def:local-availability}{{II.26}{6}{Local Availability}{theorem.2.26}{}}
-\citation{brewer2000cap,gilbert2002cap}
-\citation{flp1985impossibility}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-C}}Realizability and Applications}{2}{subsection.1.3}\protected@file@percent }
+\newlabel{sec:realizability}{{\mbox  {I-C}}{2}{Realizability and Applications}{subsection.1.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-D}}Paper Organization}{2}{subsection.1.4}\protected@file@percent }
+\newlabel{overview}{{\mbox  {I-D}}{2}{Paper Organization}{subsection.1.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-E}}Scope}{2}{subsection.1.5}\protected@file@percent }
+\newlabel{sec:scope}{{\mbox  {I-E}}{2}{Scope}{subsection.1.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {I-F}}Contributions}{2}{subsection.1.6}\protected@file@percent }
+\newlabel{sec:contributions}{{\mbox  {I-F}}{2}{Contributions}{subsection.1.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Encoding Systems and Coherence}{2}{section.2}\protected@file@percent }
+\newlabel{sec:foundations}{{II}{2}{Encoding Systems and Coherence}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Model assumptions and notation}{2}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:assumptions}{{\mbox  {II-A}}{2}{Model assumptions and notation}{subsection.2.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}The Encoding Model}{2}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:epistemic}{{\mbox  {II-B}}{2}{The Encoding Model}{subsection.2.2}{}}
+\newlabel{def:encoding-system}{{II.1}{2}{Encoding System}{theorem.2.1}{}}
+\newlabel{def:coherence}{{II.2}{2}{Coherence}{theorem.2.2}{}}
+\newlabel{def:incoherence}{{II.3}{2}{Incoherence}{theorem.2.3}{}}
+\newlabel{def:ambiguity-class}{{II.4}{2}{Ambiguity Class}{theorem.2.4}{}}
+\newlabel{thm:oracle-arbitrary}{{II.5}{2}{Oracle Arbitrariness}{theorem.2.5}{}}
+\newlabel{def:dof-epistemic}{{II.6}{3}{Degrees of Freedom}{theorem.2.6}{}}
+\newlabel{thm:dof-one-coherence}{{II.7}{3}{Unit Independent Rate Guarantees Coherence}{theorem.2.7}{}}
+\newlabel{thm:dof-gt-one-incoherence}{{II.8}{3}{Independent Rate Above One Permits Incoherence}{theorem.2.8}{}}
+\newlabel{cor:coherence-forces-ssot}{{II.9}{3}{Exact Consistency Forces Unit Rate}{theorem.2.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Host Systems}{3}{subsection.2.3}\protected@file@percent }
+\newlabel{sec:edit-space}{{\mbox  {II-C}}{3}{Host Systems}{subsection.2.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-D}}Facts: Atomic Units of Specification}{3}{subsection.2.4}\protected@file@percent }
+\newlabel{sec:facts}{{\mbox  {II-D}}{3}{Facts: Atomic Units of Specification}{subsection.2.4}{}}
+\newlabel{def:fact}{{II.13}{3}{Fact}{theorem.2.13}{}}
+\newlabel{def:structural-fact}{{II.14}{3}{Structural Fact}{theorem.2.14}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-E}}Encoding: The Correctness Relationship}{3}{subsection.2.5}\protected@file@percent }
+\newlabel{sec:encoding}{{\mbox  {II-E}}{3}{Encoding: The Correctness Relationship}{subsection.2.5}{}}
+\newlabel{def:encodes}{{II.15}{3}{Encodes}{theorem.2.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-F}}Modification Complexity}{3}{subsection.2.6}\protected@file@percent }
+\newlabel{sec:mod-complexity}{{\mbox  {II-F}}{3}{Modification Complexity}{subsection.2.6}{}}
+\newlabel{def:mod-complexity}{{II.16}{3}{Modification Complexity}{theorem.2.16}{}}
+\newlabel{thm:correctness-forcing}{{II.17}{3}{Correctness Forcing}{theorem.2.17}{}}
 \citation{shannon1956zero}
 \citation{korner1973graphs}
 \citation{lovasz1979shannon}
-\newlabel{def:partition-tolerance}{{II.27}{7}{Partition Tolerance}{theorem.2.27}{}}
-\newlabel{thm:cap-encoding}{{II.28}{7}{CAP in the Encoding Model}{theorem.2.28}{}}
-\newlabel{def:resolution-procedure}{{II.29}{7}{Resolution Procedure}{theorem.2.29}{}}
-\newlabel{thm:static-flp}{{II.30}{7}{Static FLP in the Encoding Model}{theorem.2.30}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-J}}Information-Theoretic Quantities}{7}{subsection.2.10}\protected@file@percent }
-\newlabel{sec:it-quantities}{{\mbox  {II-J}}{7}{Information-Theoretic Quantities}{subsection.2.10}{}}
-\newlabel{def:encoding-rate}{{II.31}{7}{Encoding Rate}{theorem.2.31}{}}
-\newlabel{def:value-entropy}{{II.32}{7}{Value Entropy}{theorem.2.32}{}}
-\newlabel{def:redundancy}{{II.33}{7}{Encoding Redundancy}{theorem.2.33}{}}
-\newlabel{thm:redundancy-incoherence}{{II.34}{7}{Redundancy-Incoherence Equivalence}{theorem.2.34}{}}
-\newlabel{def:incoherence-entropy}{{II.35}{7}{Incoherence Entropy}{theorem.2.35}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-K}}Zero-Incoherence Capacity Theorem}{7}{subsection.2.11}\protected@file@percent }
-\newlabel{sec:capacity}{{\mbox  {II-K}}{7}{Zero-Incoherence Capacity Theorem}{subsection.2.11}{}}
-\newlabel{def:coherence-capacity}{{II.36}{7}{Zero-Incoherence Capacity}{theorem.2.36}{}}
-\newlabel{thm:coherence-capacity}{{II.37}{7}{Zero-Incoherence Capacity}{theorem.2.37}{}}
-\newlabel{thm:capacity-achievability}{{II.38}{7}{Achievability}{theorem.2.38}{}}
-\newlabel{thm:capacity-converse}{{II.39}{8}{Converse}{theorem.2.39}{}}
-\newlabel{cor:capacity-unique}{{II.40}{8}{Capacity-Achieving Rate is Unique}{theorem.2.40}{}}
-\newlabel{cor:redundancy-above}{{II.41}{8}{Redundancy Above Capacity}{theorem.2.41}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-K}1}Zero-Distortion Boundary}{8}{subsubsection.2.11.1}\protected@file@percent }
-\newlabel{def:rate-incoherence}{{II.42}{8}{Rate-Incoherence Function}{theorem.2.42}{}}
-\newlabel{thm:rate-incoherence-step}{{II.43}{8}{Rate-Incoherence has a Sharp Zero-Error Threshold}{theorem.2.43}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-K}2}Design Necessity}{8}{subsubsection.2.11.2}\protected@file@percent }
-\newlabel{thm:design-necessity}{{II.44}{8}{Design Necessity}{theorem.2.44}{}}
-\newlabel{cor:architectural-forcing}{{II.45}{8}{Architectural Forcing}{theorem.2.45}{}}
-\citation{korner1973graphs}
-\citation{lovasz1979shannon}
-\citation{slepian1973noiseless,cover2006elements}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-K}3}Coding Interpretation of Derivation}{9}{subsubsection.2.11.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-K}4}Connection to Confusability Graphs}{9}{subsubsection.2.11.4}\protected@file@percent }
-\newlabel{def:incoherence-graph}{{II.46}{9}{Incoherence Graph}{theorem.2.46}{}}
-\newlabel{thm:incoherence-graph}{{II.47}{9}{Incoherence Graph Characterization}{theorem.2.47}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-L}}Side Information for Resolution}{9}{subsection.2.12}\protected@file@percent }
-\newlabel{sec:side-information}{{\mbox  {II-L}}{9}{Side Information for Resolution}{subsection.2.12}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-L}1}The Multi-Terminal View}{9}{subsubsection.2.12.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-L}2}Side Information Bound}{9}{subsubsection.2.12.2}\protected@file@percent }
-\newlabel{thm:side-info}{{II.48}{9}{Side Information Requirement}{theorem.2.48}{}}
-\newlabel{cor:dof1-zero-side}{{II.49}{9}{DOF = 1 Requires Zero Side Information}{theorem.2.49}{}}
-\newlabel{cor:side-info-redundancy}{{II.50}{9}{Side Information Scales with Redundancy}{theorem.2.50}{}}
-\newlabel{ex:side-info-practice}{{II.51}{9}{Side Information in Practice}{theorem.2.51}{}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-L}3}Multi-Terminal Capacity Interpretation}{10}{subsubsection.2.12.3}\protected@file@percent }
-\newlabel{cor:multi-terminal}{{II.52}{10}{Multi-Terminal Interpretation}{theorem.2.52}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-M}}Structure Theorems: The Derivation Lattice}{10}{subsection.2.13}\protected@file@percent }
-\newlabel{sec:derivation-structure}{{\mbox  {II-M}}{10}{Structure Theorems: The Derivation Lattice}{subsection.2.13}{}}
-\newlabel{def:derivation-relation}{{II.53}{10}{Derivation Relation}{theorem.2.53}{}}
-\newlabel{def:dof-derivation}{{II.54}{10}{DOF under Derivation}{theorem.2.54}{}}
-\newlabel{thm:derivation-lattice}{{II.55}{10}{Derivation Lattice}{theorem.2.55}{}}
-\newlabel{thm:dof-antimonotone}{{II.56}{10}{DOF is Anti-Monotonic}{theorem.2.56}{}}
-\newlabel{cor:minimal-dof1}{{II.57}{10}{Minimal DOF = 1 Derivations}{theorem.2.57}{}}
-\newlabel{thm:dof-complexity}{{II.58}{10}{DOF Computation Complexity}{theorem.2.58}{}}
-\citation{hunt1999pragmatic}
-\@writefile{toc}{\contentsline {section}{\numberline {III}Derivation as the Capacity-Achieving Structure}{11}{section.3}\protected@file@percent }
-\newlabel{sec:ssot}{{III}{11}{Derivation as the Capacity-Achieving Structure}{section.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Rate 1 as the Exact-Consistency Regime}{11}{subsection.3.1}\protected@file@percent }
-\newlabel{sec:ssot-def}{{\mbox  {III-A}}{11}{Rate 1 as the Exact-Consistency Regime}{subsection.3.1}{}}
-\newlabel{def:ssot}{{III.1}{11}{Optimal Encoding (DOF = 1)}{theorem.3.1}{}}
-\newlabel{thm:ssot-determinate}{{III.2}{11}{DOF = 1 Guarantees Determinacy}{theorem.3.2}{}}
-\newlabel{thm:ssot-optimal}{{III.3}{11}{DOF = 1 Achieves $O(1)$ Update}{theorem.3.3}{}}
-\newlabel{thm:ssot-unique}{{III.4}{11}{Uniqueness of Optimal Rate}{theorem.3.4}{}}
-\newlabel{cor:no-redundancy}{{III.5}{11}{Incoherence Under Redundancy}{theorem.3.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Information-theoretic proof sketches}{11}{subsection.3.2}\protected@file@percent }
-\newlabel{sec:info-sketches}{{\mbox  {III-B}}{11}{Information-theoretic proof sketches}{subsection.3.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Rate-Complexity Tradeoff}{11}{subsection.3.3}\protected@file@percent }
-\newlabel{sec:ssot-vs-m}{{\mbox  {III-C}}{11}{Rate-Complexity Tradeoff}{subsection.3.3}{}}
-\newlabel{ex:ssot-large-m}{{III.6}{11}{Encoding Rate vs. Modification Complexity}{theorem.3.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Derivation: The Coherence Mechanism}{12}{subsection.3.4}\protected@file@percent }
-\newlabel{sec:derivation}{{\mbox  {III-D}}{12}{Derivation: The Coherence Mechanism}{subsection.3.4}{}}
-\newlabel{def:derivation}{{III.7}{12}{Derivation}{theorem.3.7}{}}
-\newlabel{thm:derivation-excludes}{{III.8}{12}{Derivation Preserves Coherence}{theorem.3.8}{}}
-\newlabel{cor:metaprogramming}{{III.9}{12}{Derivation Achieves Coherence}{theorem.3.9}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-E}}Illustrative Realizations}{12}{subsection.3.5}\protected@file@percent }
-\newlabel{sec:ssot-patterns}{{\mbox  {III-E}}{12}{Illustrative Realizations}{subsection.3.5}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {IV}Realizability Requirements for the Capacity-Achieving Regime}{13}{section.4}\protected@file@percent }
-\newlabel{sec:requirements}{{IV}{13}{Realizability Requirements for the Capacity-Achieving Regime}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Confusability and Side-Information}{13}{subsection.4.1}\protected@file@percent }
-\newlabel{sec:confusability}{{\mbox  {IV-A}}{13}{Confusability and Side-Information}{subsection.4.1}{}}
-\newlabel{lem:confusability-clique}{{IV.1}{13}{Confusability Clique Bound}{theorem.4.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}The Structural Timing Constraint}{13}{subsection.4.2}\protected@file@percent }
-\newlabel{sec:timing}{{\mbox  {IV-B}}{13}{The Structural Timing Constraint}{subsection.4.2}{}}
-\newlabel{def:structural-fact-req}{{IV.2}{13}{Structural Fact}{theorem.4.2}{}}
-\newlabel{thm:timing-forces}{{IV.3}{13}{Timing Constraint for Structural Derivation}{theorem.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-G}}Independence and Degrees of Freedom}{4}{subsection.2.7}\protected@file@percent }
+\newlabel{sec:dof}{{\mbox  {II-G}}{4}{Independence and Degrees of Freedom}{subsection.2.7}{}}
+\newlabel{def:independent}{{II.18}{4}{Independent Locations}{theorem.2.18}{}}
+\newlabel{def:derived}{{II.19}{4}{Derived Location}{theorem.2.19}{}}
+\newlabel{def:dof}{{II.20}{4}{Degrees of Freedom}{theorem.2.20}{}}
+\newlabel{thm:dof-inconsistency}{{II.21}{4}{DOF = Incoherence Potential}{theorem.2.21}{}}
+\newlabel{cor:dof-risk}{{II.22}{4}{DOF $>$ 1 Implies Incoherence Risk}{theorem.2.22}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-H}}Information-Theoretic Quantities}{4}{subsection.2.8}\protected@file@percent }
+\newlabel{sec:it-quantities}{{\mbox  {II-H}}{4}{Information-Theoretic Quantities}{subsection.2.8}{}}
+\newlabel{def:encoding-rate}{{II.23}{4}{Independent Rate}{theorem.2.23}{}}
+\newlabel{def:value-entropy}{{II.24}{4}{Value Entropy}{theorem.2.24}{}}
+\newlabel{def:redundancy}{{II.25}{4}{Encoding Redundancy}{theorem.2.25}{}}
+\newlabel{thm:redundancy-incoherence}{{II.26}{4}{Redundancy-Incoherence Equivalence}{theorem.2.26}{}}
+\newlabel{def:incoherence-entropy}{{II.27}{4}{Incoherence Entropy}{theorem.2.27}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-I}}Zero-Incoherence Capacity Theorem}{4}{subsection.2.9}\protected@file@percent }
+\newlabel{sec:capacity}{{\mbox  {II-I}}{4}{Zero-Incoherence Capacity Theorem}{subsection.2.9}{}}
+\newlabel{def:coherence-capacity}{{II.28}{4}{Zero-Incoherence Capacity}{theorem.2.28}{}}
+\newlabel{thm:coherence-capacity}{{II.29}{4}{Zero-Incoherence Threshold}{theorem.2.29}{}}
+\newlabel{thm:capacity-achievability}{{II.30}{4}{Achievability}{theorem.2.30}{}}
+\newlabel{thm:capacity-converse}{{II.31}{5}{Converse}{theorem.2.31}{}}
+\newlabel{cor:capacity-unique}{{II.32}{5}{Capacity-Achieving Rate is Unique}{theorem.2.32}{}}
+\newlabel{cor:redundancy-above}{{II.33}{5}{Redundancy Above Capacity}{theorem.2.33}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-J}}Side Information for Resolution}{5}{subsection.2.10}\protected@file@percent }
+\newlabel{sec:side-information}{{\mbox  {II-J}}{5}{Side Information for Resolution}{subsection.2.10}{}}
+\newlabel{thm:side-info}{{II.34}{5}{Side Information Requirement}{theorem.2.34}{}}
+\newlabel{cor:dof1-zero-side}{{II.35}{5}{Unit Rate Requires Zero Side Information}{theorem.2.35}{}}
+\newlabel{cor:side-info-redundancy}{{II.36}{5}{Side Information Scales with Redundancy}{theorem.2.36}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}Derivation as the Capacity-Achieving Structure}{5}{section.3}\protected@file@percent }
+\newlabel{sec:ssot}{{III}{5}{Derivation as the Capacity-Achieving Structure}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Rate 1 as the Exact-Consistency Regime}{5}{subsection.3.1}\protected@file@percent }
+\newlabel{sec:ssot-def}{{\mbox  {III-A}}{5}{Rate 1 as the Exact-Consistency Regime}{subsection.3.1}{}}
+\newlabel{def:ssot}{{III.1}{5}{Optimal Encoding (Unit Independent Rate)}{theorem.3.1}{}}
+\newlabel{thm:ssot-determinate}{{III.2}{5}{Unit Rate Guarantees Determinacy}{theorem.3.2}{}}
+\newlabel{thm:ssot-optimal}{{III.3}{5}{Unit Rate Achieves $O(1)$ Update}{theorem.3.3}{}}
+\newlabel{thm:ssot-unique}{{III.4}{5}{Uniqueness of the Optimal Rate}{theorem.3.4}{}}
+\newlabel{cor:no-redundancy}{{III.5}{5}{Incoherence Under Redundancy}{theorem.3.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Counting Converse Interpretation}{6}{subsection.3.2}\protected@file@percent }
+\newlabel{sec:info-sketches}{{\mbox  {III-B}}{6}{Counting Converse Interpretation}{subsection.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Rate--Complexity Tradeoff}{6}{subsection.3.3}\protected@file@percent }
+\newlabel{sec:ssot-vs-m}{{\mbox  {III-C}}{6}{Rate--Complexity Tradeoff}{subsection.3.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-D}}Derivation: The Relevant Dependence Structure}{6}{subsection.3.4}\protected@file@percent }
+\newlabel{sec:derivation}{{\mbox  {III-D}}{6}{Derivation: The Relevant Dependence Structure}{subsection.3.4}{}}
+\newlabel{def:derivation}{{III.6}{6}{Derivation}{theorem.3.6}{}}
+\newlabel{thm:derivation-excludes}{{III.7}{6}{Derivation Preserves Coherence}{theorem.3.7}{}}
+\newlabel{cor:metaprogramming}{{III.8}{6}{Derivation Achieves the Threshold}{theorem.3.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Realizability Requirements for the Capacity-Achieving Regime}{6}{section.4}\protected@file@percent }
+\newlabel{sec:requirements}{{IV}{6}{Realizability Requirements for the Capacity-Achieving Regime}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Confusability and Side Information}{6}{subsection.4.1}\protected@file@percent }
+\newlabel{sec:confusability}{{\mbox  {IV-A}}{6}{Confusability and Side Information}{subsection.4.1}{}}
+\newlabel{lem:confusability-clique}{{IV.1}{6}{Confusability Clique Bound}{theorem.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}The Structural Timing Constraint}{6}{subsection.4.2}\protected@file@percent }
+\newlabel{sec:timing}{{\mbox  {IV-B}}{6}{The Structural Timing Constraint}{subsection.4.2}{}}
+\newlabel{def:structural-fact-req}{{IV.2}{6}{Structural Fact}{theorem.4.2}{}}
+\newlabel{thm:timing-forces}{{IV.3}{7}{Timing Constraint for Structural Derivation}{theorem.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Requirement 1: Causal Update Propagation}{7}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:causal-propagation}{{\mbox  {IV-C}}{7}{Requirement 1: Causal Update Propagation}{subsection.4.3}{}}
+\newlabel{def:causal-propagation}{{IV.4}{7}{Causal Update Propagation}{theorem.4.4}{}}
+\newlabel{thm:causal-necessary}{{IV.5}{7}{Causal Propagation is Necessary for Unit Rate}{theorem.4.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Requirement 2: Provenance Observability}{7}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:provenance-observability}{{\mbox  {IV-D}}{7}{Requirement 2: Provenance Observability}{subsection.4.4}{}}
+\newlabel{def:provenance-observability}{{IV.6}{7}{Provenance Observability}{theorem.4.6}{}}
+\newlabel{thm:provenance-necessary}{{IV.7}{7}{Provenance Observability is Necessary for Verifiable Unit Rate}{theorem.4.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}Independence of the Two Requirements}{7}{subsection.4.5}\protected@file@percent }
+\newlabel{sec:independence}{{\mbox  {IV-E}}{7}{Independence of the Two Requirements}{subsection.4.5}{}}
+\newlabel{thm:independence}{{IV.8}{7}{Requirements are Independent}{theorem.4.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-F}}The Realizability Theorem}{7}{subsection.4.6}\protected@file@percent }
+\newlabel{sec:realizability-theorem}{{\mbox  {IV-F}}{7}{The Realizability Theorem}{subsection.4.6}{}}
+\newlabel{thm:ssot-iff}{{IV.9}{7}{Necessary and Sufficient Realizability Conditions}{theorem.4.9}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {V}Application: Computational Realizations}{7}{section.5}\protected@file@percent }
+\newlabel{sec:evaluation}{{V}{7}{Application: Computational Realizations}{section.5}{}}
+\newlabel{cor:lang-realizability}{{V.1}{7}{Computational-Realization Criterion}{theorem.5.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Rate-Complexity Bounds}{8}{section.6}\protected@file@percent }
+\newlabel{sec:bounds}{{VI}{8}{Rate-Complexity Bounds}{section.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Cost Model}{8}{subsection.6.1}\protected@file@percent }
+\newlabel{sec:cost-model}{{\mbox  {VI-A}}{8}{Cost Model}{subsection.6.1}{}}
+\newlabel{def:cost-model}{{VI.1}{8}{Modification Cost Model}{theorem.6.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Upper Bound at Unit Independent Rate}{8}{subsection.6.2}\protected@file@percent }
+\newlabel{sec:upper-bound}{{\mbox  {VI-B}}{8}{Upper Bound at Unit Independent Rate}{subsection.6.2}{}}
+\newlabel{thm:upper-bound}{{VI.2}{8}{Rate-1 Upper Bound}{theorem.6.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Lower Bound Above the Threshold}{8}{subsection.6.3}\protected@file@percent }
+\newlabel{sec:lower-bound}{{\mbox  {VI-C}}{8}{Lower Bound Above the Threshold}{subsection.6.3}{}}
+\newlabel{thm:lower-bound}{{VI.3}{8}{Above-Threshold Lower Bound}{theorem.6.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Finite Counting Converse}{8}{subsection.6.4}\protected@file@percent }
+\newlabel{sec:info-converse}{{\mbox  {VI-D}}{8}{Finite Counting Converse}{subsection.6.4}{}}
+\newlabel{thm:fano-converse}{{VI.4}{8}{Finite Counting Converse}{theorem.6.4}{}}
+\newlabel{lem:info-dof}{{VI.5}{8}{Information-Constrained DOF Lower Bound}{theorem.6.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-E}}Worked Example}{8}{subsection.6.5}\protected@file@percent }
+\newlabel{sec:worked-mi}{{\mbox  {VI-E}}{8}{Worked Example}{subsection.6.5}{}}
+\citation{shannon1956zero,korner1973graphs,lovasz1979shannon}
+\citation{witsenhausen1976zero}
+\citation{slepian1973noiseless,fano1961transmission,witsenhausen1975conditional,cover2006elements}
+\citation{orlitsky2001coding,doshi2010functional}
 \citation{rashmi2015multiversion}
-\citation{slepian1973noiseless}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Requirement 1: Causal Update Propagation}{14}{subsection.4.3}\protected@file@percent }
-\newlabel{sec:causal-propagation}{{\mbox  {IV-C}}{14}{Requirement 1: Causal Update Propagation}{subsection.4.3}{}}
-\newlabel{def:causal-propagation}{{IV.4}{14}{Causal Update Propagation}{theorem.4.4}{}}
-\newlabel{thm:causal-necessary}{{IV.5}{14}{Causal Propagation is Necessary for DOF = 1}{theorem.4.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Requirement 2: Provenance Observability}{14}{subsection.4.4}\protected@file@percent }
-\newlabel{sec:provenance-observability}{{\mbox  {IV-D}}{14}{Requirement 2: Provenance Observability}{subsection.4.4}{}}
-\newlabel{def:provenance-observability}{{IV.6}{14}{Provenance Observability}{theorem.4.6}{}}
-\newlabel{thm:provenance-necessary}{{IV.7}{14}{Provenance Observability is Necessary for Verifiable DOF = 1}{theorem.4.7}{}}
-\citation{rivest1982wom,wolf1984wom}
-\citation{rivest1982wom}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}Independence of Requirements}{15}{subsection.4.5}\protected@file@percent }
-\newlabel{sec:independence}{{\mbox  {IV-E}}{15}{Independence of Requirements}{subsection.4.5}{}}
-\newlabel{thm:independence}{{IV.8}{15}{Requirements are Independent}{theorem.4.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-F}}The Realizability Theorem}{15}{subsection.4.6}\protected@file@percent }
-\newlabel{sec:realizability-theorem}{{\mbox  {IV-F}}{15}{The Realizability Theorem}{subsection.4.6}{}}
-\newlabel{thm:ssot-iff}{{IV.9}{15}{Necessary and Sufficient Realizability Conditions}{theorem.4.9}{}}
-\newlabel{def:dof-complete}{{IV.10}{15}{DOF-1-Complete Encoding System}{theorem.4.10}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-G}}Connection to Write-Once Memory Codes}{15}{subsection.4.7}\protected@file@percent }
-\newlabel{sec:wom-connection}{{\mbox  {IV-G}}{15}{Connection to Write-Once Memory Codes}{subsection.4.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-H}}The Logical Chain (Summary)}{16}{subsection.4.8}\protected@file@percent }
-\newlabel{sec:chain}{{\mbox  {IV-H}}{16}{The Logical Chain (Summary)}{subsection.4.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-I}}Concrete Impossibility Demonstration}{16}{subsection.4.9}\protected@file@percent }
-\newlabel{sec:impossibility}{{\mbox  {IV-I}}{16}{Concrete Impossibility Demonstration}{subsection.4.9}{}}
-\newlabel{thm:generated-second}{{IV.11}{16}{Generated Files Are Independent Sources}{theorem.4.11}{}}
-\citation{tiobe2024}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-J}}Summary: The Information-Theoretic Requirements}{17}{subsection.4.10}\protected@file@percent }
-\newlabel{sec:req-summary}{{\mbox  {IV-J}}{17}{Summary: The Information-Theoretic Requirements}{subsection.4.10}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {V}Application: Programming-Language Instantiation}{17}{section.5}\protected@file@percent }
-\newlabel{sec:evaluation}{{V}{17}{Application: Programming-Language Instantiation}{section.5}{}}
-\newlabel{cor:lang-realizability}{{V.1}{17}{Language Realizability Criterion}{theorem.5.1}{}}
-\newlabel{def:mainstream}{{V.2}{17}{Mainstream Language}{theorem.5.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Evaluation Criteria}{17}{subsection.5.1}\protected@file@percent }
-\newlabel{sec:criteria}{{\mbox  {V-A}}{17}{Evaluation Criteria}{subsection.5.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Summary Classification}{17}{subsection.5.2}\protected@file@percent }
-\newlabel{sec:classification-summary}{{\mbox  {V-B}}{17}{Summary Classification}{subsection.5.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {VI}Rate-Complexity Bounds}{17}{section.6}\protected@file@percent }
-\newlabel{sec:bounds}{{VI}{17}{Rate-Complexity Bounds}{section.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Cost Model}{17}{subsection.6.1}\protected@file@percent }
-\newlabel{sec:cost-model}{{\mbox  {VI-A}}{17}{Cost Model}{subsection.6.1}{}}
-\newlabel{def:cost-model}{{VI.1}{17}{Modification Cost Model}{theorem.6.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Upper Bound: DOF = 1 Achieves O(1)}{18}{subsection.6.2}\protected@file@percent }
-\newlabel{sec:upper-bound}{{\mbox  {VI-B}}{18}{Upper Bound: DOF = 1 Achieves O(1)}{subsection.6.2}{}}
-\newlabel{thm:upper-bound}{{VI.2}{18}{DOF = 1 Upper Bound}{theorem.6.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Lower Bound: DOF $>$ 1 Requires $\Omega (n)$}{18}{subsection.6.3}\protected@file@percent }
-\newlabel{sec:lower-bound}{{\mbox  {VI-C}}{18}{Lower Bound: DOF $>$ 1 Requires \texorpdfstring {$\Omega (n)$}{Omega(n)}}{subsection.6.3}{}}
-\newlabel{thm:lower-bound}{{VI.3}{18}{DOF $>$ 1 Lower Bound}{theorem.6.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Information-theoretic converse (finite counting)}{18}{subsection.6.4}\protected@file@percent }
-\newlabel{sec:info-converse}{{\mbox  {VI-D}}{18}{Information-theoretic converse (finite counting)}{subsection.6.4}{}}
-\newlabel{thm:fano-converse}{{VI.5}{18}{Finite Counting Converse}{theorem.6.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-E}}Information-constrained DOF lower bound}{18}{subsection.6.5}\protected@file@percent }
-\newlabel{sec:info-dof}{{\mbox  {VI-E}}{18}{Information-constrained DOF lower bound}{subsection.6.5}{}}
-\newlabel{lem:info-dof}{{VI.6}{18}{Information-constrained DOF Lower Bound}{theorem.6.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-F}}Worked example: finite tag budget}{19}{subsection.6.6}\protected@file@percent }
-\newlabel{sec:worked-mi}{{\mbox  {VI-F}}{19}{Worked example: finite tag budget}{subsection.6.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-G}}The Unbounded Gap}{19}{subsection.6.7}\protected@file@percent }
-\newlabel{sec:gap}{{\mbox  {VI-G}}{19}{The Unbounded Gap}{subsection.6.7}{}}
-\newlabel{thm:unbounded-gap}{{VI.7}{19}{Unbounded Gap}{theorem.6.7}{}}
-\newlabel{cor:arbitrary-reduction}{{VI.8}{19}{Arbitrary Reduction Factor}{theorem.6.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-H}}The (R, C, P) Tradeoff Space}{20}{subsection.6.8}\protected@file@percent }
-\newlabel{sec:rcp-tradeoff}{{\mbox  {VI-H}}{20}{The (R, C, P) Tradeoff Space}{subsection.6.8}{}}
-\newlabel{def:rcp-tradeoff}{{VI.9}{20}{(R, C, P) Tradeoff}{theorem.6.9}{}}
-\newlabel{thm:operating-regimes}{{VI.10}{20}{Operating Regimes}{theorem.6.10}{}}
-\newlabel{def:pareto-frontier}{{VI.11}{20}{Pareto Frontier}{theorem.6.11}{}}
-\newlabel{thm:pareto-optimal}{{VI.12}{20}{Pareto Optimality of DOF = 1}{theorem.6.12}{}}
-\newlabel{cor:no-tradeoff}{{VI.13}{20}{No Tradeoff at $P = 1$}{theorem.6.13}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-I}}Practical Implications}{20}{subsection.6.9}\protected@file@percent }
-\newlabel{sec:practical-implications}{{\mbox  {VI-I}}{20}{Practical Implications}{subsection.6.9}{}}
-\newlabel{ex:error-rate}{{VI.14}{20}{Error Rate Calculation}{theorem.6.14}{}}
-\citation{shannon1956zero}
-\citation{korner1973graphs}
-\citation{lovasz1979shannon}
-\citation{slepian1973noiseless}
-\citation{rashmi2015multiversion}
-\citation{shannon1948mathematical}
-\citation{slepian1973noiseless}
-\citation{cover2006elements}
-\citation{birs2012interactive}
-\citation{ma2011distributed}
-\citation{xiang2013interactive}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-J}}Amortized Analysis}{21}{subsection.6.10}\protected@file@percent }
-\newlabel{sec:amortized}{{\mbox  {VI-J}}{21}{Amortized Analysis}{subsection.6.10}{}}
-\newlabel{thm:amortized}{{VI.15}{21}{Amortized Complexity}{theorem.6.15}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {VII}Application: Realizability Patterns (Worked Example)}{21}{section.7}\protected@file@percent }
-\newlabel{sec:empirical}{{VII}{21}{Application: Realizability Patterns (Worked Example)}{section.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {VIII}Related Work}{21}{section.8}\protected@file@percent }
-\newlabel{sec:related}{{VIII}{21}{Related Work}{section.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-A}}Zero-Error and Multi-Terminal Source Coding}{21}{subsection.8.1}\protected@file@percent }
-\newlabel{sec:related-source-coding}{{\mbox  {VIII-A}}{21}{Zero-Error and Multi-Terminal Source Coding}{subsection.8.1}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VIII-A}0a}Closest prior work and novelty.}{21}{paragraph.8.1.0.1}\protected@file@percent }
-\citation{kiczales1991art}
-\citation{smith1984reflection}
-\citation{hunt1999pragmatic}
-\citation{parnas1972criteria}
-\citation{fowler1999refactoring,roy2007survey}
-\citation{demoura2021lean4}
-\citation{pierce2002types}
-\citation{winskel1993semantics}
-\citation{leroy2009compcert}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-B}}Distributed Systems Consistency}{22}{subsection.8.2}\protected@file@percent }
-\newlabel{sec:related-distributed}{{\mbox  {VIII-B}}{22}{Distributed Systems Consistency}{subsection.8.2}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-C}}Computational Reflection and Metaprogramming}{22}{subsection.8.3}\protected@file@percent }
-\newlabel{sec:related-meta}{{\mbox  {VIII-C}}{22}{Computational Reflection and Metaprogramming}{subsection.8.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-D}}Application-Level Design Principles}{22}{subsection.8.4}\protected@file@percent }
-\newlabel{sec:related-software}{{\mbox  {VIII-D}}{22}{Application-Level Design Principles}{subsection.8.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-E}}Formal Methods}{22}{subsection.8.5}\protected@file@percent }
-\newlabel{sec:related-formal}{{\mbox  {VIII-E}}{22}{Formal Methods}{subsection.8.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-F}}Novelty and IT Contribution}{22}{subsection.8.6}\protected@file@percent }
-\newlabel{sec:novelty}{{\mbox  {VIII-F}}{22}{Novelty and IT Contribution}{subsection.8.6}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {IX}Conclusion}{22}{section.9}\protected@file@percent }
-\newlabel{sec:conclusion}{{IX}{22}{Conclusion}{section.9}{}}
-\citation{openhcsLeanProofs}
+\citation{kiczales1991art,smith1984reflection}
+\citation{demoura2021lean4,leroy2009compcert}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-F}}Unified Converse Viewpoint}{9}{subsection.6.6}\protected@file@percent }
+\newlabel{sec:unified-converse}{{\mbox  {VI-F}}{9}{Unified Converse Viewpoint}{subsection.6.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-G}}The Unbounded Gap}{9}{subsection.6.7}\protected@file@percent }
+\newlabel{sec:gap}{{\mbox  {VI-G}}{9}{The Unbounded Gap}{subsection.6.7}{}}
+\newlabel{thm:unbounded-gap}{{VI.7}{9}{Unbounded Gap}{theorem.6.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Application: Supplementary Case Study Pointer}{9}{section.7}\protected@file@percent }
+\newlabel{sec:empirical}{{VII}{9}{Application: Supplementary Case Study Pointer}{section.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VIII}Related Work}{9}{section.8}\protected@file@percent }
+\newlabel{sec:related}{{VIII}{9}{Related Work}{section.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-A}}Zero-Error and Side-Information Lineage}{9}{subsection.8.1}\protected@file@percent }
+\newlabel{sec:related-source-coding}{{\mbox  {VIII-A}}{9}{Zero-Error and Side-Information Lineage}{subsection.8.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-B}}Consistency-Constrained Storage and Interaction}{9}{subsection.8.2}\protected@file@percent }
+\newlabel{sec:related-distributed}{{\mbox  {VIII-B}}{9}{Consistency-Constrained Storage and Interaction}{subsection.8.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-C}}Computational Realizations}{9}{subsection.8.3}\protected@file@percent }
+\newlabel{sec:related-meta}{{\mbox  {VIII-C}}{9}{Computational Realizations}{subsection.8.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VIII-D}}Formal Verification}{9}{subsection.8.4}\protected@file@percent }
+\newlabel{sec:related-formal}{{\mbox  {VIII-D}}{9}{Formal Verification}{subsection.8.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IX}Conclusion}{9}{section.9}\protected@file@percent }
+\newlabel{sec:conclusion}{{IX}{9}{Conclusion}{section.9}{}}
 \bibstyle{IEEEtran}
 \bibdata{references}
 \bibcite{shannon1956zero}{1}
 \bibcite{korner1973graphs}{2}
 \bibcite{lovasz1979shannon}{3}
-\bibcite{slepian1973noiseless}{4}
-\bibcite{brewer2000cap}{5}
-\bibcite{hunt2002vcdiff}{6}
-\bibcite{delaet2010survey}{7}
-\bibcite{hunt1999pragmatic}{8}
-\bibcite{birs2012interactive}{9}
-\bibcite{ma2011distributed}{10}
-\bibcite{cover2006elements}{11}
+\bibcite{witsenhausen1976zero}{4}
+\bibcite{slepian1973noiseless}{5}
+\bibcite{cover2006elements}{6}
+\bibcite{orlitsky2001coding}{7}
+\bibcite{doshi2010functional}{8}
+\bibcite{fano1961transmission}{9}
+\bibcite{witsenhausen1975conditional}{10}
+\bibcite{demoura2021lean4}{11}
 \bibcite{rashmi2015multiversion}{12}
-\bibcite{demoura2021lean4}{13}
-\bibcite{gilbert2002cap}{14}
-\bibcite{flp1985impossibility}{15}
-\bibcite{rivest1982wom}{16}
-\bibcite{wolf1984wom}{17}
-\bibcite{tiobe2024}{18}
-\bibcite{shannon1948mathematical}{19}
-\bibcite{xiang2013interactive}{20}
-\bibcite{kiczales1991art}{21}
-\bibcite{smith1984reflection}{22}
-\bibcite{parnas1972criteria}{23}
-\bibcite{fowler1999refactoring}{24}
-\bibcite{roy2007survey}{25}
-\bibcite{pierce2002types}{26}
-\bibcite{winskel1993semantics}{27}
-\bibcite{leroy2009compcert}{28}
-\bibcite{openhcsLeanProofs}{29}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-A}}Artifacts}{23}{subsection.9.1}\protected@file@percent }
-\newlabel{sec:data-availability}{{\mbox  {IX-A}}{23}{Artifacts}{subsection.9.1}{}}
-\@writefile{toc}{\contentsline {section}{References}{23}{section*.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{Appendix}{23}{section*.2}\protected@file@percent }
-\newlabel{sec:lean}{{A}{23}{Mechanized Proofs (Lean 4)}{section*.3}{}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {0a}Finite zero-error information handles (fully mechanized).}{24}{paragraph.Appendix.A.0.0.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {0b}Graph/confusability handles (fully mechanized finite zero-error layer).}{24}{paragraph.Appendix.A.0.0.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {0c}Foundations, capacity, and side-information chain.}{24}{paragraph.Appendix.A.0.0.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {0d}Derivation and realizability chain.}{25}{paragraph.Appendix.A.0.0.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{\numberline {0e}Bounds, regimes, and optimization chain.}{25}{paragraph.Appendix.A.0.0.5}\protected@file@percent }
-\gdef \@abspage@last{25}
+\bibcite{kiczales1991art}{13}
+\bibcite{smith1984reflection}{14}
+\bibcite{leroy2009compcert}{15}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IX-A}}Artifacts}{10}{subsection.9.1}\protected@file@percent }
+\newlabel{sec:data-availability}{{\mbox  {IX-A}}{10}{Artifacts}{subsection.9.1}{}}
+\@writefile{toc}{\contentsline {section}{References}{10}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{Appendix}{10}{section*.2}\protected@file@percent }
+\newlabel{sec:lean}{{A}{10}{Mechanized Verification (Lean 4)}{section*.3}{}}
+\gdef \@abspage@last{10}

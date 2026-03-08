@@ -13,8 +13,10 @@ The appendix supports the non-physical theorem stack of the paper:
 \begin{itemize}
 \item core decision-problem and sufficiency definitions
 \item polynomial-time reduction infrastructure
-\item coNP and $\Sigma_2^P$ hardness reductions
+\item coNP, PP, PSPACE, and $\Sigma_2^P$ hardness reductions
+\item shifted-family approximation-gap and counted-runtime threshold constructions
 \item ETH-conditioned dichotomy statements
+\item cross-regime bridge lemmas (static/stochastic/sequential)
 \item tractable subcases under explicit structural assumptions
 \end{itemize}
 
@@ -25,11 +27,12 @@ The point of the artifact is precision. Once the definitions are fixed, Lean ver
 The formalization consists of \LeanTotalFiles\ files organized as follows:
 
 \begin{itemize}
-\item \texttt{Basic.lean} and \texttt{Sufficiency.lean} -- core definitions for decision problems, projections, optimizer maps, and sufficiency
-\item \texttt{AlgorithmComplexity.lean} and \texttt{PolynomialReduction.lean} -- polynomial-time reduction infrastructure and composition
-\item \texttt{Reduction.lean} and \texttt{Hardness/} -- the TAUTOLOGY, SET-COVER, ETH, and $\Sigma_2^P$ reduction stack
-\item \texttt{QueryComplexity.lean}, \texttt{Dichotomy.lean}, and \texttt{ComplexityMain.lean} -- query lower bounds and summary complexity statements
-\item \texttt{Tractability/} -- bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
+\item \texttt{Basic.lean} and \texttt{Sufficiency.lean}: core definitions for decision problems, projections, optimizer maps, and sufficiency
+\item \texttt{AlgorithmComplexity.lean} and \texttt{PolynomialReduction.lean}: polynomial-time reduction infrastructure and composition
+\item \texttt{Reduction.lean} and \texttt{Hardness/}: the TAUTOLOGY, SET-COVER, ETH, approximation-gap, and $\Sigma_2^P$ reduction stack
+\item \texttt{StochasticSequential*.lean}: PP/PSPACE regime definitions, hardness, and hierarchy bridges
+\item \texttt{QueryComplexity.lean}, \texttt{Dichotomy.lean}, and \texttt{ComplexityMain.lean}: query lower bounds and summary complexity statements
+\item \texttt{Tractability/}: bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
 \end{itemize}
 
 \subsection{Key Theorems}

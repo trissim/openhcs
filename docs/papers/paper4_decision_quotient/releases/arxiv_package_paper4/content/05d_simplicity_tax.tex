@@ -1,0 +1,109 @@
+\section{Simplicity Tax and Hardness Conservation}\label{sec:simplicity-tax}
+
+This section formalizes the cost of ignoring decision-relevant coordinates. The core object is not an arbitrary partition chosen by the analyst, but the canonical exact-support invariant $R(\mathcal{D})$ identified earlier in the paper. By Proposition~\ref{prop:minimal-relevant-equiv}, every exact behavior-preserving representation must account for that same set. The point of the present section is to make one consequence explicit: choosing a smaller architectural interface $A_M$ does not destroy omitted exact relevance. It only changes where that relevance must be paid for.
+
+\begin{definition}[Relevant Support]
+For decision problem $\mathcal{D}$, let
+\[
+R(\mathcal{D}) := \{i \in \{1,\ldots,n\}: i \text{ is relevant}\}
+\]
+as in Definition~\ref{def:relevant}.
+\end{definition}
+
+\begin{definition}[Intrinsic and Central Degrees of Freedom]
+For a model $M$ with native coordinate set $A_M \subseteq \{1,\ldots,n\}$:
+\[
+\mathrm{intrinsicDOF}(\mathcal{D}) := |R(\mathcal{D})|,
+\qquad
+\mathrm{centralDOF}(M,\mathcal{D}) := |R(\mathcal{D}) \cap A_M|.
+\]
+\end{definition}
+
+\begin{definition}[Simplicity Tax]
+\[
+\mathrm{simplicityTax}(M,\mathcal{D}) := |R(\mathcal{D}) \setminus A_M|.
+\]
+\end{definition}
+
+\begin{theorem}[Simplicity-Tax Partition Theorem]
+For every finite-coordinate pair $(M,\mathcal{D})$:
+\[
+\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
+=
+\mathrm{intrinsicDOF}(\mathcal{D}),
+\]
+hence in particular
+\[
+\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
+\ge
+\mathrm{intrinsicDOF}(\mathcal{D}).
+\]
+\end{theorem}
+
+\begin{proof}
+Partition $R(\mathcal{D})$ into handled and unhandled parts:
+\[
+R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M)\ \dot\cup\ (R(\mathcal{D}) \setminus A_M),
+\]
+where the union is disjoint by construction. Taking cardinalities gives
+\[
+|R(\mathcal{D})|
+=
+|R(\mathcal{D}) \cap A_M|
++
+|R(\mathcal{D}) \setminus A_M|.
+\]
+Substituting the three definitions yields
+\[
+\mathrm{intrinsicDOF}(\mathcal{D})
+=
+\mathrm{centralDOF}(M,\mathcal{D})
++
+\mathrm{simplicityTax}(M,\mathcal{D}),
+\]
+which is the claimed equality. The displayed inequality is then immediate.
+\end{proof}
+
+\begin{proposition}[Linear Externalization Under a Per-Site Cost Model]
+If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ decision sites:
+\[
+\mathrm{ExternalWork}(N) = N \cdot \mathrm{simplicityTax}(M,\mathcal{D}).
+\]
+\end{proposition}
+
+\begin{theorem}[Amortization Threshold]
+Let $H_{\mathrm{central}}>0$ be one-time centralization cost and $\lambda>0$ the per-site cost coefficient. If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, then for
+\[
+N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})},
+\]
+the complete model is cheaper than repeated external handling:
+\[
+H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).
+\]
+\end{theorem}
+
+\begin{proof}
+Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. The complete model is cheaper exactly when
+\[
+H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).
+\]
+Because $\lambda>0$ and $\mathrm{simplicityTax}(M,\mathcal{D})>0$, dividing both sides by their product gives
+\[
+N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})}.
+\]
+This is precisely the stated threshold.
+\end{proof}
+
+\begin{corollary}[Hardness Conservation]
+Fix a model $M$ and decision problem $\mathcal{D}$. Coordinates in $R(\mathcal{D})\setminus A_M$ are still decision-relevant for exact behavior preservation. Hence any exact deployment must handle them somewhere: by enlarging the central model, by performing local resolution, by demanding extra queries, or by abstaining on some cases. In the hard exact regime, Theorem~\ref{thm:witness-lower-bound-4} and Theorem~\ref{thm:integrity-resource} imply that this burden cannot be discharged for free by a polynomial-budget exact certifier.
+\end{corollary}
+
+\begin{proof}
+Take any coordinate $i\in R(\mathcal{D})\setminus A_M$. Because $i$ is relevant, there exist witness states whose optimal-action sets differ in a way that cannot be ignored in any exact representation. If a deployment neither models $i$ centrally nor resolves its effect elsewhere, then its exact behavior would factor through the smaller interface $A_M$, making every coordinate outside $A_M$ irrelevant. That contradicts $i\in R(\mathcal{D})$.
+
+So omitted relevant coordinates must be handled somewhere outside the central interface. In the hard exact regime, the witness lower bound shows that exact certification can require exponentially many witness checks, and the integrity-resource theorem shows that polynomial-budget exact competence is unavailable under $\Pclass\neq\coNP$. Therefore this external burden cannot, in general, be eliminated for free by a polynomial-budget exact certifier.
+\end{proof}
+
+\begin{corollary}[No Free Simplicity]
+If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, externalized cost is unbounded in deployment scale $N$.
+\end{corollary}

@@ -89,26 +89,26 @@ Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key
 
   % Points on the D=0 frontier
   \filldraw[orange] (0,2.8) circle (2.5pt);
-  \node[orange, left] at (-0.1,2.8) {\footnotesize Attribute-only (if $A_\pi{=}1$)};
+  \node[orange, anchor=west] at (0.12,2.8) {\footnotesize Attr-only ($A_\pi{=}1$)};
 
   \filldraw[green!60!black] (5,0.6) circle (2.5pt);
-  \node[green!60!black, right] at (5.1,0.6) {\footnotesize Nominal ($D{=}0$)};
+  \node[green!60!black, anchor=east] at (4.9,0.82) {\footnotesize Nominal ($D{=}0$)};
 
-  % Duck typing: below frontier, accepts D>0
+  % Probe-only strategy: below frontier, accepts D>0
   \filldraw[red] (0,1.8) circle (2.5pt);
-  \node[red, left] at (-0.1,1.8) {\footnotesize Duck ($D{>}0$)};
+  \node[red, anchor=west] at (0.12,1.8) {\footnotesize Probe-only ($D{>}0$)};
 
 \end{tikzpicture}
-\caption{Schematic illustration of the $(L, W, D)$ tradeoff. In the maximal-barrier regime, the nominal point $(L=\log_2 k, W=O(1), D=0)$ is the unique $D=0$ Pareto optimum, while attribute-only strategies lie on the $L=0$ face and therefore leave the zero-error frontier. For a concrete example with $k = 1000$ classes, distinguishing dimension $d = 10$, and maximal barrier ($A_\pi = k$), the nominal-tag strategy achieves $L = 10$ bits, $W = O(1)$, $D = 0$, while the attribute-only strategy requires $W = 10$ queries and incurs $D > 0$ due to collisions.}
+\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; attribute-only strategies lie on the zero-tag face and leave the zero-error frontier when collisions are present.}
 \label{fig:lwd-tradeoff}
 \end{figure}
 
 The Lean 4 formalization in the supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
 
-\begin{remark}[Programming language instantiations]
-In programming language terms: \emph{nominal typing} corresponds to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}). \emph{Duck typing} corresponds to attribute-only observers (e.g., Python's \texttt{hasattr}). \emph{Structural typing} is an intermediate case with $D = 0$ but $W = O(n)$.
+\begin{remark}[Software-runtime instantiation (example)]
+In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}); attribute-probe schemes correspond to attribute-only observers (e.g., repeated \texttt{hasattr}-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
 \end{remark}
 
-\begin{remark}[Structural-check cost parameter]
-When structural typing checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
+\begin{remark}[Conformance-check cost parameter]
+When conformance checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
 \end{remark}

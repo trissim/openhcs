@@ -3,3 +3,4 @@ import AbstractClassSystem.Core
 import AbstractClassSystem.Typing
 import AbstractClassSystem.Extended
 import AbstractClassSystem.Bridge
+import AbstractClassSystem.Undecidability

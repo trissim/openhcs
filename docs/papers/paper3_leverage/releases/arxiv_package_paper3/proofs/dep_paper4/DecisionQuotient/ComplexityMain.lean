@@ -50,16 +50,16 @@ theorem complexity_summary :
         (equiv : S → S → Prop) [DecidableRel equiv]
         (pairs : List (S × S)),
       (countedCheckPairs dp equiv pairs).steps ≤ pairs.length) ∧
-    -- Polynomial reduction exists
+    -- Size-bounded reduction exists (identity has polynomial size bounds)
     (∀ (A : Type*) [SizeOf A],
-      ∃ (r : PolyReduction A A), r.f = id) := by
+      ∃ (r : SizeBoundedReduction A A), r.f = id) := by
   constructor
   · -- Upper bound
     intro A S _ _ dp equiv _ pairs
     exact countedCheckPairs_steps_bound dp equiv pairs
-  · -- Polynomial reduction (identity)
+  · -- Size-bounded reduction (identity)
     intro A _
-    exact ⟨PolyReduction.id A, rfl⟩
+    exact ⟨SizeBoundedReduction.id A, rfl⟩
 
 /-- Query complexity lower bound: distinguishing 2^k configurations requires 2^k - 1 queries -/
 theorem query_lower_bound_statement {n : ℕ} (I : Finset (Fin n)) (hI : I.Nonempty) :

@@ -1,15 +1,15 @@
 OpenHCS Paper Build Log
 ========================
 
-Paper: paper2_it - Zero-Incoherence Capacity of Interactive Encoding Systems: Achievability, Converse, and Side Information Bounds
-Package Date: 2026-03-04T12:50:53.545882
+Paper: paper2_it - Exact Consistency in Multi-Location Encodings: Zero-Error Thresholds and Side Information Bounds
+Package Date: 2026-03-08T14:59:29.488832
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
 -----------------
-Lean Files: 29
-Lines of Code: 3863
-Theorems: 185
+Lean Files: 30
+Lines of Code: 6806
+Theorems: 351
 Sorry Placeholders: 0
 
 
@@ -29,7 +29,7 @@ Proof Files:
   - Derivation.lean
   - Dof.lean
   - EditDynamics.lean
-  - Entropy.lean
+  - EntropyGeneral.lean
   - Foundations.lean
   - GraphBridges.lean
   - HandleAliases.lean
@@ -40,6 +40,7 @@ Proof Files:
   - LangStatic.lean
   - Languages.lean
   - ObserverModel.lean
+  - Probabilistic.lean
   - Requirements.lean
   - SSOT.lean
   - SSOTGrounded.lean
@@ -49,47 +50,7 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-info: ssot: no previous manifest, creating one from scratch
-info: toolchain not updated; already up-to-date
-info: mathlib: running post-update hooks
-Current branch: HEAD
-Using cache (Azure) from origin: leanprover-community/mathlib4
-Attempting to download 11 file(s) from leanprover-community/mathlib4 cache
-
-Downloaded: 1 file(s) [attempted 1/11 = 9%, 11 KB/s]
-Downloaded: 2 file(s) [attempted 2/11 = 18%, 36 KB/s]
-Downloaded: 5 file(s) [attempted 5/11 = 45%, 6 KB/s]
-Downloaded: 10 file(s) [attempted 10/11 = 90%, 22 KB/s]
-Downloaded: 11 file(s) [attempted 11/11 = 100%, 22 KB/s]
-Decompressing 7779 file(s)
-Unpacked in 20017 ms
-Completed successfully!
-✔ [585/750] Built Ssot.Basic (393ms)
-✔ [586/750] Built Ssot.Derivation (392ms)
-✔ [743/846] Built Ssot.SSOT (399ms)
-✔ [1427/1561] Built Ssot.Requirements (514ms)
-⚠ [1545/1694] Built Ssot.Coherence (689ms)
-warning: Ssot/Coherence.lean:64:8: This simp argument is unused:
-  List.mem_singleton
-
-Hint: Omit it from the simp argument list.
-  simp [̵L̵i̵s̵t̵.̵m̵e̵m̵_̵s̵i̵n̵g̵l̵e̵t̵o̵n̵]̵ ̵at hx hy
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/Coherence.lean:146:53: unused variable `new_val`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-✔ [1985/2134] Built Ssot.Completeness (488ms)
-✔ [2557/2699] Built Ssot.Foundations (820ms)
-⚠ [2694/2855] Built Ssot.Bounds (413ms)
-warning: Ssot/Bounds.lean:20:58: unused variable `hn`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3073/3097] Replayed lwd_converse
-warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3075/3097] Replayed AbstractClassSystem.Typing
+ℹ [587/838] Replayed AbstractClassSystem.Typing
 info: AbstractClassSystem/Typing.lean:110:0: []
 info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
 info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
@@ -97,38 +58,11 @@ info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapabil
  AbstractClassSystem.UnifiedCapability.enumeration,
  AbstractClassSystem.UnifiedCapability.conflictResolution,
  AbstractClassSystem.UnifiedCapability.interfaceCheck]
-✔ [3077/3097] Built Ssot.Languages (778ms)
-✔ [3078/3097] Built Ssot.CaseStudies (947ms)
-✔ [3079/3097] Built Ssot.Inconsistency (1.0s)
-⚠ [3083/3097] Built Ssot.LangRust (1.4s)
-warning: Ssot/LangRust.lean:162:54: unused variable `macro_name`
+⚠ [3083/3151] Replayed lwd_converse
+warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: Ssot/LangRust.lean:238:10: This simp argument is unused:
-  List.mem_singleton
-
-Hint: Omit it from the simp argument list.
-  simp [̵L̵i̵s̵t̵.̵m̵e̵m̵_̵s̵i̵n̵g̵l̵e̵t̵o̵n̵]̵ ̵at hru
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/LangRust.lean:242:10: This simp argument is unused:
-  List.mem_singleton
-
-Hint: Omit it from the simp argument list.
-  simp [̵L̵i̵s̵t̵.̵m̵e̵m̵_̵s̵i̵n̵g̵l̵e̵t̵o̵n̵]̵ ̵at hrm'
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-✔ [3084/3097] Built Ssot.Dof (495ms)
-✔ [3085/3097] Built Ssot.LangPython (1.6s)
-⚠ [3086/3097] Built Ssot.LangStatic (870ms)
-warning: Ssot/LangStatic.lean:144:8: This simp argument is unused:
-  GoCompileEvent.interface_satisfaction_checked
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵G̵o̵C̵o̵m̵p̵i̵l̵e̵E̵v̵e̵n̵t̵.̵i̵n̵t̵e̵r̵f̵a̵c̵e̵_̵s̵a̵t̵i̵s̵f̵a̵c̵t̵i̵o̵n̵_̵c̵h̵e̵c̵k̵e̵d̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-ℹ [3087/3097] Built Ssot.LangEvaluation (319ms)
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+ℹ [3166/3169] Replayed Ssot.LangEvaluation
 info: Ssot/LangEvaluation.lean:83:0: init_subclass_in_class_definition : ∀ (rt : PyRuntime) (name : PyId) (bases : List PyId)
   (attrs methods : List (String × String)) (parent : PyId),
   parent ∈ bases →
@@ -144,28 +78,7 @@ info: Ssot/LangEvaluation.lean:103:0: runtime_item_eq_iff : ∀ (ri1 ri2 : Runti
 info: Ssot/LangEvaluation.lean:136:0: java_lacks_definition_hooks : ∀ (def_ : StaticTypeDef) (e : ExecutionEvent),
   e ∈ java_class_definition_events def_ → is_definition_time_user_code e = false
 info: Ssot/LangEvaluation.lean:137:0: ts_types_erased : ∀ (type_name : String), TSCompileEvent.type_erased type_name ∈ typescript_compile_events type_name
-✔ [3088/3097] Built Ssot.DependencyBridge (6.6s)
-✔ [3089/3097] Built Ssot.CrossPaperDependencies (13s)
-✔ [3090/3097] Built Ssot.SSOTGrounded (12s)
-⚠ [3091/3097] Built Ssot.Entropy (14s)
-warning: Ssot/Entropy.lean:120:0: automatically included section variable(s) unused in theorem `Entropy.entropyTerm_zero_iff`:
-  [ClassicalEntropyAssumptions]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [ClassicalEntropyAssumptions] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-✔ [3092/3097] Built Ssot.EditDynamics (4.7s)
-⚠ [3093/3097] Built Ssot.ClaimClosure (4.4s)
-warning: Ssot/ClaimClosure.lean:126:17: unused variable `Pe`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: Ssot/ClaimClosure.lean:126:26: unused variable `hK`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-✔ [3094/3097] Built Ssot.ObserverModel (4.8s)
-✔ [3095/3097] Built Ssot.HandleAliases (2.5s)
-✔ [3096/3097] Built Ssot.GraphBridges (2.5s)
-Build completed successfully (3097 jobs).
+Build completed successfully (3169 jobs).
 
 
 ================================================================================

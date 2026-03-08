@@ -36,6 +36,9 @@ import DecisionQuotient.Physics.ClaimTransport
 import DecisionQuotient.Physics.Uncertainty
 import DecisionQuotient.Physics.HeisenbergStrong
 import DecisionQuotient.Physics.BoundedAcquisition
+import DecisionQuotient.Physics.WolpertMismatch
+import DecisionQuotient.Physics.WolpertConstraints
+import DecisionQuotient.Physics.WolpertDecomposition
 import DecisionQuotient.Physics.TUR
 import DecisionQuotient.Physics.WassersteinIntegrity
 import DecisionQuotient.Physics.TransportCost
@@ -69,6 +72,7 @@ import DecisionQuotient.BayesFoundations
 import DecisionQuotient.BayesOptimalityProof
 import DecisionQuotient.FunctionalInformation
 import DecisionQuotient.Quotient
+import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.Bridges
 
 namespace DecisionQuotient
@@ -913,11 +917,22 @@ noncomputable abbrev FI5 := @FunctionalInformation.functionalInformationBitsFrom
 abbrev FI6 := @FunctionalInformation.functional_information_from_thermodynamics
 abbrev FI7 := @FunctionalInformation.first_principles_thermo_coincide
 
--- Thermodynamic-lift (TL) handles - Landauer calibration -> positive per-bit conversion
+-- Thermodynamic-lift (TL) handles
+-- TL1-TL4 expose the main floor-based statements used by the artifact.
+-- TL5-TL6 retain the exact-calibration equalities as explicit idealized specializations.
 noncomputable abbrev TL1 := @ThermodynamicLift.landauerJoulesPerBit
 abbrev TL2 := @ThermodynamicLift.landauerJoulesPerBit_pos
-abbrev TL3 := @ThermodynamicLift.joulesPerBit_pos_of_landauer_calibration
-abbrev TL4 := @ThermodynamicLift.energy_lower_mandatory_of_landauer_calibration
+abbrev TL3 := @ThermodynamicLift.joulesPerBit_pos_of_landauer_floor
+abbrev TL4 := @ThermodynamicLift.energy_lower_mandatory_of_landauer_floor
+abbrev TL5 := @ThermodynamicLift.joulesPerBit_pos_of_landauer_calibration
+abbrev TL6 := @ThermodynamicLift.energy_lower_mandatory_of_landauer_calibration
+
+-- Wolpert-constraint (WC) handles - explicit floor-plus-overhead interface
+abbrev WC1 := @Physics.WolpertConstraints.landauer_floor_plus_overhead_lower_bound
+abbrev WC2 := @Physics.WolpertConstraints.effective_model_dominates_landauer_floor
+abbrev WC3 := @Physics.WolpertConstraints.effective_model_strictly_exceeds_landauer_of_strict_overhead
+abbrev WC4 := @Physics.WolpertConstraints.energy_lower_bound_mono_under_overhead
+abbrev WC5 := @Physics.WolpertConstraints.physical_grounding_bundle_with_wolpert_overhead
 
 -- Tool-collapse (TC) handles - model-relative leverage collapse
 abbrev TC1 := @ToolCollapse.WorkProfile
@@ -999,6 +1014,7 @@ abbrev FS5 := @Statistics.fisherScore_irrelevant
 
 Additional novel first-principles theorems for the introduction:
 - QT: Quotient Theory (Universal Property / Theorem A)
+- AB: Abstraction Boundary (collapse beyond the quotient)
 - WD: Witness-Checking Duality (certificate lower bounds)
 - BC: Bayes from Counting (probability axioms from counting measure)
 -/
@@ -1009,6 +1025,46 @@ abbrev QT1 := @DecisionProblem.quotient_is_coarsest
 abbrev QT2 := @DecisionProblem.quotientMap_preservesOpt
 abbrev QT3 := @DecisionProblem.quotient_represents_opt_equiv
 abbrev QT4 := @DecisionProblem.factors_implies_respects
+noncomputable abbrev QT5 := @DecisionProblem.quotientEquivOptRange
+abbrev QT6 := @DecisionProblem.quotientEquivOptRange_apply_quotientMap
+abbrev QT7 := @DecisionProblem.quotient_has_unique_factorization
+
+-- AB: Abstraction Boundary (AbstractionCollapse.lean)
+abbrev AB1 := @DecisionProblem.not_preservesOpt_iff_erasesDecisionRelevantDistinction
+abbrev AB2 := @DecisionProblem.surjective_abstraction_factors_or_erases
+abbrev AB3 := @DecisionProblem.collapseBeyondQuotient_physically_impossible
+abbrev AB4 := @DecisionProblem.surjective_abstraction_with_feasible_collapse_map_factors
+
+-- WM: Wolpert Mismatch (Physics/WolpertMismatch.lean)
+abbrev WM1 := @Physics.WolpertMismatch.mismatchKL_nonneg
+abbrev WM2 := @Physics.WolpertMismatch.mismatchKL_eq_zero_iff_eq
+abbrev WM3 := @Physics.WolpertMismatch.mismatchKL_pos_of_exists_ne
+abbrev WM4 := @Physics.WolpertMismatch.mismatchNatLowerBound_pos_of_exists_ne
+abbrev WM5 := @Physics.WolpertDecomposition.periodic_modular_mismatch_of_distribution_mismatch
+abbrev WM6 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch
+
+-- WR: Wolpert Residual (Physics/WolpertResidual.lean + decomposition lift)
+abbrev WR1 := @Physics.WolpertResidual.pairwiseResidualKL_nonneg
+abbrev WR2 := @Physics.WolpertResidual.pairwiseResidualKL_pos_of_asymmetry
+abbrev WR3 := @Physics.WolpertResidual.residualNatLowerBound_pos_of_asymmetry
+abbrev WR4 := @Physics.WolpertDecomposition.stopping_time_residual_of_pairwise_flow_asymmetry
+abbrev WR5 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_pairwise_flow_asymmetry
+abbrev WR6 := @Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway
+abbrev WR7 := @Physics.WolpertDecomposition.stopping_time_residual_of_discrete_edge_split
+abbrev WR8 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_discrete_edge_split
+abbrev WR9 := @Physics.WolpertDecomposition.stopping_time_residual_of_finite_discrete_witness
+abbrev WR10 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness
+
+-- WP: Wolpert Physics (Physics/WolpertDecomposition.lean)
+abbrev WP1 := @Physics.WolpertDecomposition.DecomposedProcessModel.totalOverheadPerBit_eq_sum
+abbrev WP2 := @Physics.WolpertDecomposition.landauer_floor_plus_decomposition_lower_bound
+abbrev WP3 := @Physics.WolpertDecomposition.effective_model_dominates_landauer_floor_decomposition
+abbrev WP4 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_periodic_modular_mismatch
+abbrev WP5 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_stopping_time_residual
+abbrev WP6 := @Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_either_cited_component
+abbrev WP7 := @Physics.WolpertDecomposition.landauer_floor_plus_structural_resource_lower_bound
+abbrev WP8 := @Physics.WolpertDecomposition.energy_lower_bound_increases_by_structural_resource
+abbrev WP9 := @Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition
 
 -- WD: Witness-Checking Duality (WitnessCheckingDuality.lean)
 -- WD1 is the main duality: any sound checker needs ≥ 2^(n-1) witness pairs
@@ -1342,5 +1398,17 @@ abbrev BR8 := @Bridges.rate_distortion_fisher_information_bridge
 abbrev BR9 := @Bridges.counting_complexity_sharp_p_hardness
 -- BR10: Approximation + counting hardness bridge
 abbrev BR10 := @Bridges.approximation_counting_hardness_bridge
+
+/-! ## Structural-rank primitive handles (SK)
+    StructuralRank.lean: direct familiar-construction facts about srank as the
+    cardinality of the relevant-coordinate support.
+-/
+
+-- SK1: srank is the cardinality of the relevant-coordinate support
+abbrev SK1 := @DecisionProblem.srank_eq_relevant_card
+-- SK2: srank is bounded by the number of coordinates
+abbrev SK2 := @DecisionProblem.srank_le_n
+-- SK3: srank = 0 iff the decision boundary is coordinate-constant
+abbrev SK3 := @DecisionProblem.srank_zero_iff_constant
 
 end DecisionQuotient

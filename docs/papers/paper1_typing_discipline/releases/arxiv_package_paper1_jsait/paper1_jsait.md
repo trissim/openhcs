@@ -1,6 +1,6 @@
 # Paper: Identification Capacity and Rate-Query Tradeoffs in Classification Systems
 
-**Status**: JSAIT-ready | **Lean**: 8003 lines, 346 theorems
+**Status**: JSAIT-ready | **Lean**: 8092 lines, 352 theorems
 
 ---
 
@@ -18,7 +18,7 @@ Consider an encoder-decoder pair communicating about entities from a large unive
 
 This is not reconstruction (the decoder need not recover $v$), but *identification* in the sense of Ahlswede and Dueck [@ahlswede1989identification]: the decoder must answer "which class?" with zero or bounded error. Our work extends this framework to consider the tradeoff between tag storage, query complexity, and identification accuracy.
 
-We prove three results:
+We prove three core theorem families, and then extend them with finite-block, open-world, and mechanization results:
 
 1.  **Information barrier (identifiability limit).** When the attribute profile $\pi: \mathcal{V} \to \{0,1\}^n$ is not injective on classes, zero-error identification via queries alone is impossible: any decoder produces identical output on colliding classes, so cannot be correct for both.
 
@@ -26,7 +26,7 @@ We prove three results:
 
 3.  **Matroid structure (query complexity).** Minimal sufficient query sets form the bases of a matroid. The *distinguishing dimension* (the common cardinality of all minimal sets) is well-defined and lower-bounds the query cost $W$ for any tag-free scheme.
 
-These results are domain-independent within the stated observation model: the same lower bounds appear in type systems, databases, biological taxonomy, and knowledge graphs. We develop the mathematics in full generality, then give concrete illustrations. In the programming-language setting, the point is not to "discover" nominal typing, but to characterize a long-observed design regularity information-theoretically: once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In particular, in maximal-barrier domains the paper shows that nominal tagging is the unique $D=0$ Pareto solution, so the issue is not stylistic preference but which resource a system chooses to spend.
+These results are domain-independent within the stated observation model: the same lower bounds appear across databases, biological taxonomy, knowledge graphs, and software runtimes. Once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In maximal-barrier domains this yields a unique $D=0$ Pareto solution, so the issue is resource feasibility, not domain-specific style conventions.
 
 ## The Observation Model
 
@@ -37,7 +37,7 @@ Let $\mathcal{V}$ be a set of entities (program objects, database records, biolo
 :::
 
 ::: remark
-We use "attribute" for the abstract concept. In type systems, attributes are *interfaces* or *method signatures*. In databases, they are *columns*. In taxonomy, they are *phenotypic characters*. In library science, they are *facets*. The mathematics is identical.
+We use "attribute" for the abstract concept. Depending on domain, attributes may be interfaces/signatures, database columns, phenotypic characters, or catalog facets. The mathematics is identical.
 :::
 
 ::: definition
@@ -45,7 +45,7 @@ For each $I \in \mathcal{I}$, define the attribute-membership observation $q_I: 
 :::
 
 ::: remark
-We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of *query sites* (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification/verification task, we may write $s$ for the number of attributes actually queried/traversed by the procedure (e.g., members/fields checked in a structural type test, phenotypic characters checked in taxonomy), with $s \le n$. The maintenance-only parameter $m$ appears only in Section [\[sec:complexity\]](#sec:complexity){reference-type="ref" reference="sec:complexity"}.
+We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of *query sites* (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification/verification task, we may write $s$ for the number of attributes actually queried/traversed by the procedure (e.g., interface or schema checks in software/data systems, phenotypic checks in taxonomy), with $s \le n$. The maintenance-only parameter $m$ appears only in Section [\[sec:complexity\]](#sec:complexity){reference-type="ref" reference="sec:complexity"}.
 :::
 
 ::: definition
@@ -83,7 +83,7 @@ The barrier is *informational*, not computational. Given unlimited time, memory,
 :::
 
 ::: remark
-Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"} is the foundational invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), the Pareto characterization (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}), and the matroid/equicardinality results (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}).
+Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"} is the base invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), the Pareto characterization (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}), and the matroid/equicardinality results (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}).
 :::
 
 ::: corollary
@@ -138,7 +138,7 @@ An adversary can answer the procedure's queries consistently with both $v$ and $
 
 This paper establishes the following results:
 
-1.  **Information Barrier Theorem** (Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"}): Attribute-only observers cannot compute any property that varies within $\sim$-equivalence classes. This is an information-theoretic impossibility, not a computational limitation, and it is the source of the downstream rate-query tradeoffs.
+1.  **Information Barrier Theorem** (Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"}): Attribute-only observers cannot compute any property that varies within $\sim$-equivalence classes. This is an observational impossibility, not a computational limitation, and it is the source of the downstream rate-query tradeoffs.
 
 2.  **Constant-Witness Theorem** (Theorem [\[thm:constant-witness\]](#thm:constant-witness){reference-type="ref" reference="thm:constant-witness"}): Nominal-tag access achieves constant witness cost for class identity. Attribute-only observers have matching lower bound $\Omega(d)$ (Theorem [\[thm:interface-lower-bound\]](#thm:interface-lower-bound){reference-type="ref" reference="thm:interface-lower-bound"}), where $d$ is the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}).
 
@@ -146,11 +146,13 @@ This paper establishes the following results:
 
 4.  **Matroid Structure** (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}): Minimal distinguishing query sets form the bases of a matroid. All such sets have equal cardinality, so the distinguishing dimension is an invariant of the observation model rather than an artifact of a particular proof or query order.
 
-5.  **$(L, W, D)$ Optimality** (Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"}): We characterize the zero-error converse via collision multiplicity $A_\pi$ and prove uniqueness of the nominal point in the maximal-barrier regime ($A_\pi=k$), turning an informal design preference into an explicit Pareto statement.
+5.  **$(L, W, D)$ Optimality** (Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"}): We characterize the zero-error converse via collision multiplicity $A_\pi$ and prove uniqueness of the nominal point in the maximal-barrier regime ($A_\pi=k$), turning an informal heuristic into an explicit resource law.
 
-6.  **Finite-Block Confusability Law** (Section [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"}): We prove exact block thresholds for zero-error feasibility in the confusability formulation: at blocklength $k$, feasibility is equivalent to an alphabet threshold $A_\pi^k$, with exact linear log-bit scaling and per-coordinate stabilization.
+6.  **Finite-Block Confusability Law** (Section [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"}): We prove exact block thresholds for zero-error feasibility in the confusability formulation: at blocklength $t$, feasibility is equivalent to an alphabet threshold $A_\pi^t$, with exact linear log-bit scaling and per-coordinate stabilization.
 
-7.  **Machine-Checked Proofs**: All results formalized in Lean 4 (8003 lines, 346 theorem/lemma statements, 0 `sorry` placeholders).
+7.  **Open-World Robustness + Decidability Boundary**: We formalize that barrier-freedom is not extension-stable in open worlds (any finite barrier-free world can be extended to force a collision), and we prove a Rice-style impossibility theorem: no computable certifier can decide barrier existence/freedom for arbitrary generators.
+
+8.  **Machine-Checked Proofs**: All results formalized in Lean 4 (8092 lines, 352 theorem/lemma statements, 0 `sorry` placeholders).
 
 Without the equicardinality result behind the matroid structure, the lower bound would depend on which distinguishing set or query strategy one chose. The matroid theorem is what makes $d$ strategy-independent.
 
@@ -168,9 +170,9 @@ This paper does not develop asymptotic coding theorems or claim new zero-error c
 
 **Query complexity and communication complexity.** The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity [@buhrman2002complexity] and interactive communication [@orlitsky1991worst]. The key distinction is that our queries are constrained to a fixed observable family $\mathcal{I}$, not arbitrary predicates.
 
-**Compression in classification systems.** The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and typed software systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), with maximal-barrier specialization $L \ge \log_2 k$.
+**Compression in classification systems.** The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), with maximal-barrier specialization $L \ge \log_2 k$.
 
-**Programming-language corollary (secondary).** In nominal-vs-structural typing settings [@Cardelli1985; @cook1990inheritance], the model yields a concrete cost statement: under attribute collisions, purely structural identification has worst-case $\Omega(d)$ witness cost, while nominal tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is the paper's PL-facing corollary; the main contribution remains the information-theoretic characterization.
+**Runtime/schema instantiation (secondary).** In nominal-vs-structural interface settings [@Cardelli1985; @cook1990inheritance], the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
 
 ## Paper Organization
 
@@ -183,7 +185,7 @@ The fundamental problem of *semantic compression* is: given a value $v$ from a l
 
 Classical rate-distortion theory [@shannon1959coding] studies the tradeoff between representation size and reconstruction fidelity. We extend this to a discrete classification setting with three dimensions: *tag length* $L$ (bits of storage), *witness cost* $W$ (queries or bits of communication required to determine class membership), and *distortion* $D$ (misclassification probability).
 
-This work treats contemporary classification problems (databases, knowledge graphs, model registries) with information-theoretic resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
+This work treats contemporary classification problems (databases, knowledge graphs, model registries) with explicit resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
 
 ## Universe of Discourse
 
@@ -213,30 +215,30 @@ This definition is intentionally broad: schemes may be adaptive, randomized, or 
 
 This proposition forces any objection into a precise form: to claim the theorem does not apply, one must name the additional observation capability not in $\Phi$. "Different universe" is not a coherent objection; it must reduce to "I have access to oracle $X \notin \Phi$."
 
-## Two-Axis Instantiation (Programming Languages)
+## Two-Axis Instantiation (Representative Domain Example)
 
-The core information-theoretic results of this paper require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is an explicit programming-language instantiation documented further in the supplementary material, not an additional axiom for the general theorems.
+The core results require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is one representative instantiation and is not an additional axiom for the general theorems.
 
 In that instantiation, each value is characterized by:
 
--   **Lineage axis ($B$)**: The provenance chain of the value's class (which classes it derives from, in what order)[^1]
+-   **Provenance axis ($B$)**: source/lineage information that can distinguish entities with identical observable profiles[^1]
 
--   **Profile axis ($S$)**: The observable attribute profile (interfaces/method signatures in the PL instantiation)
+-   **Profile axis ($S$)**: the observable attribute profile induced by $\Phi$
 
 ::: definition
 A value $v \in \mathcal{V}$ has representation $(B(v), S(v))$ where: $$\begin{aligned}
-B(v) &= \text{lineage}(\text{class}(v)) \quad \text{(class derivation chain)} \\
-S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}} \quad \text{(attribute profile)}
-\end{aligned}$$ The lineage axis captures *nominal* identity: where the class comes from. The profile axis captures *structural* identity: what the value can do.
+B(v) &= \text{provenance}(v) \\
+S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}}
+\end{aligned}$$ The provenance axis captures *identity-bearing origin information*; the profile axis captures *observable behavior/attributes*.
 
-In the PL instantiation, $B$ is carried by the runtime lineage order (e.g., C3/MRO output). Any implementation-specific normalization or lookup machinery is auxiliary and does not define inheritance.
+In concrete deployments, $B$ may be carried by lineage metadata, registry identifiers, or equivalent provenance carriers. Any implementation-specific normalization or lookup machinery is auxiliary.
 :::
 
 ::: theorem
 []{#thm:model-completeness label="thm:model-completeness"} Let a fixed-axis domain be specified by an axis map $\alpha: \mathcal{V} \to \mathcal{A}$ and an observation family $\Phi$ such that each primitive query $q \in \Phi$ factors through $\alpha$. Then every in-scope semantic property (i.e., any property computable by an admissible $\Phi$-only strategy) factors through $\alpha$: there exists $\tilde{P}$ with $$P(v) = \tilde{P}(\alpha(v)) \quad \text{for all } v \in \mathcal{V}.$$
 :::
 
-In the PL instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
+In this two-axis instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
 
 ::: proof
 *Proof.* An admissible $\Phi$-only strategy observes $v$ solely through responses to primitive queries $q_I \in \Phi$. By hypothesis each such response is a function of $\alpha(v)$. Therefore every query transcript, and hence any strategy's output, depends only on $\alpha(v)$, so the computed property factors through $\alpha$. ◻
@@ -405,6 +407,40 @@ The main result of Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" referen
 []{#def:max-barrier label="def:max-barrier"} The domain is *maximal-barrier* if $A_\pi = k$, i.e., all classes collide under the observation map.
 :::
 
+## Open-World Robustness and Decidability Boundary {#sec:open-world-boundary}
+
+::: definition
+Let $\mathcal{C}$ be the class universe. A *finite realized world* is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ *barrier-free* iff $$\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.$$
+:::
+
+::: definition
+An *open-world extension* is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
+:::
+
+::: theorem
+[]{#thm:open-world-extension-instability label="thm:open-world-extension-instability"} In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions: $$\neg\Big(\forall W \subseteq W',\ \text{BarrierFree}(W)\Rightarrow \text{BarrierFree}(W')\Big).$$
+:::
+
+::: proof
+*Proof.* Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes (`ConfigType` and `StepConfigType`) are shape-equivalent (same observable profile) but nominally distinct (different lineage), so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable. ◻
+:::
+
+::: definition
+For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define $$\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).$$ Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
+:::
+
+::: theorem
+[]{#thm:rice-barrier label="thm:rice-barrier"} There is no computable predicate on program codes deciding whether the generated observer has a barrier: $$\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).$$ Equivalently, barrier-freedom certification is also non-computable: $$\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{BarrierFree}(\mathrm{eval}(c))\right).$$
+:::
+
+::: proof
+*Proof.* Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. Set $$\mathcal{C}_{\mathrm{bar}}:=\{f:\mathbb{N}\rightharpoonup\mathbb{N}\mid \mathrm{HasBarrier}(f)\}.$$ Then $P(c)$ is exactly membership of $\mathrm{eval}(c)$ in $\mathcal{C}_{\mathrm{bar}}$. The property is non-trivial: $$\mathrm{HasBarrier}(\lambda x.\,0)\quad\text{and}\quad \neg\mathrm{HasBarrier}(\lambda x.\,x+1).$$ Rice's theorem (formalized in Lean and instantiated with these two witnesses) implies that if membership in $\mathcal{C}_{\mathrm{bar}}$ were computable from code, then every partial recursive function would have to lie in $\mathcal{C}_{\mathrm{bar}}$, contradicting the successor witness. Hence $P$ is not computable. The barrier-free statement is equivalent by $$\mathrm{BarrierFree}(f)\iff \neg\mathrm{HasBarrier}(f),$$ so computability of one would imply computability of the other. ◻
+:::
+
+::: corollary
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on "currently collision-free" attribute structure alone.
+:::
+
 ## Converse: Tag Rate Lower Bound
 
 ::: theorem
@@ -462,18 +498,18 @@ Thus, in the deterministic model, distortion is controlled by collision geometry
 Consider a classification system with $k = 1000$ classes, each characterized by a subset of $n = 50$ binary attributes. Table [1](#tab:strategies){reference-type="ref" reference="tab:strategies"} compares the strategies.
 
 ::: {#tab:strategies}
-  **Strategy**                            **Tag $L$**                 **Witness $W$**
-  ------------------------- --------------------------------------- -------------------
-  Nominal (class ID)         $\lceil \log_2 1000 \rceil = 10$ bits        $O(1)$
-  Duck typing (query all)                     $0$                    $\leq 50$ queries
-  Adaptive duck typing                        $0$                    $\geq d$ queries
+  **Strategy**                                **Tag $L$**                 **Witness $W$**
+  ----------------------------- --------------------------------------- -------------------
+  Explicit-tag identification    $\lceil \log_2 1000 \rceil = 10$ bits        $O(1)$
+  Attribute-only (exhaustive)                     $0$                    $\leq 50$ queries
+  Attribute-only (adaptive)                       $0$                    $\geq d$ queries
 
   : Identification strategies for 1000 classes with 50 attributes.
 :::
 
-Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For typical hierarchies, $d \approx 5$--$15$. The gap between 10 bits of storage vs. 5--50 queries per identification is the cost of forgoing nominal tagging.
+Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For many practical systems, $d$ is well below $n$ but nonzero. The gap between 10 bits of storage versus 5--50 queries per identification is the cost of forgoing explicit tags.
 
-[^1]: In the Lean formalization, the lineage axis is denoted `Bases`, reflecting its instantiation as the inheritance chain in object-oriented languages.
+[^1]: In the Lean witness model, this axis is represented as `Bases`.
 
 
 ## The Error Localization Theorem
@@ -499,7 +535,7 @@ Let $E(\mathcal{O})$ be the number of locations that must be inspected to find a
 :::
 
 ::: proof
-*Proof.* With declared attribute sets (interfaces in the PL instantiation), the constraint "$v$ must satisfy attribute $I$" requires verifying that each class satisfies all attributes in $I$. For $k$ classes, $O(k)$ locations. ◻
+*Proof.* With declared attribute sets, the constraint "$v$ must satisfy attribute $I$" requires verifying that each class satisfies all attributes in $I$. For $k$ classes, $O(k)$ locations. ◻
 :::
 
 ::: theorem
@@ -748,21 +784,21 @@ Figure [1](#fig:lwd-tradeoff){reference-type="ref" reference="fig:lwd-tradeoff"
 
 <figure id="fig:lwd-tradeoff">
 
-<figcaption>Schematic illustration of the <span class="math inline">(<em>L</em>, <em>W</em>, <em>D</em>)</span> tradeoff. In the maximal-barrier regime, the nominal point <span class="math inline">(<em>L</em> = log<sub>2</sub><em>k</em>, <em>W</em> = <em>O</em>(1), <em>D</em> = 0)</span> is the unique <span class="math inline"><em>D</em> = 0</span> Pareto optimum, while attribute-only strategies lie on the <span class="math inline"><em>L</em> = 0</span> face and therefore leave the zero-error frontier. For a concrete example with <span class="math inline"><em>k</em> = 1000</span> classes, distinguishing dimension <span class="math inline"><em>d</em> = 10</span>, and maximal barrier (<span class="math inline"><em>A</em><sub><em>π</em></sub> = <em>k</em></span>), the nominal-tag strategy achieves <span class="math inline"><em>L</em> = 10</span> bits, <span class="math inline"><em>W</em> = <em>O</em>(1)</span>, <span class="math inline"><em>D</em> = 0</span>, while the attribute-only strategy requires <span class="math inline"><em>W</em> = 10</span> queries and incurs <span class="math inline"><em>D</em> &gt; 0</span> due to collisions.</figcaption>
+<figcaption>Schematic <span class="math inline">(<em>L</em>, <em>W</em>, <em>D</em>)</span> tradeoff across barrier regimes. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; attribute-only strategies lie on the zero-tag face and leave the zero-error frontier when collisions are present.</figcaption>
 </figure>
 
 The Lean 4 formalization in the supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
 
 ::: remark
-In programming language terms: *nominal typing* corresponds to nominal-tag observers (e.g., CPython's `isinstance`, Java's `.getClass()`). *Duck typing* corresponds to attribute-only observers (e.g., Python's `hasattr`). *Structural typing* is an intermediate case with $D = 0$ but $W = O(n)$.
+In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's `isinstance`, Java's `.getClass()`); attribute-probe schemes correspond to attribute-only observers (e.g., repeated `hasattr`-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
 :::
 
 ::: remark
-When structural typing checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
+When conformance checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
 :::
 
 
-The core theorems are domain-agnostic. This section gives brief illustrations showing the same constraint pattern in established systems.
+This section gives brief illustrations showing the same constraint pattern in established systems.
 
 ## Compact Cross-Domain Illustrations
 
@@ -770,7 +806,7 @@ The core theorems are domain-agnostic. This section gives brief illustrations sh
 
 **Databases (columns vs keys).** Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary/surrogate keys realize the nominal-tag role and provide constant-cost identity checks [@Codd1990].
 
-**Software runtimes (structural probes vs type tags).** Structural checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as nominal tags and collapse identity checks to near-constant cost in the model [@CPythonDocs; @JVMSpec; @JavaDocs; @TypeScriptDocs; @RustDocs].
+**Software runtimes (attribute probes vs runtime identifiers).** Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model [@CPythonDocs; @JVMSpec; @JavaDocs; @TypeScriptDocs; @RustDocs].
 
 ## Takeaway
 
@@ -796,7 +832,7 @@ In the noiseless case ($\epsilon = 0$), Theorem [\[thm:identification-capacity\
 
 **Open problem (noisy identification cost).** For $\epsilon > 0$ and class-injective $\pi$, zero-error identification is impossible with finite queries (since BSC has nonzero error probability). With bounded error $\delta > 0$, we expect the identification cost to scale as $W = \Theta\left(\frac{\log(1/\delta)}{(1 - 2\epsilon)^2}\right)$ queries per entity. A key observation is that a nominal tag of $L \geq \lceil \log_2 k \rceil$ bits (transmitted noiselessly) should restore $O(1)$ identification regardless of query noise.
 
-The third point is the key insight: *nominal tags provide a noise-free side channel*. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for nominal tagging in noisy environments, precisely the regime where "duck typing" would require many repeated queries to achieve confidence.
+The third point is the key insight: *nominal tags provide a noise-free side channel*. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for explicit tagging in noisy environments, precisely the regime where pure attribute-probe schemes would require many repeated queries to achieve confidence.
 
 **Connection to identification via channels.** The noisy model connects more directly to Ahlswede-Dueck identification [@ahlswede1989identification]. In their framework, identification capacity over a noisy channel can exceed Shannon capacity (double-exponential codebook sizes). Our setting differs: we have *adaptive queries* rather than block codes, and the decoder must identify a *class* rather than test a hypothesis. Characterizing the interplay between adaptive query strategies and channel noise is an open problem.
 
@@ -818,9 +854,9 @@ The $(L, W, D)$ tradeoff admits a natural geometric interpretation. In the maxim
 
 We have treated distortion $D$ as binary (correct identification or not). Richer distortion measures are possible:
 
--   **Hierarchical distortion**: Misidentifying a class within the same genus (biological) or module (type system) is less severe than cross-genus errors.
+-   **Hierarchical distortion**: Misidentifying a class within the same genus (biological) or within the same subsystem (engineered systems) is less severe than cross-group errors.
 
--   **Weighted distortion**: Some misidentifications have higher cost than others (e.g., type errors causing security vulnerabilities vs. benign type confusion).
+-   **Weighted distortion**: Some misidentifications have higher cost than others (e.g., safety-critical misrouting vs. benign confusion).
 
 ## Privacy and Security
 
@@ -843,7 +879,7 @@ The analogy suggests several directions:
 Formalizing these connections would unify identification capacity with the broader rate-distortion-perception literature.
 
 
-This paper presents an information-theoretic analysis of classification under observational constraints. We prove three main results:
+This paper presents a resource-based analysis of classification under observational constraints. We establish three core theorem families and accompanying extensions:
 
 1.  **Information Barrier**: Observers limited to attribute-membership queries cannot compute properties that vary within indistinguishability classes. This is the structural obstruction from which the later lower bounds and tradeoffs follow.
 
@@ -859,7 +895,7 @@ Across domains, the same structure recurs:
 
 -   **Databases**: Column-value queries cannot distinguish rows with identical attributes. Primary keys (nominal tag) provide $O(1)$ identity.
 
--   **Type systems**: Attribute observation (interfaces/method signatures in this instantiation) cannot distinguish structurally identical types. Type tags provide $O(1)$ identity.
+-   **Software runtimes**: Attribute observation cannot distinguish entities that collide on observed capabilities. Runtime identifiers provide $O(1)$ identity.
 
 The information barrier is not a quirk of any particular domain; it is a mathematical necessity arising from the quotient structure induced by limited observations. What varies by domain is not the existence of the constraint, but which resource the system chooses to spend to escape it.
 
@@ -871,6 +907,8 @@ The information barrier is not a quirk of any particular domain; it is a mathema
 
 -   **Finite-block confusability laws are exact**: the mechanized graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^k$) and exact linear log-bit scaling across block length.
 
+-   **Open-world guarantees require explicit tags**: barrier-freedom is not extension-stable under system growth, and deciding barrier existence/freedom for arbitrary generators is not computable (Rice-style). So a persistent $D=0$ guarantee cannot rely on "currently collision-free" attribute structure alone.
+
 -   **Fixed-axis systems are necessarily incomplete outside their axis**: by Corollary [\[cor:fixed-axis-incompleteness\]](#cor:fixed-axis-incompleteness){reference-type="ref" reference="cor:fixed-axis-incompleteness"}, any fixed-axis classifier is complete only for axis-measurable properties and cannot represent properties that vary within an axis fiber unless a new axis or explicit tag is introduced.
 
 -   **Classification system design is constrained**: the choice of observation family determines which properties are computable.
@@ -881,11 +919,13 @@ Natural extensions include other classification domains, witness complexity for 
 
 ## Conclusion
 
-Classification under observational constraints admits a clean information-theoretic analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
+Classification under observational constraints admits a clean quantitative analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
 
-## AI Disclosure {#ai-disclosure .unnumbered}
+## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
 
-The core mathematical ideas and proof strategies were developed by the author. LLM tools assisted with exposition, formal-draft translation, and proof exploration; all stated claims were checked by the author and, where reported, machine-verified in Lean 4 as an integrity layer before submission.
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
 
 
 
@@ -896,6 +936,6 @@ The core mathematical ideas and proof strategies were developed by the author. L
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper1_typing_discipline/proofs/`
-- Lines: 8003
-- Theorems: 346
+- Lines: 8092
+- Theorems: 352
 - `sorry` placeholders: 0

@@ -14,7 +14,7 @@ Machine verification of complexity-theoretic results remains sparse compared to 
 
 \subsection{Computational Decision Theory}
 
-The complexity of decision-making has been studied extensively. Papadimitriou~\cite{papadimitriou1994complexity} established foundational results on the complexity of game-theoretic solution concepts. Our work extends this to the meta-question of identifying relevant information. For a modern treatment of complexity classes, see Arora and Barak \cite{arora2009computational}.
+The complexity of decision-making has been studied extensively. Papadimitriou~\cite{papadimitriou1994complexity} established core results on the complexity of game-theoretic solution concepts. Work on succinctly represented MDP/POMDP settings shows sharp complexity escalation in stochastic and sequential models~\cite{papadimitriou1987mdp,mundhenk2000mdp}. Our regime results align with that pattern, but focus on a different predicate: coordinate sufficiency of optimal decisions. For a modern treatment of complexity classes, see Arora and Barak \cite{arora2009computational}.
 
 \paragraph{Closest prior work and novelty.}
 Closest to our contribution is the literature on feature selection and model selection hardness, which proves NP-hardness of selecting informative feature subsets and inapproximability for minimum feature sets~\cite{blum1997selection, amaldi1998complexity}. Those results analyze predictive relevance or compression objectives. We study decision relevance and show coNP-completeness for sufficiency checking, a different quantifier structure (universal verification) with distinct proof techniques and a full hardness/tractability landscape under explicit encoding assumptions, mechanized in Lean 4. The formalization aspect is also novel: prior work establishes hardness on paper, while we provide machine-checked reductions with explicit polynomial bounds.
@@ -57,15 +57,15 @@ Our sufficiency problem is analogous: which coordinates must be observed to dete
 
 The connection runs deeper: Shpitser and Pearl~\cite{shpitser2006identification} showed that identifying causal effects is NP-hard in general graphs. Our \coNP-completeness result for SUFFICIENCY-CHECK is the decision-theoretic counterpart.
 
-\paragraph{Probability of necessity and sufficiency.} Cai et al.~\cite{cai2025pns} formalize the Probability of Necessity and Sufficiency (PNS) for explaining Graph Neural Networks. They argue that a convincing explanation must be \emph{both} necessary and sufficient: necessary explanations alone may be incomplete, while sufficient explanations alone may be non-concise. They model GNNs as Structural Causal Models and optimize a lower bound of PNS. This provides independent confirmation from the neural network explainability literature that necessity and sufficiency must be jointly considered---exactly the perspective underlying our sufficiency-checking framework.
+\paragraph{Probability of necessity and sufficiency.} Cai et al.~\cite{cai2025pns} formalize the Probability of Necessity and Sufficiency (PNS) for explaining Graph Neural Networks. They argue that a convincing explanation must be \emph{both} necessary and sufficient: necessary explanations alone may be incomplete, while sufficient explanations alone may be non-concise. They model GNNs as Structural Causal Models and optimize a lower bound of PNS. This provides independent confirmation from the neural network explainability literature that necessity and sufficiency must be jointly considered, exactly the perspective underlying our sufficiency-checking framework.
 
 \subsection{Minimum Description Length and Kolmogorov Complexity}
 
-The Minimum Description Length (MDL) principle~\cite{rissanen1978modeling, grunwald2007minimum} formalizes model selection as compression: the best model minimizes description length of data plus model. Kolmogorov complexity~\cite{li2008introduction} provides the theoretical foundation (the shortest program that generates the data).
+The Minimum Description Length (MDL) principle~\cite{rissanen1978modeling, grunwald2007minimum} formalizes model selection as compression: the best model minimizes description length of data plus model. Kolmogorov complexity~\cite{li2008introduction} provides the theoretical background (the shortest program that generates the data).
 
 Our decision quotient connects to this perspective: a coordinate set $I$ is sufficient if it compresses the decision problem without loss. Knowing $s_I$ is as good as knowing $s$ for decision purposes. The minimal sufficient set is the MDL-optimal compression of the decision problem.
 
-The complexity results explain why MDL-based model selection uses heuristics: finding the true minimum description length is uncomputable (Kolmogorov complexity) or intractable (MDL approximations). Our results show the decision-theoretic analog is \coNP-complete---intractable but decidable.
+The complexity results explain why MDL-based model selection uses heuristics: finding the true minimum description length is uncomputable (Kolmogorov complexity) or intractable (MDL approximations). Our results show the decision-theoretic analog is \coNP-complete, intractable but decidable.
 
 \subsection{Value of Information}
 

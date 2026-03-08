@@ -7,7 +7,11 @@
   The decision quotient Q = S/∼ is the MINIMAL state abstraction that preserves Opt.
   Any other abstraction φ: S → T that preserves Opt must factor through π: S → Q.
 
-  This is the core mathematical contribution - Q is universal.
+  In the category Set, this is the coimage construction for the optimizer map
+  `Opt : S → Set A`, canonically equivalent to the image/range of `Opt`.
+  The artifact's novelty is not the existence of coimages in Set; it is the
+  role this specific quotient plays in the later complexity and physical
+  collapse arguments.
 
   ## Triviality Level
   NONTRIVIAL: This is Theorem A - the universal property of the quotient.
@@ -104,5 +108,69 @@ theorem DecisionProblem.quotient_is_coarsest (dp : DecisionProblem A S) {T : Typ
   rw [dp.quotient_represents_opt_equiv]
   exact hopt.symm
 
-end DecisionQuotient
+/-- The factorization through the optimizer quotient is unique once the
+abstraction map is surjective. -/
+theorem DecisionProblem.quotient_factorization_unique (dp : DecisionProblem A S) {T : Type*}
+    (φ : S → T) (hSurj : Function.Surjective φ)
+    {ψ ψ' : T → dp.DecisionQuotientType}
+    (hψ : ∀ s : S, dp.quotientMap s = ψ (φ s))
+    (hψ' : ∀ s : S, dp.quotientMap s = ψ' (φ s)) :
+    ψ = ψ' := by
+  funext t
+  rcases hSurj t with ⟨s, rfl⟩
+  rw [← hψ s, ← hψ' s]
 
+/-- In `Set`, the optimizer quotient satisfies the usual coimage universal
+property: any surjective abstraction preserving `Opt` factors uniquely through
+the quotient map. -/
+theorem DecisionProblem.quotient_has_unique_factorization (dp : DecisionProblem A S) {T : Type*}
+    (φ : S → T) (hφ : ∀ s s', φ s = φ s' → dp.Opt s = dp.Opt s') (hSurj : Function.Surjective φ) :
+    ∃! ψ : T → dp.DecisionQuotientType, ∀ s : S, dp.quotientMap s = ψ (φ s) := by
+  rcases dp.quotient_is_coarsest φ hφ hSurj with ⟨ψ, hψ⟩
+  refine ⟨ψ, hψ, ?_⟩
+  intro ψ' hψ'
+  exact (dp.quotient_factorization_unique φ hSurj hψ hψ').symm
+
+/-- Canonical map from the quotient object to the range of `Opt`.
+In `Set`, this is the standard coimage-to-image comparison map. -/
+noncomputable def DecisionProblem.quotientToOptRange (dp : DecisionProblem A S) :
+    dp.DecisionQuotientType → ↥(Set.range dp.Opt) :=
+  Quotient.lift
+    (fun s => ⟨dp.Opt s, ⟨s, rfl⟩⟩)
+    (fun _ _ h => Subtype.ext h)
+
+/-- The canonical map from the quotient object to the range of `Opt` is
+surjective. -/
+theorem DecisionProblem.quotientToOptRange_surjective (dp : DecisionProblem A S) :
+    Function.Surjective dp.quotientToOptRange := by
+  intro y
+  rcases Set.mem_range.mp y.property with ⟨s, hs⟩
+  refine ⟨dp.quotientMap s, ?_⟩
+  apply Subtype.ext
+  simpa [DecisionProblem.quotientToOptRange] using hs
+
+/-- The canonical map from the quotient object to the range of `Opt` is
+injective. -/
+theorem DecisionProblem.quotientToOptRange_injective (dp : DecisionProblem A S) :
+    Function.Injective dp.quotientToOptRange := by
+  intro q₁ q₂
+  refine Quotient.inductionOn₂ q₁ q₂ ?_
+  intro s s' hEq
+  apply Quotient.sound
+  exact congrArg Subtype.val hEq
+
+/-- In `Set`, the decision quotient is canonically equivalent to the image/range
+of the optimizer map. This is the familiar coimage-image identification for the
+map `Opt : S → Set A`. -/
+noncomputable def DecisionProblem.quotientEquivOptRange (dp : DecisionProblem A S) :
+    dp.DecisionQuotientType ≃ ↥(Set.range dp.Opt) :=
+  Equiv.ofBijective dp.quotientToOptRange
+    ⟨dp.quotientToOptRange_injective, dp.quotientToOptRange_surjective⟩
+
+/-- On representatives, the quotient-to-range equivalence sends `s` to the
+value `Opt s` together with the obvious witness. -/
+theorem DecisionProblem.quotientEquivOptRange_apply_quotientMap
+    (dp : DecisionProblem A S) (s : S) :
+    dp.quotientEquivOptRange (dp.quotientMap s) = ⟨dp.Opt s, ⟨s, rfl⟩⟩ := rfl
+
+end DecisionQuotient

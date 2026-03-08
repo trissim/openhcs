@@ -1,103 +1,13 @@
-\section*{Mechanized Proofs (Lean 4)}\label{sec:lean}
+\section*{Mechanized Verification (Lean 4)}\label{sec:lean}
 
-Core theorem chains in this paper are machine-checked in Lean 4. The current build statistics are:
-\textbf{\LeanTotalLines\ lines across \LeanTotalFiles\ files, \LeanTotalTheorems\ theorem/lemma statements, \LeanTotalSorry\ \texttt{sorry} placeholders.}
+The main theorem chains are machine-checked in Lean 4.
 
-\subsection*{Mechanization Contract}
-
-Each theorem-level handle is typed as one of:
+The artifact covers four groups of claims used in the paper:
 \begin{itemize}
-\item \textbf{Full:} direct Lean theorem support.
-\item \textbf{Full (conditional classical):} Lean closure theorem parameterized by explicit information-theory assumptions.
-\item \textbf{Full (derived/model-level):} theorem-level closure by composition from mechanized cores in the stated model.
+\item the foundational threshold chain, including coherence, independent rate, the side-information lower bound, and the finite counting converse;
+\item the realizability chain, including derivation, the timing constraint, causal propagation, provenance observability, and the realizability iff theorem;
+\item the rate-complexity chain, including the $O(1)$ upper bound, the $\Omega(n)$ lower bound, and the unbounded-gap consequence;
+\item the finite entropy layer supporting the conditional-entropy, decoder-output, and KL-gap reformulations.
 \end{itemize}
 
-\paragraph{Classical-assumption handles (explicit in Lean).}
-\begin{itemize}
-\item \LH{ENT1} (entropy-side classical inequalities)
-\item \LH{CIA1} (Fano / side-information closure assumptions)
-\item \LH{CIA2}
-\item \LH{CIA3}
-\end{itemize}
-
-\subsection*{Complete Claim Coverage Matrix}
-
-\begingroup
-\scriptsize
-\paragraph{Foundations, capacity, and side-information chain.}
-\begin{itemize}
-\item \nolinkurl{thm:oracle-arbitrary}: Full -- \LH{ORA1}.
-\item \nolinkurl{thm:dof-one-coherence}: Full -- \LH{COH1}.
-\item \nolinkurl{thm:dof-gt-one-incoherence}: Full -- \LH{COH2}.
-\item \nolinkurl{cor:coherence-forces-ssot}: Full -- \LH{COH3}.
-\item \nolinkurl{thm:correctness-forcing}: Full -- \LH{BAS1}.
-\item \nolinkurl{thm:dof-inconsistency}: Full -- \LH{BAS2}.
-\item \nolinkurl{cor:dof-risk}: Full -- \LH{BAS3}.
-\item \nolinkurl{thm:dof-optimal}: Full -- \LH{INS1}, \LH{INS2}.
-\item \nolinkurl{thm:cap-encoding}: Full (conditional) -- \LH{CAP1}.
-\item \nolinkurl{thm:static-flp}: Full -- \LH{FLP1}.
-\item \nolinkurl{thm:redundancy-incoherence}: Full -- \LH{RED1}.
-\item \nolinkurl{thm:coherence-capacity}: Full -- \LH{COH3}.
-\item \nolinkurl{thm:capacity-achievability}: Full -- \LH{CAP2}.
-\item \nolinkurl{thm:capacity-converse}: Full -- \LH{CAP3}.
-\item \nolinkurl{cor:capacity-unique}: Full -- \LH{INS3}.
-\item \nolinkurl{cor:redundancy-above}: Full -- \LH{RED1}.
-\item \nolinkurl{thm:rate-incoherence-step}: Full -- \LH{RAT1}.
-\item \nolinkurl{thm:design-necessity}: Full -- \LH{DES1}.
-\item \nolinkurl{cor:architectural-forcing}: Full (conditional classical) -- \LH{INS4}, \LH{CIA2}.
-\item \nolinkurl{thm:incoherence-graph}: Full (derived/model-level) -- \LH{RED1}, \LH{RAT1}.
-\item \nolinkurl{thm:side-info}: Full (conditional classical) -- \LH{CIA2}.
-\item \nolinkurl{cor:dof1-zero-side}: Full -- \LH{SID1}.
-\item \nolinkurl{cor:side-info-redundancy}: Full -- \LH{SID2}.
-\item \nolinkurl{cor:multi-terminal}: Full (derived/model-level) -- \LH{RED1}, \LH{RAT1}.
-\item \nolinkurl{thm:fano-converse}: Full (conditional classical) -- \LH{CIA3}.
-\item \nolinkurl{lem:info-dof}: Full (conditional classical) -- \LH{CIA4}.
-\end{itemize}
-
-\paragraph{Derivation and realizability chain.}
-\begin{itemize}
-\item \nolinkurl{thm:derivation-lattice}: Full (model-level) -- \LH{DER1}.
-\item \nolinkurl{thm:dof-antimonotone}: Full (model-level) -- \LH{AXM1}, \LH{AXM2}.
-\item \nolinkurl{cor:minimal-dof1}: Full (model-level) -- \LH{AXM3}, \LH{AXM4}.
-\item \nolinkurl{thm:dof-complexity}: Full (model-level) -- \LH{CPL1}.
-\item \nolinkurl{thm:ssot-determinate}: Full -- \LH{COH1}.
-\item \nolinkurl{thm:ssot-optimal}: Full -- \LH{BND1}.
-\item \nolinkurl{thm:ssot-unique}: Full -- \LH{INS3}.
-\item \nolinkurl{cor:no-redundancy}: Full -- \LH{COH2}.
-\item \nolinkurl{thm:derivation-excludes}: Full -- \LH{DER2}.
-\item \nolinkurl{cor:metaprogramming}: Full (derived/model-level) -- \LH{DER2}, \LH{COH1}.
-\item \nolinkurl{lem:confusability-clique}: Full (conditional classical) -- \LH{CIA3}.
-\item \nolinkurl{thm:timing-forces}: Full -- \LH{REQ1}.
-\item \nolinkurl{thm:causal-necessary}: Full -- \LH{REQ2}.
-\item \nolinkurl{thm:provenance-necessary}: Full -- \LH{REQ3}.
-\item \nolinkurl{thm:independence}: Full -- \LH{IND1}, \LH{IND2}.
-\item \nolinkurl{thm:ssot-iff}: Full -- \LH{SOT1}.
-\item \nolinkurl{thm:generated-second}: Full -- \LH{GEN1}.
-\item \nolinkurl{cor:lang-realizability}: Full -- \LH{LNG1}.
-\end{itemize}
-
-\paragraph{Bounds, regimes, and optimization chain.}
-\begin{itemize}
-\item \nolinkurl{thm:upper-bound}: Full -- \LH{BND1}.
-\item \nolinkurl{thm:lower-bound}: Full -- \LH{BND2}.
-\item \nolinkurl{thm:unbounded-gap}: Full -- \LH{BND3}.
-\item \nolinkurl{cor:arbitrary-reduction}: Full -- \LH{BND4}.
-\item \nolinkurl{thm:operating-regimes}: Full -- \LH{REG1}.
-\item \nolinkurl{thm:pareto-optimal}: Full -- \LH{REG2}.
-\item \nolinkurl{cor:no-tradeoff}: Full -- \LH{REG3}.
-\item \nolinkurl{thm:amortized}: Full -- \LH{REG4}.
-\end{itemize}
-\endgroup
-
-\subsection*{Verification Instructions}
-
-\begin{enumerate}
-\item Lean-only verification (recommended):
-\texttt{cd docs/papers/paper2\_ssot/proofs \&\& lake build}
-\item Direct Lean build:
-\texttt{python3 scripts/build\_papers.py lean paper2\_it}
-\end{enumerate}
-
-\subsection*{Scope Note}
-
-Entries marked \textbf{Full (conditional classical)} are machine-checked closure theorems with explicit assumption parameters for standard information-theory statements.
+The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.

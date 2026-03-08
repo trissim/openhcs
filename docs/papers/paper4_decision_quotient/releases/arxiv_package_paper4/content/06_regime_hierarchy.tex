@@ -1,0 +1,34 @@
+\section{Regime Hierarchy}\label{sec:regime-hierarchy}
+
+The static, stochastic, and sequential formulations are not merely notational variants. They form a strict hierarchy under standard complexity assumptions.
+
+\subsection{Strict Inclusions}
+
+\begin{theorem}[Static $\subset$ Stochastic]\label{thm:static-stochastic-strict}
+Under standard assumptions (in particular $\Pclass\ne\coNP$), the stochastic regime strictly extends the static regime in computational complexity.
+\end{theorem}
+
+\begin{proof}
+Static sufficiency checking is coNP-complete (Theorem~\ref{thm:sufficiency-conp}), while stochastic sufficiency checking is PP-complete (Theorem~\ref{thm:stochastic-pp}). Under the stated assumptions, this yields strict separation in regime difficulty.
+\end{proof}
+
+\begin{theorem}[Stochastic $\subset$ Sequential]\label{thm:stochastic-sequential-strict}
+Under standard assumptions (in particular $\Pclass\ne\PP$), the sequential regime strictly extends the stochastic regime in computational complexity.
+\end{theorem}
+
+\begin{proof}
+Stochastic sufficiency is PP-complete (Theorem~\ref{thm:stochastic-pp}), while sequential sufficiency is PSPACE-complete (Theorem~\ref{thm:sequential-pspace}). The class gap yields strict regime inclusion under the stated assumptions.
+\end{proof}
+
+\subsection{Integrity-Resource Bounds}
+
+\begin{proposition}[Abstention Frontier Expands with Regime Complexity]\label{prop:abstention-frontier}
+For polynomial-time physical controllers constrained to exact certification, the set of instances requiring abstention expands along
+\[
+\text{static} \to \text{stochastic} \to \text{sequential}.
+\]
+\end{proposition}
+
+\begin{proof}
+As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes.
+\end{proof}

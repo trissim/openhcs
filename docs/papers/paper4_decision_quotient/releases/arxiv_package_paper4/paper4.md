@@ -1,6 +1,6 @@
-# Paper: Decision Quotient: Foundations and Complexity of Decision-Relevant Information
+# Paper: Decision Quotient: Complexity of Exact Relevance Certification
 
-**Status**: Computational Complexity-ready | **Lean**: 44497 lines, 1872 theorems
+**Status**: Computational Complexity-ready | **Lean**: 49744 lines, 2152 theorems
 
 ---
 
@@ -10,7 +10,7 @@ _Abstract not available._
 
 # Introduction {#sec:introduction}
 
-Which coordinates of a system's state determine the optimal action? For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$ This is the basic problem of decision-relevant information: how much of the state must remain visible in order to preserve the decision boundary.
+Which coordinates of a system's state can be safely discarded without changing the optimal action, and how hard is it to certify that claim exactly? For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$ This is the basic problem of exact relevance certification: how much of the state must remain visible in order to preserve the decision boundary, and what it takes to certify that the rest is irrelevant.
 
 The question is easy to state but not algorithmically benign. Evaluating $U(a,s)$ on a given state is one task; certifying that an entire family of coordinates may be ignored is another. The latter carries universal quantification over state pairs and leads naturally to coNP and $\Sigma_2^P$ phenomena. The optimizer quotient packages the same issue structurally: it is the coarsest abstraction of the state space that preserves optimal-action distinctions.
 
@@ -20,15 +20,17 @@ Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:e
 
 ## Contributions
 
-1.  **Shared foundations for coordinate sufficiency.** We formalize decision problems with coordinate structure, relevant-coordinate witnesses, exact relevance identification, and the optimizer quotient as the canonical decision-preserving abstraction.
+1.  **Shared setup for coordinate sufficiency.** We formalize decision problems with coordinate structure, relevant-coordinate witnesses, exact relevance identification, and the optimizer quotient as the canonical decision-preserving abstraction.
 
 2.  **Exact complexity classifications.** We prove that [Sufficiency-Check]{.smallcaps} is coNP-complete, [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete, and [Anchor-Sufficiency]{.smallcaps} is $\Sigma_2^P$-complete.
 
 3.  **Encoding-sensitive hardness and tractability.** We prove an explicit-state versus succinct dichotomy, derive ETH-conditioned lower bounds, and isolate natural tractable subcases under structural restrictions.
 
-4.  **Direct engineering corollaries.** We show that exact behavior-preserving minimization inherits the hardness of [Minimum-Sufficient-Set]{.smallcaps}, while conservative over-specification can be rational in the hard succinct regime under an explicit cost model.
+4.  **Reliability and approximation impossibility results.** We prove a witness-checking lower bound for exact empty-set certification, approximation-hardness results in which any uniform factor guarantee on the shifted hard family yields tautology detection by thresholding and an exact set-cover equivalence on a separate explicit gadget family yields approximation-ratio transfer, and an integrity-competence impossibility theorem showing that under $P\neq coNP$ no polynomial-budget solver is both integrity-preserving and fully competent on the hard exact regime.
 
-5.  **Machine-checked reductions and proof artifacts.** The main reductions and supporting lemmas are mechanized in Lean 4, yielding a reproducible proof artifact for the core complexity claims.
+5.  **Hardness transfers for exact simplification.** We show that exact behavior-preserving minimization inherits the hardness of [Minimum-Sufficient-Set]{.smallcaps}, while conservative over-specification can be rational in the hard succinct regime under an explicit cost model. The simplicity-tax and hardness-conservation section pins a chosen architecture against the canonical relevant-coordinate invariant and derives the resulting externalization and amortization consequences.
+
+6.  **Machine-checked reductions and proof artifacts.** The main reductions and supporting lemmas are mechanized in Lean 4, yielding a reproducible proof artifact for the core complexity claims.
 
 ## Why the Problem Is Different
 
@@ -36,16 +38,16 @@ The slogan of the paper is simple:
 
 > **Determining what you need to know can be harder than evaluating the full objective once everything is known.**
 
-The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. This difference drives the coNP classification and explains why relevance identification is not just another forward evaluation problem.
+The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. So the object-level task is forward evaluation on a fully specified state, while the meta-level task is universal verification over counterexample pairs. This difference drives the coNP classification and explains why relevance identification is not just another forward evaluation problem.
 
 ## Formalization Snapshot
 
 ::: center
   **Metric**          **Value**
   ----------------- -----------
-  Lines of Lean 4         44497
-  Theorems/lemmas          1872
-  Proof files               179
+  Lines of Lean 4         49744
+  Theorems/lemmas          2152
+  Proof files               189
   `sorry` count               0
 :::
 
@@ -53,7 +55,7 @@ The artifact builds with `lake build`. The purpose of the mechanization here is 
 
 ## Paper Structure
 
-Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} introduces the abstract foundations and the encoding contract. The hardness theorems are stated in Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}. Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"} gives the encoding-sensitive dichotomy and ETH chain, Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} records tractable subcases, and Section [\[sec:engineering-corollaries\]](#sec:engineering-corollaries){reference-type="ref" reference="sec:engineering-corollaries"} states the resulting engineering corollaries. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the work within formalized complexity theory and decision-theoretic relevance. Section [\[app:lean\]](#app:lean){reference-type="ref" reference="app:lean"} summarizes the Lean artifact.
+Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} introduces the abstract setup and the encoding contract. The hardness theorems are stated in Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}. Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"} gives the encoding-sensitive dichotomy and ETH chain, Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} records tractable subcases, Section [\[sec:engineering-corollaries\]](#sec:engineering-corollaries){reference-type="ref" reference="sec:engineering-corollaries"} gives hardness transfers and exact-simplification consequences, Section [\[sec:integrity-competence\]](#sec:integrity-competence){reference-type="ref" reference="sec:integrity-competence"} gives the integrity-competence impossibility theorem, Section [\[sec:witness-duality\]](#sec:witness-duality){reference-type="ref" reference="sec:witness-duality"} gives the witness and approximation consequences, and Section [\[sec:simplicity-tax\]](#sec:simplicity-tax){reference-type="ref" reference="sec:simplicity-tax"} gives the simplicity-tax and hardness-conservation consequences of omitted exact relevance. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the work within formalized complexity theory and decision-theoretic relevance. Section [\[app:lean\]](#app:lean){reference-type="ref" reference="app:lean"} summarizes the Lean artifact.
 
 ## Artifact Availability
 
@@ -66,7 +68,7 @@ The complete Lean 4 formalization is available at:
 The proofs build with the Lean toolchain specified in `lean-toolchain`.
 
 
-# Formal Foundations {#sec:foundations}
+# Formal Setup {#sec:formal-setup}
 
 This section fixes the abstract, non-physical vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results.
 
@@ -139,6 +141,10 @@ This section fixes the abstract, non-physical vocabulary used throughout the pap
 []{#def:exact-identifiability label="def:exact-identifiability"} For a decision problem $\mathcal{D}$ and candidate set $I$, we say that $I$ is *exactly relevance-identifying* if $$\forall i \in \{1,\ldots,n\}:\quad i \in I \iff i \text{ is relevant for } \mathcal{D}.$$
 :::
 
+::: definition
+[]{#def:srank label="def:srank"} The *structural rank* of a decision problem is the number of relevant coordinates: $$\mathrm{srank}(\mathcal{D}) := \left|\{i \in \{1,\ldots,n\}: i \text{ is relevant}\}\right|.$$
+:::
+
 ## Optimizer Quotient
 
 ::: definition
@@ -147,6 +153,14 @@ This section fixes the abstract, non-physical vocabulary used throughout the pap
 
 ::: definition
 []{#def:decision-quotient label="def:decision-quotient"} The *decision quotient* (equivalently, optimizer quotient) of $\mathcal{D}$ is the quotient object $$Q_{\mathcal{D}} := S / {\sim_{\operatorname{Opt}}}.$$ Its equivalence classes are exactly the maximal subsets of states on which the optimal-action set is constant.
+:::
+
+::: proposition
+[]{#prop:optimizer-coimage label="prop:optimizer-coimage"} The decision quotient $Q_{\mathcal{D}}$ is canonically in bijection with $\operatorname{range}(\operatorname{Opt})$. Equivalently, in **Set**, it is the coimage/image factorization of the optimizer map.
+:::
+
+::: proof
+*Proof.* Two states are identified by $\sim_{\operatorname{Opt}}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\operatorname{Opt}$. ◻
 :::
 
 ::: proposition
@@ -186,205 +200,7 @@ The solver is given oracle access to $\operatorname{Opt}(s)$ or to the utility v
 :::
 
 
-# Computational Complexity of Decision-Relevant Uncertainty {#sec:hardness}
-
-This section establishes the computational complexity of determining which state coordinates are decision-relevant, under the succinct encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. We prove three main results:
-
-1.  **SUFFICIENCY-CHECK** is coNP-complete
-
-2.  **MINIMUM-SUFFICIENT-SET** is coNP-complete (the $\Sigma_2^P$ structure collapses)
-
-3.  **ANCHOR-SUFFICIENCY** (fixed coordinates) is $\Sigma_2^P$-complete
-
-These results sit beyond NP-completeness and explain why engineers default to over-modeling: finding the minimal set of decision-relevant factors is computationally intractable.
-
-## Problem Definitions
-
-::: definition
-A *decision problem instance* is a tuple $(A, n, U)$ where:
-
--   $A$ is a finite set of alternatives
-
--   $n$ is the number of state coordinates, with state space $S = \{0,1\}^n$
-
--   $U: A \times S \to \mathbb{Q}$ is the utility function, given as a Boolean circuit
-:::
-
-::: definition
-For state $s \in S$, define: $$\text{Opt}(s) := \arg\max_{a \in A} U(a, s)$$
-:::
-
-::: definition
-A coordinate set $I \subseteq \{1, \ldots, n\}$ is *sufficient* if: $$\forall s, s' \in S: \quad s_I = s'_I \implies \text{Opt}(s) = \text{Opt}(s')$$ where $s_I$ denotes the projection of $s$ onto coordinates in $I$.
-:::
-
-::: problem
-**Input:** Decision problem $(A, n, U)$ and coordinate set $I \subseteq \{1,\ldots,n\}$\
-**Question:** Is $I$ sufficient?
-:::
-
-::: problem
-**Input:** Decision problem $(A, n, U)$ and integer $k$\
-**Question:** Does there exist a sufficient set $I$ with $|I| \leq k$?
-:::
-
-## Hardness of SUFFICIENCY-CHECK
-
-::: theorem
-[]{#thm:sufficiency-conp label="thm:sufficiency-conp"} SUFFICIENCY-CHECK is coNP-complete [@cook1971complexity; @karp1972reducibility]. *(Machine-verified in Lean 4; see `Hardness/CoNPComplete.lean`.)*
-:::
-
-::: center
-  Source                 Target                   Key property preserved
-  ---------------------- ------------------------ --------------------------------------
-  TAUTOLOGY              SUFFICIENCY-CHECK        Tautology iff $\emptyset$ sufficient
-  $\exists\forall$-SAT   ANCHOR-SUFFICIENCY       Witness anchors iff formula true
-  SET-COVER              MINIMUM-SUFFICIENT-SET   Set size maps to coordinate size
-:::
-
-::: proof
-*Proof.* **Membership in coNP:** The complementary problem INSUFFICIENCY is in NP. Given $(A, n, U, I)$, a witness for insufficiency is a pair $(s, s')$ such that:
-
-1.  $s_I = s'_I$ (verifiable in polynomial time)
-
-2.  $\text{Opt}(s) \neq \text{Opt}(s')$ (verifiable by evaluating $U$ on all alternatives)
-
-**coNP-hardness:** We reduce from TAUTOLOGY.
-
-Given Boolean formula $\varphi(x_1, \ldots, x_n)$, construct a decision problem with:
-
--   Alternatives: $A = \{\text{accept}, \text{reject}\}$
-
--   State space: $S = \{\text{reference}\} \cup \{0,1\}^n$
-
--   Utility: $$\begin{aligned}
-            U(\text{accept}, \text{reference}) &= 1 \\
-            U(\text{reject}, \text{reference}) &= 0 \\
-            U(\text{accept}, a) &= \varphi(a) \\
-            U(\text{reject}, a) &= 0 \quad \text{for assignments } a \in \{0,1\}^n
-        
-    \end{aligned}$$
-
--   Query set: $I = \emptyset$
-
-**Claim:** $I = \emptyset$ is sufficient $\iff$ $\varphi$ is a tautology.
-
-($\Rightarrow$) Suppose $I$ is sufficient. Then $\text{Opt}(s)$ is constant over all states. Since $U(\text{accept}, a) = \varphi(a)$ and $U(\text{reject}, a) = 0$:
-
--   $\text{Opt}(a) = \text{accept}$ when $\varphi(a) = 1$
-
--   $\text{Opt}(a) = \{\text{accept}, \text{reject}\}$ when $\varphi(a) = 0$
-
-For $\text{Opt}$ to be constant, $\varphi(a)$ must be true for all assignments $a$; hence $\varphi$ is a tautology.
-
-($\Leftarrow$) If $\varphi$ is a tautology, then $U(\text{accept}, a) = 1 > 0 = U(\text{reject}, a)$ for all assignments $a$. Thus $\text{Opt}(s) = \{\text{accept}\}$ for all states $s$, making $I = \emptyset$ sufficient. ◻
-:::
-
-## Complexity of MINIMUM-SUFFICIENT-SET
-
-::: theorem
-[]{#thm:minsuff-conp label="thm:minsuff-conp"} MINIMUM-SUFFICIENT-SET is coNP-complete. *(Machine-verified.)*
-:::
-
-::: proof
-*Proof.* **Structural observation:** The $\exists\forall$ quantifier pattern suggests $\Sigma_2^P$: $$\exists I \, (|I| \leq k) \; \forall s, s' \in S: \quad s_I = s'_I \implies \text{Opt}(s) = \text{Opt}(s')$$ However, this collapses because sufficiency has a simple characterization.
-
-**Key lemma:** A coordinate set $I$ is sufficient if and only if $I$ contains all relevant coordinates (proven formally as `sufficient_contains_relevant` in Lean): $$\text{sufficient}(I) \iff \text{Relevant} \subseteq I$$ where $\text{Relevant} = \{i : \exists s, s'.\; s \text{ differs from } s' \text{ only at } i \text{ and } \text{Opt}(s) \neq \text{Opt}(s')\}$.
-
-**Consequence:** The minimum sufficient set is exactly the set of relevant coordinates. Thus MINIMUM-SUFFICIENT-SET asks: "Is the number of relevant coordinates at most $k$?"
-
-**coNP membership:** A witness that the answer is NO is a set of $k+1$ coordinates, each proven relevant (by exhibiting $s, s'$ pairs). Verification is polynomial.
-
-**coNP-hardness:** The $k=0$ case asks whether no coordinates are relevant, i.e., whether $\emptyset$ is sufficient. This is exactly SUFFICIENCY-CHECK, which is coNP-complete by Theorem [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"}. ◻
-:::
-
-## Anchor Sufficiency (Fixed Coordinates)
-
-We also formalize a strengthened variant that fixes the coordinate set and asks whether there exists an *assignment* to those coordinates that makes the optimal action constant on the induced subcube.
-
-::: problem
-**Input:** Decision problem $(A, n, U)$ and fixed coordinate set $I \subseteq \{1,\ldots,n\}$\
-**Question:** Does there exist an assignment $\alpha$ to $I$ such that $\text{Opt}(s)$ is constant for all states $s$ with $s_I = \alpha$?
-:::
-
-::: theorem
-[]{#thm:anchor-sigma2p label="thm:anchor-sigma2p"} ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete [@stockmeyer1976polynomial] (already for Boolean coordinate spaces). *(Machine-verified.)*
-:::
-
-::: proof
-*Proof.* **Membership in $\Sigma_2^P$:** The problem has the form $$\exists \alpha \;\forall s \in S: \; (s_I = \alpha) \implies \text{Opt}(s) = \text{Opt}(s_\alpha),$$ which is an $\exists\forall$ pattern.
-
-**$\Sigma_2^P$-hardness:** Reduce from $\exists\forall$-SAT. Given $\exists x \, \forall y \, \varphi(x,y)$ with $x \in \{0,1\}^k$ and $y \in \{0,1\}^m$, if $m=0$ we first pad with a dummy universal variable (satisfiability is preserved), construct a decision problem with:
-
--   Actions $A = \{\text{YES}, \text{NO}\}$
-
--   State space $S = \{0,1\}^{k+m}$ representing $(x,y)$
-
--   Utility $$U(\text{YES}, (x,y)) =
-          \begin{cases}
-            2 & \text{if } \varphi(x,y)=1 \\
-            0 & \text{otherwise}
-          \end{cases}
-        \quad
-        U(\text{NO}, (x,y)) =
-          \begin{cases}
-            1 & \text{if } y = 0^m \\
-            0 & \text{otherwise}
-          \end{cases}$$
-
--   Fixed coordinate set $I$ = the $x$-coordinates.
-
-If $\exists x^\star \, \forall y \, \varphi(x^\star,y)=1$, then for any $y$ we have $U(\text{YES})=2$ and $U(\text{NO})\le 1$, so $\text{Opt}(x^\star,y)=\{\text{YES}\}$ is constant. Conversely, if $\varphi(x,y)$ is false for some $y$, then either $y=0^m$ (where NO is optimal) or $y\neq 0^m$ (where YES and NO tie), so the optimal set varies across $y$ and the subcube is not constant. Thus an anchor assignment exists iff the $\exists\forall$-SAT instance is true. ◻
-:::
-
-## Tractable Subcases
-
-Despite the general hardness, several natural subcases admit efficient algorithms:
-
-::: proposition
-When $|S|$ is polynomial in the input size (i.e., explicitly enumerable), MINIMUM-SUFFICIENT-SET is solvable in polynomial time.
-:::
-
-::: proof
-*Proof.* Compute $\text{Opt}(s)$ for all $s \in S$. The minimum sufficient set is exactly the set of coordinates that "matter" for the resulting function, computable by standard techniques. ◻
-:::
-
-::: proposition
-When $U(a, s) = w_a \cdot s$ for weight vectors $w_a \in \mathbb{Q}^n$, MINIMUM-SUFFICIENT-SET reduces to identifying coordinates where weight vectors differ.
-:::
-
-## Implications
-
-::: corollary
-Finding the minimal set of decision-relevant factors is coNP-complete. Even *verifying* that a proposed set is sufficient is coNP-complete.
-
-This formally explains the engineering phenomenon:
-
-1.  It's computationally easier to model everything than to find the minimum
-
-2.  "Which unknowns matter?" is a hard question, not a lazy one to avoid
-
-3.  Bounded scenario analysis (small $\hat{S}$) makes the problem tractable
-:::
-
-This connects to the pentalogy's leverage framework: the "epistemic budget" for deciding what to model is itself a computationally constrained resource.
-
-## Remark: The Collapse to coNP
-
-Early analysis of MINIMUM-SUFFICIENT-SET focused on the apparent $\exists\forall$ quantifier structure, which suggested a $\Sigma_2^P$-complete result. We initially explored certificate-size lower bounds for the complement, attempting to show MINIMUM-SUFFICIENT-SET was unlikely to be in coNP.
-
-However, the key insight---formalized as `sufficient_contains_relevant`---is that sufficiency has a simple characterization: a set is sufficient iff it contains all relevant coordinates. This collapses the $\exists\forall$ structure because:
-
--   The minimum sufficient set is *exactly* the relevant coordinate set
-
--   Checking relevance is in coNP (witness: two states differing only at that coordinate with different optimal sets)
-
--   Counting relevant coordinates is also in coNP
-
-This collapse explains why ANCHOR-SUFFICIENCY retains its $\Sigma_2^P$-completeness: fixing coordinates and asking for an assignment that works is a genuinely different question. The "for all suffixes" quantifier cannot be collapsed when the anchor assignment is part of the existential choice.
-
-
-# Complexity Dichotomy {#sec:dichotomy}
+# Encoding Dichotomy and ETH Lower Bounds {#sec:dichotomy}
 
 The hardness results of Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} apply to worst-case instances under the succinct encoding. This section states a dichotomy that separates an explicit-state upper bound from a succinct-encoding lower bound. The dichotomy and ETH reduction chain are machine-verified in Lean 4.
 
@@ -474,7 +290,7 @@ This dichotomy explains why some domains admit tractable model selection (few re
 
 #### Bridge theorems.
 
-The ETH chain composes with structural rank characterizations to yield the complete complexity picture. Specifically: BR1 combines ETH hardness with structural rank to show that problems with maximal srank (all coordinates relevant) inherit the exponential lower bound; DQ1 composes the dichotomy theorem with ETH to give the full classification; DQ5 combines the TAUTOLOGY reduction with ETH to establish coNP-completeness plus exponential hardness. These bridge theorems connect the complexity cluster (ETH, reductions) to the geometric cluster (srank, sufficiency) in the proof graph.
+The ETH chain composes with structural rank characterizations to yield the complete complexity picture. Specifically: BR1 combines ETH hardness with structural rank to show that problems with maximal srank (all coordinates relevant) inherit the exponential lower bound; CC1 composes the dichotomy theorem with ETH to give the full classification; DQ5 combines the TAUTOLOGY reduction with ETH to establish coNP-completeness plus exponential hardness. These bridge theorems connect the complexity cluster (ETH, reductions) to the geometric cluster (srank, sufficiency) in the proof graph.
 
 ::: remark
 The ETH lower bound is stated in the succinct circuit encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, where the utility function $U: A \times S \to \mathbb{R}$ is represented by a Boolean circuit computing $\mathbf{1}[U(a,s) > \theta]$ for threshold comparisons. In this model:
@@ -722,7 +538,7 @@ For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with *differ
 ::: proof
 *Proof.* An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$.
 
-For fixed $k$, this is $O(d^{k-1})$ --- polynomial in $d$. ◻
+For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$. ◻
 :::
 
 **Lean formalization:** `DecisionQuotient/Tractability/Dimensional.lean`
@@ -782,13 +598,13 @@ This separation ensures that:
 The philosophy: *mechanize what requires mechanical verification for rational belief; cite what is standard*.
 
 
-# Engineering Corollaries {#sec:engineering-corollaries}
+# Hardness Transfers and Exact-Simplification Consequences {#sec:engineering-corollaries}
 
-The complexity results of Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}--[\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} have direct engineering corollaries. This section records consequences of the preceding hardness and tractability theorems when the coordinate model is used to represent configuration, feature, or interface choices.
+The complexity results of Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} through [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} transfer directly to exact simplification tasks. This section records hardness transfers and exact-simplification consequences of the preceding theorems when the coordinate model is used to represent configuration, feature, or interface choices.
 
 Every claim in this section is model-conditional. The conclusions apply when a design problem is faithfully represented as a decision problem with coordinate structure and when the relevant computational cost is the cost of certifying sufficiency or finding a minimal sufficient set.
 
-## Configuration Simplification as Sufficiency Checking
+## Hardness Transfer to Configuration Simplification
 
 ::: proposition
 []{#prop:config-sufficiency label="prop:config-sufficiency"} Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite set of observable behaviors. Suppose each configuration state determines the subset of behaviors that remain feasible or optimal. Then the question $$\text{``Does parameter subset } I \subseteq P \text{ preserve all decision-relevant behavior?''}$$ is an instance of [Sufficiency-Check]{.smallcaps}.
@@ -798,7 +614,7 @@ Every claim in this section is model-conditional. The conclusions apply when a d
 *Proof.* Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking actions $A=B$, coordinate domains $X_i$ equal to the domains of the parameters $p_i$, and defining $U(b,s)=1$ exactly when behavior $b$ is realized or admissible under configuration state $s$. Then $\operatorname{Opt}(s)$ is the behavior set induced by $s$, and coordinate subset $I$ is sufficient exactly when agreement on the parameters in $I$ forces agreement on the induced optimal-behavior set. ◻
 :::
 
-## Limits of Exact Minimization
+## Exact-Minimization Impossibility
 
 ::: corollary
 []{#cor:no-general-minimizer label="cor:no-general-minimizer"} Assuming $P\neq coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
@@ -812,7 +628,7 @@ Every claim in this section is model-conditional. The conclusions apply when a d
 This does not rule out useful tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. Domain restrictions of the kind isolated in Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} remain viable.
 :::
 
-## Why Over-Specification Can Be Rational
+## Over-Specification Under Hardness
 
 ::: proposition
 []{#prop:rational-overspecification label="prop:rational-overspecification"} Consider a design process in which:
@@ -834,11 +650,11 @@ Then, for sufficiently expressive succinctly encoded instances, retaining extra 
 The conclusion is not that over-specification is always best. It is that, in the absence of tractable structure, exact minimality need not be a computationally reasonable target.
 :::
 
-## Heuristics and Structural Restrictions
+## Tractability Boundary for Simplification
 
 The tractable regimes of Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} explain when exact simplification is computationally realistic. When bounded action sets, separable utility, low tensor rank, tree structure, bounded treewidth, or coordinate symmetry are present, exact certification becomes feasible. Outside such regimes, approximate selection, conservative over-inclusion, and domain-specific simplification strategies are often better aligned with the complexity landscape than unconditional demands for exact minimality.
 
-## Competence by Regime
+## Exact-Certification Competence by Regime
 
 ::: proposition
 []{#prop:competence-by-regime label="prop:competence-by-regime"} Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} and [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"}. In the structured regimes of Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"}, exact certification becomes available in polynomial time.
@@ -850,6 +666,211 @@ The tractable regimes of Section [\[sec:tractable\]](#sec:tractable){reference-
 
 ::: remark
 This is the only competence distinction needed in Paper A: not a general theory of reporting or abstention, but a theorem-driven separation between regimes in which exact certification is computationally available and regimes in which it is not.
+:::
+
+
+# Integrity-Competence Impossibility {#sec:integrity-competence}
+
+This section gives an impossibility theorem for reliable exact certification under polynomial budgets in the hard regime.
+
+::: definition
+For exact sufficiency on a declared regime $\Gamma$, a certifying solver is a pair $(Q,V)$ where:
+
+-   $Q$ maps each instance to either $\mathsf{ABSTAIN}$ or a candidate verdict with witness,
+
+-   $V$ verifies witnesses in polynomial time (in the declared encoding length).
+:::
+
+::: definition
+A certifying solver is *integrity-preserving* if every non-abstaining output is accepted by $V$, and every accepted output is correct for the declared exact relation.
+:::
+
+::: definition
+A certifying solver is *competent* on $\Gamma$ if it is integrity-preserving, non-abstaining on all in-scope instances, and polynomial-budget compliant on all in-scope instances.
+:::
+
+::: definition
+An *exact reliability claim* on $\Gamma$ is the conjunction of universal non-abstaining coverage, correctness, and polynomial-budget compliance for exact sufficiency.
+:::
+
+::: proposition
+Integrity and competence are distinct: integrity constrains what can be asserted, while competence adds full coverage under resource bounds.
+:::
+
+::: proof
+*Proof.* The always-abstain solver is integrity-preserving (it makes no uncertified assertion) but fails competence whenever the in-scope set is non-empty. ◻
+:::
+
+::: theorem
+Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $P\neq coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
+:::
+
+::: proof
+*Proof.* Assume such a solver $(Q,V)$ exists. We build a polynomial-time decider for exact sufficiency on $\Gamma$.
+
+Given an input instance $x\in \Gamma$, run $Q(x)$. Competence implies that $Q$ never abstains on in-scope instances and always halts within polynomial budget. Let $y$ be the returned verdict with witness. Now run the polynomial-time verifier $V(x,y)$.
+
+Integrity implies two things: every non-abstaining output produced by $Q$ is accepted by $V$, and every accepted output is correct for the declared exact-sufficiency relation. Therefore the combined procedure returns the correct exact verdict on every instance in $\Gamma$ and runs in polynomial time.
+
+This yields a polynomial-time algorithm for a coNP-complete problem on $\Gamma$, hence coNP $\subseteq$ P. Under $P\neq coNP$, this is impossible. Therefore no solver is simultaneously integrity-preserving and competent on $\Gamma$. ◻
+:::
+
+::: corollary
+Under the assumptions of the theorem, exact reliability claims are impossible on the full hard regime.
+:::
+
+::: corollary
+In the hard regime, a solver cannot simultaneously maintain integrity, full exact coverage, and polynomial budgets. Operationally: abstain, weaken guarantees, or overclaim.
+:::
+
+
+# Witness-Checking and Approximation Consequences {#sec:witness-duality}
+
+This section isolates the verification bottleneck behind exact sufficiency certification and states the approximation-hardness consequences. Two different theorems are needed. The first is a gap theorem on the shifted hard family: it shows that any uniform factor guarantee on that explicit family already has enough power to decide tautology by thresholding output size. The second is an exact equivalence theorem on a separate set-cover gadget family: it shows that minimum sufficiency and set cover coincide there, so approximation guarantees and impossibility results transfer without loss. Keeping these apart matters. The gap theorem gives an internal obstruction family. The set-cover theorem gives the exact transfer bridge.
+
+## Verification Lower Bound
+
+::: theorem
+[]{#thm:witness-lower-bound-4 label="thm:witness-lower-bound-4"} For Boolean decision problems with $n$ coordinates, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
+:::
+
+::: proof
+*Proof.* Let $S=\{0,1\}^n$. Empty-set sufficiency is exactly the claim that $\operatorname{Opt}$ is constant on all states.
+
+Partition $S$ into $2^{n-1}$ disjoint witness slots $$\{(0,z),(1,z)\}\quad\text{for }z\in\{0,1\}^{n-1}.$$ Each slot can independently carry a disagreement witness (different optimizer values on its two states).
+
+Consider two instance families:
+
+-   *YES instance*: $\operatorname{Opt}$ constant on all of $S$.
+
+-   *NO$_z$ instance*: identical to YES except slot $z$ has a disagreement.
+
+If a checker inspects fewer than $2^{n-1}$ slots, at least one slot $z^\star$ is uninspected. On all inspected slots, the YES instance and the tailored NO$_{z^\star}$ instance are identical. The checker therefore sees exactly the same transcript on these two inputs and must return the same answer on both.
+
+But YES is an empty-set-sufficient instance, whereas NO$_{z^\star}$ is not. So a common answer cannot be sound on both inputs. Hence any sound worst-case checker must inspect every slot, i.e., at least $2^{n-1}$ witness pairs. ◻
+:::
+
+## Approximation Gap on the Shifted Hard Family
+
+For the shifted reduction family used in the mechanization, the optimum support size exhibits a sharp gap: $$\mathrm{OPT}(\varphi)=1 \quad \text{if $\varphi$ is a tautology,}
+\qquad
+\mathrm{OPT}(\varphi)=n+1 \quad \text{if $\varphi$ is not.}$$ One coordinate acts as a gate: toggling it changes the optimizer even before the formula variables are considered, so optimum size is never $0$. If $\varphi$ is a tautology, every branch behind that gate behaves identically, so all non-gate coordinates become irrelevant and the singleton gate coordinate is sufficient. If $\varphi$ is not a tautology, choose a falsifying assignment $a$. For each formula coordinate $i$, compare the open reference state with the state that inserts $a$ at coordinate $i$: these states agree on all other coordinates but induce different optimal-action sets, so coordinate $i$ is relevant. Together with gate relevance, this forces every coordinate to be present in every sufficient set. That is what creates the exact $1$ versus $n+1$ gap.
+
+::: theorem
+Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any solver that, on every shifted-family instance, returns a sufficient set whose cardinality is within factor $\rho$ of optimum. Then for every formula on $n$ coordinates with $\rho<n+1$, $$\varphi \text{ is a tautology}
+\quad\Longleftrightarrow\quad
+|\mathcal{A}(\varphi)|\le \rho.$$
+:::
+
+::: proof
+*Proof.* **Tautology $\Rightarrow$ threshold passes.** If $\varphi$ is a tautology, the optimum support size on the shifted family is $1$, realized by the singleton gate coordinate. A factor-$\rho$ solver therefore returns a sufficient set of size at most $\rho\cdot 1=\rho$, so $|\mathcal{A}(\varphi)|\le \rho$.
+
+**Threshold passes $\Rightarrow$ tautology.** Assume $|\mathcal{A}(\varphi)|\le \rho$ with $\rho<n+1$. If $\varphi$ were not a tautology, then every coordinate would be necessary on the shifted family, so every sufficient set would have size exactly $n+1$. Since $\mathcal{A}(\varphi)$ is sufficient by assumption on $\mathcal{A}$, this would force $|\mathcal{A}(\varphi)|=n+1>\rho$, contradiction.
+
+Therefore $|\mathcal{A}(\varphi)|\le \rho$ holds exactly in the tautology case. ◻
+:::
+
+## Counted-Runtime Threshold Decider
+
+::: theorem
+Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor-$\rho$ solver for the shifted minimum-sufficient-set family. Then the derived procedure $$\varphi \longmapsto \mathbf{1}\!\left\{\,|\mathcal{A}(\varphi)|\le \rho\,\right\}$$ is a counted polynomial-time tautology decider on the gap regime $\rho<n+1$.
+:::
+
+::: proof
+*Proof.* Correctness is exactly the gap-threshold theorem above: on the regime $\rho<n+1$, the predicate $|\mathcal{A}(\varphi)|\le \rho$ is equivalent to tautology.
+
+For runtime, the derived decider performs two operations: one call to the counted polynomial-time solver $\mathcal{A}$, followed by one cardinality comparison against the fixed threshold $\rho$. The second step contributes only constant additive overhead relative to the solver run. Hence the derived decision procedure remains counted polynomial-time. ◻
+:::
+
+## Set-Cover Transfer Boundary
+
+::: theorem
+On the mechanized gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
+:::
+
+::: proof
+*Proof.* The gadget is constructed so that each universe element $u$ gives two states, $(\mathsf{false},u)$ and $(\mathsf{true},u)$, with different optimal-action sets. A coordinate $i$ distinguishes this pair exactly when the corresponding set covers $u$.
+
+**If $I$ is not a cover**, choose an uncovered universe element $u$. Then every coordinate in $I$ takes the same value on $(\mathsf{false},u)$ and $(\mathsf{true},u)$, but their optimal-action sets differ. So $I$ is not sufficient.
+
+**If $I$ is a cover**, then for every universe element there exists some coordinate in $I$ that separates the two tagged states attached to that element. Hence two states that agree on all coordinates in $I$ cannot disagree in the tag component in a way that changes the optimizer. The optimizer therefore factors through the $I$-projection, so $I$ is sufficient.
+
+This yields an exact bijection between feasible sufficient sets and feasible covers, preserving cardinality. Therefore optimum values coincide on the gadget family. ◻
+:::
+
+::: corollary
+Any factor guarantee or instance-dependent ratio guarantee for minimum sufficiency on the gadget family induces the same guarantee for set cover on that family. Consequently, any impossibility result proved for set cover on that family transfers immediately to minimum sufficiency.
+:::
+
+::: proof
+*Proof.* Compose the candidate minimum-sufficiency solver with the gadget translation and then use the exact equivalence theorem above. Because feasible sets correspond bijectively and preserve cardinality, both approximation factors and instance-dependent ratios are unchanged. ◻
+:::
+
+The point is therefore two exact reductions with different roles. The shifted family gives a direct gap obstruction: factor approximation already decides tautology there. The set-cover family gives an exact optimization equivalence: sufficiency is cover there. That is why future logarithmic inapproximability theorems for set cover can be imported cleanly once they are available. The current boundary is only that the external set-cover hardness theorem itself is not yet part of this library.
+
+
+# Simplicity Tax and Hardness Conservation {#sec:simplicity-tax}
+
+This section formalizes the cost of ignoring decision-relevant coordinates. The core object is not an arbitrary partition chosen by the analyst, but the canonical exact-support invariant $R(\mathcal{D})$ identified earlier in the paper. By Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"}, every exact behavior-preserving representation must account for that same set. The point of the present section is to make one consequence explicit: choosing a smaller architectural interface $A_M$ does not destroy omitted exact relevance. It only changes where that relevance must be paid for.
+
+::: definition
+For decision problem $\mathcal{D}$, let $$R(\mathcal{D}) := \{i \in \{1,\ldots,n\}: i \text{ is relevant}\}$$ as in Definition [\[def:relevant\]](#def:relevant){reference-type="ref" reference="def:relevant"}.
+:::
+
+::: definition
+For a model $M$ with native coordinate set $A_M \subseteq \{1,\ldots,n\}$: $$\mathrm{intrinsicDOF}(\mathcal{D}) := |R(\mathcal{D})|,
+\qquad
+\mathrm{centralDOF}(M,\mathcal{D}) := |R(\mathcal{D}) \cap A_M|.$$
+:::
+
+::: definition
+$$\mathrm{simplicityTax}(M,\mathcal{D}) := |R(\mathcal{D}) \setminus A_M|.$$
+:::
+
+::: theorem
+For every finite-coordinate pair $(M,\mathcal{D})$: $$\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
+=
+\mathrm{intrinsicDOF}(\mathcal{D}),$$ hence in particular $$\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
+\ge
+\mathrm{intrinsicDOF}(\mathcal{D}).$$
+:::
+
+::: proof
+*Proof.* Partition $R(\mathcal{D})$ into handled and unhandled parts: $$R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M)\ \dot\cup\ (R(\mathcal{D}) \setminus A_M),$$ where the union is disjoint by construction. Taking cardinalities gives $$|R(\mathcal{D})|
+=
+|R(\mathcal{D}) \cap A_M|
++
+|R(\mathcal{D}) \setminus A_M|.$$ Substituting the three definitions yields $$\mathrm{intrinsicDOF}(\mathcal{D})
+=
+\mathrm{centralDOF}(M,\mathcal{D})
++
+\mathrm{simplicityTax}(M,\mathcal{D}),$$ which is the claimed equality. The displayed inequality is then immediate. ◻
+:::
+
+::: proposition
+If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ decision sites: $$\mathrm{ExternalWork}(N) = N \cdot \mathrm{simplicityTax}(M,\mathcal{D}).$$
+:::
+
+::: theorem
+Let $H_{\mathrm{central}}>0$ be one-time centralization cost and $\lambda>0$ the per-site cost coefficient. If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, then for $$N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})},$$ the complete model is cheaper than repeated external handling: $$H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).$$
+:::
+
+::: proof
+*Proof.* Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. The complete model is cheaper exactly when $$H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).$$ Because $\lambda>0$ and $\mathrm{simplicityTax}(M,\mathcal{D})>0$, dividing both sides by their product gives $$N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})}.$$ This is precisely the stated threshold. ◻
+:::
+
+::: corollary
+Fix a model $M$ and decision problem $\mathcal{D}$. Coordinates in $R(\mathcal{D})\setminus A_M$ are still decision-relevant for exact behavior preservation. Hence any exact deployment must handle them somewhere: by enlarging the central model, by performing local resolution, by demanding extra queries, or by abstaining on some cases. In the hard exact regime, Theorem [\[thm:witness-lower-bound-4\]](#thm:witness-lower-bound-4){reference-type="ref" reference="thm:witness-lower-bound-4"} and Theorem [\[thm:integrity-resource\]](#thm:integrity-resource){reference-type="ref" reference="thm:integrity-resource"} imply that this burden cannot be discharged for free by a polynomial-budget exact certifier.
+:::
+
+::: proof
+*Proof.* Take any coordinate $i\in R(\mathcal{D})\setminus A_M$. Because $i$ is relevant, there exist witness states whose optimal-action sets differ in a way that cannot be ignored in any exact representation. If a deployment neither models $i$ centrally nor resolves its effect elsewhere, then its exact behavior would factor through the smaller interface $A_M$, making every coordinate outside $A_M$ irrelevant. That contradicts $i\in R(\mathcal{D})$.
+
+So omitted relevant coordinates must be handled somewhere outside the central interface. In the hard exact regime, the witness lower bound shows that exact certification can require exponentially many witness checks, and the integrity-resource theorem shows that polynomial-budget exact competence is unavailable under $P\neq coNP$. Therefore this external burden cannot, in general, be eliminated for free by a polynomial-budget exact certifier. ◻
+:::
+
+::: corollary
+If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, externalized cost is unbounded in deployment scale $N$.
 :::
 
 
@@ -873,11 +894,11 @@ Mathlib's computability library [@mathlib2020] provides primitive recursive fun
 
 #### The verification gap.
 
-Published complexity proofs occasionally contain errors [@lipton2009np]. Machine verification eliminates this uncertainty. Our contribution demonstrates that complexity reductions are amenable to formalization with reasonable effort (44497 lines for the full reduction suite).
+Published complexity proofs occasionally contain errors [@lipton2009np]. Machine verification eliminates this uncertainty. Our contribution demonstrates that complexity reductions are amenable to formalization with reasonable effort (49744 lines for the full reduction suite).
 
 ## Computational Decision Theory
 
-The complexity of decision-making has been studied extensively. Papadimitriou [@papadimitriou1994complexity] established foundational results on the complexity of game-theoretic solution concepts. Our work extends this to the meta-question of identifying relevant information. For a modern treatment of complexity classes, see Arora and Barak [@arora2009computational].
+The complexity of decision-making has been studied extensively. Papadimitriou [@papadimitriou1994complexity] established core results on the complexity of game-theoretic solution concepts. Work on succinctly represented MDP/POMDP settings shows sharp complexity escalation in stochastic and sequential models [@papadimitriou1987mdp; @mundhenk2000mdp]. Our regime results align with that pattern, but focus on a different predicate: coordinate sufficiency of optimal decisions. For a modern treatment of complexity classes, see Arora and Barak [@arora2009computational].
 
 #### Closest prior work and novelty.
 
@@ -925,15 +946,15 @@ The connection runs deeper: Shpitser and Pearl [@shpitser2006identification] sh
 
 #### Probability of necessity and sufficiency.
 
-Cai et al. [@cai2025pns] formalize the Probability of Necessity and Sufficiency (PNS) for explaining Graph Neural Networks. They argue that a convincing explanation must be *both* necessary and sufficient: necessary explanations alone may be incomplete, while sufficient explanations alone may be non-concise. They model GNNs as Structural Causal Models and optimize a lower bound of PNS. This provides independent confirmation from the neural network explainability literature that necessity and sufficiency must be jointly considered---exactly the perspective underlying our sufficiency-checking framework.
+Cai et al. [@cai2025pns] formalize the Probability of Necessity and Sufficiency (PNS) for explaining Graph Neural Networks. They argue that a convincing explanation must be *both* necessary and sufficient: necessary explanations alone may be incomplete, while sufficient explanations alone may be non-concise. They model GNNs as Structural Causal Models and optimize a lower bound of PNS. This provides independent confirmation from the neural network explainability literature that necessity and sufficiency must be jointly considered, exactly the perspective underlying our sufficiency-checking framework.
 
 ## Minimum Description Length and Kolmogorov Complexity
 
-The Minimum Description Length (MDL) principle [@rissanen1978modeling; @grunwald2007minimum] formalizes model selection as compression: the best model minimizes description length of data plus model. Kolmogorov complexity [@li2008introduction] provides the theoretical foundation (the shortest program that generates the data).
+The Minimum Description Length (MDL) principle [@rissanen1978modeling; @grunwald2007minimum] formalizes model selection as compression: the best model minimizes description length of data plus model. Kolmogorov complexity [@li2008introduction] provides the theoretical background (the shortest program that generates the data).
 
 Our decision quotient connects to this perspective: a coordinate set $I$ is sufficient if it compresses the decision problem without loss. Knowing $s_I$ is as good as knowing $s$ for decision purposes. The minimal sufficient set is the MDL-optimal compression of the decision problem.
 
-The complexity results explain why MDL-based model selection uses heuristics: finding the true minimum description length is uncomputable (Kolmogorov complexity) or intractable (MDL approximations). Our results show the decision-theoretic analog is coNP-complete---intractable but decidable.
+The complexity results explain why MDL-based model selection uses heuristics: finding the true minimum description length is uncomputable (Kolmogorov complexity) or intractable (MDL approximations). Our results show the decision-theoretic analog is coNP-complete, intractable but decidable.
 
 ## Value of Information
 
@@ -964,21 +985,23 @@ This paper isolates the abstract complexity of decision-relevant information. On
 
 Within the encoding model of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, we establish:
 
--   [Sufficiency-Check]{.smallcaps} is coNP-complete
+-   **Exact certification hardness:** [Sufficiency-Check]{.smallcaps} and [Minimum-Sufficient-Set]{.smallcaps} are coNP-complete, while [Anchor-Sufficiency]{.smallcaps} is $\Sigma_{2}^{P}$-complete
 
--   [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete
+-   **Witness and approximation impossibility:** exact empty-set certification has an exponential witness-checking lower bound; on the shifted hard family, any uniform factor guarantee yields a tautology threshold test; and on a separate explicit gadget family, minimum sufficiency is exactly set cover, so approximation guarantees transfer without loss
 
--   [Anchor-Sufficiency]{.smallcaps} is $\Sigma_{2}^{P}$-complete
+-   **Encoding-sensitive boundary:** logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime
 
--   an explicit-state versus succinct dichotomy under which logarithmic-size sufficient sets admit polynomial-time algorithms while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds
-
--   tractable subcases under bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry
+-   **Structured tractability:** bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures
 
 Taken together, these results identify a precise source of difficulty: certifying that information may be discarded can be harder than evaluating the full decision rule once all information is already present.
 
-## Engineering Consequences {#engineering-consequences .unnumbered}
+## Reliability and Simplification {#reliability-and-simplification .unnumbered}
 
-The engineering consequences are direct corollaries of the main theorems. Configuration simplification is an instance of sufficiency checking; exact minimization has no general-purpose polynomial-time worst-case solution unless $P=coNP$; and in the hard succinct regime, conservative over-specification can be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+The simplification consequences are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $P=coNP$. Reliable exact certification is likewise regime-limited: under $P\neq coNP$, no polynomial-budget solver can simultaneously maintain integrity and full exact competence on the hard regime. In the hard succinct regime, conservative over-specification can therefore be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+
+## Simplicity Tax {#simplicity-tax .unnumbered}
+
+The simplicity-tax section is not an isolated counting exercise. It is the accounting layer induced by the earlier exact-support theory. Once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any architecture $A_M$ partitions that set into centrally handled and omitted coordinates: $$\mathrm{centralDOF}+\mathrm{simplicityTax}=\mathrm{intrinsicDOF}.$$ The substantive claim is the hardness-conservation consequence: omitted coordinates remain part of the exact decision problem, so they must reappear as local resolution, extra queries, abstentions, or other externalized work. Under the per-site cost model, that externalized cost grows linearly with deployment scale, and under the hard exact regime it cannot be eliminated for free by a polynomial-budget exact certifier.
 
 ## Mechanization {#mechanization .unnumbered}
 
@@ -986,7 +1009,7 @@ The Lean 4 artifact machine-checks the main reduction constructions, hardness tr
 
 ## Outlook {#outlook .unnumbered}
 
-Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the foundations-and-complexity presentation.
+Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the structure-and-complexity presentation.
 
 
 # Lean 4 Proof Listings {#app:lean}
@@ -1007,9 +1030,13 @@ The appendix supports the non-physical theorem stack of the paper:
 
 -   polynomial-time reduction infrastructure
 
--   coNP and $\Sigma_2^P$ hardness reductions
+-   coNP, PP, PSPACE, and $\Sigma_2^P$ hardness reductions
+
+-   shifted-family approximation-gap and counted-runtime threshold constructions
 
 -   ETH-conditioned dichotomy statements
+
+-   cross-regime bridge lemmas (static/stochastic/sequential)
 
 -   tractable subcases under explicit structural assumptions
 
@@ -1017,17 +1044,19 @@ The point of the artifact is precision. Once the definitions are fixed, Lean ver
 
 ## Module Structure
 
-The formalization consists of 179 files organized as follows:
+The formalization consists of 189 files organized as follows:
 
--   `Basic.lean` and `Sufficiency.lean` -- core definitions for decision problems, projections, optimizer maps, and sufficiency
+-   `Basic.lean` and `Sufficiency.lean`: core definitions for decision problems, projections, optimizer maps, and sufficiency
 
--   `AlgorithmComplexity.lean` and `PolynomialReduction.lean` -- polynomial-time reduction infrastructure and composition
+-   `AlgorithmComplexity.lean` and `PolynomialReduction.lean`: polynomial-time reduction infrastructure and composition
 
--   `Reduction.lean` and `Hardness/` -- the TAUTOLOGY, SET-COVER, ETH, and $\Sigma_2^P$ reduction stack
+-   `Reduction.lean` and `Hardness/`: the TAUTOLOGY, SET-COVER, ETH, approximation-gap, and $\Sigma_2^P$ reduction stack
 
--   `QueryComplexity.lean`, `Dichotomy.lean`, and `ComplexityMain.lean` -- query lower bounds and summary complexity statements
+-   `StochasticSequential*.lean`: PP/PSPACE regime definitions, hardness, and hierarchy bridges
 
--   `Tractability/` -- bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
+-   `QueryComplexity.lean`, `Dichotomy.lean`, and `ComplexityMain.lean`: query lower bounds and summary complexity statements
+
+-   `Tractability/`: bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
 
 ## Key Theorems
 
@@ -1050,11 +1079,11 @@ The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:suffici
 
 ## Verification Status
 
--   Total lines: 44497
+-   Total lines: 49744
 
--   Theorems/lemmas: 1872
+-   Theorems/lemmas: 2152
 
--   Files: 179
+-   Files: 189
 
 -   Status: All proofs compile with 0 `sorry`
 
@@ -1067,6 +1096,6 @@ The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:suffici
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 44497
-- Theorems: 1872
+- Lines: 49744
+- Theorems: 2152
 - `sorry` placeholders: 0

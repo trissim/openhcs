@@ -33,6 +33,10 @@ import DecisionQuotient.ThermodynamicLift
 import DecisionQuotient.FunctionalInformation
 import DecisionQuotient.Physics.AccessRegime
 import DecisionQuotient.Physics.PhysicalHardness
+import DecisionQuotient.Physics.WolpertMismatch
+import DecisionQuotient.Physics.WolpertResidual
+import DecisionQuotient.Physics.WolpertConstraints
+import DecisionQuotient.Physics.WolpertDecomposition
 import DecisionQuotient.Physics.Instantiation
 import DecisionQuotient.Physics.DecisionTime
 import DecisionQuotient.Physics.Conversation
@@ -46,6 +50,7 @@ import DecisionQuotient.Physics.ClaimTransport
 import DecisionQuotient.Physics.PhysicalCore
 import DecisionQuotient.Physics.Uncertainty
 import DecisionQuotient.Physics.HeisenbergStrong
+import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.GraphNontriviality
 import DecisionQuotient.ClaimClosure
 import DecisionQuotient.InteriorVerification

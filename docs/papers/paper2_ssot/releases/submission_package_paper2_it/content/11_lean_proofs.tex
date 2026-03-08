@@ -1,114 +1,13 @@
-\section*{Mechanized Proofs (Lean 4)}\label{sec:lean}
+\section*{Mechanized Verification (Lean 4)}\label{sec:lean}
 
-Core theorem chains in this paper are machine-checked in Lean 4. The current build statistics are:
-\textbf{\LeanTotalLines\ lines across \LeanTotalFiles\ files, \LeanTotalTheorems\ theorem/lemma statements, \LeanTotalSorry\ \texttt{sorry} placeholders.}
+The main theorem chains are machine-checked in Lean 4.
 
-\subsection*{Mechanization Contract}
-
-Each theorem-level handle is typed as one of:
+The artifact covers four groups of claims used in the paper:
 \begin{itemize}
-\item \textbf{Full:} direct Lean theorem support.
-\item \textbf{Full (conditional classical):} Lean closure theorem parameterized by explicit information-theory assumptions.
-\item \textbf{Full (derived/model-level):} theorem-level closure by composition from mechanized cores in the stated model.
+\item the foundational threshold chain, including coherence, independent rate, the side-information lower bound, and the finite counting converse;
+\item the realizability chain, including derivation, the timing constraint, causal propagation, provenance observability, and the realizability iff theorem;
+\item the rate-complexity chain, including the $O(1)$ upper bound, the $\Omega(n)$ lower bound, and the unbounded-gap consequence;
+\item the finite entropy layer supporting the conditional-entropy, decoder-output, and KL-gap reformulations.
 \end{itemize}
 
-\paragraph{Classical-assumption handles (explicit in Lean).}
-\begin{itemize}
-\item \LH{UNQ1} (entropy-side classical inequalities)
-\item \LH{UNQ1} (Fano / side-information closure assumptions)
-\item \LH{UNQ1}
-\item \LH{UNQ1}
-\end{itemize}
-
-\paragraph{Graph/confusability handles (fully mechanized finite zero-error layer).}
-\begin{itemize}
-\item \LH{UNQ1} (proper coloring bounds clique size by alphabet size)
-\item \LH{UNQ1} (complete confusability graph forces one tag per state)
-\item \LH{UNQ1} (observation-fiber clique lower bound for zero-error tagging)
-\item \LH{UNQ1} (constant-observation / maximal-barrier lower bound)
-\item \LH{UNQ1} (worst-case observation-fiber lower bound)
-\item \LH{UNQ1} (average observation-fiber occupancy lower bound)
-\item \LH{UNQ1} (global counting converse $|V|\le|O|\cdot|T|$)
-\end{itemize}
-
-\subsection*{Complete Claim Coverage Matrix}
-
-\begingroup
-\scriptsize
-\paragraph{Foundations, capacity, and side-information chain.}
-\begin{itemize}
-\item \nolinkurl{thm:oracle-arbitrary}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:dof-one-coherence}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:dof-gt-one-incoherence}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:coherence-forces-ssot}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:correctness-forcing}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:dof-inconsistency}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:dof-risk}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:dof-optimal}: Full -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{thm:cap-encoding}: Full (conditional) -- \LH{UNQ1}.
-\item \nolinkurl{thm:static-flp}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:redundancy-incoherence}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:coherence-capacity}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:capacity-achievability}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:capacity-converse}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:capacity-unique}: Full -- \LH{L1}.
-\item \nolinkurl{cor:redundancy-above}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:rate-incoherence-step}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:design-necessity}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:architectural-forcing}: Full (conditional classical) -- \LH{L1}, \LH{UNQ1}.
-\item \nolinkurl{thm:incoherence-graph}: Full (derived/model-level) -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{thm:side-info}: Full (conditional classical) -- \LH{UNQ1}.
-\item \nolinkurl{cor:dof1-zero-side}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:side-info-redundancy}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:multi-terminal}: Full (derived/model-level) -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{thm:fano-converse}: Full (conditional classical) -- \LH{UNQ1}.
-\item \nolinkurl{lem:info-dof}: Full (conditional classical) -- \LH{UNQ1}.
-\end{itemize}
-
-\paragraph{Derivation and realizability chain.}
-\begin{itemize}
-\item \nolinkurl{thm:derivation-lattice}: Full (model-level) -- \LH{UNQ1}.
-\item \nolinkurl{thm:dof-antimonotone}: Full (model-level) -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{cor:minimal-dof1}: Full (model-level) -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{thm:dof-complexity}: Full (model-level) -- \LH{UNQ1}.
-\item \nolinkurl{thm:ssot-determinate}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:ssot-optimal}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:ssot-unique}: Full -- \LH{L1}.
-\item \nolinkurl{cor:no-redundancy}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:derivation-excludes}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:metaprogramming}: Full (derived/model-level) -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{lem:confusability-clique}: Full (finite zero-error graph layer) -- \LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}, \LH{UNQ1}; Full (conditional classical refinement) -- \LH{UNQ1}.
-\item \nolinkurl{thm:timing-forces}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:causal-necessary}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:provenance-necessary}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:independence}: Full -- \LH{UNQ1}, \LH{UNQ1}.
-\item \nolinkurl{thm:ssot-iff}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:generated-second}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:lang-realizability}: Full -- \LH{UNQ1}.
-\end{itemize}
-
-\paragraph{Bounds, regimes, and optimization chain.}
-\begin{itemize}
-\item \nolinkurl{thm:upper-bound}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:lower-bound}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:unbounded-gap}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:arbitrary-reduction}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:operating-regimes}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:pareto-optimal}: Full -- \LH{UNQ1}.
-\item \nolinkurl{cor:no-tradeoff}: Full -- \LH{UNQ1}.
-\item \nolinkurl{thm:amortized}: Full -- \LH{UNQ1}.
-\end{itemize}
-\endgroup
-
-\subsection*{Verification Instructions}
-
-\begin{enumerate}
-\item Lean-only verification (recommended):
-\texttt{cd docs/papers/paper2\_ssot/proofs \&\& lake build}
-\item Direct Lean build:
-\texttt{python3 scripts/build\_papers.py lean paper2\_it}
-\end{enumerate}
-
-\subsection*{Scope Note}
-
-Entries marked \textbf{Full (conditional classical)} are machine-checked closure theorems with explicit assumption parameters for standard information-theory statements.
+The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.

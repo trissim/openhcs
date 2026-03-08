@@ -4,7 +4,7 @@ The fundamental problem of \emph{semantic compression} is: given a value $v$ fro
 
 Classical rate-distortion theory \cite{shannon1959coding} studies the tradeoff between representation size and reconstruction fidelity. We extend this to a discrete classification setting with three dimensions: \emph{tag length} $L$ (bits of storage), \emph{witness cost} $W$ (queries or bits of communication required to determine class membership), and \emph{distortion} $D$ (misclassification probability).
 
-This work treats contemporary classification problems (databases, knowledge graphs, model registries) with information-theoretic resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
+This work treats contemporary classification problems (databases, knowledge graphs, model registries) with explicit resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
 
 \subsection{Universe of Discourse}
 
@@ -35,25 +35,25 @@ Any real-world classification protocol whose evidence consists solely of attribu
 
 This proposition forces any objection into a precise form: to claim the theorem does not apply, one must name the additional observation capability not in $\Phi$. ``Different universe'' is not a coherent objection; it must reduce to ``I have access to oracle $X \notin \Phi$.''
 
-\subsection{Two-Axis Instantiation (Programming Languages)}
+\subsection{Two-Axis Instantiation (Representative Domain Example)}
 
-The core information-theoretic results of this paper require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is an explicit programming-language instantiation documented further in the supplementary material, not an additional axiom for the general theorems.
+The core results require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is one representative instantiation and is not an additional axiom for the general theorems.
 
 In that instantiation, each value is characterized by:
 \begin{itemize}
-\item \textbf{Lineage axis ($B$)}: The provenance chain of the value's class (which classes it derives from, in what order)\footnote{In the Lean formalization, the lineage axis is denoted \texttt{Bases}, reflecting its instantiation as the inheritance chain in object-oriented languages.}
-\item \textbf{Profile axis ($S$)}: The observable attribute profile (interfaces/method signatures in the PL instantiation)
+\item \textbf{Provenance axis ($B$)}: source/lineage information that can distinguish entities with identical observable profiles\footnote{In the Lean witness model, this axis is represented as \texttt{Bases}.}
+\item \textbf{Profile axis ($S$)}: the observable attribute profile induced by $\Phi$
 \end{itemize}
 
 \begin{definition}[Two-axis representation]
 A value $v \in \mathcal{V}$ has representation $(B(v), S(v))$ where:
 \begin{align}
-B(v) &= \text{lineage}(\text{class}(v)) \quad \text{(class derivation chain)} \\
-S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}} \quad \text{(attribute profile)}
+B(v) &= \text{provenance}(v) \\
+S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}}
 \end{align}
-The lineage axis captures \emph{nominal} identity: where the class comes from. The profile axis captures \emph{structural} identity: what the value can do.
+The provenance axis captures \emph{identity-bearing origin information}; the profile axis captures \emph{observable behavior/attributes}.
 
-In the PL instantiation, $B$ is carried by the runtime lineage order (e.g., C3/MRO output). Any implementation-specific normalization or lookup machinery is auxiliary and does not define inheritance.
+In concrete deployments, $B$ may be carried by lineage metadata, registry identifiers, or equivalent provenance carriers. Any implementation-specific normalization or lookup machinery is auxiliary.
 \end{definition}
 
 \begin{theorem}[Fixed-axis completeness]\label{thm:model-completeness}
@@ -64,7 +64,7 @@ P(v) = \tilde{P}(\alpha(v)) \quad \text{for all } v \in \mathcal{V}.
 \end{theorem}
 \leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
 
-In the PL instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
+In this two-axis instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
 
 \begin{proof}
 An admissible $\Phi$-only strategy observes $v$ solely through responses to primitive queries $q_I \in \Phi$. By hypothesis each such response is a function of $\alpha(v)$. Therefore every query transcript, and hence any strategy's output, depends only on $\alpha(v)$, so the computed property factors through $\alpha$.
@@ -272,6 +272,71 @@ Thus $A_\pi$ is the size of the largest class-collision block under observable p
 The domain is \emph{maximal-barrier} if $A_\pi = k$, i.e., all classes collide under the observation map.
 \end{definition}
 
+\subsection{Open-World Robustness and Decidability Boundary}\label{sec:open-world-boundary}
+
+\begin{definition}[Finite realized world]
+Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ \emph{barrier-free} iff
+\[
+\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.
+\]
+\end{definition}
+
+\begin{definition}[Open-world extension]
+An \emph{open-world extension} is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
+\end{definition}
+
+\begin{theorem}[Barrier-freedom is not extension-stable]\label{thm:open-world-extension-instability}
+In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions:
+\[
+\neg\Big(\forall W \subseteq W',\ \text{BarrierFree}(W)\Rightarrow \text{BarrierFree}(W')\Big).
+\]
+\end{theorem}
+\leanmeta{ \LH{ROB1}, \LH{ROB2}}
+
+\begin{proof}
+Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes (\texttt{ConfigType} and \texttt{StepConfigType}) are shape-equivalent (same observable profile) but nominally distinct (different lineage), so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
+\end{proof}
+
+\begin{definition}[Function-level barrier predicate]
+For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
+\[
+\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).
+\]
+Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
+\end{definition}
+
+\begin{theorem}[Rice-style non-computability of barrier certification]\label{thm:rice-barrier}
+There is no computable predicate on program codes deciding whether the generated observer has a barrier:
+\[
+\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).
+\]
+Equivalently, barrier-freedom certification is also non-computable:
+\[
+\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{BarrierFree}(\mathrm{eval}(c))\right).
+\]
+\end{theorem}
+\leanmeta{ \LH{UND1}, \LH{UND2}}
+
+\begin{proof}
+Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. Set
+\[
+\mathcal{C}_{\mathrm{bar}}:=\{f:\mathbb{N}\rightharpoonup\mathbb{N}\mid \mathrm{HasBarrier}(f)\}.
+\]
+Then $P(c)$ is exactly membership of $\mathrm{eval}(c)$ in $\mathcal{C}_{\mathrm{bar}}$. The property is non-trivial:
+\[
+\mathrm{HasBarrier}(\lambda x.\,0)\quad\text{and}\quad \neg\mathrm{HasBarrier}(\lambda x.\,x+1).
+\]
+Rice's theorem (formalized in Lean and instantiated with these two witnesses) implies that if membership in $\mathcal{C}_{\mathrm{bar}}$ were computable from code, then every partial recursive function would have to lie in $\mathcal{C}_{\mathrm{bar}}$, contradicting the successor witness. Hence $P$ is not computable. The barrier-free statement is equivalent by
+\[
+\mathrm{BarrierFree}(f)\iff \neg\mathrm{HasBarrier}(f),
+\]
+so computability of one would imply computability of the other.
+\end{proof}
+
+\begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
+\end{corollary}
+
 \subsection{Converse: Tag Rate Lower Bound}
 
 \begin{theorem}[Converse]\label{thm:converse}
@@ -360,11 +425,11 @@ Consider a classification system with $k = 1000$ classes, each characterized by 
 \toprule
 \textbf{Strategy} & \textbf{Tag $L$} & \textbf{Witness $W$} \\
 \midrule
-Nominal (class ID) & $\lceil \log_2 1000 \rceil = 10$ bits & $O(1)$ \\
-Duck typing (query all) & $0$ & $\leq 50$ queries \\
-Adaptive duck typing & $0$ & $\geq d$ queries \\
+Explicit-tag identification & $\lceil \log_2 1000 \rceil = 10$ bits & $O(1)$ \\
+Attribute-only (exhaustive) & $0$ & $\leq 50$ queries \\
+Attribute-only (adaptive) & $0$ & $\geq d$ queries \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For typical hierarchies, $d \approx 5$--$15$. The gap between 10 bits of storage vs.\ 5--50 queries per identification is the cost of forgoing nominal tagging.
+Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For many practical systems, $d$ is well below $n$ but nonzero. The gap between 10 bits of storage versus 5--50 queries per identification is the cost of forgoing explicit tags.

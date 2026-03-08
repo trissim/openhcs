@@ -1,6 +1,6 @@
 # Paper: Decision Quotient: Complexity of Exact Relevance Certification
 
-**Status**: Computational Complexity-ready | **Lean**: 49333 lines, 2129 theorems
+**Status**: Computational Complexity-ready | **Lean**: 49744 lines, 2152 theorems
 
 ---
 
@@ -45,8 +45,8 @@ The complexity gap comes from the structure of the question. Insufficiency has s
 ::: center
   **Metric**          **Value**
   ----------------- -----------
-  Lines of Lean 4         49333
-  Theorems/lemmas          2129
+  Lines of Lean 4         49744
+  Theorems/lemmas          2152
   Proof files               189
   `sorry` count               0
 :::
@@ -894,7 +894,7 @@ Mathlib's computability library [@mathlib2020] provides primitive recursive fun
 
 #### The verification gap.
 
-Published complexity proofs occasionally contain errors [@lipton2009np]. Machine verification eliminates this uncertainty. Our contribution demonstrates that complexity reductions are amenable to formalization with reasonable effort (49333 lines for the full reduction suite).
+Published complexity proofs occasionally contain errors [@lipton2009np]. Machine verification eliminates this uncertainty. Our contribution demonstrates that complexity reductions are amenable to formalization with reasonable effort (49744 lines for the full reduction suite).
 
 ## Computational Decision Theory
 
@@ -1079,9 +1079,9 @@ The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:suffici
 
 ## Verification Status
 
--   Total lines: 49333
+-   Total lines: 49744
 
--   Theorems/lemmas: 2129
+-   Theorems/lemmas: 2152
 
 -   Files: 189
 
@@ -1096,6 +1096,6 @@ The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:suffici
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 49333
-- Theorems: 2129
+- Lines: 49744
+- Theorems: 2152
 - `sorry` placeholders: 0

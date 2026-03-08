@@ -1,0 +1,53 @@
+\section{Integrity-Competence Impossibility}\label{sec:integrity-competence}
+
+This section gives an impossibility theorem for reliable exact certification under polynomial budgets in the hard regime.
+
+\begin{definition}[Certifying Solver]
+For exact sufficiency on a declared regime $\Gamma$, a certifying solver is a pair $(Q,V)$ where:
+\begin{itemize}
+\item $Q$ maps each instance to either $\mathsf{ABSTAIN}$ or a candidate verdict with witness,
+\item $V$ verifies witnesses in polynomial time (in the declared encoding length).
+\end{itemize}
+\end{definition}
+
+\begin{definition}[Integrity]
+A certifying solver is \emph{integrity-preserving} if every non-abstaining output is accepted by $V$, and every accepted output is correct for the declared exact relation.
+\end{definition}
+
+\begin{definition}[Competence]
+A certifying solver is \emph{competent} on $\Gamma$ if it is integrity-preserving, non-abstaining on all in-scope instances, and polynomial-budget compliant on all in-scope instances.
+\end{definition}
+
+\begin{definition}[Exact Reliability Claim]
+An \emph{exact reliability claim} on $\Gamma$ is the conjunction of universal non-abstaining coverage, correctness, and polynomial-budget compliance for exact sufficiency.
+\end{definition}
+
+\begin{proposition}[Integrity and Competence Separation]
+Integrity and competence are distinct: integrity constrains what can be asserted, while competence adds full coverage under resource bounds.
+\end{proposition}
+
+\begin{proof}
+The always-abstain solver is integrity-preserving (it makes no uncertified assertion) but fails competence whenever the in-scope set is non-empty.
+\end{proof}
+
+\begin{theorem}[Integrity-Resource Bound (Conditional)]
+Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $\Pclass\neq\coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
+\end{theorem}
+
+\begin{proof}
+Assume such a solver $(Q,V)$ exists. We build a polynomial-time decider for exact sufficiency on $\Gamma$.
+
+Given an input instance $x\in \Gamma$, run $Q(x)$. Competence implies that $Q$ never abstains on in-scope instances and always halts within polynomial budget. Let $y$ be the returned verdict with witness. Now run the polynomial-time verifier $V(x,y)$.
+
+Integrity implies two things: every non-abstaining output produced by $Q$ is accepted by $V$, and every accepted output is correct for the declared exact-sufficiency relation. Therefore the combined procedure returns the correct exact verdict on every instance in $\Gamma$ and runs in polynomial time.
+
+This yields a polynomial-time algorithm for a coNP-complete problem on $\Gamma$, hence coNP $\subseteq$ P. Under $\Pclass\neq\coNP$, this is impossible. Therefore no solver is simultaneously integrity-preserving and competent on $\Gamma$.
+\end{proof}
+
+\begin{corollary}[Exact Reliability Impossibility in the Hard Regime]
+Under the assumptions of the theorem, exact reliability claims are impossible on the full hard regime.
+\end{corollary}
+
+\begin{corollary}[No Middle Ground Under Polynomial Budgets]
+In the hard regime, a solver cannot simultaneously maintain integrity, full exact coverage, and polynomial budgets. Operationally: abstain, weaken guarantees, or overclaim.
+\end{corollary}

@@ -1,4 +1,4 @@
-\section{Formal Foundations}\label{sec:foundations}
+\section{Formal Setup}\label{sec:formal-setup}
 
 This section fixes the abstract, non-physical vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results.
 
@@ -90,6 +90,13 @@ For a decision problem $\mathcal{D}$ and candidate set $I$, we say that $I$ is \
 \]
 \end{definition}
 
+\begin{definition}[Structural Rank]\label{def:srank}
+The \emph{structural rank} of a decision problem is the number of relevant coordinates:
+\[
+\mathrm{srank}(\mathcal{D}) := \left|\{i \in \{1,\ldots,n\}: i \text{ is relevant}\}\right|.
+\]
+\end{definition}
+
 \subsection{Optimizer Quotient}
 
 \begin{definition}[Decision Equivalence]\label{def:decision-equiv}
@@ -106,6 +113,14 @@ Q_{\mathcal{D}} := S / {\sim_{\Opt}}.
 \]
 Its equivalence classes are exactly the maximal subsets of states on which the optimal-action set is constant.
 \end{definition}
+
+\begin{proposition}[Optimizer Quotient as Coimage/Image Factorization]\label{prop:optimizer-coimage}
+The decision quotient $Q_{\mathcal{D}}$ is canonically in bijection with $\operatorname{range}(\Opt)$. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map.
+\end{proposition}
+
+\begin{proof}
+Two states are identified by $\sim_{\Opt}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\Opt$.
+\end{proof}
 
 \begin{proposition}[Sufficiency Characterization]\label{prop:sufficiency-char}
 Coordinate set $I$ is sufficient if and only if the optimizer map factors through the projection $\pi_I : S \to S_I$. Equivalently, there exists a function $\overline{\Opt}_I : S_I \to \mathcal{P}(A)$ such that
@@ -148,7 +163,3 @@ The solver is given oracle access to $\Opt(s)$ or to the utility values needed t
 \begin{remark}[Decision Questions vs Decision Problems]\label{rem:question-vs-problem}
 The predicate ``is coordinate set $I$ sufficient for $\mathcal{D}$?'' is an encoding-independent mathematical question. A \emph{decision problem} arises only after fixing how $\mathcal{D}$ and $I$ are represented. Complexity classes are properties of these encoded problems, not of the abstract predicate in isolation.
 \end{remark}
-
-
-% Include the hardness proofs (already developed)
-\input{hardness_proofs.tex}
