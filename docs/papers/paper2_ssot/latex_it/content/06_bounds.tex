@@ -35,6 +35,21 @@ K \le O\,T.
 Theorem~\ref{thm:pair-injective} requires injectivity of the map into the product alphabet $\mathcal Y \times \mathcal T$. A product alphabet of size $O\,T$ cannot support an injective image of more than $O\,T$ latent states.
 \end{proof}
 
+\begin{theorem}[Fiber-level injectivity and cardinality]\label{thm:fiber-cardinality}
+Fix an observation value $y$. On the observation fiber
+\[
+\mathcal F_y=\{x : Y(x)=y\},
+\]
+exact zero-error recovery forces the tag map to be injective. Consequently,
+\[
+|\mathcal F_y| \le |\mathcal T|.
+\]
+\end{theorem}
+
+\begin{proof}
+Restrict Theorem~\ref{thm:pair-injective} to $\mathcal F_y$. Since $Y$ is constant on the fiber, injectivity of the pair map reduces to injectivity of the tag coordinate alone. An injective map from $\mathcal F_y$ into the tag alphabet immediately gives $|\mathcal F_y| \le |\mathcal T|$.
+\end{proof}
+
 \begin{theorem}[Finite counting converse]\label{thm:fano-converse}
 Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then
 \[
@@ -75,6 +90,19 @@ where $h_2$ is binary entropy and $|\mathcal T|$ is the tag alphabet size.
 
 \begin{proof}
 Inside a confusability clique, exact recovery on the success set still forces tag injectivity. The successful states therefore contribute at most $\log_2 |\mathcal T|$ bits per unit success mass. Separating success from failure adds the Bernoulli term $h_2(p_S)$, which yields the stated bound.
+\end{proof}
+
+\begin{theorem}[Success-set injectivity and weighted entropy]\label{thm:success-set-injective}
+Let $S$ be the decoder success set inside a confusability clique. Then the restriction of the observation-tag map to $S$ is injective, and the weighted entropy of the successful states is bounded by the logarithm of the available tag budget:
+\[
+\sum_{x\in S} p(x)\log_2 \frac{1}{p(x)}
+\le
+h_2(p_S)+ p_S \log_2 |\mathcal T|.
+\]
+\end{theorem}
+
+\begin{proof}
+On the success set, exact decoding holds by definition, so Theorem~\ref{thm:pair-injective} applies directly to the restricted map. Because the clique assumption makes the observation coordinate constant up to confusability, injectivity must be carried by the tag coordinate. The successful branch therefore occupies at most $|\mathcal T|$ distinguishable states, and weighting by its total mass $p_S$ yields the stated entropy bound.
 \end{proof}
 
 \begin{theorem}[Decoder-output and gap formulations]\label{thm:decoder-gap-converse}
