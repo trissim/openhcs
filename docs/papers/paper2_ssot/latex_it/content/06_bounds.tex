@@ -63,6 +63,8 @@ Equivalently, exact zero-error recovery of $K$ ambiguous states requires at leas
 This is Theorem~\ref{thm:confusability-converse} specialized to a single $K$-way ambiguity class.
 \end{proof}
 
+The counting bound is the coarsest form of the obstruction. The next step is to weight the same argument by source mass. Exact recovery still enforces injectivity on successful confusability classes, but now the question is how much entropy can remain once the source is partitioned into success and failure branches.
+
 \begin{theorem}[Conditional-entropy formulation]\label{thm:conditional-entropy-converse}
 Let $X$ be uniform on a $K$-way ambiguity class and let $Y$ be the deterministic observation transcript. If $Y$ is constant on that class, then $H(X\mid Y)=\log_2 K$. In particular, any tag-observation pair $(Y,T)$ that resolves the class exactly must satisfy
 \[
@@ -145,7 +147,7 @@ The confusability, counting, conditional-entropy, decoder-output, and finite-gap
 \end{theorem}
 
 \begin{proof}
-Pair injectivity is the structural core. The confusability and counting theorems express the injectivity requirement combinatorially; the conditional-entropy theorem expresses the same obstruction as residual uncertainty; the decoder-output and gap theorems express it through deterministic coarsening and finite alphabet ceilings. Each theorem therefore measures the same failure of exact isolation in a different coordinate system.
+Pair injectivity is the structural core. The confusability and counting theorems express the injectivity requirement combinatorially; the conditional-entropy and weighted-entropy theorems express it in source-mass coordinates; the decoder-output and gap theorems express it through deterministic coarsening and finite alphabet ceilings; and the finite-error theorem is the relaxed version obtained by allowing a nonzero failure branch. Each theorem therefore measures the same failure of exact isolation in a different coordinate system.
 \end{proof}
 
 \subsection{Finite-error extension}\label{sec:finite-error-extension}
@@ -163,10 +165,14 @@ h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).
 \leanmeta{\LH{PRB85}}\leanmeta{\LH{PRB87}}
 
 \begin{proof}
-Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term.
+Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term. Equivalently,
+\[
+H(\hat X)=H(\hat X \mid \text{success/failure}) + H(\text{success/failure})
+\]
+is bounded by combining the support bound on each branch with the binary entropy of the branch variable itself.
 \end{proof}
 
-The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the failure term disappears, and the budget collapses back to the finite converse family above.
+The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the Bernoulli term vanishes, the failure contribution disappears, and the budget collapses back to the finite converse family above.
 
 \subsection{Rate-Complexity Consequence}\label{sec:rate-complexity-consequence}
 
