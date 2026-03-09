@@ -19,6 +19,8 @@ where $C_0$ denotes the largest independent rate that guarantees zero incoherenc
 
 The converse family and the threshold theorem therefore play different roles: the converse identifies the finite obstruction, and $C_0=1$ identifies the unique regime in which that obstruction is absent.
 
+The paper also develops a multi-fact partial-observation extension in which the ambiguity structure is no longer restricted to cliques. In that extended model, exact recovery is equivalent to colorability of the induced confusability graph, exact recovery on a designated success set is equivalent to colorability of the induced subgraph on that set, optimal exact success under a uniform source is determined by the largest colorable induced subgraph, the full $n$-block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph, the normalized block-rate sequence both generates an explicit graph-side lower-capacity expression and converges to a real asymptotic capacity value equal to the supremum of the finite block rates, and that same asymptotic value is bounded above by the logarithm of the complement chromatic number.\leanmeta{\LH{MFT3}}\leanmeta{\LH{MFT9}}\leanmeta{\LH{MFT19}}\leanmeta{\LH{MFT35}}\leanmeta{\LH{MFT44}}\leanmeta{\LH{MFT48}}\leanmeta{\LH{MFT55}}
+
 \subsection{Relation to Classical Information Theory}\label{sec:connection-it}
 
 Three classical lines are particularly relevant.
@@ -51,6 +53,7 @@ The main contributions are:
 \begin{itemize}
 \tightlist
 \item \textbf{A deterministic finite converse family} for exact consistency, presented through confusability, counting, conditional-entropy, decoder-output, and entropy-gap formulations of the same finite obstruction, together with a deterministic data-processing step and a budgeted finite-error extension.
+\item \textbf{A multi-fact graph extension} in which partial observations on latent tuples produce non-clique confusability graphs, exact recovery becomes equivalent to graph colorability, success-set exactness becomes equivalent to induced-subgraph colorability, the exact finite weighted-success value is characterized by the largest colorable induced subgraph, the $n$-block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the resulting block-rate sequence satisfies multiplicative coloring, clique-budget, success-set product, supermultiplicative block, $n$-block exponential independent-set, lower asymptotic-capacity, asymptotic-limit, supremum-characterization, and complement-chromatic upper-bound laws.
 \item \textbf{A sharp threshold corollary} showing that zero-incoherence capacity is exactly one independent source; this is the structural rate-$1$ consequence of the converse family.
 \item \textbf{A realizability theorem} identifying causal propagation and provenance observability as the conditions needed to attain the rate-$1$ regime in concrete systems.
 \item \textbf{An operational consequence} showing $O(1)$ manual update cost at rate $1$ and $\Omega(n)$ cost above it, with an unbounded asymptotic gap.

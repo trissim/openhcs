@@ -7,6 +7,7 @@ import Ssot.CrossPaperDependencies  -- Bridge theorems linking Paper 2 → Paper
 import Ssot.Foundations
 import Ssot.Inconsistency
 import Ssot.LangPython
+import Ssot.MultiFact
 import Ssot.ObserverModel
 import Ssot.EntropyGeneral
 import Ssot.Probabilistic
@@ -187,6 +188,64 @@ abbrev IND2 := both_requirements_independent'
 abbrev SOT1 := ssot_iff
 abbrev GEN1 := generated_file_is_second_encoding
 abbrev LNG1 := ClaimClosure.language_realizability_criterion
+
+/-! ## MULTI-FACT / NON-CLIQUE EXTENSION -/
+abbrev MFT1 := @MultiFact.exactRecovery_implies_properColoring
+abbrev MFT2 := @MultiFact.properColoring_implies_exactRecovery
+abbrev MFT3 := @MultiFact.exactRecovery_iff_properColoring
+abbrev MFT4 := @MultiFact.exists_exactRecovery_iff_colorable
+abbrev MFT5 := MultiFact.binaryViews_nonclique_witness
+abbrev MFT6 := MultiFact.binaryViews_colorable_two
+abbrev MFT7 := MultiFact.binaryViews_not_colorable_one
+abbrev MFT8 := MultiFact.binaryViews_oneTag_uniform_successProb_le_half
+abbrev MFT9 := @MultiFact.exists_exactOn_iff_colorableOn
+abbrev MFT10 := @MultiFact.binaryViews_oneTag_exactOn_card_le_two
+abbrev MFT11 := @MultiFact.pairProperColoring_of_componentColorings
+abbrev MFT12 := @MultiFact.pairColorable_of_colorable
+abbrev MFT13 := @MultiFact.pair_product_clique_budget_lower_bound
+abbrev MFT14 := @MultiFact.exists_exactOn_card_eq_maxColorableCard
+abbrev MFT15 := MultiFact.binaryViews_maxColorableCard_one_eq_two
+abbrev MFT16 := @MultiFact.pair_product_success_card_lower_bound
+abbrev MFT17 := @MultiFact.pair_product_independent_lower_bound
+abbrev MFT18 := @MultiFact.exactOn_mass_le_maxColorableMass
+abbrev MFT19 := @MultiFact.exists_exactOn_mass_eq_maxColorableMass
+abbrev MFT20 := @MultiFact.colorable_iff_graphColorable
+abbrev MFT21 := @MultiFact.block_power_independent_lower_bound
+abbrev MFT22 := @MultiFact.block_add_independent_lower_bound
+abbrev MFT23 := @MultiFact.exactRateDistortionValue_upper
+abbrev MFT24 := @MultiFact.exists_exactRateDistortionValue
+abbrev MFT25 := @MultiFact.pairConfusable_iff_strongProdAdj
+abbrev MFT26 := @MultiFact.pairConfusabilityGraph_eq_strongProd
+abbrev MFT27 := @MultiFact.blockRate_le_shannonLowerCapacity
+abbrev MFT28 := @MultiFact.oneShotLogRate_le_shannonLowerCapacity
+abbrev MFT29 := @MultiFact.concatBlockConfusable_iff_strongProdAdj
+abbrev MFT30 := @MultiFact.blockConfusabilityGraph_addIsoStrongProd
+abbrev MFT31 := @MultiFact.blockMaxIndependentCard_eq_graphMaxIndependentCard
+abbrev MFT32 := @MultiFact.shannonLowerCapacity_eq_iSup_graphRates
+abbrev MFT33 := @MultiFact.blockRate_le_blockRate_mul
+abbrev MFT34 := @MultiFact.blockConfusable_iff_strongPowAdj
+abbrev MFT35 := @MultiFact.blockConfusabilityGraph_eq_strongPow
+abbrev MFT36 := @MultiFact.shannonLowerCapacity_eq_graphShannonLowerCapacity
+abbrev MFT37 := @MultiFact.strongPowAdj_add_iff_strongProd
+abbrev MFT38 := @MultiFact.strongPow_addIsoStrongProd
+abbrev MFT39 := @MultiFact.graphMaxIndependentCard_strongPow_add_eq_strongProd
+abbrev MFT40 := @MultiFact.graphMaxIndependentCard_strongProd_lower_bound
+abbrev MFT41 := @MultiFact.graphMaxIndependentCard_strongPow_mul_lower_bound
+abbrev MFT42 := @MultiFact.graphPowerRate_le_graphPowerRate_mul
+abbrev MFT43 := @MultiFact.graphNegLogSeq_subadditive
+abbrev MFT44 := @MultiFact.tendsto_graphPowerRateNat_graphShannonCapacityReal
+abbrev MFT45 := @MultiFact.graphPowerRate_le_graphShannonCapacityReal
+abbrev MFT46 := @MultiFact.graphShannonCapacityReal_nonneg
+abbrev MFT47 := @MultiFact.iSup_graphPowerRate_eq_graphShannonCapacityReal
+abbrev MFT48 := @MultiFact.shannonCapacityReal_eq_iSup_blockRate
+abbrev MFT49 := @MultiFact.blockRate_le_shannonCapacityReal
+abbrev MFT50 := @MultiFact.compl_strongPow_adj_iff_exists
+abbrev MFT51 := @MultiFact.complStrongPow_colorable
+abbrev MFT52 := @MultiFact.graphMaxIndependentCard_strongPow_le_complChromaticPow
+abbrev MFT53 := @MultiFact.graphPowerRate_le_log_complChromatic
+abbrev MFT54 := @MultiFact.graphShannonCapacityReal_le_log_complChromatic
+abbrev MFT55 := @MultiFact.graphShannonCapacityReal_le_log_complChromaticNumber
+abbrev MFT56 := @MultiFact.graphShannonLowerCapacity_eq_ofReal_graphShannonCapacityReal
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
