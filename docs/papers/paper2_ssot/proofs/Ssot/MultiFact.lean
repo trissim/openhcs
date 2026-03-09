@@ -8,14 +8,17 @@ import Mathlib.Analysis.Subadditive
 import Mathlib.Analysis.SpecialFunctions.Log.Basic
 import Mathlib.Analysis.InnerProductSpace.Orthonormal
 import Mathlib.Analysis.InnerProductSpace.PiL2
+import Mathlib.Analysis.Matrix.Order
 import Mathlib.Data.ENNReal.Real
 import Mathlib.Combinatorics.SimpleGraph.Coloring
 import Mathlib.Combinatorics.SimpleGraph.Clique
+import Mathlib.LinearAlgebra.Matrix.PosDef
 import Mathlib.Tactic
 
 namespace MultiFact
 
 open Set Filter Topology
+open scoped MatrixOrder
 
 /-- A latent multi-fact state with `F` coordinates, each taking values in `Fin A`. -/
 abbrev State (F A : Nat) := Fin F → Fin A
@@ -473,6 +476,98 @@ noncomputable def ThetaSDPFeasible.toThetaMatrixFeasible
     simpa [h, real_inner_comm] using T.one_le_bound_entry_sq v
 
 end ThetaSDP
+
+/-- A pure PSD matrix feasible object for the theta side. Unlike `ThetaSDPFeasible`, this carries
+only the matrix and semidefinite constraints, with no explicit Gram factorization field. -/
+structure ThetaPSDFeasible (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  M : Matrix (Option V) (Option V) ℝ
+  posSemidef : M.PosSemidef
+  diag_none : M none none = 1
+  diag_some : ∀ v : V, M (some v) (some v) = 1
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → M (some v) (some w) = 0
+  bound : ℝ
+  one_le_bound : 1 ≤ bound
+  one_le_bound_entry_sq : ∀ v, 1 ≤ bound * (M none (some v))^2
+
+section ThetaPSD
+
+variable {V κ : Type} [Fintype V] [DecidableEq V] [Fintype κ] [DecidableEq κ] [Nonempty κ]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaSDPFeasible.coordMatrix
+    (T : ThetaSDPFeasible V G) :
+    Matrix T.κ (Option V) ℝ :=
+  fun k i => T.embed i k
+
+theorem ThetaSDPFeasible.coordMatrix_conjTranspose_mul
+    (T : ThetaSDPFeasible V G) :
+    Matrix.conjTranspose (T.coordMatrix) * T.coordMatrix = T.M := by
+  ext i j
+  rw [Matrix.mul_apply]
+  rw [T.gram_eq]
+  simp [ThetaSDPFeasible.coordMatrix, EuclideanSpace.inner_eq_star_dotProduct, Matrix.conjTranspose_apply,
+    dotProduct, mul_comm]
+
+noncomputable def ThetaSDPFeasible.toThetaPSDFeasible
+    (T : ThetaSDPFeasible V G) :
+    ThetaPSDFeasible V G where
+  M := T.M
+  posSemidef := by
+    rw [← T.coordMatrix_conjTranspose_mul]
+    exact Matrix.posSemidef_conjTranspose_mul_self T.coordMatrix
+  diag_none := T.diag_none
+  diag_some := T.diag_some
+  zero_of_nonadj := T.zero_of_nonadj
+  bound := T.bound
+  one_le_bound := T.one_le_bound
+  one_le_bound_entry_sq := T.one_le_bound_entry_sq
+
+noncomputable def ThetaPSDFeasible.sqrtEmbed
+    (T : ThetaPSDFeasible V G) :
+    Option V → EuclideanSpace ℝ (Option V) :=
+  fun i => WithLp.toLp 2 (fun j => CFC.sqrt T.M j i)
+
+theorem ThetaPSDFeasible.sqrtEmbed_gram
+    (T : ThetaPSDFeasible V G) :
+    (fun i j => inner ℝ (T.sqrtEmbed i) (T.sqrtEmbed j)) = T.M := by
+  funext i
+  funext j
+  have hnonneg : (0 : Matrix (Option V) (Option V) ℝ) ≤ CFC.sqrt T.M := CFC.sqrt_nonneg T.M
+  have hpsdS : (CFC.sqrt T.M).PosSemidef := by
+    exact Matrix.nonneg_iff_posSemidef.mp hnonneg
+  have hherm : (CFC.sqrt T.M).IsHermitian := hpsdS.isHermitian
+  have hMherm : T.M.IsHermitian := T.posSemidef.isHermitian
+  have hmul : CFC.sqrt T.M * CFC.sqrt T.M = T.M := by
+    simpa using (CFC.sqrt_mul_sqrt_self (a := T.M) (ha := T.posSemidef.nonneg))
+  have hentry :
+      (Matrix.conjTranspose (CFC.sqrt T.M) * CFC.sqrt T.M) j i = T.M i j := by
+    calc
+      (Matrix.conjTranspose (CFC.sqrt T.M) * CFC.sqrt T.M) j i
+          = T.M j i := by rw [hherm.eq, hmul]
+      _ = T.M i j := by simpa using hMherm.apply i j
+  simpa [ThetaPSDFeasible.sqrtEmbed, EuclideanSpace.inner_toLp_toLp, Matrix.mul_apply,
+    Matrix.conjTranspose_apply, dotProduct] using hentry
+
+noncomputable def ThetaPSDFeasible.toThetaSDPFeasible
+    (T : ThetaPSDFeasible V G) :
+    ThetaSDPFeasible V G where
+  κ := Option V
+  instFintypeκ := inferInstance
+  instDecidableEqκ := inferInstance
+  instNonemptyκ := inferInstance
+  embed := T.sqrtEmbed
+  M := T.M
+  gram_eq := by
+    ext i j
+    exact (congrFun (congrFun T.sqrtEmbed_gram i) j).symm
+  diag_none := T.diag_none
+  diag_some := T.diag_some
+  zero_of_nonadj := T.zero_of_nonadj
+  bound := T.bound
+  one_le_bound := T.one_le_bound
+  one_le_bound_entry_sq := T.one_le_bound_entry_sq
+
+end ThetaPSD
 
 noncomputable def thetaWitnessOfColoring
     {V β : Type} [Fintype β] [DecidableEq β] [Nonempty β]
@@ -3082,6 +3177,16 @@ noncomputable def graphThetaSDPLogUpper
     (G : SimpleGraph α) : ℝ :=
   sInf (graphThetaSDPLogBoundSet G)
 
+def graphThetaPSDLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { r | ∃ T : ThetaPSDFeasible α G, r = Real.log T.bound }
+
+noncomputable def graphThetaPSDLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (graphThetaPSDLogBoundSet G)
+
 theorem graphThetaMatrixLogBoundSet_eq_graphThetaLogBoundSet
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) :
@@ -3128,6 +3233,19 @@ theorem graphThetaSDPLogBoundSet_eq_graphThetaLogBoundSet
     exact graphThetaSDPLogBoundSet_subset_graphThetaLogBoundSet G hr
   · intro hr
     exact graphThetaLogBoundSet_subset_graphThetaSDPLogBoundSet G hr
+
+theorem graphThetaSDPLogBoundSet_eq_graphThetaPSDLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSDPLogBoundSet G = graphThetaPSDLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toThetaPSDFeasible, rfl⟩
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toThetaSDPFeasible, rfl⟩
 
 theorem graphThetaSDPLogBoundSet_nonempty
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
@@ -3182,6 +3300,18 @@ theorem graphThetaSDPLogUpper_eq_graphThetaLogUpper
     (G : SimpleGraph α) :
     graphThetaSDPLogUpper G = graphThetaLogUpper G := by
   simp [graphThetaSDPLogUpper, graphThetaLogUpper, graphThetaSDPLogBoundSet_eq_graphThetaLogBoundSet]
+
+theorem graphThetaPSDLogUpper_eq_graphThetaSDPLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaPSDLogUpper G = graphThetaSDPLogUpper G := by
+  simp [graphThetaPSDLogUpper, graphThetaSDPLogUpper, graphThetaSDPLogBoundSet_eq_graphThetaPSDLogBoundSet]
+
+theorem graphThetaPSDLogUpper_eq_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaPSDLogUpper G = graphThetaLogUpper G := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaSDPLogUpper, graphThetaSDPLogUpper_eq_graphThetaLogUpper]
 
 theorem graphShannonCapacityReal_le_graphThetaLogUpper
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
@@ -3269,6 +3399,38 @@ theorem graphThetaLogUpper_strongProd_le
           linarith
     _ = graphThetaLogUpper G + graphThetaLogUpper H + ε := by ring
 
+theorem graphShannonCapacityReal_le_graphThetaPSDLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphShannonCapacityReal G ≤ graphThetaPSDLogUpper G := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+  exact graphShannonCapacityReal_le_graphThetaLogUpper G
+
+theorem graphThetaPSDLogUpper_le_log_complChromatic
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) {n : Nat}
+    (hc : Gᶜ.Colorable n) :
+    graphThetaPSDLogUpper G ≤ Real.log n := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+  exact graphThetaLogUpper_le_log_complChromatic G hc
+
+theorem graphThetaPSDLogUpper_le_log_complChromaticNumber
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaPSDLogUpper G ≤ Real.log (ENat.toNat (Gᶜ).chromaticNumber) := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+  exact graphThetaLogUpper_le_log_complChromaticNumber G
+
+theorem graphThetaPSDLogUpper_strongProd_le
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    (G : SimpleGraph α) (H : SimpleGraph γ) :
+    graphThetaPSDLogUpper (strongProd G H) ≤ graphThetaPSDLogUpper G + graphThetaPSDLogUpper H := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper,
+    graphThetaPSDLogUpper_eq_graphThetaLogUpper,
+    graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+  exact graphThetaLogUpper_strongProd_le G H
+
 theorem graphShannonCapacityReal_le_log_complChromatic
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) {n : Nat}
@@ -3324,6 +3486,12 @@ noncomputable def shannonThetaLogUpper
     (views : ViewFamily F L) : ℝ :=
   graphThetaLogUpper (confusabilityGraph (A := A) views)
 
+/-- A pure PSD-matrix asymptotic upper invariant for a view family. -/
+noncomputable def shannonThetaPSDLogUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) : ℝ :=
+  graphThetaPSDLogUpper (confusabilityGraph (A := A) views)
+
 theorem shannonCapacityReal_eq_iSup_blockRate
     {F A L : Nat} [Nonempty (State F A)]
     (views : ViewFamily F L) :
@@ -3354,6 +3522,21 @@ theorem shannonCapacityReal_le_shannonThetaLogUpper
   simpa [shannonCapacityReal, shannonThetaLogUpper] using
     graphShannonCapacityReal_le_graphThetaLogUpper
       (G := confusabilityGraph (A := A) views)
+
+theorem shannonThetaPSDLogUpper_eq_shannonThetaLogUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) :
+    shannonThetaPSDLogUpper (F := F) (A := A) (L := L) views =
+      shannonThetaLogUpper (F := F) (A := A) (L := L) views := by
+  simp [shannonThetaPSDLogUpper, shannonThetaLogUpper, graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+
+theorem shannonCapacityReal_le_shannonThetaPSDLogUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views ≤
+      shannonThetaPSDLogUpper (F := F) (A := A) (L := L) views := by
+  rw [shannonThetaPSDLogUpper_eq_shannonThetaLogUpper]
+  exact shannonCapacityReal_le_shannonThetaLogUpper views
 
 theorem shannonLowerCapacity_eq_iSup_graphRates
     {F A L : Nat}
