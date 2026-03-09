@@ -29,7 +29,7 @@ The information barrier is not a quirk of any particular domain; it is a mathema
 
 \item \textbf{The barrier is informational, not computational}: even with unbounded resources, attribute-only observers cannot overcome it.
 
-\item \textbf{Finite-block confusability laws are exact}: the mechanized graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^k$) and exact linear log-bit scaling across block length.
+\item \textbf{Finite-block confusability laws are exact}: the graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^k$) and exact linear log-bit scaling across block length.
 
 \item \textbf{Open-world guarantees require explicit tags}: barrier-freedom is not extension-stable under system growth, and deciding barrier existence/freedom for arbitrary generators is not computable (Rice-style). So a persistent $D=0$ guarantee cannot rely on ``currently collision-free'' attribute structure alone.
 
@@ -45,7 +45,7 @@ Natural extensions include other classification domains, witness complexity for 
 
 \subsection{Conclusion}
 
-Classification under observational constraints admits a clean quantitative analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem~\ref{thm:lwd-optimal}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
+Classification under observational constraints admits a clean quantitative analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem~\ref{thm:lwd-optimal}). The graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants; the supplementary artifact machine-verifies the main claims.
 
 \subsection*{Acknowledgment: AI-use Disclosure}
 

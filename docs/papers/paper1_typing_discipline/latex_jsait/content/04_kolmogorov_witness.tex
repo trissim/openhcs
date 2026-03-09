@@ -13,11 +13,10 @@ Attribute-only observers require $W_{\text{eq}} = \Omega(d)$ where $d$ is the di
 \leanmeta{ \LH{ACS7}, \LH{ACS1}}
 
 \begin{proof}
-See Lean formalization: \texttt{proofs/nominal\_resolution.lean}. The proof shows:
 \begin{enumerate}
-\item Nominal-tag access is a single primitive query
-\item Attribute-only observers must query at least $d$ attributes in the worst case (a generic strategy queries all $n$)
-\item No shorter witness exists for attribute-only observers (by the information barrier)
+\item Nominal-tag access is a single primitive query.
+\item Attribute-only observers must query at least $d$ attributes in the worst case (a generic strategy queries all $n$).
+\item No shorter witness exists for attribute-only observers by the information barrier.
 \end{enumerate}
 \end{proof}
 
@@ -33,7 +32,8 @@ Nominal-tag & Single tag read & $O(1)$ \\
 Attribute-only & Query a distinguishing set & $\Omega(d)$ \\
 \hline
 \end{tabular}
+\vspace{3pt}
 \caption{Witness cost for class identity by observer class.}
 \end{table}
 
-The Lean 4 formalization in the supplementary artifact provides a machine-checked proof that nominal-tag access minimizes witness cost for class identity.
+The supplementary artifact provides a machine-checked proof that nominal-tag access minimizes witness cost for class identity.

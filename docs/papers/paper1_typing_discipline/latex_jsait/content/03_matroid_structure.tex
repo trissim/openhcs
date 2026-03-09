@@ -46,7 +46,7 @@ A distinguishing set $S$ is \emph{minimal} if no proper subset of $S$ is disting
 \item ``Minimal'' means inclusion-minimal: no proper subset suffices.
 \end{itemize}
 
-No further assumptions are required within this theory beyond the fixed observation family $\Phi$. In Lean, the mechanization is explicit end-to-end. Closure-operator lemmas (extensive, monotone, idempotent) are proved in \nolinkurl{proofs/abstract_class_system.lean} via \nolinkurl{AxisClosure}. Exchange and equicardinality lemmas are proved in \nolinkurl{proofs/axis_framework.lean} via \LH{L4} and \LH{L1}. The composition point is formalized by \nolinkurl{closureInducedAxisMatroid} and \LH{L1}, with closure-induced nodup/subset/exchange hypotheses made explicit.
+No further assumptions are required within this theory beyond the fixed observation family $\Phi$. The mechanized development verifies the closure laws, the exchange and equicardinality lemmas, and the closure-to-matroid bridge used below; the representative handle tags are \LH{L1}, \LH{L4}, and \LH{L5}.
 
 \begin{definition}[Bases family]
 Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries (attribute predicates). Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
@@ -66,7 +66,7 @@ Define the closure operator $\text{cl}(X) = \{q : X\text{-equivalence implies }q
 
 For exchange, take $q \in \text{cl}(X \cup \{q'\}) \setminus \text{cl}(X)$. Since $q \notin \text{cl}(X)$, there exist $v,w$ that are $X$-equivalent but disagree on $q$. Because $q \in \text{cl}(X \cup \{q'\})$, any pair that is $(X \cup \{q'\})$-equivalent must agree on $q$; therefore this witness pair cannot be $(X \cup \{q'\})$-equivalent, so it must disagree on $q'$. Now fix any pair $v',w'$ that are $(X \cup \{q\})$-equivalent. They are in particular $X$-equivalent and agree on $q$. If they disagreed on $q'$, then by the previous implication we could derive disagreement on $q$, contradiction. Hence $v',w'$ agree on $q'$, proving $q' \in \text{cl}(X \cup \{q\})$.
 
-Minimal distinguishing sets are exactly the bases of the matroid defined by this closure operator. The closure component is machine-checked in \texttt{AxisClosure}; the exchange/equicardinality component and the closure-to-matroid bridge used for distinguishing-dimension well-definedness are machine-checked in \texttt{axis\_framework.lean}.
+Minimal distinguishing sets are exactly the bases of the matroid defined by this closure operator. The machine-checked development verifies the closure laws, the exchange and equicardinality lemmas, and the bridge from closure to matroid structure used to make the distinguishing dimension well-defined.
 \end{proof}
 
 \begin{theorem}[Matroid bases]\label{thm:matroid-bases}

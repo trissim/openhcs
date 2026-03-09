@@ -41,8 +41,9 @@ In information-barrier domains, attribute-only observers (the $L=0$ face) satisf
 
 \begin{proof}
 Converse item (1) is Theorem~\ref{thm:converse}. For item (2), maximal barrier means all classes are observationally colliding, so any $D=0$ scheme must carry full class identity in tag bits (Corollary~\ref{cor:max-barrier-converse}), while nominal tags realize this lower bound with one tag read. Pareto uniqueness follows because any competing $D=0$ point cannot reduce $L$ below $\log_2 k$ nor reduce $W$ below constant-time tag access under the admissibility rules of Section~\ref{sec:framework}.
+\medskip
 
-The converse proof path is machine-checked in Lean: \texttt{proofs/lwd\_converse.lean} formalizes (i) constant transcript on a collision block implies tag injectivity under zero-error decoding, and (ii) counting then yields $2^L \ge A_\pi$. The maximal-barrier corollary is formalized in the same module. Runtime cost instantiations (e.g., unbounded gap examples) remain in \texttt{proofs/python\_instantiation.lean}.
+The converse chain has two steps: first, a constant transcript on a collision block forces any zero-error decoder to separate classes using tag information; second, counting those tag outcomes yields $2^L \ge A_\pi$. In the maximal-barrier regime this becomes $L \ge \log_2 k$, which nominal tagging achieves with one tag read.
 \end{proof}
 
 \begin{remark}[General $D=0$ Frontier]
@@ -75,35 +76,37 @@ Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key
 
   % Axes (draw after shading)
   \draw[->] (0,0) -- (5.8,0) node[right] {Tag rate $L$};
-  \draw[->] (0,0) -- (0,3.5) node[above] {Query cost $W$};
+  \draw[->] (0,0) -- (0,3.5) node[above] {Identification cost $W$};
 
   % Axis labels
   \node[below left] at (0,0) {$0$};
   \node[below] at (5,0) {$\log_2 k$};
   \draw (5,0.08) -- (5,-0.08);
+  \node[left] at (0,0.6) {\footnotesize $O(1)$};
+  \draw (0.08,0.6) -- (-0.08,0.6);
 
   % Region labels
-  \node[blue] at (3.2,2.3) {\small $D = 0$};
-  \node[blue] at (3.2,1.95) {\small frontier};
+  \node[blue, anchor=west] at (2.55,2.22) {\small $D = 0$ frontier};
   \node[gray] at (2.2,0.8) {\footnotesize achievable};
 
   % Points on the D=0 frontier
   \filldraw[orange] (0,2.8) circle (2.5pt);
-  \node[orange, anchor=west] at (0.12,2.8) {\footnotesize Attr-only ($A_\pi{=}1$)};
+  \node[orange, anchor=west] at (0.22,2.92) {\footnotesize Collision-free attr-only ($A_\pi{=}1$)};
 
   \filldraw[green!60!black] (5,0.6) circle (2.5pt);
-  \node[green!60!black, anchor=east] at (4.9,0.82) {\footnotesize Nominal ($D{=}0$)};
+  \node[green!60!black, anchor=north east] at (4.82,0.76) {\footnotesize Nominal ($D{=}0$)};
+  \node[green!60!black, anchor=west] at (5.08,0.6) {\footnotesize $W=1$};
 
   % Probe-only strategy: below frontier, accepts D>0
   \filldraw[red] (0,1.8) circle (2.5pt);
-  \node[red, anchor=west] at (0.12,1.8) {\footnotesize Probe-only ($D{>}0$)};
+  \node[red, anchor=west] at (0.22,1.72) {\footnotesize Colliding attr-only ($D{>}0$)};
 
 \end{tikzpicture}
-\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; attribute-only strategies lie on the zero-tag face and leave the zero-error frontier when collisions are present.}
+\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Here $W$ counts identification operations, including a constant-time tag read, so the nominal zero-error point sits at $W=O(1)$ rather than $W=0$. The left orange point shows the collision-free attribute-only regime ($A_\pi=1$), while the red point shows a colliding attribute-only regime with $D>0$. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; if tag access were treated as free representation access rather than an observation, the nominal point would move down to the $W=0$ axis.}
 \label{fig:lwd-tradeoff}
 \end{figure}
 
-The Lean 4 formalization in the supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
+The supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
 
 \begin{remark}[Software-runtime instantiation (example)]
 In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}); attribute-probe schemes correspond to attribute-only observers (e.g., repeated \texttt{hasattr}-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.

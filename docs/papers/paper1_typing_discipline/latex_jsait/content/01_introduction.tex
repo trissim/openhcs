@@ -168,7 +168,7 @@ This paper establishes the following results:
 
 \item \textbf{Open-World Robustness + Decidability Boundary}: We formalize that barrier-freedom is not extension-stable in open worlds (any finite barrier-free world can be extended to force a collision), and we prove a Rice-style impossibility theorem: no computable certifier can decide barrier existence/freedom for arbitrary generators.
 
-\item \textbf{Machine-Checked Proofs}: All results formalized in Lean 4 (\LeanTotalLines\ lines, \LeanTotalTheorems\ theorem/lemma statements, \LeanTotalSorry\ \texttt{sorry} placeholders).
+\item \textbf{Machine-Checked Proofs}: All results are machine-checked in Lean 4 (\LeanTotalLines\ lines, \LeanTotalTheorems\ theorem/lemma statements, \LeanTotalSorry\ \texttt{sorry} placeholders).
 \end{enumerate}
 \leanmeta{ \LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2} }
 
@@ -184,7 +184,7 @@ This paper does not develop asymptotic coding theorems or claim new zero-error c
 
 \textbf{Rate-distortion-perception tradeoffs.} Blau and Michaeli \cite{blau2019rethinking} extended rate-distortion theory by adding a perception constraint, creating a three-way tradeoff. Our query cost $W$ plays an analogous role: it measures the interactive cost of achieving low distortion rather than a distributional constraint. We cite this as a structural analogy, not as a claim that the present model inherits the full geometry of that setting.
 
-\textbf{Zero-error information theory.} The matroid structure (Section~\ref{sec:matroid}) places the model near zero-error information theory. K\"orner \cite{korner1973coding} and Witsenhausen \cite{witsenhausen1976zero} studied zero-error source coding where confusable symbols must be distinguished. Here the direct theorem is simpler: when $L = 0$, the distinguishing dimension (Definition~\ref{def:distinguishing-dimension}) is the minimum number of binary queries needed for zero-error class separation. In addition, the paper proves exact finite-block confusability laws: block feasibility threshold $A_\pi^k$, exact linear log-bit scaling, and per-coordinate stabilization in the worst-case regime. These are formalized in Lean and strengthen the operational converse while remaining distinct from full distribution-optimized graph-entropy/capacity theorems.
+\textbf{Zero-error information theory.} The matroid structure (Section~\ref{sec:matroid}) places the model near zero-error information theory. K\"orner \cite{korner1973coding} and Witsenhausen \cite{witsenhausen1976zero} studied zero-error source coding where confusable symbols must be distinguished. Here the direct theorem is simpler: when $L = 0$, the distinguishing dimension (Definition~\ref{def:distinguishing-dimension}) is the minimum number of binary queries needed for zero-error class separation. In addition, the paper proves exact finite-block confusability laws: block feasibility threshold $A_\pi^k$, exact linear log-bit scaling, and per-coordinate stabilization in the worst-case regime. These strengthen the operational converse while remaining distinct from full distribution-optimized graph-entropy/capacity theorems.
 
 \textbf{Query complexity and communication complexity.} The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity \cite{buhrman2002complexity} and interactive communication \cite{orlitsky1991worst}. The key distinction is that our queries are constrained to a fixed observable family $\mathcal{I}$, not arbitrary predicates.
 
