@@ -3431,6 +3431,166 @@ theorem graphThetaPSDLogUpper_strongProd_le
     graphThetaPSDLogUpper_eq_graphThetaLogUpper]
   exact graphThetaLogUpper_strongProd_le G H
 
+theorem graphThetaLogBoundSet_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaLogBoundSet H = graphThetaLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨β, _, _, _, W, rfl⟩
+    exact ⟨β, inferInstance, inferInstance, inferInstance, ThetaWitness.reindex e.symm W, rfl⟩
+  · intro hr
+    rcases hr with ⟨β, _, _, _, W, rfl⟩
+    exact ⟨β, inferInstance, inferInstance, inferInstance, ThetaWitness.reindex e W, rfl⟩
+
+theorem graphThetaLogUpper_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaLogUpper H = graphThetaLogUpper G := by
+  simp [graphThetaLogUpper, graphThetaLogBoundSet_iso_eq e]
+
+theorem graphThetaPSDLogUpper_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaPSDLogUpper H = graphThetaPSDLogUpper G := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper,
+    graphThetaPSDLogUpper_eq_graphThetaLogUpper,
+    graphThetaLogUpper_iso_eq e]
+
+theorem graphThetaLogUpper_nonneg
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    0 ≤ graphThetaLogUpper G := by
+  dsimp [graphThetaLogUpper]
+  exact le_csInf (graphThetaLogBoundSet_nonempty G) (by
+    intro r hr
+    rcases hr with ⟨β, _, _, _, W, rfl⟩
+    exact Real.log_nonneg W.one_le_bound)
+
+theorem graphThetaPSDLogUpper_nonneg
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    0 ≤ graphThetaPSDLogUpper G := by
+  rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper]
+  exact graphThetaLogUpper_nonneg G
+
+/-- The PSD theta upper sequence along strong powers. -/
+noncomputable def graphThetaPSDLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) : ℝ :=
+  graphThetaPSDLogUpper (strongPow G N)
+
+theorem graphThetaPSDLogSeq_subadditive
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Subadditive (graphThetaPSDLogSeq G) := by
+  intro M N
+  dsimp [graphThetaPSDLogSeq]
+  rw [graphThetaPSDLogUpper_iso_eq (strongPow_addIsoStrongProd G M N)]
+  exact graphThetaPSDLogUpper_strongProd_le (strongPow G M) (strongPow G N)
+
+theorem graphThetaPSDLogSeq_div_bddBelow
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    BddBelow (Set.range fun N : Nat => graphThetaPSDLogSeq G N / (N : ℝ)) := by
+  refine ⟨0, ?_⟩
+  rintro _ ⟨N, rfl⟩
+  by_cases hN : N = 0
+  · simp [hN]
+  · have hnonneg : 0 ≤ graphThetaPSDLogSeq G N := by
+      dsimp [graphThetaPSDLogSeq]
+      exact graphThetaPSDLogUpper_nonneg (strongPow G N)
+    have hNnonneg : 0 ≤ (N : ℝ) := by positivity
+    have := div_nonneg hnonneg hNnonneg
+    simpa using this
+
+/-- The asymptotic PSD theta upper value obtained from the subadditive power sequence. -/
+noncomputable def graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  (graphThetaPSDLogSeq_subadditive G).lim
+
+noncomputable def graphThetaPSDPowerRateNat
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) : ℝ :=
+  graphThetaPSDLogSeq G N / (N : ℝ)
+
+noncomputable def graphThetaPSDPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) : ℝ :=
+  graphThetaPSDLogUpper (strongPow G N.1) / (N.1 : ℝ)
+
+theorem tendsto_graphThetaPSDPowerRateNat_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Tendsto (graphThetaPSDPowerRateNat G) atTop (𝓝 (graphThetaPSDAsymptoticUpper G)) := by
+  have hsub := graphThetaPSDLogSeq_subadditive G
+  simpa [graphThetaPSDAsymptoticUpper, graphThetaPSDPowerRateNat, graphThetaPSDLogSeq]
+    using Subadditive.tendsto_lim (h := hsub) (graphThetaPSDLogSeq_div_bddBelow G)
+
+theorem graphThetaPSDAsymptoticUpper_le_graphThetaPSDPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) :
+    graphThetaPSDAsymptoticUpper G ≤ graphThetaPSDPowerRate G N := by
+  have hsub := graphThetaPSDLogSeq_subadditive G
+  exact hsub.lim_le_div (graphThetaPSDLogSeq_div_bddBelow G) N.2.ne'
+
+theorem graphThetaPSDAsymptoticUpper_le_graphThetaPSDLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaPSDAsymptoticUpper G ≤ graphThetaPSDLogUpper G := by
+  rw [← graphThetaPSDLogUpper_iso_eq (strongPow_oneIso G)]
+  simpa [graphThetaPSDPowerRate, graphThetaPSDLogSeq] using
+    graphThetaPSDAsymptoticUpper_le_graphThetaPSDPowerRate G 1
+
+theorem exists_graphThetaPSDPowerRate_lt_of_gt_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) {w : ℝ}
+    (hw : graphThetaPSDAsymptoticUpper G < w) :
+    ∃ N : PosNat, graphThetaPSDPowerRate G N < w := by
+  let c := graphThetaPSDAsymptoticUpper G
+  let ε : ℝ := (w - c) / 2
+  have hε : 0 < ε := by
+    dsimp [ε, c]
+    linarith
+  have hnhds : {x : ℝ | |x - c| < ε} ∈ 𝓝 c := by
+    simpa [Real.dist_eq] using Metric.ball_mem_nhds c hε
+  have hEv : ∀ᶠ n : Nat in atTop, |graphThetaPSDPowerRateNat G n - c| < ε :=
+    tendsto_graphThetaPSDPowerRateNat_graphThetaPSDAsymptoticUpper G hnhds
+  rcases Filter.eventually_atTop.1 hEv with ⟨N0, hN0⟩
+  let Nnat : Nat := max N0 1
+  have hNnat_pos : 0 < Nnat := by
+    dsimp [Nnat]
+    exact lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_right _ _)
+  let N : PosNat := ⟨Nnat, hNnat_pos⟩
+  have hclose : |graphThetaPSDPowerRateNat G Nnat - c| < ε := hN0 Nnat (Nat.le_max_left _ _)
+  have hup : graphThetaPSDPowerRateNat G Nnat < c + ε := by
+    have hright : graphThetaPSDPowerRateNat G Nnat - c < ε := (abs_lt.mp hclose).2
+    linarith
+  have hw' : c + ε < w := by
+    dsimp [ε, c]
+    linarith
+  refine ⟨N, ?_⟩
+  have : graphThetaPSDPowerRateNat G Nnat < w := lt_trans hup hw'
+  simpa [graphThetaPSDPowerRateNat, graphThetaPSDPowerRate, graphThetaPSDLogSeq, N, Nnat] using this
+
+theorem iInf_graphThetaPSDPowerRate_eq_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    (⨅ N : PosNat, graphThetaPSDPowerRate G N) = graphThetaPSDAsymptoticUpper G := by
+  refine ciInf_eq_of_forall_ge_of_forall_gt_exists_lt
+    (f := graphThetaPSDPowerRate G) (b := graphThetaPSDAsymptoticUpper G)
+    (fun N => graphThetaPSDAsymptoticUpper_le_graphThetaPSDPowerRate G N) ?_
+  intro w hw
+  exact exists_graphThetaPSDPowerRate_lt_of_gt_graphThetaPSDAsymptoticUpper G hw
+
 theorem graphShannonCapacityReal_le_log_complChromatic
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) {n : Nat}
