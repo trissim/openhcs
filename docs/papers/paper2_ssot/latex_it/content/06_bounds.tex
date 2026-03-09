@@ -1,7 +1,148 @@
-\section{Rate-Complexity Bounds}\label{sec:bounds}
+\section{Finite Converse Family and Rate-Complexity Bounds}\label{sec:bounds}
 %==============================================================================
 
-The threshold $C_0=1$ has an operational consequence: independent rate governs manual synchronization cost. This section states that consequence in the same finite, deterministic model used for the zero-error theorems.
+This section states the deterministic finite converse family and then derives its operational rate-complexity consequence.
+
+\subsection{Finite Converse Family}\label{sec:finite-converse-family}
+
+The cleanest zero-error formulation starts from the joint observation-tag map itself.
+
+\begin{theorem}[Pair-injectivity characterization]\label{thm:pair-injective}
+Let $X$ range over a finite latent alphabet, let $Y$ be the deterministic observation transcript, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible if and only if the pair map $x \mapsto (Y(x),T(x))$ is injective on the ambiguity class under consideration.
+\end{theorem}
+
+\begin{proof}
+If two distinct latent states induce the same pair $(Y,T)$, then every deterministic decoder receives the same input on both states and must err on at least one of them. Conversely, if the pair map is injective, define the decoder by inversion on the image of $(Y,T)$; injectivity makes that inverse single-valued and exact.
+\end{proof}
+
+\begin{theorem}[Confusability formulation]\label{thm:confusability-converse}
+Fix a deterministic observation transcript and an $L$-bit side-information tag. If $K$ latent states induce the same observation transcript, then exact zero-error decoding on that ambiguity class requires $K$ distinct tag outcomes. Equivalently, a $K$-way ambiguity class forms a confusability clique whose size cannot exceed the available tag alphabet.
+\end{theorem}
+\leanmeta{\LH{OBS5}}
+
+\begin{proof}
+Apply Theorem~\ref{thm:pair-injective} on an ambiguity class on which the observation is constant. Then injectivity of $(Y,T)$ reduces to injectivity of the tag coordinate alone on that class. Since an $L$-bit tag provides at most $2^L$ outcomes, the clique size cannot exceed $2^L$.
+\end{proof}
+
+\begin{corollary}[Global observation-tag budget]\label{cor:global-budget}
+If the observation alphabet has size $O$ and the auxiliary tag alphabet has size $T$, then exact zero-error recovery on a latent alphabet of size $K$ requires
+\[
+K \le O\,T.
+\]
+\end{corollary}
+
+\begin{proof}
+Theorem~\ref{thm:pair-injective} requires injectivity of the map into the product alphabet $\mathcal Y \times \mathcal T$. A product alphabet of size $O\,T$ cannot support an injective image of more than $O\,T$ latent states.
+\end{proof}
+
+\begin{theorem}[Finite counting converse]\label{thm:fano-converse}
+Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then
+\[
+K \le 2^L.
+\]
+Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
+\end{theorem}
+\leanmeta{\LH{CIA3}}
+
+\begin{proof}
+This is Theorem~\ref{thm:confusability-converse} specialized to a single $K$-way ambiguity class.
+\end{proof}
+
+\begin{theorem}[Conditional-entropy formulation]\label{thm:conditional-entropy-converse}
+Let $X$ be uniform on a $K$-way ambiguity class and let $Y$ be the deterministic observation transcript. If $Y$ is constant on that class, then $H(X\mid Y)=\log_2 K$. In particular, any tag-observation pair $(Y,T)$ that resolves the class exactly must satisfy
+\[
+H(X\mid Y,T)=0
+\qquad\text{and}\qquad
+H(T\mid Y)\ge \log_2 K .
+\]
+\end{theorem}
+\leanmeta{\LH{PRB55}}\leanmeta{\LH{PRB47}}
+
+\begin{proof}
+If $Y$ is constant on the class, conditioning on $Y$ leaves the uniform prior unchanged, hence $H(X\mid Y)=\log_2 K$. Exact recovery from $(Y,T)$ forces $H(X\mid Y,T)=0$, so the side information carried by $T$ must close the entire $\log_2 K$ gap.
+\end{proof}
+
+\begin{theorem}[Mass-weighted clique entropy bound]\label{thm:weighted-clique-entropy}
+Let $S$ be a success set for a zero-error decoder, and suppose $S$ forms a confusability clique under the observation transcript. If $p_S$ denotes the total probability mass of $S$, then the entropy carried by the successful states obeys
+\[
+\sum_{x\in S} p(x)\log_2 \frac{1}{p(x)}
+\;\le\;
+h_2(p_S) + p_S \log_2 |\mathcal T|,
+\]
+where $h_2$ is binary entropy and $|\mathcal T|$ is the tag alphabet size.
+\end{theorem}
+\leanmeta{\LH{PRB55}}
+
+\begin{proof}
+Inside a confusability clique, exact recovery on the success set still forces tag injectivity. The successful states therefore contribute at most $\log_2 |\mathcal T|$ bits per unit success mass. Separating success from failure adds the Bernoulli term $h_2(p_S)$, which yields the stated bound.
+\end{proof}
+
+\begin{theorem}[Decoder-output and gap formulations]\label{thm:decoder-gap-converse}
+In the same deterministic finite model, the obstruction can also be expressed as output-entropy and finite-budget gap constraints: any deterministic decoder output $\hat X$ satisfies
+\[
+H(\hat X)\le H(Y,T)\le H(X),
+\]
+and the observation-tag entropy and decoded-output entropy are bounded by their corresponding finite alphabet ceilings, so the deficits
+\[
+\log_2 |\mathcal Y\times \mathcal T|-H(Y,T),
+\qquad
+\log_2 |\widehat{\mathcal X}|-H(\hat X)
+\]
+are nonnegative and vanish only in the uniform saturation cases formalized in the supplement.
+\end{theorem}
+\leanmeta{\LH{PRB90}}\leanmeta{\LH{PRB95}}\leanmeta{\LH{PRB73}}\leanmeta{\LH{PRB74}}\leanmeta{\LH{PRB82}}\leanmeta{\LH{PRB83}}\leanmeta{\LH{PRB93}}\leanmeta{\LH{PRB94}}
+
+\begin{proof}
+The decoder output is a deterministic function of $(Y,T)$, so Theorem~\ref{thm:deterministic-data-processing} gives $H(\hat X)\le H(Y,T)$. The pair entropy is itself bounded by the source entropy and by the logarithm of the available pair alphabet, which yields the nonnegative gap constraints.
+\end{proof}
+
+\begin{theorem}[Deterministic data processing]\label{thm:deterministic-data-processing}
+Let $\kappa$ be any deterministic coarsening of the observation-tag pair $(Y,T)$. Then
+\[
+H(\kappa(Y,T)) \le H(Y,T).
+\]
+In particular, since any deterministic decoder output $\hat X$ is a coarsening of $(Y,T)$,
+\[
+H(\hat X)\le H(Y,T)\le \log_2 |\mathcal Y\times \mathcal T|.
+\]
+\end{theorem}
+\leanmeta{\LH{PRB68}}\leanmeta{\LH{PRB81}}\leanmeta{\LH{PRB83}}
+
+\begin{proof}
+Deterministic coarsening merges atoms of the distribution on $(Y,T)$ and therefore cannot increase entropy. A decoder is one such coarsening. The ceiling follows because $(Y,T)$ takes values in a finite alphabet of size $|\mathcal Y\times\mathcal T|$.
+\end{proof}
+
+\begin{theorem}[Equivalence viewpoint]\label{thm:equivalence-viewpoint}
+The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements above are different normal forms of the same deterministic finite zero-error obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
+\end{theorem}
+
+\begin{proof}
+Pair injectivity is the structural core. The confusability and counting theorems express the injectivity requirement combinatorially; the conditional-entropy theorem expresses the same obstruction as residual uncertainty; the decoder-output and gap theorems express it through deterministic coarsening and finite alphabet ceilings. Each theorem therefore measures the same failure of exact isolation in a different coordinate system.
+\end{proof}
+
+\subsection{Finite-error extension}\label{sec:finite-error-extension}
+
+The main body of the paper studies exact zero error. The same deterministic finite model also supports a budgeted finite-error extension.
+
+\begin{theorem}[Budgeted finite-error converse]\label{thm:finite-error-budgeted}
+Let $P_e$ denote the decoder error probability on a finite source of size $K$, observed through a deterministic transcript alphabet of size $O$ together with a tag alphabet of size $T$. Then the decoded-output entropy obeys
+\[
+H(\hat X)
+\;\le\;
+h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).
+\]
+\end{theorem}
+\leanmeta{\LH{PRB85}}\leanmeta{\LH{PRB87}}
+
+\begin{proof}
+Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term.
+\end{proof}
+
+The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the failure term disappears, and the budget collapses back to the finite converse family above.
+
+\subsection{Rate-Complexity Consequence}\label{sec:rate-complexity-consequence}
+
+The threshold $C_0=1$ has an operational consequence: independent rate governs manual synchronization cost in the same finite deterministic model.
 
 \subsection{Cost Model}\label{sec:cost-model}
 
@@ -39,23 +180,6 @@ M_{\mathrm{effective}}(C,\delta_F)=\Omega(n).
 Each independent location can retain an outdated value unless it is edited directly. To restore exact consistency after changing $F$, each of the $n$ independent locations must therefore be synchronized manually. Hence the effective modification complexity grows at least linearly in $n$.
 \end{proof}
 
-\subsection{Finite Counting Converse}\label{sec:info-converse}
-
-The update-cost lower bound is the operational face of the same information obstruction studied earlier: insufficient side information prevents exact recovery of the correct latent value.
-
-\begin{theorem}[Finite Counting Converse]\label{thm:fano-converse}
-Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then
-\[
-K \le 2^L.
-\]
-Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
-\end{theorem}
-\leanmeta{\LH{CIA3}}
-
-\begin{proof}
-An $L$-bit tag yields at most $2^L$ distinct labels. If the base observation transcript is fixed across the ambiguous states, exact recovery requires the tag assignment to distinguish all $K$ possibilities. Distinct states therefore need distinct tags, which is possible only when $K\le 2^L$.
-\end{proof}
-
 \begin{lemma}[Information-Constrained DOF Lower Bound]\label{lem:info-dof}
 If the available side-information mechanism exposes at most $2^L$ distinguishable tags while the latent ambiguity class has size $K>2^L$, then no zero-error resolver can identify the true state from those tags alone. Any architecture that still guarantees exact correctness must therefore rely on additional independently accessible discriminating support, moving the system above the single-source regime.
 \end{lemma}
@@ -64,28 +188,6 @@ If the available side-information mechanism exposes at most $2^L$ distinguishabl
 \begin{proof}
 Theorem~\ref{thm:fano-converse} rules out exact recovery from the available tag budget. If exact correctness is nevertheless required, the architecture must supplement the insufficient side-information channel with additional independently accessible information. In the present model, that means leaving the rate-$1$ regime and paying the synchronization cost of Theorem~\ref{thm:lower-bound}.
 \end{proof}
-
-\subsection{Worked Example}\label{sec:worked-mi}
-
-Consider a fact with $K=4$ admissible values while the available side-information channel supplies only one bit. Since $2^1 < 4$, Theorem~\ref{thm:fano-converse} rules out zero-error recovery. The architecture must either enlarge the side-information alphabet or expose additional independent support. The theorem does not depend on software; the same logic applies to any host system whose observation transcript leaves four mutually compatible alternatives.
-
-\subsection{Unified Converse Viewpoint}\label{sec:unified-converse}
-
-The counting theorem is the basic form of the converse, but it is not the only one. In the deterministic finite model, the same budget obstruction can be restated in several classical languages.
-
-\begin{theorem}[Unified finite converse, summary form]
-Let $X$ be the latent source, let $Y$ denote the deterministic observation/side-information transcript, and let $\hat X$ be any deterministic decoder output. If $Y$ does not identify the true state exactly, then the same finite budget simultaneously:
-\begin{enumerate}
-\tightlist
-\item lower-bounds zero-error ambiguity resolution and confusability-clique separation,
-\item upper-bounds the conditional entropy $H(X\mid Y)$,
-\item upper-bounds the decoder-output entropy $H(\hat X)$,
-\item and appears as an output-entropy or KL gap relative to the ambient finite alphabets.
-\end{enumerate}
-These are different normal forms of one deterministic finite converse family rather than unrelated lemmas.
-\end{theorem}
-
-The zero-incoherence threshold identifies the unique exact-consistency regime; the converse family explains how departures from that regime reappear as finite information-budget obstructions.
 
 \subsection{The Unbounded Gap}\label{sec:gap}
 
@@ -101,4 +203,4 @@ The ratio between the modification cost of an architecture with $n$ independent 
 By Theorem~\ref{thm:upper-bound}, a rate-$1$ architecture has constant effective modification complexity. By Theorem~\ref{thm:lower-bound}, an architecture with $n$ independent encodings incurs linear cost in $n$. The ratio therefore grows without bound.
 \end{proof}
 
-The asymptotic statement has a simple practical reading: once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not merely with the visibility of the fact.
+Once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not merely with the visibility of the fact.

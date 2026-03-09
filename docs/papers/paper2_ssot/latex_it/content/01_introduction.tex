@@ -1,29 +1,23 @@
 \section{Introduction}\label{introduction}
 
-When one latent fact is represented at several modifiable locations, exact consistency becomes a zero-error inference problem. The current system state either identifies one authoritative value or leaves a nontrivial ambiguity class of mutually incompatible latent states.
-
-An abstract multi-location encoding model is used throughout. A fact $F$ is represented across locations $\{L_1,\dots,L_n\}$, some independently writable and some derived from others. Two questions drive the analysis:
-\begin{enumerate}
-\item When does the encoding architecture itself guarantee exact consistency?
-\item When it does not, how much side information is needed for zero-error resolution?
-\end{enumerate}
+When one latent fact is represented at several modifiable locations, exact consistency becomes a zero-error inference problem for a deterministic multi-location encoding. The current system state either identifies one authoritative value or leaves a nontrivial ambiguity class of mutually incompatible latent states. The paper asks when the encoding architecture itself guarantees exact consistency and, when it does not, how much side information is needed for zero-error resolution.
 The resulting theory belongs to the intersection of zero-error information theory, side-information source coding, and finite converses~\cite{shannon1956zero,korner1973graphs,lovasz1979shannon,witsenhausen1976zero,slepian1973noiseless,cover2006elements}.
 
 \subsection{Problem Formulation}\label{sec:encoding-problem}
 
-The model yields an exact-consistency analogue of zero-error resolvability for modifiable encodings. Rate is measured by the number of independently writable locations; we refer to this quantity as the \emph{independent rate} and use \emph{degrees of freedom} (DOF) only as shorthand. The fundamental threshold is
+The model yields an exact-consistency analogue of zero-error resolvability for modifiable encodings. Rate is measured by the number of independently writable locations; we refer to this quantity as the \emph{independent rate} and use \emph{degrees of freedom} (DOF) only as shorthand. The central theorem family is a deterministic finite converse: once ambiguity survives the observation transcript, the same finite information budget reappears in several classical forms.
+
+\begin{theorem}[Unified finite converse, informal]
+Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible exactly when the pair map $x \mapsto (Y(x),T(x))$ is injective on the surviving ambiguity class. This same injectivity requirement yields confusability and counting converses, conditional-entropy and decoder-output reformulations, finite alphabet-gap constraints, and a budgeted finite-error extension. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.
+\end{theorem}
+
+The structural threshold then follows as the special case in which exact zero incoherence is possible:
 \begin{center}
 \fbox{$C_0 = 1$}
 \end{center}
 where $C_0$ denotes the largest independent rate that guarantees zero incoherence.
 
-A finite converse family shows that once ambiguity survives the observation transcript, the same finite information budget reappears in several classical forms.
-
-\begin{theorem}[Unified finite converse, informal]
-Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $\hat X$ be any deterministic decoder output. If $Y$ does not isolate the true state, then the same finite observation/side-information budget simultaneously governs exact zero-error resolution of ambiguity classes, bounds the conditional entropy $H(X\mid Y)$, bounds the decoder-output entropy $H(\hat X)$, and appears as an output-entropy or KL gap relative to the corresponding finite alphabet ceiling. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.
-\end{theorem}
-
-The threshold theorem and the converse family interact: $C_0=1$ identifies the unique zero-incoherence regime, while the converse explains what fails once the architecture moves above that regime.
+The converse family and the threshold theorem therefore play different roles: the converse identifies the finite obstruction, and $C_0=1$ identifies the unique regime in which that obstruction is absent.
 
 \subsection{Relation to Classical Information Theory}\label{sec:connection-it}
 
@@ -31,11 +25,11 @@ Three classical lines are particularly relevant.
 
 \textbf{Zero-error information theory.} Shannon's zero-error framework and its graph-theoretic refinements describe exact communication under confusability constraints~\cite{shannon1956zero,korner1973graphs,lovasz1979shannon}. Our model translates that perspective from one-shot channels to persistent encodings under edits.
 
-\textbf{Source coding with side information.} In Slepian--Wolf theory, and in Witsenhausen's zero-error side-information problem, decoder side information lowers the rate or label budget needed for correct recovery~\cite{slepian1973noiseless,witsenhausen1976zero}. Coding-for-computing and functional-compression results make the same structure explicit when the decoder seeks a deterministic function rather than the full source~\cite{orlitsky2001coding,doshi2010functional}. Here the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery is impossible unless the available tags or observations separate all remaining alternatives.
+\textbf{Source coding with side information.} In Slepian--Wolf theory and Witsenhausen's zero-error side-information problem, decoder side information lowers the rate or label budget needed for correct recovery~\cite{slepian1973noiseless,witsenhausen1976zero}. Here the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery is impossible unless the available tags or observations separate all remaining alternatives.
 
 \textbf{Finite entropy converses.} Classical Fano inequalities and related entropy bounds convert decoding difficulty into information bounds~\cite{fano1961transmission,witsenhausen1975conditional,cover2006elements}. Our setting yields a deterministic finite-source analogue in which counting, conditional entropy, decoder-output entropy, and output-gap formulations become different normal forms of the same obstruction.
 
-\subsection{Realizability and Applications}\label{sec:realizability}
+\subsection{Realizability and Verification}\label{sec:realizability}
 
 Beyond the abstract threshold, a second question is when a concrete host system can realize the rate-$1$ regime. We show that two structural properties are required:
 \begin{enumerate}
@@ -45,7 +39,7 @@ Beyond the abstract threshold, a second question is when a concrete host system 
 
 \subsection{Paper Organization}\label{overview}
 
-Section~\ref{sec:foundations} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section~\ref{sec:ssot} interprets derivation as the dependence structure achieving rate $1$. Section~\ref{sec:requirements} gives the realizability theorem. Section~\ref{sec:bounds} develops the finite converse family and its rate-complexity consequence. Sections~\ref{sec:evaluation} and~\ref{sec:empirical} provide brief computational illustrations. A supplementary Lean 4 artifact machine-checks the core counting, threshold, realizability, and complexity chains~\cite{demoura2021lean4}.
+Section~\ref{sec:foundations} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section~\ref{sec:ssot} interprets derivation as the dependence structure achieving rate $1$. Section~\ref{sec:requirements} gives the realizability theorem. Section~\ref{sec:bounds} develops the finite converse family and its rate-complexity consequence. Sections~\ref{sec:evaluation} and~\ref{sec:empirical} verify the realizability criterion on concrete host systems. A supplementary Lean 4 artifact machine-checks the converse family, threshold chain, realizability theorem, and rate-complexity arguments~\cite{demoura2021lean4}.
 
 \subsection{Scope}\label{sec:scope}
 
@@ -56,10 +50,11 @@ The scope is finite facts represented at multiple locations under admissible edi
 The main contributions are:
 \begin{itemize}
 \tightlist
-\item \textbf{A deterministic finite converse family} for exact consistency, starting from the $\log_2 k$ side-information lower bound and extending to confusability, conditional-entropy, decoder-output, and entropy-gap formulations.
-\item \textbf{A sharp threshold corollary} showing that zero-incoherence capacity is exactly one independent source.
+\item \textbf{A deterministic finite converse family} for exact consistency, presented through confusability, counting, conditional-entropy, decoder-output, and entropy-gap formulations of the same finite obstruction, together with a deterministic data-processing step and a budgeted finite-error extension.
+\item \textbf{A sharp threshold corollary} showing that zero-incoherence capacity is exactly one independent source; this is the structural rate-$1$ consequence of the converse family.
 \item \textbf{A realizability theorem} identifying causal propagation and provenance observability as the conditions needed to attain the rate-$1$ regime in concrete systems.
 \item \textbf{An operational consequence} showing $O(1)$ manual update cost at rate $1$ and $\Omega(n)$ cost above it, with an unbounded asymptotic gap.
+\item \textbf{A supplementary machine-checked artifact} verifying the converse family, threshold chain, realizability theorem, and rate-complexity arguments in Lean~4.
 \end{itemize}
 
 
