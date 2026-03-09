@@ -8,20 +8,75 @@ A computational platform realizes verifiable independent rate $1$ for structural
 \end{corollary}
 \leanmeta{\LH{LNG1}}
 
-The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across applications is the implementation of the two required capabilities.
+The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across applications is the host mechanism that provides propagation and provenance. The two tables below make that criterion concrete in programming-language runtimes and database systems. Both are routine software environments, and both exhibit the same structural separation between host-native maintained derivations and externalized synchronization.
 
-\begin{center}
-\small
-\setlength{\tabcolsep}{3pt}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.22\linewidth}YY@{}}
+\paragraph{Programming-language runtimes (selected).}
+For language-level artifacts, the realizability question becomes concrete: does the host language/runtime itself provide both (i) automatic propagation from one structural definition to its derived runtime views and (ii) queryable provenance for those views, without relying on external build tooling? Table~\ref{tab:selected-pl} records a compact comparison for representative mainstream runtimes drawn from widely used languages in current usage surveys and rankings~\cite{stackoverflow2025,tiobe2024}.
+
+\begingroup
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.14\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}>{\RaggedRight\arraybackslash}p{0.14\linewidth}X@{}}
 \toprule
-\textbf{Domain} & \textbf{Authoritative source and derived views} & \textbf{How the theorem specializes} \\
+\textbf{Language} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Feature} & \textbf{Reason} \\
 \midrule
-Language-level artifacts & one declarative definition plus maintained registries, interface views, or metadata projections & definition-time or build-time hooks supply propagation; reflection or metadata APIs supply provenance \\
-Databases & one base relation or schema declaration plus maintained views, indexes, or summaries & transactional maintenance supplies propagation; system catalogs expose provenance \\
-Configuration and deployment systems & one source declaration plus dependency outputs or rendered manifests & dependency-driven recomputation supplies propagation; resource graphs expose provenance \\
+Python~\cite{pep487,pythondatamodel2025} & yes & yes & yes & \parbox[t]{\linewidth}{\raggedright\fontsize{5.8}{5.9}\selectfont\ttfamily \_\_init\_-\\subclass\_\_\\\_\_sub-\\classes\_\_()} & Host runtime provides class-definition hooks and hierarchy introspection. \\
+Java~\cite{gosling2021java} & no & no & no & annotations only & Annotations/tooling are external; the JVM lacks subclass-enumeration provenance. \\
+Rust~\cite{rustref2024} & partial & no & no & proc macros & Proc macros generate code at compile time, but generated provenance is unavailable at runtime. \\
+Go~\cite{gospec2024} & no & no & no & reflection only & No definition-time hooks and no host-level registry of implementers. \\
+\parbox[t]{\linewidth}{\raggedright TypeScript/\\JavaScript\\[-0.15em]{\footnotesize\cite{typescriptDecorators2025,javascriptDecorators2025}}} & partial & no & no & decorators & Decorators attach metadata, but type erasure and missing subclass provenance block exact verification. \\
 \bottomrule
 \end{tabularx}
+\par\noindent\vspace{-0.55em}\textbf{Table V.1.} Selected mainstream programming-language runtimes under Corollary~\ref{cor:lang-realizability}.
+\label{tab:selected-pl}
+\par
+\endgroup
+
+In this selected mainstream runtime set, Python is the only language supplying both requirements internally. The point is not language ranking; it is that the realizability theorem cuts across domains and becomes directly testable in concrete host environments. Table~\ref{tab:selected-db} shows the same separation in a non-programming-language setting.
+
+\paragraph{Database systems.}
+The same criterion separates native maintained views from external synchronization pipelines.
+
+\begingroup
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.28\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}X@{}}
+\toprule
+\textbf{Database pattern} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Reason} \\
+\midrule
+Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & yes & yes & yes & The database engine maintains the derived relation and exposes catalog metadata for the maintained object. \\
+External ETL copy / duplicate summary table & no & no & no & Synchronization can be skipped or forked, and provenance for the derived copy is no longer intrinsic to the host database. \\
+\bottomrule
+\end{tabularx}
+\par\noindent\vspace{-0.55em}\textbf{Table V.2.} Database realizations under the same criterion.
+\label{tab:selected-db}
+\par
+\endgroup
+
+\paragraph{Dependency-resolution systems.}
+A third everyday regime appears in dependency-resolution systems. Package managers often provide strong provenance observability for resolved dependency graphs, but they do not provide causal propagation in the sense of Corollary~\ref{cor:lang-realizability}: editing the authoritative manifest does not itself update the lockfile or installed graph until a separate host operation is executed.
+
+\begin{center}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.10\linewidth}>{\centering\arraybackslash}m{0.06\linewidth}>{\centering\arraybackslash}m{0.06\linewidth}>{\centering\arraybackslash}m{0.08\linewidth}>{\RaggedRight\arraybackslash}m{0.14\linewidth}>{\RaggedRight\arraybackslash}m{0.48\linewidth}@{}}
+\toprule
+\textbf{System} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Feature} & \textbf{Reason} \\
+\midrule
+\parbox[c]{\linewidth}{\raggedright npm\\[-0.1em]{\footnotesize\cite{npmLock2026,npmExplain2026,npmLs2026}}} & no & yes & no & lockfile + explain & The lockfile records the resolved tree and npm exposes dependency provenance, but manifest edits and lock/tree synchronization are separated by explicit npm operations. \\
+\parbox[c]{\linewidth}{\raggedright Cargo\\[-0.1em]{\footnotesize\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026}}} & no & yes & no & lockfile + tree & Cargo exposes resolved-dependency provenance clearly, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands rather than at source-edit time. \\
+\parbox[c]{\linewidth}{\raggedright Poetry\\[-0.1em]{\footnotesize\cite{poetryCli2026}}} & no & yes & no & \texttt{show --tree} & The resolved graph is queryable, but lock regeneration is an explicit step, so propagation is not intrinsic to the source edit itself. \\
+\parbox[c]{\linewidth}{\raggedright pnpm\\[-0.1em]{\footnotesize\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026}}} & no & yes & no & lockfile + why & The host exposes dependency provenance, but the lockfile is still a separately maintained derived artifact rather than an automatically updated structural view at edit time. \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\textbf{Table V.3.} Dependency-resolution systems are typically provenance-rich but propagation-incomplete under the realizability criterion.
+\label{tab:selected-deps}
 \end{center}
 
 Platforms that rely solely on external batch synchronization or opaque code generation do not automatically satisfy the corollary: if propagation can be bypassed or provenance is not available to the host system, exact verification of the single-source regime remains unresolved. Supplement~A contains additional case-study material.
