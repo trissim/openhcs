@@ -86,20 +86,20 @@ Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key
   \draw (0.08,0.6) -- (-0.08,0.6);
 
   % Region labels
-  \node[blue, anchor=west] at (2.55,2.22) {\small $D = 0$ frontier};
-  \node[gray] at (2.2,0.8) {\footnotesize achievable};
+  \node[blue] at (2.60,2.32) {\small $D = 0$ frontier};
+  \node[gray] at (2.15,1.12) {\footnotesize achievable};
 
   % Points on the D=0 frontier
   \filldraw[orange] (0,2.8) circle (2.5pt);
-  \node[orange, anchor=west] at (0.22,2.92) {\footnotesize Collision-free attr-only ($A_\pi{=}1$)};
+  \node[orange, anchor=west] at (0.22,2.8) {\footnotesize Collision-free attr-only ($A_\pi{=}1$)};
 
   \filldraw[green!60!black] (5,0.6) circle (2.5pt);
-  \node[green!60!black, anchor=north east] at (4.82,0.76) {\footnotesize Nominal ($D{=}0$)};
-  \node[green!60!black, anchor=west] at (5.08,0.6) {\footnotesize $W=1$};
+  \node[green!60!black, anchor=east] at (4.78,0.6) {\footnotesize Nominal ($D{=}0$)};
+  \node[green!60!black, anchor=west] at (5.16,0.6) {\footnotesize $W=1$};
 
   % Probe-only strategy: below frontier, accepts D>0
   \filldraw[red] (0,1.8) circle (2.5pt);
-  \node[red, anchor=west] at (0.22,1.72) {\footnotesize Colliding attr-only ($D{>}0$)};
+  \node[red, anchor=west] at (0.22,1.8) {\footnotesize Colliding attr-only ($D{>}0$)};
 
 \end{tikzpicture}
 \caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Here $W$ counts identification operations, including a constant-time tag read, so the nominal zero-error point sits at $W=O(1)$ rather than $W=0$. The left orange point shows the collision-free attribute-only regime ($A_\pi=1$), while the red point shows a colliding attribute-only regime with $D>0$. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; if tag access were treated as free representation access rather than an observation, the nominal point would move down to the $W=0$ axis.}
