@@ -314,6 +314,166 @@ structure ThetaWitness {V β : Type} [Fintype β] [DecidableEq β] (G : SimpleGr
   one_le_bound : 1 ≤ bound
   one_le_bound_inner_sq : ∀ v, 1 ≤ bound * (inner ℝ (repr v) handle)^2
 
+/-- A correlation/Gram-style feasible object: one unit vector for each graph vertex and one
+distinguished handle vector, presented uniformly on `Option V`. -/
+structure ThetaMatrixFeasible {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] (G : SimpleGraph V) where
+  embed : Option V → EuclideanSpace ℝ κ
+  unit_none : ‖embed none‖ = 1
+  unit_some : ∀ v, ‖embed (some v)‖ = 1
+  ortho_of_nonadj :
+    ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w →
+      inner ℝ (embed (some v)) (embed (some w)) = 0
+  bound : ℝ
+  one_le_bound : 1 ≤ bound
+  one_le_bound_inner_sq : ∀ v, 1 ≤ bound * (inner ℝ (embed (some v)) (embed none))^2
+
+noncomputable def ThetaMatrixFeasible.gram
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    Matrix (Option V) (Option V) ℝ :=
+  fun i j => inner ℝ (T.embed i) (T.embed j)
+
+theorem ThetaMatrixFeasible.gram_symm
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    Matrix.transpose T.gram = T.gram := by
+  ext i j
+  simp [ThetaMatrixFeasible.gram, Matrix.transpose_apply, real_inner_comm]
+
+theorem ThetaMatrixFeasible.gram_none_none
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    T.gram none none = 1 := by
+  simp [ThetaMatrixFeasible.gram, real_inner_self_eq_norm_sq, T.unit_none]
+
+theorem ThetaMatrixFeasible.gram_some_some_diag
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) (v : V) :
+    T.gram (some v) (some v) = 1 := by
+  simp [ThetaMatrixFeasible.gram, real_inner_self_eq_norm_sq, T.unit_some]
+
+theorem ThetaMatrixFeasible.gram_nonadj_zero
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) {v w : V}
+    (hvw : v ≠ w) (hnotAdj : ¬ G.Adj v w) :
+    T.gram (some v) (some w) = 0 := by
+  simpa [ThetaMatrixFeasible.gram] using T.ortho_of_nonadj hvw hnotAdj
+
+noncomputable def ThetaMatrixFeasible.toThetaWitness
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    ThetaWitness (β := κ) G where
+  repr := fun v => T.embed (some v)
+  handle := T.embed none
+  repr_unit := T.unit_some
+  handle_unit := T.unit_none
+  ortho_of_nonadj := T.ortho_of_nonadj
+  bound := T.bound
+  one_le_bound := T.one_le_bound
+  one_le_bound_inner_sq := T.one_le_bound_inner_sq
+
+noncomputable def ThetaMatrixFeasible.ofThetaWitness
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (W : ThetaWitness (β := κ) G) :
+    ThetaMatrixFeasible (κ := κ) G where
+  embed
+    | none => W.handle
+    | some v => W.repr v
+  unit_none := W.handle_unit
+  unit_some := W.repr_unit
+  ortho_of_nonadj := W.ortho_of_nonadj
+  bound := W.bound
+  one_le_bound := W.one_le_bound
+  one_le_bound_inner_sq := W.one_le_bound_inner_sq
+
+theorem ThetaMatrixFeasible.toThetaWitness_ofThetaWitness
+    {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] {G : SimpleGraph V}
+    (W : ThetaWitness (β := κ) G) :
+    (ThetaMatrixFeasible.ofThetaWitness W).toThetaWitness = W := by
+  cases W
+  rfl
+
+/-- A factorized correlation-matrix feasible object for the theta side. The matrix is indexed by
+the graph vertices together with a distinguished handle slot `none`, and is presented together
+with an explicit Gram factorization. -/
+structure ThetaSDPFeasible (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  κ : Type
+  instFintypeκ : Fintype κ
+  instDecidableEqκ : DecidableEq κ
+  instNonemptyκ : Nonempty κ
+  embed : Option V → EuclideanSpace ℝ κ
+  M : Matrix (Option V) (Option V) ℝ
+  gram_eq : M = fun i j => inner ℝ (embed i) (embed j)
+  diag_none : M none none = 1
+  diag_some : ∀ v : V, M (some v) (some v) = 1
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → M (some v) (some w) = 0
+  bound : ℝ
+  one_le_bound : 1 ≤ bound
+  one_le_bound_entry_sq : ∀ v, 1 ≤ bound * (M none (some v))^2
+
+attribute [instance] ThetaSDPFeasible.instFintypeκ
+attribute [instance] ThetaSDPFeasible.instDecidableEqκ
+attribute [instance] ThetaSDPFeasible.instNonemptyκ
+
+section ThetaSDP
+
+variable {V κ : Type} [Fintype V] [DecidableEq V] [Fintype κ] [DecidableEq κ] [Nonempty κ]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaMatrixFeasible.toThetaSDPFeasible
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    ThetaSDPFeasible V G where
+  κ := κ
+  instFintypeκ := inferInstance
+  instDecidableEqκ := inferInstance
+  instNonemptyκ := inferInstance
+  embed := T.embed
+  M := T.gram
+  gram_eq := by
+    ext i j
+    rfl
+  diag_none := T.gram_none_none
+  diag_some := T.gram_some_some_diag
+  zero_of_nonadj := by
+    intro v w hvw hnotAdj
+    simpa using T.gram_nonadj_zero hvw hnotAdj
+  bound := T.bound
+  one_le_bound := T.one_le_bound
+  one_le_bound_entry_sq := by
+    intro v
+    rw [ThetaMatrixFeasible.gram]
+    simpa [real_inner_comm] using T.one_le_bound_inner_sq v
+
+noncomputable def ThetaSDPFeasible.toThetaMatrixFeasible
+    (T : ThetaSDPFeasible V G) :
+    ThetaMatrixFeasible (κ := T.κ) G where
+  embed := T.embed
+  unit_none := by
+    have h := congrArg (fun M => M none none) T.gram_eq
+    have hs : ‖T.embed none‖ ^ 2 = 1 := by
+      simpa [real_inner_self_eq_norm_sq] using h.symm.trans T.diag_none
+    have hsqrt := congrArg Real.sqrt hs
+    simpa [Real.sqrt_sq_eq_abs, abs_of_nonneg (norm_nonneg _)] using hsqrt
+  unit_some := by
+    intro v
+    have h := congrArg (fun M => M (some v) (some v)) T.gram_eq
+    have hs : ‖T.embed (some v)‖ ^ 2 = 1 := by
+      simpa [real_inner_self_eq_norm_sq] using h.symm.trans (T.diag_some v)
+    have hsqrt := congrArg Real.sqrt hs
+    simpa [Real.sqrt_sq_eq_abs, abs_of_nonneg (norm_nonneg _)] using hsqrt
+  ortho_of_nonadj := by
+    intro v w hvw hnotAdj
+    have h := congrArg (fun M => M (some v) (some w)) T.gram_eq
+    simpa using h.symm.trans (T.zero_of_nonadj hvw hnotAdj)
+  bound := T.bound
+  one_le_bound := T.one_le_bound
+  one_le_bound_inner_sq := by
+    intro v
+    have h := congrArg (fun M => M none (some v)) T.gram_eq
+    simpa [h, real_inner_comm] using T.one_le_bound_entry_sq v
+
+end ThetaSDP
+
 noncomputable def thetaWitnessOfColoring
     {V β : Type} [Fintype β] [DecidableEq β] [Nonempty β]
     {G : SimpleGraph V}
@@ -2901,6 +3061,93 @@ noncomputable def graphThetaLogUpper
     (G : SimpleGraph α) : ℝ :=
   sInf (graphThetaLogBoundSet G)
 
+def graphThetaMatrixLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { r | ∃ (κ : Type) (_ : Fintype κ) (_ : DecidableEq κ) (_ : Nonempty κ),
+      ∃ T : ThetaMatrixFeasible (κ := κ) G, r = Real.log T.bound }
+
+noncomputable def graphThetaMatrixLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (graphThetaMatrixLogBoundSet G)
+
+def graphThetaSDPLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { r | ∃ T : ThetaSDPFeasible α G, r = Real.log T.bound }
+
+noncomputable def graphThetaSDPLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (graphThetaSDPLogBoundSet G)
+
+theorem graphThetaMatrixLogBoundSet_eq_graphThetaLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaMatrixLogBoundSet G = graphThetaLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨κ, _, _, _, T, rfl⟩
+    exact ⟨κ, inferInstance, inferInstance, inferInstance, T.toThetaWitness, rfl⟩
+  · intro hr
+    rcases hr with ⟨κ, _, _, _, W, rfl⟩
+    exact ⟨κ, inferInstance, inferInstance, inferInstance, ThetaMatrixFeasible.ofThetaWitness W, rfl⟩
+
+theorem graphThetaMatrixLogUpper_eq_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaMatrixLogUpper G = graphThetaLogUpper G := by
+  simp [graphThetaMatrixLogUpper, graphThetaLogUpper, graphThetaMatrixLogBoundSet_eq_graphThetaLogBoundSet]
+
+theorem graphThetaLogBoundSet_subset_graphThetaSDPLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaLogBoundSet G ⊆ graphThetaSDPLogBoundSet G := by
+  intro r hr
+  rcases hr with ⟨β, _, _, _, W, rfl⟩
+  exact ⟨(ThetaMatrixFeasible.ofThetaWitness W).toThetaSDPFeasible, rfl⟩
+
+theorem graphThetaSDPLogBoundSet_subset_graphThetaLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSDPLogBoundSet G ⊆ graphThetaLogBoundSet G := by
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  refine ⟨T.κ, inferInstance, inferInstance, inferInstance, T.toThetaMatrixFeasible.toThetaWitness, ?_⟩
+  rfl
+
+theorem graphThetaSDPLogBoundSet_eq_graphThetaLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSDPLogBoundSet G = graphThetaLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    exact graphThetaSDPLogBoundSet_subset_graphThetaLogBoundSet G hr
+  · intro hr
+    exact graphThetaLogBoundSet_subset_graphThetaSDPLogBoundSet G hr
+
+theorem graphThetaSDPLogBoundSet_nonempty
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    (graphThetaSDPLogBoundSet G).Nonempty := by
+  classical
+  have hW : ThetaWitness (β := α) G := thetaWitnessOfColoring ((Gᶜ).selfColoring)
+  refine ⟨Real.log hW.bound, ?_⟩
+  exact ⟨(ThetaMatrixFeasible.ofThetaWitness hW).toThetaSDPFeasible, rfl⟩
+
+theorem graphThetaSDPLogBoundSet_bddBelow
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    BddBelow (graphThetaSDPLogBoundSet G) := by
+  refine ⟨0, ?_⟩
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact Real.log_nonneg T.one_le_bound
+
+
 theorem graphThetaLogBoundSet_nonempty
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) :
@@ -2919,6 +3166,22 @@ theorem graphThetaLogBoundSet_bddBelow
   intro r hr
   rcases hr with ⟨β, _, _, _, W, rfl⟩
   exact Real.log_nonneg W.one_le_bound
+
+theorem graphThetaSDPLogUpper_le_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSDPLogUpper G ≤ graphThetaLogUpper G := by
+  dsimp [graphThetaSDPLogUpper, graphThetaLogUpper]
+  exact csInf_le_csInf
+    (graphThetaSDPLogBoundSet_bddBelow G)
+    (graphThetaLogBoundSet_nonempty G)
+    (graphThetaLogBoundSet_subset_graphThetaSDPLogBoundSet G)
+
+theorem graphThetaSDPLogUpper_eq_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSDPLogUpper G = graphThetaLogUpper G := by
+  simp [graphThetaSDPLogUpper, graphThetaLogUpper, graphThetaSDPLogBoundSet_eq_graphThetaLogBoundSet]
 
 theorem graphShannonCapacityReal_le_graphThetaLogUpper
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
