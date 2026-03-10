@@ -30,7 +30,7 @@ The paper is best read as one theorem package with four linked takeaways: a stru
 
 \item \textbf{Impossibility Theorem.} In the hard regime, no exact certifier can be simultaneously sound, complete, and polynomial-budgeted. One of these must fail: abstain on some instances, weaken guarantees, or accept incorrect outputs. The same section also isolates witness-checking lower bounds, approximation obstructions, and the externalization of omitted exact relevance.
 
-\item \textbf{Lean-certified reduction and finite-decision core.} The main reductions, size-bounded hardness packages, exact finite boolean deciders, counted finite-search procedures, and explicit-state step-counting wrappers for the regime-typed query predicates are mechanized in Lean 4. For the stochastic existential variants, the artifact now also mechanizes the witness-over-verifier schema, the existential-majority reduction core, and an internal completeness-style packaging for the stochastic anchor family \leanmeta{\LH{OU1}, \LH{OU2}, \LH{EH1}, \LH{EH2}, \LH{EH4}, \LH{EH5}.} Standard PP/PSPACE and oracle-class membership arguments still remain part of the paper text rather than end-to-end Turing-machine witness proofs in the current repository.
+\item \textbf{Lean-certified reduction and finite-decision core.} The main reductions, size-bounded hardness packages, exact finite boolean deciders, counted finite-search procedures, and explicit-state step-counting wrappers for the regime-typed query predicates are mechanized in Lean 4. For the stochastic existential variants, the artifact now also mechanizes the witness-over-verifier schema, the existential-majority reduction core, and an internal completeness-style packaging for the stochastic anchor family \leanmeta{\LHrng{OU}{1}{2}, \LHrng{EH}{1}{2}, \LHrng{EH}{4}{5}.} Standard PP/PSPACE and oracle-class membership arguments still remain part of the paper text rather than end-to-end Turing-machine witness proofs in the current repository.
 \end{enumerate}
 
 \subsection{Quantifier Structure}
@@ -54,7 +54,7 @@ Proof files backing cited content & \LeanReleaseFiles \\
 \end{tabular}
 \end{center}
 
-The artifact builds with \texttt{lake build}. It certifies the reduction-correctness lemmas, size-bounded hardness packages, exact finite deciders, counted-search witnesses, tractability statements, explicit-state step-counting wrappers, and the scoped witness-over-verifier and existential-hardness packages cited for the stochastic $\textsf{NP}^{\textsf{PP}}$ boundary \leanmeta{\LH{OU1}, \LH{OU2}, \LH{EH2}, \LH{EH3}, \LH{EH4}, \LH{EH5}.} Standard PP/PSPACE and oracle-class membership directions remain paper proofs rather than full Turing-machine formalizations.
+The artifact builds with \texttt{lake build}. It certifies the reduction-correctness lemmas, size-bounded hardness packages, exact finite deciders, counted-search witnesses, tractability statements, explicit-state step-counting wrappers, and the scoped witness-over-verifier and existential-hardness packages cited for the stochastic $\textsf{NP}^{\textsf{PP}}$ boundary \leanmeta{\LHrng{OU}{1}{2}, \LHrng{EH}{2}{5}.} Standard PP/PSPACE and oracle-class membership directions remain paper proofs rather than full Turing-machine formalizations.
 
 \subsection{Paper Structure}
 

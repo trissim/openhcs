@@ -3323,13 +3323,20 @@ end {module_root}
         - preserves prefix order by first appearance
         - sorts numerically within each prefix
         - compresses contiguous runs into `\\LHrng{PREFIX}{a}{b}`
+        - preserves a single trailing period when present
         """
         item_pattern = re.compile(
             r"\\LH\{([A-Z]+)(\d+)\}|\\LHrng\{([A-Z]+)\}\{(\d+)\}\{(\d+)\}"
         )
 
         def normalize_inner(inner: str) -> Optional[str]:
-            parts = [part.strip() for part in inner.split(",")]
+            trailing = ""
+            stripped_inner = inner.strip()
+            if stripped_inner.endswith("."):
+                trailing = "."
+                stripped_inner = stripped_inner[:-1].rstrip()
+
+            parts = [part.strip() for part in stripped_inner.split(",")]
             items: List[Tuple[str, int, int, int]] = []
             prefix_order: Dict[str, int] = {}
 
@@ -3373,7 +3380,8 @@ end {module_root}
                 else:
                     rendered.append(rf"\LHrng{{{prefix}}}{{{start}}}{{{current_end}}}")
                 i = j
-            return ", ".join(rendered)
+            joined = ", ".join(rendered)
+            return joined + trailing
 
         pieces: List[str] = []
         cursor = 0

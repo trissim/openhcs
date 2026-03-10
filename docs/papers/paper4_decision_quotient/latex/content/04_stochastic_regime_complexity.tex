@@ -75,7 +75,7 @@ If every admissible $I$-fiber has a unique conditional optimum, then any chosen 
 STOCHASTIC-ANCHOR-SUFFICIENCY-CHECK is PP-hard.
 \end{theorem}
 
-\leanmeta{\LH{DC40}, \LH{DC41}, \LH{DC42}.}
+\leanmeta{\LHrng{DC}{40}{42}.}
 
 \begin{proof}
 Reduce MAJSAT. Given Boolean formula $\varphi$ on $n\geq 1$ variables, take $S=\{0,1\}^n$, uniform $P$, $I=\emptyset$, and three actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$. Set
@@ -100,7 +100,7 @@ Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, th
 For finite instances, the artifact contains counted exhaustive-search procedures for stochastic sufficiency, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their certified step bounds are respectively $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
 \end{proposition}
 
-\leanmeta{\LH{DC62}, \LH{DC63}, \LH{DC64}, \LH{DC65}, \LH{DC72}, \LH{DC73}, \LH{DC76}.}
+\leanmeta{\LHrng{DC}{62}{65}, \LHrng{DC}{72}{73}, \LH{DC76}.}
 
 \begin{proof}
 The sufficiency search scans for a violating state whose fiber-optimal set is non-singleton; the anchor search scans over candidate anchor-state/action pairs; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
@@ -110,7 +110,7 @@ The sufficiency search scans for a violating state whose fiber-optimal set is no
 Under the present encoding, \textsc{Stochastic-Anchor-Sufficiency-Check} and \textsc{Stochastic-Minimum-Sufficient-Set} are both in $\textsf{NP}^{\textsf{PP}}$.
 \end{theorem}
 
-\leanmeta{\LH{OU1}, \LH{OU2}, \LH{PA3}, \LH{OU6}, \LH{OU7}, \LH{EH1}, \LH{EH2}, \LH{EH3}, \LH{EH4}, \LH{EH5}.}
+\leanmeta{\LHrng{OU}{1}{2}, \LHrng{OU}{6}{7}, \LH{PA3}, \LHrng{EH}{1}{5}.}
 
 \begin{proof}
 For anchor sufficiency, the mechanized collapse
@@ -124,7 +124,7 @@ is already available in the artifact \LH{PA3}. A nondeterministic polynomial-tim
 For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically sufficient. By Theorem~\ref{thm:stochastic-pp}, that verification predicate lies in PP. Hence the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
 \end{proof}
 
-Theorem~\ref{thm:stochastic-nppp-upper} completes the paper-level stochastic landscape: stochastic sufficiency is PP-complete, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership. The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the finite core behind that classification: the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and an existential-majority reduction package giving an internal completeness-style surrogate for the stochastic anchor family \leanmeta{\LH{EH2}, \LH{EH3}, \LH{EH4}, \LH{EH5}.}
+Theorem~\ref{thm:stochastic-nppp-upper} completes the paper-level stochastic landscape: stochastic sufficiency is PP-complete, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership. The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the finite core behind that classification: the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and an existential-majority reduction package giving an internal completeness-style surrogate for the stochastic anchor family \leanmeta{\LHrng{EH}{2}{5}.}
 
 \paragraph{Relevance boundary.}
 The stochastic query is fiber-indexed: fixing a candidate information set $I$
@@ -146,7 +146,7 @@ The stochastic sufficiency problem is polynomial-time solvable under each of the
 \end{enumerate}
 \end{proposition}
 
-\leanmeta{\LH{DQ15}, \LH{DQ13}.}
+\leanmeta{\LH{DQ13}, \LH{DQ15}.}
 
 \begin{proof}
 In each case, conditional expected utilities can either be computed exactly or reduced to a polynomial number of marginal comparisons.
@@ -170,7 +170,7 @@ Choose utilities where optimizer ties are harmless pointwise but are broken in e
 If $P$ factorizes as a product distribution and $I$ is statically sufficient, then $I$ is stochastically sufficient.
 \end{proposition}
 
-\leanmeta{\LH{DQ16}, \LH{DQ15}.}
+\leanmeta{\LHrng{DQ}{15}{16}.}
 
 \begin{proof}
 Under product factorization, conditioning on $I$ does not introduce cross-coordinate dependence outside the sufficient projection, so optimizer preservation transfers from pointwise to expectation form.
