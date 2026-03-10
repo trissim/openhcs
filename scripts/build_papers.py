@@ -101,34 +101,107 @@ import json
 
 try:
     from pylatexenc.latex2text import LatexNodes2Text
+
     HAS_PYLATEXENC = True
 except ImportError:
     HAS_PYLATEXENC = False
 
 # Unicode subscript/superscript mappings for math rendering
 UNICODE_SUBSCRIPTS = {
-    '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
-    '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
-    'a': 'ₐ', 'e': 'ₑ', 'h': 'ₕ', 'i': 'ᵢ', 'j': 'ⱼ',
-    'k': 'ₖ', 'l': 'ₗ', 'm': 'ₘ', 'n': 'ₙ', 'o': 'ₒ',
-    'p': 'ₚ', 'r': 'ᵣ', 's': 'ₛ', 't': 'ₜ', 'u': 'ᵤ',
-    'v': 'ᵥ', 'x': 'ₓ',
-    '+': '₊', '-': '₋', '=': '₌', '(': '₍', ')': '₎',
+    "0": "₀",
+    "1": "₁",
+    "2": "₂",
+    "3": "₃",
+    "4": "₄",
+    "5": "₅",
+    "6": "₆",
+    "7": "₇",
+    "8": "₈",
+    "9": "₉",
+    "a": "ₐ",
+    "e": "ₑ",
+    "h": "ₕ",
+    "i": "ᵢ",
+    "j": "ⱼ",
+    "k": "ₖ",
+    "l": "ₗ",
+    "m": "ₘ",
+    "n": "ₙ",
+    "o": "ₒ",
+    "p": "ₚ",
+    "r": "ᵣ",
+    "s": "ₛ",
+    "t": "ₜ",
+    "u": "ᵤ",
+    "v": "ᵥ",
+    "x": "ₓ",
+    "+": "₊",
+    "-": "₋",
+    "=": "₌",
+    "(": "₍",
+    ")": "₎",
 }
 
 UNICODE_SUPERSCRIPTS = {
-    '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
-    '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹',
-    'a': 'ᵃ', 'b': 'ᵇ', 'c': 'ᶜ', 'd': 'ᵈ', 'e': 'ᵉ',
-    'f': 'ᶠ', 'g': 'ᵍ', 'h': 'ʰ', 'i': 'ⁱ', 'j': 'ʲ',
-    'k': 'ᵏ', 'l': 'ˡ', 'm': 'ᵐ', 'n': 'ⁿ', 'o': 'ᵒ',
-    'p': 'ᵖ', 'r': 'ʳ', 's': 'ˢ', 't': 'ᵗ', 'u': 'ᵘ',
-    'v': 'ᵛ', 'w': 'ʷ', 'x': 'ˣ', 'y': 'ʸ', 'z': 'ᶻ',
-    '+': '⁺', '-': '⁻', '=': '⁼', '(': '⁽', ')': '⁾',
-    'A': 'ᴬ', 'B': 'ᴮ', 'D': 'ᴰ', 'E': 'ᴱ', 'G': 'ᴳ',
-    'H': 'ᴴ', 'I': 'ᴵ', 'J': 'ᴶ', 'K': 'ᴷ', 'L': 'ᴸ',
-    'M': 'ᴹ', 'N': 'ᴺ', 'O': 'ᴼ', 'P': 'ᴾ', 'R': 'ᴿ',
-    'T': 'ᵀ', 'U': 'ᵁ', 'V': 'ⱽ', 'W': 'ᵂ',
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+    "a": "ᵃ",
+    "b": "ᵇ",
+    "c": "ᶜ",
+    "d": "ᵈ",
+    "e": "ᵉ",
+    "f": "ᶠ",
+    "g": "ᵍ",
+    "h": "ʰ",
+    "i": "ⁱ",
+    "j": "ʲ",
+    "k": "ᵏ",
+    "l": "ˡ",
+    "m": "ᵐ",
+    "n": "ⁿ",
+    "o": "ᵒ",
+    "p": "ᵖ",
+    "r": "ʳ",
+    "s": "ˢ",
+    "t": "ᵗ",
+    "u": "ᵘ",
+    "v": "ᵛ",
+    "w": "ʷ",
+    "x": "ˣ",
+    "y": "ʸ",
+    "z": "ᶻ",
+    "+": "⁺",
+    "-": "⁻",
+    "=": "⁼",
+    "(": "⁽",
+    ")": "⁾",
+    "A": "ᴬ",
+    "B": "ᴮ",
+    "D": "ᴰ",
+    "E": "ᴱ",
+    "G": "ᴳ",
+    "H": "ᴴ",
+    "I": "ᴵ",
+    "J": "ᴶ",
+    "K": "ᴷ",
+    "L": "ᴸ",
+    "M": "ᴹ",
+    "N": "ᴺ",
+    "O": "ᴼ",
+    "P": "ᴾ",
+    "R": "ᴿ",
+    "T": "ᵀ",
+    "U": "ᵁ",
+    "V": "ⱽ",
+    "W": "ᵂ",
 }
 
 
@@ -199,6 +272,7 @@ class PaperMeta:
     lean_dependencies: Tuple[
         str, ...
     ] = ()  # Other papers whose Lean to include in releases
+    lean_stats_scope: str = "cumulative"
     assumption_ledger_sources: Tuple[str, ...] = ()
     claim_mapping_file: str = ""
     arxiv_comments: str = ""
@@ -218,6 +292,7 @@ class PaperMeta:
             module_root=d.get("module_root", ""),
             archive_prefix=d.get("archive_prefix", ""),
             lean_dependencies=tuple(d.get("lean_dependencies", [])),
+            lean_stats_scope=d.get("lean_stats_scope", "cumulative"),
             assumption_ledger_sources=tuple(d.get("assumption_ledger_sources", [])),
             claim_mapping_file=d.get("claim_mapping_file", ""),
             arxiv_comments=d.get("arxiv_comments", ""),
@@ -529,6 +604,7 @@ class PaperBuilder:
 % Auto-generated scaffold. Replace with venue-specific preamble as needed.
 \\IfFileExists{{content/lean_stats.tex}}{{\\input{{content/lean_stats.tex}}}}{{}}
 \\providecommand{{\\claimstamp}}[2]{{\\allowbreak{{\\scriptsize\\textit{{[C:#1;R:#2]}}}}}}
+\\providecommand{{\\LHrng}}[3]{{\\hyperlink{{lh:#1#2}}{{\\nolinkurl{{#1#2-#3}}}}}}
 \\providecommand{{\\leanmeta}}[1]{{\\allowbreak{{\\scriptsize\\textit{{(L: #1)}}}}}}
 
 \\title{{{meta.full_name}}}
@@ -1876,6 +1952,303 @@ end {module_root}
             file_count=file_count,
         )
 
+    def _claim_backed_lean_stats_cache_key(
+        self, paper_id: str
+    ) -> Tuple[str, Tuple[str, ...]]:
+        claim_map = self._extract_claim_label_to_lean_handles(
+            paper_id, include_dependencies=True
+        )
+        handles: Set[str] = set()
+        for handle_list in claim_map.values():
+            handles.update(handle_list)
+        return (paper_id, tuple(sorted(handles)))
+
+    def _extract_declared_handle_to_module_map(
+        self, paper_id: str, include_dependencies: bool = True
+    ) -> Dict[str, Tuple[str, str]]:
+        """Map fully qualified Lean handles to `(source_paper_id, module_path)`.
+
+        `module_path` is relative to the corresponding proofs directory and omits `.lean`.
+        """
+        roots: List[Tuple[str, Path]]
+        if include_dependencies:
+            roots = self._iter_lean_roots_for_paper(paper_id)
+        else:
+            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+
+        decl_pattern = re.compile(
+            r"\b(?:theorem|lemma|def|abbrev|class|structure)\s+([A-Za-z_][A-Za-z0-9_'.]*)"
+        )
+        namespace_pattern = re.compile(r"^\s*namespace\s+([A-Za-z0-9_'.]+)\s*$")
+        end_pattern = re.compile(r"^\s*end(?:\s+[A-Za-z0-9_'.]+)?\s*$")
+
+        handle_map: Dict[str, Tuple[str, str]] = {}
+        for source_paper_id, proofs_dir in roots:
+            if not proofs_dir.exists():
+                continue
+            for lean_file in self._iter_paper_lean_files(proofs_dir):
+                module_path = str(lean_file.relative_to(proofs_dir).with_suffix(""))
+                module_name = module_path.replace("/", ".")
+                content = lean_file.read_text(encoding="utf-8", errors="replace")
+                stripped = self._strip_lean_comments(content)
+                namespace_stack: List[str] = []
+
+                for raw_line in stripped.splitlines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+
+                    ns_match = namespace_pattern.match(line)
+                    if ns_match:
+                        namespace_stack.append(ns_match.group(1))
+                        continue
+
+                    if end_pattern.match(line):
+                        if namespace_stack:
+                            namespace_stack.pop()
+                        continue
+
+                    decl_match = decl_pattern.search(line)
+                    if not decl_match:
+                        continue
+
+                    name = decl_match.group(1)
+                    if "." in name:
+                        full_handle = name
+                    elif namespace_stack:
+                        ns_parts: List[str] = []
+                        for ns in namespace_stack:
+                            ns_parts.extend([part for part in ns.split(".") if part])
+                        ns_prefix = ".".join(ns_parts)
+                        full_handle = f"{ns_prefix}.{name}" if ns_prefix else name
+                        handle_map.setdefault(
+                            full_handle, (source_paper_id, module_path)
+                        )
+                        root_ns = module_name.split(".", 1)[0] if module_name else ""
+                        if root_ns and not full_handle.startswith(f"{root_ns}.{name}"):
+                            handle_map.setdefault(
+                                f"{root_ns}.{name}", (source_paper_id, module_path)
+                            )
+                    else:
+                        full_handle = name
+                        handle_map.setdefault(
+                            full_handle, (source_paper_id, module_path)
+                        )
+                        if module_name:
+                            handle_map.setdefault(
+                                f"{module_name}.{name}", (source_paper_id, module_path)
+                            )
+                            root_ns = module_name.split(".", 1)[0]
+                            if root_ns and root_ns != module_name:
+                                handle_map.setdefault(
+                                    f"{root_ns}.{name}", (source_paper_id, module_path)
+                                )
+
+        return handle_map
+
+    def _build_lean_module_index(
+        self, paper_id: str, include_dependencies: bool = True
+    ) -> Dict[str, Tuple[str, str]]:
+        """Map importable Lean module names to `(source_paper_id, module_path)`."""
+        roots: List[Tuple[str, Path]]
+        if include_dependencies:
+            roots = self._iter_lean_roots_for_paper(paper_id)
+        else:
+            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+
+        module_index: Dict[str, Tuple[str, str]] = {}
+        for source_paper_id, proofs_dir in roots:
+            if not proofs_dir.exists():
+                continue
+            for lean_file in self._iter_paper_lean_files(proofs_dir):
+                module_path = str(lean_file.relative_to(proofs_dir).with_suffix(""))
+                module_name = module_path.replace("/", ".")
+                module_index.setdefault(module_name, (source_paper_id, module_path))
+        return module_index
+
+    def _get_handle_module_closure(
+        self, paper_id: str, handles: Set[str]
+    ) -> Dict[str, Set[str]]:
+        """Return source-paper -> module paths for handles plus import closure."""
+        handle_map = self._extract_declared_handle_to_module_map(
+            paper_id, include_dependencies=True
+        )
+        module_index = self._build_lean_module_index(
+            paper_id, include_dependencies=True
+        )
+        import_re = re.compile(r"^\s*import\s+([A-Za-z0-9_'.]+)\s*$", re.MULTILINE)
+
+        seed_modules: Set[Tuple[str, str]] = set()
+        for handle in handles:
+            target = handle_map.get(handle)
+            if target is None and "." in handle:
+                suffix = handle.rsplit(".", 1)[1]
+                suffix_matches = [
+                    item
+                    for h, item in handle_map.items()
+                    if h.rsplit(".", 1)[-1] == suffix
+                ]
+                if len(suffix_matches) == 1:
+                    target = suffix_matches[0]
+            if target is not None:
+                seed_modules.add(target)
+
+        queue: List[Tuple[str, str]] = list(seed_modules)
+        visited: Set[Tuple[str, str]] = set(seed_modules)
+        while queue:
+            source_paper_id, module_path = queue.pop()
+            proofs_dir = self._get_paper_proofs_dir(source_paper_id)
+            lean_file = proofs_dir / f"{module_path}.lean"
+            if not lean_file.exists():
+                continue
+            content = self._strip_lean_comments(
+                lean_file.read_text(encoding="utf-8", errors="replace")
+            )
+            for import_name in import_re.findall(content):
+                target = module_index.get(import_name)
+                if target is None or target in visited:
+                    continue
+                visited.add(target)
+                queue.append(target)
+
+        files_by_root: Dict[str, Set[str]] = {}
+        for source_paper_id, module_path in visited:
+            files_by_root.setdefault(source_paper_id, set()).add(module_path)
+        return files_by_root
+
+    def _get_claim_backed_module_closure(self, paper_id: str) -> Dict[str, Set[str]]:
+        """Return source-paper -> module paths for claim-cited declarations plus imports."""
+        claim_map = self._extract_claim_label_to_lean_handles(
+            paper_id, include_dependencies=True
+        )
+        handles: Set[str] = set()
+        for handle_list in claim_map.values():
+            handles.update(handle_list)
+        return self._get_handle_module_closure(paper_id, handles)
+
+    def _content_backed_lean_stats_cache_key(
+        self, paper_id: str
+    ) -> Tuple[str, Tuple[str, ...]]:
+        files = self._discover_content_files_for_flags(paper_id)
+        alias_by_code = self._extract_alias_code_map_from_handle_aliases(
+            paper_id, include_dependencies=True
+        )
+        id_to_handle = self._read_lean_handle_id_map(paper_id)
+        handles = self._extract_referenced_lean_handles_from_content(
+            paper_id, files=files
+        )
+        handles.update(
+            self._extract_referenced_lh_handles_from_content(paper_id, files=files)
+        )
+        for code in self._extract_lh_ids_from_content(paper_id, files=files):
+            handle = alias_by_code.get(code) or id_to_handle.get(code)
+            if handle:
+                handles.add(handle)
+        return (paper_id, tuple(sorted(handles)))
+
+    def _get_content_backed_module_closure(self, paper_id: str) -> Dict[str, Set[str]]:
+        """Return source-paper -> module paths for Lean cited in included paper content."""
+        cache_key = self._content_backed_lean_stats_cache_key(paper_id)
+        return self._get_handle_module_closure(paper_id, set(cache_key[1]))
+
+    def _get_content_backed_lean_stats(self, paper_id: str) -> LeanStats:
+        """Stats for Lean files cited anywhere in the included paper content."""
+        if not hasattr(self, "_content_backed_lean_stats_cache"):
+            self._content_backed_lean_stats_cache: Dict[
+                Tuple[str, Tuple[str, ...]], LeanStats
+            ] = {}
+
+        cache_key = self._content_backed_lean_stats_cache_key(paper_id)
+        cached = self._content_backed_lean_stats_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        files_by_root = self._get_handle_module_closure(paper_id, set(cache_key[1]))
+
+        line_count = 0
+        theorem_count = 0
+        sorry_count = 0
+        file_count = 0
+        for source_paper_id, module_paths in files_by_root.items():
+            file_stats = self._get_lean_file_stats(source_paper_id)
+            for module_path in module_paths:
+                stats = file_stats.get(module_path)
+                if stats is None:
+                    continue
+                line_count += stats.line_count
+                theorem_count += stats.theorem_count
+                sorry_count += stats.sorry_count
+                file_count += 1
+
+        result = LeanStats(
+            line_count=line_count,
+            theorem_count=theorem_count,
+            sorry_count=sorry_count,
+            file_count=file_count,
+        )
+        self._content_backed_lean_stats_cache[cache_key] = result
+        return result
+
+    def _get_claim_backed_lean_stats(self, paper_id: str) -> LeanStats:
+        """Stats for files containing Lean declarations cited by paper claims."""
+        if not hasattr(self, "_claim_backed_lean_stats_cache"):
+            self._claim_backed_lean_stats_cache: Dict[
+                Tuple[str, Tuple[str, ...]], LeanStats
+            ] = {}
+
+        cache_key = self._claim_backed_lean_stats_cache_key(paper_id)
+        cached = self._claim_backed_lean_stats_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        files_by_root = self._get_claim_backed_module_closure(paper_id)
+
+        line_count = 0
+        theorem_count = 0
+        sorry_count = 0
+        file_count = 0
+        for source_paper_id, module_paths in files_by_root.items():
+            file_stats = self._get_lean_file_stats(source_paper_id)
+            for module_path in module_paths:
+                stats = file_stats.get(module_path)
+                if stats is None:
+                    continue
+                line_count += stats.line_count
+                theorem_count += stats.theorem_count
+                sorry_count += stats.sorry_count
+                file_count += 1
+
+        result = LeanStats(
+            line_count=line_count,
+            theorem_count=theorem_count,
+            sorry_count=sorry_count,
+            file_count=file_count,
+        )
+        self._claim_backed_lean_stats_cache[cache_key] = result
+        return result
+
+    def _get_release_lean_stats(self, paper_id: str) -> LeanStats:
+        """Lean stats used by paper-facing release metadata/macros."""
+        meta = self._get_paper_meta(paper_id)
+        if meta.lean_stats_scope == "content_cited":
+            return self._get_content_backed_lean_stats(paper_id)
+        if meta.lean_stats_scope == "claims_only":
+            return self._get_claim_backed_lean_stats(paper_id)
+        if meta.lean_stats_scope == "local":
+            return self._get_lean_stats(paper_id)
+        return self._get_cumulative_lean_stats(paper_id)
+
+    def _get_release_module_closure(
+        self, paper_id: str
+    ) -> Optional[Dict[str, Set[str]]]:
+        """Lean modules to bundle for release, or `None` for full local proofs."""
+        meta = self._get_paper_meta(paper_id)
+        if meta.lean_stats_scope == "content_cited":
+            return self._get_content_backed_module_closure(paper_id)
+        if meta.lean_stats_scope == "claims_only":
+            return self._get_claim_backed_module_closure(paper_id)
+        return None
+
     def _get_lean_file_stats(self, paper_id: str) -> Dict[str, LeanFileStats]:
         """Get per-file Lean stats for a paper or variant."""
         proofs_dir = self._get_paper_proofs_dir(paper_id)
@@ -1961,6 +2334,7 @@ end {module_root}
 
         local_stats = self._get_lean_stats(paper_id)
         total_stats = self._get_cumulative_lean_stats(paper_id)
+        release_stats = self._get_release_lean_stats(paper_id)
         file_stats = self._get_lean_file_stats(paper_id)
         suffix_map = self._build_lean_macro_suffix_map(sorted(file_stats.keys()))
 
@@ -1975,6 +2349,10 @@ end {module_root}
             f"\\providecommand{{\\LeanTotalTheorems}}{{{total_stats.theorem_count}}}",
             f"\\providecommand{{\\LeanTotalSorry}}{{{total_stats.sorry_count}}}",
             f"\\providecommand{{\\LeanTotalFiles}}{{{total_stats.file_count}}}",
+            f"\\providecommand{{\\LeanReleaseLines}}{{{release_stats.line_count}}}",
+            f"\\providecommand{{\\LeanReleaseTheorems}}{{{release_stats.theorem_count}}}",
+            f"\\providecommand{{\\LeanReleaseSorry}}{{{release_stats.sorry_count}}}",
+            f"\\providecommand{{\\LeanReleaseFiles}}{{{release_stats.file_count}}}",
         ]
         for module_path in sorted(file_stats.keys()):
             suffix = suffix_map[module_path]
@@ -2329,9 +2707,7 @@ end {module_root}
             pair_matches = pair_pattern.findall(raw_line)
             if pair_matches:
                 for code, handle in pair_matches:
-                    rows.append(
-                        (code.strip(), handle.strip().replace(r"\_", "_"))
-                    )
+                    rows.append((code.strip(), handle.strip().replace(r"\_", "_")))
                 continue
             hyper_match = hyper_code_pattern.search(raw_line)
             code_match = code_pattern.search(raw_line)
@@ -2351,15 +2727,10 @@ end {module_root}
                 rows.append((code, handle))
         return rows
 
-    def _extract_declared_lean_handles(
+    def _extract_declared_lean_handle_locations(
         self, paper_id: str, include_dependencies: bool = True
-    ) -> Set[str]:
-        """Extract declared Lean constants from theorem/def/class-style declarations.
-
-        When `include_dependencies` is true, this scans the paper's transitive
-        Lean dependency closure so handle extraction is derived from the full
-        proof graph rather than only the local proofs tree.
-        """
+    ) -> Dict[str, str]:
+        """Extract declared Lean handles together with their source files."""
         roots: List[Tuple[str, Path]]
         if include_dependencies:
             roots = self._iter_lean_roots_for_paper(paper_id)
@@ -2372,14 +2743,22 @@ end {module_root}
         namespace_pattern = re.compile(r"^\s*namespace\s+([A-Za-z0-9_'.]+)\s*$")
         end_pattern = re.compile(r"^\s*end(?:\s+[A-Za-z0-9_'.]+)?\s*$")
 
-        handles: Set[str] = set()
-        for _, proofs_dir in roots:
+        handle_locations: Dict[str, str] = {}
+        for root_name, proofs_dir in roots:
             if not proofs_dir.exists():
                 continue
             for lean_file in self._iter_paper_lean_files(proofs_dir):
                 content = lean_file.read_text(encoding="utf-8", errors="replace")
                 stripped = self._strip_lean_comments(content)
                 namespace_stack: List[str] = []
+                try:
+                    rel_file = lean_file.relative_to(proofs_dir).as_posix()
+                except ValueError:
+                    rel_file = lean_file.name
+                display_file = (
+                    rel_file if root_name == paper_id else f"{root_name}/{rel_file}"
+                )
+                module_name = rel_file.removesuffix(".lean").replace("/", ".")
 
                 for raw_line in stripped.splitlines():
                     line = raw_line.strip()
@@ -2402,7 +2781,7 @@ end {module_root}
 
                     name = decl_match.group(1)
                     if "." in name:
-                        handles.add(name)
+                        handle_locations.setdefault(name, display_file)
                         continue
 
                     if namespace_stack:
@@ -2410,11 +2789,41 @@ end {module_root}
                         for ns in namespace_stack:
                             ns_parts.extend([part for part in ns.split(".") if part])
                         ns_prefix = ".".join(ns_parts)
-                        handles.add(f"{ns_prefix}.{name}" if ns_prefix else name)
+                        full_name = f"{ns_prefix}.{name}" if ns_prefix else name
+                        handle_locations.setdefault(full_name, display_file)
+                        root_ns = module_name.split(".", 1)[0] if module_name else ""
+                        if root_ns and not full_name.startswith(f"{root_ns}.{name}"):
+                            handle_locations.setdefault(
+                                f"{root_ns}.{name}", display_file
+                            )
                     else:
-                        handles.add(name)
+                        handle_locations.setdefault(name, display_file)
+                        if module_name:
+                            handle_locations.setdefault(
+                                f"{module_name}.{name}", display_file
+                            )
+                            root_ns = module_name.split(".", 1)[0]
+                            if root_ns and root_ns != module_name:
+                                handle_locations.setdefault(
+                                    f"{root_ns}.{name}", display_file
+                                )
 
-        return handles
+        return handle_locations
+
+    def _extract_declared_lean_handles(
+        self, paper_id: str, include_dependencies: bool = True
+    ) -> Set[str]:
+        """Extract declared Lean constants from theorem/def/class-style declarations.
+
+        When `include_dependencies` is true, this scans the paper's transitive
+        Lean dependency closure so handle extraction is derived from the full
+        proof graph rather than only the local proofs tree.
+        """
+        return set(
+            self._extract_declared_lean_handle_locations(
+                paper_id, include_dependencies=include_dependencies
+            ).keys()
+        )
 
     def _extract_referenced_lean_handles_from_content(
         self, paper_id: str, files: Optional[List[Path]] = None
@@ -2765,6 +3174,30 @@ end {module_root}
 
         handle_to_code = self._assign_compact_handle_ids(all_handles, preserved_rows)
         code_to_handle = {code: handle for handle, code in handle_to_code.items()}
+        handle_locations = self._extract_declared_lean_handle_locations(
+            paper_id, include_dependencies=True
+        )
+        suffix_locations: Dict[str, str] = {}
+        for full_handle, source_file in handle_locations.items():
+            parts = full_handle.split(".")
+            for idx in range(len(parts)):
+                suffix = ".".join(parts[idx:])
+                suffix_locations.setdefault(suffix, source_file)
+
+        def format_handle_cell(handle: str) -> str:
+            handle_tex = (
+                rf"{{\fontsize{{5.1}}{{5.25}}\selectfont\nolinkurl{{{handle}}}}}"
+            )
+            source_file = handle_locations.get(handle, "") or suffix_locations.get(
+                handle, ""
+            )
+            if not source_file:
+                return handle_tex
+            safe_file = source_file.replace("_", r"\_").replace("/", r"/\allowbreak ")
+            return (
+                handle_tex
+                + rf"\par\vspace{{-0.2ex}}{{\fontsize{{5.1}}{{5.35}}\selectfont\ttfamily {safe_file}}}"
+            )
 
         def sort_key(code: str) -> Tuple[str, int, str]:
             match = re.match(r"^([A-Za-z]+)(\d+)$", code)
@@ -2778,7 +3211,7 @@ end {module_root}
             r"\begingroup",
             r"\tiny",
             r"\setlength{\tabcolsep}{3pt}",
-            r"\renewcommand{\arraystretch}{0.82}",
+            r"\renewcommand{\arraystretch}{0.74}",
             r"\setlength{\LTpre}{0pt}",
             r"\setlength{\LTpost}{0pt}",
             r"\urlstyle{same}",
@@ -2791,7 +3224,7 @@ end {module_root}
             for code in sorted(code_to_handle.keys(), key=sort_key):
                 handle = code_to_handle[code]
                 lines.append(
-                    rf"\item \hypertarget{{lh:{code}}}{{\nolinkurl{{{code}}}}}\hspace{{0.35em}}\nolinkurl{{{handle}}}"
+                    rf"\item \hypertarget{{lh:{code}}}{{\nolinkurl{{{code}}}}}\hspace{{0.35em}}{format_handle_cell(handle)}"
                 )
         else:
             lines.append(r"\item \textit{No Lean handles parsed yet.}")
@@ -2821,15 +3254,19 @@ end {module_root}
                     right_code = sorted_codes[idx + 1]
                     right_handle = code_to_handle[right_code]
                     lines.append(
-                        rf"\hypertarget{{lh:{left_code}}}{{\nolinkurl{{{left_code}}}}} & \nolinkurl{{{left_handle}}} & "
-                        rf"\hypertarget{{lh:{right_code}}}{{\nolinkurl{{{right_code}}}}} & \nolinkurl{{{right_handle}}} \\"
+                        rf"\hypertarget{{lh:{left_code}}}{{\nolinkurl{{{left_code}}}}} & {format_handle_cell(left_handle)} & "
+                        rf"\hypertarget{{lh:{right_code}}}{{\nolinkurl{{{right_code}}}}} & {format_handle_cell(right_handle)} \\"
                     )
+                    lines.append(r"\specialrule{0.2pt}{0pt}{0pt}")
                 else:
                     lines.append(
-                        rf"\hypertarget{{lh:{left_code}}}{{\nolinkurl{{{left_code}}}}} & \nolinkurl{{{left_handle}}} & & \\"
+                        rf"\hypertarget{{lh:{left_code}}}{{\nolinkurl{{{left_code}}}}} & {format_handle_cell(left_handle)} & & \\"
                     )
+                    lines.append(r"\specialrule{0.2pt}{0pt}{0pt}")
         else:
-            lines.append(r"\multicolumn{4}{@{}l@{}}{\textit{No Lean handles parsed yet.}} \\")
+            lines.append(
+                r"\multicolumn{4}{@{}l@{}}{\textit{No Lean handles parsed yet.}} \\"
+            )
 
         lines.extend(
             [
@@ -2874,8 +3311,107 @@ end {module_root}
                 return rf"\LH{{{code}}}"
 
             rewritten = nolink_pattern.sub(repl, normalized)
+            rewritten = self._normalize_leanmeta_handle_lists(rewritten)
             if rewritten != text:
                 tex_file.write_text(rewritten, encoding="utf-8")
+
+    def _normalize_leanmeta_handle_lists(self, text: str) -> str:
+        """Normalize `\\leanmeta{...}` handle lists.
+
+        Rules:
+        - only touches `\\leanmeta{...}` blocks that contain exclusively `\\LH{...}`
+          and `\\LHrng{...}{...}{...}` items separated by commas
+        - preserves prefix order by first appearance
+        - sorts numerically within each prefix
+        - compresses contiguous runs into `\\LHrng{PREFIX}{a}{b}`
+        """
+        item_pattern = re.compile(
+            r"\\LH\{([A-Z]+)(\d+)\}|\\LHrng\{([A-Z]+)\}\{(\d+)\}\{(\d+)\}"
+        )
+
+        def normalize_inner(inner: str) -> Optional[str]:
+            parts = [part.strip() for part in inner.split(",")]
+            items: List[Tuple[str, int, int, int]] = []
+            prefix_order: Dict[str, int] = {}
+
+            for idx, part in enumerate(parts):
+                if not part:
+                    continue
+                match = item_pattern.fullmatch(part)
+                if match is None:
+                    return None
+                if match.group(1) is not None:
+                    prefix = match.group(1)
+                    start = int(match.group(2))
+                    end = start
+                else:
+                    prefix = match.group(3)  # type: ignore[arg-type]
+                    start = int(match.group(4))  # type: ignore[arg-type]
+                    end = int(match.group(5))  # type: ignore[arg-type]
+                prefix_order.setdefault(prefix, idx)
+                items.append((prefix, start, end, idx))
+
+            if not items:
+                return inner
+
+            items.sort(key=lambda it: (prefix_order[it[0]], it[1], it[2]))
+
+            rendered: List[str] = []
+            i = 0
+            while i < len(items):
+                prefix, start, end, _ = items[i]
+                j = i + 1
+                current_end = end
+                while (
+                    j < len(items)
+                    and items[j][0] == prefix
+                    and items[j][1] == current_end + 1
+                ):
+                    current_end = items[j][2]
+                    j += 1
+                if start == current_end:
+                    rendered.append(rf"\LH{{{prefix}{start}}}")
+                else:
+                    rendered.append(rf"\LHrng{{{prefix}}}{{{start}}}{{{current_end}}}")
+                i = j
+            return ", ".join(rendered)
+
+        pieces: List[str] = []
+        cursor = 0
+        needle = r"\leanmeta{"
+        needle_len = len(needle)
+
+        while True:
+            start = text.find(needle, cursor)
+            if start == -1:
+                pieces.append(text[cursor:])
+                break
+
+            pieces.append(text[cursor:start])
+            body_start = start + needle_len
+            depth = 1
+            idx = body_start
+            while idx < len(text) and depth > 0:
+                char = text[idx]
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                idx += 1
+
+            if depth != 0:
+                pieces.append(text[start:])
+                break
+
+            inner = text[body_start : idx - 1]
+            normalized_inner = normalize_inner(inner)
+            if normalized_inner is None:
+                pieces.append(text[start:idx])
+            else:
+                pieces.append(rf"\leanmeta{{{normalized_inner}}}")
+            cursor = idx
+
+        return "".join(pieces)
 
     def _claim_ref_code_for_label(self, label: str) -> str:
         """Return compact claim-ref code by label prefix."""
@@ -3176,7 +3712,7 @@ end {module_root}
             re.DOTALL,
         )
         claim_block_pattern = re.compile(
-            r"(\\begin\{claim\}\{[^{}]*\}\{([^{}]+)\})(.*?)(\\end\{claim\})",
+            r"(\\begin\{claim\}\{(?:[^{}]|\{[^{}]*\})*\}\{([^{}]+)\})(.*?)(\\end\{claim\})",
             re.DOTALL,
         )
         generic_first_pattern = re.compile(
@@ -3232,21 +3768,70 @@ end {module_root}
     ) -> Dict[str, List[str]]:
         """Extract mapping from theorem-style labels to inline Lean handles.
 
-        Local rows are claim-local: only \\LH{code} occurrences inside the
-        corresponding labeled theorem/claim block count for that label.
+        Local rows are claim-local: Lean support cited inside the corresponding
+        labeled theorem/claim block counts for that label. Support may appear as
+        compact ``\\LH{ID}`` markers or as raw fully qualified declaration names
+        wrapped in ``\\nolinkurl{...}`` inside ``\\leanmeta{...}``.
         """
         content_dir = self._get_content_dir(paper_id)
         if not content_dir.exists():
             return {}
 
         id_to_handle = self._read_lean_handle_id_map(paper_id)
-        lh_pattern = re.compile(r"\\LH\{([^}]+)\}")
         claim_labels = self._extract_paper_claim_labels(paper_id)
         merged: Dict[str, Set[str]] = {label: set() for label in claim_labels}
         label_pattern = re.compile(r"\\label\{([^}]+)\}")
+        compact_id_pattern = re.compile(r"^[A-Za-z]+\d+$")
+        paper_handle_pattern = re.compile(r"^(?:thm|cor|lem|prop):")
+        lh_pattern = re.compile(r"\\LH\{([^}]+)\}")
+        nolink_pattern = re.compile(r"\\nolinkurl\{([^}]+)\}")
+
+        def extract_handles(snippet: str) -> Set[str]:
+            handles: Set[str] = set()
+
+            for raw in lh_pattern.findall(snippet):
+                token = raw.strip().replace(r"\_", "_")
+                if not token:
+                    continue
+                resolved = id_to_handle.get(token)
+                if resolved:
+                    handles.add(resolved)
+                    continue
+                if compact_id_pattern.match(token):
+                    continue
+                if paper_handle_pattern.match(token):
+                    continue
+                if token.endswith(".lean"):
+                    continue
+                if "://" in token or token.startswith("www."):
+                    continue
+                if "." not in token and "_" not in token:
+                    continue
+                handles.add(token)
+
+            for raw in nolink_pattern.findall(snippet):
+                token = raw.strip().replace(r"\_", "_")
+                if not token:
+                    continue
+                if paper_handle_pattern.match(token):
+                    continue
+                if token.endswith(".lean"):
+                    continue
+                if "://" in token or token.startswith("www."):
+                    continue
+                if compact_id_pattern.match(token):
+                    resolved = id_to_handle.get(token)
+                    if resolved:
+                        handles.add(resolved)
+                    continue
+                if "." not in token and "_" not in token:
+                    continue
+                handles.add(token)
+
+            return handles
 
         claim_block_pattern = re.compile(
-            r"\\begin\{claim\}\{[^{}]*\}\{([^{}]+)\}(.*?)\\end\{claim\}",
+            r"\\begin\{claim\}\{(?:[^{}]|\{[^{}]*\})*\}\{([^{}]+)\}(.*?)\\end\{claim\}",
             re.DOTALL,
         )
         theorem_block_pattern = re.compile(
@@ -3262,10 +3847,7 @@ end {module_root}
                 if label not in merged:
                     continue
                 body = match.group(2)
-                for code in lh_pattern.findall(body):
-                    resolved = id_to_handle.get(code.strip())
-                    if resolved:
-                        merged[label].add(resolved)
+                merged[label].update(extract_handles(body))
 
             for match in theorem_block_pattern.finditer(text):
                 body = match.group(2)
@@ -3274,20 +3856,13 @@ end {module_root}
                 if not matched_labels:
                     continue
 
-                handles: Set[str] = set()
-                for code in lh_pattern.findall(body):
-                    resolved = id_to_handle.get(code.strip())
-                    if resolved:
-                        handles.add(resolved)
+                handles = extract_handles(body)
 
                 # Paper 2 style: theorem block is followed by a dedicated \leanmeta{...}
                 # line, so inspect the next few lines after the environment closes.
                 trailing_lines = text[match.end() :].splitlines()[:3]
                 trailing_text = "\n".join(trailing_lines)
-                for code in lh_pattern.findall(trailing_text):
-                    resolved = id_to_handle.get(code.strip())
-                    if resolved:
-                        handles.add(resolved)
+                handles.update(extract_handles(trailing_text))
 
                 for label in matched_labels:
                     merged[label].update(handles)
@@ -3357,7 +3932,7 @@ end {module_root}
                 continue
             handle = handle_matches[-1].strip().replace(r"\_", "_")
             if code and handle:
-                id_to_handle[code] = handle
+                id_to_handle.setdefault(code, handle)
         return id_to_handle
 
     def _read_claim_mapping_table_handles(self, paper_id: str) -> Dict[str, List[str]]:
@@ -3466,6 +4041,7 @@ end {module_root}
         """Expand ``\\Lean*`` macros to numeric values for markdown conversion."""
         local_stats = self._get_lean_stats(paper_id)
         total_stats = self._get_cumulative_lean_stats(paper_id)
+        release_stats = self._get_release_lean_stats(paper_id)
         file_stats = self._get_lean_file_stats(paper_id)
         suffix_map = self._build_lean_macro_suffix_map(sorted(file_stats.keys()))
         replacements: Dict[str, str] = {
@@ -3477,6 +4053,10 @@ end {module_root}
             r"\LeanTotalTheorems": str(total_stats.theorem_count),
             r"\LeanTotalSorry": str(total_stats.sorry_count),
             r"\LeanTotalFiles": str(total_stats.file_count),
+            r"\LeanReleaseLines": str(release_stats.line_count),
+            r"\LeanReleaseTheorems": str(release_stats.theorem_count),
+            r"\LeanReleaseSorry": str(release_stats.sorry_count),
+            r"\LeanReleaseFiles": str(release_stats.file_count),
         }
         for module_path, stats in file_stats.items():
             suffix = suffix_map[module_path]
@@ -3709,9 +4289,7 @@ end {module_root}
         job_name = latex_file.stem + "_submission"
         hook_name = self._write_submission_build_hook(latex_dir)
         tex_input = (
-            f"\\def{latex_flag}{{}}"
-            f"\\input{{{hook_name}}}"
-            f"\\input{{{latex_file.name}}}"
+            f"\\def{latex_flag}{{}}\\input{{{hook_name}}}\\input{{{latex_file.name}}}"
         )
 
         aux_name = job_name
@@ -3830,7 +4408,9 @@ end {module_root}
     ) -> str:
         """Write a compile-ready wrapper that enables the submission flag."""
         meta = self._get_paper_meta(paper_id)
-        wrapper_name = "main.tex" if meta.latex_file != "main.tex" else "submission_main.tex"
+        wrapper_name = (
+            "main.tex" if meta.latex_file != "main.tex" else "submission_main.tex"
+        )
         wrapper = (
             "% Auto-generated by scripts/build_papers.py. Submission wrapper.\n"
             f"\\def{latex_flag}{{}}\n"
@@ -3850,6 +4430,7 @@ end {module_root}
             r"\AtBeginDocument{%",
             r"  \providecommand{\LH}[1]{\nolinkurl{#1}}%",
             r"  \renewcommand{\LH}[1]{\hyperlink{lh:#1}{\nolinkurl{#1}}}%",
+            r"  \providecommand{\LHrng}[3]{\hyperlink{lh:#1#2}{\nolinkurl{#1#2-#3}}}%",
             r"}",
             r"\AtEndDocument{%",
             r"  \IfFileExists{content/lean_handle_ids_auto.tex}{%",
@@ -3902,7 +4483,7 @@ end {module_root}
         content_files = self._discover_content_files(paper_id)
         # Single source of truth for generated artifacts: main LaTeX `\title{...}`.
         title = self._release_title_from_latex(paper_id)
-        lean_stats = self._get_cumulative_lean_stats(paper_id)
+        lean_stats = self._get_release_lean_stats(paper_id)
         self._build_markdown_file(meta, content_files, out_file, title, lean_stats)
 
         # Also copy to releases/ for arxiv package
@@ -4193,17 +4774,18 @@ end {module_root}
         Only converts when ALL characters in the subscript/superscript have
         Unicode equivalents, to avoid ugly partial conversions like Edₑcᵢₛᵢₒₙ.
         """
+
         def _try_convert_sub(content: str) -> Optional[str]:
             """Return Unicode subscript if all chars convertible, else None."""
             result = []
             for c in content:
                 if c in UNICODE_SUBSCRIPTS:
                     result.append(UNICODE_SUBSCRIPTS[c])
-                elif c == ' ':
-                    result.append(' ')
+                elif c == " ":
+                    result.append(" ")
                 else:
                     return None  # Can't fully convert
-            return ''.join(result)
+            return "".join(result)
 
         def _try_convert_sup(content: str) -> Optional[str]:
             """Return Unicode superscript if all chars convertible, else None."""
@@ -4211,11 +4793,11 @@ end {module_root}
             for c in content:
                 if c in UNICODE_SUPERSCRIPTS:
                     result.append(UNICODE_SUPERSCRIPTS[c])
-                elif c == ' ':
-                    result.append(' ')
+                elif c == " ":
+                    result.append(" ")
                 else:
                     return None  # Can't fully convert
-            return ''.join(result)
+            return "".join(result)
 
         def _convert_sub_paren(match: re.Match) -> str:
             """Handle X_(content) patterns."""
@@ -4226,7 +4808,7 @@ end {module_root}
                 return base + converted
             # Can't fully convert; keep parens only for expressions (has operators)
             # Pure alphanumeric subscripts don't need parens in plain text
-            if re.search(r'[+\-−×÷*/=<> ]', sub_content):
+            if re.search(r"[+\-−×÷*/=<> ]", sub_content):
                 return f"{base}_({sub_content})"
             return f"{base}_{sub_content}"
 
@@ -4248,7 +4830,7 @@ end {module_root}
                 return base + converted
             # Can't fully convert; keep parens only for expressions (has operators)
             # Pure alphanumeric superscripts don't need parens in plain text
-            if re.search(r'[+\-−×÷*/=<> ]', sup_content):
+            if re.search(r"[+\-−×÷*/=<> ]", sup_content):
                 return f"{base}^({sup_content})"
             return f"{base}^{sup_content}"
 
@@ -4263,12 +4845,12 @@ end {module_root}
 
         # Pattern: X_(content) -> X + subscript content
         # Handles both single char like X_a and parenthesized like X_(min)
-        result = re.sub(r'(\w)_\(([^)]+)\)', _convert_sub_paren, text)
-        result = re.sub(r'(\w)_([a-z0-9])\b', _convert_sub_single, result)
+        result = re.sub(r"(\w)_\(([^)]+)\)", _convert_sub_paren, text)
+        result = re.sub(r"(\w)_([a-z0-9])\b", _convert_sub_single, result)
 
         # Pattern: X^(content) -> X + superscript content
-        result = re.sub(r'(\w)\^\(([^)]+)\)', _convert_sup_paren, result)
-        result = re.sub(r'(\w)\^([a-z0-9A-Z])\b', _convert_sup_single, result)
+        result = re.sub(r"(\w)\^\(([^)]+)\)", _convert_sup_paren, result)
+        result = re.sub(r"(\w)\^([a-z0-9A-Z])\b", _convert_sup_single, result)
 
         return result
 
@@ -4278,80 +4860,81 @@ end {module_root}
         Handles aligned environments and other display math that pandoc
         can't convert, turning them into readable plain text.
         """
+
         def _convert_block(match: re.Match) -> str:
             content = match.group(1)
 
             # Strip aligned/align environment wrappers
-            content = re.sub(r'\\begin\{aligned?\}', '', content)
-            content = re.sub(r'\\end\{aligned?\}', '', content)
+            content = re.sub(r"\\begin\{aligned?\}", "", content)
+            content = re.sub(r"\\end\{aligned?\}", "", content)
 
             # Convert LaTeX commands to Unicode
             replacements = [
-                (r'\\iff', '⟺'),
-                (r'\\Leftrightarrow', '⟺'),
-                (r'\\implies', '⟹'),
-                (r'\\Rightarrow', '⟹'),
-                (r'\\to', '→'),
-                (r'\\rightarrow', '→'),
-                (r'\\leftarrow', '←'),
-                (r'\\leftrightarrow', '↔'),
-                (r'\\neq', '≠'),
-                (r'\\leq', '≤'),
-                (r'\\geq', '≥'),
-                (r'\\times', '×'),
-                (r'\\cdot', '·'),
-                (r'\\infty', '∞'),
-                (r'\\in', '∈'),
-                (r'\\notin', '∉'),
-                (r'\\subset', '⊂'),
-                (r'\\subseteq', '⊆'),
-                (r'\\forall', '∀'),
-                (r'\\exists', '∃'),
-                (r'\\neg', '¬'),
-                (r'\\land', '∧'),
-                (r'\\lor', '∨'),
-                (r'\\Delta', 'Δ'),
-                (r'\\Sigma', 'Σ'),
-                (r'\\Pi', 'Π'),
-                (r'\\Omega', 'Ω'),
-                (r'\\alpha', 'α'),
-                (r'\\beta', 'β'),
-                (r'\\gamma', 'γ'),
-                (r'\\delta', 'δ'),
-                (r'\\epsilon', 'ε'),
-                (r'\\theta', 'θ'),
-                (r'\\lambda', 'λ'),
-                (r'\\mu', 'μ'),
-                (r'\\pi', 'π'),
-                (r'\\sigma', 'σ'),
-                (r'\\omega', 'ω'),
-                (r'\\ln', 'ln'),
-                (r'\\log', 'log'),
-                (r'\\min', 'min'),
-                (r'\\max', 'max'),
+                (r"\\iff", "⟺"),
+                (r"\\Leftrightarrow", "⟺"),
+                (r"\\implies", "⟹"),
+                (r"\\Rightarrow", "⟹"),
+                (r"\\to", "→"),
+                (r"\\rightarrow", "→"),
+                (r"\\leftarrow", "←"),
+                (r"\\leftrightarrow", "↔"),
+                (r"\\neq", "≠"),
+                (r"\\leq", "≤"),
+                (r"\\geq", "≥"),
+                (r"\\times", "×"),
+                (r"\\cdot", "·"),
+                (r"\\infty", "∞"),
+                (r"\\in", "∈"),
+                (r"\\notin", "∉"),
+                (r"\\subset", "⊂"),
+                (r"\\subseteq", "⊆"),
+                (r"\\forall", "∀"),
+                (r"\\exists", "∃"),
+                (r"\\neg", "¬"),
+                (r"\\land", "∧"),
+                (r"\\lor", "∨"),
+                (r"\\Delta", "Δ"),
+                (r"\\Sigma", "Σ"),
+                (r"\\Pi", "Π"),
+                (r"\\Omega", "Ω"),
+                (r"\\alpha", "α"),
+                (r"\\beta", "β"),
+                (r"\\gamma", "γ"),
+                (r"\\delta", "δ"),
+                (r"\\epsilon", "ε"),
+                (r"\\theta", "θ"),
+                (r"\\lambda", "λ"),
+                (r"\\mu", "μ"),
+                (r"\\pi", "π"),
+                (r"\\sigma", "σ"),
+                (r"\\omega", "ω"),
+                (r"\\ln", "ln"),
+                (r"\\log", "log"),
+                (r"\\min", "min"),
+                (r"\\max", "max"),
             ]
             for pattern, replacement in replacements:
                 content = re.sub(pattern, replacement, content)
 
             # Remove \mathrm{} but keep content
-            content = re.sub(r'\\mathrm\{([^}]+)\}', r'\1', content)
+            content = re.sub(r"\\mathrm\{([^}]+)\}", r"\1", content)
             # Remove \text{} but keep content
-            content = re.sub(r'\\text\{([^}]+)\}', r'\1', content)
+            content = re.sub(r"\\text\{([^}]+)\}", r"\1", content)
             # Remove \; \, \! \  spacing commands
-            content = re.sub(r'\\[;,! ]', ' ', content)
+            content = re.sub(r"\\[;,! ]", " ", content)
             # Remove & alignment markers
-            content = content.replace('&', '')
+            content = content.replace("&", "")
             # Convert \\ to space (line breaks in aligned become spaces)
-            content = re.sub(r'\\\\', ' ', content)
+            content = re.sub(r"\\\\", " ", content)
             # Clean up multiple spaces
-            content = re.sub(r'\s+', ' ', content)
+            content = re.sub(r"\s+", " ", content)
             # Remove | that were for absolute value markers in \mathrm
             # but keep them if they look like |Cap|
 
             return content.strip()
 
         # Match $$...$$ blocks (including multiline)
-        result = re.sub(r'\$\$([\s\S]*?)\$\$', _convert_block, text)
+        result = re.sub(r"\$\$([\s\S]*?)\$\$", _convert_block, text)
         return result
 
     def _latex_snippet_to_unicode_zenodo(self, latex_input: str, paper_id: str) -> str:
@@ -4373,20 +4956,20 @@ end {module_root}
         plain = re.sub(r"(?m)^-\s+", "• ", plain)
 
         # Common symbol replacements that pandoc may miss
-        plain = plain.replace('>=', '≥')
-        plain = plain.replace('<=', '≤')
-        plain = plain.replace('!=', '≠')
-        plain = plain.replace('->', '→')
-        plain = plain.replace('<->', '↔')
-        plain = plain.replace('<=>', '⇔')
-        plain = plain.replace('...', '…')
+        plain = plain.replace(">=", "≥")
+        plain = plain.replace("<=", "≤")
+        plain = plain.replace("!=", "≠")
+        plain = plain.replace("->", "→")
+        plain = plain.replace("<->", "↔")
+        plain = plain.replace("<=>", "⇔")
+        plain = plain.replace("...", "…")
 
         return self._normalize_plaintext_block(plain)
 
     def _default_arxiv_comments(self, paper_id: str) -> str:
         """Build a default arXiv comments line when no explicit metadata is configured."""
         meta = self._get_paper_meta(paper_id)
-        lean_stats = self._get_cumulative_lean_stats(paper_id)
+        lean_stats = self._get_release_lean_stats(paper_id)
         return (
             f"{meta.venue} submission. Lean 4 artifact: "
             f"{lean_stats.line_count} lines, {lean_stats.theorem_count} theorems/lemmas "
@@ -4735,7 +5318,7 @@ end {module_root}
         labels: Set[str] = set()
         label_pattern = re.compile(r"\\label\{((?:thm|cor|lem|prop):[^}]+)\}")
         claim_label_pattern = re.compile(
-            r"\\begin\{claim\}\{[^{}]*\}\{((?:thm|cor|lem|prop):[^{}]+)\}"
+            r"\\begin\{claim\}\{(?:[^{}]|\{[^{}]*\})*\}\{((?:thm|cor|lem|prop):[^{}]+)\}"
         )
         for tex_file in sorted(content_dir.glob("*.tex")):
             text = tex_file.read_text(encoding="utf-8", errors="replace")
@@ -5044,6 +5627,7 @@ end {module_root}
         dep_ids = self._collect_lean_dependency_closure(paper_id)
         roots: List[Tuple[str, Path]] = [(paper_id, proofs_dir)]
         roots.extend((dep_id, self._get_paper_proofs_dir(dep_id)) for dep_id in dep_ids)
+        release_module_closure = self._get_release_module_closure(paper_id)
 
         paper_files: List[Path] = []
         dep_file_count = 0
@@ -5058,7 +5642,14 @@ end {module_root}
                 )
                 continue
 
+            allowed_modules = None
+            if release_module_closure is not None:
+                allowed_modules = release_module_closure.get(source_paper_id, set())
+
             for src_file in self._iter_paper_lean_files(source_dir):
+                rel_module = str(src_file.relative_to(source_dir).with_suffix(""))
+                if allowed_modules is not None and rel_module not in allowed_modules:
+                    continue
                 rel_path = src_file.relative_to(source_dir)
                 root_dest = lean_dest / rel_path
                 root_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -5092,7 +5683,7 @@ end {module_root}
                     dep_file_count += 1
 
         # Copy config files from main paper.
-        config_files = ["lean-toolchain", "lake-manifest.json"]
+        config_files = ["lean-toolchain", "lake-manifest.json", "lakefile.lean"]
         for fname in config_files:
             src = proofs_dir / fname
             if src.exists():
@@ -5121,7 +5712,10 @@ end {module_root}
         for dep_paper_id in dep_ids:
             dep_proofs_dir = self._get_paper_proofs_dir(dep_paper_id)
             if dep_proofs_dir.exists():
-                dep_count = len(self._iter_paper_lean_files(dep_proofs_dir))
+                if release_module_closure is None:
+                    dep_count = len(self._iter_paper_lean_files(dep_proofs_dir))
+                else:
+                    dep_count = len(release_module_closure.get(dep_paper_id, set()))
                 print(f"[arxiv]   Dependency {dep_paper_id}: {dep_count} files")
 
         total_files = len(paper_files) + dep_file_count
@@ -5154,10 +5748,13 @@ end {module_root}
         dep_imports: List[str] = []
         for dep_id in dep_ids:
             for root in self._derive_module_roots(dep_id):
+                if "." not in root:
+                    continue
+                root_file = lean_dest / Path(*root.split(".")).with_suffix(".lean")
+                if not root_file.exists():
+                    continue
                 if root not in dep_imports:
                     dep_imports.append(root)
-        if not dep_imports:
-            return
 
         bridge_rel = Path(*host_root.split(".")) / "DependencyBridge.lean"
         bridge_file = lean_dest / bridge_rel
@@ -6077,7 +6674,17 @@ require mathlib from git
     ) -> None:
         """Generate README for proofs directory from actual proof files."""
         meta = self._get_paper_meta(paper_id)
-        lean_stats = self._get_lean_stats(paper_id)
+        release_module_closure = self._get_release_module_closure(paper_id)
+        lean_stats = (
+            self._get_release_lean_stats(paper_id)
+            if release_module_closure is not None
+            else self._get_lean_stats(paper_id)
+        )
+        overview = (
+            f"This directory contains the Lean 4 slice backing the cited {meta.name} content."
+            if release_module_closure is not None
+            else f"This directory contains the complete Lean 4 formalization for {meta.name}."
+        )
 
         # Build file table
         file_rows = "\n".join(
@@ -6096,7 +6703,7 @@ require mathlib from git
 
 ## Overview
 
-This directory contains the complete Lean 4 formalization for {meta.name}.
+{overview}
 
 - **Lines:** {lean_stats.line_count}
 - **Theorems:** {lean_stats.theorem_count}
@@ -6141,12 +6748,25 @@ MIT License - See main repository for details.
         This is the mathematical evidence that proofs compile.
         """
         paper_title = self._release_title_from_latex(paper_id)
-        lean_stats = self._get_lean_stats(paper_id)
+        release_module_closure = self._get_release_module_closure(paper_id)
+        lean_stats = (
+            self._get_release_lean_stats(paper_id)
+            if release_module_closure is not None
+            else self._get_lean_stats(paper_id)
+        )
         log_file = package_dir / "BUILD_LOG.txt"
 
         # Paper-specific proof files from paper's proofs directory
         proofs_dir = self._get_paper_proofs_dir(paper_id)
-        paper_lean_files = self._iter_paper_lean_files(proofs_dir)
+        if release_module_closure is None:
+            paper_lean_files = self._iter_paper_lean_files(proofs_dir)
+        else:
+            local_modules = release_module_closure.get(paper_id, set())
+            paper_lean_files = [
+                f
+                for f in self._iter_paper_lean_files(proofs_dir)
+                if str(f.relative_to(proofs_dir).with_suffix("")) in local_modules
+            ]
         lean_toolchain = proofs_dir / "lean-toolchain"
         toolchain_version = (
             lean_toolchain.read_text().strip() if lean_toolchain.exists() else "unknown"
