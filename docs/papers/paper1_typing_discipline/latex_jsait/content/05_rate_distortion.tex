@@ -1,21 +1,13 @@
 \subsection{Three-Dimensional Tradeoff: Tag Length, Witness Cost, Distortion}
 
-Recall from Section 2 that observer strategies are characterized by three dimensions:
+Recall from the preceding sections that observer strategies are characterized by three dimensions:
 \begin{itemize}
-\item \textbf{Tag length} $L$: bits required to encode a class identifier ($L \geq \log_2 k$ for $k$ classes under full class tagging)
-\item \textbf{Witness cost} $W$: minimum number of primitive queries for class identification
+\item \textbf{Tag length} $L$: bits required to encode class information,
+\item \textbf{Witness cost} $W$: minimum number of primitive queries for class identification,
 \item \textbf{Distortion} $D$: probability of misclassification, $D = \Pr[\hat{C} \neq C]$.
 \end{itemize}
 
-We compare two observer classes:
-
-\begin{definition}[Attribute-only observer]
-An observer that queries only attribute membership ($q_I \in \Phi_{\mathcal{I}}$), with no access to explicit class tags.
-\end{definition}
-
-\begin{definition}[Nominal-tag observer]
-An observer that may read a single class identifier (nominal tag) per value, in addition to attribute queries.
-\end{definition}
+We compare two observer classes: attribute-only observers, which query only attribute membership, and nominal-tag observers, which may read a class identifier in addition to attribute queries.
 
 \begin{theorem}[Pareto Optimality of Nominal-Tag Observers]\label{thm:lwd-optimal}
 Let $A_\pi$ be the collision multiplicity (Definition~\ref{def:collision-multiplicity}). Then:
@@ -23,25 +15,24 @@ Let $A_\pi$ be the collision multiplicity (Definition~\ref{def:collision-multipl
 \item Any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}).
 \item In maximal-barrier domains ($A_\pi = k$), nominal-tag observers achieve the unique Pareto-optimal $D=0$ point:
 \begin{itemize}
-\item \textbf{Tag length}: $L = \lceil \log_2 k \rceil$ bits for $k$ classes
-\item \textbf{Witness cost}: $W = O(1)$ queries (one tag read)
-\item \textbf{Distortion}: $D = 0$ (zero misclassification probability)
+\item \textbf{Tag length}: $L = \lceil \log_2 k \rceil$ bits,
+\item \textbf{Witness cost}: $W = O(1)$ queries,
+\item \textbf{Distortion}: $D = 0$.
 \end{itemize}
 \item In general (non-maximal) domains, nominal tagging remains Pareto-optimal at $D=0$ but need not be unique: partial tags can coexist on the frontier.
 \end{enumerate}
 
 In information-barrier domains, attribute-only observers (the $L=0$ face) satisfy:
 \begin{itemize}
-\item \textbf{Tag length}: $L = 0$ bits (no explicit tag)
-\item \textbf{Witness cost}: $W = \Omega(d)$ queries (must query at least one minimal distinguishing set of size $d$, see Definition~\ref{def:distinguishing-dimension})
-\item \textbf{Distortion}: $D > 0$ (probability of misclassification is strictly positive due to collisions)
+\item \textbf{Tag length}: $L = 0$ bits,
+\item \textbf{Witness cost}: $W = \Omega(d)$ queries,
+\item \textbf{Distortion}: $D > 0$ when collisions persist.
 \end{itemize}
 \end{theorem}
 \leanmeta{ \LH{LWDC1}, \LH{LWDC3}, \LH{LWDC2}}
 
 \begin{proof}
 Converse item (1) is Theorem~\ref{thm:converse}. For item (2), maximal barrier means all classes are observationally colliding, so any $D=0$ scheme must carry full class identity in tag bits (Corollary~\ref{cor:max-barrier-converse}), while nominal tags realize this lower bound with one tag read. Pareto uniqueness follows because any competing $D=0$ point cannot reduce $L$ below $\log_2 k$ nor reduce $W$ below constant-time tag access under the admissibility rules of Section~\ref{sec:framework}.
-\medskip
 
 The converse chain has two steps: first, a constant transcript on a collision block forces any zero-error decoder to separate classes using tag information; second, counting those tag outcomes yields $2^L \ge A_\pi$. In the maximal-barrier regime this becomes $L \ge \log_2 k$, which nominal tagging achieves with one tag read.
 \end{proof}
@@ -54,55 +45,41 @@ When $1 < A_\pi < k$, the $D=0$ frontier can include mixed designs: a partial ta
 \item No barrier ($A_\pi=1$): $L=0$ zero-error identification is feasible.
 \end{enumerate}
 \end{remark}
+\leanmeta{ \LH{LWDC1}, \LH{LWDC2}, \LH{LWDC3}}
 
 \subsection{Pareto Frontier}
 
 The three-dimensional frontier shows:
 \begin{itemize}
-\item In maximal-barrier domains, the unique $D=0$ Pareto point is nominal tagging at $L=\lceil \log_2 k\rceil$.
-\item In general domains, attribute-only observers trade tag length for distortion on the $L=0$ face when collisions are present.
+\item in maximal-barrier domains, the unique $D=0$ Pareto point is nominal tagging at $L=\lceil \log_2 k\rceil$,
+\item in general domains, attribute-only observers trade tag length for distortion on the $L=0$ face when collisions are present.
 \end{itemize}
 
-Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with the maximal-barrier special case $\log_2 k$.
+Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with maximal-barrier specialization $\log_2 k$.
 
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[scale=0.8]
-  % Shaded D=0 achievable region (draw FIRST)
   \fill[blue!8] (0,0) -- (5,0) -- (5,0.6) -- (0,2.8) -- cycle;
-
-  % D=0 Pareto frontier
   \draw[thick, blue] (0,2.8) -- (5,0.6);
-
-  % Axes (draw after shading)
   \draw[->] (0,0) -- (5.8,0) node[right] {Tag rate $L$};
   \draw[->] (0,0) -- (0,3.5) node[above] {Identification cost $W$};
-
-  % Axis labels
   \node[below left] at (0,0) {$0$};
   \node[below] at (5,0) {$\log_2 k$};
   \draw (5,0.08) -- (5,-0.08);
   \node[left] at (0,0.6) {\footnotesize $O(1)$};
   \draw (0.08,0.6) -- (-0.08,0.6);
-
-  % Region labels
   \node[blue] at (2.60,2.32) {\small $D = 0$ frontier};
   \node[gray] at (2.15,1.12) {\footnotesize achievable};
-
-  % Points on the D=0 frontier
   \filldraw[orange] (0,2.8) circle (2.5pt);
   \node[orange, anchor=west] at (0.22,2.8) {\footnotesize Collision-free attr-only ($A_\pi{=}1$)};
-
   \filldraw[green!60!black] (5,0.6) circle (2.5pt);
   \node[green!60!black, anchor=east] at (4.78,0.6) {\footnotesize Nominal ($D{=}0$)};
   \node[green!60!black, anchor=west] at (5.16,0.6) {\footnotesize $W=1$};
-
-  % Probe-only strategy: below frontier, accepts D>0
   \filldraw[red] (0,1.8) circle (2.5pt);
   \node[red, anchor=west] at (0.22,1.8) {\footnotesize Colliding attr-only ($D{>}0$)};
-
 \end{tikzpicture}
-\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Here $W$ counts identification operations, including a constant-time tag read, so the nominal zero-error point sits at $W=O(1)$ rather than $W=0$. The left orange point shows the collision-free attribute-only regime ($A_\pi=1$), while the red point shows a colliding attribute-only regime with $D>0$. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; if tag access were treated as free representation access rather than an observation, the nominal point would move down to the $W=0$ axis.}
+\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Here $W$ counts identification operations, including a constant-time tag read, so the nominal zero-error point sits at $W=O(1)$ rather than $W=0$. The left orange point shows the collision-free attribute-only regime ($A_\pi=1$), while the red point shows a colliding attribute-only regime with $D>0$. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains.}
 \label{fig:lwd-tradeoff}
 \end{figure}
 
@@ -111,7 +88,50 @@ The supplementary artifact machine-checks the full ambiguity-based converse chai
 \begin{remark}[Software-runtime instantiation (example)]
 In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}); attribute-probe schemes correspond to attribute-only observers (e.g., repeated \texttt{hasattr}-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
 \end{remark}
+\leanmeta{ \LH{ACS7}, \LH{ACS1}, \LH{FORC2}}
 
 \begin{remark}[Conformance-check cost parameter]
-When conformance checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
+When conformance checks traverse $s$ members or fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
 \end{remark}
+\leanmeta{ \LH{ACS1}}
+
+\subsection{Confusability Graph Thresholds and Block Scaling}
+
+Let $\pi_{\mathcal{C}} : \mathcal{C} \to \{0,1\}^n$ be the class-profile map. The induced confusability graph connects two distinct classes when they share the same observable profile.
+
+\begin{theorem}[Exact one-shot feasibility threshold]\label{thm:graph-one-shot-threshold}
+For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and only if
+\[
+A_\pi \le n.
+\]
+\end{theorem}
+\leanmeta{ \LH{GPH13}}
+
+\begin{proof}
+Classes in the same profile fiber are pairwise confusable, so each such fiber is a clique in the confusability graph. Zero-error tagging is equivalent to a proper graph coloring; therefore feasibility is equivalent to having at least as many colors as the largest clique size, which is exactly $A_\pi$.
+\end{proof}
+
+\begin{theorem}[Exact block feasibility law]\label{thm:graph-block-threshold}
+For block length $t\ge 1$ with coordinatewise observation on $\mathcal{C}^t$, zero-error tagging with alphabet size $n_t$ is feasible if and only if
+\[
+A_\pi^t \le n_t.
+\]
+Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
+\end{theorem}
+\leanmeta{ \LH{GPH16}, \LH{GPH17}, \LH{GPH20}}
+
+\begin{corollary}[Linear log-bit scaling]\label{cor:graph-logbit-scaling}
+Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block tag budget in bits. Then
+\[
+L_t^\star = t\,\log_2 A_\pi,
+\qquad
+\frac{L_t^\star}{t} = \log_2 A_\pi.
+\]
+So per-entity tag rate is exactly stable across block length.
+\end{corollary}
+\leanmeta{ \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
+
+\begin{remark}[Scope]
+These are worst-case finite-block confusability laws. They strengthen the zero-error converse with exact block thresholds, while remaining distinct from full distribution-optimized K\"orner graph-entropy theory.
+\end{remark}
+\leanmeta{ \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}

@@ -1,4 +1,4 @@
-This is BibTeX, Version 0.99d (TeX Live 2026/dev/Arch Linux)
+This is BibTeX, Version 0.99e (TeX Live 2026/Arch Linux)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: type_compression_jsait.aux
 The style file: IEEEtran.bst
@@ -15,7 +15,7 @@ Database file #1: references.bib
 Done.
 You've used 19 entries,
             4087 wiz_defined-function locations,
-            933 strings with 10173 characters,
+            933 strings with 10189 characters,
 and the built_in function-call counts, 12498 in all, are:
 = -- 1054
 > -- 207
