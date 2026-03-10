@@ -2856,9 +2856,17 @@ end {module_root}
     ) -> Set[str]:
         """Extract compact Lean-handle IDs referenced via `\\LH{...}` in content."""
         ids: Set[str] = set()
+        lhrng_pattern = re.compile(r"\\LHrng\{([A-Za-z]+)\}\{(\d+)\}\{(\d+)\}")
         for tex_file in self._iter_manual_content_tex(paper_id, files=files):
             text = tex_file.read_text(encoding="utf-8", errors="replace")
             ids.update(m.strip() for m in re.findall(r"\\LH\{([^}]+)\}", text))
+            for prefix, start_raw, end_raw in lhrng_pattern.findall(text):
+                start = int(start_raw)
+                end = int(end_raw)
+                if end < start:
+                    start, end = end, start
+                for idx in range(start, end + 1):
+                    ids.add(f"{prefix}{idx}")
         return {code for code in ids if re.match(r"^[A-Za-z]+\d+$", code)}
 
     def _extract_referenced_lh_handles_from_content(
@@ -3791,6 +3799,7 @@ end {module_root}
         compact_id_pattern = re.compile(r"^[A-Za-z]+\d+$")
         paper_handle_pattern = re.compile(r"^(?:thm|cor|lem|prop):")
         lh_pattern = re.compile(r"\\LH\{([^}]+)\}")
+        lhrng_pattern = re.compile(r"\\LHrng\{([A-Za-z]+)\}\{(\d+)\}\{(\d+)\}")
         nolink_pattern = re.compile(r"\\nolinkurl\{([^}]+)\}")
 
         def extract_handles(snippet: str) -> Set[str]:
@@ -3815,6 +3824,17 @@ end {module_root}
                 if "." not in token and "_" not in token:
                     continue
                 handles.add(token)
+
+            for prefix, start_raw, end_raw in lhrng_pattern.findall(snippet):
+                start = int(start_raw)
+                end = int(end_raw)
+                if end < start:
+                    start, end = end, start
+                for idx in range(start, end + 1):
+                    token = f"{prefix}{idx}"
+                    resolved = id_to_handle.get(token)
+                    if resolved:
+                        handles.add(resolved)
 
             for raw in nolink_pattern.findall(snippet):
                 token = raw.strip().replace(r"\_", "_")
