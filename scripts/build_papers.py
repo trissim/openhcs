@@ -962,8 +962,7 @@ end {module_root}
 
     def _discover_content_files(self, paper_id: str) -> List[Path]:
         """Discover markdown content files by following main LaTeX include order."""
-        files = self._discover_content_files_for_flags(paper_id)
-        return [f for f in files if f.name != "abstract.tex"]
+        return self._discover_content_files_for_flags(paper_id)
 
     def _strip_latex_comments(self, content: str) -> str:
         """Remove LaTeX comments while preserving escaped percent signs."""
