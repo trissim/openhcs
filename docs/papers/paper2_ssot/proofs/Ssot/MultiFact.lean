@@ -51,6 +51,13 @@ def observe {F A : Nat} (view : Finset (Fin F)) (x : State F A) : PartialObserva
 /-- A family of observation locations, each with its own revealed coordinate set. -/
 abbrev ViewFamily (F L : Nat) := Fin L → Finset (Fin F)
 
+/-- The full deterministic observation transcript across all allowed locations. -/
+abbrev FullTranscript (F A L : Nat) := Fin L → PartialObservation F A
+
+/-- The full observation transcript induced by a view family on a latent state. -/
+def fullTranscript {F A L : Nat} (views : ViewFamily F L) (x : State F A) : FullTranscript F A L :=
+  fun ℓ => observe (views ℓ) x
+
 /--
 Two latent states are confusable when some allowed location yields the same partial observation.
 This is the natural zero-error adjacency relation for decoders that must succeed uniformly over
@@ -58,6 +65,32 @@ all allowed locations.
 -/
 def Confusable {F A L : Nat} (views : ViewFamily F L) (x y : State F A) : Prop :=
   x ≠ y ∧ ∃ ℓ : Fin L, observe (views ℓ) x = observe (views ℓ) y
+
+/-- A structural coherence condition: agreement at one allowed location forces agreement
+of the full observation transcript. Under this condition, the confusability relation collapses
+to clique-shaped transcript fibers. -/
+def FiberCoherent {F A L : Nat} (views : ViewFamily F L) : Prop :=
+  ∀ ⦃x y : State F A⦄ ⦃ℓ : Fin L⦄,
+    observe (views ℓ) x = observe (views ℓ) y →
+      fullTranscript views x = fullTranscript views y
+
+/-- The largest exact cluster-collapse class in the base model: confusability is transitive. -/
+def ConfusableTransitive {F A L : Nat} (views : ViewFamily F L) : Prop :=
+  ∀ ⦃x y z : State F A⦄,
+    Confusable views x y → Confusable views y z → x ≠ z → Confusable views x z
+
+theorem fiberCoherent_confusableTransitive
+    {F A L : Nat} (views : ViewFamily F L)
+    (hcoh : FiberCoherent (A := A) views) :
+    ConfusableTransitive (A := A) views := by
+  intro x y z hxy hyz hxz
+  rcases hxy with ⟨_, ℓxy, hobsxy⟩
+  rcases hyz with ⟨_, _, hobsyz⟩
+  have hfullxy : fullTranscript views x = fullTranscript views y := hcoh hobsxy
+  have hfullyz : fullTranscript views y = fullTranscript views z := hcoh hobsyz
+  have hfullxz : fullTranscript views x = fullTranscript views z := hfullxy.trans hfullyz
+  refine ⟨hxz, ⟨ℓxy, ?_⟩⟩
+  simpa [fullTranscript] using congrArg (fun t => t ℓxy) hfullxz
 
 instance instDecidableConfusable {F A L : Nat}
     (views : ViewFamily F L) (x y : State F A) : Decidable (Confusable views x y) := by
@@ -196,6 +229,7 @@ def confusabilityGraph {F A L : Nat} (views : ViewFamily F L) : SimpleGraph (Sta
     intro x h
     exact h.1 rfl
 
+
 def graphColoringOfProperColoring
     {F A L T : Nat}
     (views : ViewFamily F L)
@@ -306,6 +340,162 @@ theorem graphMaxIndependentCard_iso_eq
         rw [← hcardt, Finset.card_image_of_injective (s := t) e.symm.injective]
       _ ≤ graphMaxIndependentCard G := graphIndependent_card_le_graphMaxIndependentCard G _ ht'
   exact le_antisymm hle₁ hle₂
+
+/-- A cluster graph: distinct vertices are adjacent exactly when they lie in the same label fiber. -/
+def clusterGraph {α β : Type} [DecidableEq α] (label : α → β) : SimpleGraph α where
+  Adj x y := x ≠ y ∧ label x = label y
+  symm := by
+    intro x y h
+    exact ⟨h.1.symm, h.2.symm⟩
+  loopless := by
+    intro x h
+    exact h.1 rfl
+
+/-- The realized transcript fibers of a view family. -/
+abbrev TranscriptFiber {F A L : Nat} (views : ViewFamily F L) :=
+  { t : FullTranscript F A L // ∃ x : State F A, fullTranscript views x = t }
+
+/-- Canonical transcript-fiber label of a latent state. -/
+def transcriptLabel {F A L : Nat} (views : ViewFamily F L) (x : State F A) : TranscriptFiber (A := A) views :=
+  ⟨fullTranscript views x, ⟨x, rfl⟩⟩
+
+lemma transcriptLabel_eq_iff {F A L : Nat} (views : ViewFamily F L) (x y : State F A) :
+    transcriptLabel views x = transcriptLabel views y ↔ fullTranscript views x = fullTranscript views y := by
+  constructor
+  · intro h
+    exact congrArg Subtype.val h
+  · intro h
+    apply Subtype.ext
+    simpa [transcriptLabel] using h
+
+theorem transcriptLabel_surjective {F A L : Nat} (views : ViewFamily F L) :
+    Function.Surjective (transcriptLabel (A := A) views) := by
+  intro t
+  rcases t.property with ⟨x, hx⟩
+  refine ⟨x, ?_⟩
+  apply Subtype.ext
+  simpa [transcriptLabel] using hx
+
+theorem confusable_iff_transcriptFiber
+    {F A L : Nat} (views : ViewFamily F L)
+    (hL : 0 < L) (hcoh : FiberCoherent (A := A) views)
+    {x y : State F A} :
+    Confusable views x y ↔ x ≠ y ∧ transcriptLabel (A := A) views x = transcriptLabel (A := A) views y := by
+  constructor
+  · rintro ⟨hxy, ℓ, hobs⟩
+    refine ⟨hxy, ?_⟩
+    exact (transcriptLabel_eq_iff views x y).2 (hcoh hobs)
+  · rintro ⟨hxy, hlabel⟩
+    refine ⟨hxy, ?_⟩
+    let ℓ0 : Fin L := ⟨0, hL⟩
+    refine ⟨ℓ0, ?_⟩
+    have htrans : fullTranscript views x = fullTranscript views y :=
+      (transcriptLabel_eq_iff views x y).1 hlabel
+    have := congrArg (fun t => t ℓ0) htrans
+    simpa [fullTranscript] using this
+
+theorem confusabilityGraph_eq_clusterGraph_transcriptLabel
+    {F A L : Nat} (views : ViewFamily F L)
+    (hL : 0 < L) (hcoh : FiberCoherent (A := A) views) :
+    confusabilityGraph (A := A) views = clusterGraph (transcriptLabel (A := A) views) := by
+  ext x y
+  constructor <;> intro h
+  · exact (confusable_iff_transcriptFiber views hL hcoh).1 h
+  · exact (confusable_iff_transcriptFiber views hL hcoh).2 h
+
+theorem confusable_of_reachable_of_confusableTransitive
+    {F A L : Nat} (views : ViewFamily F L)
+    (htrans : ConfusableTransitive (A := A) views)
+    {x y : State F A}
+    (hreach : (confusabilityGraph (A := A) views).Reachable x y)
+    (hxy : x ≠ y) :
+    Confusable views x y := by
+  rw [SimpleGraph.reachable_iff_reflTransGen] at hreach
+  exact Relation.ReflTransGen.head_induction_on hreach
+    (by intro hy; cases hy rfl)
+    (fun {a c} hac hcy ih => by
+      intro hay
+      by_cases hcyEq : c = y
+      · simpa [hcyEq] using hac
+      · exact htrans hac (ih hcyEq) hay) hxy
+
+theorem connectedComponentMk_surjective_confusabilityGraph
+    {F A L : Nat} (views : ViewFamily F L) :
+    Function.Surjective ((confusabilityGraph (A := A) views).connectedComponentMk) := by
+  intro c
+  refine c.ind ?_
+  intro v
+  exact ⟨v, rfl⟩
+
+noncomputable def confusabilityComponentCard {F A L : Nat} (views : ViewFamily F L) : Nat :=
+  Nat.card (Set.range ((confusabilityGraph (A := A) views).connectedComponentMk))
+
+theorem confusable_iff_sameComponent_of_confusableTransitive
+    {F A L : Nat} (views : ViewFamily F L)
+    (htrans : ConfusableTransitive (A := A) views)
+    {x y : State F A} :
+    Confusable views x y ↔ x ≠ y ∧
+      (confusabilityGraph (A := A) views).connectedComponentMk x =
+      (confusabilityGraph (A := A) views).connectedComponentMk y := by
+  constructor
+  · intro h
+    have hadj : (confusabilityGraph (A := A) views).Adj x y := h
+    exact ⟨h.1, SimpleGraph.ConnectedComponent.sound (G := confusabilityGraph (A := A) views) hadj.reachable⟩
+  · rintro ⟨hxy, hcomp⟩
+    exact confusable_of_reachable_of_confusableTransitive (A := A) views htrans
+      ((SimpleGraph.ConnectedComponent.eq (G := confusabilityGraph (A := A) views)).mp hcomp) hxy
+
+theorem confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
+    {F A L : Nat} (views : ViewFamily F L)
+    (htrans : ConfusableTransitive (A := A) views) :
+    confusabilityGraph (A := A) views =
+      clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk) := by
+  ext x y
+  exact confusable_iff_sameComponent_of_confusableTransitive (A := A) views htrans
+
+theorem clusterGraph_compl_colorable
+    {α β : Type} [DecidableEq α] [Fintype β] [DecidableEq β]
+    (label : α → β) :
+    (clusterGraph label)ᶜ.Colorable (Fintype.card β) := by
+  classical
+  refine ⟨SimpleGraph.Coloring.mk (fun x => Fintype.equivFin β (label x)) ?_⟩
+  intro x y hAdj hEq
+  rcases (SimpleGraph.compl_adj (clusterGraph label) x y).1 hAdj with ⟨hxy, hnotAdj⟩
+  apply hnotAdj
+  refine ⟨hxy, ?_⟩
+  apply (Fintype.equivFin β).injective
+  simpa using hEq
+
+theorem clusterGraph_graphIndependent_representatives
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    {label : α → β}
+    (hsurj : Function.Surjective label) :
+    Fintype.card β ≤ graphMaxIndependentCard (clusterGraph label) := by
+  classical
+  let rep : β → α := fun b => Classical.choose (hsurj b)
+  have hrep : ∀ b, label (rep b) = b := by
+    intro b
+    exact Classical.choose_spec (hsurj b)
+  have hrep_inj : Function.Injective rep := by
+    intro b₁ b₂ hEq
+    apply_fun label at hEq
+    simpa [hrep b₁, hrep b₂] using hEq
+  let s : Finset α := Finset.univ.map ⟨rep, hrep_inj⟩
+  have hs : GraphIndependent (clusterGraph label) s := by
+    intro x y hx hy hxy hAdj
+    rcases Finset.mem_map.mp hx with ⟨b₁, _, hxeq⟩
+    rcases Finset.mem_map.mp hy with ⟨b₂, _, hyeq⟩
+    subst hxeq
+    subst hyeq
+    apply hxy
+    have hb : b₁ = b₂ := by
+      simpa [hrep b₁, hrep b₂] using hAdj.2
+    simpa [hb]
+  calc
+    Fintype.card β = s.card := by
+      simp [s]
+    _ ≤ graphMaxIndependentCard (clusterGraph label) :=
+      graphIndependent_card_le_graphMaxIndependentCard (clusterGraph label) s hs
 
 /-- A Lovász-theta-style upper-bound witness built from an orthonormal representation
 of the complement relation together with a unit handle vector. -/
@@ -5631,6 +5821,99 @@ theorem graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
   unfold lovaszThetaAsymptoticUpper
   exact graphShannonCapacityReal_le_lovaszThetaPrimalAsymptoticUpper G
 
+theorem clusterGraph_graphPowerRate_one_eq_log_maxIndependentCard
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    (label : α → β) :
+    graphPowerRate (clusterGraph label) 1 =
+      Real.log (graphMaxIndependentCard (clusterGraph label)) := by
+  simp [graphPowerRate, graphMaxIndependentCard_iso_eq (strongPow_oneIso (clusterGraph label))]
+
+theorem clusterGraph_log_card_le_graphShannonCapacityReal
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    {label : α → β}
+    (hsurj : Function.Surjective label) :
+    Real.log (Fintype.card β) ≤ graphShannonCapacityReal (clusterGraph label) := by
+  have hβnonempty : Nonempty β := ⟨label (Classical.choice ‹Nonempty α›)⟩
+  have hβpos : 0 < (Fintype.card β : ℝ) := by
+    exact_mod_cast (Fintype.card_pos_iff.mpr hβnonempty)
+  have hind :
+      Fintype.card β ≤ graphMaxIndependentCard (clusterGraph label) :=
+    clusterGraph_graphIndependent_representatives hsurj
+  have hαpos : 0 < (graphMaxIndependentCard (clusterGraph label) : ℝ) := by
+    exact_mod_cast (lt_of_lt_of_le (Fintype.card_pos_iff.mpr hβnonempty) hind)
+  have hlog :
+      Real.log (Fintype.card β) ≤
+        Real.log (graphMaxIndependentCard (clusterGraph label)) := by
+    exact Real.log_le_log hβpos (by exact_mod_cast hind)
+  calc
+    Real.log (Fintype.card β)
+        ≤ Real.log (graphMaxIndependentCard (clusterGraph label)) := hlog
+    _ = graphPowerRate (clusterGraph label) 1 :=
+      (clusterGraph_graphPowerRate_one_eq_log_maxIndependentCard label).symm
+    _ ≤ graphShannonCapacityReal (clusterGraph label) :=
+      graphPowerRate_le_graphShannonCapacityReal (clusterGraph label) 1
+
+theorem lovaszThetaAsymptoticUpper_clusterGraph_le_log_card
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    (label : α → β) :
+    lovaszThetaAsymptoticUpper (clusterGraph label) ≤ Real.log (Fintype.card β) := by
+  have hc : (clusterGraph label)ᶜ.Colorable (Fintype.card β) :=
+    clusterGraph_compl_colorable label
+  unfold lovaszThetaAsymptoticUpper
+  rw [lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper]
+  exact le_trans
+    (graphThetaPSDAsymptoticUpper_le_graphThetaPSDLogUpper (clusterGraph label))
+    (graphThetaPSDLogUpper_le_log_complChromatic (clusterGraph label) hc)
+
+theorem graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    {label : α → β}
+    (hsurj : Function.Surjective label) :
+    graphShannonCapacityReal (clusterGraph label) =
+      lovaszThetaAsymptoticUpper (clusterGraph label) := by
+  have hlow : Real.log (Fintype.card β) ≤ graphShannonCapacityReal (clusterGraph label) :=
+    clusterGraph_log_card_le_graphShannonCapacityReal hsurj
+  have hmid :
+      graphShannonCapacityReal (clusterGraph label) ≤
+        lovaszThetaAsymptoticUpper (clusterGraph label) :=
+    graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper (clusterGraph label)
+  have hupp :
+      lovaszThetaAsymptoticUpper (clusterGraph label) ≤
+        Real.log (Fintype.card β) :=
+    lovaszThetaAsymptoticUpper_clusterGraph_le_log_card label
+  exact le_antisymm hmid (le_trans hupp hlow)
+
+theorem graphShannonCapacityReal_eq_log_card_clusterGraph
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    {label : α → β}
+    (hsurj : Function.Surjective label) :
+    graphShannonCapacityReal (clusterGraph label) = Real.log (Fintype.card β) := by
+  have hlow : Real.log (Fintype.card β) ≤ graphShannonCapacityReal (clusterGraph label) :=
+    clusterGraph_log_card_le_graphShannonCapacityReal hsurj
+  have hupp :
+      graphShannonCapacityReal (clusterGraph label) ≤ Real.log (Fintype.card β) := by
+    exact le_trans
+      (graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper (clusterGraph label))
+      (lovaszThetaAsymptoticUpper_clusterGraph_le_log_card label)
+  exact le_antisymm hupp hlow
+
+theorem lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph
+    {α β : Type} [Fintype α] [DecidableEq α] [Nonempty α] [Fintype β] [DecidableEq β]
+    {label : α → β}
+    (hsurj : Function.Surjective label) :
+    lovaszThetaAsymptoticUpper (clusterGraph label) = Real.log (Fintype.card β) := by
+  have hcap :
+      graphShannonCapacityReal (clusterGraph label) = Real.log (Fintype.card β) :=
+    graphShannonCapacityReal_eq_log_card_clusterGraph hsurj
+  have heq :
+      graphShannonCapacityReal (clusterGraph label) =
+        lovaszThetaAsymptoticUpper (clusterGraph label) :=
+    graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph hsurj
+  calc
+    lovaszThetaAsymptoticUpper (clusterGraph label)
+        = graphShannonCapacityReal (clusterGraph label) := heq.symm
+    _ = Real.log (Fintype.card β) := hcap
+
 theorem graphShannonCapacityReal_le_log_complChromatic
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) {n : Nat}
@@ -5685,6 +5968,161 @@ noncomputable def shannonThetaLogUpper
     {F A L : Nat} [Nonempty (State F A)]
     (views : ViewFamily F L) : ℝ :=
   graphThetaLogUpper (confusabilityGraph (A := A) views)
+
+/-- The fixed textbook Lov'asz-`\vartheta` asymptotic upper invariant for a view family. -/
+noncomputable def shannonThetaPSDAsymptoticUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) : ℝ :=
+  graphThetaPSDAsymptoticUpper (confusabilityGraph (A := A) views)
+
+/-- The fixed textbook Lov\'asz-`\vartheta` asymptotic upper invariant for a view family. -/
+noncomputable def shannonLovaszThetaAsymptoticUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) : ℝ :=
+  lovaszThetaAsymptoticUpper (confusabilityGraph (A := A) views)
+
+theorem shannonLovaszThetaAsymptoticUpper_eq_shannonThetaPSDAsymptoticUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) :
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views =
+      shannonThetaPSDAsymptoticUpper (F := F) (A := A) (L := L) views := by
+  simp [shannonLovaszThetaAsymptoticUpper, shannonThetaPSDAsymptoticUpper,
+    lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper, lovaszThetaAsymptoticUpper]
+
+theorem shannonCapacityReal_le_shannonLovaszThetaAsymptoticUpper
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views ≤
+      shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+  simpa [shannonCapacityReal, shannonLovaszThetaAsymptoticUpper] using
+    graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
+      (G := confusabilityGraph (A := A) views)
+
+theorem shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_fiberCoherent
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hL : 0 < L) (hcoh : FiberCoherent (A := A) views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+  let label := transcriptLabel (A := A) views
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_transcriptLabel (A := A) views hL hcoh
+  have hsurj : Function.Surjective label := transcriptLabel_surjective (A := A) views
+  calc
+    shannonCapacityReal (F := F) (A := A) (L := L) views
+        = graphShannonCapacityReal (clusterGraph label) := by
+          simp [shannonCapacityReal, hgraph]
+    _ = lovaszThetaAsymptoticUpper (clusterGraph label) :=
+          graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph hsurj
+    _ = shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+          simp [shannonLovaszThetaAsymptoticUpper, hgraph]
+
+theorem shannonCapacityReal_eq_log_transcriptFiberCard_of_fiberCoherent
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hL : 0 < L) (hcoh : FiberCoherent (A := A) views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      Real.log (Fintype.card (TranscriptFiber (A := A) views)) := by
+  let label := transcriptLabel (A := A) views
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_transcriptLabel (A := A) views hL hcoh
+  have hsurj : Function.Surjective label := transcriptLabel_surjective (A := A) views
+  calc
+    shannonCapacityReal (F := F) (A := A) (L := L) views
+        = graphShannonCapacityReal (clusterGraph label) := by
+          simp [shannonCapacityReal, hgraph]
+    _ = Real.log (Fintype.card (TranscriptFiber views)) := by
+          simpa [label] using graphShannonCapacityReal_eq_log_card_clusterGraph hsurj
+
+theorem shannonLovaszThetaAsymptoticUpper_eq_log_transcriptFiberCard_of_fiberCoherent
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hL : 0 < L) (hcoh : FiberCoherent (A := A) views) :
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views =
+      Real.log (Fintype.card (TranscriptFiber (A := A) views)) := by
+  let label := transcriptLabel (A := A) views
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_transcriptLabel (A := A) views hL hcoh
+  have hsurj : Function.Surjective label := transcriptLabel_surjective (A := A) views
+  calc
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views
+        = lovaszThetaAsymptoticUpper (clusterGraph label) := by
+          simp [shannonLovaszThetaAsymptoticUpper, hgraph]
+    _ = Real.log (Fintype.card (TranscriptFiber views)) := by
+          simpa [label] using lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph hsurj
+
+theorem shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_confusableTransitive
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (htrans : ConfusableTransitive (A := A) views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+  classical
+  let G := confusabilityGraph (A := A) views
+  let label := G.connectedComponentMk
+  letI : Fintype G.ConnectedComponent := @Quotient.fintype _ _ G.reachableSetoid (inferInstance : DecidableRel G.Reachable)
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive (A := A) views htrans
+  have hsurj : Function.Surjective label :=
+    connectedComponentMk_surjective_confusabilityGraph (A := A) views
+  calc
+    shannonCapacityReal (F := F) (A := A) (L := L) views
+        = graphShannonCapacityReal (clusterGraph label) := by
+          simp [shannonCapacityReal, hgraph]
+    _ = lovaszThetaAsymptoticUpper (clusterGraph label) :=
+        graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph hsurj
+    _ = shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+          simp [shannonLovaszThetaAsymptoticUpper, hgraph]
+
+theorem shannonCapacityReal_eq_log_connectedComponents_of_confusableTransitive
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (htrans : ConfusableTransitive (A := A) views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      Real.log (confusabilityComponentCard (A := A) views) := by
+  let label := (confusabilityGraph (A := A) views).connectedComponentMk
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive (A := A) views htrans
+  have hsurj : Function.Surjective label :=
+    connectedComponentMk_surjective_confusabilityGraph (A := A) views
+  calc
+    shannonCapacityReal (F := F) (A := A) (L := L) views
+        = graphShannonCapacityReal (clusterGraph label) := by
+          simp [shannonCapacityReal, hgraph]
+    _ = Real.log (confusabilityComponentCard (A := A) views) := by
+          classical
+          let G := confusabilityGraph (A := A) views
+          letI : Fintype G.ConnectedComponent := @Quotient.fintype _ _ G.reachableSetoid (inferInstance : DecidableRel G.Reachable)
+          let e : Set.range label ≃ G.ConnectedComponent :=
+            { toFun := fun r => r.1
+              invFun := fun c => ⟨c, hsurj c⟩
+              left_inv := by rintro ⟨c, hc⟩; rfl
+              right_inv := by intro c; rfl }
+          have hcard : confusabilityComponentCard (A := A) views = Fintype.card G.ConnectedComponent := by
+            simpa [confusabilityComponentCard, label, Nat.card_eq_fintype_card] using (Nat.card_congr e)
+          simpa [label, hcard] using graphShannonCapacityReal_eq_log_card_clusterGraph hsurj
+
+theorem shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusableTransitive
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (htrans : ConfusableTransitive (A := A) views) :
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views =
+      Real.log (confusabilityComponentCard (A := A) views) := by
+  let label := (confusabilityGraph (A := A) views).connectedComponentMk
+  have hgraph : confusabilityGraph (A := A) views = clusterGraph label :=
+    confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive (A := A) views htrans
+  have hsurj : Function.Surjective label :=
+    connectedComponentMk_surjective_confusabilityGraph (A := A) views
+  calc
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views
+        = lovaszThetaAsymptoticUpper (clusterGraph label) := by
+          simp [shannonLovaszThetaAsymptoticUpper, hgraph]
+    _ = Real.log (confusabilityComponentCard (A := A) views) := by
+          classical
+          let G := confusabilityGraph (A := A) views
+          letI : Fintype G.ConnectedComponent := @Quotient.fintype _ _ G.reachableSetoid (inferInstance : DecidableRel G.Reachable)
+          let e : Set.range label ≃ G.ConnectedComponent :=
+            { toFun := fun r => r.1
+              invFun := fun c => ⟨c, hsurj c⟩
+              left_inv := by rintro ⟨c, hc⟩; rfl
+              right_inv := by intro c; rfl }
+          have hcard : confusabilityComponentCard (A := A) views = Fintype.card G.ConnectedComponent := by
+            simpa [confusabilityComponentCard, label, Nat.card_eq_fintype_card] using (Nat.card_congr e)
+          simpa [label, hcard] using lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph hsurj
 
 /-- A pure PSD-matrix asymptotic upper invariant for a view family. -/
 noncomputable def shannonThetaPSDLogUpper
