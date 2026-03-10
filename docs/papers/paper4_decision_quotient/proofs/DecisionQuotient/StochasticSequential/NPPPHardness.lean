@@ -201,5 +201,167 @@ theorem fiberExpected_accept_eq_scaled
               (if Formula.eval y (ExistsMajorityFormula.fixX x φ.formula) then 1 else 0) := by
             simp
 
+theorem fiberExpected_hold_eq_scaled
+    (φ : ExistsMajorityFormula) (x : XAssign φ.nx) (y₀ : YAssign φ.ny)
+    (a : PureAnchorStochAction)
+    (ha : a = PureAnchorStochAction.holdL ∨ a = PureAnchorStochAction.holdR) :
+    fiberExpectedUtility (reduceExistsMajorityPureAnchor φ) (xCoordsEM φ.nx φ.ny) (x, y₀) a
+      = (1 / (2 : ℝ) ^ φ.nx) *
+          stochasticExpectedUtility
+            (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)) a := by
+  rcases ha with rfl | rfl
+  · unfold fiberExpectedUtility stochasticExpectedUtility reduceExistsMajorityPureAnchor
+      emDistribution emPureAnchorUtility reduceMAJSATPureAnchor stochDistribution pureAnchorUtility pureAnchorThreshold
+    rw [Fintype.sum_prod_type]
+    simp_rw [agreeOn_xCoordsEM_iff]
+    have hcollapse :
+        ∀ x' : XAssign φ.nx,
+          (∑ y : YAssign φ.ny,
+            if x' = x then 1 / (2 : ℝ) ^ (φ.nx + φ.ny) * pureAnchorThreshold φ.ny else 0)
+          = if x' = x then
+              (1 / (2 : ℝ) ^ φ.nx) *
+                ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny
+            else 0 := by
+      intro x'
+      by_cases hx' : x' = x
+      · subst x'
+        rw [if_pos rfl, if_pos rfl]
+        have hpow : (2 : ℝ) ^ (φ.nx + φ.ny) = (2 : ℝ) ^ φ.nx * (2 : ℝ) ^ φ.ny := by
+          rw [pow_add]
+        simp_rw [hpow]
+        rw [Finset.mul_sum]
+        apply Finset.sum_congr rfl
+        intro y _
+        have hnx : (2 : ℝ) ^ φ.nx ≠ 0 := by positivity
+        field_simp [hnx]
+      · simp [hx']
+    calc
+      (∑ x' : XAssign φ.nx,
+          ∑ y : YAssign φ.ny,
+            if x' = x then 1 / (2 : ℝ) ^ (φ.nx + φ.ny) * pureAnchorThreshold φ.ny else 0)
+        = ∑ x' : XAssign φ.nx,
+            if x' = x then
+              (1 / (2 : ℝ) ^ φ.nx) *
+                ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny
+            else 0 := by
+              apply Fintype.sum_congr
+              intro x'
+              exact hcollapse x'
+      _ = (1 / (2 : ℝ) ^ φ.nx) *
+            ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny := by
+              simp
+  · unfold fiberExpectedUtility stochasticExpectedUtility reduceExistsMajorityPureAnchor
+      emDistribution emPureAnchorUtility reduceMAJSATPureAnchor stochDistribution pureAnchorUtility pureAnchorThreshold
+    rw [Fintype.sum_prod_type]
+    simp_rw [agreeOn_xCoordsEM_iff]
+    have hcollapse :
+        ∀ x' : XAssign φ.nx,
+          (∑ y : YAssign φ.ny,
+            if x' = x then 1 / (2 : ℝ) ^ (φ.nx + φ.ny) * pureAnchorThreshold φ.ny else 0)
+          = if x' = x then
+              (1 / (2 : ℝ) ^ φ.nx) *
+                ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny
+            else 0 := by
+      intro x'
+      by_cases hx' : x' = x
+      · subst x'
+        rw [if_pos rfl, if_pos rfl]
+        have hpow : (2 : ℝ) ^ (φ.nx + φ.ny) = (2 : ℝ) ^ φ.nx * (2 : ℝ) ^ φ.ny := by
+          rw [pow_add]
+        simp_rw [hpow]
+        rw [Finset.mul_sum]
+        apply Finset.sum_congr rfl
+        intro y _
+        have hnx : (2 : ℝ) ^ φ.nx ≠ 0 := by positivity
+        field_simp [hnx]
+      · simp [hx']
+    calc
+      (∑ x' : XAssign φ.nx,
+          ∑ y : YAssign φ.ny,
+            if x' = x then 1 / (2 : ℝ) ^ (φ.nx + φ.ny) * pureAnchorThreshold φ.ny else 0)
+        = ∑ x' : XAssign φ.nx,
+            if x' = x then
+              (1 / (2 : ℝ) ^ φ.nx) *
+                ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny
+            else 0 := by
+              apply Fintype.sum_congr
+              intro x'
+              exact hcollapse x'
+      _ = (1 / (2 : ℝ) ^ φ.nx) *
+            ∑ y : YAssign φ.ny, 1 / (2 : ℝ) ^ φ.ny * pureAnchorThreshold φ.ny := by
+              simp
+
+theorem fiberOpt_eq_fixed_pureAnchor_stochasticOpt
+    (φ : ExistsMajorityFormula) (x : XAssign φ.nx) (y₀ : YAssign φ.ny) :
+    fiberOpt (reduceExistsMajorityPureAnchor φ) (xCoordsEM φ.nx φ.ny) (x, y₀)
+      = (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)).stochasticOpt := by
+  let c : ℝ := 1 / (2 : ℝ) ^ φ.nx
+  have hpos : 0 < c := by
+    dsimp [c]
+    positivity
+  have hscale :
+      ∀ a : PureAnchorStochAction,
+        fiberExpectedUtility (reduceExistsMajorityPureAnchor φ) (xCoordsEM φ.nx φ.ny) (x, y₀) a =
+          c * stochasticExpectedUtility
+            (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)) a := by
+    intro a
+    cases a with
+    | accept =>
+        simpa [c] using fiberExpected_accept_eq_scaled φ x y₀
+    | holdL =>
+        simpa [c] using
+          fiberExpected_hold_eq_scaled φ x y₀ PureAnchorStochAction.holdL (Or.inl rfl)
+    | holdR =>
+        simpa [c] using
+          fiberExpected_hold_eq_scaled φ x y₀ PureAnchorStochAction.holdR (Or.inr rfl)
+  ext a
+  unfold fiberOpt StochasticDecisionProblem.stochasticOpt
+  constructor
+  · intro ha
+    intro a'
+    have hle := ha a'
+    rw [hscale a', hscale a] at hle
+    nlinarith
+  · intro ha
+    intro a'
+    have hle := ha a'
+    rw [hscale a', hscale a]
+    nlinarith
+
+theorem reduceExistsMajorityPureAnchor_correct
+    (φ : ExistsMajorityFormula) (hny : φ.ny ≥ 1) :
+    ExistsMajorityFormula.satisfiable φ ↔
+      StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor φ)
+        (xCoordsEM φ.nx φ.ny) := by
+  constructor
+  · intro hsat
+    rcases hsat with ⟨x, hmaj⟩
+    have huniq :
+        (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)).stochasticOpt
+          = {PureAnchorStochAction.accept} :=
+      pureAnchor_accept_unique_of_majsat _ hny hmaj
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton]
+    refine ⟨(x, fun _ => false), PureAnchorStochAction.accept, ?_⟩
+    simpa [fiberOpt_eq_fixed_pureAnchor_stochasticOpt] using huniq
+  · intro hanchor
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton] at hanchor
+    rcases hanchor with ⟨s₀, a, ha⟩
+    let x : XAssign φ.nx := s₀.1
+    have hfiber :
+        fiberOpt (reduceExistsMajorityPureAnchor φ) (xCoordsEM φ.nx φ.ny) s₀
+          = (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)).stochasticOpt := by
+      cases s₀ with
+      | mk x' y' => simpa [x] using fiberOpt_eq_fixed_pureAnchor_stochasticOpt φ x' y'
+    have hanchor' :
+        StochasticAnchorSufficiencyCheck
+          (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula))
+          (∅ : Finset (Fin φ.ny)) := by
+      rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton]
+      refine ⟨fun _ => false, a, ?_⟩
+      simpa [hfiber, fiberOpt_empty] using ha
+    have hmaj : Formula.majorityTrue (ExistsMajorityFormula.fixX x φ.formula) :=
+      (reduceMAJSATPureAnchor_correct (ExistsMajorityFormula.fixX x φ.formula) hny).2 hanchor'
+    exact ⟨x, hmaj⟩
+
 end StochasticSequential
 end DecisionQuotient
