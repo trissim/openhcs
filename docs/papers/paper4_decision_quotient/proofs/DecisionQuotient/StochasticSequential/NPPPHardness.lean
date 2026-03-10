@@ -14,6 +14,7 @@
 -/
 
 import DecisionQuotient.Hardness.QBF
+import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.PolynomialReduction
 import DecisionQuotient.Physics.AnchorChecks
 import Mathlib.Data.Finset.Card
@@ -362,6 +363,44 @@ theorem reduceExistsMajorityPureAnchor_correct
     have hmaj : Formula.majorityTrue (ExistsMajorityFormula.fixX x φ.formula) :=
       (reduceMAJSATPureAnchor_correct (ExistsMajorityFormula.fixX x φ.formula) hny).2 hanchor'
     exact ⟨x, hmaj⟩
+
+abbrev ExistsMajorityInput := {φ : ExistsMajorityFormula // φ.ny ≥ 1}
+
+def ExistsMajoritySourceLanguage : Set ExistsMajorityInput :=
+  {q | ExistsMajorityFormula.satisfiable q.1}
+
+def ExistsMajorityAnchorLanguage : Set ExistsMajorityInput :=
+  {q | StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1)
+      (xCoordsEM q.1.nx q.1.ny)}
+
+/-- Honest reduction wrapper for the existential-majority source problem into the
+stochastic anchor query family. The target language is stated on the same input
+type, with membership interpreted by the reduced stochastic-anchor instance.
+This packages reduction correctness together with trivial polynomial size bounds,
+but does not claim a machine-checked standard `NP^PP` hardness theorem. -/
+noncomputable def reduceExistsMajority_to_stochastic_anchor_reduction :
+    PolyReduction4b ExistsMajorityInput ExistsMajorityInput
+      ExistsMajoritySourceLanguage ExistsMajorityAnchorLanguage where
+  f := id
+  poly_time := by
+    refine ⟨1, 1, ?_⟩
+    intro q
+    simp
+  correct := by
+    intro q
+    change ExistsMajorityFormula.satisfiable q.1 ↔
+      StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1)
+        (xCoordsEM q.1.nx q.1.ny)
+    exact reduceExistsMajorityPureAnchor_correct q.1 q.2
+
+def HonestExistsMajorityStochasticAnchorHard : Prop :=
+  Nonempty
+    (PolyReduction4b ExistsMajorityInput ExistsMajorityInput
+      ExistsMajoritySourceLanguage ExistsMajorityAnchorLanguage)
+
+theorem existsMajority_stochastic_anchor_hard :
+    HonestExistsMajorityStochasticAnchorHard := by
+  exact ⟨reduceExistsMajority_to_stochastic_anchor_reduction⟩
 
 end StochasticSequential
 end DecisionQuotient
