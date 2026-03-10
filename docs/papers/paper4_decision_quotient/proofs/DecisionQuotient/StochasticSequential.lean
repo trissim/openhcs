@@ -18,6 +18,7 @@ import DecisionQuotient.StochasticSequential.Finite
 import DecisionQuotient.StochasticSequential.Information
 import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.NPPPHardness
+import DecisionQuotient.StochasticSequential.ExistentialHardness
 import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Instances
 import DecisionQuotient.StochasticSequential.Quotient

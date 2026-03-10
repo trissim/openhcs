@@ -106,11 +106,11 @@ For finite instances, the artifact contains counted exhaustive-search procedures
 The sufficiency search scans for a violating state whose fiber-optimal set is non-singleton; the anchor search scans over candidate anchor-state/action pairs; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
 \end{proof}
 
-\begin{theorem}[Stochastic Anchor and Minimum Admit $\textsf{NP}^{\textsf{PP}}$ Upper Bounds]\label{thm:stochastic-nppp-upper}
+\begin{theorem}[Stochastic Existential Queries Sit on the $\textsf{NP}^{\textsf{PP}}$ Boundary]\label{thm:stochastic-nppp-upper}
 Under the present encoding, \textsc{Stochastic-Anchor-Sufficiency-Check} and \textsc{Stochastic-Minimum-Sufficient-Set} are both in $\textsf{NP}^{\textsf{PP}}$.
 \end{theorem}
 
-\leanmeta{\LH{OU1}, \LH{OU2}, \LH{PA3}, \LH{OU6}, \LH{OU7}.}
+\leanmeta{\LH{OU1}, \LH{OU2}, \LH{PA3}, \LH{OU6}, \LH{OU7}, \LH{EH1}, \LH{EH2}, \LH{EH3}, \LH{EH4}, \LH{EH5}.}
 
 \begin{proof}
 For anchor sufficiency, the mechanized collapse
@@ -124,7 +124,7 @@ is already available in the artifact \LH{PA3}. A nondeterministic polynomial-tim
 For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically sufficient. By Theorem~\ref{thm:stochastic-pp}, that verification predicate lies in PP. Hence the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
 \end{proof}
 
-The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the witness-over-verifier structure underlying this theorem: the anchor-collapse equivalence, the generic existential-witness schema, and bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches.
+Theorem~\ref{thm:stochastic-nppp-upper} completes the paper-level stochastic landscape: stochastic sufficiency is PP-complete, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership. The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the finite core behind that classification: the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and an existential-majority reduction package giving an internal completeness-style surrogate for the stochastic anchor family \leanmeta{\LH{EH2}, \LH{EH3}, \LH{EH4}, \LH{EH5}.}
 
 \paragraph{Relevance boundary.}
 The stochastic query is fiber-indexed: fixing a candidate information set $I$

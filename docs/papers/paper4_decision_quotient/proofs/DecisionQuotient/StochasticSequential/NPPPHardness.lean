@@ -534,30 +534,190 @@ structure NPOverPPStyleHardnessWitness (β : Type*) [SizeOf β] (Lβ : Set β) w
 def HonestNPOverPPStyleHard (β : Type*) [SizeOf β] (Lβ : Set β) : Prop :=
   Nonempty (NPOverPPStyleHardnessWitness β Lβ)
 
+theorem honestNPOverPPStyleHard_of_reduction
+    {α β ω : Type} [SizeOf α] [SizeOf β]
+    {Lα : Set α} {Lβ : Set β} {R : α → ω → Prop}
+    (hfits : FitsNPOverPPStyle α ω (fun x => x ∈ Lα) R)
+    (r : PolyReduction4b α β Lα Lβ) :
+    HonestNPOverPPStyleHard β Lβ := by
+  refine ⟨{
+    α := α
+    instSizeOfα := inferInstance
+    ω := ω
+    Lα := Lα
+    R := R
+    fits := hfits
+    reduction := r
+  }⟩
+
 theorem existsMajority_anchor_language_honest_np_over_ppstyle_hard :
     HonestNPOverPPStyleHard ExistsMajorityInput ExistsMajorityAnchorLanguage := by
-  refine ⟨{
-    α := ExistsMajorityInput
-    instSizeOfα := inferInstance
-    ω := PackedXWitness
-    Lα := ExistsMajoritySourceLanguage
-    R := ExistsMajorityPackedWitnessRel
-    fits := existsMajority_source_fits_np_over_ppstyle
-    reduction := reduceExistsMajority_to_stochastic_anchor_reduction
-  }⟩
+  exact honestNPOverPPStyleHard_of_reduction
+    existsMajority_source_fits_np_over_ppstyle
+    reduceExistsMajority_to_stochastic_anchor_reduction
 
 theorem existsMajority_anchor_query_family_honest_np_over_ppstyle_hard :
     HonestNPOverPPStyleHard ExistsMajorityAnchorQueryInstance
       ExistsMajorityAnchorQueryLanguage := by
-  refine ⟨{
-    α := ExistsMajorityInput
-    instSizeOfα := inferInstance
-    ω := PackedXWitness
-    Lα := ExistsMajoritySourceLanguage
-    R := ExistsMajorityPackedWitnessRel
-    fits := existsMajority_source_fits_np_over_ppstyle
-    reduction := reduceExistsMajority_to_stochastic_anchor_query_family_reduction
+  exact honestNPOverPPStyleHard_of_reduction
+    existsMajority_source_fits_np_over_ppstyle
+    reduceExistsMajority_to_stochastic_anchor_query_family_reduction
+
+def castEMState {q q' : ExistsMajorityInput} (h : q = q') :
+    EMState q.1.nx q.1.ny → EMState q'.1.nx q'.1.ny := by
+  cases h
+  exact id
+
+abbrev ExistsMajorityAnchorPackedWitness :=
+  Σ q : ExistsMajorityInput, EMState q.1.nx q.1.ny × PureAnchorStochAction
+
+def ExistsMajorityAnchorPackedWitnessRel
+    (q : ExistsMajorityInput) (w : ExistsMajorityAnchorPackedWitness) : Prop :=
+  ∃ h : w.1 = q,
+    fiberOpt (reduceExistsMajorityPureAnchor q.1) (xCoordsEM q.1.nx q.1.ny)
+      (castEMState h w.2.1) = ({w.2.2} : Set PureAnchorStochAction)
+
+theorem existsMajorityAnchorPackedWitnessRel_exact
+    (q : ExistsMajorityInput) (w : ExistsMajorityAnchorPackedWitness) :
+    HasExactBoolDecider (ExistsMajorityAnchorPackedWitnessRel q w) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsMajority_anchor_language_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityInput ExistsMajorityAnchorPackedWitness
+      (fun q => q ∈ ExistsMajorityAnchorLanguage)
+      ExistsMajorityAnchorPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsMajorityAnchorPackedWitnessRel existsMajorityAnchorPackedWitnessRel_exact ?_
+  intro q
+  change StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1)
+    (xCoordsEM q.1.nx q.1.ny) ↔ ∃ w, ExistsMajorityAnchorPackedWitnessRel q w
+  constructor
+  · intro h
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton] at h
+    rcases h with ⟨s₀, a, ha⟩
+    exact ⟨⟨q, (s₀, a)⟩, rfl, ha⟩
+  · intro h
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton]
+    rcases h with ⟨⟨q', s₀, a⟩, hq, ha⟩
+    cases hq
+    exact ⟨s₀, a, by simpa [castEMState] using ha⟩
+
+def ExistsMajorityAnchorQueryPackedWitnessRel
+    (inst : ExistsMajorityAnchorQueryInstance)
+    (w : ExistsMajorityAnchorPackedWitness) : Prop :=
+  ∃ h : w.1 = inst.1,
+    fiberOpt inst.2.problem inst.2.infoSet
+      (castEMState h w.2.1) = ({w.2.2} : Set PureAnchorStochAction)
+
+theorem existsMajorityAnchorQueryPackedWitnessRel_exact
+    (inst : ExistsMajorityAnchorQueryInstance) (w : ExistsMajorityAnchorPackedWitness) :
+    HasExactBoolDecider (ExistsMajorityAnchorQueryPackedWitnessRel inst w) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsMajority_anchor_query_family_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityAnchorQueryInstance ExistsMajorityAnchorPackedWitness
+      (fun inst => inst ∈ ExistsMajorityAnchorQueryLanguage)
+      ExistsMajorityAnchorQueryPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsMajorityAnchorQueryPackedWitnessRel
+    existsMajorityAnchorQueryPackedWitnessRel_exact ?_
+  intro inst
+  change StochasticAnchorSufficiencyCheck inst.2.problem inst.2.infoSet ↔
+    ∃ w, ExistsMajorityAnchorQueryPackedWitnessRel inst w
+  constructor
+  · intro h
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton] at h
+    rcases h with ⟨s₀, a, ha⟩
+    exact ⟨⟨inst.1, (s₀, a)⟩, rfl, ha⟩
+  · intro h
+    rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton]
+    rcases h with ⟨⟨q, s₀, a⟩, hq, ha⟩
+    cases hq
+    exact ⟨s₀, a, by simpa [castEMState] using ha⟩
+
+noncomputable def reduceExistsMajority_to_self_reduction :
+    PolyReduction4b ExistsMajorityInput ExistsMajorityInput
+      ExistsMajoritySourceLanguage ExistsMajoritySourceLanguage where
+  f := id
+  poly_time := by
+    refine ⟨1, 1, ?_⟩
+    intro q
+    simp
+  correct := by
+    intro q
+    rfl
+
+theorem existsMajority_source_language_honest_np_over_ppstyle_hard :
+    HonestNPOverPPStyleHard ExistsMajorityInput ExistsMajoritySourceLanguage := by
+  exact honestNPOverPPStyleHard_of_reduction
+    existsMajority_source_fits_np_over_ppstyle
+    reduceExistsMajority_to_self_reduction
+
+structure NPOverPPStyleCompleteWitness (β : Type*) [SizeOf β] (Lβ : Set β) where
+  ω : Type
+  R : β → ω → Prop
+  fits : FitsNPOverPPStyle β ω (fun x => x ∈ Lβ) R
+  hard : HonestNPOverPPStyleHard β Lβ
+
+def HonestNPOverPPStyleComplete (β : Type*) [SizeOf β] (Lβ : Set β) : Prop :=
+  Nonempty (NPOverPPStyleCompleteWitness β Lβ)
+
+theorem honestNPOverPPStyleComplete_of_fits_and_hard
+    {β ω : Type} [SizeOf β] {Lβ : Set β} {R : β → ω → Prop}
+    (hfits : FitsNPOverPPStyle β ω (fun x => x ∈ Lβ) R)
+    (hhard : HonestNPOverPPStyleHard β Lβ) :
+    HonestNPOverPPStyleComplete β Lβ := by
+  exact ⟨{
+    ω := ω
+    R := R
+    fits := hfits
+    hard := hhard
   }⟩
+
+theorem existsMajority_source_language_honest_np_over_ppstyle_complete :
+    HonestNPOverPPStyleComplete ExistsMajorityInput ExistsMajoritySourceLanguage := by
+  exact honestNPOverPPStyleComplete_of_fits_and_hard
+    existsMajority_source_fits_np_over_ppstyle
+    existsMajority_source_language_honest_np_over_ppstyle_hard
+
+theorem existsMajority_anchor_language_honest_np_over_ppstyle_complete :
+    HonestNPOverPPStyleComplete ExistsMajorityInput ExistsMajorityAnchorLanguage := by
+  exact honestNPOverPPStyleComplete_of_fits_and_hard
+    existsMajority_anchor_language_fits_np_over_ppstyle
+    existsMajority_anchor_language_honest_np_over_ppstyle_hard
+
+theorem existsMajority_anchor_query_family_honest_np_over_ppstyle_complete :
+    HonestNPOverPPStyleComplete ExistsMajorityAnchorQueryInstance
+      ExistsMajorityAnchorQueryLanguage := by
+  exact honestNPOverPPStyleComplete_of_fits_and_hard
+    existsMajority_anchor_query_family_fits_np_over_ppstyle
+    existsMajority_anchor_query_family_honest_np_over_ppstyle_hard
+
+theorem honestNPOverPPStyleHard_transfer
+    {β γ : Type} [SizeOf β] [SizeOf γ]
+    {Lβ : Set β} {Lγ : Set γ}
+    (hhard : HonestNPOverPPStyleHard β Lβ)
+    (r : PolyReduction4b β γ Lβ Lγ) :
+    HonestNPOverPPStyleHard γ Lγ := by
+  rcases hhard with ⟨w⟩
+  letI : SizeOf w.α := w.instSizeOfα
+  exact honestNPOverPPStyleHard_of_reduction w.fits
+    (composeReduction4b w.reduction r)
+
+theorem honestNPOverPPStyleComplete_transfer
+    {β γ ω : Type} [SizeOf β] [SizeOf γ]
+    {Lβ : Set β} {Lγ : Set γ} {R : γ → ω → Prop}
+    (hcomp : HonestNPOverPPStyleComplete β Lβ)
+    (r : PolyReduction4b β γ Lβ Lγ)
+    (hfits : FitsNPOverPPStyle γ ω (fun x => x ∈ Lγ) R) :
+    HonestNPOverPPStyleComplete γ Lγ := by
+  have hhard : HonestNPOverPPStyleHard γ Lγ :=
+    honestNPOverPPStyleHard_transfer (by
+      rcases hcomp with ⟨w⟩
+      exact w.hard) r
+  exact honestNPOverPPStyleComplete_of_fits_and_hard hfits hhard
 
 end StochasticSequential
 end DecisionQuotient

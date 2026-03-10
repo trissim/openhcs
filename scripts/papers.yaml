@@ -38,6 +38,7 @@ build:
   shared_preamble_files:
     - "paper-preamble.sty"
     - "pentalogy-preamble.sty"
+    - "lean-handle-macros.tex"
   latex_source_extensions:
     - ".tex"
     - ".bib"
@@ -116,6 +117,7 @@ papers:
     latex_dir: "latex"
     latex_file: "decision_quotient_arxiv.tex"
     venue: "Computational Complexity"
+    lean_stats_scope: "content_cited"
     lean_dependencies:
       - "paper1"
       - "paper2"

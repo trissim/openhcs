@@ -67,6 +67,7 @@ import DecisionQuotient.StochasticSequential.Quotient
 import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Computation
 import DecisionQuotient.StochasticSequential.OracleUpperBounds
+import DecisionQuotient.StochasticSequential.ExistentialHardness
 import DecisionQuotient.StochasticSequential.Hardness
 import DecisionQuotient.AlgorithmComplexity
 import DecisionQuotient.ComplexityMain
@@ -970,6 +971,13 @@ abbrev OU4 := @StochasticSequential.fitsNPOverPPStyle_of_exists_witness
 abbrev OU5 := @StochasticSequential.inP_of_poly_witness_list
 abbrev OU6 := @StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema
 abbrev OU7 := @StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema
+
+-- Existential-hardness (EH) handles - honest existential-majority packaging
+abbrev EH1 := @StochasticSequential.existential_anchor_source_fits_np_over_ppstyle_honest
+abbrev EH2 := @StochasticSequential.existential_anchor_hard_honest
+abbrev EH3 := @StochasticSequential.existential_anchor_query_family_hard_honest
+abbrev EH4 := @StochasticSequential.existential_anchor_np_over_ppstyle_hard_honest
+abbrev EH5 := @StochasticSequential.existential_anchor_query_family_np_over_ppstyle_hard_honest
 
 -- Graph nontriviality (GN) handles - cycles, observer surprisal, Bayes/DQ/physics bridge
 abbrev GN1 := @LogicGraph.isCycle
