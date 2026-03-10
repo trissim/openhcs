@@ -1,6 +1,6 @@
 # Paper: Exact Consistency in Multi-Location Encodings: Zero-Error Thresholds and Side Information Bounds
 
-**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 14898 lines, 703 theorems
+**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 22210 lines, 1024 theorems
 
 ---
 
@@ -29,6 +29,14 @@ where $C_0$ denotes the largest independent rate that guarantees zero incoherenc
 
 The converse family and the threshold theorem therefore play different roles: the converse identifies the finite obstruction, and $C_0=1$ identifies the unique regime in which that obstruction is absent.
 
+The paper also develops a multi-fact partial-observation extension in which ambiguity is no longer restricted to cliques. In that regime, the confusability graph is the structural object controlling exact consistency under partial views: exact recovery is equivalent to colorability of the confusability graph, exact recovery on a designated success set is equivalent to colorability of the induced subgraph, and the exact finite weighted-success value is determined by the maximum $T$-colorable induced subgraph.
+
+The same extension has a genuine block and asymptotic theory. The full $n$-block confusability graph is identified with the $n$-fold strong power of the one-shot graph; the normalized block-rate sequence converges to a real asymptotic Shannon-capacity value equal to the supremum of the finite block rates; and that capacity is bounded above both by the logarithm of the complement chromatic number and by a fixed Lovász-$\vartheta$ upper convention. The corresponding one-shot upper object is identified with standard orthonormal-representation, primal-PSD, and dual-theta forms, and the standard primal and dual theta upper sequences converge to the same asymptotic upper value.
+
+For the original clique-fiber subclass coming from a surjective label map, the mechanized theory proves equality: asymptotic Shannon capacity and the fixed Lovász-$\vartheta$ upper both collapse to $\log |\mathcal B|$, where $\mathcal B$ is the fiber-label alphabet. The same equality now exports back to the original view-family model through a broader structural criterion. Transitivity of base confusability is the exact condition for the current cluster-collapse mechanism: it holds if and only if the base confusability graph is exactly the cluster graph on connected components, and in that case the asymptotic Shannon capacity and the fixed Lovász-$\vartheta$ upper both collapse to the logarithm of the number of connected components. Between arbitrary base models and full fiber coherence, the paper proves a checkable meet-witness condition on the allowed views that already implies this collapse. Fiber coherence is then a stronger sufficient condition: if agreement at any allowed location already determines the full transcript, transitivity follows, the connected components are exactly the realized transcript fibers, and the same equality reduces to $\log |\mathcal T|$ for the realized transcript alphabet. Thus the paper now contains both a nontrivial upper/lower graph regime and a structurally characterized exact-equality regime.
+
+A separate restricted theorem concerns fact-side determination rather than recovery from views. If the realized state family is affine over a field, then semantic determination of one fact by a set of facts is equivalent to membership of the corresponding coordinate functional in their linear span. The induced fact-closure is therefore a representable matroid on fact indices: matroid independence is linear independence of the coordinate functionals, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank. This gives the paper a second structural invariant, separate from the confusability/capacity side, on the fact-observation side of the model.
+
 ## Relation to Classical Information Theory {#sec:connection-it}
 
 Three classical lines are particularly relevant.
@@ -49,7 +57,7 @@ Beyond the abstract threshold, a second question is when a concrete host system 
 
 ## Paper Organization {#overview}
 
-Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"} interprets derivation as the dependence structure achieving rate $1$. Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} gives the realizability theorem. Section [\[sec:bounds\]](#sec:bounds){reference-type="ref" reference="sec:bounds"} develops the finite converse family and its rate-complexity consequence. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} verify the realizability criterion on concrete host systems. A supplementary Lean 4 artifact machine-checks the converse family, threshold chain, realizability theorem, and rate-complexity arguments [@demoura2021lean4].
+Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"} interprets derivation as the dependence structure achieving rate $1$. Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} gives the realizability theorem. Section [\[sec:bounds\]](#sec:bounds){reference-type="ref" reference="sec:bounds"} develops the finite converse family, the graph/capacity extension, the equality theory, the affine fact-matroid theorem, and the rate-complexity consequence. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} verify the realizability criterion on concrete host systems. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid theorem, threshold chain, realizability theorem, and rate-complexity arguments [@demoura2021lean4].
 
 ## Scope {#sec:scope}
 
@@ -60,6 +68,14 @@ The scope is finite facts represented at multiple locations under admissible edi
 The main contributions are:
 
 -   **A deterministic finite converse family** for exact consistency, presented through confusability, counting, conditional-entropy, decoder-output, and entropy-gap formulations of the same finite obstruction, together with a deterministic data-processing step and a budgeted finite-error extension.
+
+-   **A multi-fact graph extension** in which partial observations on latent tuples produce non-clique confusability graphs, exact recovery becomes equivalent to graph colorability, success-set exactness becomes equivalent to induced-subgraph colorability, and the exact finite weighted-success value is characterized by the maximum $T$-colorable induced subgraph.
+
+-   **A block and asymptotic capacity theory** in which the $n$-block confusability graph is the $n$-fold strong power of the one-shot graph, the normalized block-rate sequence converges to a real asymptotic capacity value equal to the supremum of the finite block rates, and that capacity is bounded above by both complement-chromatic and fixed Lovász-$\vartheta$ upper objects.
+
+-   **A restricted-class equality theory** in which the clique-fiber subclass satisfies exact asymptotic equality, and that equality exports back to the original view-family model under transitivity of confusability, with a meet-witness criterion as a weaker sufficient condition and fiber coherence as a stronger one.
+
+-   **An affine fact-matroid theorem** in which affine realized-state families induce a representable matroid on fact indices: semantic determination is span membership, and minimal determining fact sets are exactly the bases. This is a second structural theorem of the model, logically separate from the confusability/capacity chain.
 
 -   **A sharp threshold corollary** showing that zero-incoherence capacity is exactly one independent source; this is the structural rate-$1$ consequence of the converse family.
 
@@ -572,7 +588,7 @@ This section tests Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="re
 []{#cor:lang-realizability label="cor:lang-realizability"} A computational platform realizes verifiable independent rate $1$ for structural facts if and only if it combines automatic propagation of derived representations with queryable provenance for those representations.
 :::
 
-The corollary is a direct restatement of Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. What changes across examples is the host mechanism that provides propagation and provenance. The tables below record whether the theorem's prediction is confirmed on concrete systems.
+The corollary is a direct restatement of Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. What changes across examples is the host mechanism that provides propagation and provenance. The tables below therefore function as theorem checks: each one records the predicted realizability regime together with the host-level mechanism that confirms it.
 
 #### Programming-language runtimes (selected).
 
@@ -599,7 +615,7 @@ For language-level artifacts, the realizability question becomes concrete: does 
 
 **Table V.1.** Selected mainstream programming-language runtimes under Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"}. []{#tab:selected-pl label="tab:selected-pl"}
 
-Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} predicts verifiable rate $1$ exactly when both host-level conditions hold. In this selected runtime set, Python is the only positive case; the negative rows fail for the missing condition listed in the table. Table [\[tab:selected-db\]](#tab:selected-db){reference-type="ref" reference="tab:selected-db"} shows the same separation in a non-programming-language setting.
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} predicts verifiable rate $1$ exactly when both host-level conditions hold. Table [\[tab:selected-pl\]](#tab:selected-pl){reference-type="ref" reference="tab:selected-pl"} confirms that prediction row by row: Python supplies both mechanisms internally and realizes verifiable rate $1$, whereas each negative row fails at the specific missing condition recorded in the table. Table [\[tab:selected-db\]](#tab:selected-db){reference-type="ref" reference="tab:selected-db"} tests the same prediction in a non-programming-language setting.
 
 #### Database systems.
 
@@ -615,7 +631,7 @@ The same criterion separates native maintained views from external synchronizati
 
 **Table V.2.** Database realizations under the same criterion. []{#tab:selected-db label="tab:selected-db"}
 
-Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} again predicts the outcome exactly: engine-maintained views satisfy both conditions, whereas externalized synchronization does not.
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} again predicts the outcome exactly: engine-maintained views satisfy both conditions and realize verifiable rate $1$, whereas externalized synchronization breaks the propagation/provenance pair and therefore fails the theorem's criterion.
 
 #### Dependency-resolution systems.
 
@@ -641,7 +657,7 @@ A third everyday regime appears in dependency-resolution systems. Package manage
 **Table V.3.** Dependency-resolution systems are typically provenance-rich but propagation-incomplete under the realizability criterion. []{#tab:selected-deps label="tab:selected-deps"}
 :::
 
-Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} also predicts the mixed regime in Table [\[tab:selected-deps\]](#tab:selected-deps){reference-type="ref" reference="tab:selected-deps"}: provenance can be present without host-native propagation, and then verifiable rate $1$ still fails. Supplement A contains additional case-study material.
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} also predicts the mixed regime in Table [\[tab:selected-deps\]](#tab:selected-deps){reference-type="ref" reference="tab:selected-deps"}: provenance can be present without host-native propagation, and then verifiable rate $1$ still fails. The table confirms that this provenance-rich/propagation-incomplete regime is standard across common dependency-resolution hosts. Supplement A contains additional case-study material.
 
 
 # Finite Converse Family and Rate-Complexity Bounds {#sec:bounds}
@@ -742,6 +758,8 @@ h_2(p_S)+ p_S \log_2 |\mathcal T|.$$
 *Proof.* Deterministic coarsening merges atoms of the distribution on $(Y,T)$ and therefore cannot increase entropy. A decoder is one such coarsening. The ceiling follows because $(Y,T)$ takes values in a finite alphabet of size $|\mathcal Y\times\mathcal T|$. ◻
 :::
 
+This theorem is the structural reason the output and gap formulations are not independent embellishments of the counting converse. Once the architecture exposes only a coarsened transcript, every downstream representation inherits the same obstruction through deterministic data processing rather than escaping it.
+
 ::: theorem
 []{#thm:equivalence-viewpoint label="thm:equivalence-viewpoint"} The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements above are different normal forms of the same deterministic finite zero-error obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
 :::
@@ -765,6 +783,92 @@ h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).$$
 :::
 
 The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the Bernoulli term vanishes, the failure contribution disappears, and the budget collapses back to the finite converse family above.
+
+## Multi-Fact Partial-Observation Extension {#sec:multifact-extension}
+
+The single-fact converse family treats ambiguity classes that are effectively clique-shaped under the observation transcript. A natural extension is to let the latent state be a tuple of facts and let each location reveal only a subset of coordinates. The resulting confusability graph need not be complete.
+
+::: theorem
+[]{#thm:multifact-colorability label="thm:multifact-colorability"} For a finite multi-fact latent tuple observed through a finite family of partial-coordinate views, exact zero-error recovery with a $T$-ary auxiliary tag exists if and only if the induced confusability graph is $T$-colorable.
+:::
+
+::: proof
+*Proof.* As in Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"}, exact recovery forces any two confusable latent states to receive different tags, so the tag map is a proper graph coloring. Conversely, any proper coloring can be inverted jointly with the observation transcript to build an exact decoder. ◻
+:::
+
+The mechanized development now packages this statement through an explicit simple confusability graph object, and for $n$ repeated copies it identifies the full block confusability graph with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.
+
+::: theorem
+[]{#thm:multifact-success-set label="thm:multifact-success-set"} In the same model, exact decoding on a designated success set $S$ is equivalent to $T$-colorability of the induced confusability subgraph on $S$.
+:::
+
+::: proof
+*Proof.* Restrict the argument of Theorem [\[thm:multifact-colorability\]](#thm:multifact-colorability){reference-type="ref" reference="thm:multifact-colorability"} to the success set. Exactness is required only on $S$, so the coloring condition is required only on confusable pairs inside $S$. ◻
+:::
+
+::: theorem
+[]{#thm:multifact-max-success label="thm:multifact-max-success"} For each tag alphabet size $T>0$, there is a largest success-set size $$M_T := \max\{|S| : S \text{ induces a } T\text{-colorable confusability subgraph}\}.$$ An exact decoder with $T$ tags exists on a success set $S$ if and only if $|S|\le M_T$ after replacing $S$ by some $T$-colorable success set of size $M_T$. Under the uniform source, the optimal exact success probability is therefore $M_T/|\mathcal X|$.
+:::
+
+::: proof
+*Proof.* Theorem [\[thm:multifact-success-set\]](#thm:multifact-success-set){reference-type="ref" reference="thm:multifact-success-set"} identifies exact success sets with induced $T$-colorable subgraphs. Since the latent alphabet is finite, a maximum-cardinality such set exists. The mechanized characterization exposes this optimum directly. In the binary four-cycle witness, the optimum at $T=1$ is exactly two states, so the best uniform exact success probability is $2/4=1/2$. ◻
+:::
+
+The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the mechanized development defines the maximum mass of a $T$-colorable induced subgraph and proves that an exact decoder on a success set $S$ attains at most that mass, with equality for some optimizing success set. This is the exact finite weighted-success law for the extended model.
+
+Equivalently, the mechanized development now packages this optimum as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.
+
+::: theorem
+[]{#thm:multifact-nonclique label="thm:multifact-nonclique"} There exists a binary two-fact system with single-coordinate observation views whose confusability graph is not a clique. In that system, two tags suffice for exact recovery, one tag is impossible, and any one-tag decoder can be exact on at most half of the four latent states under the uniform source.
+:::
+
+::: proof
+*Proof.* The witness is the four-state binary square with one location revealing the first coordinate and the other revealing the second. States that agree on one coordinate are confusable through the corresponding location, but opposite corners are not confusable, so the graph is a $4$-cycle rather than a clique. A parity coloring gives an exact two-tag decoder. With one tag, any exact success set must be an independent set of the cycle, hence has size at most two, yielding success probability at most $1/2$ under the uniform source. ◻
+:::
+
+::: theorem
+[]{#thm:multifact-product label="thm:multifact-product"} If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
+:::
+
+::: proof
+*Proof.* Take proper colorings of the two component confusability graphs and encode the pair of colors as one color in the product alphabet. Any confusable product pair must remain confusable in at least one component, so one of the component colorings separates it, and therefore so does the paired color. ◻
+:::
+
+This product law now has both directions in the mechanized development. The upper direction is the multiplicative coloring construction above. More sharply, once both location alphabets are nonempty, the product confusability graph is exactly the strong product of the two component confusability graphs. The graph object is therefore not just analogous to zero-error graph products; it is literally a strong-product construction inside the mechanized development.
+
+The lower direction is clique-based: if the first component contains a confusability clique of size $c_1$ and the second contains one of size $c_2$, then the product system contains a confusability clique of size $c_1c_2$, so any exact product decoder requires at least $c_1c_2$ tags. The same mechanism also propagates to finite-error success sets: the largest exactly decodable success set in the product system is at least the product of the largest exactly decodable success sets in the two components. At the one-shot zero-error coding level, the maximum independent-set code size also obeys the same product lower bound. Thus the extended model now has an honest strong-product graph law together with matching lower/upper budget consequences.
+
+The mechanized development now proves a genuine supermultiplicative block law: $$\alpha_{m+n}\;\ge\;\alpha_m\alpha_n,$$ where $\alpha_n$ denotes the largest one-shot zero-error code size in the $n$-block composed system. This is the correct discrete precursor to Shannon-capacity analysis: the admissible code-size sequence is already supermultiplicative at the graph level.
+
+More sharply, the block-level graph itself now factors correctly. The mechanized development proves both a generic strong-power addition theorem for graphs and the induced model-specific statement that confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object in the mechanized theory.
+
+Iterating the same construction yields the derived $n$-block lower bound. If $\alpha_1$ denotes the one-shot maximum independent-set code size, then the mechanized block-power theorem gives $$\alpha_1^n \;\le\; \alpha_n,$$ where $\alpha_n$ is the largest one-shot zero-error code size in the $n$-fold block-composed system. This is the first asymptotic-capacity scaffold in the extended model: repeated block composition already forces the expected exponential growth law before any Shannon-capacity or $\vartheta$-style upper theory is introduced.
+
+The mechanized development now packages these normalized block rates into an explicit lower asymptotic capacity envelope $$C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},$$ implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. In the mechanized development, $\alpha_n$ is now identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.
+
+The asymptotic scaffold is also no longer limited to a lower envelope statement. On the graph side itself, the mechanized development now proves strong-product lower bounds for independent-set cardinality and the induced monotonicity of normalized strong-power rates along repeated multiples. Specializing those generic graph theorems back to the SSOT confusability graph yields the repeated-block statement below.
+
+Repeating a fixed $m$-block system $k$ times yields $$\alpha_m^k \;\le\; \alpha_{km},$$ and hence $$\frac{\log \alpha_m}{m} \;\le\; \frac{\log \alpha_{km}}{km}.$$ Thus rates along repeated block multiples are monotone from below toward the same capacity envelope. This is still a lower theory rather than a full Shannon-capacity theorem, but it is already a genuine asymptotic graph-rate statement inside the mechanized development.
+
+The asymptotic graph theory now also closes the remaining Fekete step. Defining the negative log-independence sequence on strong powers, the mechanized development proves subadditivity of that sequence, derives bounded-below normalized quotients from the trivial vertex-count bound, and then applies Fekete's lemma to obtain a real asymptotic capacity value to which the normalized strong-power rates converge. Moreover, every finite block rate is proved to lie below that limit, the limit itself is identified with the supremum of the finite block-rate sequence, and the older $\mathrm{ENNReal}$ lower-capacity envelope is proved equal to the real asymptotic capacity after applying $\mathrm{ofReal}$. Thus the strong-power scaffold is no longer just a lower-envelope construction; it already carries an honest asymptotic capacity theorem on the graph side and, by transport through the block-confusability identification, on the SSOT model itself.
+
+The mechanized upper theory now also includes the first genuine chromatic bound. The complement of the strong-power confusability graph is identified with the coordinatewise "there exists an offending coordinate" graph on the complement, and a coloring of the one-shot complement graph lifts to a coloring of every strong power by coloring each coordinate separately. Consequently, $$\alpha(G^{\boxtimes n}) \le \chi(\overline G)^n,
+\qquad
+\frac{\log \alpha(G^{\boxtimes n})}{n} \le \log \chi(\overline G),$$ and the asymptotic capacity is bounded above by $\log \chi(\overline G)$. This is still weaker than a Lovász-$\vartheta$ upper theory, but it is already a real graph-theoretic upper bound rather than only a lower-capacity scaffold.
+
+The mechanized upper theory now also includes a pure PSD formulation equivalent to the earlier witness and factorized-matrix formulations. On one-shot graphs this PSD upper value is proved equal to the existing witness upper invariant, so the capacity upper bound can be stated either in witness language or directly through a PSD object. The same one-shot invariant is also identified with a standard orthonormal-representation form and with a standard primal PSD form, so the upper theory is no longer tied to custom witness packaging. On the dual side, the lifted-dual and Schur-dual log upper objects are proved equivalent, the Schur-dual upper is stable under graph isomorphism, and the same one-shot Schur-dual invariant is identified with a standard dual-theta value object. Along strong powers, the normalized PSD upper sequence is subadditive; Fekete's lemma yields an asymptotic PSD upper value to which the finite PSD power rates converge, and this asymptotic upper value is the infimum of the finite PSD power-rate upper bounds. Moreover, the finite block rates are bounded above by the corresponding finite PSD power rates, so the real asymptotic Shannon capacity is bounded above by the asymptotic PSD upper value itself. The same asymptotic upper is equivalently expressible in the standard primal-theta notation. The Schur-dual power sequence is likewise subadditive, hence convergent by the same Fekete argument; its asymptotic dual upper value is identified with the corresponding standard dual-theta asymptotic object. The standard primal and dual theta upper objects are then proved equal both one-shot and asymptotically, so the mechanized upper theory now supports a single fixed textbook Lovász-$\vartheta$ convention, denoted $\vartheta_{\infty}(G)$, with $$\Theta(G)\le \vartheta_{\infty}(G).$$ What remains open is the sharpness of this upper theory for the graph classes generated by the extended model, not the absence of a standard primal--dual theta packaging.
+
+The original clique-fiber regime is now isolated as an equality subclass rather than only a threshold corollary. If a graph is generated by a surjective label map $x \mapsto b(x)$ with adjacency exactly between distinct vertices in the same fiber, then one representative from each fiber forms an independent set of size $|\mathcal B|$, while the complement graph is colorable by the same label map using $|\mathcal B|$ colors. The mechanized development packages this argument into a restricted-class theorem: $$C(G)=\vartheta_{\infty}(G)=\log |\mathcal B|.$$ Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lovász-$\vartheta$ framework. That equality is no longer confined to the abstract cluster-graph subclass. The current cluster-collapse mechanism is characterized exactly by transitivity of the base confusability relation: $$\text{confusability is transitive}
+\iff
+G_{\mathrm{conf}}=\mathrm{Cluster}(\Pi_{\mathrm{cc}}).$$ Hence, if confusability is transitive, the base confusability graph is exactly the cluster graph on connected components, and the mechanized equality theorem yields $$C_\infty(\text{views})=\vartheta_\infty(\text{views})=\log |\Pi_{\mathrm{cc}}|,$$ where $\Pi_{\mathrm{cc}}$ is the connected-component partition of the base confusability graph. Between arbitrary base models and full fiber coherence, a checkable sufficient condition is that the view family be *meet-witnessed*: every pair of allowed views contains another allowed view inside their intersection. Under that condition, any two confusability witnesses can be pulled back to a common subview, so confusability is transitive and the same equality follows. Fiber coherence is then a stronger sufficient structural condition: if equality at one allowed location already fixes the full observation transcript, transitivity follows, the connected components are exactly the realized transcript fibers, and the equality sharpens further to $$C_\infty(\text{views})=\vartheta_\infty(\text{views})=\log |\mathcal T_{\mathrm{real}}|.$$ At the witness level, this same collapse admits a local composition form: base confusability is the edge union of the single-view cluster graphs, and transitivity is equivalent to closure of those fixed-view witnesses under two-step composition through an intermediate state. This is the exact local criterion for the current equality mechanism: the collapse to a cluster graph is determined by how single-view witnesses compose, not by an opaque global coincidence of the full confusability graph.
+
+::: theorem
+[]{#thm:affine-fact-matroid label="thm:affine-fact-matroid"} Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.
+:::
+
+::: proof
+*Proof.* Subtracting the affine origin converts semantic agreement of two realized states into vanishing of a difference vector in the direction subspace. A fact is therefore determined by $S$ exactly when its coordinate functional vanishes on every direction vector whose coordinates in $S$ vanish, which is equivalent to span membership of that coordinate functional. The coordinate functionals therefore define a representable matroid on fact indices. In that matroid, independent spanning sets are bases, bases all have the same cardinality, and the minimal determining fact sets are precisely those bases. ◻
+:::
 
 ## Rate-Complexity Consequence {#sec:rate-complexity-consequence}
 
@@ -849,9 +953,15 @@ The Lean 4 formalization places the work in the tradition of mechanized mathemat
 
 Exact consistency in modifiable multi-location encodings yields a deterministic finite converse family. Once the observation transcript leaves a nontrivial ambiguity class, the same finite obstruction can be stated as a confusability-clique bound, a counting converse, a conditional-entropy lower bound, and decoder-output or finite-gap constraints. The same model also supports deterministic data-processing and a budgeted finite-error extension.
 
+The multi-fact partial-observation extension shows that the theory is not confined to clique-shaped ambiguity classes. In that richer regime, the confusability graph is the structural object controlling exact consistency under partial views: exact recovery becomes a colorability problem, exactness on a success set becomes colorability of an induced subgraph, and the exact finite weighted-success value is determined by the largest colorable induced subgraph. At block length $n$, the full confusability graph is the $n$-fold strong power of the one-shot graph, the resulting block-rate sequence is supermultiplicative, and its normalized rates converge by Fekete's lemma to a real asymptotic Shannon capacity equal to the supremum of the finite block rates. On the upper side, the same capacity is bounded by both the logarithm of the complement chromatic number and a fixed Lovász-$\vartheta$ upper convention. The one-shot upper object is identified with standard orthonormal-representation, primal-PSD, and dual-theta forms, and the corresponding primal and dual asymptotic theta upper sequences converge to the same upper value.
+
+For the original clique-fiber subclass generated by a surjective label map, the mechanized theory proves equality: asymptotic Shannon capacity, the fixed Lovász-$\vartheta$ upper, and the logarithm of the number of fibers coincide. The same equality exports back to the original view-family model through a broader structural criterion. Transitivity of confusability is exactly the current cluster-collapse condition: it holds if and only if the base confusability graph is the cluster graph on connected components, and in that case the asymptotic Shannon capacity and the fixed Lovász-$\vartheta$ upper both collapse to the logarithm of the number of connected components. A meet-witness condition on the allowed views is sufficient for this collapse and sits strictly between arbitrary base models and full fiber coherence. Fiber coherence remains a stronger sufficient condition: if any one allowed observation already fixes the full transcript, then transitivity follows and the connected components are exactly the realized transcript fibers.
+
+Under a different restricted hypothesis on the realized state family, the same development also yields a fact-side structural theorem. When the valid states form an affine family, semantic determination of one fact by others is equivalent to span membership of the corresponding coordinate functional, so the fact indices carry a representable matroid and the minimal determining fact sets are exactly the bases. This is a second structural theorem of the model, separate from the confusability/capacity chain.
+
 The threshold $C_0=1$ is the structural corollary of that converse family: one authoritative location with deterministic views is the unique zero-incoherence regime, and any higher independent rate makes ambiguity reachable. The same obstruction then reappears operationally as manual update cost, yielding $O(1)$ cost at rate $1$ and $\Omega(n)$ cost above it, with an unbounded asymptotic gap. The realizability theorem identifies causal propagation and provenance observability as the host-level conditions under which the rate-$1$ regime is actually attained.
 
-**Limitations and future work.** The present model is finite and exact. Natural extensions include probabilistic coherence, networked encodings with communication constraints, and partial-correlation regimes that move closer to classical stochastic side-information models.
+**Limitations and future work.** The present model is still finite and deterministic. The new graph-theoretic extension now reaches non-clique confusability, success-set colorability, exact finite weighted-success values, an asymptotic Shannon-capacity theorem, and a fixed primal-dual Lovász-$\vartheta$ upper theory. What remains open is the sharpness of that upper theory for the graph classes generated by the extended model, together with equality questions for those subclasses.
 
 ## Artifacts {#sec:data-availability}
 
@@ -872,11 +982,15 @@ The artifact covers four groups of claims used in the paper:
 
 -   the foundational threshold chain, including coherence, independent rate, the side-information lower bound, and the finite counting converse;
 
+-   an affine fact-matroid layer in which semantic determination of one fact by others is identified with span membership of coordinate functionals, yielding a representable matroid on fact indices and identifying minimal determining fact sets with matroid bases;
+
 -   the realizability chain, including derivation, the timing constraint, causal propagation, provenance observability, and the realizability iff theorem;
 
 -   the rate-complexity chain, including the $O(1)$ upper bound, the $\Omega(n)$ lower bound, and the unbounded-gap consequence;
 
--   the finite entropy layer supporting pair injectivity, clique/fiber budget bounds, conditional-entropy reformulations, deterministic data processing, decoder-output bounds, KL-gap reformulations, and the budgeted finite-error extension.
+-   the finite entropy layer supporting pair injectivity, clique/fiber budget bounds, conditional-entropy reformulations, deterministic data processing, decoder-output bounds, KL-gap reformulations, and the budgeted finite-error extension;
+
+-   the multi-fact graph layer, including an explicit confusability graph object, a generic strong-power addition theorem for graphs, generic strong-product lower bounds and repeated-multiple rate monotonicity for graph independence growth, identification of the full $n$-block confusability graph with the $n$-fold strong power of the one-shot confusability graph, colorability as the exact zero-error criterion, exact success-set cardinality and weighted success mass via largest colorable induced subgraphs, multiplicative coloring/clique-budget/success-set product laws for block-composed view families, graph-independent-set interpretations of the block code sizes, a supermultiplicative block-growth law, an explicit graph-side Shannon lower-capacity expression over strong powers, an $n$-block exponential lower bound for one-shot zero-error code size, a Fekete-style asymptotic limit theorem for the normalized strong-power rates together with an identification of that limit with the supremum of the finite block-rate sequence, an equality between the older $\mathrm{ENNReal}$ lower-capacity envelope and the real asymptotic capacity, a complement-chromatic upper theory obtained by lifting one-shot complement colorings to all strong powers, an equivalent pure-PSD upper formulation whose normalized power-rate sequence is subadditive, converges to an asymptotic PSD upper value, and identifies that value with the infimum of the finite PSD power-rate upper bounds, a pointwise block-rate upper comparison against the PSD power rates and hence an asymptotic capacity upper bound by the PSD limit itself, standard one-shot orthonormal-representation, primal-PSD, and dual-theta forms, equality of the standard primal and dual theta upper objects both one-shot and asymptotically, the resulting fixed textbook Lovász-$\vartheta$ upper convention, and a restricted-class equality theorem showing that for the original clique-fiber subclass the asymptotic Shannon capacity and the fixed Lovász-$\vartheta$ upper both collapse to the logarithm of the fiber-label alphabet size, together with export theorems for the original view-family model: transitivity of the base confusability relation is proved equivalent to cluster collapse on connected components, yielding the same equality with the logarithm of the connected-component count; a syntactic meet-witness condition on the allowed views is proved sufficient for this transitive collapse; fiber coherence is then recovered as a stronger sufficient condition and sharpens the value to the logarithm of the realized transcript alphabet size.
 
 The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.
 
@@ -889,6 +1003,6 @@ The supplementary artifact contains the theorem-to-declaration coverage matrix, 
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper2_ssot/proofs/`
-- Lines: 14898
-- Theorems: 703
+- Lines: 22210
+- Theorems: 1024
 - `sorry` placeholders: 0

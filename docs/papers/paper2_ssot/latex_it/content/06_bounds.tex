@@ -73,7 +73,7 @@ H(X\mid Y,T)=0
 H(T\mid Y)\ge \log_2 K .
 \]
 \end{theorem}
-\leanmeta{\LH{PRB55}}\leanmeta{\LH{PRB47}}
+\leanmeta{\LH{PRB47}, \LH{PRB55}}
 
 \begin{proof}
 If $Y$ is constant on the class, conditioning on $Y$ leaves the uniform prior unchanged, hence $H(X\mid Y)=\log_2 K$. Exact recovery from $(Y,T)$ forces $H(X\mid Y,T)=0$, so the side information carried by $T$ must close the entire $\log_2 K$ gap.
@@ -120,7 +120,7 @@ and the observation-tag entropy and decoded-output entropy are bounded by their 
 \]
 are nonnegative and vanish only in the uniform saturation cases formalized in the supplement.
 \end{theorem}
-\leanmeta{\LH{PRB90}}\leanmeta{\LH{PRB95}}\leanmeta{\LH{PRB73}}\leanmeta{\LH{PRB74}}\leanmeta{\LH{PRB82}}\leanmeta{\LH{PRB83}}\leanmeta{\LH{PRB93}}\leanmeta{\LH{PRB94}}
+\leanmeta{\LHrng{PRB}{73}{74}, \LHrng{PRB}{82}{83}, \LH{PRB90}, \LHrng{PRB}{93}{95}}
 
 \begin{proof}
 The decoder output is a deterministic function of $(Y,T)$, so Theorem~\ref{thm:deterministic-data-processing} gives $H(\hat X)\le H(Y,T)$. The pair entropy is itself bounded by the source entropy and by the logarithm of the available pair alphabet, which yields the nonnegative gap constraints.
@@ -136,7 +136,7 @@ In particular, since any deterministic decoder output $\hat X$ is a coarsening o
 H(\hat X)\le H(Y,T)\le \log_2 |\mathcal Y\times \mathcal T|.
 \]
 \end{theorem}
-\leanmeta{\LH{PRB68}}\leanmeta{\LH{PRB81}}\leanmeta{\LH{PRB83}}
+\leanmeta{\LH{PRB68}, \LH{PRB81}, \LH{PRB83}}
 
 \begin{proof}
 Deterministic coarsening merges atoms of the distribution on $(Y,T)$ and therefore cannot increase entropy. A decoder is one such coarsening. The ceiling follows because $(Y,T)$ takes values in a finite alphabet of size $|\mathcal Y\times\mathcal T|$.
@@ -164,7 +164,7 @@ H(\hat X)
 h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).
 \]
 \end{theorem}
-\leanmeta{\LH{PRB85}}\leanmeta{\LH{PRB87}}
+\leanmeta{\LH{PRB85}, \LH{PRB87}}
 
 \begin{proof}
 Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term. Equivalently,
@@ -183,13 +183,13 @@ The single-fact converse family treats ambiguity classes that are effectively cl
 \begin{theorem}[Exact recovery as graph colorability]\label{thm:multifact-colorability}
 For a finite multi-fact latent tuple observed through a finite family of partial-coordinate views, exact zero-error recovery with a $T$-ary auxiliary tag exists if and only if the induced confusability graph is $T$-colorable.
 \end{theorem}
-\leanmeta{\LH{MFT3}}\leanmeta{\LH{MFT4}}\leanmeta{\LH{MFT20}}
+\leanmeta{\LHrng{MFT}{3}{4}, \LH{MFT20}}
 
 \begin{proof}
 As in Theorem~\ref{thm:pair-injective}, exact recovery forces any two confusable latent states to receive different tags, so the tag map is a proper graph coloring. Conversely, any proper coloring can be inverted jointly with the observation transcript to build an exact decoder.
 \end{proof}
 
-The mechanized development now packages this statement through an explicit simple confusability graph object, and for $n$ repeated copies it identifies the full block confusability graph with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LH{MFT34}}\leanmeta{\LH{MFT35}}
+The mechanized development now packages this statement through an explicit simple confusability graph object, and for $n$ repeated copies it identifies the full block confusability graph with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LHrng{MFT}{34}{35}}
 
 \begin{theorem}[Success-set characterization]\label{thm:multifact-success-set}
 In the same model, exact decoding on a designated success set $S$ is equivalent to $T$-colorability of the induced confusability subgraph on $S$.
@@ -207,20 +207,20 @@ M_T := \max\{|S| : S \text{ induces a } T\text{-colorable confusability subgraph
 \]
 An exact decoder with $T$ tags exists on a success set $S$ if and only if $|S|\le M_T$ after replacing $S$ by some $T$-colorable success set of size $M_T$. Under the uniform source, the optimal exact success probability is therefore $M_T/|\mathcal X|$.
 \end{theorem}
-\leanmeta{\LH{MFT14}}\leanmeta{\LH{MFT15}}
+\leanmeta{\LHrng{MFT}{14}{15}}
 
 \begin{proof}
 Theorem~\ref{thm:multifact-success-set} identifies exact success sets with induced $T$-colorable subgraphs. Since the latent alphabet is finite, a maximum-cardinality such set exists. The mechanized characterization exposes this optimum directly. In the binary four-cycle witness, the optimum at $T=1$ is exactly two states, so the best uniform exact success probability is $2/4=1/2$.
 \end{proof}
 
-The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the mechanized development defines the maximum mass of a $T$-colorable induced subgraph and proves that an exact decoder on a success set $S$ attains at most that mass, with equality for some optimizing success set. This is the exact finite weighted-success law for the extended model.\leanmeta{\LH{MFT18}}\leanmeta{\LH{MFT19}}
+The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the mechanized development defines the maximum mass of a $T$-colorable induced subgraph and proves that an exact decoder on a success set $S$ attains at most that mass, with equality for some optimizing success set. This is the exact finite weighted-success law for the extended model.\leanmeta{\LHrng{MFT}{18}{19}}
 
-Equivalently, the mechanized development now packages this optimum as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.\leanmeta{\LH{MFT23}}\leanmeta{\LH{MFT24}}
+Equivalently, the mechanized development now packages this optimum as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.\leanmeta{\LHrng{MFT}{23}{24}}
 
 \begin{theorem}[First non-clique witness]\label{thm:multifact-nonclique}
 There exists a binary two-fact system with single-coordinate observation views whose confusability graph is not a clique. In that system, two tags suffice for exact recovery, one tag is impossible, and any one-tag decoder can be exact on at most half of the four latent states under the uniform source.
 \end{theorem}
-\leanmeta{\LH{MFT5}}\leanmeta{\LH{MFT6}}\leanmeta{\LH{MFT7}}\leanmeta{\LH{MFT8}}\leanmeta{\LH{MFT10}}
+\leanmeta{\LHrng{MFT}{5}{8}, \LH{MFT10}}
 
 \begin{proof}
 The witness is the four-state binary square with one location revealing the first coordinate and the other revealing the second. States that agree on one coordinate are confusable through the corresponding location, but opposite corners are not confusable, so the graph is a $4$-cycle rather than a clique. A parity coloring gives an exact two-tag decoder. With one tag, any exact success set must be an independent set of the cycle, hence has size at most two, yielding success probability at most $1/2$ under the uniform source.
@@ -229,13 +229,13 @@ The witness is the four-state binary square with one location revealing the firs
 \begin{theorem}[Block-composition law]\label{thm:multifact-product}
 If two partial-observation systems are colorable with tag alphabets of sizes $T_1$ and $T_2$, then their block-composed product system is colorable with a tag alphabet of size $T_1T_2$.
 \end{theorem}
-\leanmeta{\LH{MFT11}}\leanmeta{\LH{MFT12}}\leanmeta{\LH{MFT13}}\leanmeta{\LH{MFT16}}
+\leanmeta{\LHrng{MFT}{11}{13}, \LH{MFT16}}
 
 \begin{proof}
 Take proper colorings of the two component confusability graphs and encode the pair of colors as one color in the product alphabet. Any confusable product pair must remain confusable in at least one component, so one of the component colorings separates it, and therefore so does the paired color.
 \end{proof}
 
-This product law now has both directions in the mechanized development. The upper direction is the multiplicative coloring construction above. More sharply, once both location alphabets are nonempty, the product confusability graph is exactly the strong product of the two component confusability graphs. The graph object is therefore not just analogous to zero-error graph products; it is literally a strong-product construction inside the mechanized development. \leanmeta{\LH{MFT25}}\leanmeta{\LH{MFT26}}
+This product law now has both directions in the mechanized development. The upper direction is the multiplicative coloring construction above. More sharply, once both location alphabets are nonempty, the product confusability graph is exactly the strong product of the two component confusability graphs. The graph object is therefore not just analogous to zero-error graph products; it is literally a strong-product construction inside the mechanized development. \leanmeta{\LHrng{MFT}{25}{26}}
 
 The lower direction is clique-based: if the first component contains a confusability clique of size $c_1$ and the second contains one of size $c_2$, then the product system contains a confusability clique of size $c_1c_2$, so any exact product decoder requires at least $c_1c_2$ tags. The same mechanism also propagates to finite-error success sets: the largest exactly decodable success set in the product system is at least the product of the largest exactly decodable success sets in the two components. At the one-shot zero-error coding level, the maximum independent-set code size also obeys the same product lower bound. Thus the extended model now has an honest strong-product graph law together with matching lower/upper budget consequences.\leanmeta{\LH{MFT17}}
 
@@ -245,7 +245,7 @@ The mechanized development now proves a genuine supermultiplicative block law:
 \]
 where $\alpha_n$ denotes the largest one-shot zero-error code size in the $n$-block composed system. This is the correct discrete precursor to Shannon-capacity analysis: the admissible code-size sequence is already supermultiplicative at the graph level.\leanmeta{\LH{MFT22}}
 
-More sharply, the block-level graph itself now factors correctly. The mechanized development proves both a generic strong-power addition theorem for graphs and the induced model-specific statement that confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object in the mechanized theory.\leanmeta{\LH{MFT29}}\leanmeta{\LH{MFT30}}\leanmeta{\LH{MFT38}}\leanmeta{\LH{MFT39}}
+More sharply, the block-level graph itself now factors correctly. The mechanized development proves both a generic strong-power addition theorem for graphs and the induced model-specific statement that confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object in the mechanized theory.\leanmeta{\LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
 
 Iterating the same construction yields the derived $n$-block lower bound. If $\alpha_1$ denotes the one-shot maximum independent-set code size, then the mechanized block-power theorem gives
 \[
@@ -257,9 +257,9 @@ The mechanized development now packages these normalized block rates into an exp
 \[
 C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},
 \]
-implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. In the mechanized development, $\alpha_n$ is now identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.\leanmeta{\LH{MFT31}}\leanmeta{\LH{MFT32}}\leanmeta{\LH{MFT35}}\leanmeta{\LH{MFT36}}
+implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. In the mechanized development, $\alpha_n$ is now identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
 
-The asymptotic scaffold is also no longer limited to a lower envelope statement. On the graph side itself, the mechanized development now proves strong-product lower bounds for independent-set cardinality and the induced monotonicity of normalized strong-power rates along repeated multiples. Specializing those generic graph theorems back to the SSOT confusability graph yields the repeated-block statement below.\leanmeta{\LH{MFT40}}\leanmeta{\LH{MFT41}}\leanmeta{\LH{MFT42}}
+The asymptotic scaffold is also no longer limited to a lower envelope statement. On the graph side itself, the mechanized development now proves strong-product lower bounds for independent-set cardinality and the induced monotonicity of normalized strong-power rates along repeated multiples. Specializing those generic graph theorems back to the SSOT confusability graph yields the repeated-block statement below.\leanmeta{\LHrng{MFT}{40}{42}}
 
 Repeating a fixed $m$-block system $k$ times yields
 \[
@@ -271,7 +271,7 @@ and hence
 \]
 Thus rates along repeated block multiples are monotone from below toward the same capacity envelope. This is still a lower theory rather than a full Shannon-capacity theorem, but it is already a genuine asymptotic graph-rate statement inside the mechanized development.\leanmeta{\LH{MFT33}}
 
-The asymptotic graph theory now also closes the remaining Fekete step. Defining the negative log-independence sequence on strong powers, the mechanized development proves subadditivity of that sequence, derives bounded-below normalized quotients from the trivial vertex-count bound, and then applies Fekete's lemma to obtain a real asymptotic capacity value to which the normalized strong-power rates converge. Moreover, every finite block rate is proved to lie below that limit, the limit itself is identified with the supremum of the finite block-rate sequence, and the older $\mathrm{ENNReal}$ lower-capacity envelope is proved equal to the real asymptotic capacity after applying $\mathrm{ofReal}$. Thus the strong-power scaffold is no longer just a lower-envelope construction; it already carries an honest asymptotic capacity theorem on the graph side and, by transport through the block-confusability identification, on the SSOT model itself.\leanmeta{\LH{MFT43}}\leanmeta{\LH{MFT44}}\leanmeta{\LH{MFT45}}\leanmeta{\LH{MFT46}}\leanmeta{\LH{MFT47}}\leanmeta{\LH{MFT48}}\leanmeta{\LH{MFT49}}\leanmeta{\LH{MFT56}}
+The asymptotic graph theory now also closes the remaining Fekete step. Defining the negative log-independence sequence on strong powers, the mechanized development proves subadditivity of that sequence, derives bounded-below normalized quotients from the trivial vertex-count bound, and then applies Fekete's lemma to obtain a real asymptotic capacity value to which the normalized strong-power rates converge. Moreover, every finite block rate is proved to lie below that limit, the limit itself is identified with the supremum of the finite block-rate sequence, and the older $\mathrm{ENNReal}$ lower-capacity envelope is proved equal to the real asymptotic capacity after applying $\mathrm{ofReal}$. Thus the strong-power scaffold is no longer just a lower-envelope construction; it already carries an honest asymptotic capacity theorem on the graph side and, by transport through the block-confusability identification, on the SSOT model itself.\leanmeta{\LHrng{MFT}{43}{49}, \LH{MFT56}}
 
 The mechanized upper theory now also includes the first genuine chromatic bound. The complement of the strong-power confusability graph is identified with the coordinatewise ``there exists an offending coordinate'' graph on the complement, and a coloring of the one-shot complement graph lifts to a coloring of every strong power by coloring each coordinate separately. Consequently,
 \[
@@ -279,13 +279,13 @@ The mechanized upper theory now also includes the first genuine chromatic bound.
 \qquad
 \frac{\log \alpha(G^{\boxtimes n})}{n} \le \log \chi(\overline G),
 \]
-and the asymptotic capacity is bounded above by $\log \chi(\overline G)$. This is still weaker than a Lov\'asz-$\vartheta$ upper theory, but it is already a real graph-theoretic upper bound rather than only a lower-capacity scaffold.\leanmeta{\LH{MFT50}}\leanmeta{\LH{MFT51}}\leanmeta{\LH{MFT52}}\leanmeta{\LH{MFT53}}\leanmeta{\LH{MFT54}}\leanmeta{\LH{MFT55}}
+and the asymptotic capacity is bounded above by $\log \chi(\overline G)$. This is still weaker than a Lov\'asz-$\vartheta$ upper theory, but it is already a real graph-theoretic upper bound rather than only a lower-capacity scaffold.\leanmeta{\LHrng{MFT}{50}{55}}
 
-The mechanized upper theory now also includes a pure PSD formulation equivalent to the earlier witness and factorized-matrix formulations. On one-shot graphs this PSD upper value is proved equal to the existing witness upper invariant, so the capacity upper bound can be stated either in witness language or directly through a PSD object. The same one-shot invariant is also identified with a standard orthonormal-representation form and with a standard primal PSD form, so the upper theory is no longer tied to custom witness packaging. On the dual side, the lifted-dual and Schur-dual log upper objects are proved equivalent, the Schur-dual upper is stable under graph isomorphism, and the same one-shot Schur-dual invariant is identified with a standard dual-theta value object.\leanmeta{\LH{MFT57}}\leanmeta{\LH{MFT64}}\leanmeta{\LH{MFT65}}\leanmeta{\LH{MFT66}}\leanmeta{\LH{MFT72}}\leanmeta{\LH{MFT73}}\leanmeta{\LH{MFT79}} Along strong powers, the normalized PSD upper sequence is subadditive; Fekete's lemma yields an asymptotic PSD upper value to which the finite PSD power rates converge, and this asymptotic upper value is the infimum of the finite PSD power-rate upper bounds. Moreover, the finite block rates are bounded above by the corresponding finite PSD power rates, so the real asymptotic Shannon capacity is bounded above by the asymptotic PSD upper value itself. The same asymptotic upper is equivalently expressible in the standard primal-theta notation.\leanmeta{\LH{MFT58}}\leanmeta{\LH{MFT59}}\leanmeta{\LH{MFT60}}\leanmeta{\LH{MFT61}}\leanmeta{\LH{MFT62}}\leanmeta{\LH{MFT63}}\leanmeta{\LH{MFT68}}\leanmeta{\LH{MFT69}}\leanmeta{\LH{MFT70}}\leanmeta{\LH{MFT71}} The Schur-dual power sequence is likewise subadditive, hence convergent by the same Fekete argument; its asymptotic dual upper value is identified with the corresponding standard dual-theta asymptotic object. The standard primal and dual theta upper objects are then proved equal both one-shot and asymptotically, so the mechanized upper theory now supports a single fixed textbook Lov\'asz-$\vartheta$ convention, denoted $\vartheta_{\infty}(G)$, with
+The mechanized upper theory now also includes a pure PSD formulation equivalent to the earlier witness and factorized-matrix formulations. On one-shot graphs this PSD upper value is proved equal to the existing witness upper invariant, so the capacity upper bound can be stated either in witness language or directly through a PSD object. The same one-shot invariant is also identified with a standard orthonormal-representation form and with a standard primal PSD form, so the upper theory is no longer tied to custom witness packaging. On the dual side, the lifted-dual and Schur-dual log upper objects are proved equivalent, the Schur-dual upper is stable under graph isomorphism, and the same one-shot Schur-dual invariant is identified with a standard dual-theta value object.\leanmeta{\LH{MFT57}, \LHrng{MFT}{64}{66}, \LHrng{MFT}{72}{73}, \LH{MFT79}} Along strong powers, the normalized PSD upper sequence is subadditive; Fekete's lemma yields an asymptotic PSD upper value to which the finite PSD power rates converge, and this asymptotic upper value is the infimum of the finite PSD power-rate upper bounds. Moreover, the finite block rates are bounded above by the corresponding finite PSD power rates, so the real asymptotic Shannon capacity is bounded above by the asymptotic PSD upper value itself. The same asymptotic upper is equivalently expressible in the standard primal-theta notation.\leanmeta{\LHrng{MFT}{58}{63}, \LHrng{MFT}{68}{71}} The Schur-dual power sequence is likewise subadditive, hence convergent by the same Fekete argument; its asymptotic dual upper value is identified with the corresponding standard dual-theta asymptotic object. The standard primal and dual theta upper objects are then proved equal both one-shot and asymptotically, so the mechanized upper theory now supports a single fixed textbook Lov\'asz-$\vartheta$ convention, denoted $\vartheta_{\infty}(G)$, with
 \[
 \Theta(G)\le \vartheta_{\infty}(G).
 \]
-\leanmeta{\LH{MFT74}}\leanmeta{\LH{MFT75}}\leanmeta{\LH{MFT76}}\leanmeta{\LH{MFT77}}\leanmeta{\LH{MFT78}}\leanmeta{\LH{MFT80}}\leanmeta{\LH{MFT81}}\leanmeta{\LH{MFT82}}\leanmeta{\LH{MFT83}}\leanmeta{\LH{MFT84}} What remains open is the sharpness of this upper theory for the graph classes generated by the extended model, not the absence of a standard primal--dual theta packaging.
+\leanmeta{\LHrng{MFT}{74}{78}, \LHrng{MFT}{80}{84}} What remains open is the sharpness of this upper theory for the graph classes generated by the extended model, not the absence of a standard primal--dual theta packaging.
 
 The original clique-fiber regime is now isolated as an equality subclass rather than only a threshold corollary. If a graph is generated by a surjective label map $x \mapsto b(x)$ with adjacency exactly between distinct vertices in the same fiber, then one representative from each fiber forms an independent set of size $|\mathcal B|$, while the complement graph is colorable by the same label map using $|\mathcal B|$ colors. The mechanized development packages this argument into a restricted-class theorem:
 \[
@@ -305,11 +305,10 @@ where $\Pi_{\mathrm{cc}}$ is the connected-component partition of the base confu
 \[
 C_\infty(\text{views})=\vartheta_\infty(\text{views})=\log |\mathcal T_{\mathrm{real}}|.
 \]
-At the witness level, this same collapse admits a local composition form: base confusability is the edge union of the single-view cluster graphs, and transitivity is equivalent to closure of those fixed-view witnesses under two-step composition through an intermediate state. This is the exact local criterion for the current equality mechanism: the collapse to a cluster graph is determined by how single-view witnesses compose, not by an opaque global coincidence of the full confusability graph.\leanmeta{\LH{MFT107}}\leanmeta{\LH{MFT108}}\leanmeta{\LH{MFT109}}
-\leanmeta{\LH{MFT88}}\leanmeta{\LH{MFT89}}\leanmeta{\LH{MFT90}}\leanmeta{\LH{MFT91}}\leanmeta{\LH{MFT92}}\leanmeta{\LH{MFT93}}\leanmeta{\LH{MFT94}}\leanmeta{\LH{MFT95}}\leanmeta{\LH{MFT96}}\leanmeta{\LH{MFT97}}\leanmeta{\LH{MFT98}}\leanmeta{\LH{MFT99}}\leanmeta{\LH{MFT100}}\leanmeta{\LH{MFT101}}\leanmeta{\LH{MFT102}}\leanmeta{\LH{MFT85}}\leanmeta{\LH{MFT86}}\leanmeta{\LH{MFT87}}
+At the witness level, this same collapse admits a local composition form: base confusability is the edge union of the single-view cluster graphs, and transitivity is equivalent to closure of those fixed-view witnesses under two-step composition through an intermediate state. This is the exact local criterion for the current equality mechanism: the collapse to a cluster graph is determined by how single-view witnesses compose, not by an opaque global coincidence of the full confusability graph.\leanmeta{\LHrng{MFT}{85}{102}, \LHrng{MFT}{107}{109}}
 
 \begin{theorem}[Affine fact-matroid theorem]\label{thm:affine-fact-matroid}
-Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.\leanmeta{\LH{AFM1}}\leanmeta{\LH{AFM2}}\leanmeta{\LH{AFM3}}\leanmeta{\LH{AFM4}}\leanmeta{\LH{AFM5}}
+Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.\leanmeta{\LHrng{AFM}{1}{5}}
 \end{theorem}
 
 \begin{proof}

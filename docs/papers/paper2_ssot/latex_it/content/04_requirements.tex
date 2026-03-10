@@ -85,7 +85,7 @@ The two requirements are logically separate.
 \item An encoding system can have provenance observability without causal propagation.
 \end{enumerate}
 \end{theorem}
-\leanmeta{\LH{IND1}, \LH{IND2}}
+\leanmeta{\LHrng{IND}{1}{2}}
 
 \begin{proof}
 For (1), consider a system that automatically refreshes all derived views after each source update but exposes no query interface for its derivation graph. Coherence may hold operationally, but the single-source claim is not inspectable. For (2), consider a system that records complete provenance metadata yet requires users to trigger propagation manually after each change. The derivation structure is visible, but stale views remain reachable. Hence neither property implies the other.
