@@ -66,6 +66,7 @@ import DecisionQuotient.StochasticSequential.Basic
 import DecisionQuotient.StochasticSequential.Quotient
 import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Computation
+import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.Hardness
 import DecisionQuotient.AlgorithmComplexity
 import DecisionQuotient.ComplexityMain
@@ -960,6 +961,15 @@ abbrev PA6 := @Physics.AnchorChecks.sequential_sufficient_of_observer_collapse
 abbrev PA7 := @Physics.AnchorChecks.sequential_anchor_check_of_observer_collapse
 abbrev PA8 := @Physics.AnchorChecks.physical_observer_collapse_implies_obsEquiv_all
 abbrev PA9 := @Physics.AnchorChecks.physical_stochastic_anchor_check_of_observer_collapse_and_seed
+
+-- Oracle upper-bound (OU) handles - scoped witness-over-verifier machinery
+abbrev OU1 := @StochasticSequential.stochastic_anchor_query_fits_np_over_ppstyle
+abbrev OU2 := @StochasticSequential.stochastic_minimum_query_fits_np_over_ppstyle
+abbrev OU3 := @StochasticSequential.stochastic_existential_queries_fit_np_over_ppstyle
+abbrev OU4 := @StochasticSequential.fitsNPOverPPStyle_of_exists_witness
+abbrev OU5 := @StochasticSequential.inP_of_poly_witness_list
+abbrev OU6 := @StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema
+abbrev OU7 := @StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema
 
 -- Graph nontriviality (GN) handles - cycles, observer surprisal, Bayes/DQ/physics bridge
 abbrev GN1 := @LogicGraph.isCycle

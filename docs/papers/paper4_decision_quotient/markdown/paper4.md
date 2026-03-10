@@ -1,6 +1,6 @@
-# Paper: Decision Quotient: Complexity of Exact Relevance Certification
+# Paper: Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
 
-**Status**: Computational Complexity-ready | **Lean**: 49744 lines, 2152 theorems
+**Status**: Computational Complexity-ready | **Lean**: 21142 lines, 985 theorems
 
 ---
 
@@ -10,59 +10,63 @@ _Abstract not available._
 
 # Introduction {#sec:introduction}
 
-Which coordinates of a system's state can be safely discarded without changing the optimal action, and how hard is it to certify that claim exactly? For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$ This is the basic problem of exact relevance certification: how much of the state must remain visible in order to preserve the decision boundary, and what it takes to certify that the rest is irrelevant.
+Which coordinates of a decision problem can be hidden without changing the optimal action, and how hard is it to certify that claim exactly? We expected one answer. We found three fundamentally different ones. We study this exact-certification question across static, stochastic, and sequential regimes. For a decision problem $\mathcal{D}=(A,S,U)$ with $S = X_1 \times \cdots \times X_n$, a coordinate set $I$ is sufficient when agreement on $I$ forces agreement on the optimal-action set: $$s_I = s'_I \implies \operatorname{Opt}(s) = \operatorname{Opt}(s').$$ This is the basic problem of exact relevance certification: how much of the state must remain visible to preserve the decision boundary, and what it takes to certify that the rest is irrelevant. The question resembles subset selection, but exact certification has a different quantifier structure and, as the paper shows, a different complexity landscape.
 
-The question is easy to state but not algorithmically benign. Evaluating $U(a,s)$ on a given state is one task; certifying that an entire family of coordinates may be ignored is another. The latter carries universal quantification over state pairs and leads naturally to coNP and $\Sigma_2^P$ phenomena. The optimizer quotient packages the same issue structurally: it is the coarsest abstraction of the state space that preserves optimal-action distinctions.
+This is a certification problem rather than a forward-evaluation problem. Evaluating $U(a,s)$ or $\operatorname{Opt}(s)$ on a fully specified state is one task; proving that a family of coordinates is irrelevant requires ruling out every counterexample pair of states. That universal structure drives the static regime. A first structural point is worth stating up front: [Minimum-Sufficient-Set]{.smallcaps} looks existential-universal on its face, but in the static regime it collapses because a set is sufficient exactly when it contains every relevant coordinate. So the minimum sufficient set is just the relevant-coordinate set. At the same time, the optimizer quotient is not an arbitrary definition: it is the canonical coarsest abstraction that preserves optimal-action distinctions. [Anchor-Sufficiency]{.smallcaps} does not collapse in the same way, because the anchor assignment is itself part of the existential choice and must then satisfy a universal fiberwise condition.
 
-This paper isolates that abstract problem. We work entirely with finite coordinate-structured decision problems and explicit encoding regimes.
+This distinction also explains why exactness matters. When a system replaces exact relevance certification with a heuristic simplification, the omitted relevance does not disappear; it is shifted into residual uncertainty that must be handled elsewhere in the system. We refer to that externalized burden as the *simplicity tax*. The results of this paper show that this tax is not merely rhetorical: exact simplification can be computationally expensive, but inexact simplification does not erase decision-relevant structure; it relocates it.
 
-Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"} fixes the computational model and the encoding regimes used by every complexity claim.
+#### Informal interpretive guide.
+
+The formal objects studied here admit a compact intuitive reading. A relevant coordinate is a point of *leverage*: changing it can change the decision. The optimizer quotient isolates the decision *signal*: it is the coarsest abstraction that still preserves optimal-action distinctions. The static collapse expresses *inevitability*: in the static regime, the optimal simplification is forced by the structure of relevance rather than discovered by search. The simplicity tax is *liability*: omitted exact relevance does not disappear, but must be handled elsewhere in the system. At the task level, sufficiency is *observation*, anchor sufficiency is *discovery*, and sequential certification is *exposure*: omitted information may appear harmless now while still creating future liability elsewhere in the system.
+
+The paper's central claim is that this is not a collection of isolated hardness facts. Once the same exact-certification question is tracked across richer input models, the difficulty escalates in a systematic way. Static certification is governed by counterexample exclusion, stochastic certification by majority-style conditional comparisons, and sequential certification by policy preservation across evolving information states. Read as a complexity matrix, adding probability lifts exact certification from coNP to PP, and adding time lifts it again to PSPACE. The optimizer quotient packages the same issue structurally: it is the coarsest abstraction of the state space that preserves optimal-action distinctions.
+
+Throughout, we work with finite coordinate-structured decision problems under explicit encoding regimes. Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"} fixes the computational model used by every complexity claim.
 
 ## Contributions
 
-1.  **Shared setup for coordinate sufficiency.** We formalize decision problems with coordinate structure, relevant-coordinate witnesses, exact relevance identification, and the optimizer quotient as the canonical decision-preserving abstraction.
+The paper is best read as one theorem package with four linked takeaways: a structural static collapse, a regime-sensitive complexity matrix, a sharp phase transition between tractable and hard exact certification, and a trilemma for exact certifiers in the hard regime.
 
-2.  **Exact complexity classifications.** We prove that [Sufficiency-Check]{.smallcaps} is coNP-complete, [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete, and [Anchor-Sufficiency]{.smallcaps} is $\Sigma_2^P$-complete.
+1.  **The Static Collapse Theorem.** In the static regime, the apparent quantifier complexity of exact minimization simplifies sharply: sufficient sets are exactly the supersets of the relevant-coordinate set. This collapses [Minimum-Sufficient-Set]{.smallcaps} to a coNP problem rather than a genuine $\Sigma_2^P$ search problem, while [Anchor-Sufficiency]{.smallcaps} remains $\Sigma_2^P$-complete because its existential anchor choice does not collapse.
 
-3.  **Encoding-sensitive hardness and tractability.** We prove an explicit-state versus succinct dichotomy, derive ETH-conditioned lower bounds, and isolate natural tractable subcases under structural restrictions.
+2.  **Unified regime-sensitive complexity matrix.** Inside one common model of finite coordinate-structured decision problems, we formalize coordinate sufficiency, relevance, minimal sufficient sets, anchor sufficiency, and the optimizer quotient, and we show that the resulting exact certification problems organize into a single regime hierarchy: static [Sufficiency-Check]{.smallcaps} and [Minimum-Sufficient-Set]{.smallcaps} are coNP-complete, static [Anchor-Sufficiency]{.smallcaps} is $\Sigma_2^P$-complete, stochastic sufficiency is PP-complete, and sequential sufficiency is PSPACE-complete, with PP-hard and PSPACE-hard stochastic/sequential minimum and anchor queries.
 
-4.  **Reliability and approximation impossibility results.** We prove a witness-checking lower bound for exact empty-set certification, approximation-hardness results in which any uniform factor guarantee on the shifted hard family yields tautology detection by thresholding and an exact set-cover equivalence on a separate explicit gadget family yields approximation-ratio transfer, and an integrity-competence impossibility theorem showing that under $P\neq coNP$ no polynomial-budget solver is both integrity-preserving and fully competent on the hard exact regime.
+3.  **Sharp phase transition between tractable and hard exact certification.** We prove an explicit-state versus succinct dichotomy: logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets in the succinct regime inherit ETH-conditioned exponential lower bounds. We also isolate six structured tractable subcases under standard restrictions.
 
-5.  **Hardness transfers for exact simplification.** We show that exact behavior-preserving minimization inherits the hardness of [Minimum-Sufficient-Set]{.smallcaps}, while conservative over-specification can be rational in the hard succinct regime under an explicit cost model. The simplicity-tax and hardness-conservation section pins a chosen architecture against the canonical relevant-coordinate invariant and derives the resulting externalization and amortization consequences.
+4.  **The trilemma of exact certification.** We transfer the hierarchy to exact simplification, isolate a witness-checking lower bound and approximation obstructions, and prove an integrity-competence impossibility theorem: no exact certifier can be simultaneously sound, complete, and polynomial-budgeted on the hard regime. This trilemma is a fundamental reliability constraint, and we show that omitted exact relevance is externalized rather than eliminated.
 
-6.  **Machine-checked reductions and proof artifacts.** The main reductions and supporting lemmas are mechanized in Lean 4, yielding a reproducible proof artifact for the core complexity claims.
+5.  **Lean-certified reduction and finite-decision core.** The main reductions, size-bounded hardness packages, exact finite boolean deciders, counted finite-search procedures, and explicit-state step-counting wrappers for the regime-typed query predicates are mechanized in Lean 4. For the stochastic and sequential completeness claims, the artifact fully internalizes the reduction side together with the finite decision procedures; the standard PP/PSPACE membership arguments remain part of the paper text rather than end-to-end Turing-machine witness proofs in the current repository.
 
-## Why the Problem Is Different
+## Quantifier Structure
 
-The slogan of the paper is simple:
+The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. So the object-level task is forward evaluation on a fully specified state, while the meta-level task is universal verification over counterexample pairs. This difference drives the coNP classification and explains why relevance identification is not just another forward-evaluation problem.
 
-> **Determining what you need to know can be harder than evaluating the full objective once everything is known.**
-
-The complexity gap comes from the structure of the question. Insufficiency has short witnesses: two states that agree on the proposed coordinates but induce different optimal-action sets. Sufficiency, by contrast, asks for the absence of every such witness. So the object-level task is forward evaluation on a fully specified state, while the meta-level task is universal verification over counterexample pairs. This difference drives the coNP classification and explains why relevance identification is not just another forward evaluation problem.
+The static regime also contains the paper's main structural simplification. Although minimum sufficiency can be written with an outer existential quantifier over coordinate sets, the existential layer collapses once sufficiency is characterized as containment of all relevant coordinates. The stochastic and sequential regimes do not simplify in the same way: conditioning introduces majority-style comparisons over fibers, while temporal evolution introduces policy-level dependence on hidden information.
 
 ## Formalization Snapshot
 
 ::: center
-  **Metric**          **Value**
-  ----------------- -----------
-  Lines of Lean 4         49744
-  Theorems/lemmas          2152
-  Proof files               189
-  `sorry` count               0
+  **Metric**                                 **Value**
+  ---------------------------------------- -----------
+  Lines of Lean 4 backing cited content          21142
+  Theorems/lemmas in cited-content files           985
+  Proof files backing cited content                 62
+  `sorry` count in cited-content files               0
 :::
 
-The artifact builds with `lake build`. The purpose of the mechanization here is not to replace the mathematical narrative, but to guarantee the correctness of the reduction constructions and the formal statements attached to them.
+The artifact builds with `lake build`. It certifies the reduction-correctness lemmas, size-bounded hardness packages, exact finite deciders, counted-search witnesses, tractability statements, and explicit-state step-counting wrappers cited in the main text. The PP/PSPACE membership directions remain paper proofs rather than full Turing-machine formalizations.
 
 ## Paper Structure
 
-Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} introduces the abstract setup and the encoding contract. The hardness theorems are stated in Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}. Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"} gives the encoding-sensitive dichotomy and ETH chain, Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} records tractable subcases, Section [\[sec:engineering-corollaries\]](#sec:engineering-corollaries){reference-type="ref" reference="sec:engineering-corollaries"} gives hardness transfers and exact-simplification consequences, Section [\[sec:integrity-competence\]](#sec:integrity-competence){reference-type="ref" reference="sec:integrity-competence"} gives the integrity-competence impossibility theorem, Section [\[sec:witness-duality\]](#sec:witness-duality){reference-type="ref" reference="sec:witness-duality"} gives the witness and approximation consequences, and Section [\[sec:simplicity-tax\]](#sec:simplicity-tax){reference-type="ref" reference="sec:simplicity-tax"} gives the simplicity-tax and hardness-conservation consequences of omitted exact relevance. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the work within formalized complexity theory and decision-theoretic relevance. Section [\[app:lean\]](#app:lean){reference-type="ref" reference="app:lean"} summarizes the Lean artifact.
+Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} introduces the abstract setup and the encoding contract. Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"}, [\[sec:stochastic\]](#sec:stochastic){reference-type="ref" reference="sec:stochastic"}, [\[sec:sequential\]](#sec:sequential){reference-type="ref" reference="sec:sequential"}, and [\[sec:regime-hierarchy\]](#sec:regime-hierarchy){reference-type="ref" reference="sec:regime-hierarchy"} develop the paper's core theorem package: the Static Collapse Theorem, the regime-sensitive complexity matrix, and the resulting hierarchy from static to stochastic to sequential certification. Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"} gives the encoding-sensitive dichotomy and the sharp phase transition for exact certification, and Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} records tractable subcases. Section [\[sec:engineering-corollaries\]](#sec:engineering-corollaries){reference-type="ref" reference="sec:engineering-corollaries"} then collects the main implications for exact simplification, the trilemma of exact certification, witness checking, approximation, and externalized relevance. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the work within formalized complexity theory and decision-theoretic relevance.
 
 ## Artifact Availability
 
-The complete Lean 4 formalization is available at:
+The standalone Lean proof artifact and submission snapshot are archived at:
 
 ::: center
-<https://doi.org/10.5281/zenodo.18140965>
+<https://doi.org/10.5281/zenodo.18140966>
 :::
 
 The proofs build with the Lean toolchain specified in `lean-toolchain`.
@@ -70,7 +74,7 @@ The proofs build with the Lean toolchain specified in `lean-toolchain`.
 
 # Formal Setup {#sec:formal-setup}
 
-This section fixes the abstract, non-physical vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results.
+This section fixes the abstract vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results. The same setup will support the paper's three core regime classifications, the encoding-sensitive boundary, and the later consequence sections.
 
 ## Decision Problems with Coordinate Structure
 
@@ -163,6 +167,20 @@ This section fixes the abstract, non-physical vocabulary used throughout the pap
 *Proof.* Two states are identified by $\sim_{\operatorname{Opt}}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\operatorname{Opt}$. ◻
 :::
 
+::: theorem
+[]{#thm:quotient-universal label="thm:quotient-universal"} Let $Q_{\mathcal{D}}=S/{\sim_{\operatorname{Opt}}}$ be the decision quotient with quotient map $\pi:S\to Q_{\mathcal{D}}$. For any surjective abstraction $\phi:S\to T$ such that $$\phi(s)=\phi(s') \implies \operatorname{Opt}(s)=\operatorname{Opt}(s'),$$ there exists a unique map $\psi:T\to Q_{\mathcal{D}}$ such that $$\pi = \psi \circ \phi.$$
+:::
+
+::: proof
+*Proof.* Because $\phi$ preserves optimizer values on its fibers, any two states identified by $\phi$ are decision-equivalent. So each fiber of $\phi$ is contained in a single $\sim_{\operatorname{Opt}}$-class.
+
+For each $t \in T$, choose any $s \in S$ with $\phi(s)=t$ and define $\psi(t):=\pi(s)$. This is well defined because any two such choices lie in the same $\sim_{\operatorname{Opt}}$-class. By construction, $(\psi\circ\phi)(s)=\pi(s)$ for every $s\in S$, so $\pi=\psi\circ\phi$. Uniqueness follows from surjectivity of $\phi$: if $\psi'$ also satisfies $\pi=\psi'\circ\phi$, then every $t\in T$ has the form $t=\phi(s)$ and therefore $$\psi(t)=\psi(\phi(s))=\pi(s)=\psi'(\phi(s))=\psi'(t).$$ Hence $\psi=\psi'$. ◻
+:::
+
+::: remark
+[]{#rem:quotient-canonical label="rem:quotient-canonical"} The optimizer quotient is therefore the coarsest abstraction of the state space that preserves optimal-action distinctions. Any surjective abstraction that is strictly coarser must erase some decision-relevant distinction.
+:::
+
 ::: proposition
 []{#prop:sufficiency-char label="prop:sufficiency-char"} Coordinate set $I$ is sufficient if and only if the optimizer map factors through the projection $\pi_I : S \to S_I$. Equivalently, there exists a function $\overline{\operatorname{Opt}}_I : S_I \to \mathcal{P}(A)$ such that $$\operatorname{Opt}= \overline{\operatorname{Opt}}_I \circ \pi_I.$$
 :::
@@ -200,9 +218,398 @@ The solver is given oracle access to $\operatorname{Opt}(s)$ or to the utility v
 :::
 
 
+# Static Regime Complexity {#sec:hardness}
+
+This section studies the static regime, where the input is a finite coordinate-structured decision problem under the succinct encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. This is the baseline certification setting: no stochastic averaging, no temporal dynamics, only the exact question of whether a candidate coordinate set preserves the optimizer map. The main structural fact appears already here: [Minimum-Sufficient-Set]{.smallcaps} looks like an existential-universal search problem, but it collapses once sufficiency is characterized by relevance containment. The only genuinely higher-level static query is the anchor variant, where an existentially chosen fiber must satisfy a universal constancy condition.
+
+## Problem Definitions
+
+::: problem
+**Input:** Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and coordinate set $I \subseteq \{1,\ldots,n\}$.\
+**Question:** Is $I$ sufficient for $\mathcal{D}$?
+:::
+
+::: problem
+**Input:** Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and integer $k$.\
+**Question:** Does there exist a sufficient set $I$ with $|I| \le k$?
+:::
+
+::: problem
+**Input:** Decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ and fixed coordinate set $I$.\
+**Question:** Does there exist an assignment $\alpha$ to $I$ such that $\operatorname{Opt}(s)$ is constant on the fiber $\{s : s_I=\alpha\}$?
+:::
+
+## The Static Collapse
+
+At first glance, [Minimum-Sufficient-Set]{.smallcaps} seems to have the form $$\exists I\; \forall s,s'\in S:
+\quad s_I=s'_I \implies \operatorname{Opt}(s)=\operatorname{Opt}(s').$$ If that syntax reflected the true structure of the problem, one might expect a $\Sigma_2^P$ classification. But Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"} removes the outer search layer: a set is sufficient exactly when it contains every relevant coordinate, so the minimum sufficient set is simply the relevant-coordinate set. We refer to this phenomenon as the *static collapse*. Static exact minimization is therefore a relevance-counting problem, not a genuinely alternating search problem.
+
+That collapse is specific to minimum sufficiency. [Anchor-Sufficiency]{.smallcaps} still asks the algorithm to choose an assignment $\alpha$ and then certify a universal condition on the induced fiber, so its existential layer cannot be absorbed into a structural characterization of the instance.
+
+## coNP-Completeness Results
+
+The first two results show that exact certification is already harder than pointwise evaluation. A counterexample to sufficiency is short, but certifying that no such counterexample exists is a universal statement over state pairs. The collapse discussed above explains why the same coNP behavior governs both direct sufficiency checking and exact minimization.
+
+::: theorem
+[]{#thm:sufficiency-conp label="thm:sufficiency-conp"} SUFFICIENCY-CHECK is coNP-complete.
+:::
+
+::: proof
+*Proof.* For membership, Proposition [\[prop:insufficiency-counterexample\]](#prop:insufficiency-counterexample){reference-type="ref" reference="prop:insufficiency-counterexample"} gives a polynomial witness $(s,s')$ with $s_I=s'_I$ and $\operatorname{Opt}(s)\ne\operatorname{Opt}(s')$ whenever $I$ is not sufficient, so the complement is in NP.
+
+For hardness, reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\operatorname{Opt}$ (Proposition [\[prop:empty-sufficient-constant\]](#prop:empty-sufficient-constant){reference-type="ref" reference="prop:empty-sufficient-constant"}). The reduction is polynomial in formula size. ◻
+:::
+
+::: theorem
+[]{#thm:minsuff-conp label="thm:minsuff-conp"} In the static regime, the apparent existential layer in [Minimum-Sufficient-Set]{.smallcaps} collapses to relevance containment. Consequently, [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete.
+:::
+
+::: proof
+*Proof.* Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"} identifies the minimum sufficient set with the relevant-coordinate set. The question "$|I^*|\le k$?" therefore becomes the question whether at most $k$ coordinates are relevant, which is a coNP check over relevance witnesses. CoNP-hardness follows from the $k=0$ slice, which is exactly SUFFICIENCY-CHECK with $I=\emptyset$. ◻
+:::
+
+## Sigma-2-P Completeness
+
+Anchor sufficiency adds one more layer of choice that the previous collapse does not remove: the algorithm may select a fiber, but must then certify that the chosen fiber is uniformly decision-preserving. That existential-then-universal pattern is exactly what raises the complexity class.
+
+::: theorem
+[]{#thm:anchor-sigma2p label="thm:anchor-sigma2p"} ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete.
+:::
+
+::: proof
+*Proof.* Membership follows directly from the quantifier pattern: $$\exists\alpha\;\forall s\in S:\ (s_I=\alpha)\Rightarrow \operatorname{Opt}(s)=\operatorname{Opt}(s_\alpha).$$ For hardness, reduce from $\exists\forall$-SAT: existential variables encode the anchor assignment, and universal variables range over the residual coordinates. Utility values are set so that fiberwise constancy holds exactly when the source formula is true. ◻
+:::
+
+## Certificate-Size Lower Bound
+
+The next theorem sharpens the static picture. It is not only that exact certification is hard in the complexity-class sense; even a checker restricted to the empty-set core may be forced to inspect exponentially many witness locations in the worst case.
+
+::: theorem
+[]{#thm:witness-checking-duality label="thm:witness-checking-duality"} For Boolean state spaces $S=\{0,1\}^n$, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
+:::
+
+::: proof
+*Proof.* Empty-set sufficiency asks whether $\operatorname{Opt}$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary. ◻
+:::
+
+#### Mechanization note.
+
+The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are indexed by their inline handles.
+
+#### Explicit-state search upper bounds.
+
+Under the explicit-state step-counting model, static sufficiency and static anchor sufficiency are also wrapped as abstract [P]{.smallcaps} predicates on inputs carrying a certified state budget. The artifact proves these upper bounds via counted searches with quadratic and linear state-space dependence respectively, and it also packages the static sufficiency search as an explicit correctness-plus-step-bound witness and as part of the unified finite-search summary theorem.
+
+This completes the baseline regime. The next section keeps the same exact certification question but replaces pairwise counterexample exclusion by conditional expected-utility comparison, which is why the complexity lifts from the static coNP/$\Sigma_2^P$ picture to PP.
+
+
+# Stochastic Regime Complexity {#sec:stochastic}
+
+We now add a distribution over states. This does not weaken the certification problem; it changes its form. Sufficiency is no longer a pointwise optimizer-preservation condition but a statement about conditional optimal decisions under averaging, and that shift is enough to move the problem to PP. The underlying reason is structural: once utilities are compared through conditional expectations, certification becomes a weighted counting problem rather than a pure counterexample-exclusion problem. Static hardness comes from ruling out bad pairs; stochastic hardness comes from deciding which side of a majority-style threshold a conditional expectation lies on.
+
+## Stochastic Decision Problems
+
+::: definition
+[]{#def:stochastic-decision-problem label="def:stochastic-decision-problem"} A stochastic decision problem is a tuple $$\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P),$$ where $P\in\Delta(S)$ is a distribution on $S=X_1\times\cdots\times X_n$.
+:::
+
+::: definition
+[]{#def:stochastic-sufficient label="def:stochastic-sufficient"} A coordinate set $I$ is *stochastically sufficient* if conditioning on $s_I$ never changes the induced optimal-action set: $$\arg\max_{a\in A}\,\mathbb{E}[U(a,s)\mid s_I]
+=
+\arg\max_{a\in A}\,\mathbb{E}[U(a,s)]$$ for all admissible $I$-fibers.
+:::
+
+::: problem
+[]{#prob:stochastic-sufficiency label="prob:stochastic-sufficiency"} **Input:** $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$.\
+**Question:** Is $I$ stochastically sufficient?
+:::
+
+::: definition
+[]{#def:stochastic-anchor-sufficient label="def:stochastic-anchor-sufficient"} A coordinate set $I$ is *stochastically anchor-sufficient* if there exists an anchor fiber such that the conditional optimal-action set on that fiber is a singleton and every state agreeing with the anchor on $I$ induces that same singleton conditional optimum.
+:::
+
+::: problem
+[]{#prob:stochastic-anchor-sufficiency label="prob:stochastic-anchor-sufficiency"} **Input:** $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$.\
+**Question:** Is $I$ stochastically anchor-sufficient?
+:::
+
+::: problem
+[]{#prob:stochastic-minimum-sufficient label="prob:stochastic-minimum-sufficient"} **Input:** $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $k\in\mathbb{N}$.\
+**Question:** Does there exist a stochastically sufficient coordinate set $I$ with $|I|\le k$?
+:::
+
+## PP-Completeness
+
+The stochastic regime preserves the same underlying question, which coordinates can be ignored without changing the decision, but asks it after conditioning and expectation have been introduced. The resulting majority-style comparisons are exactly where PP enters. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, every fiberwise exact-certification check asks whether one conditional expected utility dominates another across all admissible fibers, which is the natural counting analogue of the static universal check.
+
+::: theorem
+[]{#thm:stochastic-pp label="thm:stochastic-pp"} STOCHASTIC-SUFFICIENCY-CHECK is PP-complete.
+:::
+
+::: proof
+*Proof.* For membership, deciding whether one conditional expected utility dominates another is a majority-style weighted counting comparison, hence in PP.
+
+For hardness, reduce MAJSAT. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{reject}\}$, and utilities $$U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad U(\mathrm{reject},s)=1/2,$$ with $I=\emptyset$. Then empty-set stochastic sufficiency is equivalent to deciding whether $\mathbb{E}[\varphi]\ge 1/2$, i.e., MAJSAT. ◻
+:::
+
+::: proposition
+[]{#prop:stochastic-anchor-refinement label="prop:stochastic-anchor-refinement"} If $I$ is stochastically sufficient, then $I$ is stochastically anchor-sufficient.
+:::
+
+::: proof
+*Proof.* If every admissible $I$-fiber has a unique conditional optimum, then any chosen anchor fiber has a unique conditional optimum, and every state agreeing with that anchor on $I$ induces the same singleton conditional optimum. ◻
+:::
+
+::: theorem
+[]{#thm:stochastic-anchor-hard label="thm:stochastic-anchor-hard"} STOCHASTIC-ANCHOR-SUFFICIENCY-CHECK is PP-hard.
+:::
+
+::: proof
+*Proof.* Reduce MAJSAT. Given Boolean formula $\varphi$ on $n\geq 1$ variables, take $S=\{0,1\}^n$, uniform $P$, $I=\emptyset$, and three actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$. Set $$U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
+U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)}.$$ If at least half of all assignments satisfy $\varphi$, then $\mathrm{accept}$ is the unique optimal action on the empty-information fiber, so the instance is anchor-sufficient. If fewer than half satisfy $\varphi$, then $\mathrm{hold}_L$ and $\mathrm{hold}_R$ tie above $\mathrm{accept}$, so no singleton anchor optimum exists. Thus MAJSAT many-one reduces to the stochastic anchor query. ◻
+:::
+
+::: theorem
+[]{#thm:stochastic-minimum-hard label="thm:stochastic-minimum-hard"} The stochastic minimum-sufficient-set query is PP-hard.
+:::
+
+::: proof
+*Proof.* Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically sufficient set of size at most $0$ iff the empty set itself is stochastically sufficient. This empty-set equivalence for the gadget is certified in the artifact, so MAJSAT many-one reduces to STOCHASTIC-MINIMUM-SUFFICIENT-SET. ◻
+:::
+
+::: proposition
+[]{#prop:stochastic-explicit-search label="prop:stochastic-explicit-search"} For finite instances, the artifact contains counted exhaustive-search procedures for stochastic sufficiency, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their certified step bounds are respectively $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
+:::
+
+::: proof
+*Proof.* The sufficiency search scans for a violating state whose fiber-optimal set is non-singleton; the anchor search scans over candidate anchor-state/action pairs; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound. ◻
+:::
+
+#### Relevance boundary.
+
+The stochastic query is fiber-indexed: fixing a candidate information set $I$ induces a derived decision problem whose optimizer is the conditional fiber optimizer. In the current formalization this induced problem is always $I$-sufficient , but its relevance notion is therefore also indexed by $I$. For that reason, the paper does not assert a single global relevance-set characterization for stochastic minimal sufficiency analogous to the static and sequential regimes.
+
+## Tractable Subcases
+
+::: proposition
+[]{#prop:stochastic-tractable label="prop:stochastic-tractable"} The stochastic sufficiency problem is polynomial-time solvable under each of the following restrictions:
+
+1.  product distributions $P=\bigotimes_i P_i$,
+
+2.  bounded support $|\mathrm{supp}(P)|\le k$,
+
+3.  structured families where conditional expectations are computable in polynomial time (e.g. log-concave models with oracle access).
+:::
+
+::: proof
+*Proof.* In each case, conditional expected utilities can either be computed exactly or reduced to a polynomial number of marginal comparisons. ◻
+:::
+
+## Bridge from Static
+
+These final propositions show that moving from static to stochastic reasoning is not merely a reformulation. Distributional conditioning can genuinely destroy or preserve sufficiency depending on the structure of the input model.
+
+::: proposition
+[]{#prop:static-not-stochastic label="prop:static-not-stochastic"} There exist instances where $I$ is sufficient in the static sense but not stochastically sufficient once a distribution $P$ is fixed.
+:::
+
+::: proof
+*Proof.* Choose utilities where optimizer ties are harmless pointwise but are broken in expectation after conditioning. Then static fibers preserve $\operatorname{Opt}$, while conditional expectations change the optimal action. ◻
+:::
+
+::: proposition
+[]{#prop:static-to-stochastic-product label="prop:static-to-stochastic-product"} If $P$ factorizes as a product distribution and $I$ is statically sufficient, then $I$ is stochastically sufficient.
+:::
+
+::: proof
+*Proof.* Under product factorization, conditioning on $I$ does not introduce cross-coordinate dependence outside the sufficient projection, so optimizer preservation transfers from pointwise to expectation form. ◻
+:::
+
+The stochastic regime therefore gives the middle layer of the paper's hierarchy: conditioning already raises exact certification beyond the static setting by turning exact certification into a counting comparison problem, but the full temporal escalation is deferred until sequential dynamics are added in the next section.
+
+
+# Sequential Regime Complexity {#sec:sequential}
+
+We now move to sequential settings with transitions and observations. Here the same certification question is asked at the policy level: can one suppress some coordinates of the evolving information state without changing the optimal policy? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore compare policies across temporally unfolding contingencies rather than compare one-shot optimizers or conditional expectations. In succinct models, that policy-preservation task naturally supports the same kind of alternating contingency that drives PSPACE hardness in planning and quantified-logic reductions.
+
+## Sequential Decision Problems
+
+::: definition
+[]{#def:sequential-decision-problem label="def:sequential-decision-problem"} A sequential decision problem is a tuple $$\mathcal{D}_{\mathrm{seq}}=(A,X_1,\ldots,X_n,U,T,O),$$ with state space $S=X_1\times\cdots\times X_n$, transition kernel $T:A\times S\to\Delta(S)$, and observation model $O:S\to\Delta(\Omega)$.
+:::
+
+::: definition
+[]{#def:sequential-sufficient label="def:sequential-sufficient"} Coordinate set $I$ is *sequentially sufficient* if the optimal policy using full observation history equals the optimal policy obtained when histories are restricted to $I$-coordinates.
+:::
+
+::: problem
+[]{#prob:sequential-sufficiency label="prob:sequential-sufficiency"} **Input:** $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$.\
+**Question:** Is $I$ sequentially sufficient?
+:::
+
+::: definition
+[]{#def:sequential-anchor-sufficient label="def:sequential-anchor-sufficient"} A coordinate set $I$ is *sequentially anchor-sufficient* if there exists an anchor state whose $I$-agreement class preserves the optimal action set throughout that class.
+:::
+
+::: problem
+[]{#prob:sequential-anchor-sufficiency label="prob:sequential-anchor-sufficiency"} **Input:** $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$.\
+**Question:** Is $I$ sequentially anchor-sufficient?
+:::
+
+::: problem
+[]{#prob:sequential-minimum-sufficient label="prob:sequential-minimum-sufficient"} **Input:** $\mathcal{D}_{\mathrm{seq}}$ and $k\in\mathbb{N}$.\
+**Question:** Does there exist a sequentially sufficient coordinate set $I$ with $|I|\le k$?
+:::
+
+::: proposition
+[]{#prop:sequential-minimal-relevant label="prop:sequential-minimal-relevant"} For any minimal sequentially sufficient set $I$, a coordinate lies in $I$ if and only if it is relevant for the underlying decision boundary.
+:::
+
+::: proof
+*Proof.* In the current formalization, sequential sufficiency is defined as sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting. ◻
+:::
+
+## PSPACE-Completeness
+
+The sequential regime is the strongest of the three because hidden information can matter not only for the current optimizer but for the future evolution of the decision problem. The same relevance question therefore becomes a policy-comparison problem over dynamic information states. Static certification asks whether bad state pairs exist; stochastic certification asks whether conditional averages cross a threshold; sequential certification asks whether omitted coordinates can change the value of future contingent choices. That added temporal contingency is exactly what the TQBF reduction exploits.
+
+::: theorem
+[]{#thm:sequential-pspace label="thm:sequential-pspace"} SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
+:::
+
+::: proof
+*Proof.* For membership, finite-horizon policy comparison for POMDP-style models is decidable in polynomial space by dynamic programming over belief and state summaries.
+
+For hardness, reduce TQBF. Encode alternating quantifiers as alternating controlled and adversarial transitions, and let the terminal reward evaluate the quantified formula. Then full-history sufficiency holds exactly when the quantified instance is true. ◻
+:::
+
+::: proposition
+[]{#prop:sequential-anchor-refinement label="prop:sequential-anchor-refinement"} If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.
+:::
+
+::: proof
+*Proof.* If optimal-action sets are preserved for every pair of states agreeing on $I$, then fixing any anchor state immediately yields preservation across its entire $I$-agreement class. ◻
+:::
+
+::: theorem
+[]{#thm:sequential-anchor-hard label="thm:sequential-anchor-hard"} The sequential anchor query is PSPACE-hard.
+:::
+
+::: proof
+*Proof.* Reuse the TQBF reduction for sequential sufficiency with $I=\emptyset$. At empty information, sequential anchor sufficiency is equivalent to global preservation of the optimal-action set, so the same construction yields $$\mathrm{TQBF}(q)
+\iff
+\mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).$$ Hence TQBF many-one reduces to the sequential anchor query. ◻
+:::
+
+::: theorem
+[]{#thm:sequential-minimum-hard label="thm:sequential-minimum-hard"} The sequential minimum-sufficient-set query is PSPACE-hard.
+:::
+
+::: proof
+*Proof.* Reduce TQBF to the $k=0$ slice. There exists a sequentially sufficient set of size at most $0$ iff the empty set itself is sequentially sufficient. The same construction yields PSPACE-hardness for SEQUENTIAL-MINIMUM-SUFFICIENT-SET. ◻
+:::
+
+::: proposition
+[]{#prop:sequential-explicit-search label="prop:sequential-explicit-search"} For finite instances, the development contains counted exhaustive-search procedures for sequential sufficiency, sequential anchor sufficiency, and sequential minimum sufficiency. Their certified step bounds are respectively $O(|S|^2)$, $O(|S|)$, and $O(2^n)$.
+:::
+
+::: proof
+*Proof.* The sufficiency search scans for an agreeing pair of states with different optimal sets; the anchor search scans over candidate anchor states; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound. ◻
+:::
+
+## Tractable Subcases
+
+::: proposition
+[]{#prop:sequential-tractable label="prop:sequential-tractable"} The sequential sufficiency problem is polynomial-time solvable under each of the following restrictions:
+
+1.  full observability (MDP case),
+
+2.  bounded horizon,
+
+3.  tree-structured transition systems,
+
+4.  deterministic transitions.
+:::
+
+::: proof
+*Proof.* Each restriction reduces policy search to dynamic programming over a polynomially bounded representation. ◻
+:::
+
+## Bridge from Stochastic
+
+The bridge from the stochastic regime is strict. A one-shot distribution can hide no temporal contingency; once dynamics are introduced, latent information can become decision-relevant later even when it appears irrelevant at time zero.
+
+::: proposition
+[]{#prop:stochastic-not-sequential label="prop:stochastic-not-sequential"} There exist instances where $I$ is sufficient in the stochastic one-shot sense but fails to be sufficient once temporal dynamics are introduced.
+:::
+
+::: proof
+*Proof.* Construct a process in which the same one-step expected optimizer is preserved under $I$, but hidden-state memory affects future information states and therefore optimal policies. The temporal dependence blocks one-shot sufficiency transfer. ◻
+:::
+
+With the static, stochastic, and sequential classifications in place, the next section consolidates them into a single regime hierarchy and makes the escalation explicit: counterexample exclusion, then counting comparison, then policy preservation over time.
+
+
+# Regime Hierarchy {#sec:regime-hierarchy}
+
+The static, stochastic, and sequential formulations are the paper's central organizing object. The same exact certification question is posed in three increasingly expressive models, and the resulting complexity classes separate accordingly. Read as a complexity matrix, the addition of probability lifts exact certification from coNP to PP, and the addition of time lifts it again to PSPACE.
+
+## Complexity Matrix
+
+::: center
+  Regime          Sufficiency        Minimum             Anchor
+  ------------ ----------------- --------------- -----------------------
+  Static         coNP-complete    coNP-complete   $\Sigma_2^P$-complete
+  Stochastic      PP-complete        PP-hard             PP-hard
+  Sequential    PSPACE-complete    PSPACE-hard         PSPACE-hard
+:::
+
+This table is the paper's compact summary. Adding probability lifts exact certification from coNP to PP, and adding time lifts it again to PSPACE.
+
+The stochastic and sequential anchor and minimum variants are classified with hardness lower bounds only; the explicit-state finite-search deciders in the artifact provide upper bounds under the explicit regime but do not constitute general PP or PSPACE membership proofs under the succinct encoding.
+
+::: theorem
+[]{#thm:regime-main label="thm:regime-main"} Under the encoding model of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, exact relevance certification admits a strict regime-sensitive hierarchy. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, sufficiency is PP-complete and the minimum and anchor queries are PP-hard. In the sequential regime, sufficiency is PSPACE-complete and the minimum and anchor queries are PSPACE-hard. Under standard complexity assumptions, this yields strict inclusions $$\text{static} \subset \text{stochastic} \subset \text{sequential}.$$
+:::
+
+::: proof
+*Proof.* The matrix entries are exactly Theorems [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"}, [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"}, [\[thm:anchor-sigma2p\]](#thm:anchor-sigma2p){reference-type="ref" reference="thm:anchor-sigma2p"}, [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}, [\[thm:stochastic-anchor-hard\]](#thm:stochastic-anchor-hard){reference-type="ref" reference="thm:stochastic-anchor-hard"}, [\[thm:stochastic-minimum-hard\]](#thm:stochastic-minimum-hard){reference-type="ref" reference="thm:stochastic-minimum-hard"}, [\[thm:sequential-pspace\]](#thm:sequential-pspace){reference-type="ref" reference="thm:sequential-pspace"}, [\[thm:sequential-anchor-hard\]](#thm:sequential-anchor-hard){reference-type="ref" reference="thm:sequential-anchor-hard"}, and [\[thm:sequential-minimum-hard\]](#thm:sequential-minimum-hard){reference-type="ref" reference="thm:sequential-minimum-hard"}. The strict inclusions then follow from the standard class separations invoked in Theorems [\[thm:static-stochastic-strict\]](#thm:static-stochastic-strict){reference-type="ref" reference="thm:static-stochastic-strict"} and [\[thm:stochastic-sequential-strict\]](#thm:stochastic-sequential-strict){reference-type="ref" reference="thm:stochastic-sequential-strict"}. ◻
+:::
+
+## Strict Inclusions
+
+::: theorem
+[]{#thm:static-stochastic-strict label="thm:static-stochastic-strict"} Under standard assumptions (in particular $P\ne coNP$), the stochastic regime strictly extends the static regime in computational complexity.
+:::
+
+::: proof
+*Proof.* Static sufficiency checking is coNP-complete (Theorem [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"}), while stochastic sufficiency checking is PP-complete (Theorem [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}). Under the stated assumptions, this yields strict separation in regime difficulty. ◻
+:::
+
+::: theorem
+[]{#thm:stochastic-sequential-strict label="thm:stochastic-sequential-strict"} Under standard assumptions (in particular $P\ne PP$), the sequential regime strictly extends the stochastic regime in computational complexity.
+:::
+
+::: proof
+*Proof.* Stochastic sufficiency is PP-complete (Theorem [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}), while sequential sufficiency is PSPACE-complete (Theorem [\[thm:sequential-pspace\]](#thm:sequential-pspace){reference-type="ref" reference="thm:sequential-pspace"}). The class gap yields strict regime inclusion under the stated assumptions. ◻
+:::
+
+## Integrity-Resource Bounds
+
+The hierarchy has a methodological consequence as well: as one moves upward in the hierarchy, exact certification becomes less compatible with fixed polynomial resource budgets.
+
+::: proposition
+[]{#prop:abstention-frontier label="prop:abstention-frontier"} For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along $$\text{static} \to \text{stochastic} \to \text{sequential}.$$
+:::
+
+::: proof
+*Proof.* As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes. ◻
+:::
+
+
 # Encoding Dichotomy and ETH Lower Bounds {#sec:dichotomy}
 
-The hardness results of Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} apply to worst-case instances under the succinct encoding. This section states a dichotomy that separates an explicit-state upper bound from a succinct-encoding lower bound. The dichotomy and ETH reduction chain are machine-verified in Lean 4.
+The regime hierarchy identifies where exact relevance certification sits in the standard complexity landscape. This section extracts the complementary algorithmic message: under the encodings of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, there is a genuine dichotomy between explicit-state instances whose true relevant support is small and succinct instances whose relevant support is extensive. The former admit direct algorithms; the latter inherit exponential lower bounds under ETH. The practical takeaway is a sharp phase transition: logarithmic relevant support can still be certified exactly in polynomial time under explicit encodings, while linear relevant support under succinct encodings already forces ETH-conditioned exponential cost.
 
 #### Model note.
 
@@ -265,7 +672,7 @@ When $\varphi$ has $n$ variables, the constructed problem has $n+1$ coordinates.
 ## Phase Transition
 
 ::: corollary
-[]{#cor:phase-transition label="cor:phase-transition"} There is a sharp transition between tractable and intractable regimes at the logarithmic scale (with respect to the encodings in Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}):
+[]{#cor:phase-transition label="cor:phase-transition"} The tractable-hard boundary for exact certification is sharp at the logarithmic scale (with respect to the encodings in Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}):
 
 -   If $k^* = O(\log N)$, SUFFICIENCY-CHECK is polynomial in $N$ under the explicit-state encoding
 
@@ -286,11 +693,11 @@ The transition point is where $2^{k^*} = N^{k^*/\log N}$ stops being polynomial 
 Under ETH, the lower bound is asymptotically tight in the succinct encoding. The explicit-state upper bound is tight in the sense that it matches enumeration complexity in $N$.
 :::
 
-This dichotomy explains why some domains admit tractable model selection (few relevant variables) while others require heuristics (many relevant variables). In the succinct regime, the reduction chain gives a class-level coNP statement together with a worst-case $2^{\Omega(n)}$ lower bound under the declared ETH assumption.
+This dichotomy explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
 
-#### Bridge theorems.
+#### Interpretation.
 
-The ETH chain composes with structural rank characterizations to yield the complete complexity picture. Specifically: BR1 combines ETH hardness with structural rank to show that problems with maximal srank (all coordinates relevant) inherit the exponential lower bound; CC1 composes the dichotomy theorem with ETH to give the full classification; DQ5 combines the TAUTOLOGY reduction with ETH to establish coNP-completeness plus exponential hardness. These bridge theorems connect the complexity cluster (ETH, reductions) to the geometric cluster (srank, sufficiency) in the proof graph.
+The ETH chain composes with the structural rank viewpoint introduced earlier. When relevance is extensive, the same objects that drive the regime hierarchy also force the exponential obstruction in the succinct model. In that sense, the dichotomy theorem complements the hierarchy rather than standing apart from it: the hierarchy locates exact certification in the standard class landscape, while the dichotomy explains when explicit structure can still make exact certification feasible.
 
 ::: remark
 The ETH lower bound is stated in the succinct circuit encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, where the utility function $U: A \times S \to \mathbb{R}$ is represented by a Boolean circuit computing $\mathbf{1}[U(a,s) > \theta]$ for threshold comparisons. In this model:
@@ -307,7 +714,7 @@ This linear size preservation is essential for ETH transfer. In the explicit enu
 
 # Tractable Special Cases {#sec:tractable}
 
-We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. The tractability results below state the model assumption explicitly. All results are formalized in `DecisionQuotient/Tractability/` and verified in Lean 4 with no `sorry` placeholders.
+We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. The tractability results below state the model assumption explicitly.
 
 ::: theorem
 []{#thm:tractable label="thm:tractable"} SUFFICIENCY-CHECK is polynomial-time solvable in the following cases:
@@ -325,7 +732,7 @@ We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){refer
 6.  **Coordinate symmetry:** Utility is invariant under coordinate permutations. Complexity: $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$ orbit-type pairs.
 :::
 
-The following subsections provide formal definitions, reduction theorems, and prose descriptions for each tractable subcase. For each result, we cite standard algorithms where applicable and prove only the paper-specific reductions in Lean.
+The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
 
 ## Bounded Actions {#sec:tract-bounded}
 
@@ -351,12 +758,6 @@ A decision problem has *bounded actions* with parameter $k$ if $|A| \leq k$ for 
 When $k$ is constant, this is polynomial in $|S|$. ◻
 :::
 
-**Lean formalization:** `DecisionQuotient/Tractability/BoundedActions.lean`
-
--   L10: Correctness of the algorithm.
-
--   L2: Complexity bound $|S|^2 \cdot (1 + k^2)$.
-
 ## Separable Utility (Rank 1) {#sec:tract-separable}
 
 Separable utility decouples actions from states, making sufficiency trivial.
@@ -372,14 +773,6 @@ Separable utility decouples actions from states, making sufficiency trivial.
 ::: proof
 *Proof.* If $U(a, s) = f(a) + g(s)$, then: $$\operatorname{Opt}(s) = \arg\max_{a \in A} [f(a) + g(s)] = \arg\max_{a \in A} f(a)$$ The optimal action depends only on $f$, not on $s$. Hence $\operatorname{Opt}(s) = \operatorname{Opt}(s')$ for all $s, s'$, making any $I$ (including $\emptyset$) sufficient. ◻
 :::
-
-**Lean formalization:** `DecisionQuotient/Tractability/SeparableUtility.lean`
-
--   SeparableUtility: Structure encoding the separability condition.
-
--   L8: Optimal actions are state-independent.
-
--   L8: The empty set is sufficient.
 
 ## Low Tensor Rank {#sec:tract-tensor}
 
@@ -411,16 +804,6 @@ Separable utility (Definition [\[def:separable\]](#def:separable){reference-typ
  ◻
 :::
 
-**Lean formalization:** `DecisionQuotient/Tractability/SeparableUtility.lean`
-
--   TensorRankDecomposition: Structure encoding rank-$R$ decomposition.
-
--   L14: Axiom citing tensor network algorithms [@kolda2009tensor; @cichocki2016tensor].
-
--   L4: Reduction theorem for factored computation.
-
--   L6: Tractability via factored sufficiency check.
-
 ## Tree-Structured Dependencies {#sec:tract-tree}
 
 When coordinate dependencies form a tree, dynamic programming yields polynomial-time sufficiency checking.
@@ -446,12 +829,6 @@ When coordinate dependencies form a tree, dynamic programming yields polynomial-
 
 A coordinate is relevant iff varying its value changes the optimal action set. ◻
 :::
-
-**Lean formalization:** `DecisionQuotient/Tractability/TreeStructure.lean`
-
--   TreeStructured: Predicate encoding tree dependency structure.
-
--   L16: Axiom citing standard DP on trees.
 
 ## Bounded Treewidth {#sec:tract-treewidth}
 
@@ -483,20 +860,6 @@ The tree-structured case generalizes to bounded treewidth interaction graphs via
 The reduction is polynomial; the algorithm is standard. ◻
 :::
 
-**Lean formalization:** `DecisionQuotient/Tractability/TreeStructure.lean`
-
--   InteractionGraph: Definition of the interaction graph.
-
--   PairwiseUtility: Structure encoding pairwise decomposition.
-
--   L16: Axiom for treewidth (citing Bodlaender [@bodlaender1993tourist]).
-
--   L4: Axiom citing CSP algorithms.
-
--   L12: Paper-specific reduction theorem.
-
--   L2: Tractability statement combining reduction and algorithm.
-
 ## Coordinate Symmetry {#sec:tract-symmetry}
 
 When utility is invariant under coordinate permutations, the effective state space collapses to orbit types.
@@ -518,7 +881,7 @@ When utility is invariant under coordinate permutations, the effective state spa
 :::
 
 ::: proof
-*Proof.* **If:** Permuting coordinates preserves the multiset of values. **Only if:** If $s$ and $s'$ have the same multiset of values, we can construct a permutation mapping each occurrence in $s$ to the corresponding occurrence in $s'$. The Lean proof constructs this permutation explicitly via a fiber bundle argument. ◻
+*Proof.* **If:** Permuting coordinates preserves the multiset of values. **Only if:** If $s$ and $s'$ have the same multiset of values, we can construct a permutation mapping each occurrence in $s$ to the corresponding occurrence in $s'$. ◻
 :::
 
 ::: theorem
@@ -541,22 +904,6 @@ For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with *differ
 For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$. ◻
 :::
 
-**Lean formalization:** `DecisionQuotient/Tractability/Dimensional.lean`
-
--   DimensionalStateSpace: Definition of $k$-ary $d$-dimensional state space.
-
--   SymmetricUtility: Predicate for coordinate-permutation invariance.
-
--   orbitType: Function computing the orbit type (histogram).
-
--   L6: **(Core result)** Orbit types equal iff permutation exists.
-
--   L12: Optimal actions constant on orbits.
-
--   L10: Reduction to cross-orbit pairs.
-
--   L14: $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$ bound.
-
 ## Practical Implications {#sec:tract-practical}
 
 The six tractable cases correspond to common modeling scenarios:
@@ -575,46 +922,20 @@ The six tractable cases correspond to common modeling scenarios:
 
 For problems given in the succinct encoding without these structural restrictions, the hardness results of Section [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} apply, justifying heuristic approaches.
 
-## Verification Philosophy {#sec:tract-verification}
 
-The Lean formalization follows a consistent pattern for each tractable case:
+# Implications for Exact Certification {#sec:engineering-corollaries}
 
-1.  **Define the structural restriction** as a Lean structure or predicate.
+The regime hierarchy matters for more than class labels. The same exact question, which coordinates can be omitted without changing the decision boundary, reappears when one tries to simplify models, build reliable certifiers, check witnesses, approximate exact minimizers, or compress a central interface. This section collects those consequences in one place. The common lesson is that exact relevance is expensive to certify, subject to a trilemma in the hard regime, and easy to displace rather than remove.
 
-2.  **State axioms for standard algorithms** (DP on trees, CSP on bounded treewidth, tensor contraction) with citations to the literature.
-
-3.  **Prove the paper-specific reduction** showing SUFFICIENCY-CHECK satisfies the preconditions of the standard algorithm.
-
-4.  **Combine** to obtain the tractability statement.
-
-This separation ensures that:
-
--   Standard results are cited, not re-proved (avoiding redundant mechanization).
-
--   Paper-specific claims are fully verified (the reductions are where errors hide).
-
--   The formalization is maintainable (algorithm updates don't require re-verification).
-
-The philosophy: *mechanize what requires mechanical verification for rational belief; cite what is standard*.
-
-
-# Hardness Transfers and Exact-Simplification Consequences {#sec:engineering-corollaries}
-
-The complexity results of Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} through [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} transfer directly to exact simplification tasks. This section records hardness transfers and exact-simplification consequences of the preceding theorems when the coordinate model is used to represent configuration, feature, or interface choices.
-
-Every claim in this section is model-conditional. The conclusions apply when a design problem is faithfully represented as a decision problem with coordinate structure and when the relevant computational cost is the cost of certifying sufficiency or finding a minimal sufficient set.
-
-## Hardness Transfer to Configuration Simplification
+## Exact Simplification and Over-Specification
 
 ::: proposition
-[]{#prop:config-sufficiency label="prop:config-sufficiency"} Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite set of observable behaviors. Suppose each configuration state determines the subset of behaviors that remain feasible or optimal. Then the question $$\text{``Does parameter subset } I \subseteq P \text{ preserve all decision-relevant behavior?''}$$ is an instance of [Sufficiency-Check]{.smallcaps}.
+[]{#prop:config-sufficiency label="prop:config-sufficiency"} Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite set of observable behaviors. Suppose each configuration state determines the subset of behaviors that remain feasible or optimal. Then the question $$\text{``Does parameter subset } I \subseteq P \text{ preserve all decision-relevant behavior?''}$$ is an instance of [[Sufficiency-Check]{.smallcaps}]{.nodecor}.
 :::
 
 ::: proof
 *Proof.* Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking actions $A=B$, coordinate domains $X_i$ equal to the domains of the parameters $p_i$, and defining $U(b,s)=1$ exactly when behavior $b$ is realized or admissible under configuration state $s$. Then $\operatorname{Opt}(s)$ is the behavior set induced by $s$, and coordinate subset $I$ is sufficient exactly when agreement on the parameters in $I$ forces agreement on the induced optimal-behavior set. ◻
 :::
-
-## Exact-Minimization Impossibility
 
 ::: corollary
 []{#cor:no-general-minimizer label="cor:no-general-minimizer"} Assuming $P\neq coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
@@ -623,12 +944,6 @@ Every claim in this section is model-conditional. The conclusions apply when a d
 ::: proof
 *Proof.* Such a procedure would solve [Minimum-Sufficient-Set]{.smallcaps} in polynomial time for arbitrary succinctly encoded instances, contradicting Theorem [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"} under the assumption $P\neq coNP$. ◻
 :::
-
-::: remark
-This does not rule out useful tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. Domain restrictions of the kind isolated in Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} remain viable.
-:::
-
-## Over-Specification Under Hardness
 
 ::: proposition
 []{#prop:rational-overspecification label="prop:rational-overspecification"} Consider a design process in which:
@@ -639,22 +954,18 @@ This does not rule out useful tools. It rules out a fully general exact minimize
 
 3.  carrying an extra parameter incurs only linear or otherwise low-order maintenance overhead.
 
-Then, for sufficiently expressive succinctly encoded instances, retaining extra parameters can be an economically rational response to the hardness of exact minimization.
+Then, for sufficiently expressive succinctly encoded instances, retaining extra parameters can minimize total cost under the stated cost model.
 :::
 
 ::: proof
-*Proof.* By Theorems [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"} and [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"}, exact sufficiency certification and exact minimization are coNP-complete in the general succinct regime. By Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"}, this hardness is accompanied by exponential lower bounds under ETH in the linear-support regime. If the cost of carrying extra parameters grows only linearly while exact minimization inherits worst-case exponential cost, then beyond a problem-dependent threshold the latter dominates the former. Under that cost model, over-specification is a rational hedge against intractable exact pruning. ◻
+*Proof.* By Theorems [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"} and [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"}, exact sufficiency certification and exact minimization are coNP-complete in the general succinct regime. By Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"}, this hardness is accompanied by exponential lower bounds under ETH in the linear-support regime. If the cost of carrying extra parameters grows only linearly while exact minimization inherits worst-case exponential cost, then beyond a problem-dependent threshold the latter dominates the former. Under that cost model, retaining extra parameters minimizes total cost. ◻
 :::
 
 ::: remark
-The conclusion is not that over-specification is always best. It is that, in the absence of tractable structure, exact minimality need not be a computationally reasonable target.
+This does not rule out useful simplification tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. The structured regimes isolated in Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} remain viable precisely because they restrict the source of hardness.
 :::
 
-## Tractability Boundary for Simplification
-
-The tractable regimes of Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"} explain when exact simplification is computationally realistic. When bounded action sets, separable utility, low tensor rank, tree structure, bounded treewidth, or coordinate symmetry are present, exact certification becomes feasible. Outside such regimes, approximate selection, conservative over-inclusion, and domain-specific simplification strategies are often better aligned with the complexity landscape than unconditional demands for exact minimality.
-
-## Exact-Certification Competence by Regime
+## Regime-Limited Exact Certification
 
 ::: proposition
 []{#prop:competence-by-regime label="prop:competence-by-regime"} Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections [\[sec:hardness\]](#sec:hardness){reference-type="ref" reference="sec:hardness"} and [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"}. In the structured regimes of Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"}, exact certification becomes available in polynomial time.
@@ -664,14 +975,12 @@ The tractable regimes of Section [\[sec:tractable\]](#sec:tractable){reference-
 *Proof.* The negative side is given by Theorems [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"} and [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"}, together with the ETH-conditioned lower bounds summarized in Section [\[sec:dichotomy\]](#sec:dichotomy){reference-type="ref" reference="sec:dichotomy"}. The positive side is given by the tractability results of Section [\[sec:tractable\]](#sec:tractable){reference-type="ref" reference="sec:tractable"}, which provide explicit polynomial-time certification procedures under structural restrictions. ◻
 :::
 
-::: remark
-This is the only competence distinction needed in Paper A: not a general theory of reporting or abstention, but a theorem-driven separation between regimes in which exact certification is computationally available and regimes in which it is not.
-:::
+The next three subsections sharpen that basic regime distinction in different directions: exact reliability under polynomial budgets, witness-checking and approximation limits, and the cost of compressing a central interface while leaving exact relevance unresolved.
 
 
-# Integrity-Competence Impossibility {#sec:integrity-competence}
+## Integrity, Competence, and the Trilemma of Exact Certification {#sec:integrity-competence}
 
-This section gives an impossibility theorem for reliable exact certification under polynomial budgets in the hard regime.
+Once exact certification is hard, the natural systems question is not only whether the predicate can be computed, but whether a solver can stay exact, non-abstaining, and polynomial-budgeted on the whole hard regime. The theorem below shows that those three goals are incompatible. We refer to this incompatibility as the *trilemma of exact certification*.
 
 ::: definition
 For exact sufficiency on a declared regime $\Gamma$, a certifying solver is a pair $(Q,V)$ where:
@@ -702,7 +1011,7 @@ Integrity and competence are distinct: integrity constrains what can be asserted
 :::
 
 ::: theorem
-Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $P\neq coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
+[]{#thm:integrity-resource label="thm:integrity-resource"} Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $P\neq coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
 :::
 
 ::: proof
@@ -720,15 +1029,15 @@ Under the assumptions of the theorem, exact reliability claims are impossible on
 :::
 
 ::: corollary
-In the hard regime, a solver cannot simultaneously maintain integrity, full exact coverage, and polynomial budgets. Operationally: abstain, weaken guarantees, or overclaim.
+In the hard regime, no exact certifier can simultaneously be sound, complete on all in-scope instances, and polynomial-budgeted. Operationally, one of three concessions is unavoidable: abstain on some instances, weaken the guarantee, or risk overclaiming.
 :::
 
 
-# Witness-Checking and Approximation Consequences {#sec:witness-duality}
+## Witness and Approximation Limits {#sec:witness-duality}
 
-This section isolates the verification bottleneck behind exact sufficiency certification and states the approximation-hardness consequences. Two different theorems are needed. The first is a gap theorem on the shifted hard family: it shows that any uniform factor guarantee on that explicit family already has enough power to decide tautology by thresholding output size. The second is an exact equivalence theorem on a separate set-cover gadget family: it shows that minimum sufficiency and set cover coincide there, so approximation guarantees and impossibility results transfer without loss. Keeping these apart matters. The gap theorem gives an internal obstruction family. The set-cover theorem gives the exact transfer bridge.
+Hardness does not disappear when one weakens exact minimization to witness checking or approximation. The first theorem shows that even the empty-set core can force exponential witness inspection. The remaining results then show two complementary approximation obstructions: a direct gap obstruction on the shifted hard family and an exact optimization transfer on the set-cover gadget family.
 
-## Verification Lower Bound
+### Witness-Checking Lower Bound
 
 ::: theorem
 []{#thm:witness-lower-bound-4 label="thm:witness-lower-bound-4"} For Boolean decision problems with $n$ coordinates, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
@@ -750,7 +1059,7 @@ If a checker inspects fewer than $2^{n-1}$ slots, at least one slot $z^\star$ is
 But YES is an empty-set-sufficient instance, whereas NO$_{z^\star}$ is not. So a common answer cannot be sound on both inputs. Hence any sound worst-case checker must inspect every slot, i.e., at least $2^{n-1}$ witness pairs. ◻
 :::
 
-## Approximation Gap on the Shifted Hard Family
+### Approximation Gap on the Shifted Family
 
 For the shifted reduction family used in the mechanization, the optimum support size exhibits a sharp gap: $$\mathrm{OPT}(\varphi)=1 \quad \text{if $\varphi$ is a tautology,}
 \qquad
@@ -770,8 +1079,6 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any solver that, on every shifted-
 Therefore $|\mathcal{A}(\varphi)|\le \rho$ holds exactly in the tautology case. ◻
 :::
 
-## Counted-Runtime Threshold Decider
-
 ::: theorem
 Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor-$\rho$ solver for the shifted minimum-sufficient-set family. Then the derived procedure $$\varphi \longmapsto \mathbf{1}\!\left\{\,|\mathcal{A}(\varphi)|\le \rho\,\right\}$$ is a counted polynomial-time tautology decider on the gap regime $\rho<n+1$.
 :::
@@ -782,7 +1089,7 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor
 For runtime, the derived decider performs two operations: one call to the counted polynomial-time solver $\mathcal{A}$, followed by one cardinality comparison against the fixed threshold $\rho$. The second step contributes only constant additive overhead relative to the solver run. Hence the derived decision procedure remains counted polynomial-time. ◻
 :::
 
-## Set-Cover Transfer Boundary
+### Set-Cover Transfer Boundary
 
 ::: theorem
 On the mechanized gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
@@ -806,12 +1113,12 @@ Any factor guarantee or instance-dependent ratio guarantee for minimum sufficien
 *Proof.* Compose the candidate minimum-sufficiency solver with the gadget translation and then use the exact equivalence theorem above. Because feasible sets correspond bijectively and preserve cardinality, both approximation factors and instance-dependent ratios are unchanged. ◻
 :::
 
-The point is therefore two exact reductions with different roles. The shifted family gives a direct gap obstruction: factor approximation already decides tautology there. The set-cover family gives an exact optimization equivalence: sufficiency is cover there. That is why future logarithmic inapproximability theorems for set cover can be imported cleanly once they are available. The current boundary is only that the external set-cover hardness theorem itself is not yet part of this library.
+The two reductions serve different purposes. The shifted family gives a direct gap obstruction: factor approximation already decides tautology there. The set-cover family gives an exact optimization equivalence: sufficiency is cover there. Together they show that weakening exact minimization to witness checking or approximation does not dissolve the core obstruction.
 
 
-# Simplicity Tax and Hardness Conservation {#sec:simplicity-tax}
+## Externalized Relevance and Simplicity Tax {#sec:simplicity-tax}
 
-This section formalizes the cost of ignoring decision-relevant coordinates. The core object is not an arbitrary partition chosen by the analyst, but the canonical exact-support invariant $R(\mathcal{D})$ identified earlier in the paper. By Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"}, every exact behavior-preserving representation must account for that same set. The point of the present section is to make one consequence explicit: choosing a smaller architectural interface $A_M$ does not destroy omitted exact relevance. It only changes where that relevance must be paid for.
+The final implication concerns architectural compression. The main point is interpretive rather than algebraic: shrinking a central interface does not remove exact relevance; it relocates the unresolved part of that relevance to some other part of the system. The simplicity tax is the name for that externalized burden.
 
 ::: definition
 For decision problem $\mathcal{D}$, let $$R(\mathcal{D}) := \{i \in \{1,\ldots,n\}: i \text{ is relevant}\}$$ as in Definition [\[def:relevant\]](#def:relevant){reference-type="ref" reference="def:relevant"}.
@@ -827,28 +1134,24 @@ For a model $M$ with native coordinate set $A_M \subseteq \{1,\ldots,n\}$: $$\ma
 $$\mathrm{simplicityTax}(M,\mathcal{D}) := |R(\mathcal{D}) \setminus A_M|.$$
 :::
 
-::: theorem
-For every finite-coordinate pair $(M,\mathcal{D})$: $$\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
+::: proposition
+For every finite-coordinate pair $(M,\mathcal{D})$, $$\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
 =
-\mathrm{intrinsicDOF}(\mathcal{D}),$$ hence in particular $$\mathrm{centralDOF}(M,\mathcal{D}) + \mathrm{simplicityTax}(M,\mathcal{D})
-\ge
 \mathrm{intrinsicDOF}(\mathcal{D}).$$
 :::
 
 ::: proof
-*Proof.* Partition $R(\mathcal{D})$ into handled and unhandled parts: $$R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M)\ \dot\cup\ (R(\mathcal{D}) \setminus A_M),$$ where the union is disjoint by construction. Taking cardinalities gives $$|R(\mathcal{D})|
-=
-|R(\mathcal{D}) \cap A_M|
-+
-|R(\mathcal{D}) \setminus A_M|.$$ Substituting the three definitions yields $$\mathrm{intrinsicDOF}(\mathcal{D})
-=
-\mathrm{centralDOF}(M,\mathcal{D})
-+
-\mathrm{simplicityTax}(M,\mathcal{D}),$$ which is the claimed equality. The displayed inequality is then immediate. ◻
+*Proof.* Immediate from the partition $R(\mathcal{D}) = (R(\mathcal{D}) \cap A_M) \;\dot\cup\; (R(\mathcal{D}) \setminus A_M)$. ◻
 :::
+
+In other words, central simplification changes where exact relevance is handled, not how much exact relevance the deployment must ultimately account for.
 
 ::: proposition
 If each unresolved relevant coordinate induces one unit of per-site external work, then for $N$ decision sites: $$\mathrm{ExternalWork}(N) = N \cdot \mathrm{simplicityTax}(M,\mathcal{D}).$$
+:::
+
+::: proof
+*Proof.* Each site pays one unit for each unresolved relevant coordinate, so the total cost is the number of sites times the number of unresolved relevant coordinates. ◻
 :::
 
 ::: theorem
@@ -856,7 +1159,7 @@ Let $H_{\mathrm{central}}>0$ be one-time centralization cost and $\lambda>0$ the
 :::
 
 ::: proof
-*Proof.* Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. The complete model is cheaper exactly when $$H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D}).$$ Because $\lambda>0$ and $\mathrm{simplicityTax}(M,\mathcal{D})>0$, dividing both sides by their product gives $$N > \frac{H_{\mathrm{central}}}{\lambda \cdot \mathrm{simplicityTax}(M,\mathcal{D})}.$$ This is precisely the stated threshold. ◻
+*Proof.* Repeated external handling costs $\lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$, while the complete model costs $H_{\mathrm{central}}$ once. Solving the strict inequality $H_{\mathrm{central}} < \lambda N\cdot \mathrm{simplicityTax}(M,\mathcal{D})$ for $N$ gives the stated threshold. ◻
 :::
 
 ::: corollary
@@ -869,223 +1172,103 @@ Fix a model $M$ and decision problem $\mathcal{D}$. Coordinates in $R(\mathcal{D
 So omitted relevant coordinates must be handled somewhere outside the central interface. In the hard exact regime, the witness lower bound shows that exact certification can require exponentially many witness checks, and the integrity-resource theorem shows that polynomial-budget exact competence is unavailable under $P\neq coNP$. Therefore this external burden cannot, in general, be eliminated for free by a polynomial-budget exact certifier. ◻
 :::
 
-::: corollary
-If $\mathrm{simplicityTax}(M,\mathcal{D})>0$, externalized cost is unbounded in deployment scale $N$.
-:::
-
 
 # Related Work {#sec:related}
 
-## Formalized Complexity Theory
+## Formalized Complexity Theory and Mechanized Reductions
 
-Machine verification of complexity-theoretic results remains sparse compared to other areas of mathematics. We survey existing work and position our contribution.
+Machine verification of complexity-theoretic arguments remains substantially less mature than formal verification in algebra, analysis, or standard algorithmics. Forster et al. [@forster2019verified] developed certified machine models and computability infrastructure in Coq, and Kunze et al. [@kunze2019formal] formalized major proof-theoretic components in Coq as well. In Isabelle/HOL, much of the mature work has centered on verified algorithms and resource analysis for concrete procedures rather than on families of hardness reductions [@nipkow2002isabelle; @haslbeck2021verified]. Lean 4 and Mathlib provide increasingly capable foundations for mechanized finite mathematics and computation [@mathlib2020; @moura2021lean4], but reusable reduction suites for coNP/$\Sigma_2^P$/PP/PSPACE-style arguments remain relatively rare.
 
-#### Coq formalizations.
+The present artifact is intended as a problem-specific certification layer within that broader program. It does not claim to settle formal complexity theory in full generality; instead, it internalizes the reduction-correctness lemmas, size-bounded hardness packages, exact finite deciders, counted-search procedures, tractability wrappers, and explicit-state upper-bound interfaces needed for the decision-relevance predicates studied here. In that sense the contribution is closest to a certified reduction-and-decision core for one theorem family rather than to a general-purpose complexity library.
 
-Forster et al. [@forster2019verified] developed a Coq library for computability theory, including undecidability proofs. Their work focuses on computability rather than complexity classes. Kunze et al. [@kunze2019formal] formalized the Cook-Levin theorem in Coq, proving SAT is NP-complete. Our work extends this methodology to coNP-completeness and approximation hardness.
+## Rough Sets, Reducts, and Attribute Reduction
 
-#### Isabelle/HOL.
+The closest classical neighbor is rough-set theory and its large literature on reducts and attribute reduction [@pawlak1982rough; @jensen2004semantics; @jensen2008rough]. That literature asks when a smaller attribute set preserves discernibility or decision-table structure, and it has developed both exact and heuristic methods for reduct computation. There is an obvious family resemblance to the static regime of the present paper: both settings ask which coordinates can be removed without losing decision distinctions.
 
-Nipkow and colleagues formalized substantial algorithm verification in Isabelle [@nipkow2002isabelle], but complexity-theoretic reductions are less developed. Recent work on algorithm complexity [@haslbeck2021verified] provides time bounds for specific algorithms rather than hardness reductions.
+The difference is not merely terminological. Rough-set reducts are typically formulated relative to indiscernibility relations or decision tables, whereas the object here is the optimizer map of a decision problem and the induced exact preservation of optimal-action sets. That shift matters computationally. In the present formulation, insufficiency has short counterexample witnesses, sufficiency is universal over such witnesses, and minimum sufficiency collapses to relevance containment in the static regime. The paper's static-collapse theorem, regime hierarchy, and exact-certification trilemma are therefore not direct corollaries of the reduct literature, even though that literature is an important intellectual precursor and deserves explicit credit as a nearby tradition.
 
-#### Lean and Mathlib.
+The same generosity is due to the broader feature-selection and subset-selection literature in machine learning and combinatorial optimization [@blum1997selection; @amaldi1998complexity]. Those works study sparse predictive representations, informative feature subsets, and the computational cost of choosing them. Our setting differs in targeting exact preservation of the optimal-action correspondence rather than prediction loss, classifier complexity, or approximate empirical utility. Still, the shared concern is clear: identifying what information matters and what can be safely omitted.
 
-Mathlib's computability library [@mathlib2020] provides primitive recursive functions and basic computability results. Our work extends this to polynomial-time reductions and complexity classes. To our knowledge, this is the first Lean 4 formalization of coNP-completeness proofs and approximation hardness.
+## Decision-Theoretic Sufficiency, Informativeness, and Value of Information
 
-#### The verification gap.
+There is also a strong conceptual connection to statistical decision theory and the theory of informativeness. Classical sufficient statistics, value-of-information analysis, and comparison of experiments ask when one information structure is at least as useful for decision making as another [@blackwell1953equivalent; @savage1954foundations; @raiffa1961applied; @howard1966information]. That tradition studies when information can be compressed, compared, or discarded without harming decisions. The optimizer quotient and the exact sufficiency predicate in this paper should be read against that background.
 
-Published complexity proofs occasionally contain errors [@lipton2009np]. Machine verification eliminates this uncertainty. Our contribution demonstrates that complexity reductions are amenable to formalization with reasonable effort (49744 lines for the full reduction suite).
+At the same time, the present work studies a different layer of the problem. The focus here is not statistical estimation, asymptotic identifiability, or expected utility under a fixed experiment class. It is the computational certification problem of proving that a coordinate projection preserves the optimal-action correspondence exactly. The connection to classical decision theory is therefore one of ancestry and motivation rather than direct theorem transfer. The paper owes that literature recognition for posing, in older language, the same high-level question: what information is genuinely needed for a decision?
 
-## Computational Decision Theory
+## Abstraction, Bisimulation, and Homomorphisms in Planning and Reinforcement Learning
 
-The complexity of decision-making has been studied extensively. Papadimitriou [@papadimitriou1994complexity] established core results on the complexity of game-theoretic solution concepts. Work on succinctly represented MDP/POMDP settings shows sharp complexity escalation in stochastic and sequential models [@papadimitriou1987mdp; @mundhenk2000mdp]. Our regime results align with that pattern, but focus on a different predicate: coordinate sufficiency of optimal decisions. For a modern treatment of complexity classes, see Arora and Barak [@arora2009computational].
+The stochastic and sequential parts of the paper sit near a second major literature: exact abstraction in Markov decision processes, POMDPs, bisimulation-based aggregation, and MDP homomorphisms [@papadimitriou1987mdp; @littman1998probplanning; @mundhenk2000mdp; @givan2003equivalence; @ravindran2004algebraic]. This body of work studies when state spaces can be aggregated while preserving value or policy structure, and it has established many of the representation-sensitive complexity phenomena that make richer stochastic and sequential models computationally difficult.
 
-#### Closest prior work and novelty.
+That literature is structurally very close to the present paper and should be credited as such. The main difference is that our predicate is coordinate sufficiency for preserving optimal-action sets under an explicit coordinate-hiding operation. We do not study arbitrary abstract state maps, approximate bisimulation metrics, or value-function approximation guarantees. Instead, we ask for exact certification that a chosen coordinate interface is enough. The contribution here is therefore not abstraction theory in general, but a regime-sensitive complexity theory for one exact decision-relevance predicate tracked coherently across static, stochastic, and sequential settings.
 
-Closest to our contribution is the literature on feature selection and model selection hardness, which proves NP-hardness of selecting informative feature subsets and inapproximability for minimum feature sets [@blum1997selection; @amaldi1998complexity]. Those results analyze predictive relevance or compression objectives. We study decision relevance and show coNP-completeness for sufficiency checking, a different quantifier structure (universal verification) with distinct proof techniques and a full hardness/tractability landscape under explicit encoding assumptions, mechanized in Lean 4. The formalization aspect is also novel: prior work establishes hardness on paper, while we provide machine-checked reductions with explicit polynomial bounds.
+## Explanations, Anchors, and Minimal Decision Rules
 
-## Succinct Representations and Regime Separation
+The paper should also acknowledge adjacent work in explainable AI and local rule-based explanations, especially anchor-style explanations [@ribeiro2018anchors]. Readers will naturally notice the word "anchor" and map it to that literature. The resemblance is real: both settings isolate a restricted condition under which a local piece of information suffices to support a decision or prediction. More broadly, explanation methods based on local rules, counterfactuals, or minimal sufficient subsets share the same informal ambition of identifying a small decision-preserving core.
 
-Representation-sensitive complexity is established in planning and decision-process theory: classical and compactly represented MDP/planning problems exhibit sharp complexity shifts under different input models [@papadimitriou1987mdp; @mundhenk2000mdp; @littman1998probplanning]. Our explicit-vs-succinct separation aligns with this broader principle.
+The difference is again exactness and scope. Anchor explanations in XAI are typically local, model-agnostic, approximate, or precision-calibrated. Our anchor-sufficiency problem is an exact certification problem inside a fully specified decision model, and its complexity is governed by an existential choice followed by a universal fiberwise verification condition. So the paper is not an explanation method, but it is in direct conversation with explanation work that asks what small local structure is enough to preserve a decision.
 
-The distinction in this paper is the object and scope of the classification: we classify *decision relevance* (sufficiency, anchor sufficiency, and minimum sufficient sets) for a fixed decision relation, with theorem-level regime typing and mechanized reduction chains.
+There is an even closer logical neighbor in recent work on reasons behind decisions, prime-implicant style explanations, and exact decision justifications [@darwiche2023reasons]. That literature is concerned with exact structural reasons for a decision outcome and therefore lies much nearer to the present paper than generic post-hoc explanation methods do. The overlap is substantial at the conceptual level: both ask for exact small structures that preserve a decision. The difference is that our objects are coordinate sufficiency, minimum sufficiency, and anchor sufficiency inside coordinate-structured decision problems, and the paper's main contribution is a regime-sensitive complexity classification of these predicates rather than a logical semantics of reasons alone.
 
-## Oracle and Query-Access Lower Bounds
+## Abduction, Diagnosis, and Exact Explanatory Cores
 
-Query-access lower bounds are a standard source of computational hardness transfer [@dobzinski2012query]. Our `[Q_fin]` and `[Q_bool]` results are in this tradition, but specialized to the same sufficiency predicate used throughout the paper: they establish access-obstruction lower bounds while keeping the underlying decision relation fixed across regimes.
+The minimum and anchor queries should also be read against the classical literature on abduction and diagnosis [@reiter1987diagnosis; @eiter1995abduction]. Reiter-style diagnosis studies which hidden fault sets explain an observation, while logic-based abduction studies the complexity of finding explanatory hypotheses sufficient for a target consequence. Those frameworks share an important structural feature with the present work: a move from verification to explanatory search typically raises complexity because one is no longer merely checking a candidate structure but searching for one.
 
-## Feature Selection Complexity
+That kinship is especially relevant for the paper's anchor query. The existential anchor choice is one reason the static anchor problem remains $\Sigma_2^P$-complete even when minimum sufficiency collapses in the static regime. In that sense the anchor problem behaves more like explanatory discovery than like plain verification. The exact predicate is different---we certify preservation of optimal-action sets under coordinate hiding rather than explanatory entailment of a formula---but the logical-complexity intuition is nearby enough that this literature deserves explicit acknowledgment.
 
-In machine learning, feature selection asks which input features are relevant for prediction. Blum and Langley [@blum1997selection] survey the field, noting hardness in general settings. Amaldi and Kann [@amaldi1998complexity] proved that finding minimum feature sets for linear classifiers is NP-hard, and established inapproximability bounds: no polynomial-time algorithm approximates the minimum feature set within factor $2^{\log^{1-\epsilon} n}$ unless NP $\subseteq$ DTIME$(n^{\text{polylog } n})$.
+## Causality, Responsibility, and Structural Explanation
 
-Our results extend this line: the decision-theoretic analog (SUFFICIENCY-CHECK) is coNP-complete, and MINIMUM-SUFFICIENT-SET inherits this hardness. The key insight is that sufficiency checking is "dual" to feature selection; rather than asking which features predict a label, we ask which coordinates determine optimal action. The coNP (rather than NP) classification reflects this duality: insufficiency has short certificates (counterexample state pairs), while sufficiency requires universal verification.
+The paper also belongs in conversation with structural accounts of causality, explanation, and responsibility [@pearl2009causality; @spirtes2000causation; @halpern2001explanations; @chockler2004responsibility]. Those works ask which variables or interventions matter for an outcome, how explanatory structure should be represented, and how responsibility can be assigned to particular factors. This is not the same problem studied here, but it is nearby in spirit: a relevant coordinate is precisely a coordinate whose perturbation can change the decision, and the optimizer quotient isolates exactly the distinctions that matter for optimal-action structure.
 
-#### Backdoors to tractable classes.
+The difference, again, is that the present paper focuses on exact decision preservation under coordinate projection and on the computational cost of certifying that preservation. Causality and responsibility frameworks typically emphasize semantic characterization, counterfactual dependence, or intervention-level explanation. The present work instead asks when hidden coordinates can be ignored *without changing the optimizer map*, and how hard it is to certify that claim exactly across static, stochastic, and sequential regimes.
 
-Bessiere et al. [@bessiere2013detecting] show how to exploit CSP instances that are "almost" tractable by computing backdoors: the smallest set of variables whose instantiation yields a tractable subproblem. Computing minimal backdoors is fixed-parameter tractable (FPT) when the tractable subset of relations is known, and W\[2\]-complete otherwise. This complements our dichotomy: when a decision problem has high DOF (many relevant coordinates), their backdoor method identifies the minimal intractable core. The two results together characterize the tractability boundary from different angles.
+## Oracle, Query, and Access-Based Lower Bounds
 
-## Sufficient Statistics
+Query-access lower bounds provide another nearby technique family [@dobzinski2012query]. Our witness-checking duality and access-obstruction results belong to that tradition in spirit. The difference is that the lower bounds are developed around the same fixed sufficiency predicate used throughout the paper, which allows direct comparison between forward evaluation, certification, exact minimization, and restricted-access models without changing the underlying decision relation.
 
-Fisher [@fisher1922mathematical] introduced sufficient statistics: a statistic $T(X)$ is *sufficient* for parameter $\theta$ if the conditional distribution of $X$ given $T(X)$ does not depend on $\theta$. Lehmann and Scheffé [@lehmann1950completeness] characterized minimal sufficient statistics and their uniqueness properties.
+## Scope and Novelty
 
-Our coordinate sufficiency is the decision-theoretic analog: a coordinate set $I$ is sufficient if knowing $s_I$ determines optimal action, regardless of the remaining coordinates. The parallel is precise:
+The paper is therefore intentionally synthetic in the good sense. Rough sets and reducts study decision-preserving attribute reduction; feature selection studies informative subsets; statistical decision theory studies informativeness and sufficiency; abstraction and bisimulation literatures study exact aggregation of stochastic and sequential decision processes; explanation methods study local decision-preserving cores; formalized complexity work studies certified reductions and machine-checked decision procedures. The contribution here is to treat exact relevance certification itself as the common object and to develop one coherent complexity-theoretic account around it.
 
--   **Statistics:** $T$ is sufficient $\iff$ $P(X | T(X), \theta) = P(X | T(X))$
-
--   **Decisions:** $I$ is sufficient $\iff$ $\operatorname{Opt}(s) = \operatorname{Opt}(s')$ whenever $s_I = s'_I$
-
-Fisher's factorization theorem provides a characterization; our Theorem [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"} shows that *finding* minimal sufficient statistics (in the decision-theoretic sense) is computationally hard.
-
-## Causal Inference and Adjustment Sets
-
-Pearl [@pearl2009causality] and Spirtes et al. [@spirtes2000causation] developed frameworks for identifying causal effects from observational data. A central question is: which variables must be adjusted for to identify a causal effect? The *adjustment criterion* and *back-door criterion* characterize sufficient adjustment sets.
-
-Our sufficiency problem is analogous: which coordinates must be observed to determine optimal action? We conjecture that optimal adjustment set selection is intractable; recent work on the complexity of causal discovery supports this [@chickering2004large].
-
-The connection runs deeper: Shpitser and Pearl [@shpitser2006identification] showed that identifying causal effects is NP-hard in general graphs. Our coNP-completeness result for SUFFICIENCY-CHECK is the decision-theoretic counterpart.
-
-#### Probability of necessity and sufficiency.
-
-Cai et al. [@cai2025pns] formalize the Probability of Necessity and Sufficiency (PNS) for explaining Graph Neural Networks. They argue that a convincing explanation must be *both* necessary and sufficient: necessary explanations alone may be incomplete, while sufficient explanations alone may be non-concise. They model GNNs as Structural Causal Models and optimize a lower bound of PNS. This provides independent confirmation from the neural network explainability literature that necessity and sufficiency must be jointly considered, exactly the perspective underlying our sufficiency-checking framework.
-
-## Minimum Description Length and Kolmogorov Complexity
-
-The Minimum Description Length (MDL) principle [@rissanen1978modeling; @grunwald2007minimum] formalizes model selection as compression: the best model minimizes description length of data plus model. Kolmogorov complexity [@li2008introduction] provides the theoretical background (the shortest program that generates the data).
-
-Our decision quotient connects to this perspective: a coordinate set $I$ is sufficient if it compresses the decision problem without loss. Knowing $s_I$ is as good as knowing $s$ for decision purposes. The minimal sufficient set is the MDL-optimal compression of the decision problem.
-
-The complexity results explain why MDL-based model selection uses heuristics: finding the true minimum description length is uncomputable (Kolmogorov complexity) or intractable (MDL approximations). Our results show the decision-theoretic analog is coNP-complete, intractable but decidable.
-
-## Value of Information
-
-The value of information (VOI) framework [@howard1966information] quantifies the maximum rational payment for information. Our work addresses a different question: not the *value* of information, but the *complexity* of identifying which information has value.
-
-In explicit-state representations, VOI is polynomial to compute in the input size, while identifying which information *to value* (our problem) is coNP-complete. This separation explains why VOI is practical while optimal sensor placement remains heuristic.
-
-## Sensitivity Analysis
-
-Sensitivity analysis asks how outputs change with inputs. Local sensitivity (derivatives) is polynomial; global sensitivity (Sobol indices [@sobol2001global]) requires sampling. Identifying which inputs *matter* for decision-making is our sufficiency problem, which we show is coNP-complete.
-
-This explains why practitioners use sampling-based sensitivity analysis rather than exact methods: exact identification of decision-relevant inputs is intractable. The dichotomy theorem (Theorem [\[thm:dichotomy\]](#thm:dichotomy){reference-type="ref" reference="thm:dichotomy"}) characterizes when sensitivity analysis becomes tractable (logarithmic relevant inputs) versus intractable (linear relevant inputs).
-
-## Model Selection
-
-Statistical model selection (AIC [@akaike1974new], BIC [@schwarz1978estimating], cross-validation [@stone1974cross]) provides practical heuristics for choosing among models. Our results provide theoretical justification: optimal model selection is intractable, so heuristics are necessary. At the level of decision relevance, the lesson is structural rather than heuristic: exact identification of the smallest sufficient representation is hard in general, so restricted model classes and structural assumptions are not optional conveniences but complexity-theoretic necessities.
-
-#### Three-axis integration.
-
-To our knowledge, prior work treats these pillars separately: representation-sensitive hardness, query-access lower bounds, and certifying soundness disciplines. This paper integrates all three for the same decision-relevance object in one regime-typed and machine-checked framework.
+What is new is not merely that these literatures are mentioned together. It is that one predicate---exact preservation of optimal-action distinctions under coordinate hiding---is formalized once and then followed across static, stochastic, and sequential regimes; that the static regime exhibits a non-obvious collapse of minimum sufficiency to relevance containment; that the encoding-sensitive dichotomy isolates a sharp tractable--intractable boundary; that the downstream consequences are pushed through to exact simplification, witness checking, approximation, and the simplicity tax; and that a substantial Lean-backed certification layer is provided for the reduction and finite-decision core. Prior work contains many nearby pieces. The present paper aims to assemble them into a single precise theory of exact relevance certification.
 
 
 # Conclusion
 
-This paper isolates the abstract complexity of decision-relevant information. Once the state space is factored into coordinates, the central question is not merely how to evaluate the objective on a given state, but how to certify which coordinates determine the optimal action.
+This paper develops a regime-sensitive complexity theory of exact relevance certification for coordinate-structured decision problems. Once the state space is factored into coordinates, evaluating the objective on one fully specified state and certifying which coordinates determine the optimal action become distinct computational tasks, and the latter organizes into a sharp hierarchy across static, stochastic, and sequential models.
 
 ## Main Results {#main-results .unnumbered}
 
 Within the encoding model of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, we establish:
 
--   **Exact certification hardness:** [Sufficiency-Check]{.smallcaps} and [Minimum-Sufficient-Set]{.smallcaps} are coNP-complete, while [Anchor-Sufficiency]{.smallcaps} is $\Sigma_{2}^{P}$-complete
+-   **Static Collapse Theorem plus regime-sensitive complexity matrix:** in the static regime, [Minimum-Sufficient-Set]{.smallcaps} collapses to relevance containment, so exact minimization is coNP-complete rather than a genuine $\Sigma_{2}^{P}$ search problem, while [Anchor-Sufficiency]{.smallcaps} remains $\Sigma_{2}^{P}$-complete. Once conditioning and temporal dynamics are added, the same exact-certification question escalates to PP-complete stochastic sufficiency and PSPACE-complete sequential sufficiency, with PP-hard and PSPACE-hard minimum and anchor queries. Under standard assumptions, these results form a strict hierarchy from static to stochastic to sequential exact certification.
 
--   **Witness and approximation impossibility:** exact empty-set certification has an exponential witness-checking lower bound; on the shifted hard family, any uniform factor guarantee yields a tautology threshold test; and on a separate explicit gadget family, minimum sufficiency is exactly set cover, so approximation guarantees transfer without loss
+-   **Sharp phase transition for exact certification:** logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime.
 
--   **Encoding-sensitive boundary:** logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime
+-   **Structural and downstream consequences:** the paper derives witness and approximation obstructions, exact-simplification hardness transfers, and the trilemma of exact certification: no exact certifier can be simultaneously sound, complete, and polynomial-budgeted on the hard regime. This is a fundamental reliability constraint, and a simplicity-tax framing shows that omitted exact relevance is externalized rather than eliminated.
 
--   **Structured tractability:** bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures
+-   **Structured tractability:** bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures.
 
-Taken together, these results identify a precise source of difficulty: certifying that information may be discarded can be harder than evaluating the full decision rule once all information is already present.
+Taken together, these results show that exact relevance certification is a distinct complexity-theoretic object in its own right: computing $\operatorname{Opt}(s)$ on one state can be easy even when proving coordinate irrelevance is hard, and the difficulty of that certification problem depends sharply on whether one is ruling out counterexamples, comparing conditional averages, or preserving policies over time.
 
-## Reliability and Simplification {#reliability-and-simplification .unnumbered}
+## Implications {#implications .unnumbered}
 
-The simplification consequences are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $P=coNP$. Reliable exact certification is likewise regime-limited: under $P\neq coNP$, no polynomial-budget solver can simultaneously maintain integrity and full exact competence on the hard regime. In the hard succinct regime, conservative over-specification can therefore be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+The implications are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $P=coNP$. Reliable exact certification is likewise regime-limited: under $P\neq coNP$, the trilemma of exact certification rules out any solver that is simultaneously sound, complete on the full hard regime, and polynomial-budgeted. And once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any compressed interface merely partitions that relevance into centrally handled and externalized parts. Compression therefore relocates exact relevance rather than erasing it; under the per-site cost model, the unresolved part grows linearly with deployment scale.
 
-## Simplicity Tax {#simplicity-tax .unnumbered}
-
-The simplicity-tax section is not an isolated counting exercise. It is the accounting layer induced by the earlier exact-support theory. Once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any architecture $A_M$ partitions that set into centrally handled and omitted coordinates: $$\mathrm{centralDOF}+\mathrm{simplicityTax}=\mathrm{intrinsicDOF}.$$ The substantive claim is the hardness-conservation consequence: omitted coordinates remain part of the exact decision problem, so they must reappear as local resolution, extra queries, abstentions, or other externalized work. Under the per-site cost model, that externalized cost grows linearly with deployment scale, and under the hard exact regime it cannot be eliminated for free by a polynomial-budget exact certifier.
+This is also the practical meaning of the simplicity tax. In the hard exact regime, a cheap simplification procedure cannot be assumed to have removed decision-relevant structure merely because it has compressed the visible interface. Any relevance omitted from the certified core must still be paid for somewhere else in the system: by local resolution, extra queries, abstention, or weaker guarantees. Exact simplification is therefore costly, but inexact simplification is not free; it externalizes the unresolved burden.
 
 ## Mechanization {#mechanization .unnumbered}
 
-The Lean 4 artifact machine-checks the main reduction constructions, hardness transfers, and tractability statements. The mechanization does not replace the mathematical argument; it certifies that the formal definitions and reductions used by the argument are internally correct and reproducible.
+The Lean 4 development certifies the main reduction constructions, size-bounded hardness packages, exact finite deciders, counted finite-search procedures, tractability statements, and explicit-state step-counting wrappers used by the paper. This gives a mechanically checked core for the reduction and finite-decision layers of the argument. Standard PP/PSPACE membership arguments remain stated in the paper rather than packaged as end-to-end Turing-machine witness proofs.
 
 ## Outlook {#outlook .unnumbered}
 
-Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the structure-and-complexity presentation.
+Two immediate directions remain. First, the reduction infrastructure can be integrated more tightly with general-purpose formalized complexity libraries. Second, the artifact boundary can be made even cleaner by continuing to package the existing finite-decision results into more uniform summary interfaces without changing the paper's complexity claims. On the complexity side, the remaining gap is also conceptually interesting: sequential anchor and minimum variants may plausibly admit PSPACE upper bounds by a guess-and-verify argument, whereas stochastic anchor and minimum membership is less immediate because the added existential layer does not obviously remain inside PP.
 
+## Acknowledgments {#acknowledgments .unnumbered}
 
-# Lean 4 Proof Listings {#app:lean}
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
 
-The complete Lean 4 formalization is available at:
-
-::: center
-<https://doi.org/10.5281/zenodo.18140966>
-:::
-
-The formalization is not a transcription of the paper text. It exposes reusable definitions for reductions, decision problems, hardness transfers, and tractable subcases, so the main complexity claims can be checked mechanically.
-
-## What the Artifact Covers
-
-The appendix supports the non-physical theorem stack of the paper:
-
--   core decision-problem and sufficiency definitions
-
--   polynomial-time reduction infrastructure
-
--   coNP, PP, PSPACE, and $\Sigma_2^P$ hardness reductions
-
--   shifted-family approximation-gap and counted-runtime threshold constructions
-
--   ETH-conditioned dichotomy statements
-
--   cross-regime bridge lemmas (static/stochastic/sequential)
-
--   tractable subcases under explicit structural assumptions
-
-The point of the artifact is precision. Once the definitions are fixed, Lean verifies that the reductions preserve the intended predicates and that the later theorems invoke the correct formal statements.
-
-## Module Structure
-
-The formalization consists of 189 files organized as follows:
-
--   `Basic.lean` and `Sufficiency.lean`: core definitions for decision problems, projections, optimizer maps, and sufficiency
-
--   `AlgorithmComplexity.lean` and `PolynomialReduction.lean`: polynomial-time reduction infrastructure and composition
-
--   `Reduction.lean` and `Hardness/`: the TAUTOLOGY, SET-COVER, ETH, approximation-gap, and $\Sigma_2^P$ reduction stack
-
--   `StochasticSequential*.lean`: PP/PSPACE regime definitions, hardness, and hierarchy bridges
-
--   `QueryComplexity.lean`, `Dichotomy.lean`, and `ComplexityMain.lean`: query lower bounds and summary complexity statements
-
--   `Tractability/`: bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
-
-## Key Theorems
-
-::: theorem
-[]{#thm:poly-compose label="thm:poly-compose"} Polynomial-time reductions compose to polynomial-time reductions.
-:::
-
-    theorem PolyReduction.comp_exists
-        (f : PolyReduction A B) (g : PolyReduction B C) :
-        exists h : PolyReduction A C,
-          forall a, h.reduce a = g.reduce (f.reduce a)
-
-::: theorem
-The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"} is mechanized and proves that the empty set is sufficient exactly when the source formula is a tautology.
-:::
-
-    theorem reduction_correct
-        (φ : QBF) :
-        empty_sufficient (reduce φ) ↔ QBF.eval φ
-
-## Verification Status
-
--   Total lines: 49744
-
--   Theorems/lemmas: 2152
-
--   Files: 189
-
--   Status: All proofs compile with 0 `sorry`
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
 
 
 
@@ -1096,6 +1279,6 @@ The canonical reduction used in Theorem [\[thm:sufficiency-conp\]](#thm:suffici
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 49744
-- Theorems: 2152
+- Lines: 21142
+- Theorems: 985
 - `sorry` placeholders: 0

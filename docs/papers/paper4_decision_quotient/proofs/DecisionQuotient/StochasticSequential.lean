@@ -16,6 +16,7 @@ import DecisionQuotient.StochasticSequential.AlgorithmComplexity
 import DecisionQuotient.StochasticSequential.Computation
 import DecisionQuotient.StochasticSequential.Finite
 import DecisionQuotient.StochasticSequential.Information
+import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Instances
 import DecisionQuotient.StochasticSequential.Quotient

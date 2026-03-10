@@ -106,6 +106,26 @@ For finite instances, the artifact contains counted exhaustive-search procedures
 The sufficiency search scans for a violating state whose fiber-optimal set is non-singleton; the anchor search scans over candidate anchor-state/action pairs; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
 \end{proof}
 
+\begin{theorem}[Stochastic Anchor and Minimum Admit $\textsf{NP}^{\textsf{PP}}$ Upper Bounds]\label{thm:stochastic-nppp-upper}
+Under the present encoding, \textsc{Stochastic-Anchor-Sufficiency-Check} and \textsc{Stochastic-Minimum-Sufficient-Set} are both in $\textsf{NP}^{\textsf{PP}}$.
+\end{theorem}
+
+\leanmeta{\LH{OU1}, \LH{OU2}, \LH{PA3}, \LH{OU6}, \LH{OU7}.}
+
+\begin{proof}
+For anchor sufficiency, the mechanized collapse
+\[
+\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(P,I)
+\iff
+\exists s_0\,\exists a\; \bigl(\mathrm{fiberOpt}(P,I,s_0)=\{a\}\bigr)
+\]
+is already available in the artifact \LH{PA3}. A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the PP membership proof for stochastic sufficiency.
+
+For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically sufficient. By Theorem~\ref{thm:stochastic-pp}, that verification predicate lies in PP. Hence the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
+\end{proof}
+
+The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the witness-over-verifier structure underlying this theorem: the anchor-collapse equivalence, the generic existential-witness schema, and bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches.
+
 \paragraph{Relevance boundary.}
 The stochastic query is fiber-indexed: fixing a candidate information set $I$
 induces a derived decision problem whose optimizer is the conditional fiber
