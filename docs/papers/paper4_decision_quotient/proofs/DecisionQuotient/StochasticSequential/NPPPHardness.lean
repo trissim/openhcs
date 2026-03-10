@@ -366,12 +366,108 @@ theorem reduceExistsMajorityPureAnchor_correct
 
 abbrev ExistsMajorityInput := {φ : ExistsMajorityFormula // φ.ny ≥ 1}
 
+abbrev ExistsMajorityFixed (nx ny : ℕ) := QFormula (Sum (Fin nx) (Fin ny))
+
+def ExistsMajorityFixedSat {nx ny : ℕ} (φ : ExistsMajorityFixed nx ny) : Prop :=
+  ∃ x : XAssign nx, Formula.majorityTrue (ExistsMajorityFormula.fixX x φ)
+
+def ExistsMajorityFixedWitnessRel {nx ny : ℕ}
+    (φ : ExistsMajorityFixed nx ny) (x : XAssign nx) : Prop :=
+  Formula.majorityTrue (ExistsMajorityFormula.fixX x φ)
+
+theorem existsMajorityFixedWitnessRel_exact {nx ny : ℕ}
+    (φ : ExistsMajorityFixed nx ny) (x : XAssign nx) :
+    HasExactBoolDecider (ExistsMajorityFixedWitnessRel φ x) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsMajority_fixed_fits_np_over_ppstyle {nx ny : ℕ} :
+    FitsNPOverPPStyle (ExistsMajorityFixed nx ny) (XAssign nx)
+      ExistsMajorityFixedSat ExistsMajorityFixedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsMajorityFixedWitnessRel existsMajorityFixedWitnessRel_exact ?_
+  intro φ
+  rfl
+
+abbrev PackedXWitness := Σ nx : ℕ, XAssign nx
+
+def castXAssign {m n : ℕ} (h : m = n) (x : XAssign m) : XAssign n := by
+  subst h
+  exact x
+
+def ExistsMajorityPackedWitnessRel
+    (q : ExistsMajorityInput) (w : PackedXWitness) : Prop :=
+  ∃ h : w.1 = q.1.nx,
+    Formula.majorityTrue (ExistsMajorityFormula.fixX (castXAssign h w.2) q.1.formula)
+
 def ExistsMajoritySourceLanguage : Set ExistsMajorityInput :=
   {q | ExistsMajorityFormula.satisfiable q.1}
+
+theorem existsMajorityPackedWitnessRel_exact
+    (q : ExistsMajorityInput) (w : PackedXWitness) :
+    HasExactBoolDecider (ExistsMajorityPackedWitnessRel q w) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsMajority_source_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityInput PackedXWitness
+      (fun q => q ∈ ExistsMajoritySourceLanguage)
+      ExistsMajorityPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsMajorityPackedWitnessRel existsMajorityPackedWitnessRel_exact ?_
+  intro q
+  constructor
+  · intro hsat
+    rcases hsat with ⟨x, hx⟩
+    refine ⟨⟨q.1.nx, x⟩, rfl, ?_⟩
+    simpa [castXAssign] using hx
+  · intro hw
+    rcases hw with ⟨⟨m, x⟩, hm, hx⟩
+    cases hm
+    refine ⟨x, ?_⟩
+    simpa [castXAssign] using hx
 
 def ExistsMajorityAnchorLanguage : Set ExistsMajorityInput :=
   {q | StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1)
       (xCoordsEM q.1.nx q.1.ny)}
+
+noncomputable def reduceExistsMajorityAnchorQuery
+    (q : ExistsMajorityInput) :
+    StochasticAnchorQueryInput PureAnchorStochAction (EMState q.1.nx q.1.ny) (q.1.nx + q.1.ny) where
+  problem := reduceExistsMajorityPureAnchor q.1
+  infoSet := xCoordsEM q.1.nx q.1.ny
+
+abbrev ExistsMajorityAnchorQueryInstance :=
+  Σ q : ExistsMajorityInput,
+    StochasticAnchorQueryInput PureAnchorStochAction (EMState q.1.nx q.1.ny) (q.1.nx + q.1.ny)
+
+noncomputable instance instSizeOfExistsMajorityAnchorQueryInstance :
+    SizeOf ExistsMajorityAnchorQueryInstance where
+  sizeOf inst := sizeOf inst.1 + 1
+
+noncomputable def reduceExistsMajorityToAnchorQueryInstance
+    (q : ExistsMajorityInput) : ExistsMajorityAnchorQueryInstance :=
+  ⟨q, reduceExistsMajorityAnchorQuery q⟩
+
+def ExistsMajorityAnchorQueryLanguage : Set ExistsMajorityAnchorQueryInstance :=
+  {inst | StochasticAnchorSufficiencyCheck inst.2.problem inst.2.infoSet}
+
+theorem reduceExistsMajorityToAnchorQueryInstance_poly :
+    ∃ (c k : ℕ), ∀ q : ExistsMajorityInput,
+      sizeOf (reduceExistsMajorityToAnchorQueryInstance q) ≤ c * (sizeOf q) ^ k + c := by
+  refine ⟨2, 1, ?_⟩
+  intro q
+  change sizeOf q + 1 ≤ 2 * (sizeOf q) ^ 1 + 2
+  simp
+  omega
+
+theorem reduceExistsMajorityToAnchorQueryInstance_correct
+    (q : ExistsMajorityInput) :
+    q ∈ ExistsMajoritySourceLanguage ↔
+      reduceExistsMajorityToAnchorQueryInstance q ∈ ExistsMajorityAnchorQueryLanguage := by
+  change ExistsMajorityFormula.satisfiable q.1 ↔
+    StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1) (xCoordsEM q.1.nx q.1.ny)
+  exact reduceExistsMajorityPureAnchor_correct q.1 q.2
 
 /-- Honest reduction wrapper for the existential-majority source problem into the
 stochastic anchor query family. The target language is stated on the same input
@@ -401,6 +497,67 @@ def HonestExistsMajorityStochasticAnchorHard : Prop :=
 theorem existsMajority_stochastic_anchor_hard :
     HonestExistsMajorityStochasticAnchorHard := by
   exact ⟨reduceExistsMajority_to_stochastic_anchor_reduction⟩
+
+/-- Stronger packaging: the existential-majority source problem reduces directly
+to the generic stochastic-anchor query family, represented as packaged query
+instances. -/
+noncomputable def reduceExistsMajority_to_stochastic_anchor_query_family_reduction :
+    PolyReduction4b ExistsMajorityInput ExistsMajorityAnchorQueryInstance
+      ExistsMajoritySourceLanguage ExistsMajorityAnchorQueryLanguage where
+  f := reduceExistsMajorityToAnchorQueryInstance
+  poly_time := reduceExistsMajorityToAnchorQueryInstance_poly
+  correct := reduceExistsMajorityToAnchorQueryInstance_correct
+
+def HonestExistsMajorityStochasticAnchorQueryFamilyHard : Prop :=
+  Nonempty
+    (PolyReduction4b ExistsMajorityInput ExistsMajorityAnchorQueryInstance
+      ExistsMajoritySourceLanguage ExistsMajorityAnchorQueryLanguage)
+
+theorem existsMajority_stochastic_anchor_query_family_hard :
+    HonestExistsMajorityStochasticAnchorQueryFamilyHard := by
+  exact ⟨reduceExistsMajority_to_stochastic_anchor_query_family_reduction⟩
+
+/-- Internal hardness notion for this artifact: a target language is hard for a
+scoped witness-over-PP-style source if some source language already fitting
+`FitsNPOverPPStyle` admits a polynomially size-bounded reduction into it. This
+is intentionally weaker and more honest than a standard oracle-TM hardness
+definition. -/
+structure NPOverPPStyleHardnessWitness (β : Type*) [SizeOf β] (Lβ : Set β) where
+  α : Type
+  instSizeOfα : SizeOf α
+  ω : Type
+  Lα : Set α
+  R : α → ω → Prop
+  fits : FitsNPOverPPStyle α ω (fun x => x ∈ Lα) R
+  reduction : let _ : SizeOf α := instSizeOfα; PolyReduction4b α β Lα Lβ
+
+def HonestNPOverPPStyleHard (β : Type*) [SizeOf β] (Lβ : Set β) : Prop :=
+  Nonempty (NPOverPPStyleHardnessWitness β Lβ)
+
+theorem existsMajority_anchor_language_honest_np_over_ppstyle_hard :
+    HonestNPOverPPStyleHard ExistsMajorityInput ExistsMajorityAnchorLanguage := by
+  refine ⟨{
+    α := ExistsMajorityInput
+    instSizeOfα := inferInstance
+    ω := PackedXWitness
+    Lα := ExistsMajoritySourceLanguage
+    R := ExistsMajorityPackedWitnessRel
+    fits := existsMajority_source_fits_np_over_ppstyle
+    reduction := reduceExistsMajority_to_stochastic_anchor_reduction
+  }⟩
+
+theorem existsMajority_anchor_query_family_honest_np_over_ppstyle_hard :
+    HonestNPOverPPStyleHard ExistsMajorityAnchorQueryInstance
+      ExistsMajorityAnchorQueryLanguage := by
+  refine ⟨{
+    α := ExistsMajorityInput
+    instSizeOfα := inferInstance
+    ω := PackedXWitness
+    Lα := ExistsMajoritySourceLanguage
+    R := ExistsMajorityPackedWitnessRel
+    fits := existsMajority_source_fits_np_over_ppstyle
+    reduction := reduceExistsMajority_to_stochastic_anchor_query_family_reduction
+  }⟩
 
 end StochasticSequential
 end DecisionQuotient
