@@ -5624,6 +5624,13 @@ noncomputable def lovaszThetaAsymptoticUpper
     (G : SimpleGraph α) : ℝ :=
   lovaszThetaPrimalAsymptoticUpper G
 
+theorem graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphShannonCapacityReal G ≤ lovaszThetaAsymptoticUpper G := by
+  unfold lovaszThetaAsymptoticUpper
+  exact graphShannonCapacityReal_le_lovaszThetaPrimalAsymptoticUpper G
+
 theorem graphShannonCapacityReal_le_log_complChromatic
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) {n : Nat}

@@ -271,6 +271,9 @@ abbrev MFT78 := @MultiFact.graphThetaSchurDualAsymptoticUpper_le_lovaszThetaPrim
 abbrev MFT79 := @MultiFact.lovaszThetaDualLogUpper_eq_graphThetaSchurDualLogUpper
 abbrev MFT80 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_graphThetaSchurDualAsymptoticUpper
 abbrev MFT81 := @MultiFact.lovaszThetaDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT82 := @MultiFact.lovaszThetaDualLogUpper_eq_lovaszThetaPrimalLogUpper
+abbrev MFT83 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT84 := @MultiFact.graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
