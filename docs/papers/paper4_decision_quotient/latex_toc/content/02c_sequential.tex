@@ -64,10 +64,56 @@ For each quantified Boolean formula $q$:
 \mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
 \]
 \claimstamp{P\ref{prop:sequential-anchor-tqbf-reduction}}{PSPACE}
-\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
+\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29},\LH{DC44}.}
 \end{claim}
 
-\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
+\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29},\LH{DC44}.}
+
+\begin{claim}{Sequential anchor hardness package}{prop:sequential-anchor-hardness-package}
+For each arity $n$, there is a polynomially size-bounded reduction from TQBF to the sequential anchor query.
+\claimstamp{P\ref{prop:sequential-anchor-hardness-package}}{PSPACE}
+\leanmeta{\LH{DC43},\LH{DC44}.}
+\end{claim}
+
+\leanmeta{\LH{DC43},\LH{DC44}.}
+
+\begin{claim}{Sequential minimum hardness package}{prop:sequential-minimum-hardness-package}
+For each arity $n$, there is a polynomially size-bounded reduction from TQBF to
+the $k=0$ slice of the sequential minimum-sufficiency query.
+\claimstamp{P\ref{prop:sequential-minimum-hardness-package}}{PSPACE}
+\leanmeta{\LH{DC46},\LH{DC48}.}
+\end{claim}
+
+\leanmeta{\LH{DC46},\LH{DC48}.}
+
+\begin{claim}{Sequential minimality equals relevance}{prop:sequential-minimal-relevant}
+For any minimal sequentially sufficient coordinate set $I$, a coordinate lies in
+$I$ if and only if it is relevant for the underlying sequential decision map,
+and any two minimal sequentially sufficient sets coincide.
+\claimstamp{P\ref{prop:sequential-minimal-relevant}}{structural}
+\leanmeta{\LH{DC49},\LH{DC50}.}
+\end{claim}
+
+\leanmeta{\LH{DC49},\LH{DC50}.}
+
+\begin{claim}{Exact finite deciders for sequential queries}{prop:sequential-finite-deciders}
+The development internalizes exact boolean deciders for sequential sufficiency,
+sequential anchor sufficiency, and sequential minimum sufficiency.
+\claimstamp{P\ref{prop:sequential-finite-deciders}}{finite exact deciders}
+\leanmeta{\LH{DC54},\LH{DC55},\LH{DC56}.}
+\end{claim}
+
+\leanmeta{\LH{DC54},\LH{DC55},\LH{DC56}.}
+
+\begin{claim}{Explicit counted search bounds for sequential queries}{prop:sequential-counted-search}
+The development contains counted exhaustive-search procedures for sequential
+sufficiency, sequential anchor sufficiency, and sequential minimum sufficiency,
+with certified bounds $O(|S|^2)$, $O(|S|)$, and $O(2^n)$ respectively.
+\claimstamp{P\ref{prop:sequential-counted-search}}{finite explicit search}
+\leanmeta{\LH{DC60},\LH{DC61},\LH{DC66},\LH{DC67},\LH{DC68},\LH{DC69}.}
+\end{claim}
+
+\leanmeta{\LH{DC60},\LH{DC61},\LH{DC66},\LH{DC67},\LH{DC68},\LH{DC69}.}
 
 Observer-collapse closure for the sequential anchor query is mechanized: under the declared collapse hypothesis, sequential sufficiency and sequential anchor-check truth follow directly.
 \leanmeta{\LH{PA6},\LH{PA7}.}

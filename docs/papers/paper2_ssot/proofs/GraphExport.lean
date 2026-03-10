@@ -21,6 +21,7 @@ import Ssot.LangPython
 import Ssot.LangRust
 import Ssot.LangStatic
 import Ssot.Languages
+import Ssot.MultiFact
 import Ssot.ObserverModel
 import Ssot.Probabilistic
 import Ssot.Requirements

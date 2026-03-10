@@ -10,6 +10,7 @@ import Ssot.LangPython
 import Ssot.MultiFact
 import Ssot.ObserverModel
 import Ssot.EntropyGeneral
+import Ssot.FactMatroid
 import Ssot.Probabilistic
 import Ssot.Requirements
 import axis_framework
@@ -286,6 +287,19 @@ abbrev MFT93 := @MultiFact.confusabilityGraph_eq_clusterGraph_component_of_confu
 abbrev MFT94 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_confusableTransitive
 abbrev MFT95 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_confusableTransitive
 abbrev MFT96 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusableTransitive
+abbrev MFT97 := @MultiFact.MeetWitnessed
+abbrev MFT98 := @MultiFact.meetWitnessed_confusableTransitive
+abbrev MFT99 := @MultiFact.confusableTransitive_iff_clusterCollapse
+abbrev MFT100 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_meetWitnessed
+abbrev MFT101 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT102 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT103 := @MultiFact.fiberCoherent_meetWitnessed
+abbrev MFT104 := @MultiFact.binaryViews_not_meetWitnessed
+abbrev MFT105 := @MultiFact.meetWitnessViews_meetWitnessed
+abbrev MFT106 := @MultiFact.meetWitnessViews_not_fiberCoherent
+abbrev MFT107 := @MultiFact.ViewCompositionClosed
+abbrev MFT108 := @MultiFact.confusableTransitive_iff_viewCompositionClosed
+abbrev MFT109 := @MultiFact.confusable_iff_exists_viewClusterAdj
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
@@ -298,6 +312,13 @@ abbrev REG4 := ClaimClosure.amortized_complexity_core
 
 abbrev PYH1 := Python.python_has_hooks
 abbrev PYI1 := Python.python_has_introspection
+
+-- Affine fact-matroid layer (AFM*): fact closure becomes a representable matroid
+abbrev AFM1 := @FactMatroid.determinesFact_iff_mem_factSpan
+abbrev AFM2 := @FactMatroid.factMatroid_indep_iff
+abbrev AFM3 := @FactMatroid.basisFacts_card_eq_finrank
+abbrev AFM4 := @FactMatroid.basisFacts_minimal
+abbrev AFM5 := @FactMatroid.minimalDetermining_basis
 
 /-! ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that SSOT is FORCED by first principles.

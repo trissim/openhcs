@@ -82,8 +82,57 @@ For each formula $\varphi$ on $n \ge 1$ variables:
 
 \leanmeta{\LH{DC24},\LH{DC25},\LH{DC26}.}
 
+\begin{claim}{Direct MAJSAT reduction to stochastic anchor check}{prop:stochastic-anchor-direct-reduction}
+For each formula $\varphi$ on $n \ge 1$ variables,
+\[
+\mathrm{MAJSAT}(\varphi)
+\iff
+\mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceMAJSATPureAnchor}(\varphi),\emptyset).
+\]
+\claimstamp{P\ref{prop:stochastic-anchor-direct-reduction}}{PP}
+\leanmeta{\LH{DC40},\LH{DC41},\LH{DC42}.}
+\end{claim}
+
+\leanmeta{\LH{DC40},\LH{DC41},\LH{DC42}.}
+
+\begin{claim}{Stochastic minimum hardness package}{prop:stochastic-minimum-hardness-package}
+For each arity $n \ge 1$, there is a polynomially size-bounded reduction from
+MAJSAT to the $k=0$ slice of the stochastic minimum-sufficiency query.
+\claimstamp{P\ref{prop:stochastic-minimum-hardness-package}}{PP}
+\leanmeta{\LH{DC45},\LH{DC47}.}
+\end{claim}
+
+\leanmeta{\LH{DC45},\LH{DC47}.}
+
+\begin{claim}{Exact finite deciders for stochastic queries}{prop:stochastic-finite-deciders}
+The development internalizes exact boolean deciders for stochastic sufficiency,
+stochastic anchor sufficiency, and stochastic minimum sufficiency.
+\claimstamp{P\ref{prop:stochastic-finite-deciders}}{finite exact deciders}
+\leanmeta{\LH{DC51},\LH{DC52},\LH{DC53}.}
+\end{claim}
+
+\leanmeta{\LH{DC51},\LH{DC52},\LH{DC53}.}
+
+\begin{claim}{Explicit counted search bounds for stochastic queries}{prop:stochastic-counted-search}
+The development contains counted exhaustive-search procedures for stochastic
+sufficiency, stochastic anchor sufficiency, and stochastic minimum sufficiency,
+with certified bounds $O(|S|)$, $O(|S||A|)$, and $O(2^n)$ respectively.
+\claimstamp{P\ref{prop:stochastic-counted-search}}{finite explicit search}
+\leanmeta{\LH{DC58},\LH{DC59},\LH{DC62},\LH{DC63},\LH{DC64},\LH{DC65}.}
+\end{claim}
+
+\leanmeta{\LH{DC58},\LH{DC59},\LH{DC62},\LH{DC63},\LH{DC64},\LH{DC65}.}
+
 Observer-collapse closure for the stochastic anchor query is also mechanized: singleton effective-state structure yields global observational equivalence and, with seeded support, yields stochastic sufficiency and anchor-check truth under the declared hypotheses.
 \leanmeta{\LH{PA1},\LH{PA2},\LH{PA3},\LH{PA4},\LH{PA5},\LH{PA8},\LH{PA9}.}
+
+\paragraph{Relevance boundary.}
+For each fixed candidate information set $I$, the stochastic query induces a
+derived decision problem whose optimizer is exactly the conditional fiber
+optimizer. That derived problem is itself sufficient on $I$, so the natural
+relevance notion is indexed by $I$ rather than attached to a single global
+stochastic decision map.
+\leanmeta{\LH{DC57}.}
 
 \begin{enumerate}
 \item \textbf{Membership in \PP}: Given $\mathcal{D}_S$ and $I$, we must check whether knowing $s_I$ determines the optimal action. This reduces to comparing expected utilities conditioned on $s_I$ versus unconditioned. For each action pair $(a, a')$, we compare:

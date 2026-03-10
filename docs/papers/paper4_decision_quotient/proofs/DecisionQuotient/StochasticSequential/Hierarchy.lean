@@ -4,7 +4,7 @@
   Hierarchy.lean - Regime hierarchy and complexity class inclusion
 
   Establishes the strict inclusion: Static ⊂ Stochastic ⊂ Sequential
-  Uses the ComplexityClass from IntegrityEquilibrium.
+  using Paper 4's dimensional complexity layer.
 -/
 
 import DecisionQuotient.StochasticSequential.Basic
@@ -14,7 +14,7 @@ import Mathlib.Logic.Basic
 namespace DecisionQuotient.StochasticSequential
 
 open Classical
-open DecisionQuotient.Physics.DimensionalComplexity
+open DecisionQuotient.DimensionalComplexity
 
 /-! ## Regime Hierarchy
 

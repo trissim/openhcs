@@ -1,3 +1,19 @@
+\subsection{Running Example}
+
+We use one small example throughout the paper. Let the class set be
+\[
+\mathcal C = \{A,B,C,D,E\}
+\]
+with three observable attributes and class profiles
+\begin{center}
+\begin{tabular}{c|ccccc}
+class & $A$ & $B$ & $C$ & $D$ & $E$ \\
+\hline
+profile & $000$ & $000$ & $100$ & $110$ & $111$
+\end{tabular}
+\end{center}
+Then $A$ and $B$ form a nontrivial collision block, so $A_\pi = 2$. One minimal distinguishing family is $\{q_1,q_2,q_3\}$, so the example also witnesses distinguishing dimension $d=3$. We will use the same example to instantiate the ambiguity converse, the exact block law, the query lower bound, and the open-world extension failure.
+
 \subsection{One-Shot Zero-Error Feasibility}
 
 We now formalize the identification problem in channel-theoretic terms. Let $C: \mathcal{V} \to \{1, \ldots, k\}$ denote the class assignment function, and let $\pi: \mathcal{V} \to \{0,1\}^n$ denote the attribute profile.
@@ -6,7 +22,7 @@ We now formalize the identification problem in channel-theoretic terms. Let $C: 
 The \emph{observation channel} induced by observation family $\Phi$ is the mapping $C \to \pi(V)$ for a random entity $V$ drawn from distribution $P_V$ over $\mathcal{V}$. The channel output is the attribute profile; the channel input is implicitly the class $C(V)$.
 \end{definition}
 
-\begin{theorem}[One-Shot Zero-Error Identification Feasibility]\label{thm:identification-capacity}
+\begin{theorem}[One-Shot Zero-Error Feasibility]\label{thm:identification-capacity}
 Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. Zero-error identification of all $k$ classes is achievable if and only if every class has a distinct attribute profile. When $\pi$ is not class-injective, no zero-error identification scheme exists without auxiliary tag information.
 \end{theorem}
 \leanmeta{ \LH{ACS8}}
@@ -24,11 +40,6 @@ Under any distribution with positive mass on both colliding classes, $I(C; \pi(V
 
 \begin{remark}[Relation to Ahlswede-Dueck]
 In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
-\end{remark}
-\leanmeta{ \LH{ACS8}}
-
-\begin{remark}[Terminology]
-Theorem~\ref{thm:identification-capacity} is a one-shot feasibility statement, not a Shannon asymptotic coding theorem. The terminology is retained only as compact shorthand for the zero-error or non-zero-error dichotomy under the stated observation model.
 \end{remark}
 \leanmeta{ \LH{ACS8}}
 
@@ -78,7 +89,9 @@ Specifically, the witness procedure is to compare the relevant tag values.
 The procedure makes a constant number of primitive queries (one tag access per value) and one comparison. This is $O(1)$ regardless of the number of available attributes $|\mathcal{I}|$.
 \end{proof}
 
-\subsection{Converse: Tag Rate Lower Bound}
+\subsection{Ambiguity Converse}
+
+The next theorem is the paper's main zero-error compression statement. It converts observational collision multiplicity directly into a necessary naming budget.
 
 \begin{definition}[Collision multiplicity]\label{def:collision-multiplicity}
 Let $\mathcal{C}=\{1,\ldots,k\}$ and let $\pi_{\mathcal{C}}:\mathcal{C}\to\{0,1\}^n$ be the class-level profile map. Define
@@ -113,6 +126,46 @@ Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical o
 If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 \end{corollary}
 \leanmeta{ \LH{LWDC3}}
+
+In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem~\ref{thm:converse} already forces $L \ge 1$ bit for zero-error identification.
+
+\subsection{Exact Finite-Block Law}
+
+The ambiguity converse extends exactly to blocks, so the main compression law is not merely one-shot. The next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
+
+\begin{theorem}[Exact one-shot feasibility threshold]\label{thm:graph-one-shot-threshold}
+For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and only if
+\[
+A_\pi \le n.
+\]
+\end{theorem}
+\leanmeta{ \LH{GPH13}}
+
+\begin{proof}
+Classes in the same profile fiber are pairwise confusable, so each such fiber is a clique in the confusability graph. Zero-error tagging is equivalent to a proper graph coloring; therefore feasibility is equivalent to having at least as many colors as the largest clique size, which is exactly $A_\pi$.
+\end{proof}
+
+\begin{theorem}[Exact block feasibility law]\label{thm:graph-block-threshold}
+For block length $t\ge 1$ with coordinatewise observation on $\mathcal{C}^t$, zero-error tagging with alphabet size $n_t$ is feasible if and only if
+\[
+A_\pi^t \le n_t.
+\]
+Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
+\end{theorem}
+\leanmeta{ \LH{GPH16}, \LH{GPH17}, \LH{GPH20}}
+
+\begin{corollary}[Linear log-bit scaling]\label{cor:graph-logbit-scaling}
+Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block tag budget in bits. Then
+\[
+L_t^\star = t\,\log_2 A_\pi,
+\qquad
+\frac{L_t^\star}{t} = \log_2 A_\pi.
+\]
+So per-entity tag rate is exactly stable across block length.
+\end{corollary}
+\leanmeta{ \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
+
+In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.
 
 \subsection{Witness Cost for Class Identity}
 

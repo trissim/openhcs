@@ -9,6 +9,8 @@ Recall from the preceding sections that observer strategies are characterized by
 
 We compare two observer classes: attribute-only observers, which query only attribute membership, and nominal-tag observers, which may read a class identifier in addition to attribute queries.
 
+This section gathers the earlier theorem families into one frontier statement. Section~\ref{sec:zero-error} establishes the minimum tag resource needed to eliminate ambiguity; Section~\ref{sec:matroid} establishes the minimum query resource needed when tags are absent. The present section places those two laws on the same geometric picture. In the semantics-aware compression language of the paper, $L$ stores explicit naming information, $W$ measures interactive disambiguation effort, and $D$ measures semantic failure.
+
 \begin{theorem}[Pareto Optimality of Nominal-Tag Observers]\label{thm:lwd-optimal}
 Let $A_\pi$ be the collision multiplicity (Definition~\ref{def:collision-multiplicity}). Then:
 \begin{enumerate}
@@ -57,6 +59,10 @@ The three-dimensional frontier shows:
 
 Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with maximal-barrier specialization $\log_2 k$.
 
+In the running example from Section~\ref{sec:zero-error}, the point $(L,W,D)=(1,O(1),0)$ is feasible by tagging the collided pair $\{A,B\}$. The tag-free point $(0,\cdot,0)$ is infeasible because $A_\pi=2>1$, and the query lower bound from Section~\ref{sec:matroid} still forces $W\ge 3$ whenever one attempts tag-free zero-error separation.
+
+That example makes the frontier concrete. The converse does not merely say that some metadata is helpful; it identifies the exact one-bit shift needed to cross from impossible to feasible zero-error identification in the presence of the observed collision block.
+
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[scale=0.8]
@@ -95,43 +101,13 @@ When conformance checks traverse $s$ members or fields (rather than ranging over
 \end{remark}
 \leanmeta{ \LH{ACS1}}
 
-\subsection{Confusability Graph Thresholds and Block Scaling}
+\subsection{Interpretation of the Zero-Error Frontier}
 
-Let $\pi_{\mathcal{C}} : \mathcal{C} \to \{0,1\}^n$ be the class-profile map. The induced confusability graph connects two distinct classes when they share the same observable profile.
+The exact block law established in Section~\ref{sec:zero-error} determines the horizontal zero-error threshold. The query lower bound from Section~\ref{sec:matroid} determines the vertical cost of remaining tag-free. The frontier therefore separates the two resources cleanly: tag bits pay for collision multiplicity, while queries pay for distinguishing structure inside the observable family.
 
-\begin{theorem}[Exact one-shot feasibility threshold]\label{thm:graph-one-shot-threshold}
-For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and only if
-\[
-A_\pi \le n.
-\]
-\end{theorem}
-\leanmeta{ \LH{GPH13}}
-
-\begin{proof}
-Classes in the same profile fiber are pairwise confusable, so each such fiber is a clique in the confusability graph. Zero-error tagging is equivalent to a proper graph coloring; therefore feasibility is equivalent to having at least as many colors as the largest clique size, which is exactly $A_\pi$.
-\end{proof}
-
-\begin{theorem}[Exact block feasibility law]\label{thm:graph-block-threshold}
-For block length $t\ge 1$ with coordinatewise observation on $\mathcal{C}^t$, zero-error tagging with alphabet size $n_t$ is feasible if and only if
-\[
-A_\pi^t \le n_t.
-\]
-Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
-\end{theorem}
-\leanmeta{ \LH{GPH16}, \LH{GPH17}, \LH{GPH20}}
-
-\begin{corollary}[Linear log-bit scaling]\label{cor:graph-logbit-scaling}
-Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block tag budget in bits. Then
-\[
-L_t^\star = t\,\log_2 A_\pi,
-\qquad
-\frac{L_t^\star}{t} = \log_2 A_\pi.
-\]
-So per-entity tag rate is exactly stable across block length.
-\end{corollary}
-\leanmeta{ \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
+That separation is what makes the three-resource view useful. The rate coordinate does not merely summarize stored metadata, and the query coordinate does not merely summarize computation; together they describe two distinct ways of paying for semantic ambiguity.
 
 \begin{remark}[Scope]
-These are worst-case finite-block confusability laws. They strengthen the zero-error converse with exact block thresholds, while remaining distinct from full distribution-optimized K\"orner graph-entropy theory.
+The finite-block laws used here are worst-case confusability results. They sharpen the ambiguity converse with exact thresholds, while remaining distinct from full distribution-optimized K\"orner graph-entropy theory.
 \end{remark}
 \leanmeta{ \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}

@@ -64,3 +64,4 @@ import DecisionQuotient.ComplexityMain
 import DecisionQuotient.WitnessCheckingDuality
 import DecisionQuotient.StochasticSequential
 import DecisionQuotient.ComputationalDecisionProblem
+import DecisionQuotient.ExplicitStateMembership

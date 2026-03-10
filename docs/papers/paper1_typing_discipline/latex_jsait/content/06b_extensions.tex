@@ -1,80 +1,23 @@
-\subsection{Lossy Regime: Deterministic vs Noisy Models}
+The main theorem chain is complete in the deterministic zero-error setting. We record only brief forward-looking directions here.
 
-The zero-error corner ($D=0$) is governed by Theorem~\ref{thm:converse}. For $D>0$, the model matters:
-\begin{itemize}
-\item \textbf{Deterministic queries}: there is no universal law of the form $W=O(\log(1/\epsilon)\cdot d)$. If classes collide on all deterministic observations, repeating those same observations does not reduce error.
-\item \textbf{Noisy queries}: repeated independent observations can reduce error exponentially, yielding logarithmic-in-$1/\epsilon$ sample complexity.
-\end{itemize}
+Each extension changes one part of the model while preserving the paper's central question: once identity is only partially visible, how do stored naming information, interactive evidence, and allowable error trade off?
 
-Thus, in the deterministic model, distortion is controlled by collision geometry and decision rules; in noisy models, repetition-based concentration bounds become relevant.
+\subsection{Noisy and Lossy Observation}
 
-\subsection{Noisy Query Model}
+With noisy queries, repeated sampling can reduce error, so the natural problem becomes the tradeoff among tag rate, repeated query cost, and target error level. In this regime, the model changes by replacing deterministic attribute observations with noisy ones, and the main open question is how the ambiguity law interacts with repeated evidence. Explicit tags should continue to act as a noise-free side channel whenever they are transmitted cleanly.
 
-Throughout this paper, queries are deterministic: $q_I(v) \in \{0,1\}$ is a fixed function of $v$. In practice, observations may be corrupted. We sketch an extension to noisy queries and state the resulting open problems.
-
-\begin{definition}[Noisy observation channel]
-A \emph{noisy observation channel} with crossover probability $\epsilon \in [0, 1/2)$ returns:
-\[
-\tilde{q}_I(v) = \begin{cases}
-q_I(v) & \text{with probability } 1 - \epsilon \\
-1 - q_I(v) & \text{with probability } \epsilon
-\end{cases}
-\]
-Each query response is an independent BSC$(\epsilon)$ corruption of the true value.
-\end{definition}
-\leanmeta{ \LH{ACS8}}
-
-\begin{definition}[Noisy identification capacity]
-The \emph{$\epsilon$-noisy identification capacity} is the supremum rate (in bits per entity) at which zero-error identification is achievable when all attribute queries pass through a BSC$(\epsilon)$.
-\end{definition}
-\leanmeta{ \LH{ACS8}, \LH{ACS7}}
-
-In the noiseless case ($\epsilon = 0$), Theorem~\ref{thm:identification-capacity} shows the capacity is binary: $\log_2 k$ if $\pi$ is class-injective, $0$ otherwise. For $\epsilon > 0$, several questions arise.
-
-\textbf{Open problem (noisy identification cost).} For $\epsilon > 0$ and class-injective $\pi$, zero-error identification is impossible with finite queries (since the BSC has nonzero error probability). With bounded error $\delta > 0$, we expect the identification cost to scale as $W = \Theta\left(\frac{\log(1/\delta)}{(1 - 2\epsilon)^2}\right)$ queries per entity. A key observation is that a nominal tag of $L \geq \lceil \log_2 k \rceil$ bits (transmitted noiselessly) should restore $O(1)$ identification regardless of query noise.
-
-The third point is the key insight: \emph{nominal tags provide a noise-free side channel}. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for explicit tagging in noisy environments, precisely the regime where pure attribute-probe schemes would require many repeated queries to achieve confidence.
-
-\textbf{Connection to identification via channels.} The noisy model connects more directly to Ahlswede-Dueck identification \cite{ahlswede1989identification}. In their framework, identification capacity over a noisy channel can exceed Shannon capacity. Our setting differs: we have adaptive queries rather than block codes, and the decoder must identify a class rather than test a hypothesis. Characterizing the interplay between adaptive query strategies and channel noise remains open.
-
-\subsection{Rate-Distortion-Query Tradeoff Surface}
-
-The $(L, W, D)$ tradeoff admits a natural geometric interpretation. In the maximal-barrier regime we identify a unique Pareto-optimal point at $D = 0$ (Theorem~\ref{thm:lwd-optimal}); outside that regime, the full tradeoff surface can contain multiple $D=0$ frontier points.
-
-\textbf{Fixed-$W$ slices.} For fixed query budget $W$, what is the minimum tag rate $L$ to achieve distortion $D$? When $W \geq d$ (the distinguishing dimension), zero distortion is achievable with $L = 0$ via exhaustive querying. When $W < d$, the observer cannot distinguish all classes, and either:
-\begin{itemize}
-\item accepts $D > 0$ (misidentification), or
-\item adds tags ($L > 0$) to compensate for insufficient queries.
-\end{itemize}
-
-\textbf{Fixed-$L$ slices.} For fixed tag rate $L < \log_2 k$, the tag partitions the $k$ classes into $2^L$ groups. Within each group, the observer must use queries to distinguish. The query cost is determined by the distinguishing dimension within each group, which is potentially much smaller than the global dimension.
-
-\textbf{Open problem (subadditivity of query cost).} For a tag of rate $L$ partitioning classes into groups $G_1, \ldots, G_{2^L}$, we expect $W(L) \leq \max_i d(G_i)$, where $d(G_i)$ is the distinguishing dimension within group $G_i$. Optimal tag design should minimize this maximum. Characterizing the optimal partition remains open.
+The noisy setting asks how the same ambiguity law interacts with repeated but unreliable evidence.
 
 \subsection{Semantic Distortion Measures}
 
-We have treated distortion $D$ as binary (correct identification or not). Richer distortion measures are possible:
-\begin{itemize}
-\item \textbf{Hierarchical distortion}: misidentifying a class within the same genus or subsystem is less severe than cross-group errors.
-\item \textbf{Weighted distortion}: some misidentifications have higher cost than others.
-\end{itemize}
+The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the $(L,W,D)$ frontier changes when near misses and catastrophic confusions are not penalized equally.
 
-\subsection{Privacy and Security}
+This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
 
-\textbf{Privacy-preserving identification.} Nominal tags enable zero-knowledge-style proofs of class membership without revealing full attribute profiles. An entity can prove ``I belong to class $C$'' by revealing $\tau(v) = C$ without exposing $\pi(v)$, preserving attribute privacy. Attribute-only schemes must often reveal the complete profile $\pi(v)$ to prove membership, leaking structural information.
+\subsection{Privacy, Security, and Three-Resource Geometry}
 
-\textbf{Secure model verification.} In machine learning deployment, compressed model identifiers prevent model substitution attacks. Verifying model identity via nominal tags ($O(1)$ hash comparison) is more efficient and secure than attribute-based verification ($O(s)$ architecture inspection), which is vulnerable to adversarial perturbations that preserve structural fingerprints while altering behavior.
+Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. Here the model change is that one constrains what information may be revealed while still certifying identity or class membership, and the open question is how much explicit naming information can be exposed safely.
 
-\subsection{Connection to Rate-Distortion-Perception Theory}
+More broadly, the $(L,W,D)$ frontier invites comparison with other three-resource tradeoff geometries, including rate-distortion-perception formulations \cite{blau2019rethinking}. The question left open here is whether there is a similarly sharp geometric characterization when the third resource is interactive query effort rather than perceptual fidelity.
 
-Blau and Michaeli \cite{blau2019rethinking} extended classical rate-distortion theory by adding a \emph{perception} constraint: the reconstructed distribution must match a target distribution under some divergence measure. This creates a three-way tradeoff between rate, distortion, and perceptual quality.
-
-Our $(L, W, D)$ framework admits a parallel interpretation. The query cost $W$ plays a role analogous to the perception constraint: it measures the \emph{interactive cost} of achieving low distortion, rather than a distributional constraint. Just as rate-distortion-perception theory asks ``what is the minimum rate to achieve distortion $D$ while satisfying perception constraint $P$?'', we ask ``what is the minimum tag rate $L$ to achieve distortion $D$ with query budget $W$?''
-
-The analogy suggests several directions:
-\begin{itemize}
-\item \textbf{Perception as identification fidelity}: in classification systems that must preserve statistical properties, a perception constraint would require the observer's class estimates to have the correct marginal distribution, not just low expected error.
-\item \textbf{Three-resource tradeoffs}: the $(L, W, D)$ Pareto frontier (Theorem~\ref{thm:lwd-optimal}) is a discrete analogue of the rate-distortion-perception tradeoff surface. Characterizing this surface for specific classification problems would extend the geometric rate-distortion program to identification settings.
-\end{itemize}
-
-Formalizing these connections would unify identification capacity with the broader rate-distortion-perception literature.
+These directions preserve the paper's central viewpoint: identity can be partially stored, partially queried, and partially approximated. Changing the model changes how those resources interact, but not the need to account for them explicitly.

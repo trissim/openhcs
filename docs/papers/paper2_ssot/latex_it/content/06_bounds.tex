@@ -142,6 +142,8 @@ H(\hat X)\le H(Y,T)\le \log_2 |\mathcal Y\times \mathcal T|.
 Deterministic coarsening merges atoms of the distribution on $(Y,T)$ and therefore cannot increase entropy. A decoder is one such coarsening. The ceiling follows because $(Y,T)$ takes values in a finite alphabet of size $|\mathcal Y\times\mathcal T|$.
 \end{proof}
 
+This theorem is the structural reason the output and gap formulations are not independent embellishments of the counting converse. Once the architecture exposes only a coarsened transcript, every downstream representation inherits the same obstruction through deterministic data processing rather than escaping it.
+
 \begin{theorem}[Equivalence viewpoint]\label{thm:equivalence-viewpoint}
 The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements above are different normal forms of the same deterministic finite zero-error obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
 \end{theorem}
@@ -213,7 +215,7 @@ Theorem~\ref{thm:multifact-success-set} identifies exact success sets with induc
 
 The same characterization is also available in weighted form. For any finite source weight $w$ on the latent alphabet, the mechanized development defines the maximum mass of a $T$-colorable induced subgraph and proves that an exact decoder on a success set $S$ attains at most that mass, with equality for some optimizing success set. This is the exact finite weighted-success law for the extended model.\leanmeta{\LH{MFT18}}\leanmeta{\LH{MFT19}}
 
-Equivalently, the mechanized development now packages this optimum as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; it has an exact finite weighted characterization at the one-shot level.\leanmeta{\LH{MFT23}}\leanmeta{\LH{MFT24}}
+Equivalently, the mechanized development now packages this optimum as an explicit exact finite rate-distortion value for the extended model at tag budget $T$: every exact success set has weighted mass at most this value, and some exact decoder attains it. Thus the extended model no longer has only a converse inequality; at the one-shot level it has an exact weighted success law rather than merely an upper bound.\leanmeta{\LH{MFT23}}\leanmeta{\LH{MFT24}}
 
 \begin{theorem}[First non-clique witness]\label{thm:multifact-nonclique}
 There exists a binary two-fact system with single-coordinate observation views whose confusability graph is not a clique. In that system, two tags suffice for exact recovery, one tag is impossible, and any one-tag decoder can be exact on at most half of the four latent states under the uniform source.
@@ -289,15 +291,30 @@ The original clique-fiber regime is now isolated as an equality subclass rather 
 \[
 C(G)=\vartheta_{\infty}(G)=\log |\mathcal B|.
 \]
-Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lov\'asz-$\vartheta$ framework. That equality is no longer confined to the abstract cluster-graph subclass. The broader exact-collapse criterion is transitivity of the base confusability relation: if confusability is transitive, then the base confusability graph is exactly the cluster graph on connected components, and the mechanized equality theorem yields
+Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lov\'asz-$\vartheta$ framework. That equality is no longer confined to the abstract cluster-graph subclass. The current cluster-collapse mechanism is characterized exactly by transitivity of the base confusability relation:
+\[
+\text{confusability is transitive}
+\iff
+G_{\mathrm{conf}}=\mathrm{Cluster}(\Pi_{\mathrm{cc}}).
+\]
+Hence, if confusability is transitive, the base confusability graph is exactly the cluster graph on connected components, and the mechanized equality theorem yields
 \[
 C_\infty(\text{views})=\vartheta_\infty(\text{views})=\log |\Pi_{\mathrm{cc}}|,
 \]
-where $\Pi_{\mathrm{cc}}$ is the connected-component partition of the base confusability graph. Fiber coherence is then a sufficient structural condition: if equality at one allowed location already fixes the full observation transcript, transitivity follows, the connected components are exactly the realized transcript fibers, and the equality sharpens further to
+where $\Pi_{\mathrm{cc}}$ is the connected-component partition of the base confusability graph. Between arbitrary base models and full fiber coherence, a checkable sufficient condition is that the view family be \emph{meet-witnessed}: every pair of allowed views contains another allowed view inside their intersection. Under that condition, any two confusability witnesses can be pulled back to a common subview, so confusability is transitive and the same equality follows. Fiber coherence is then a stronger sufficient structural condition: if equality at one allowed location already fixes the full observation transcript, transitivity follows, the connected components are exactly the realized transcript fibers, and the equality sharpens further to
 \[
 C_\infty(\text{views})=\vartheta_\infty(\text{views})=\log |\mathcal T_{\mathrm{real}}|.
 \]
-\leanmeta{\LH{MFT88}}\leanmeta{\LH{MFT89}}\leanmeta{\LH{MFT90}}\leanmeta{\LH{MFT91}}\leanmeta{\LH{MFT92}}\leanmeta{\LH{MFT93}}\leanmeta{\LH{MFT94}}\leanmeta{\LH{MFT95}}\leanmeta{\LH{MFT96}}\leanmeta{\LH{MFT85}}\leanmeta{\LH{MFT86}}\leanmeta{\LH{MFT87}}
+At the witness level, this same collapse admits a local composition form: base confusability is the edge union of the single-view cluster graphs, and transitivity is equivalent to closure of those fixed-view witnesses under two-step composition through an intermediate state. This is the exact local criterion for the current equality mechanism: the collapse to a cluster graph is determined by how single-view witnesses compose, not by an opaque global coincidence of the full confusability graph.\leanmeta{\LH{MFT107}}\leanmeta{\LH{MFT108}}\leanmeta{\LH{MFT109}}
+\leanmeta{\LH{MFT88}}\leanmeta{\LH{MFT89}}\leanmeta{\LH{MFT90}}\leanmeta{\LH{MFT91}}\leanmeta{\LH{MFT92}}\leanmeta{\LH{MFT93}}\leanmeta{\LH{MFT94}}\leanmeta{\LH{MFT95}}\leanmeta{\LH{MFT96}}\leanmeta{\LH{MFT97}}\leanmeta{\LH{MFT98}}\leanmeta{\LH{MFT99}}\leanmeta{\LH{MFT100}}\leanmeta{\LH{MFT101}}\leanmeta{\LH{MFT102}}\leanmeta{\LH{MFT85}}\leanmeta{\LH{MFT86}}\leanmeta{\LH{MFT87}}
+
+\begin{theorem}[Affine fact-matroid theorem]\label{thm:affine-fact-matroid}
+Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.\leanmeta{\LH{AFM1}}\leanmeta{\LH{AFM2}}\leanmeta{\LH{AFM3}}\leanmeta{\LH{AFM4}}\leanmeta{\LH{AFM5}}
+\end{theorem}
+
+\begin{proof}
+Subtracting the affine origin converts semantic agreement of two realized states into vanishing of a difference vector in the direction subspace. A fact is therefore determined by $S$ exactly when its coordinate functional vanishes on every direction vector whose coordinates in $S$ vanish, which is equivalent to span membership of that coordinate functional. The coordinate functionals therefore define a representable matroid on fact indices. In that matroid, independent spanning sets are bases, bases all have the same cardinality, and the minimal determining fact sets are precisely those bases.
+\end{proof}
 
 \subsection{Rate-Complexity Consequence}\label{sec:rate-complexity-consequence}
 

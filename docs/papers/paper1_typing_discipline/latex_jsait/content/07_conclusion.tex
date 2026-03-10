@@ -1,33 +1,17 @@
-This paper presents a resource-based analysis of classification under observational constraints. The central law is the zero-error ambiguity converse: any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$, where $A_\pi$ is the largest collision block induced by observable profiles. The finite-block confusability results sharpen that law to exact thresholds and exact linear log-bit scaling across block length. In maximal-barrier domains, nominal tagging achieves the unique Pareto-optimal zero-error point in the $(L, W, D)$ tradeoff.
+This paper presents a resource-based analysis of zero-error semantic compression under observational constraints. The central law is the zero-error ambiguity converse: any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$, where $A_\pi$ is the largest collision block induced by observable profiles. The finite-block confusability results sharpen that law to exact thresholds and exact linear log-bit scaling across block length. In maximal-barrier domains, nominal tagging achieves the unique Pareto-optimal zero-error point in the $(L, W, D)$ tradeoff.
 
 The second main arc characterizes the query resource. Minimal distinguishing query sets form the bases of a matroid, making the distinguishing dimension $d$ well-defined as an invariant of the observation structure. Attribute-only zero-error identification therefore pays at least $d$ queries in the worst case. Open-world and Rice-style boundary results explain why present-day collision-freedom is not enough for persistent guarantees, and the implementation-level results show how the same structure reappears as maintenance localization and information scattering.
 
-\subsection{A Recurring Design Constraint}
+Across domains, the same law recurs: when observable profiles collide, zero-error identification requires either explicit naming information or additional structure-specific work. The ambiguity converse, the exact block law, and the query lower bound formalize that tradeoff, while the open-world boundary shows why present collision-freedom does not remove it.
+\leanmeta{ \LH{LWDC1}, \LH{GPH18}, \LH{ACS1}, \LH{ROB1}, \LH{UND1} }
 
-Across domains, the same structure recurs:
-\begin{itemize}
-\item \textbf{Biology}: phenotypic observation cannot distinguish cryptic species. DNA barcoding supplies additional naming information.
-\item \textbf{Databases}: column-value queries cannot distinguish rows with identical observable attributes. Primary keys provide explicit identity.
-\item \textbf{Software runtimes}: attribute observation cannot distinguish entities that collide on observed capabilities. Runtime identifiers provide constant-cost identity.
-\item \textbf{Model registries}: structural signatures can collide, and registry identifiers play the same nominal role as tags.
-\end{itemize}
+Biology, databases, software runtimes, and model registries instantiate the same constraint in different guises: phenotype collides where barcodes separate, non-key columns collide where primary keys separate, observable capabilities collide where runtime identifiers separate, and structural signatures collide where registry identifiers separate. The same observable collision structure governs all of them.
 
-The information barrier is not a quirk of any particular domain; it is a mathematical consequence of the quotient structure induced by limited observations. What varies by domain is not the existence of the constraint, but which resource the system chooses to spend to escape it.
+Zero-error class identification is therefore governed by three structural quantities: collision multiplicity fixes the minimum naming budget, the exact block law fixes its finite-block scaling, and the distinguishing dimension fixes the tag-free query burden. The open-world results show that these costs do not disappear just because a current snapshot happens to be separable.
 
-\subsection{Implications}
+The practical consequence is equally direct. Systems can centralize identity by carrying explicit names, or they can recover it indirectly by distributing distinguishing work across queries, declarations, and maintenance sites. The theorems identify exactly where that tradeoff comes from and which parts of it are unavoidable.
 
-\begin{itemize}
-\item \textbf{The necessity of nominal information is a theorem, not a preference.} Any zero-error scheme must satisfy the ambiguity converse $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}). In maximal-barrier domains ($A_\pi = k$), this becomes $L \ge \log_2 k$, and nominal tagging gives the unique $D=0$ Pareto point with $W=O(1)$ (Theorem~\ref{thm:lwd-optimal}).
-
-\item \textbf{The barrier is informational, not computational.} Even with unbounded resources, attribute-only observers cannot overcome it.
-
-\item \textbf{Finite-block confusability laws are exact.} The graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^t$) and exact linear log-bit scaling across block length.
-
-\item \textbf{Open-world guarantees require explicit tags.} Barrier-freedom is not extension-stable under system growth, and deciding barrier existence or freedom for arbitrary generators is not computable. So a persistent $D=0$ guarantee cannot rely on currently collision-free attribute structure alone.
-
-\item \textbf{Fixed-axis systems are necessarily incomplete outside their axis.} By Corollary~\ref{cor:fixed-axis-incompleteness}, any fixed-axis classifier is complete only for axis-measurable properties and cannot represent properties that vary within an axis fiber unless a new axis or explicit tag is introduced.
-\end{itemize}
-\leanmeta{ \LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2} }
+Collision multiplicity determines the minimum zero-error tag budget, distinguishing dimension determines the tag-free query burden, and both persist beyond any single realized world.
 
 \subsection{Future Work}
 

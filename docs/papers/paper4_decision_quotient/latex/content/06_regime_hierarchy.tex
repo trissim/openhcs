@@ -1,12 +1,45 @@
 \section{Regime Hierarchy}\label{sec:regime-hierarchy}
 
-The static, stochastic, and sequential formulations are not merely notational variants. They form a strict hierarchy under standard complexity assumptions.
+The static, stochastic, and sequential formulations are the paper's central organizing object. The same exact certification question is posed in three increasingly expressive models, and the resulting complexity classes separate accordingly. Read as a complexity matrix, the addition of probability lifts exact certification from coNP to PP, and the addition of time lifts it again to PSPACE.
+
+\subsection{Complexity Matrix}
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+Regime & Sufficiency & Minimum & Anchor \\
+\midrule
+Static & coNP-complete & coNP-complete & $\Sigma_2^P$-complete \\
+Stochastic & PP-complete & PP-hard & PP-hard \\
+Sequential & PSPACE-complete & PSPACE-complete & PSPACE-complete \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This table is the paper's compact summary. Adding probability lifts exact certification from coNP to PP, and adding time lifts it again to PSPACE.
+
+The stochastic anchor and minimum variants are classified with hardness lower bounds only; the explicit-state finite-search deciders in the artifact provide upper bounds under the explicit regime but do not constitute general PP membership proofs under the succinct encoding. By contrast, the sequential anchor and minimum variants admit paper-level PSPACE membership via guess-and-verify over anchors or coordinate subsets together with the sequential sufficiency verifier.
+
+\begin{theorem}[Unified Regime Hierarchy for Exact Relevance Certification]\label{thm:regime-main}
+Under the encoding model of Section~\ref{sec:encoding}, exact relevance certification admits a strict regime-sensitive hierarchy. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, sufficiency is PP-complete and the minimum and anchor queries are PP-hard. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete. Under standard complexity assumptions, this yields strict inclusions
+\[
+\text{static} \subset \text{stochastic} \subset \text{sequential}.
+\]
+\end{theorem}
+
+\leanmeta{\LH{DQ17}, \LH{DQ18}, \LH{DQ19}, \LH{DQ1}.}
+
+\begin{proof}
+The matrix entries are exactly Theorems~\ref{thm:sufficiency-conp}, \ref{thm:minsuff-conp}, \ref{thm:anchor-sigma2p}, \ref{thm:stochastic-pp}, \ref{thm:stochastic-anchor-hard}, \ref{thm:stochastic-minimum-hard}, \ref{thm:sequential-pspace}, \ref{thm:sequential-anchor-hard}, and \ref{thm:sequential-minimum-hard}. The strict inclusions then follow from the standard class separations invoked in Theorems~\ref{thm:static-stochastic-strict} and~\ref{thm:stochastic-sequential-strict}.
+\end{proof}
 
 \subsection{Strict Inclusions}
 
 \begin{theorem}[Static $\subset$ Stochastic]\label{thm:static-stochastic-strict}
 Under standard assumptions (in particular $\Pclass\ne\coNP$), the stochastic regime strictly extends the static regime in computational complexity.
 \end{theorem}
+
+\leanmeta{\LH{DQ18}.}
 
 \begin{proof}
 Static sufficiency checking is coNP-complete (Theorem~\ref{thm:sufficiency-conp}), while stochastic sufficiency checking is PP-complete (Theorem~\ref{thm:stochastic-pp}). Under the stated assumptions, this yields strict separation in regime difficulty.
@@ -16,18 +49,24 @@ Static sufficiency checking is coNP-complete (Theorem~\ref{thm:sufficiency-conp}
 Under standard assumptions (in particular $\Pclass\ne\PP$), the sequential regime strictly extends the stochastic regime in computational complexity.
 \end{theorem}
 
+\leanmeta{\LH{DQ19}.}
+
 \begin{proof}
 Stochastic sufficiency is PP-complete (Theorem~\ref{thm:stochastic-pp}), while sequential sufficiency is PSPACE-complete (Theorem~\ref{thm:sequential-pspace}). The class gap yields strict regime inclusion under the stated assumptions.
 \end{proof}
 
 \subsection{Integrity-Resource Bounds}
 
+The hierarchy has a methodological consequence as well: as one moves upward in the hierarchy, exact certification becomes less compatible with fixed polynomial resource budgets.
+
 \begin{proposition}[Abstention Frontier Expands with Regime Complexity]\label{prop:abstention-frontier}
-For polynomial-time physical controllers constrained to exact certification, the set of instances requiring abstention expands along
+For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along
 \[
 \text{static} \to \text{stochastic} \to \text{sequential}.
 \]
 \end{proposition}
+
+\leanmeta{\LH{IC32}, \LH{DQ2}.}
 
 \begin{proof}
 As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes.

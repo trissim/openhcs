@@ -1,21 +1,15 @@
-\subsection{Model Contract (Fixed-Axis Domains)}
-
-Model contract (fixed-axis domain). A domain is specified by a fixed observation family $\Phi$ derived from a fixed axis map $\alpha: \mathcal{V} \to \mathcal{A}$ (e.g., $\alpha(v) = (B(v), S(v))$). An observer is permitted to interact with $v$ only through primitive queries in $\Phi$, and each primitive query factors through $\alpha$: for every $q \in \Phi$, there exists $\tilde{q}$ such that $q(v) = \tilde{q}(\alpha(v))$. A property is in-scope semantic iff it is computable by an admissible strategy that uses only responses to queries in $\Phi$.
-
-We adopt $\Phi$ as the complete observation universe for this paper: to claim applicability to a concrete runtime one must either (i) exhibit mappings from each runtime observable into $\Phi$, or (ii) enforce the admissibility constraints (no external registries, no reflection, no preprocessing or amortization). Under either condition the theorems apply without qualification.
-
-The fixed-axis contract means the observer works on an observational quotient: all in-scope semantic properties factor through $\alpha$, and any mechanism that distinguishes values inside an $\alpha$-fiber must introduce additional information not present in the declared observation family.
-
 \subsection{Query Families and Distinguishing Sets}
 
-The classification problem is: given a set of queries, which subsets suffice to distinguish all entities?
+We now study the query resource under the fixed observation family $\Phi$. A distinguishing set separates every pair of distinct classes. Minimal distinguishing sets will be shown to form the bases of a matroid.
+
+The running example already illustrates the basic contrast: one explicit bit resolves the only collision block, but tag-free zero-error separation still has to pay for the full distinguishing family. This section identifies the structural invariant that controls that query cost.
 
 \begin{definition}[Query family]
 Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
 \end{definition}
 \leanmeta{ \LH{ACS1}}
 
-\noindent In this section, ``queries'' are the primitive attribute predicates $q \in \Phi$ (equivalently, each $q$ factors through the axis map: $q = \tilde{q} \circ \alpha$).
+\noindent In this section, ``queries'' are the primitive attribute predicates $q \in \Phi$.
 
 \noindent\textbf{Convention:} $\Phi := \mathcal{Q}$. All universal quantification over ``queries'' ranges over $q \in \Phi$ only.
 
@@ -29,17 +23,9 @@ A distinguishing set $S$ is \emph{minimal} if no proper subset of $S$ is disting
 \end{definition}
 \leanmeta{ \LH{L1}, \LH{L4}}
 
+In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is distinguishing and minimal, so it already witnesses the query resource needed for tag-free separation.
+
 \subsection{Matroid Structure of Query Families}
-
-\textbf{Scope and assumptions.} The matroid theorem below is unconditional within the fixed-axis observational theory defined above. In this section, ``query'' always means a primitive predicate $q \in \Phi$. It depends only on:
-
-\begin{itemize}
-\item $E = \Phi$ is the ground set of primitive queries (attribute predicates).
-\item ``Distinguishing'': for all values $v,w$ with $\text{class}(v) \neq \text{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
-\item ``Minimal'' means inclusion-minimal: no proper subset suffices.
-\end{itemize}
-
-No further assumptions are required within this theory beyond the fixed observation family $\Phi$. The mechanized development verifies the closure laws, the exchange and equicardinality lemmas, and the closure-to-matroid bridge used below; the representative handle tags are \LH{L1}, \LH{L4}, and \LH{L5}.
 
 \begin{definition}[Bases family]
 Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries. Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
@@ -109,7 +95,11 @@ For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is t
 \end{corollary}
 \leanmeta{ \LH{ACS1}}
 
+In the running example, this yields $W \ge 3$ for any attribute-only zero-error scheme, even though the ambiguity converse will later show that one explicit tag bit already suffices to resolve the only collision block.
+
 The key insight: the distinguishing dimension is invariant across all minimal query strategies. The difference between nominal-tag and attribute-only observers lies in \emph{witness cost}: a nominal tag achieves $W = O(1)$ by storing the identity directly, bypassing query enumeration.
+
+This is the paper's complementary resource law. The ambiguity converse says how many bits are needed to eliminate collision multiplicity; the query lower bound says how much structure must still be traversed when those bits are absent.
 
 \subsection{Witness Cost Comparison}
 

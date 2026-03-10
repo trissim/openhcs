@@ -1,6 +1,6 @@
 \section{Entropy-Inflation Program Status}\label{sec:entropy-inflation-program}
 
-This section records the formal implementation program for the entropy-via-inflation bridge in LaTeX form (artifact-facing), including completed bridge theorems, minimality witness coverage, and remaining integration work.
+This section records the implemented entropy-via-inflation bridge, its minimality witnesses, and several natural extensions.
 
 \subsection{Available Machinery}
 
@@ -29,6 +29,28 @@ The module \texttt{InflationEntropyBridge.lean} now contains:
 The same module includes \texttt{TemporalUtilityFamily} and transfer lemmas
 \texttt{temporal\_classes\_monotone\_of\_utilityCompat} and
 \texttt{temporal\_entropy\_monotone\_of\_utilityCompat}, lifting temporal state-cardinality indexing into dynamic decision families.
+
+\paragraph{Probability-necessity layer.}
+On the temporally expanded valid successor slice, the same module now proves:
+\begin{itemize}
+\item \texttt{state\_cardinality\_gt\_one\_of\_positive\_time}
+\item \texttt{uniformPrior\_uncertainty\_of\_positive\_time}
+\item \texttt{uniformPrior\_nondegenerate\_of\_positive\_time}
+\item \texttt{counting\_measure\_not\_probability\_on\_stateAt\_of\_positive\_time}
+\item \texttt{cosmological\_expansion\_forces\_probabilistic\_reasoning}
+\item \texttt{cosmological\_expansion\_forces\_support\_complete\_probabilistic\_reasoning}
+\end{itemize}
+This strengthens the earlier bridge from monotone optimizer-class growth to a
+theorem that expansion of physically valid successor states forces probability
+normalization once raw counting ceases to be a probability measure.
+
+\paragraph{Support-complete semantics and chosen encoding.}
+The module now names the support-complete valid-answer semantics explicitly via
+\texttt{canonicalValidAnswerSemantics} and proves
+\texttt{canonicalValidAnswerSemantics\_identifies\_StateAt}. It also defines a
+chosen state-indexed physical-decision encoding and proves
+\texttt{stateIndexedPhysicalEncoding\_identifies\_StateAt}, making the physical
+answer carrier explicit at the level of the temporal slice.
 
 \paragraph{Minimality witnesses.}
 The module \texttt{InflationEntropyMinimality.lean} now includes explicit witnesses for:
@@ -68,10 +90,10 @@ Physical positivity/floor premises & Monotone floor implemented & Strict floor +
 \end{tabular}
 \end{center}
 
-\subsection{Open Integration Tasks}
+\subsection{Further Extensions}
 
 \begin{enumerate}
-\item TOC claim-handle publication alignment: incorporate the new IEB/SSV handles into paper-level claim labels and regenerate auto claim mapping with no new unmapped deltas.
+\item Integrate the newly added IEB17--IEB24 handles into the generated claim and handle tables.
 \item Strengthen requirement-minimality from weakened-framework witnesses to strongest same-structure internal forms where appropriate.
-\item Extend beyond finite accessible slices (measure-theoretic/infinite-state treatment) as a separate theorem layer.
+\item Extend beyond finite accessible slices to a separate measure-theoretic infinite-state layer.
 \end{enumerate}

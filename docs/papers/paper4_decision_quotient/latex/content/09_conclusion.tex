@@ -1,40 +1,34 @@
 \section{Conclusion}
 
-This paper isolates the abstract complexity of decision-relevant information. Once the state space is factored into coordinates, the central question is not merely how to evaluate the objective on a given state, but how to certify which coordinates determine the optimal action.
+This paper develops a regime-sensitive complexity theory of exact relevance certification for coordinate-structured decision problems. Once the state space is factored into coordinates, evaluating the objective on one fully specified state and certifying which coordinates determine the optimal action become distinct computational tasks, and the latter organizes into a sharp hierarchy across static, stochastic, and sequential models.
 
 \subsection*{Main Results}
 
 Within the encoding model of Section~\ref{sec:encoding}, we establish:
 \begin{itemize}
-\item \textbf{Exact certification hardness:} \textsc{Sufficiency-Check} and \textsc{Minimum-Sufficient-Set} are \coNP-complete, while \textsc{Anchor-Sufficiency} is $\SigmaP{2}$-complete
-\item \textbf{Witness and approximation impossibility:} exact empty-set certification has an exponential witness-checking lower bound; on the shifted hard family, any uniform factor guarantee yields a tautology threshold test; and on a separate explicit gadget family, minimum sufficiency is exactly set cover, so approximation guarantees transfer without loss
-\item \textbf{Encoding-sensitive boundary:} logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime
-\item \textbf{Structured tractability:} bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures
+\item \textbf{Static Collapse Theorem plus regime-sensitive complexity matrix:} in the static regime, \textsc{Minimum-Sufficient-Set} collapses to relevance containment, so exact minimization is coNP-complete rather than a genuine $\SigmaP{2}$ search problem, while \textsc{Anchor-Sufficiency} remains $\SigmaP{2}$-complete. Once conditioning and temporal dynamics are added, the same exact-certification question escalates to PP-complete stochastic sufficiency and PSPACE-complete sequential sufficiency, with PP-hard and PSPACE-hard minimum and anchor queries. Under standard assumptions, these results form a strict hierarchy from static to stochastic to sequential exact certification.
+\item \textbf{Sharp phase transition for exact certification:} logarithmic-size sufficient sets admit polynomial-time algorithms in the explicit regime, while linear-size sufficient sets inherit ETH-conditioned exponential lower bounds in the succinct regime.
+\item \textbf{Structural and downstream consequences:} the paper derives witness and approximation obstructions, exact-simplification hardness transfers, and the trilemma of exact certification: no exact certifier can be simultaneously sound, complete, and polynomial-budgeted on the hard regime. This is a fundamental reliability constraint, and a simplicity-tax framing shows that omitted exact relevance is externalized rather than eliminated.
+\item \textbf{Structured tractability:} bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures.
 \end{itemize}
 
-Taken together, these results identify a precise source of difficulty: certifying that information may be discarded can be harder than evaluating the full decision rule once all information is already present.
+Taken together, these results show that exact relevance certification is a distinct complexity-theoretic object in its own right: computing $\Opt(s)$ on one state can be easy even when proving coordinate irrelevance is hard, and the difficulty of that certification problem depends sharply on whether one is ruling out counterexamples, comparing conditional averages, or preserving policies over time.
 
-\subsection*{Reliability and Simplification}
+\subsection*{Implications}
 
-The simplification consequences are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $\Pclass=\coNP$. Reliable exact certification is likewise regime-limited: under $\Pclass\neq\coNP$, no polynomial-budget solver can simultaneously maintain integrity and full exact competence on the hard regime. In the hard succinct regime, conservative over-specification can therefore be a rational response when maintenance overhead is low-order and exact pruning cost is exponential.
+The implications are direct hardness transfers. Configuration simplification is an instance of sufficiency checking, so exact behavior-preserving minimization has no general-purpose polynomial-time worst-case solution unless $\Pclass=\coNP$. Reliable exact certification is likewise regime-limited: under $\Pclass\neq\coNP$, the trilemma of exact certification rules out any solver that is simultaneously sound, complete on the full hard regime, and polynomial-budgeted. And once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any compressed interface merely partitions that relevance into centrally handled and externalized parts. Compression therefore relocates exact relevance rather than erasing it; under the per-site cost model, the unresolved part grows linearly with deployment scale.
 
-\subsection*{Simplicity Tax}
-
-The simplicity-tax section is not an isolated counting exercise. It is the accounting layer induced by the earlier exact-support theory. Once the canonical relevant-coordinate set $R(\mathcal{D})$ is fixed, any architecture $A_M$ partitions that set into centrally handled and omitted coordinates:
-\[
-\mathrm{centralDOF}+\mathrm{simplicityTax}=\mathrm{intrinsicDOF}.
-\]
-The substantive claim is the hardness-conservation consequence: omitted coordinates remain part of the exact decision problem, so they must reappear as local resolution, extra queries, abstentions, or other externalized work. Under the per-site cost model, that externalized cost grows linearly with deployment scale, and under the hard exact regime it cannot be eliminated for free by a polynomial-budget exact certifier.
+This is also the practical meaning of the simplicity tax. In the hard exact regime, a cheap simplification procedure cannot be assumed to have removed decision-relevant structure merely because it has compressed the visible interface. Any relevance omitted from the certified core must still be paid for somewhere else in the system: by local resolution, extra queries, abstention, or weaker guarantees. Exact simplification is therefore costly, but inexact simplification is not free; it externalizes the unresolved burden.
 
 \subsection*{Mechanization}
 
-The Lean 4 artifact machine-checks the main reduction constructions, hardness transfers, and tractability statements. The mechanization does not replace the mathematical argument; it certifies that the formal definitions and reductions used by the argument are internally correct and reproducible.
+The Lean 4 development certifies the main reduction constructions, size-bounded hardness packages, exact finite deciders, counted finite-search procedures, tractability statements, and explicit-state step-counting wrappers used by the paper. This gives a mechanically checked core for the reduction and finite-decision layers of the argument. Standard PP/PSPACE membership arguments remain stated in the paper rather than packaged as end-to-end Turing-machine witness proofs.
 
 \subsection*{Outlook}
 
-Two immediate directions remain. First, the reduction infrastructure can be further integrated with general-purpose formalized complexity libraries. Second, the abstract theorem stack developed here can serve as a clean upstream citation target for downstream convergence and physical papers without forcing those themes into the structure-and-complexity presentation.
+Two immediate directions remain. First, the reduction infrastructure can be integrated more tightly with general-purpose formalized complexity libraries. Second, the artifact boundary can be made even cleaner by continuing to package the existing finite-decision results into more uniform summary interfaces without changing the paper's complexity claims. On the complexity side, the remaining gap is also conceptually interesting: sequential anchor and minimum variants may plausibly admit PSPACE upper bounds by a guess-and-verify argument, whereas stochastic anchor and minimum membership is less immediate because the added existential layer does not obviously remain inside PP.
 
-\subsection*{Acknowledgment: AI-use Disclosure}
+\subsection*{Acknowledgments}
 
 Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, \LaTeX{}/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/\LaTeX{}), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
 

@@ -8,7 +8,7 @@ A computational platform realizes verifiable independent rate $1$ for structural
 \end{corollary}
 \leanmeta{\LH{LNG1}}
 
-The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across examples is the host mechanism that provides propagation and provenance. The tables below record whether the theorem's prediction is confirmed on concrete systems.
+The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across examples is the host mechanism that provides propagation and provenance. The tables below therefore function as theorem checks: each one records the predicted realizability regime together with the host-level mechanism that confirms it.
 
 \paragraph{Programming-language runtimes (selected).}
 For language-level artifacts, the realizability question becomes concrete: does the host language/runtime itself provide both (i) automatic propagation from one structural definition to its derived runtime views and (ii) queryable provenance for those views, without relying on external build tooling? Table~\ref{tab:selected-pl} records a compact comparison for representative mainstream runtimes drawn from widely used languages in current usage surveys and rankings~\cite{stackoverflow2025,tiobe2024}.
@@ -34,7 +34,7 @@ Go~\cite{gospec2024} & no & no & no & reflection only & No definition-time hooks
 \par
 \endgroup
 
-Corollary~\ref{cor:lang-realizability} predicts verifiable rate~$1$ exactly when both host-level conditions hold. In this selected runtime set, Python is the only positive case; the negative rows fail for the missing condition listed in the table. Table~\ref{tab:selected-db} shows the same separation in a non-programming-language setting.
+Corollary~\ref{cor:lang-realizability} predicts verifiable rate~$1$ exactly when both host-level conditions hold. Table~\ref{tab:selected-pl} confirms that prediction row by row: Python supplies both mechanisms internally and realizes verifiable rate~$1$, whereas each negative row fails at the specific missing condition recorded in the table. Table~\ref{tab:selected-db} tests the same prediction in a non-programming-language setting.
 
 \paragraph{Database systems.}
 The same criterion separates native maintained views from external synchronization pipelines.
@@ -57,7 +57,7 @@ External ETL copy / duplicate summary table & no & no & no & Synchronization can
 \par
 \endgroup
 
-Corollary~\ref{cor:lang-realizability} again predicts the outcome exactly: engine-maintained views satisfy both conditions, whereas externalized synchronization does not.
+Corollary~\ref{cor:lang-realizability} again predicts the outcome exactly: engine-maintained views satisfy both conditions and realize verifiable rate~$1$, whereas externalized synchronization breaks the propagation/provenance pair and therefore fails the theorem's criterion.
 
 \paragraph{Dependency-resolution systems.}
 A third everyday regime appears in dependency-resolution systems. Package managers often provide strong provenance observability for resolved dependency graphs, but they do not provide causal propagation in the sense of Corollary~\ref{cor:lang-realizability}: editing the authoritative manifest does not itself update the lockfile or installed graph until a separate host operation is executed.
@@ -81,4 +81,4 @@ A third everyday regime appears in dependency-resolution systems. Package manage
 \label{tab:selected-deps}
 \end{center}
 
-Corollary~\ref{cor:lang-realizability} also predicts the mixed regime in Table~\ref{tab:selected-deps}: provenance can be present without host-native propagation, and then verifiable rate~$1$ still fails. Supplement~A contains additional case-study material.
+Corollary~\ref{cor:lang-realizability} also predicts the mixed regime in Table~\ref{tab:selected-deps}: provenance can be present without host-native propagation, and then verifiable rate~$1$ still fails. The table confirms that this provenance-rich/propagation-incomplete regime is standard across common dependency-resolution hosts. Supplement~A contains additional case-study material.

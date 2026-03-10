@@ -1,25 +1,10 @@
-\subsection{Concrete Example}
+\subsection{Worked Example}
 
-Consider a classification system with $k = 1000$ classes, each characterized by a subset of $n = 50$ binary attributes. Table~\ref{tab:strategies} compares the strategies.
+The running example now supports the whole theorem chain with almost no extra notation. The collision block $\{A,B\}$ gives $A_\pi = 2$, so the ambiguity converse forces one tag bit for zero-error identification. The minimal distinguishing family has size $d=3$, so every tag-free zero-error scheme pays at least three queries. The exact block law gives $L_t^\star = t$, and the open-world section uses the same example to show how adding $B$ destroys present collision-freedom in the realized world $\{A,C,D,E\}$.
 
-\begin{table}[t]
-\centering
-\caption{Identification strategies for 1000 classes with 50 attributes.}
-\label{tab:strategies}
-\begin{tabular}{lcc}
-\toprule
-\textbf{Strategy} & \textbf{Tag $L$} & \textbf{Witness $W$} \\
-\midrule
-Explicit-tag identification & $\lceil \log_2 1000 \rceil = 10$ bits & $O(1)$ \\
-Attribute-only (exhaustive) & $0$ & $\leq 50$ queries \\
-Attribute-only (adaptive) & $0$ & $\geq d$ queries \\
-\bottomrule
-\end{tabular}
-\end{table}
+The following consequences show how the same collision structure governing the ambiguity converse reappears in maintenance locality, architectural centralization, and concrete data-management settings.
 
-Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For many practical systems, $d$ is well below $n$ but nonzero. The gap between 10 bits of storage versus 5--50 queries per identification is the cost of forgoing explicit tags.
-
-\subsection{The Error Localization Theorem}
+\subsection{Maintenance and Localization Consequences}
 
 \paragraph{Scope of this subsection.}
 This subsection studies \emph{maintenance or localization} complexity, measured by locations to inspect ($E(\cdot)$), not per-instance identification complexity ($W$) from earlier sections. The metrics are related but distinct: $W$ quantifies online class-identification effort, while $E$ quantifies where constraint logic is distributed in implementations.
@@ -61,7 +46,7 @@ Nominal-tag observation strictly dominates attribute-only: $E(\text{nominal-tag}
 \end{corollary}
 \leanmeta{ \LH{ACS4}, \LH{DOM1}, \LH{FORC2}}
 
-\subsection{The Information Scattering Theorem}
+\subsection{Information Scattering and Cross-Domain Illustrations}
 
 \begin{definition}[Constraint encoding locations]
 Let $I(\mathcal{O}, c)$ be the set of locations where constraint $c$ is encoded under observation family $\mathcal{O}$.
@@ -91,18 +76,14 @@ Attribute-only observation maximizes maintenance entropy; nominal-tag observatio
 \end{corollary}
 \leanmeta{ \LH{ACS2}, \LH{COH1}, \LH{FORC2}}
 
-\subsection{Compact Cross-Domain Illustrations}
-
-\textbf{Biology (phenotype vs genotype).} Distinct species can collide under phenotype, so phenotype-only observation cannot guarantee zero-error identity. DNA barcoding supplies additional naming information that resolves collision blocks in constant-time lookup style \cite{DNABarcoding}.
-
 \textbf{Databases (columns vs keys).} Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary or surrogate keys realize the nominal-tag role and provide constant-cost identity checks \cite{Codd1990}.
-
-\textbf{Software runtimes (attribute probes vs runtime identifiers).} Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class or type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model \cite{CPythonDocs,JVMSpec,JavaDocs,TypeScriptDocs,RustDocs}.
 
 \textbf{Model registries and artifact stores.} Structural signatures can collide across distinct artifacts. Registry identifiers and hashes play the same nominal role as tags, while profile inspection alone inherits the ambiguity lower bounds.
 
-\subsection{Takeaway}
+\textbf{Biology (phenotype vs genotype).} Distinct species can collide under phenotype, so phenotype-only observation cannot guarantee zero-error identity. DNA barcoding supplies additional naming information that resolves collision blocks in constant-time lookup style \cite{DNABarcoding}.
+
+\textbf{Software runtimes (attribute probes vs runtime identifiers).} Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class or type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model \cite{CPythonDocs,JVMSpec,JavaDocs,TypeScriptDocs,RustDocs}.
 
 These illustrations are not historical causality claims. They show a common resource law: when observable profiles collide, zero-error identification requires additional naming information; otherwise the system pays higher query cost, higher maintenance complexity, and/or nonzero error.
 
-The examples are consequences of the main theorem family rather than separate stories. Across domains, the recurring design constraint is the same: once observable profiles collide, systems must spend either explicit naming bits or additional structure-specific work, and persistent guarantees are strongest when the naming information is carried directly.
+The operational metrics in this section complement the main $L$-, $W$-, and $D$-resource laws. The same collision structure that drives the ambiguity converse also reappears in maintenance burden, error localization, and architectural scattering.

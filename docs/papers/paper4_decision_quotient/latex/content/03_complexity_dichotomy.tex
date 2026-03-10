@@ -1,6 +1,6 @@
 \section{Encoding Dichotomy and ETH Lower Bounds}\label{sec:dichotomy}
 
-The hardness results of Section~\ref{sec:hardness} apply to worst-case instances under the succinct encoding. This section states a dichotomy that separates an explicit-state upper bound from a succinct-encoding lower bound. The dichotomy and ETH reduction chain are machine-verified in Lean 4.
+The regime hierarchy identifies where exact relevance certification sits in the standard complexity landscape. This section extracts the complementary algorithmic message: under the encodings of Section~\ref{sec:encoding}, there is a genuine dichotomy between explicit-state instances whose true relevant support is small and succinct instances whose relevant support is extensive. The former admit direct algorithms; the latter inherit exponential lower bounds under ETH. The practical takeaway is a sharp phase transition: logarithmic relevant support can still be certified exactly in polynomial time under explicit encodings, while linear relevant support under succinct encodings already forces ETH-conditioned exponential cost.
 
 \paragraph{Model note.} Part~1 is an explicit-state upper bound (time polynomial in $|S|$). Part~2 is a succinct-encoding lower bound under ETH (time exponential in $n$). The encodings are defined in Section~\ref{sec:encoding}.
 
@@ -13,6 +13,8 @@ Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N
 \item \textbf{Linear case (succinct lower bound under ETH):} If $k^* = \Omega(n)$, then SUFFICIENCY-CHECK requires time $\Omega(2^{n/c})$ for some constant $c > 0$ under the succinct encoding (assuming ETH).
 \end{enumerate}
 \end{theorem}
+
+\leanmeta{\LH{DQ29}, \LH{DQ30}, \LH{DQ26}.}
 
 \begin{proof}
 \textbf{Part 1 (Logarithmic case):} If $k^* = O(\log N)$, then the number of distinct projections $|S_{I^*}|$ is at most $2^{k^*} = O(N^c)$ for some constant $c$. Under the explicit-state encoding, we enumerate all projections and verify sufficiency in polynomial time.
@@ -55,6 +57,8 @@ The reduction in Theorem~\ref{thm:sufficiency-conp} preserves the number of vari
 where $\delta$ is the ETH constant for 3-SAT.
 \end{proposition}
 
+\leanmeta{\LH{DQ30}, \LH{DQ27}.}
+
 \begin{proof}
 The TAUTOLOGY reduction (Theorem~\ref{thm:sufficiency-conp}) constructs:
 \begin{itemize}
@@ -66,14 +70,16 @@ When $\varphi$ has $n$ variables, the constructed problem has $n+1$ coordinates.
 
 \subsection{Phase Transition}
 
-\begin{corollary}[Phase Transition]\label{cor:phase-transition}
-There is a sharp transition between tractable and intractable regimes at the logarithmic scale (with respect to the encodings in Section~\ref{sec:encoding}):
+\begin{corollary}[Phase Transition for Exact Certification]\label{cor:phase-transition}
+The tractable-hard boundary for exact certification is sharp at the logarithmic scale (with respect to the encodings in Section~\ref{sec:encoding}):
 \begin{itemize}
 \item If $k^* = O(\log N)$, SUFFICIENCY-CHECK is polynomial in $N$ under the explicit-state encoding
 \item If $k^* = \Omega(n)$, SUFFICIENCY-CHECK is exponential in $n$ under ETH in the succinct encoding
 \end{itemize}
 For Boolean coordinate spaces ($N = 2^n$), the transition is between $k^* = O(\log n)$ (explicit-state tractable) and $k^* = \Omega(n)$ (succinct-encoding intractable).
 \end{corollary}
+
+\leanmeta{\LH{DQ26}, \LH{DQ3}.}
 
 \begin{proof}
 The logarithmic case (Part 1 of Theorem~\ref{thm:dichotomy}) gives polynomial time when $k^* = O(\log N)$. More precisely, when $k^* \leq c \log N$ for constant $c$, the algorithm runs in time $O(N^c \cdot \text{poly}(n))$.
@@ -87,9 +93,9 @@ The transition point is where $2^{k^*} = N^{k^*/\log N}$ stops being polynomial 
 Under ETH, the lower bound is asymptotically tight in the succinct encoding. The explicit-state upper bound is tight in the sense that it matches enumeration complexity in $N$.
 \end{remark}
 
-This dichotomy explains why some domains admit tractable model selection (few relevant variables) while others require heuristics (many relevant variables). In the succinct regime, the reduction chain gives a class-level coNP statement together with a worst-case $2^{\Omega(n)}$ lower bound under the declared ETH assumption.
+This dichotomy explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
 
-\paragraph{Bridge theorems.} The ETH chain composes with structural rank characterizations to yield the complete complexity picture. Specifically: \LH{BR1} combines ETH hardness with structural rank to show that problems with maximal srank (all coordinates relevant) inherit the exponential lower bound; \LH{CC1} composes the dichotomy theorem with ETH to give the full classification; \LH{DQ5} combines the TAUTOLOGY reduction with ETH to establish coNP-completeness plus exponential hardness. These bridge theorems connect the complexity cluster (ETH, reductions) to the geometric cluster (srank, sufficiency) in the proof graph.
+\paragraph{Interpretation.} The ETH chain composes with the structural rank viewpoint introduced earlier. When relevance is extensive, the same objects that drive the regime hierarchy also force the exponential obstruction in the succinct model. In that sense, the dichotomy theorem complements the hierarchy rather than standing apart from it: the hierarchy locates exact certification in the standard class landscape, while the dichotomy explains when explicit structure can still make exact certification feasible.
 
 \begin{remark}[Circuit Model Formalization]
 The ETH lower bound is stated in the succinct circuit encoding of Section~\ref{sec:encoding}, where the utility function $U: A \times S \to \mathbb{R}$ is represented by a Boolean circuit computing $\mathbf{1}[U(a,s) > \theta]$ for threshold comparisons. In this model:

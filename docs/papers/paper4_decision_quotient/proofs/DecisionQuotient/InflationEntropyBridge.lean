@@ -1,7 +1,11 @@
 import DecisionQuotient.Information
+import DecisionQuotient.BayesFromDQ
+import DecisionQuotient.Physics.ClaimTransport
+import DecisionQuotient.Physics.ConstraintForcing
+import DecisionQuotient.Physics.MeasureNecessity
 import DecisionQuotient.Physics.TemporalCountingGap
 
-open Classical
+open Classical MeasureTheory
 
 namespace DecisionQuotient
 namespace InflationEntropyBridge
@@ -201,6 +205,10 @@ open Physics.TemporalCountingGap
 def StateAt (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) : Type :=
   Fin (StateSpaceCardinality psf.a ρ t)
 
+instance instMeasurableSpaceStateAt
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) :
+    MeasurableSpace (StateAt psf ρ t) := ⊤
+
 instance instFintypeStateAt (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) :
     Fintype (StateAt psf ρ t) := by
   unfold StateAt
@@ -240,6 +248,218 @@ theorem state_cardinality_strict_growth
     {t₁ t₂ : ℕ} (h : t₁ < t₂) :
     Fintype.card (StateAt psf ρ t₁) < Fintype.card (StateAt psf ρ t₂) := by
   simpa [StateAt] using states_increase_with_time psf ρ hρ t₁ t₂ h
+
+/-- A support-complete semantics for valid answers at time `t` is any carrier
+    whose image covers the full valid successor-state slice `StateAt psf ρ t`. -/
+structure SupportCompleteValidAnswerSemantics
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) where
+  Answer : Type*
+  toState : Answer → StateAt psf ρ t
+  support_complete : Function.Surjective toState
+
+/-- Canonical support-complete semantics: the valid-answer carrier is the
+    expanded successor slice itself. -/
+def canonicalValidAnswerSemantics
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) :
+    SupportCompleteValidAnswerSemantics psf ρ t where
+  Answer := StateAt psf ρ t
+  toState := id
+  support_complete := by
+    intro s
+    exact ⟨s, rfl⟩
+
+theorem canonicalValidAnswerSemantics_identifies_StateAt
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) :
+    ∀ s : StateAt psf ρ t,
+      ∃ a : (canonicalValidAnswerSemantics psf ρ t).Answer,
+        (canonicalValidAnswerSemantics psf ρ t).toState a = s := by
+  intro s
+  exact ⟨s, rfl⟩
+
+/-- Uniform counting-normalized prior on the temporally valid state space. -/
+noncomputable def uniformPrior
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ) (t : ℕ) :
+    ProbDist (StateAt psf ρ t) where
+  prob := fun _ => 1 / (Fintype.card (StateAt psf ρ t) : ℝ)
+  nonneg := by
+    intro _
+    positivity
+  sum_one := by
+    have hCardPos : 0 < Fintype.card (StateAt psf ρ t) := by
+      simpa [StateAt] using state_cardinality_pos psf ρ hρ t
+    have hCardNe : (Fintype.card (StateAt psf ρ t) : ℝ) ≠ 0 := by
+      exact_mod_cast Nat.ne_of_gt hCardPos
+    calc
+      Finset.univ.sum (fun _ : StateAt psf ρ t =>
+          1 / (Fintype.card (StateAt psf ρ t) : ℝ)) =
+          (Fintype.card (StateAt psf ρ t) : ℝ) *
+            (1 / (Fintype.card (StateAt psf ρ t) : ℝ)) := by
+            simp
+      _ = 1 := by
+        field_simp [hCardNe]
+
+@[simp] theorem uniformPrior_prob
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ) (t : ℕ)
+    (s : StateAt psf ρ t) :
+    (uniformPrior psf ρ hρ t).prob s =
+      1 / (Fintype.card (StateAt psf ρ t) : ℝ) := by
+  rfl
+
+/-- Positive time already forces more than one valid physical state under the
+    cosmological-expansion model. -/
+theorem state_cardinality_gt_one_of_positive_time
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    1 < Fintype.card (StateAt psf ρ t) := by
+  have hGrowth : StateSpaceCardinality psf.a ρ 0 < StateSpaceCardinality psf.a ρ t :=
+    states_increase_with_time psf ρ hρ 0 t ht
+  have hOrigin : StateSpaceCardinality psf.a ρ 0 = ρ := state_space_at_origin psf ρ
+  have hOneLeOrigin : 1 ≤ StateSpaceCardinality psf.a ρ 0 := by
+    simpa [hOrigin] using Nat.succ_le_of_lt hρ
+  have hCard : 1 < StateSpaceCardinality psf.a ρ t :=
+    lt_of_le_of_lt hOneLeOrigin hGrowth
+  simpa [StateAt] using hCard
+
+/-- On any temporally expanded state space with more than one valid state, the
+    normalized counting prior cannot collapse to certainty on one hypothesis. -/
+theorem uniformPrior_uncertainty_of_card_gt_one
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ) (t : ℕ)
+    (hCard : 1 < Fintype.card (StateAt psf ρ t)) :
+    UncertaintyForced (uniformPrior psf ρ hρ t) := by
+  intro hCertain
+  rcases hCertain with ⟨s, hs⟩
+  have hCardPos : 0 < Fintype.card (StateAt psf ρ t) := by
+    exact lt_trans Nat.zero_lt_one hCard
+  have hCardNe : (Fintype.card (StateAt psf ρ t) : ℝ) ≠ 0 := by
+    exact_mod_cast Nat.ne_of_gt hCardPos
+  have hs' : 1 / (Fintype.card (StateAt psf ρ t) : ℝ) = 1 := by
+    simpa [uniformPrior] using hs
+  have hEq : (Fintype.card (StateAt psf ρ t) : ℝ) = 1 := by
+    field_simp [hCardNe] at hs'
+    linarith
+  have hEqNat : Fintype.card (StateAt psf ρ t) = 1 := by
+    exact_mod_cast hEq
+  exact (Nat.ne_of_gt hCard) hEqNat
+
+/-- Expansion-induced multiplicity of valid states yields nondegenerate belief
+    under the normalized counting prior. -/
+theorem uniformPrior_nondegenerate_of_card_gt_one
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ) (t : ℕ)
+    (hCard : 1 < Fintype.card (StateAt psf ρ t)) :
+    NondegenerateBelief (uniformPrior psf ρ hρ t) := by
+  exact nondegenerateBelief_of_uncertaintyForced _
+    (uniformPrior_uncertainty_of_card_gt_one psf ρ hρ t hCard)
+
+/-- Positive time gives expansion-induced uncertainty for the uniform prior on
+    valid successor states. -/
+theorem uniformPrior_uncertainty_of_positive_time
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    UncertaintyForced (uniformPrior psf ρ hρ t) := by
+  exact uniformPrior_uncertainty_of_card_gt_one psf ρ hρ t
+    (state_cardinality_gt_one_of_positive_time psf ρ hρ ht)
+
+/-- Positive time gives a genuinely nondegenerate belief state on the expanded
+    valid successor space. -/
+theorem uniformPrior_nondegenerate_of_positive_time
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    NondegenerateBelief (uniformPrior psf ρ hρ t) := by
+  exact uniformPrior_nondegenerate_of_card_gt_one psf ρ hρ t
+    (state_cardinality_gt_one_of_positive_time psf ρ hρ ht)
+
+/-- Raw counting on the expanded state space is not probability-normalized once
+    multiple valid states exist; stochastic reasoning therefore requires a
+    probability normalization layer. -/
+theorem counting_measure_not_probability_on_stateAt_of_positive_time
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    ¬ IsProbabilityMeasure (Measure.count : Measure (StateAt psf ρ t)) := by
+  exact Physics.MeasureNecessity.counting_measure_not_probability_of_card_gt_one
+    (state_cardinality_gt_one_of_positive_time psf ρ hρ ht)
+
+/-- Main bridge: cosmological expansion yields a support-complete probabilistic
+    prior on valid successor states, and raw counting alone is insufficient
+    because it is not probability-normalized once the space has expanded. -/
+theorem cosmological_expansion_forces_probabilistic_reasoning
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    ∃ prior : ProbDist (StateAt psf ρ t),
+      UncertaintyForced prior ∧
+      NondegenerateBelief prior ∧
+      ¬ IsProbabilityMeasure (Measure.count : Measure (StateAt psf ρ t)) := by
+  refine ⟨uniformPrior psf ρ hρ t, ?_⟩
+  constructor
+  · exact uniformPrior_uncertainty_of_positive_time psf ρ hρ ht
+  constructor
+  · exact uniformPrior_nondegenerate_of_positive_time psf ρ hρ ht
+  · exact counting_measure_not_probability_on_stateAt_of_positive_time psf ρ hρ ht
+
+/-- Strengthened bridge: the expanded valid-answer space admits a named
+    support-complete semantics, and on that full support one is forced to pass
+    from raw counting to a normalized probability distribution. -/
+theorem cosmological_expansion_forces_support_complete_probabilistic_reasoning
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    Function.Surjective (canonicalValidAnswerSemantics psf ρ t).toState ∧
+    UncertaintyForced (uniformPrior psf ρ hρ t) ∧
+    NondegenerateBelief (uniformPrior psf ρ hρ t) ∧
+    ¬ IsProbabilityMeasure (Measure.count : Measure (StateAt psf ρ t)) := by
+  constructor
+  · exact (canonicalValidAnswerSemantics psf ρ t).support_complete
+  constructor
+  · exact uniformPrior_uncertainty_of_positive_time psf ρ hρ ht
+  constructor
+  · exact uniformPrior_nondegenerate_of_positive_time psf ρ hρ ht
+  · exact counting_measure_not_probability_on_stateAt_of_positive_time psf ρ hρ ht
+
+/-- Chosen physical-decision encoding whose instance carrier is the expanded
+    valid successor slice itself. Every instance is identified with its
+    corresponding `StateAt` element, and the encoded decision problem is fixed
+    on that slice. -/
+def stateIndexedPhysicalEncoding
+    (dp : DecisionProblem A (StateAt psf ρ t)) :
+    Physics.ClaimTransport.PhysicalEncoding (StateAt psf ρ t) A (StateAt psf ρ t) where
+  encode := fun _ => dp
+
+/-- Physical-state semantics attached to the chosen state-indexed encoding. -/
+def stateIndexedPhysicalStateSemantics
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (t : ℕ) :
+    Physics.ClaimTransport.PhysicalStateSemantics (StateAt psf ρ t) (StateAt psf ρ t) where
+  observe := id
+  isPhysical := fun _ => True
+  realizable := by
+    intro s _
+    exact ⟨s, rfl⟩
+
+/-- Explicit identification theorem: under the chosen physical-decision
+    encoding, every physically valid answer is exactly a point of `StateAt`. -/
+theorem stateIndexedPhysicalEncoding_identifies_StateAt
+    (dp : DecisionProblem A (StateAt psf ρ t)) :
+    ∀ s : StateAt psf ρ t,
+      ∃ p : StateAt psf ρ t,
+        (stateIndexedPhysicalStateSemantics psf ρ t).observe p = s ∧
+        (stateIndexedPhysicalEncoding (psf := psf) (ρ := ρ) (t := t) dp).encode p = dp := by
+  intro s
+  exact ⟨s, rfl, rfl⟩
+
+/-- If a physical decision is deadline-forced while cosmological expansion has
+    already produced multiple valid successor states, then the decision cannot
+    be represented by a degenerate belief state. -/
+theorem forced_decision_requires_probabilistic_reasoning_of_positive_time
+    {S A Θ : Type*}
+    (F : Physics.ConstraintForcing.LogicTimeScaffold S)
+    (L : Physics.ConstraintForcing.TimedLawFamily Θ S A)
+    (θ : Θ)
+    (hState : ∃ s, F.consistent s)
+    (hDeadline : Physics.ConstraintForcing.deadlineForcesAction F L θ)
+    (psf : PhysicalScaleFactor) (ρ : ℕ) (hρ : 0 < ρ)
+    {t : ℕ} (ht : 0 < t) :
+    ∃ _ : A, NondegenerateBelief (uniformPrior psf ρ hρ t) := by
+  have hAction : ActionForced A :=
+    Physics.ConstraintForcing.actionForced_of_deadline F L θ hState hDeadline
+  exact forced_action_under_uncertainty hAction _
+    (uniformPrior_uncertainty_of_positive_time psf ρ hρ ht)
 
 structure TemporalUtilityFamily
     (A : Type*)

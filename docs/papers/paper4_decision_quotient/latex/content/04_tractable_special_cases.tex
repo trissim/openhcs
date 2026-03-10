@@ -1,6 +1,6 @@
 \section{Tractable Special Cases}\label{sec:tractable}
 
-We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly. All results are formalized in \texttt{DecisionQuotient/Tractability/} and verified in Lean~4 with no \texttt{sorry} placeholders.
+We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
 SUFFICIENCY-CHECK is polynomial-time solvable in the following cases:
@@ -14,7 +14,9 @@ SUFFICIENCY-CHECK is polynomial-time solvable in the following cases:
 \end{enumerate}
 \end{theorem}
 
-The following subsections provide formal definitions, reduction theorems, and prose descriptions for each tractable subcase. For each result, we cite standard algorithms where applicable and prove only the paper-specific reductions in Lean.
+\leanmeta{\LH{DQ44}, \LH{DQ51}, \LH{DQ57}, \LH{DQ77}, \LH{DQ63}, \LH{DQ81}, \LH{DQ85}.}
+
+The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
 
 %% ============================================================
 \subsection{Bounded Actions}\label{sec:tract-bounded}
@@ -29,6 +31,8 @@ A decision problem has \emph{bounded actions} with parameter $k$ if $|A| \leq k$
 If $|A| \leq k$ for constant $k$, then SUFFICIENCY-CHECK runs in $O(|S|^2 \cdot k^2)$ time.
 \end{theorem}
 
+\leanmeta{\LH{DQ51}, \LH{DQ72}.}
+
 \begin{proof}
 Given the full table of $U(a,s)$:
 \begin{enumerate}
@@ -38,12 +42,6 @@ Given the full table of $U(a,s)$:
 \end{enumerate}
 When $k$ is constant, this is polynomial in $|S|$.
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/BoundedActions.lean}
-\begin{itemize}
-\item \LH{L10}: Correctness of the algorithm.
-\item \LH{L2}: Complexity bound $|S|^2 \cdot (1 + k^2)$.
-\end{itemize}
 
 %% ============================================================
 \subsection{Separable Utility (Rank 1)}\label{sec:tract-separable}
@@ -58,6 +56,8 @@ A utility function is \emph{separable} if there exist functions $f : A \to \math
 If utility is separable, then $I = \emptyset$ is always sufficient.
 \end{theorem}
 
+\leanmeta{\LH{DQ57}, \LH{DQ74}.}
+
 \begin{proof}
 If $U(a, s) = f(a) + g(s)$, then:
 \[
@@ -65,14 +65,6 @@ If $U(a, s) = f(a) + g(s)$, then:
 \]
 The optimal action depends only on $f$, not on $s$. Hence $\Opt(s) = \Opt(s')$ for all $s, s'$, making any $I$ (including $\emptyset$) sufficient.
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/SeparableUtility.lean}
-\begin{itemize}
-\item \LH{SeparableUtility}: Structure encoding the separability condition.
-\item \LH{L8}: Optimal actions are state-independent.
-\item \LH{L8}: The empty set is sufficient.
-\end{itemize}
-
 
 %% ============================================================
 \subsection{Low Tensor Rank}\label{sec:tract-tensor}
@@ -94,6 +86,8 @@ Separable utility (Definition~\ref{def:separable}) is the special case $R = 1$ w
 If utility has tensor rank $R$, then SUFFICIENCY-CHECK runs in $O(|A| \cdot R \cdot n)$ time per state.
 \end{theorem}
 
+\leanmeta{\LH{DQ76}, \LH{DQ77}, \LH{DQ75}.}
+
 \begin{proof}
 The factored representation enables efficient computation:
 \begin{enumerate}
@@ -103,14 +97,6 @@ The factored representation enables efficient computation:
 \item This reduces sufficiency checking to comparing factored sums over orbit representatives.
 \end{enumerate}
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/SeparableUtility.lean}
-\begin{itemize}
-\item \LH{TensorRankDecomposition}: Structure encoding rank-$R$ decomposition.
-\item \LH{L14}: Axiom citing tensor network algorithms~\cite{kolda2009tensor,cichocki2016tensor}.
-\item \LH{L4}: Reduction theorem for factored computation.
-\item \LH{L6}: Tractability via factored sufficiency check.
-\end{itemize}
 
 %% ============================================================
 \subsection{Tree-Structured Dependencies}\label{sec:tract-tree}
@@ -129,6 +115,8 @@ where $\mathrm{parent}(i) < i$ for all $i > 1$, and the root term depends only o
 If dependencies are tree-structured with explicit local tables, SUFFICIENCY-CHECK runs in $O(n \cdot |A| \cdot k_{\max})$ time where $k_{\max} = \max_i |X_i|$.
 \end{theorem}
 
+\leanmeta{\LH{DQ63}, \LH{DQ78}.}
+
 \begin{proof}
 Dynamic programming on the tree order:
 \begin{enumerate}
@@ -139,12 +127,6 @@ Dynamic programming on the tree order:
 \end{enumerate}
 A coordinate is relevant iff varying its value changes the optimal action set.
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/TreeStructure.lean}
-\begin{itemize}
-\item \LH{TreeStructured}: Predicate encoding tree dependency structure.
-\item \LH{L16}: Axiom citing standard DP on trees.
-\end{itemize}
 
 %% ============================================================
 \subsection{Bounded Treewidth}\label{sec:tract-treewidth}
@@ -171,6 +153,8 @@ with unary terms $u_i$ and binary terms $u_{ij}$ given explicitly.
 If the interaction graph has treewidth $\leq w$ and utility is pairwise with explicit factors, then SUFFICIENCY-CHECK runs in $O(n \cdot k^{w+1})$ time where $k = \max_i |X_i|$.
 \end{theorem}
 
+\leanmeta{\LH{DQ79}, \LH{DQ80}, \LH{DQ81}.}
+
 \begin{proof}
 We reduce SUFFICIENCY-CHECK to constraint satisfaction on the interaction graph:
 \begin{enumerate}
@@ -179,17 +163,6 @@ We reduce SUFFICIENCY-CHECK to constraint satisfaction on the interaction graph:
 \end{enumerate}
 The reduction is polynomial; the algorithm is standard.
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/TreeStructure.lean}
-\begin{itemize}
-\item \LH{InteractionGraph}: Definition of the interaction graph.
-\item \LH{PairwiseUtility}: Structure encoding pairwise decomposition.
-\item \LH{L16}: Axiom for treewidth (citing Bodlaender~\cite{bodlaender1993tourist}).
-\item \LH{L4}: Axiom citing CSP algorithms.
-\item \LH{L12}: Paper-specific reduction theorem.
-\item \LH{L2}: Tractability statement combining reduction and algorithm.
-\end{itemize}
-
 
 %% ============================================================
 \subsection{Coordinate Symmetry}\label{sec:tract-symmetry}
@@ -219,9 +192,11 @@ Two states have the same orbit type iff they lie in the same orbit under coordin
 For dimensional state spaces, two states $s, s'$ have equal orbit types if and only if there exists a coordinate permutation $\sigma$ such that $\sigma \cdot s = s'$.
 \end{theorem}
 
+\leanmeta{\LH{DQ82}.}
+
 \begin{proof}
 \textbf{If:} Permuting coordinates preserves the multiset of values.
-\textbf{Only if:} If $s$ and $s'$ have the same multiset of values, we can construct a permutation mapping each occurrence in $s$ to the corresponding occurrence in $s'$. The Lean proof constructs this permutation explicitly via a fiber bundle argument.
+\textbf{Only if:} If $s$ and $s'$ have the same multiset of values, we can construct a permutation mapping each occurrence in $s$ to the corresponding occurrence in $s'$.
 \end{proof}
 
 \begin{theorem}[Symmetric Sufficiency Reduction]\label{thm:symmetric-reduction}
@@ -231,6 +206,8 @@ Under symmetric utility, optimal actions depend only on orbit type:
 \]
 Thus SUFFICIENCY-CHECK reduces to checking pairs with \emph{different} orbit types.
 \end{theorem}
+
+\leanmeta{\LH{DQ83}, \LH{DQ84}.}
 
 \begin{proof}
 If $\text{orbitType}(s) = \text{orbitType}(s')$, then by Theorem~\ref{thm:orbit-type} there exists $\sigma$ with $\sigma \cdot s = s'$. By symmetry, $U(a, s) = U(a, s')$ for all $a$, so $\Opt(s) = \Opt(s')$.
@@ -246,22 +223,13 @@ The number of orbit types is bounded by the stars-and-bars count:
 Thus SUFFICIENCY-CHECK requires at most $\binom{d + k - 1}{k - 1}^2$ orbit-type pair checks, which is polynomial in $d$ for fixed $k$.
 \end{theorem}
 
+\leanmeta{\LH{DQ56}, \LH{DQ85}.}
+
 \begin{proof}
 An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$.
 
 For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$.
 \end{proof}
-
-\noindent\textbf{Lean formalization:} \texttt{DecisionQuotient/Tractability/Dimensional.lean}
-\begin{itemize}
-\item \LH{DimensionalStateSpace}: Definition of $k$-ary $d$-dimensional state space.
-\item \LH{SymmetricUtility}: Predicate for coordinate-permutation invariance.
-\item \LH{orbitType}: Function computing the orbit type (histogram).
-\item \LH{L6}: \textbf{(Core result)} Orbit types equal iff permutation exists.
-\item \LH{L12}: Optimal actions constant on orbits.
-\item \LH{L10}: Reduction to cross-orbit pairs.
-\item \LH{L14}: $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$ bound.
-\end{itemize}
 
 %% ============================================================
 \subsection{Practical Implications}\label{sec:tract-practical}
@@ -278,24 +246,3 @@ The six tractable cases correspond to common modeling scenarios:
 \end{itemize}
 
 For problems given in the succinct encoding without these structural restrictions, the hardness results of Section~\ref{sec:hardness} apply, justifying heuristic approaches.
-
-%% ============================================================
-\subsection{Verification Philosophy}\label{sec:tract-verification}
-
-The Lean formalization follows a consistent pattern for each tractable case:
-
-\begin{enumerate}
-\item \textbf{Define the structural restriction} as a Lean structure or predicate.
-\item \textbf{State axioms for standard algorithms} (DP on trees, CSP on bounded treewidth, tensor contraction) with citations to the literature.
-\item \textbf{Prove the paper-specific reduction} showing SUFFICIENCY-CHECK satisfies the preconditions of the standard algorithm.
-\item \textbf{Combine} to obtain the tractability statement.
-\end{enumerate}
-
-This separation ensures that:
-\begin{itemize}
-\item Standard results are cited, not re-proved (avoiding redundant mechanization).
-\item Paper-specific claims are fully verified (the reductions are where errors hide).
-\item The formalization is maintainable (algorithm updates don't require re-verification).
-\end{itemize}
-
-The philosophy: \emph{mechanize what requires mechanical verification for rational belief; cite what is standard}.

@@ -1,6 +1,6 @@
 \subsection{Open-World Robustness and Decidability Boundary}
 
-The main converse can be challenged by saying that the current realized world happens to be collision-free, so the lower bound is irrelevant in practice. The next two theorems show why that defense is not stable.
+The main converse addresses whatever collision structure is present in the observable world. The next two results show that a currently collision-free realized world does not escape the theorem in any durable sense: barrier-freedom is not extension-stable, and in full generality it is not computably certifiable in advance.
 
 \begin{definition}[Finite realized world]
 Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ \emph{barrier-free} iff
@@ -26,6 +26,8 @@ In the open-world class model formalized in Lean, it is not true that barrier-fr
 \begin{proof}
 Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
 \end{proof}
+
+The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
 
 \begin{definition}[Function-level barrier predicate]
 For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define

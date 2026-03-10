@@ -1,12 +1,6 @@
-\subsection{Semantic Compression: The Problem}
+\subsection{Primitive Objects}
 
-The fundamental problem of \emph{semantic compression} is: given a value $v$ from a large space $\mathcal{V}$, how can we represent $v$ compactly while preserving the ability to answer semantic queries about $v$? This differs from classical source coding in that the goal is not reconstruction but \emph{identification}: determining which equivalence class $v$ belongs to.
-
-Classical rate-distortion theory \cite{shannon1959coding} studies the tradeoff between representation size and reconstruction fidelity. We extend this to a discrete classification setting with three dimensions: \emph{tag length} $L$ (bits of storage), \emph{witness cost} $W$ (queries or bits of communication required to determine class membership), and \emph{distortion} $D$ (misclassification probability).
-
-This work treats contemporary classification problems with explicit resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
-
-\subsection{Universe of Discourse}
+The introduction has already motivated the semantic-compression viewpoint. This section fixes the observation model once, with only the primitives and assumptions needed for the theorem chain.
 
 \begin{definition}[Entity space and attribute family]
 Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary \emph{attributes}. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
@@ -62,7 +56,19 @@ An \emph{attribute-only observer} is any procedure whose interaction with a valu
 \end{definition}
 \leanmeta{ \LH{ACS8}, \LH{COMPL1}}
 
-\subsection{The Central Question}
+\begin{definition}[Admissibility contract]\label{def:admissibility-contract}
+All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit nominal tag charged to the tag budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
+\end{definition}
+\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+
+\begin{proposition}[Model capture]\label{prop:model-capture}
+Any classification protocol whose evidence consists only of the declared observation family and any explicit nominal tag is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
+\end{proposition}
+\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+
+The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
+
+\subsection{Attribute-Computable Properties}
 
 The central question is: \textbf{what semantic properties can an attribute-only observer compute?}
 
@@ -103,76 +109,39 @@ Let $C: \mathcal{V} \to \{1,\ldots,k\}$ be the class assignment function. If the
 Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
 \end{proof}
 
-\subsection{Model Capture and Fixed-Axis Domains}
+\begin{remark}[Quotient viewpoint]
+The relation $\sim$ partitions $\mathcal{V}$ into observational equivalence classes, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared observable family.
+\end{remark}
+\leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}, \LH{COMPL1}, \LH{FORC2}}
 
-\begin{proposition}[Model capture]\label{prop:model-capture}
-Any real-world classification protocol whose evidence consists solely of attribute-membership queries is representable as a scheme in the above model. Conversely, any additional capability corresponds to adding new observations to $\Phi$.
-\end{proposition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
-
-This proposition forces any objection into a precise form: to claim the theorem does not apply, one must name the additional observation capability not in $\Phi$. ``Different universe'' is not a coherent objection; it must reduce to ``I have access to oracle $X \notin \Phi$.''
-
-The core results require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is one representative instantiation and is not an additional axiom for the general theorems.
-
-In that instantiation, each value is characterized by:
-\begin{itemize}
-\item \textbf{Provenance axis ($B$)}: source or lineage information that can distinguish entities with identical observable profiles\footnote{In the Lean witness model, this axis is represented as \texttt{Bases}.}
-\item \textbf{Profile axis ($S$)}: the observable attribute profile induced by $\Phi$
-\end{itemize}
-
-\begin{definition}[Two-axis representation]
-A value $v \in \mathcal{V}$ has representation $(B(v), S(v))$ where:
-\begin{align}
-B(v) &= \text{provenance}(v) \\
-S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}}.
-\end{align}
-The provenance axis captures \emph{identity-bearing origin information}; the profile axis captures \emph{observable behavior or attributes}.
-
-In concrete deployments, $B$ may be carried by lineage metadata, registry identifiers, or equivalent provenance carriers. Any implementation-specific normalization or lookup machinery is auxiliary.
-\end{definition}
-\leanmeta{ \LH{ACS5}, \LH{DOM1}, \LH{FORC2}}
+\begin{remark}[Fixed-axis viewpoint]
+A representative specialization writes the observable state as $\alpha(v)=(B(v),S(v))$, where $S(v)=\pi(v)$ is the declared profile and $B(v)$ is any explicit provenance carrier. In that viewpoint, admissible semantic properties factor through $\alpha$, and properties that vary within an $\alpha$-fiber require adding new information rather than better inference alone.
+\end{remark}
+\leanmeta{ \LH{ACS5}, \LH{DOM1}, \LH{L6}}
 
 \begin{theorem}[Fixed-axis completeness]\label{thm:model-completeness}
-Let a fixed-axis domain be specified by an axis map $\alpha: \mathcal{V} \to \mathcal{A}$ and an observation family $\Phi$ such that each primitive query $q \in \Phi$ factors through $\alpha$. Then every in-scope semantic property (i.e., any property computable by an admissible $\Phi$-only strategy) factors through $\alpha$: there exists $\tilde{P}$ with
+Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
 \[
-P(v) = \tilde{P}(\alpha(v)) \quad \text{for all } v \in \mathcal{V}.
+P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
 \]
 \end{theorem}
 \leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
 
-In this two-axis instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
-
 \begin{proof}
-An admissible $\Phi$-only strategy observes $v$ solely through responses to primitive queries $q_I \in \Phi$. By hypothesis each such response is a function of $\alpha(v)$. Therefore every query transcript, and hence any strategy's output, depends only on $\alpha(v)$, so the computed property factors through $\alpha$.
+An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript.
 \end{proof}
 
 \begin{corollary}[Fixed-axis incompleteness]\label{cor:fixed-axis-incompleteness}
-Any fixed-axis classification system is complete only for properties measurable on the fixed axis map $\alpha$, and incomplete for any property that varies within an $\alpha$-fiber. Equivalently, if $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible $\Phi$-only strategy can compute $P$ with zero error.
+If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{ \LH{L2}}
+\leanmeta{ \LH{L6}}
 
 \begin{proposition}[Observational quotient]\label{prop:observational-quotient}
-For any admissible strategy using only $\Phi$, the entire interaction transcript (and hence the output) depends only on $\alpha(v)$. Equivalently, any in-scope semantic property $P$ factors through $\alpha$: there exists $\tilde{P}$ with $P(v) = \tilde{P}(\alpha(v))$ for all $v$.
+For any admissible strategy using only the declared observable family, the entire interaction transcript and hence the output depend only on the observable state. Equivalently, every in-scope semantic property factors through that state.
 \end{proposition}
 \leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}}
 
-\begin{corollary}[Why ``ad hoc'' = adding an axis or tag]\label{cor:ad-hoc-add-axis}
-If two values $v, w$ satisfy $\alpha(v) = \alpha(w)$, then no admissible $\Phi$-only strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs must introduce additional information not present in $\alpha$ (equivalently, refine the axis map by adding a new axis or tag).
+\begin{corollary}[Adding information changes the state space]\label{cor:ad-hoc-add-axis}
+If two values agree on the declared observable state, then no admissible strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs introduces additional information that should be represented explicitly in the model.
 \end{corollary}
 \leanmeta{ \LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
-
-\subsection{Attribute Equivalence and Observational Limits}
-
-\begin{proposition}[Equivalence class structure]\label{prop:equivalence-class-structure}
-The relation $\sim$ partitions $\mathcal{V}$ into equivalence classes. Let $\mathcal{V}/{\sim}$ denote the quotient space. An attribute-only observer effectively operates on $\mathcal{V}/{\sim}$, not $\mathcal{V}$.
-\end{proposition}
-\leanmeta{ \LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
-
-\begin{corollary}[Information loss quantification]\label{cor:information-loss-quantification}
-The information lost by attribute-only observation is:
-\[
-H(\mathcal{V}) - H(\mathcal{V}/{\sim}) = H(\mathcal{V} \mid \pi)
-\]
-where $H$ denotes entropy. This quantity is positive whenever multiple classes share the same attribute profile.
-\end{corollary}
-\leanmeta{ \LH{ACS8}}

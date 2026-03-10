@@ -79,6 +79,61 @@ def ConfusableTransitive {F A L : Nat} (views : ViewFamily F L) : Prop :=
   ∀ ⦃x y z : State F A⦄,
     Confusable views x y → Confusable views y z → x ≠ z → Confusable views x z
 
+/-- A checkable syntactic condition: any two allowed views admit an allowed subview
+contained in their intersection. This is weaker than fiber coherence and sufficient
+for transitive confusability. -/
+def MeetWitnessed {F L : Nat} (views : ViewFamily F L) : Prop :=
+  ∀ ℓ₁ ℓ₂ : Fin L, ∃ ℓ₃ : Fin L, views ℓ₃ ⊆ views ℓ₁ ∩ views ℓ₂
+
+/-- Exact agreement at a fixed allowed view. -/
+def ObserveEq {F A L : Nat} (views : ViewFamily F L) (ℓ : Fin L)
+    (x y : State F A) : Prop :=
+  observe (views ℓ) x = observe (views ℓ) y
+
+/-- A local composition-closure form of transitivity: whenever two fixed view witnesses
+compose through an intermediate state, some allowed view already resolves the endpoints. -/
+def ViewCompositionClosed {F A L : Nat} (views : ViewFamily F L) : Prop :=
+  ∀ ⦃x y z : State F A⦄ ⦃ℓ₁ ℓ₂ : Fin L⦄,
+    ObserveEq views ℓ₁ x y →
+    ObserveEq views ℓ₂ y z →
+    x ≠ y →
+    y ≠ z →
+    x ≠ z →
+    Confusable views x z
+
+theorem confusable_iff_exists_viewWitness
+    {F A L : Nat} (views : ViewFamily F L) {x y : State F A} :
+    Confusable views x y ↔ x ≠ y ∧ ∃ ℓ : Fin L, ObserveEq views ℓ x y := by
+  constructor
+  · rintro ⟨hxy, ℓ, hℓ⟩
+    exact ⟨hxy, ⟨ℓ, hℓ⟩⟩
+  · rintro ⟨hxy, ℓ, hℓ⟩
+    exact ⟨hxy, ℓ, hℓ⟩
+
+theorem confusableTransitive_iff_viewCompositionClosed
+    {F A L : Nat} (views : ViewFamily F L) :
+    ConfusableTransitive (A := A) views ↔ ViewCompositionClosed (A := A) views := by
+  constructor
+  · intro htrans x y z ℓ₁ ℓ₂ h₁ h₂ hxy hyz hxz
+    exact htrans ⟨hxy, ℓ₁, h₁⟩ ⟨hyz, ℓ₂, h₂⟩ hxz
+  · intro hloc x y z hxy hyz hxz
+    rcases hxy with ⟨hxy_ne, ℓ₁, h₁⟩
+    rcases hyz with ⟨hyz_ne, ℓ₂, h₂⟩
+    exact hloc h₁ h₂ hxy_ne hyz_ne hxz
+
+theorem observe_eq_of_subset
+    {F A : Nat} {S T : Finset (Fin F)} (hST : S ⊆ T) {x y : State F A}
+    (h : observe T x = observe T y) :
+    observe S x = observe S y := by
+  funext i
+  by_cases hiS : i ∈ S
+  · have hiT : i ∈ T := hST hiS
+    simp [observe, hiS, hiT]
+    simpa [observe, hiT] using congrArg (fun obs => obs i) h
+  · by_cases hiT : i ∈ T
+    · simp [observe, hiS]
+    · simp [observe, hiS, hiT]
+
 theorem fiberCoherent_confusableTransitive
     {F A L : Nat} (views : ViewFamily F L)
     (hcoh : FiberCoherent (A := A) views) :
@@ -91,6 +146,78 @@ theorem fiberCoherent_confusableTransitive
   have hfullxz : fullTranscript views x = fullTranscript views z := hfullxy.trans hfullyz
   refine ⟨hxz, ⟨ℓxy, ?_⟩⟩
   simpa [fullTranscript] using congrArg (fun t => t ℓxy) hfullxz
+
+theorem meetWitnessed_confusableTransitive
+    {F A L : Nat} (views : ViewFamily F L)
+    (hmeet : MeetWitnessed views) :
+    ConfusableTransitive (A := A) views := by
+  intro x y z hxy hyz hxz
+  rcases hxy with ⟨_, ℓ₁, h₁⟩
+  rcases hyz with ⟨_, ℓ₂, h₂⟩
+  rcases hmeet ℓ₁ ℓ₂ with ⟨ℓ₃, hsub⟩
+  refine ⟨hxz, ⟨ℓ₃, ?_⟩⟩
+  have h13 : observe (views ℓ₃) x = observe (views ℓ₃) y :=
+    observe_eq_of_subset (by
+      intro i hi
+      exact (Finset.mem_inter.mp (hsub hi)).1) h₁
+  have h23 : observe (views ℓ₃) y = observe (views ℓ₃) z :=
+    observe_eq_of_subset (by
+      intro i hi
+      exact (Finset.mem_inter.mp (hsub hi)).2) h₂
+  exact h13.trans h23
+
+theorem fiberCoherent_view_subset
+    {F A L : Nat} (views : ViewFamily F L)
+    (hA : 1 < A)
+    (hcoh : FiberCoherent (A := A) views)
+    (ℓ₁ ℓ₂ : Fin L) :
+    views ℓ₂ ⊆ views ℓ₁ := by
+  intro i hi₂
+  by_contra hi₁
+  have hA0 : 0 < A := lt_trans (by decide : 0 < 1) hA
+  let zeroA : Fin A := ⟨0, hA0⟩
+  let oneA : Fin A := ⟨1, hA⟩
+  let x : State F A := fun _ => zeroA
+  let y : State F A := Function.update x i oneA
+  have hobs : observe (views ℓ₁) x = observe (views ℓ₁) y := by
+    funext j
+    by_cases hj₁ : j ∈ views ℓ₁
+    · have hji : j ≠ i := by
+        intro hEq
+        subst hEq
+        exact hi₁ hj₁
+      simp [observe, hj₁, x, y, Function.update, hji]
+    · simp [observe, hj₁]
+  have hfull : fullTranscript views x = fullTranscript views y := hcoh hobs
+  have hcoord := congrArg (fun t => t ℓ₂ i) hfull
+  have hi₂' : i ∈ views ℓ₂ := hi₂
+  simp [fullTranscript, observe, hi₂', x, y, Function.update] at hcoord
+  have hneq : zeroA ≠ oneA := by
+    intro hEq
+    have : (0 : Nat) = 1 := Fin.mk.inj hEq
+    cases this
+  exact hneq hcoord
+
+theorem fiberCoherent_views_equal
+    {F A L : Nat} (views : ViewFamily F L)
+    (hA : 1 < A)
+    (hcoh : FiberCoherent (A := A) views) :
+    ∀ ℓ₁ ℓ₂ : Fin L, views ℓ₁ = views ℓ₂ := by
+  intro ℓ₁ ℓ₂
+  apply Finset.Subset.antisymm
+  · exact fiberCoherent_view_subset (A := A) views hA hcoh ℓ₂ ℓ₁
+  · exact fiberCoherent_view_subset (A := A) views hA hcoh ℓ₁ ℓ₂
+
+theorem fiberCoherent_meetWitnessed
+    {F A L : Nat} (views : ViewFamily F L)
+    (hA : 1 < A)
+    (hcoh : FiberCoherent (A := A) views) :
+    MeetWitnessed views := by
+  intro ℓ₁ ℓ₂
+  refine ⟨ℓ₁, ?_⟩
+  intro i hi
+  exact Finset.mem_inter.mpr ⟨hi, by
+    simpa [fiberCoherent_views_equal (A := A) views hA hcoh ℓ₁ ℓ₂] using hi⟩
 
 instance instDecidableConfusable {F A L : Nat}
     (views : ViewFamily F L) (x y : State F A) : Decidable (Confusable views x y) := by
@@ -453,6 +580,42 @@ theorem confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
   ext x y
   exact confusable_iff_sameComponent_of_confusableTransitive (A := A) views htrans
 
+theorem confusableTransitive_of_confusabilityGraph_eq_clusterGraph_component
+    {F A L : Nat} (views : ViewFamily F L)
+    (hgraph :
+      confusabilityGraph (A := A) views =
+        clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk)) :
+    ConfusableTransitive (A := A) views := by
+  intro x y z hxy hyz hxz
+  have hxyc :
+      (confusabilityGraph (A := A) views).connectedComponentMk x =
+      (confusabilityGraph (A := A) views).connectedComponentMk y := by
+    exact SimpleGraph.ConnectedComponent.sound
+      (G := confusabilityGraph (A := A) views)
+      ((show (confusabilityGraph (A := A) views).Adj x y from hxy).reachable)
+  have hyzc :
+      (confusabilityGraph (A := A) views).connectedComponentMk y =
+      (confusabilityGraph (A := A) views).connectedComponentMk z := by
+    exact SimpleGraph.ConnectedComponent.sound
+      (G := confusabilityGraph (A := A) views)
+      ((show (confusabilityGraph (A := A) views).Adj y z from hyz).reachable)
+  have hAdj :
+      (clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk)).Adj x z :=
+    ⟨hxz, hxyc.trans hyzc⟩
+  have hconf : (confusabilityGraph (A := A) views).Adj x z := by
+    rw [hgraph]
+    exact hAdj
+  exact hconf
+
+theorem confusableTransitive_iff_clusterCollapse
+    {F A L : Nat} (views : ViewFamily F L) :
+    ConfusableTransitive (A := A) views ↔
+      confusabilityGraph (A := A) views =
+        clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk) := by
+  constructor
+  · exact confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive (A := A) views
+  · exact confusableTransitive_of_confusabilityGraph_eq_clusterGraph_component (A := A) views
+
 theorem clusterGraph_compl_colorable
     {α β : Type} [DecidableEq α] [Fintype β] [DecidableEq β]
     (label : α → β) :
@@ -496,6 +659,21 @@ theorem clusterGraph_graphIndependent_representatives
       simp [s]
     _ ≤ graphMaxIndependentCard (clusterGraph label) :=
       graphIndependent_card_le_graphMaxIndependentCard (clusterGraph label) s hs
+
+/-- The single-view cluster graph induced by exact agreement at location `ℓ`. -/
+def viewClusterGraph {F A L : Nat} (views : ViewFamily F L) (ℓ : Fin L) :
+    SimpleGraph (State F A) :=
+  clusterGraph (observe (views ℓ))
+
+theorem confusable_iff_exists_viewClusterAdj
+    {F A L : Nat} (views : ViewFamily F L) {x y : State F A} :
+    Confusable views x y ↔
+      ∃ ℓ : Fin L, (viewClusterGraph views ℓ).Adj x y := by
+  constructor
+  · rintro ⟨hxy, ℓ, hℓ⟩
+    exact ⟨ℓ, ⟨hxy, hℓ⟩⟩
+  · rintro ⟨ℓ, hℓ⟩
+    exact ⟨hℓ.1, ℓ, hℓ.2⟩
 
 /-- A Lovász-theta-style upper-bound witness built from an orthonormal representation
 of the complement relation together with a unit handle vector. -/
@@ -6124,6 +6302,30 @@ theorem shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusab
             simpa [confusabilityComponentCard, label, Nat.card_eq_fintype_card] using (Nat.card_congr e)
           simpa [label, hcard] using lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph hsurj
 
+theorem shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_meetWitnessed
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hmeet : MeetWitnessed views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views := by
+  exact shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_confusableTransitive
+    (A := A) views (meetWitnessed_confusableTransitive (A := A) views hmeet)
+
+theorem shannonCapacityReal_eq_log_connectedComponents_of_meetWitnessed
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hmeet : MeetWitnessed views) :
+    shannonCapacityReal (F := F) (A := A) (L := L) views =
+      Real.log (confusabilityComponentCard (A := A) views) := by
+  exact shannonCapacityReal_eq_log_connectedComponents_of_confusableTransitive
+    (A := A) views (meetWitnessed_confusableTransitive (A := A) views hmeet)
+
+theorem shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_meetWitnessed
+    {F A L : Nat} [Nonempty (State F A)]
+    (views : ViewFamily F L) (hmeet : MeetWitnessed views) :
+    shannonLovaszThetaAsymptoticUpper (F := F) (A := A) (L := L) views =
+      Real.log (confusabilityComponentCard (A := A) views) := by
+  exact shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusableTransitive
+    (A := A) views (meetWitnessed_confusableTransitive (A := A) views hmeet)
+
 /-- A pure PSD-matrix asymptotic upper invariant for a view family. -/
 noncomputable def shannonThetaPSDLogUpper
     {F A L : Nat} [Nonempty (State F A)]
@@ -6404,6 +6606,50 @@ def binaryViews : ViewFamily 2 2
 
 theorem s00_ne_s11 : s00 ≠ s11 := by
   decide
+
+theorem binaryViews_not_meetWitnessed : ¬ MeetWitnessed binaryViews := by
+  intro hmw
+  have := hmw ⟨0, by decide⟩ ⟨1, by decide⟩
+  rcases this with ⟨ℓ₃, hsub⟩
+  fin_cases ℓ₃ <;> simp [binaryViews] at hsub
+
+/-- Four views: full, first coordinate, second coordinate, and empty. -/
+def meetWitnessViews : ViewFamily 2 4
+  | ⟨0, _⟩ => {⟨0, by decide⟩, ⟨1, by decide⟩}
+  | ⟨1, _⟩ => {⟨0, by decide⟩}
+  | ⟨2, _⟩ => {⟨1, by decide⟩}
+  | ⟨3, _⟩ => ∅
+
+theorem meetWitnessViews_meetWitnessed : MeetWitnessed meetWitnessViews := by
+  intro ℓ₁ ℓ₂
+  fin_cases ℓ₁ <;> fin_cases ℓ₂
+  · refine ⟨⟨0, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨1, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨2, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨1, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨1, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨2, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨2, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+  · refine ⟨⟨3, by decide⟩, ?_⟩; intro i hi; simpa [meetWitnessViews] using hi
+
+theorem meetWitnessViews_not_fiberCoherent : ¬ FiberCoherent (A := 2) meetWitnessViews := by
+  intro hcoh
+  have hobs : observe (meetWitnessViews ⟨1, by decide⟩) s00 =
+      observe (meetWitnessViews ⟨1, by decide⟩) s01 := by
+    decide
+  have hfull : fullTranscript meetWitnessViews s00 = fullTranscript meetWitnessViews s01 := hcoh hobs
+  have hcoord := congrArg (fun t => t ⟨2, by decide⟩ ⟨1, by decide⟩) hfull
+  simp [fullTranscript, observe, meetWitnessViews] at hcoord
+  have h01 : s00 ⟨1, by decide⟩ = s01 ⟨1, by decide⟩ := hcoord
+  simp [s00, s01, bitState] at h01
 
 theorem s00_confusable_s01 : Confusable binaryViews s00 s01 := by
   decide

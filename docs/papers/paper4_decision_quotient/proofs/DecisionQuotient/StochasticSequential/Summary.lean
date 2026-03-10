@@ -14,7 +14,7 @@ import DecisionQuotient.StochasticSequential.CrossRegime
 
 namespace DecisionQuotient.StochasticSequential
 
-open DecisionQuotient.Physics.DimensionalComplexity
+open DecisionQuotient.DimensionalComplexity
 
 /-! ## Main Theorems -/
 
@@ -31,22 +31,23 @@ open DecisionQuotient.Physics.DimensionalComplexity
 
 /-! ## Complexity Summary
 
-Summary of complexity results:
+Summary of complexity results and mechanization status:
 
-| Regime       | Problem                    | Complexity |
-|--------------|----------------------------|------------|
-| Static       | SUFFICIENCY-CHECK         | coNP-complete (Paper 4) |
-| Stochastic   | STOCHASTIC-SUFFICIENCY    | PP-complete |
-| Sequential   | SEQUENTIAL-SUFFICIENCY    | PSPACE-complete |
+| Regime       | Problem                              | Complexity |
+|--------------|--------------------------------------|------------|
+| Static       | SUFFICIENCY / MINIMUM / ANCHOR       | coNP-c / coNP-c / Sigma2P-c |
+| Stochastic   | SUFFICIENCY / MINIMUM / ANCHOR       | PP-c / PP-hard / PP-hard |
+| Sequential   | SUFFICIENCY / MINIMUM / ANCHOR       | PSPACE-c / PSPACE-hard / PSPACE-hard |
 
 Transfer conditions:
 - Static → Stochastic: product distributions
 - Static → Sequential: horizon = 1, deterministic
 - Stochastic → Sequential: memoryless transitions
 
-All complexity results follow from:
-1. Reduction from standard complete problems (MAJSAT, TQBF)
-2. 6 tractable subcases machinery from IntegrityEquilibrium
+The artifact now also internalizes exact finite boolean deciders for the query
+predicates. The hardness side is fully mechanized via size-bounded reductions
+from standard complete problems (MAJSAT, TQBF). Full TM-witness membership
+proofs for PP/PSPACE are not yet packaged end-to-end in this repository.
 -/
 
 end DecisionQuotient.StochasticSequential

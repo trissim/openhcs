@@ -17,9 +17,11 @@ import DecisionQuotient.ComputationalDecisionProblem
 import DecisionQuotient.CrossPaperDependencies
 import DecisionQuotient.DecisionGeometry
 import DecisionQuotient.Dichotomy
+import DecisionQuotient.DimensionalComplexity
 import DecisionQuotient.Economics.Approximation
 import DecisionQuotient.Economics.Elicitation
 import DecisionQuotient.Economics.ValueOfInformation
+import DecisionQuotient.ExplicitStateMembership
 import DecisionQuotient.Finite
 import DecisionQuotient.FunctionalInformation
 import DecisionQuotient.GraphNontriviality

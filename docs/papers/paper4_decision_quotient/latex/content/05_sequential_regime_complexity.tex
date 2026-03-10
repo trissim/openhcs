@@ -1,6 +1,6 @@
 \section{Sequential Regime Complexity}\label{sec:sequential}
 
-We now move to sequential settings with transitions and observations (POMDP-style). Sufficiency becomes a policy-level invariance condition.
+We now move to sequential settings with transitions and observations. Here the same certification question is asked at the policy level: can one suppress some coordinates of the evolving information state without changing the optimal policy? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore compare policies across temporally unfolding contingencies rather than compare one-shot optimizers or conditional expectations. In succinct models, that policy-preservation task naturally supports the same kind of alternating contingency that drives PSPACE hardness in planning and quantified-logic reductions.
 
 \subsection{Sequential Decision Problems}
 
@@ -21,22 +21,100 @@ Coordinate set $I$ is \emph{sequentially sufficient} if the optimal policy using
 \textbf{Question:} Is $I$ sequentially sufficient?
 \end{problem}
 
+\begin{definition}[Sequential Anchor Sufficiency]\label{def:sequential-anchor-sufficient}
+A coordinate set $I$ is \emph{sequentially anchor-sufficient} if there exists an anchor state whose $I$-agreement class preserves the optimal action set throughout that class.
+\end{definition}
+
+\begin{problem}[SEQUENTIAL-ANCHOR-SUFFICIENCY-CHECK]\label{prob:sequential-anchor-sufficiency}
+\textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$. \\
+\textbf{Question:} Is $I$ sequentially anchor-sufficient?
+\end{problem}
+
+\begin{problem}[Sequential Minimum Query]\label{prob:sequential-minimum-sufficient}
+\textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $k\in\mathbb{N}$. \\
+\textbf{Question:} Does there exist a sequentially sufficient coordinate set $I$ with $|I|\le k$?
+\end{problem}
+
+\begin{proposition}[Sequential Minimality Equals Relevance]\label{prop:sequential-minimal-relevant}
+For any minimal sequentially sufficient set $I$, a coordinate lies in $I$ if and only if it is relevant for the underlying decision boundary.
+\end{proposition}
+
+\leanmeta{\LH{DC49}, \LH{DC50}.}
+
+\begin{proof}
+In the current formalization, sequential sufficiency is defined as sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting.
+\end{proof}
+
 \subsection{PSPACE-Completeness}
 
-\begin{theorem}[SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete]\label{thm:sequential-pspace}
+The sequential regime is the strongest of the three because hidden information can matter not only for the current optimizer but for the future evolution of the decision problem. The same relevance question therefore becomes a policy-comparison problem over dynamic information states. Static certification asks whether bad state pairs exist; stochastic certification asks whether conditional averages cross a threshold; sequential certification asks whether omitted coordinates can change the value of future contingent choices. That added temporal contingency is exactly what the TQBF reduction exploits.
+
+\begin{theorem}[Sequential Sufficiency is PSPACE-complete]\label{thm:sequential-pspace}
 SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
 \end{theorem}
 
-\begin{proof}
-Membership: finite-horizon policy comparison for POMDP-style models is decidable in polynomial space by dynamic programming over belief/state summaries.
+\leanmeta{\LH{DC46}, \LH{DC66}, \LH{DC74}.}
 
-Hardness: reduce TQBF. Alternating quantifiers are encoded as alternating controlled/adversarial transitions; terminal reward evaluates the quantified formula. Full-history sufficiency holds exactly when the quantified instance is true.
+\begin{proof}
+For membership, finite-horizon policy comparison for POMDP-style models is decidable in polynomial space by dynamic programming over belief and state summaries.
+
+For hardness, reduce TQBF. Encode alternating quantifiers as alternating controlled and adversarial transitions, and let the terminal reward evaluate the quantified formula. Then full-history sufficiency holds exactly when the quantified instance is true.
+\end{proof}
+
+\begin{proposition}[Sequential Sufficiency Refines to Sequential Anchor Sufficiency]\label{prop:sequential-anchor-refinement}
+If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.
+\end{proposition}
+
+\leanmeta{\LH{DC23}.}
+
+\begin{proof}
+If optimal-action sets are preserved for every pair of states agreeing on $I$, then fixing any anchor state immediately yields preservation across its entire $I$-agreement class.
+\end{proof}
+
+\begin{theorem}[Sequential Anchor Query is PSPACE-complete]\label{thm:sequential-anchor-hard}
+The sequential anchor query is PSPACE-complete.
+\end{theorem}
+
+\leanmeta{\LH{DC28}, \LH{DC29}, \LH{DC44}.}
+
+\begin{proof}
+Membership is in PSPACE. By definition, the query asks whether there exists an anchor state $s_0$ such that every state agreeing with $s_0$ on $I$ preserves the same optimal-action set. A nondeterministic polynomial-space procedure can guess $s_0$ and then scan candidate states one at a time, verifying the agreement condition and comparing the corresponding optimal-action sets. Since NPSPACE = PSPACE, the query lies in PSPACE.
+
+Reuse the TQBF reduction for sequential sufficiency with $I=\emptyset$. At empty information, sequential anchor sufficiency is equivalent to global preservation of the optimal-action set, so the same construction yields
+\[
+\mathrm{TQBF}(q)
+\iff
+\mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
+\]
+Hence TQBF many-one reduces to the sequential anchor query.
+\end{proof}
+
+\begin{theorem}[Sequential Minimum Query is PSPACE-complete]\label{thm:sequential-minimum-hard}
+The sequential minimum-sufficient-set query is PSPACE-complete.
+\end{theorem}
+
+\leanmeta{\LH{DC46}, \LH{DC48}.}
+
+\begin{proof}
+Membership is in PSPACE. The query asks whether there exists a coordinate set $I$ of size at most $k$ such that $I$ is sequentially sufficient. A nondeterministic polynomial-space procedure can guess $I$ and then run the same polynomial-space verifier used for sequential sufficiency. Again, NPSPACE = PSPACE.
+
+Reduce TQBF to the $k=0$ slice. There exists a sequentially sufficient set of size at most $0$ iff the empty set itself is sequentially sufficient. The same construction yields PSPACE-hardness for SEQUENTIAL-MINIMUM-SUFFICIENT-SET.
+\end{proof}
+
+\begin{proposition}[Explicit Finite Search for Sequential Queries]\label{prop:sequential-explicit-search}
+For finite instances, the development contains counted exhaustive-search procedures for sequential sufficiency, sequential anchor sufficiency, and sequential minimum sufficiency. Their certified step bounds are respectively $O(|S|^2)$, $O(|S|)$, and $O(2^n)$.
+\end{proposition}
+
+\leanmeta{\LH{DC66}, \LH{DC67}, \LH{DC68}, \LH{DC69}, \LH{DC74}, \LH{DC75}, \LH{DC76}.}
+
+\begin{proof}
+The sufficiency search scans for an agreeing pair of states with different optimal sets; the anchor search scans over candidate anchor states; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
 \end{proof}
 
 \subsection{Tractable Subcases}
 
-\begin{proposition}[Sequential Tractable Classes]\label{prop:sequential-tractable}
-SEQUENTIAL-SUFFICIENCY-CHECK is polynomial-time solvable under each of the following restrictions:
+\begin{proposition}[Tractable Sequential Cases]\label{prop:sequential-tractable}
+The sequential sufficiency problem is polynomial-time solvable under each of the following restrictions:
 \begin{enumerate}
 \item full observability (MDP case),
 \item bounded horizon,
@@ -45,16 +123,27 @@ SEQUENTIAL-SUFFICIENCY-CHECK is polynomial-time solvable under each of the follo
 \end{enumerate}
 \end{proposition}
 
+\leanmeta{\LH{DQ14}, \LH{DQ12}, \LH{DQ45}.}
+
 \begin{proof}
 Each restriction reduces policy search to dynamic programming over a polynomially bounded representation.
 \end{proof}
 
 \subsection{Bridge from Stochastic}
 
+The bridge from the stochastic regime is strict. A one-shot distribution can hide no temporal contingency; once dynamics are introduced, latent information can become decision-relevant later even when it appears irrelevant at time zero.
+
 \begin{proposition}[Stochastic Sufficiency Does Not Imply Sequential Sufficiency]\label{prop:stochastic-not-sequential}
 There exist instances where $I$ is sufficient in the stochastic one-shot sense but fails to be sufficient once temporal dynamics are introduced.
 \end{proposition}
 
+\leanmeta{\LH{DQ62}.}
+
 \begin{proof}
-Construct a process in which the same one-step expected optimizer is preserved under $I$, but hidden-state memory affects future information states and therefore optimal policies. The temporal dependence breaks one-shot sufficiency transfer.
+Construct a process in which the same one-step expected optimizer is preserved under $I$, but hidden-state memory affects future information states and therefore optimal policies. The temporal dependence blocks one-shot sufficiency transfer.
 \end{proof}
+
+With the static, stochastic, and sequential classifications in place, the next
+section consolidates them into a single regime hierarchy and makes the
+escalation explicit: counterexample exclusion, then counting comparison, then
+policy preservation over time.

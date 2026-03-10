@@ -1,6 +1,6 @@
 \section{Lean 4 Proof Listings}\label{app:lean}
 
-The complete Lean 4 formalization is available in the companion artifact (Zenodo DOI listed on the title page). The mechanization consists of \LeanTotalLines\ lines across \LeanTotalFiles\ files, with \LeanTotalTheorems\ theorem/lemma statements.
+The complete Lean 4 formalization is available at the Zenodo DOI listed on the title page. The mechanization consists of \LeanTotalLines\ lines across \LeanTotalFiles\ files, with \LeanTotalTheorems\ theorem/lemma statements.
 
 \noindent\textbf{Handle IDs.} Inline theorem metadata now cites compact IDs (for example, \texttt{HD6}, \texttt{CC12}, \texttt{IC4}) instead of full theorem constants. The full ID-to-handle mapping is listed in Section~\ref{sec:lean-handle-id-map}.
 
@@ -160,6 +160,22 @@ The bridge now includes an explicit adapter from cosmological-cardinality growth
 \texttt{temporal\_classes\_monotone\_of\_utilityCompat} and
 \texttt{temporal\_entropy\_monotone\_of\_utilityCompat}.
 
+\paragraph{Expansion-to-probability bridge.}
+The same module now includes a probability-necessity layer on the temporally
+expanded valid successor slice: \texttt{state\_cardinality\_gt\_one\_of\_positive\_time},
+\texttt{uniformPrior\_uncertainty\_of\_positive\_time},
+\texttt{uniformPrior\_nondegenerate\_of\_positive\_time},
+\texttt{counting\_measure\_not\_probability\_on\_stateAt\_of\_positive\_time},
+\texttt{cosmological\_expansion\_forces\_probabilistic\_reasoning}, and the
+strengthened support-complete form
+\texttt{cosmological\_expansion\_forces\_support\_complete\_probabilistic\_reasoning}.
+
+\paragraph{Chosen physical encoding identification.}
+For a state-indexed physical-decision encoding, the development also proves
+\texttt{stateIndexedPhysicalEncoding\_identifies\_StateAt}, making the chosen
+physical-answer carrier explicitly coincide with the temporal slice
+\texttt{StateAt}.
+
 \paragraph{Assumption-minimality status.}
 Mechanized witnesses are present for representative drops of
 compatibility/strictness/positivity/floor assumptions.
@@ -169,8 +185,39 @@ and are explicitly separated from the main bridge structure.
 
 \paragraph{Handle integration.}
 Compact handle aliases for the bridge and minimality witnesses are exported in
-\texttt{HandleAliases.lean} (IEB and SSV groups), and corresponding axiom-audit prints are included in
+\texttt{HandleAliases.lean} (including the IEB17--IEB24 expansion/probability handles), and corresponding axiom-audit prints are included in
 \texttt{CheckAxioms.lean}.
+
+\paragraph{Complexity mechanization boundary.}
+The fully internalized complexity content currently consists of exact finite
+boolean deciders, reduction correctness, and polynomial output-size bounds. In
+particular, the development now exposes direct size-bounded hardness packages
+\texttt{stochastic\_sufficiency\_pp\_hard},
+\texttt{stochastic\_minimum\_sufficiency\_pp\_hard},
+\texttt{stochastic\_anchor\_check\_pp\_hard},
+\texttt{sequential\_sufficiency\_pspace\_hard}, and
+\texttt{sequential\_minimum\_sufficiency\_pspace\_hard}, and
+\texttt{sequential\_anchor\_check\_pspace\_hard}. It also proves exact-decider
+specifications for the six regime-typed boolean queries, together with explicit
+counted exhaustive-search procedures and step bounds for the static minimum and
+anchor queries and for all six stochastic/sequential regime-typed queries.
+End-to-end
+Turing-machine membership witnesses for \PP/\PSPACE are not yet mechanized in
+the same style.
+
+\paragraph{Search-matrix packaging.}
+The same layer now also packages these searches into explicit witness theorems
+for the static queries, including ordinary static sufficiency, and regime-wise
+search matrices for the stochastic and sequential queries. An integration theorem
+\texttt{finite\_search\_summary} then bundles the static, stochastic, and
+sequential counted-search layers into one summary statement.
+
+\paragraph{Explicit-state abstract-\textsc{P} wrappers.}
+The development further packages explicit-state abstract-\textsc{P} membership
+wrappers for static, stochastic, and sequential sufficiency/anchor queries,
+and also for the corresponding minimum queries once an explicit subset-budget is
+included in the input, using the repository's step-counting model rather than
+full TM witnesses.
 
 \subsection{Verification}
 

@@ -1,14 +1,14 @@
 \subsection{The Identification Problem}
 
-Consider an encoder-decoder pair communicating about entities from a large universe $\mathcal{V}$. The decoder must \emph{identify} each entity, determining which of $k$ classes it belongs to, using only:
+Consider an encoder-decoder pair communicating about entities from a large universe $\mathcal{V}$. The paper studies a worst-case semantic compression problem in which the decoder must identify each entity, determining which of $k$ classes it belongs to, using only:
 \begin{itemize}
 \item a \emph{tag} of $L$ bits stored with the entity, and/or
 \item \emph{queries} to a binary oracle: ``does entity $v$ satisfy attribute $I$?''
 \end{itemize}
 
-This is not reconstruction (the decoder need not recover $v$), but \emph{identification} in the sense that the decoder must answer ``which class?'' with zero or bounded error. Our work extends this setting to track the tradeoff between tag storage, query complexity, and identification accuracy under constrained observation.
+This is not reconstruction (the decoder need not recover $v$), but identification with task-relevant semantic accuracy. The resulting tradeoff is among stored naming information, interactive query effort, and semantic error under constrained observation.
 
-The observational bottleneck is the attribute-profile map $\pi: \mathcal{V} \to \{0,1\}^n$. Once distinct classes collide under $\pi$, attribute-only observation cannot distinguish them with zero error. The paper turns that obstruction into a compression law. Let
+The observational bottleneck is the attribute-profile map $\pi: \mathcal{V} \to \{0,1\}^n$. Once distinct classes collide under $\pi$, attribute-only observation cannot distinguish them with zero error. The paper turns that obstruction into an exact compression law. Let
 \[
 A_\pi := \max_u |\{c : \pi(c)=u\}|
 \]
@@ -16,11 +16,13 @@ be the largest collision block. Then every zero-error scheme must satisfy
 \[
 L \ge \log_2 A_\pi,
 \]
-and this lower bound is tight. The same law extends exactly to finite blocks: the minimum block tag budget is $L_t^\star = t\log_2 A_\pi$.
+and this lower bound is tight. The same law extends exactly to finite blocks: the minimum block tag budget is $L_t^\star = t\log_2 A_\pi$. These are the paper's main compression-facing statements.
 
 We then develop a second theorem arc for the query resource. Without tags ($L=0$), zero-error identification depends on the structure of distinguishing query families. Minimal sufficient query sets form the bases of a matroid, so the distinguishing dimension $d$ is well-defined as an invariant of the observation structure rather than of a particular query strategy. Every tag-free zero-error scheme therefore has worst-case query cost at least $d$.
 
 These laws are domain-independent within the stated model: the same lower bounds appear across databases, biological taxonomy, knowledge graphs, model registries, and software runtimes. Once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In maximal-barrier domains this yields a unique $D=0$ Pareto solution, so the issue is resource feasibility rather than domain-specific style conventions.
+
+The present model can be read as a zero-error semantics-aware compression problem, with direct structural connections to rate-distortion-style tradeoffs and natural privacy/security extensions.
 
 \subsection{Main Results}
 
@@ -45,22 +47,22 @@ Without the equicardinality result behind the matroid structure, the lower bound
 
 \subsection{Related Work and Positioning}
 
-This paper does not develop asymptotic coding theorems or claim new zero-error capacity results. Its contribution is to make explicit the bit/query/error tradeoffs governing zero-error classification under constrained observations.
+We study a worst-case zero-error semantic compression problem under a fixed observable family, derive an exact ambiguity converse and finite-block law, and characterize the complementary query resource via a matroid invariant.
 
-\textbf{Identification via channels.} Our work is adjacent to the identification paradigm introduced by Ahlswede and Dueck \cite{ahlswede1989identification, ahlswede1989identification2}. In their framework, a decoder need not reconstruct a message but only answer ``is the message $m$?'' for a given hypothesis. Our setting is different in three ways: (1) we consider one-shot zero-error class identification rather than asymptotic vanishing-error identification, (2) queries are adaptive rather than block codes, and (3) we allow auxiliary tagging (rate $L$) to reduce query cost. The connection is motivational and terminological rather than a direct reuse of the original coding theorem.
+\textbf{Identification via channels.} Ahlswede and Dueck \cite{ahlswede1989identification, ahlswede1989identification2} study identification over channels, where the decoder answers a hypothesis-testing question rather than reconstructing a message. Our setting identifies semantic classes under constrained observations, allows adaptive queries, and trades explicit tag bits against query cost.
 
-\textbf{Rate-distortion theory.} The $(L, W, D)$ framework is analogous to rate-distortion theory \cite{shannon1959coding, berger1971rate}: the ``distortion'' $D$ is semantic (class misidentification), and there is a second resource $W$ (query cost) alongside rate $L$. Classical rate-distortion asks for the minimum rate needed to achieve distortion $D$; here the main question is which combinations of tag bits and queries permit $D=0$. Theorem~\ref{thm:lwd-optimal} gives the resulting converse in terms of collision multiplicity and identifies the unique nominal point in the maximal-barrier regime.
+\textbf{Rate-distortion theory.} The $(L, W, D)$ framework is rate-distortion-adjacent in the following sense: $L$ stores explicit naming information, $W$ measures interactive disambiguation effort, and $D$ measures semantic failure through class misidentification \cite{shannon1959coding, berger1971rate}. Theorem~\ref{thm:lwd-optimal} identifies the resulting zero-error frontier in terms of collision multiplicity and distinguishing dimension.
 
-\textbf{Rate-distortion-perception tradeoffs.} Blau and Michaeli \cite{blau2019rethinking} extended rate-distortion theory by adding a perception constraint, creating a three-way tradeoff. Our query cost $W$ plays an analogous role: it measures the interactive cost of achieving low distortion rather than a distributional constraint. We cite this as a structural analogy, not as a claim that the present model inherits the full geometry of that setting.
+\textbf{Rate-distortion-perception tradeoffs.} Blau and Michaeli \cite{blau2019rethinking} extend rate-distortion theory with a third resource. Our query cost $W$ measures interactive effort in the same three-resource spirit.
 
-\textbf{Zero-error information theory.} K\"orner \cite{korner1973coding} and Witsenhausen \cite{witsenhausen1976zero} studied zero-error source coding where confusable symbols must be distinguished. Here the direct theorem is simpler: the ambiguity converse yields an explicit minimum zero-error tag budget, and the paper also proves exact finite-block confusability laws with linear log-bit scaling. These strengthen the operational converse while remaining distinct from full distribution-optimized graph-entropy or capacity theorems.
+\textbf{Zero-error information theory.} K\"orner \cite{korner1973coding} and Witsenhausen \cite{witsenhausen1976zero} study coding with confusability constraints. Here the central invariant is collision multiplicity $A_\pi$, which yields an explicit ambiguity converse and exact finite-block scaling.
 
-\textbf{Query complexity and communication complexity.} The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity \cite{buhrman2002complexity} and interactive communication \cite{orlitsky1991worst}. The key distinction is that our queries are constrained to a fixed observable family $\mathcal{I}$, not arbitrary predicates.
+\textbf{Query complexity and communication complexity.} The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity \cite{buhrman2002complexity} and interactive communication \cite{orlitsky1991worst}. Here the query resource is the amount of interactive evidence needed once explicit naming information is absent.
 
-\textbf{Compression in classification systems.} The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}), with maximal-barrier specialization $L \ge \log_2 k$.
+\textbf{Semantic compression settings.} The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}), with maximal-barrier specialization $L \ge \log_2 k$.
 
-\textbf{Runtime or schema instantiation (secondary).} In nominal-vs-structural interface settings \cite{Cardelli1985, cook1990inheritance}, the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
+\textbf{Secondary instantiation.} In nominal-vs-structural interface settings \cite{Cardelli1985, cook1990inheritance}, the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
 
 \subsection{Paper Organization}
 
-Section~\ref{sec:model} formalizes the observation model and the foundational information barrier. Section~\ref{sec:zero-error} develops one-shot zero-error feasibility, nominal tagging, and the ambiguity-based converse. Section~\ref{sec:matroid} proves the matroid structure of distinguishing query families. Section~\ref{sec:lwd} gives the $(L, W, D)$ frontier and exact finite-block scaling. Section~\ref{sec:robustness} studies open-world robustness and the decidability boundary. Section~\ref{sec:applications} collects practical consequences and cross-domain illustrations. Section~\ref{sec:extensions} sketches extensions and open directions. Section~\ref{sec:conclusion} concludes.
+Section~\ref{sec:model} formalizes the observation model and the foundational information barrier. Section~\ref{sec:zero-error} develops one-shot zero-error feasibility, nominal tagging, the ambiguity-based converse, and the exact finite-block law. Section~\ref{sec:matroid} proves the matroid structure of distinguishing query families. Section~\ref{sec:lwd} gives the $(L, W, D)$ frontier. Section~\ref{sec:robustness} studies open-world robustness and the decidability boundary. Section~\ref{sec:applications} collects practical consequences and cross-domain illustrations. Section~\ref{sec:extensions} sketches extensions and open directions. Section~\ref{sec:conclusion} concludes.

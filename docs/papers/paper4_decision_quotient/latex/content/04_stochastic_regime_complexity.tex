@@ -1,6 +1,6 @@
 \section{Stochastic Regime Complexity}\label{sec:stochastic}
 
-We now add a distribution over states. This changes sufficiency from a pointwise optimizer-preservation condition to a distribution-conditional optimizer condition.
+We now add a distribution over states. This does not weaken the certification problem; it changes its form. Sufficiency is no longer a pointwise optimizer-preservation condition but a statement about conditional optimal decisions under averaging, and that shift is enough to move the problem to PP. The underlying reason is structural: once utilities are compared through conditional expectations, certification becomes a weighted counting problem rather than a pure counterexample-exclusion problem. Static hardness comes from ruling out bad pairs; stochastic hardness comes from deciding which side of a majority-style threshold a conditional expectation lies on.
 
 \subsection{Stochastic Decision Problems}
 
@@ -27,26 +27,98 @@ for all admissible $I$-fibers.
 \textbf{Question:} Is $I$ stochastically sufficient?
 \end{problem}
 
+\begin{definition}[Stochastic Anchor Sufficiency]\label{def:stochastic-anchor-sufficient}
+A coordinate set $I$ is \emph{stochastically anchor-sufficient} if there exists an anchor fiber such that the conditional optimal-action set on that fiber is a singleton and every state agreeing with the anchor on $I$ induces that same singleton conditional optimum.
+\end{definition}
+
+\begin{problem}[Stochastic Anchor Check]\label{prob:stochastic-anchor-sufficiency}
+\textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
+\textbf{Question:} Is $I$ stochastically anchor-sufficient?
+\end{problem}
+
+\begin{problem}[Stochastic Minimum Query]\label{prob:stochastic-minimum-sufficient}
+\textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $k\in\mathbb{N}$. \\
+\textbf{Question:} Does there exist a stochastically sufficient coordinate set $I$ with $|I|\le k$?
+\end{problem}
+
 \subsection{PP-Completeness}
 
-\begin{theorem}[STOCHASTIC-SUFFICIENCY-CHECK is PP-complete]\label{thm:stochastic-pp}
+The stochastic regime preserves the same underlying question, which coordinates can be ignored without changing the decision, but asks it after conditioning and expectation have been introduced. The resulting majority-style comparisons are exactly where PP enters. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, every fiberwise exact-certification check asks whether one conditional expected utility dominates another across all admissible fibers, which is the natural counting analogue of the static universal check.
+
+\begin{theorem}[Stochastic Sufficiency is PP-complete]\label{thm:stochastic-pp}
 STOCHASTIC-SUFFICIENCY-CHECK is PP-complete.
 \end{theorem}
 
-\begin{proof}
-Membership: deciding whether one conditional expected utility dominates another is a majority-style weighted counting comparison, hence in PP.
+\leanmeta{\LH{DC45}, \LH{DC62}, \LH{DC72}.}
 
-Hardness: reduce MAJSAT. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{reject}\}$, and utilities
+\begin{proof}
+For membership, deciding whether one conditional expected utility dominates another is a majority-style weighted counting comparison, hence in PP.
+
+For hardness, reduce MAJSAT. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{reject}\}$, and utilities
 \[
 U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad U(\mathrm{reject},s)=1/2,
 \]
 with $I=\emptyset$. Then empty-set stochastic sufficiency is equivalent to deciding whether $\mathbb{E}[\varphi]\ge 1/2$, i.e., MAJSAT.
 \end{proof}
 
+\begin{proposition}[Stochastic Sufficiency Refines to Stochastic Anchor Sufficiency]\label{prop:stochastic-anchor-refinement}
+If $I$ is stochastically sufficient, then $I$ is stochastically anchor-sufficient.
+\end{proposition}
+
+\leanmeta{\LH{DC19}.}
+
+\begin{proof}
+If every admissible $I$-fiber has a unique conditional optimum, then any chosen anchor fiber has a unique conditional optimum, and every state agreeing with that anchor on $I$ induces the same singleton conditional optimum.
+\end{proof}
+
+\begin{theorem}[Stochastic Anchor Hardness]\label{thm:stochastic-anchor-hard}
+STOCHASTIC-ANCHOR-SUFFICIENCY-CHECK is PP-hard.
+\end{theorem}
+
+\leanmeta{\LH{DC40}, \LH{DC41}, \LH{DC42}.}
+
+\begin{proof}
+Reduce MAJSAT. Given Boolean formula $\varphi$ on $n\geq 1$ variables, take $S=\{0,1\}^n$, uniform $P$, $I=\emptyset$, and three actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$. Set
+\[
+U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
+U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)}.
+\]
+If at least half of all assignments satisfy $\varphi$, then $\mathrm{accept}$ is the unique optimal action on the empty-information fiber, so the instance is anchor-sufficient. If fewer than half satisfy $\varphi$, then $\mathrm{hold}_L$ and $\mathrm{hold}_R$ tie above $\mathrm{accept}$, so no singleton anchor optimum exists. Thus MAJSAT many-one reduces to the stochastic anchor query.
+\end{proof}
+
+\begin{theorem}[Stochastic Minimum Hardness]\label{thm:stochastic-minimum-hard}
+The stochastic minimum-sufficient-set query is PP-hard.
+\end{theorem}
+
+\leanmeta{\LH{DC45}, \LH{DC47}.}
+
+\begin{proof}
+Reduce MAJSAT to the $k=0$ slice. In the same three-action gadget used above, there exists a stochastically sufficient set of size at most $0$ iff the empty set itself is stochastically sufficient. This empty-set equivalence for the gadget is certified in the artifact, so MAJSAT many-one reduces to STOCHASTIC-MINIMUM-SUFFICIENT-SET.
+\end{proof}
+
+\begin{proposition}[Explicit Finite Search for Stochastic Queries]\label{prop:stochastic-explicit-search}
+For finite instances, the artifact contains counted exhaustive-search procedures for stochastic sufficiency, stochastic anchor sufficiency, and stochastic minimum sufficiency. Their certified step bounds are respectively $O(|S|)$, $O(|S||A|)$, and $O(2^n)$.
+\end{proposition}
+
+\leanmeta{\LH{DC62}, \LH{DC63}, \LH{DC64}, \LH{DC65}, \LH{DC72}, \LH{DC73}, \LH{DC76}.}
+
+\begin{proof}
+The sufficiency search scans for a violating state whose fiber-optimal set is non-singleton; the anchor search scans over candidate anchor-state/action pairs; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
+\end{proof}
+
+\paragraph{Relevance boundary.}
+The stochastic query is fiber-indexed: fixing a candidate information set $I$
+induces a derived decision problem whose optimizer is the conditional fiber
+optimizer. In the current formalization this induced problem is always
+$I$-sufficient \leanmeta{\LH{DC57}}, but its relevance notion is therefore also
+indexed by $I$. For that reason, the paper does not assert a single global
+relevance-set characterization for stochastic minimal sufficiency analogous to
+the static and sequential regimes.
+
 \subsection{Tractable Subcases}
 
-\begin{proposition}[Stochastic Tractable Classes]\label{prop:stochastic-tractable}
-STOCHASTIC-SUFFICIENCY-CHECK is polynomial-time solvable under each of the following restrictions:
+\begin{proposition}[Tractable Stochastic Cases]\label{prop:stochastic-tractable}
+The stochastic sufficiency problem is polynomial-time solvable under each of the following restrictions:
 \begin{enumerate}
 \item product distributions $P=\bigotimes_i P_i$,
 \item bounded support $|\mathrm{supp}(P)|\le k$,
@@ -54,24 +126,38 @@ STOCHASTIC-SUFFICIENCY-CHECK is polynomial-time solvable under each of the follo
 \end{enumerate}
 \end{proposition}
 
+\leanmeta{\LH{DQ15}, \LH{DQ13}.}
+
 \begin{proof}
-In each case, conditional expected utilities can be computed exactly or reduced to a polynomial number of marginal comparisons.
+In each case, conditional expected utilities can either be computed exactly or reduced to a polynomial number of marginal comparisons.
 \end{proof}
 
 \subsection{Bridge from Static}
+
+These final propositions show that moving from static to stochastic reasoning is not merely a reformulation. Distributional conditioning can genuinely destroy or preserve sufficiency depending on the structure of the input model.
 
 \begin{proposition}[Static Sufficiency Does Not Imply Stochastic Sufficiency]\label{prop:static-not-stochastic}
 There exist instances where $I$ is sufficient in the static sense but not stochastically sufficient once a distribution $P$ is fixed.
 \end{proposition}
 
+\leanmeta{\LH{DQ58}.}
+
 \begin{proof}
-Choose utilities where optimizer ties are harmless pointwise but are broken in expectation after conditioning. Then static fibers preserve $\Opt$, while conditional expectations shift the optimal action.
+Choose utilities where optimizer ties are harmless pointwise but are broken in expectation after conditioning. Then static fibers preserve $\Opt$, while conditional expectations change the optimal action.
 \end{proof}
 
 \begin{proposition}[Transfer Under Product Distributions]\label{prop:static-to-stochastic-product}
 If $P$ factorizes as a product distribution and $I$ is statically sufficient, then $I$ is stochastically sufficient.
 \end{proposition}
 
+\leanmeta{\LH{DQ16}, \LH{DQ15}.}
+
 \begin{proof}
 Under product factorization, conditioning on $I$ does not introduce cross-coordinate dependence outside the sufficient projection, so optimizer preservation transfers from pointwise to expectation form.
 \end{proof}
+
+The stochastic regime therefore gives the middle layer of the paper's hierarchy:
+conditioning already raises exact certification beyond the static setting by
+turning exact certification into a counting comparison problem, but the full
+temporal escalation is deferred until sequential dynamics are added in the next
+section.
