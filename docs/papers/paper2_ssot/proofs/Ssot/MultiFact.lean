@@ -9,10 +9,12 @@ import Mathlib.Analysis.SpecialFunctions.Log.Basic
 import Mathlib.Analysis.InnerProductSpace.Orthonormal
 import Mathlib.Analysis.InnerProductSpace.PiL2
 import Mathlib.Analysis.Matrix.Order
+import Mathlib.Analysis.Convex.Cone.InnerDual
 import Mathlib.Data.ENNReal.Real
 import Mathlib.Combinatorics.SimpleGraph.Coloring
 import Mathlib.Combinatorics.SimpleGraph.Clique
 import Mathlib.LinearAlgebra.Matrix.PosDef
+import Mathlib.Analysis.Normed.Module.FiniteDimension
 import Mathlib.Tactic
 
 namespace MultiFact
@@ -317,6 +319,58 @@ structure ThetaWitness {V β : Type} [Fintype β] [DecidableEq β] (G : SimpleGr
   one_le_bound : 1 ≤ bound
   one_le_bound_inner_sq : ∀ v, 1 ≤ bound * (inner ℝ (repr v) handle)^2
 
+/-- A standard orthonormal-representation formulation of a Lovász-theta upper witness:
+unit vertex vectors, a unit handle vector, orthogonality on nonedges, and a scalar objective. -/
+structure LovaszOrthoFeasible {V β : Type} [Fintype β] [DecidableEq β] (G : SimpleGraph V) where
+  vec : V → EuclideanSpace ℝ β
+  handle : EuclideanSpace ℝ β
+  vec_unit : ∀ v, ‖vec v‖ = 1
+  handle_unit : ‖handle‖ = 1
+  ortho_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → inner ℝ (vec v) (vec w) = 0
+  theta : ℝ
+  one_le_theta : 1 ≤ theta
+  one_le_theta_inner_sq : ∀ v, 1 ≤ theta * (inner ℝ (vec v) handle)^2
+
+noncomputable def ThetaWitness.toLovaszOrthoFeasible
+    {V β : Type} [Fintype β] [DecidableEq β] {G : SimpleGraph V}
+    (W : ThetaWitness (β := β) G) :
+    LovaszOrthoFeasible (β := β) G where
+  vec := W.repr
+  handle := W.handle
+  vec_unit := W.repr_unit
+  handle_unit := W.handle_unit
+  ortho_of_nonadj := W.ortho_of_nonadj
+  theta := W.bound
+  one_le_theta := W.one_le_bound
+  one_le_theta_inner_sq := W.one_le_bound_inner_sq
+
+noncomputable def LovaszOrthoFeasible.toThetaWitness
+    {V β : Type} [Fintype β] [DecidableEq β] {G : SimpleGraph V}
+    (L : LovaszOrthoFeasible (β := β) G) :
+    ThetaWitness (β := β) G where
+  repr := L.vec
+  handle := L.handle
+  repr_unit := L.vec_unit
+  handle_unit := L.handle_unit
+  ortho_of_nonadj := L.ortho_of_nonadj
+  bound := L.theta
+  one_le_bound := L.one_le_theta
+  one_le_bound_inner_sq := L.one_le_theta_inner_sq
+
+theorem ThetaWitness.toLovaszOrthoFeasible_toThetaWitness
+    {V β : Type} [Fintype β] [DecidableEq β] {G : SimpleGraph V}
+    (W : ThetaWitness (β := β) G) :
+    W.toLovaszOrthoFeasible.toThetaWitness = W := by
+  cases W
+  rfl
+
+theorem LovaszOrthoFeasible.toThetaWitness_toLovaszOrthoFeasible
+    {V β : Type} [Fintype β] [DecidableEq β] {G : SimpleGraph V}
+    (L : LovaszOrthoFeasible (β := β) G) :
+    L.toThetaWitness.toLovaszOrthoFeasible = L := by
+  cases L
+  rfl
+
 /-- A correlation/Gram-style feasible object: one unit vector for each graph vertex and one
 distinguished handle vector, presented uniformly on `Option V`. -/
 structure ThetaMatrixFeasible {V κ : Type} [Fintype κ] [DecidableEq κ] [Nonempty κ] (G : SimpleGraph V) where
@@ -488,6 +542,58 @@ structure ThetaPSDFeasible (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGra
   bound : ℝ
   one_le_bound : 1 ≤ bound
   one_le_bound_entry_sq : ∀ v, 1 ≤ bound * (M none (some v))^2
+
+/-- A standard primal PSD theta object on the index set `Option V`: the handle slot `none`,
+unit diagonal, zero pattern on nonedges, and an objective scalar. -/
+structure LovaszThetaPrimalFeasible (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  M : Matrix (Option V) (Option V) ℝ
+  posSemidef : M.PosSemidef
+  diag_none : M none none = 1
+  diag_some : ∀ v : V, M (some v) (some v) = 1
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → M (some v) (some w) = 0
+  theta : ℝ
+  one_le_theta : 1 ≤ theta
+  one_le_theta_entry_sq : ∀ v, 1 ≤ theta * (M none (some v))^2
+
+noncomputable def ThetaPSDFeasible.toLovaszThetaPrimalFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : ThetaPSDFeasible V G) :
+    LovaszThetaPrimalFeasible V G where
+  M := T.M
+  posSemidef := T.posSemidef
+  diag_none := T.diag_none
+  diag_some := T.diag_some
+  zero_of_nonadj := T.zero_of_nonadj
+  theta := T.bound
+  one_le_theta := T.one_le_bound
+  one_le_theta_entry_sq := T.one_le_bound_entry_sq
+
+noncomputable def LovaszThetaPrimalFeasible.toThetaPSDFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : LovaszThetaPrimalFeasible V G) :
+    ThetaPSDFeasible V G where
+  M := T.M
+  posSemidef := T.posSemidef
+  diag_none := T.diag_none
+  diag_some := T.diag_some
+  zero_of_nonadj := T.zero_of_nonadj
+  bound := T.theta
+  one_le_bound := T.one_le_theta
+  one_le_bound_entry_sq := T.one_le_theta_entry_sq
+
+theorem ThetaPSDFeasible.toLovaszThetaPrimalFeasible_toThetaPSDFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : ThetaPSDFeasible V G) :
+    T.toLovaszThetaPrimalFeasible.toThetaPSDFeasible = T := by
+  cases T
+  rfl
+
+theorem LovaszThetaPrimalFeasible.toThetaPSDFeasible_toLovaszThetaPrimalFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : LovaszThetaPrimalFeasible V G) :
+    T.toThetaPSDFeasible.toLovaszThetaPrimalFeasible = T := by
+  cases T
+  rfl
 
 section ThetaPSD
 
@@ -3145,11 +3251,1307 @@ theorem graphShannonCapacityReal_le_log_thetaWitness
   rw [← iSup_graphPowerRate_eq_graphShannonCapacityReal]
   exact ciSup_le (fun N => graphPowerRate_le_log_thetaWitness W N)
 
+def graphThetaBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { t | ∃ (β : Type) (_ : Fintype β) (_ : DecidableEq β) (_ : Nonempty β),
+      ∃ W : ThetaWitness (β := β) G, t = W.bound }
+
+noncomputable def graphThetaUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (graphThetaBoundSet G)
+
+structure ThetaTraceFeasible
+    (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  X : Matrix V V ℝ
+  posSemidef : X.PosSemidef
+  trace_eq_one : Matrix.trace X = 1
+  zero_of_adj : ∀ ⦃v w : V⦄, G.Adj v w → X v w = 0
+
+def thetaTraceObj
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : ThetaTraceFeasible V G) : ℝ :=
+  ∑ i, ∑ j, T.X i j
+
+def graphThetaTraceValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : ThetaTraceFeasible V G, r = thetaTraceObj T }
+
+noncomputable def graphThetaTraceLower
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sSup (graphThetaTraceValueSet G)
+
+structure ThetaLiftedDualFeasible
+    (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  Z : Matrix (Option V) (Option V) ℝ
+  posSemidef : Z.PosSemidef
+  diag_none : Z none none = 1
+  none_some_eq_one : ∀ v, Z none (some v) = 1
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → Z (some v) (some w) = 0
+  bound : ℝ
+  diag_some_le_bound : ∀ v, Z (some v) (some v) ≤ bound
+
+structure ThetaTraceGramFeasible
+    (V κ : Type) [Fintype V] [DecidableEq V]
+    [Fintype κ] [DecidableEq κ] [Nonempty κ]
+    (G : SimpleGraph V) where
+  embed : V → EuclideanSpace ℝ κ
+  norm_sq_sum_eq_one : ∑ v, ‖embed v‖ ^ 2 = 1
+  ortho_of_adj : ∀ ⦃v w : V⦄, G.Adj v w → inner ℝ (embed v) (embed w) = 0
+
+noncomputable def thetaTraceGramObj
+    {V κ : Type} [Fintype V] [DecidableEq V]
+    [Fintype κ] [DecidableEq κ] [Nonempty κ]
+    {G : SimpleGraph V}
+    (T : ThetaTraceGramFeasible V κ G) : ℝ :=
+  ‖∑ v, T.embed v‖ ^ 2
+
+section ThetaTrace
+
+variable {V κ : Type} [Fintype V] [DecidableEq V] [Fintype κ] [DecidableEq κ] [Nonempty κ]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaTraceGramFeasible.gram
+    (T : ThetaTraceGramFeasible V κ G) :
+    Matrix V V ℝ :=
+  fun i j => inner ℝ (T.embed i) (T.embed j)
+
+noncomputable def ThetaTraceGramFeasible.coordMatrix
+    (T : ThetaTraceGramFeasible V κ G) :
+    Matrix κ V ℝ :=
+  fun k i => T.embed i k
+
+theorem ThetaTraceGramFeasible.coordMatrix_conjTranspose_mul
+    (T : ThetaTraceGramFeasible V κ G) :
+    Matrix.conjTranspose T.coordMatrix * T.coordMatrix = T.gram := by
+  ext i j
+  rw [Matrix.mul_apply]
+  simp [ThetaTraceGramFeasible.coordMatrix, ThetaTraceGramFeasible.gram,
+    EuclideanSpace.inner_eq_star_dotProduct, Matrix.conjTranspose_apply, dotProduct, mul_comm]
+
+noncomputable def ThetaTraceGramFeasible.toThetaTraceFeasible
+    (T : ThetaTraceGramFeasible V κ G) :
+    ThetaTraceFeasible V G where
+  X := T.gram
+  posSemidef := by
+    rw [← T.coordMatrix_conjTranspose_mul]
+    exact Matrix.posSemidef_conjTranspose_mul_self T.coordMatrix
+  trace_eq_one := by
+    rw [Matrix.trace]
+    simpa [ThetaTraceGramFeasible.gram, real_inner_self_eq_norm_sq] using T.norm_sq_sum_eq_one
+  zero_of_adj := by
+    intro v w hAdj
+    simpa [ThetaTraceGramFeasible.gram] using T.ortho_of_adj hAdj
+
+theorem thetaTraceObj_toThetaTraceFeasible_eq_thetaTraceGramObj
+    (T : ThetaTraceGramFeasible V κ G) :
+    thetaTraceObj T.toThetaTraceFeasible = thetaTraceGramObj T := by
+  rw [thetaTraceObj, thetaTraceGramObj, ThetaTraceGramFeasible.toThetaTraceFeasible]
+  simp only [ThetaTraceGramFeasible.gram]
+  rw [← real_inner_self_eq_norm_sq]
+  rw [inner_sum]
+  simp_rw [sum_inner]
+  rw [Finset.sum_comm]
+
+noncomputable def ThetaTraceFeasible.sqrtEmbed
+    (T : ThetaTraceFeasible V G) :
+    V → EuclideanSpace ℝ V :=
+  fun i => WithLp.toLp 2 (fun j => CFC.sqrt T.X j i)
+
+theorem ThetaTraceFeasible.sqrtEmbed_gram
+    (T : ThetaTraceFeasible V G) :
+    (fun i j => inner ℝ (T.sqrtEmbed i) (T.sqrtEmbed j)) = T.X := by
+  funext i
+  funext j
+  have hnonneg : (0 : Matrix V V ℝ) ≤ CFC.sqrt T.X := CFC.sqrt_nonneg T.X
+  have hpsdS : (CFC.sqrt T.X).PosSemidef := by
+    exact Matrix.nonneg_iff_posSemidef.mp hnonneg
+  have hherm : (CFC.sqrt T.X).IsHermitian := hpsdS.isHermitian
+  have hXherm : T.X.IsHermitian := T.posSemidef.isHermitian
+  have hmul : CFC.sqrt T.X * CFC.sqrt T.X = T.X := by
+    simpa using (CFC.sqrt_mul_sqrt_self (a := T.X) (ha := T.posSemidef.nonneg))
+  have hentry :
+      (Matrix.conjTranspose (CFC.sqrt T.X) * CFC.sqrt T.X) j i = T.X i j := by
+    calc
+      (Matrix.conjTranspose (CFC.sqrt T.X) * CFC.sqrt T.X) j i
+          = T.X j i := by rw [hherm.eq, hmul]
+      _ = T.X i j := by simpa using hXherm.apply i j
+  simpa [ThetaTraceFeasible.sqrtEmbed, EuclideanSpace.inner_toLp_toLp, Matrix.mul_apply,
+    Matrix.conjTranspose_apply, dotProduct] using hentry
+
+noncomputable def ThetaTraceFeasible.toThetaTraceGramFeasible
+    [Nonempty V]
+    (T : ThetaTraceFeasible V G) :
+    ThetaTraceGramFeasible V V G where
+  embed := T.sqrtEmbed
+  norm_sq_sum_eq_one := by
+    rw [show (∑ v, ‖T.sqrtEmbed v‖ ^ 2) = ∑ v, T.X v v by
+      congr with v
+      have h := congrFun (congrFun T.sqrtEmbed_gram v) v
+      simpa [real_inner_self_eq_norm_sq] using h]
+    simpa [Matrix.trace] using T.trace_eq_one
+  ortho_of_adj := by
+    intro v w hAdj
+    have h := congrFun (congrFun T.sqrtEmbed_gram v) w
+    simpa using h.trans (T.zero_of_adj hAdj)
+
+noncomputable def ThetaTraceGramFeasible.prod
+    {W γ : Type} [Fintype W] [DecidableEq W] [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {H : SimpleGraph W}
+    (TG : ThetaTraceGramFeasible V κ G)
+    (TH : ThetaTraceGramFeasible W γ H) :
+    ThetaTraceGramFeasible (V × W) (κ × γ) (strongProd G H) where
+  embed := fun x : V × W => tensorVec (TG.embed x.1) (TH.embed x.2)
+  norm_sq_sum_eq_one := by
+    rw [Fintype.sum_prod_type]
+    calc
+      ∑ x, ∑ y, ‖tensorVec (TG.embed x) (TH.embed y)‖ ^ 2
+          = ∑ x, ∑ y, (‖TG.embed x‖ * ‖TH.embed y‖) ^ 2 := by
+              simp [norm_tensorVec]
+      _ = ∑ x, ∑ y, (‖TG.embed x‖ ^ 2) * (‖TH.embed y‖ ^ 2) := by
+            congr with x
+            congr with y
+            ring
+      _ = (∑ x, ‖TG.embed x‖ ^ 2) * ∑ y, ‖TH.embed y‖ ^ 2 := by
+            rw [← Finset.sum_mul_sum]
+      _ = 1 := by simp [TG.norm_sq_sum_eq_one, TH.norm_sq_sum_eq_one]
+  ortho_of_adj := by
+    intro x y hAdj
+    rcases (strongProd_adj_iff (G := G) (H := H) (x := x) (y := y)).1 hAdj with ⟨_, _, hcase⟩
+    rw [inner_tensorVec]
+    rcases hcase with hxy | hxy
+    · simp [TG.ortho_of_adj hxy]
+    · simp [TH.ortho_of_adj hxy]
+
+theorem thetaTraceGramObj_prod
+    {W γ : Type} [Fintype W] [DecidableEq W] [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {H : SimpleGraph W}
+    (TG : ThetaTraceGramFeasible V κ G)
+    (TH : ThetaTraceGramFeasible W γ H) :
+    thetaTraceGramObj (TG.prod TH) = thetaTraceGramObj TG * thetaTraceGramObj TH := by
+  rw [thetaTraceGramObj, thetaTraceGramObj, thetaTraceGramObj]
+  rw [Fintype.sum_prod_type]
+  have hsum :
+      (∑ x, ∑ y, tensorVec (TG.embed x) (TH.embed y)) =
+        tensorVec (∑ v, TG.embed v) (∑ w, TH.embed w) := by
+    ext p
+    simp [tensorVec_apply, Finset.sum_mul_sum]
+  change ‖∑ x, ∑ y, tensorVec (TG.embed x) (TH.embed y)‖ ^ 2 =
+    ‖∑ v, TG.embed v‖ ^ 2 * ‖∑ v, TH.embed v‖ ^ 2
+  rw [hsum, norm_tensorVec]
+  ring
+
+end ThetaTrace
+
+theorem graphThetaTraceValueSet_nonempty
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) :
+    (graphThetaTraceValueSet G).Nonempty := by
+  classical
+  let T : ThetaTraceGramFeasible V V G := {
+    embed := fun v => EuclideanSpace.single v ((Real.sqrt (Fintype.card V : ℝ))⁻¹)
+    norm_sq_sum_eq_one := by
+      have hcard_pos : 0 < (Fintype.card V : ℝ) := by
+        exact_mod_cast (Fintype.card_pos_iff.mpr ‹Nonempty V›)
+      have hsqrt_ne : Real.sqrt (Fintype.card V : ℝ) ≠ 0 := by
+        exact ne_of_gt (Real.sqrt_pos.2 hcard_pos)
+      have hcalc : (Fintype.card V : ℝ) * ((Real.sqrt (Fintype.card V : ℝ))⁻¹) ^ 2 = 1 := by
+        field_simp [hsqrt_ne]
+        rw [Real.sq_sqrt (show 0 ≤ (Fintype.card V : ℝ) by positivity)]
+      have habs : |Real.sqrt (Fintype.card V : ℝ)| = Real.sqrt (Fintype.card V : ℝ) := by
+        exact abs_of_nonneg (Real.sqrt_nonneg _)
+      simpa [EuclideanSpace.norm_single, pow_two, habs] using hcalc
+    ortho_of_adj := by
+      intro v w hAdj
+      have hvw : v ≠ w := G.ne_of_adj hAdj
+      rw [EuclideanSpace.inner_single_left]
+      simp [EuclideanSpace.single_apply, hvw]
+  }
+  refine ⟨thetaTraceGramObj T, ?_⟩
+  exact ⟨T.toThetaTraceFeasible, (thetaTraceObj_toThetaTraceFeasible_eq_thetaTraceGramObj T).symm⟩
+
+theorem thetaTraceObj_eq_thetaTraceGramObj_of_toThetaTraceGramFeasible
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    {G : SimpleGraph V}
+    (T : ThetaTraceFeasible V G) :
+    thetaTraceObj T = thetaTraceGramObj T.toThetaTraceGramFeasible := by
+  let TG := T.toThetaTraceGramFeasible
+  have hX : ∀ i j, T.X i j = TG.toThetaTraceFeasible.X i j := by
+    intro i j
+    have h := congrFun (congrFun T.sqrtEmbed_gram i) j
+    simpa [TG, ThetaTraceFeasible.toThetaTraceGramFeasible, ThetaTraceGramFeasible.toThetaTraceFeasible,
+      ThetaTraceGramFeasible.gram] using h.symm
+  calc
+    thetaTraceObj T = thetaTraceObj TG.toThetaTraceFeasible := by
+      unfold thetaTraceObj
+      simp [hX]
+    _ = thetaTraceGramObj TG := thetaTraceObj_toThetaTraceFeasible_eq_thetaTraceGramObj TG
+
+theorem thetaTraceObj_le_card_sq
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    {G : SimpleGraph V}
+    (T : ThetaTraceFeasible V G) :
+    thetaTraceObj T ≤ (Fintype.card V : ℝ) ^ 2 := by
+  let TG := T.toThetaTraceGramFeasible
+  have hcoord_sq_le : ∀ v, ‖TG.embed v‖ ^ 2 ≤ 1 := by
+    intro v
+    have hle : ‖TG.embed v‖ ^ 2 ≤ ∑ w, ‖TG.embed w‖ ^ 2 := by
+      have hrest : 0 ≤ ∑ w ∈ Finset.univ.erase v, ‖TG.embed w‖ ^ 2 :=
+        Finset.sum_nonneg (fun w hw => sq_nonneg _)
+      calc
+        ‖TG.embed v‖ ^ 2 ≤ ‖TG.embed v‖ ^ 2 + ∑ w ∈ Finset.univ.erase v, ‖TG.embed w‖ ^ 2 :=
+          le_add_of_nonneg_right hrest
+        _ = ∑ w, ‖TG.embed w‖ ^ 2 := by
+          symm
+          simpa using Finset.sum_erase_add (s := Finset.univ) (f := fun w => ‖TG.embed w‖ ^ 2)
+            (h := Finset.mem_univ v)
+    calc
+      ‖TG.embed v‖ ^ 2 ≤ ∑ w, ‖TG.embed w‖ ^ 2 := hle
+      _ = 1 := TG.norm_sq_sum_eq_one
+  have hcoord_le : ∀ v, ‖TG.embed v‖ ≤ 1 := by
+    intro v
+    have h := (sq_le_sq₀ (norm_nonneg _) zero_le_one).1
+      (by simpa using hcoord_sq_le v : ‖TG.embed v‖ ^ 2 ≤ (1 : ℝ) ^ 2)
+    simpa using h
+  have hsum_le : ∑ v, ‖TG.embed v‖ ≤ Fintype.card V := by
+    calc
+      ∑ v, ‖TG.embed v‖ ≤ ∑ v, (1 : ℝ) := Finset.sum_le_sum (fun v _ => hcoord_le v)
+      _ = Fintype.card V := by simp
+  calc
+    thetaTraceObj T = thetaTraceGramObj TG := thetaTraceObj_eq_thetaTraceGramObj_of_toThetaTraceGramFeasible T
+    _ = ‖∑ v, TG.embed v‖ ^ 2 := rfl
+    _ ≤ (∑ v, ‖TG.embed v‖) ^ 2 := by
+          exact (sq_le_sq₀ (norm_nonneg _) (Finset.sum_nonneg fun v _ => norm_nonneg _)).2 (by
+            simpa using norm_sum_le (s := Finset.univ) (f := TG.embed))
+    _ ≤ (Fintype.card V : ℝ) ^ 2 := by
+          exact (sq_le_sq₀ (Finset.sum_nonneg fun v _ => norm_nonneg _) (by positivity)).2 hsum_le
+
+theorem graphThetaTraceValueSet_bddAbove
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) :
+    BddAbove (graphThetaTraceValueSet G) := by
+  refine ⟨(Fintype.card V : ℝ) ^ 2, ?_⟩
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact thetaTraceObj_le_card_sq T
+
+theorem thetaTraceObj_nonneg
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    {G : SimpleGraph V}
+    (T : ThetaTraceFeasible V G) :
+    0 ≤ thetaTraceObj T := by
+  rw [thetaTraceObj_eq_thetaTraceGramObj_of_toThetaTraceGramFeasible T]
+  exact sq_nonneg _
+
+theorem graphThetaTraceLower_nonneg
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) :
+    0 ≤ graphThetaTraceLower G := by
+  rcases graphThetaTraceValueSet_nonempty G with ⟨r, hr⟩
+  have hrle : r ≤ graphThetaTraceLower G := by
+    exact le_csSup (graphThetaTraceValueSet_bddAbove G) hr
+  rcases hr with ⟨T, rfl⟩
+  exact (thetaTraceObj_nonneg T).trans hrle
+
+theorem thetaTraceObj_mul_graphThetaTraceLower_le_strongProd
+    {V W : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    [Fintype W] [DecidableEq W] [Nonempty W]
+    {G : SimpleGraph V} {H : SimpleGraph W}
+    (TGm : ThetaTraceFeasible V G) :
+    thetaTraceObj TGm * graphThetaTraceLower H ≤ graphThetaTraceLower (strongProd G H) := by
+  refine le_of_forall_pos_lt_add ?_
+  intro ε hε
+  let c : ℝ := thetaTraceObj TGm
+  let δ : ℝ := ε / (c + 1)
+  have hc_nonneg : 0 ≤ c := by
+    dsimp [c]
+    exact thetaTraceObj_nonneg TGm
+  have hδ : 0 < δ := by
+    dsimp [δ]
+    have hden : 0 < c + 1 := by linarith
+    exact div_pos hε hden
+  have hHapprox : graphThetaTraceLower H - δ < sSup (graphThetaTraceValueSet H) := by
+    dsimp [graphThetaTraceLower]
+    linarith
+  rcases exists_lt_of_lt_csSup (graphThetaTraceValueSet_nonempty H) hHapprox with ⟨rH, hrHmem, hrHlt⟩
+  rcases hrHmem with ⟨THm, rfl⟩
+  let TGG := TGm.toThetaTraceGramFeasible
+  let THG := THm.toThetaTraceGramFeasible
+  have hmem : thetaTraceGramObj (TGG.prod THG) ∈ graphThetaTraceValueSet (strongProd G H) := by
+    refine ⟨(TGG.prod THG).toThetaTraceFeasible, ?_⟩
+    exact (thetaTraceObj_toThetaTraceFeasible_eq_thetaTraceGramObj (TGG.prod THG)).symm
+  have hsup : thetaTraceGramObj (TGG.prod THG) ≤ graphThetaTraceLower (strongProd G H) := by
+    dsimp [graphThetaTraceLower]
+    exact le_csSup (graphThetaTraceValueSet_bddAbove (strongProd G H)) hmem
+  have hGid : thetaTraceObj TGm = thetaTraceGramObj TGG :=
+    thetaTraceObj_eq_thetaTraceGramObj_of_toThetaTraceGramFeasible TGm
+  have hHid : thetaTraceObj THm = thetaTraceGramObj THG :=
+    thetaTraceObj_eq_thetaTraceGramObj_of_toThetaTraceGramFeasible THm
+  have hδε : c * δ < ε := by
+    dsimp [δ]
+    have hden : 0 < c + 1 := by linarith
+    have hfrac : c / (c + 1) < 1 := by
+      exact (div_lt_iff₀ hden).2 (by nlinarith)
+    have hcalc : c * (ε / (c + 1)) = ε * (c / (c + 1)) := by
+      field_simp [hden.ne']
+    rw [hcalc]
+    have := mul_lt_mul_of_pos_left hfrac hε
+    simpa using this
+  calc
+    thetaTraceObj TGm * graphThetaTraceLower H
+        < thetaTraceObj TGm * thetaTraceObj THm + ε := by
+            nlinarith [hc_nonneg, hrHlt, hδε]
+    _ = thetaTraceGramObj (TGG.prod THG) + ε := by
+          rw [thetaTraceGramObj_prod, ← hGid, ← hHid]
+    _ ≤ graphThetaTraceLower (strongProd G H) + ε := by
+          simpa [add_comm, add_left_comm, add_assoc] using add_le_add_right hsup ε
+
+theorem graphThetaTraceLower_strongProd_ge_mul
+    {V W : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    [Fintype W] [DecidableEq W] [Nonempty W]
+    (G : SimpleGraph V) (H : SimpleGraph W) :
+    graphThetaTraceLower (strongProd G H) ≥ graphThetaTraceLower G * graphThetaTraceLower H := by
+  refine le_of_forall_pos_le_add ?_
+  intro ε hε
+  let δ : ℝ := ε / (graphThetaTraceLower H + 1)
+  have hδ : 0 < δ := by
+    dsimp [δ]
+    have hden : 0 < graphThetaTraceLower H + 1 := by
+      linarith [graphThetaTraceLower_nonneg H]
+    exact div_pos hε hden
+  have hGapprox : graphThetaTraceLower G - δ < sSup (graphThetaTraceValueSet G) := by
+    dsimp [graphThetaTraceLower]
+    linarith
+  rcases exists_lt_of_lt_csSup (graphThetaTraceValueSet_nonempty G) hGapprox with ⟨rG, hrGmem, hrGlt⟩
+  rcases hrGmem with ⟨TGm, rfl⟩
+  have hmain := thetaTraceObj_mul_graphThetaTraceLower_le_strongProd (G := G) (H := H) TGm
+  have hδε : δ * graphThetaTraceLower H < ε := by
+    dsimp [δ]
+    have hden : 0 < graphThetaTraceLower H + 1 := by
+      linarith [graphThetaTraceLower_nonneg H]
+    have hfrac : graphThetaTraceLower H / (graphThetaTraceLower H + 1) < 1 := by
+      exact (div_lt_iff₀ hden).2 (by nlinarith)
+    have hcalc : (ε / (graphThetaTraceLower H + 1)) * graphThetaTraceLower H =
+        ε * (graphThetaTraceLower H / (graphThetaTraceLower H + 1)) := by
+      field_simp [hden.ne']
+    rw [hcalc]
+    have := mul_lt_mul_of_pos_left hfrac hε
+    simpa using this
+  have happrox : graphThetaTraceLower G * graphThetaTraceLower H
+      < thetaTraceObj TGm * graphThetaTraceLower H + ε := by
+    nlinarith [graphThetaTraceLower_nonneg H, hrGlt, hδε]
+  have hmain' : thetaTraceObj TGm * graphThetaTraceLower H ≤ graphThetaTraceLower (strongProd G H) + ε := by
+    exact le_trans hmain (by linarith)
+  have hmain'' : thetaTraceObj TGm * graphThetaTraceLower H + ε ≤ graphThetaTraceLower (strongProd G H) + ε := by
+    simpa [add_comm, add_left_comm, add_assoc] using add_le_add_right hmain ε
+  exact (lt_of_lt_of_le happrox hmain'').le
+
+section ThetaLiftedBridge
+
+variable {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaPSDFeasible.handleEntry
+    (T : ThetaPSDFeasible V G) (v : V) : ℝ :=
+  T.M none (some v)
+
+theorem ThetaPSDFeasible.handleEntry_ne_zero
+    (T : ThetaPSDFeasible V G) (v : V) :
+    T.handleEntry v ≠ 0 := by
+  have hone := T.one_le_bound_entry_sq v
+  intro hz
+  unfold ThetaPSDFeasible.handleEntry at hone
+  have hz' : T.M none (some v) = 0 := hz
+  rw [hz'] at hone
+  nlinarith [T.one_le_bound]
+
+theorem ThetaPSDFeasible.handleEntry_pos_sq
+    (T : ThetaPSDFeasible V G) (v : V) :
+    0 < (T.handleEntry v) ^ 2 := by
+  exact sq_pos_iff.mpr (ThetaPSDFeasible.handleEntry_ne_zero T v)
+
+noncomputable def ThetaPSDFeasible.normalizeScale
+    (T : ThetaPSDFeasible V G) : Option V → ℝ
+  | none => 1
+  | some v => (T.handleEntry v)⁻¹
+
+noncomputable def ThetaPSDFeasible.normalizedMatrix
+    (T : ThetaPSDFeasible V G) : Matrix (Option V) (Option V) ℝ :=
+  fun i j => T.normalizeScale i * T.M i j * T.normalizeScale j
+
+
+@[simp] theorem ThetaPSDFeasible.normalizedMatrix_none_none
+    (T : ThetaPSDFeasible V G) :
+    T.normalizedMatrix none none = 1 := by
+  simp [ThetaPSDFeasible.normalizedMatrix, ThetaPSDFeasible.normalizeScale, T.diag_none]
+
+@[simp] theorem ThetaPSDFeasible.normalizedMatrix_none_some
+    (T : ThetaPSDFeasible V G) (v : V) :
+    T.normalizedMatrix none (some v) = 1 := by
+  have hne := ThetaPSDFeasible.handleEntry_ne_zero T v
+  unfold ThetaPSDFeasible.normalizedMatrix ThetaPSDFeasible.normalizeScale ThetaPSDFeasible.handleEntry
+  simp
+  exact mul_inv_cancel₀ hne
+
+@[simp] theorem ThetaPSDFeasible.normalizedMatrix_some_none
+    (T : ThetaPSDFeasible V G) (v : V) :
+    T.normalizedMatrix (some v) none = 1 := by
+  have hherm : T.M.IsHermitian := T.posSemidef.isHermitian
+  calc
+    T.normalizedMatrix (some v) none = T.normalizeScale (some v) * T.M (some v) none * T.normalizeScale none := by
+      rfl
+    _ = T.normalizeScale (some v) * T.M none (some v) * T.normalizeScale none := by
+      rw [show T.M (some v) none = T.M none (some v) by
+        exact (hherm.apply (some v) none).symm]
+    _ = 1 := by
+      have hne := ThetaPSDFeasible.handleEntry_ne_zero T v
+      unfold ThetaPSDFeasible.normalizeScale ThetaPSDFeasible.handleEntry
+      simp
+      exact inv_mul_cancel₀ hne
+
+theorem ThetaPSDFeasible.normalizedMatrix_zero_of_nonadj
+    (T : ThetaPSDFeasible V G) {v w : V}
+    (hvw : v ≠ w) (hnotAdj : ¬ G.Adj v w) :
+    T.normalizedMatrix (some v) (some w) = 0 := by
+  simp [ThetaPSDFeasible.normalizedMatrix, ThetaPSDFeasible.zero_of_nonadj _ hvw hnotAdj]
+
+end ThetaLiftedBridge
+
+def graphThetaLiftedDualValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : ThetaLiftedDualFeasible V G, r = T.bound }
+
+noncomputable def graphThetaLiftedDualUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (graphThetaLiftedDualValueSet G)
+
+def graphThetaLiftedDualLogValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : ThetaLiftedDualFeasible V G, r = Real.log T.bound }
+
+noncomputable def graphThetaLiftedDualLogUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (graphThetaLiftedDualLogValueSet G)
+
+section ThetaLiftedDualBridge
+
+variable {V κ : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+variable [Fintype κ] [DecidableEq κ] [Nonempty κ]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaMatrixFeasible.handleCoeff
+    (T : ThetaMatrixFeasible (κ := κ) G) (v : V) : ℝ :=
+  inner ℝ (T.embed (some v)) (T.embed none)
+
+theorem ThetaMatrixFeasible.handleCoeff_ne_zero
+    (T : ThetaMatrixFeasible (κ := κ) G) (v : V) :
+    T.handleCoeff v ≠ 0 := by
+  have hone := T.one_le_bound_inner_sq v
+  intro hz
+  unfold ThetaMatrixFeasible.handleCoeff at hone
+  have hz' : inner ℝ (T.embed (some v)) (T.embed none) = 0 := hz
+  rw [hz'] at hone
+  nlinarith [T.one_le_bound]
+
+noncomputable def ThetaMatrixFeasible.liftedEmbed
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    Option V → EuclideanSpace ℝ κ
+  | none => T.embed none
+  | some v => (T.handleCoeff v)⁻¹ • T.embed (some v)
+
+noncomputable def ThetaMatrixFeasible.toThetaLiftedDualFeasible
+    (T : ThetaMatrixFeasible (κ := κ) G) :
+    ThetaLiftedDualFeasible V G where
+  Z := fun i j => inner ℝ (T.liftedEmbed i) (T.liftedEmbed j)
+  posSemidef := by
+    let A : Matrix κ (Option V) ℝ := fun k i => T.liftedEmbed i k
+    have hgram : Matrix.conjTranspose A * A = (fun i j => inner ℝ (T.liftedEmbed i) (T.liftedEmbed j)) := by
+      ext i j
+      simp [A, EuclideanSpace.inner_eq_star_dotProduct, Matrix.conjTranspose_apply, Matrix.mul_apply,
+        dotProduct, mul_comm]
+    rw [← hgram]
+    exact Matrix.posSemidef_conjTranspose_mul_self A
+  diag_none := by
+    simp [ThetaMatrixFeasible.liftedEmbed, T.unit_none]
+  none_some_eq_one := by
+    intro v
+    have hne := ThetaMatrixFeasible.handleCoeff_ne_zero T v
+    have hne' : inner ℝ (T.embed none) (T.embed (some v)) ≠ 0 := by
+      simpa [ThetaMatrixFeasible.handleCoeff, real_inner_comm] using hne
+    unfold ThetaMatrixFeasible.liftedEmbed ThetaMatrixFeasible.handleCoeff
+    simp
+    rw [inner_smul_right]
+    simp [real_inner_comm]
+    exact inv_mul_cancel₀ hne'
+  zero_of_nonadj := by
+    intro v w hvw hnotAdj
+    have hne1 := ThetaMatrixFeasible.handleCoeff_ne_zero T v
+    have hne2 := ThetaMatrixFeasible.handleCoeff_ne_zero T w
+    unfold ThetaMatrixFeasible.liftedEmbed
+    rw [inner_smul_left, inner_smul_right]
+    simp [T.ortho_of_nonadj hvw hnotAdj, hne1, hne2]
+  bound := T.bound
+  diag_some_le_bound := by
+    intro v
+    have hne := ThetaMatrixFeasible.handleCoeff_ne_zero T v
+    have hone := T.one_le_bound_inner_sq v
+    have hpos : 0 < (T.handleCoeff v) ^ 2 := sq_pos_iff.mpr hne
+    unfold ThetaMatrixFeasible.liftedEmbed ThetaMatrixFeasible.handleCoeff
+    rw [real_inner_self_eq_norm_sq, norm_smul, T.unit_some]
+    simp [hne] at hone ⊢
+    exact (inv_le_iff_one_le_mul₀ hpos).2 hone
+
+theorem graphThetaBoundSet_subset_graphThetaLiftedDualValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) :
+    graphThetaBoundSet G ⊆ graphThetaLiftedDualValueSet G := by
+  intro r hr
+  rcases hr with ⟨κ, _, _, _, W, rfl⟩
+  exact ⟨(ThetaMatrixFeasible.ofThetaWitness W).toThetaLiftedDualFeasible, rfl⟩
+
+end ThetaLiftedDualBridge
+
+section ThetaLiftedDualFacts
+
+variable {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+variable {G : SimpleGraph V}
+
+noncomputable def ThetaLiftedDualFeasible.sqrtEmbed
+    (T : ThetaLiftedDualFeasible V G) :
+    Option V → EuclideanSpace ℝ (Option V) :=
+  fun i => WithLp.toLp 2 (fun j => CFC.sqrt T.Z j i)
+
+theorem ThetaLiftedDualFeasible.sqrtEmbed_gram
+    (T : ThetaLiftedDualFeasible V G) :
+    (fun i j => inner ℝ (T.sqrtEmbed i) (T.sqrtEmbed j)) = T.Z := by
+  funext i
+  funext j
+  have hnonneg : (0 : Matrix (Option V) (Option V) ℝ) ≤ CFC.sqrt T.Z := CFC.sqrt_nonneg T.Z
+  have hpsdS : (CFC.sqrt T.Z).PosSemidef := by
+    exact Matrix.nonneg_iff_posSemidef.mp hnonneg
+  have hherm : (CFC.sqrt T.Z).IsHermitian := hpsdS.isHermitian
+  have hZherm : T.Z.IsHermitian := T.posSemidef.isHermitian
+  have hmul : CFC.sqrt T.Z * CFC.sqrt T.Z = T.Z := by
+    simpa using (CFC.sqrt_mul_sqrt_self (a := T.Z) (ha := T.posSemidef.nonneg))
+  have hentry :
+      (Matrix.conjTranspose (CFC.sqrt T.Z) * CFC.sqrt T.Z) j i = T.Z i j := by
+    calc
+      (Matrix.conjTranspose (CFC.sqrt T.Z) * CFC.sqrt T.Z) j i
+          = T.Z j i := by rw [hherm.eq, hmul]
+      _ = T.Z i j := by simpa using hZherm.apply i j
+  simpa [ThetaLiftedDualFeasible.sqrtEmbed, EuclideanSpace.inner_toLp_toLp, Matrix.mul_apply,
+    Matrix.conjTranspose_apply, dotProduct] using hentry
+
+theorem ThetaLiftedDualFeasible.one_le_diag_some
+    (T : ThetaLiftedDualFeasible V G) (v : V) :
+    1 ≤ T.Z (some v) (some v) := by
+  have hsq : 0 ≤ ‖T.sqrtEmbed none - T.sqrtEmbed (some v)‖ ^ 2 := sq_nonneg _
+  have hnone : ‖T.sqrtEmbed none‖ ^ 2 = 1 := by
+    have h := congrArg (fun M => M none none) T.sqrtEmbed_gram
+    simpa [real_inner_self_eq_norm_sq, T.diag_none] using h
+  have hcross : inner ℝ (T.sqrtEmbed none) (T.sqrtEmbed (some v)) = 1 := by
+    have h := congrArg (fun M => M none (some v)) T.sqrtEmbed_gram
+    simpa [T.none_some_eq_one] using h
+  have hdiag : ‖T.sqrtEmbed (some v)‖ ^ 2 = T.Z (some v) (some v) := by
+    have h := congrArg (fun M => M (some v) (some v)) T.sqrtEmbed_gram
+    simpa [real_inner_self_eq_norm_sq] using h
+  rw [norm_sub_sq_real, hnone, hcross, hdiag] at hsq
+  nlinarith
+
+theorem ThetaLiftedDualFeasible.one_le_bound
+    (T : ThetaLiftedDualFeasible V G) :
+    1 ≤ T.bound := by
+  let v : V := Classical.choice ‹Nonempty V›
+  exact le_trans (T.one_le_diag_some v) (T.diag_some_le_bound v)
+
+theorem graphThetaLiftedDualValueSet_nonempty
+    (G : SimpleGraph V) :
+    (graphThetaLiftedDualValueSet G).Nonempty := by
+  classical
+  have hW : ThetaWitness (β := V) G := thetaWitnessOfColoring ((Gᶜ).selfColoring)
+  refine ⟨hW.bound, ?_⟩
+  have hr : hW.bound ∈ graphThetaBoundSet G := by
+    exact ⟨V, inferInstance, inferInstance, inferInstance, hW, rfl⟩
+  exact (graphThetaBoundSet_subset_graphThetaLiftedDualValueSet G) hr
+
+theorem graphThetaLiftedDualValueSet_bddBelow
+    (G : SimpleGraph V) :
+    BddBelow (graphThetaLiftedDualValueSet G) := by
+  refine ⟨1, ?_⟩
+  intro t ht
+  rcases ht with ⟨T, rfl⟩
+  exact T.one_le_bound
+
+theorem graphThetaLiftedDualUpper_le_graphThetaUpper
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualUpper G ≤ graphThetaUpper G := by
+  classical
+  have hbound_nonempty : (graphThetaBoundSet G).Nonempty := by
+    have hW : ThetaWitness (β := V) G := thetaWitnessOfColoring ((Gᶜ).selfColoring)
+    exact ⟨hW.bound, ⟨V, inferInstance, inferInstance, inferInstance, hW, rfl⟩⟩
+  dsimp [graphThetaLiftedDualUpper, graphThetaUpper]
+  exact csInf_le_csInf
+    (graphThetaLiftedDualValueSet_bddBelow G)
+    hbound_nonempty
+    (graphThetaBoundSet_subset_graphThetaLiftedDualValueSet G)
+
+theorem one_le_graphThetaLiftedDualUpper
+    (G : SimpleGraph V) :
+    1 ≤ graphThetaLiftedDualUpper G := by
+  dsimp [graphThetaLiftedDualUpper]
+  exact le_csInf (graphThetaLiftedDualValueSet_nonempty G) (by
+    intro t ht
+    rcases ht with ⟨T, rfl⟩
+    exact T.one_le_bound)
+
+end ThetaLiftedDualFacts
+
+structure ThetaSchurDualFeasible
+    (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  C : Matrix V V ℝ
+  posSemidef : C.PosSemidef
+  subJ_posSemidef :
+    (C - (show Matrix V V ℝ from fun _ _ => (1 : ℝ))).PosSemidef
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → C v w = 0
+  bound : ℝ
+  diag_le_bound : ∀ v, C v v ≤ bound
+
+/-- Standard Schur-form dual theta object: PSD, dominates the all-ones matrix, vanishes on
+nonedges, and is optimized by a diagonal upper bound. -/
+structure LovaszThetaDualFeasible
+    (V : Type) [Fintype V] [DecidableEq V] (G : SimpleGraph V) where
+  C : Matrix V V ℝ
+  posSemidef : C.PosSemidef
+  subJ_posSemidef :
+    (C - (show Matrix V V ℝ from fun _ _ => (1 : ℝ))).PosSemidef
+  zero_of_nonadj : ∀ ⦃v w : V⦄, v ≠ w → ¬ G.Adj v w → C v w = 0
+  theta : ℝ
+  diag_le_theta : ∀ v, C v v ≤ theta
+
+noncomputable def ThetaSchurDualFeasible.toLovaszThetaDualFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : ThetaSchurDualFeasible V G) :
+    LovaszThetaDualFeasible V G where
+  C := T.C
+  posSemidef := T.posSemidef
+  subJ_posSemidef := T.subJ_posSemidef
+  zero_of_nonadj := T.zero_of_nonadj
+  theta := T.bound
+  diag_le_theta := T.diag_le_bound
+
+noncomputable def LovaszThetaDualFeasible.toThetaSchurDualFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : LovaszThetaDualFeasible V G) :
+    ThetaSchurDualFeasible V G where
+  C := T.C
+  posSemidef := T.posSemidef
+  subJ_posSemidef := T.subJ_posSemidef
+  zero_of_nonadj := T.zero_of_nonadj
+  bound := T.theta
+  diag_le_bound := T.diag_le_theta
+
+theorem ThetaSchurDualFeasible.toLovaszThetaDualFeasible_toThetaSchurDualFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : ThetaSchurDualFeasible V G) :
+    T.toLovaszThetaDualFeasible.toThetaSchurDualFeasible = T := by
+  cases T
+  rfl
+
+theorem LovaszThetaDualFeasible.toThetaSchurDualFeasible_toLovaszThetaDualFeasible
+    {V : Type} [Fintype V] [DecidableEq V] {G : SimpleGraph V}
+    (T : LovaszThetaDualFeasible V G) :
+    T.toThetaSchurDualFeasible.toLovaszThetaDualFeasible = T := by
+  cases T
+  rfl
+
+def graphThetaSchurDualValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : ThetaSchurDualFeasible V G, r = T.bound }
+
+noncomputable def graphThetaSchurDualUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (graphThetaSchurDualValueSet G)
+
+def graphThetaSchurDualLogValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : ThetaSchurDualFeasible V G, r = Real.log T.bound }
+
+noncomputable def graphThetaSchurDualLogUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (graphThetaSchurDualLogValueSet G)
+
+def lovaszThetaDualValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : LovaszThetaDualFeasible V G, r = T.theta }
+
+noncomputable def lovaszThetaDualUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (lovaszThetaDualValueSet G)
+
+def lovaszThetaDualLogValueSet
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : Set ℝ :=
+  { r | ∃ T : LovaszThetaDualFeasible V G, r = Real.log T.theta }
+
+noncomputable def lovaszThetaDualLogUpper
+    {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    (G : SimpleGraph V) : ℝ :=
+  sInf (lovaszThetaDualLogValueSet G)
+
+section ThetaSchurBridge
+
+variable {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+variable {G : SimpleGraph V}
+
+def optionEquivSumUnit (α : Type*) : Option α ≃ α ⊕ Unit where
+  toFun
+    | none => Sum.inr ()
+    | some a => Sum.inl a
+  invFun
+    | Sum.inl a => some a
+    | Sum.inr _ => none
+  left_inv o := by cases o <;> rfl
+  right_inv s := by cases s <;> rfl
+
+@[simp] theorem optionEquivSumUnit_none {α : Type*} :
+    optionEquivSumUnit α none = Sum.inr () := rfl
+
+@[simp] theorem optionEquivSumUnit_some {α : Type*} (a : α) :
+    optionEquivSumUnit α (some a) = Sum.inl a := rfl
+
+theorem ThetaLiftedDualFeasible.some_none_eq_one
+    (T : ThetaLiftedDualFeasible V G) (v : V) :
+    T.Z (some v) none = 1 := by
+  have hherm : T.Z.IsHermitian := T.posSemidef.isHermitian
+  rw [show T.Z (some v) none = T.Z none (some v) by
+    exact (hherm.apply (some v) none).symm]
+  simpa using T.none_some_eq_one v
+
+noncomputable def ThetaLiftedDualFeasible.diffEmbed
+    (T : ThetaLiftedDualFeasible V G) :
+    V → EuclideanSpace ℝ (Option V) :=
+  fun v => T.sqrtEmbed (some v) - T.sqrtEmbed none
+
+theorem ThetaLiftedDualFeasible.diffEmbed_gram_subJ
+    (T : ThetaLiftedDualFeasible V G) :
+    (show Matrix V V ℝ from fun v w => inner ℝ (T.diffEmbed v) (T.diffEmbed w)) =
+      ((show Matrix V V ℝ from fun v w => T.Z (some v) (some w)) -
+        (show Matrix V V ℝ from fun _ _ => (1 : ℝ))) := by
+  ext v w
+  have hss : inner ℝ (T.sqrtEmbed (some v)) (T.sqrtEmbed (some w)) = T.Z (some v) (some w) := by
+    have h := congrArg (fun M => M (some v) (some w)) T.sqrtEmbed_gram
+    simpa using h
+  have hsn : inner ℝ (T.sqrtEmbed (some v)) (T.sqrtEmbed none) = 1 := by
+    have h := congrArg (fun M => M (some v) none) T.sqrtEmbed_gram
+    simpa [T.some_none_eq_one v] using h
+  have hns : inner ℝ (T.sqrtEmbed none) (T.sqrtEmbed (some w)) = 1 := by
+    have h := congrArg (fun M => M none (some w)) T.sqrtEmbed_gram
+    simpa [T.none_some_eq_one w] using h
+  have hnn : inner ℝ (T.sqrtEmbed none) (T.sqrtEmbed none) = 1 := by
+    have h := congrArg (fun M => M none none) T.sqrtEmbed_gram
+    simpa [T.diag_none] using h
+  have hnone : ‖T.sqrtEmbed none‖ ^ 2 = 1 := by
+    simpa [real_inner_self_eq_norm_sq] using hnn
+  simp [ThetaLiftedDualFeasible.diffEmbed, inner_sub_left, inner_sub_right, hss, hsn, hns, hnone]
+
+noncomputable def ThetaLiftedDualFeasible.toThetaSchurDualFeasible
+    (T : ThetaLiftedDualFeasible V G) :
+    ThetaSchurDualFeasible V G where
+  C := fun v w => T.Z (some v) (some w)
+  posSemidef := T.posSemidef.submatrix some
+  subJ_posSemidef := by
+    let A : Matrix (Option V) V ℝ := fun k v => T.diffEmbed v k
+    have hgram : Matrix.conjTranspose A * A =
+        (show Matrix V V ℝ from fun v w => inner ℝ (T.diffEmbed v) (T.diffEmbed w)) := by
+      ext v w
+      simp [A, EuclideanSpace.inner_eq_star_dotProduct, Matrix.mul_apply, dotProduct, mul_comm]
+    have hsubJ := T.diffEmbed_gram_subJ
+    have hpsd : (Matrix.conjTranspose A * A).PosSemidef := Matrix.posSemidef_conjTranspose_mul_self A
+    rw [hgram, hsubJ] at hpsd
+    simpa using hpsd
+  zero_of_nonadj := by
+    intro v w hvw hnotAdj
+    exact T.zero_of_nonadj hvw hnotAdj
+  bound := T.bound
+  diag_le_bound := T.diag_some_le_bound
+
+theorem ThetaSchurDualFeasible.one_le_bound
+    (T : ThetaSchurDualFeasible V G) :
+    1 ≤ T.bound := by
+  let v : V := Classical.choice ‹Nonempty V›
+  have hdiag : 0 ≤ (T.C - (show Matrix V V ℝ from fun _ _ => (1 : ℝ))) v v :=
+    T.subJ_posSemidef.diag_nonneg
+  have hone : 1 ≤ T.C v v := by
+    simpa using hdiag
+  exact le_trans hone (T.diag_le_bound v)
+
+def ThetaSchurDualFeasible.reindex
+    {V W : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+    [Fintype W] [DecidableEq W] [Nonempty W]
+    {G : SimpleGraph V} {H : SimpleGraph W}
+    (e : H ≃g G)
+    (T : ThetaSchurDualFeasible V G) :
+    ThetaSchurDualFeasible W H where
+  C := fun v w => T.C (e v) (e w)
+  posSemidef := T.posSemidef.submatrix e
+  subJ_posSemidef := by
+    simpa using T.subJ_posSemidef.submatrix e
+  zero_of_nonadj := by
+    intro v w hvw hnonadj
+    apply T.zero_of_nonadj
+    · intro hEq
+      apply hvw
+      exact e.injective hEq
+    · intro hAdj
+      apply hnonadj
+      exact (e.map_rel_iff').mp hAdj
+  bound := T.bound
+  diag_le_bound := by
+    intro v
+    simpa using T.diag_le_bound (e v)
+
+theorem graphThetaLiftedDualValueSet_subset_graphThetaSchurDualValueSet
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualValueSet G ⊆ graphThetaSchurDualValueSet G := by
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact ⟨T.toThetaSchurDualFeasible, rfl⟩
+
+theorem graphThetaLiftedDualLogValueSet_subset_graphThetaSchurDualLogValueSet
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualLogValueSet G ⊆ graphThetaSchurDualLogValueSet G := by
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact ⟨T.toThetaSchurDualFeasible, rfl⟩
+
+theorem graphThetaSchurDualValueSet_nonempty
+    (G : SimpleGraph V) :
+    (graphThetaSchurDualValueSet G).Nonempty := by
+  rcases graphThetaLiftedDualValueSet_nonempty G with ⟨r, hr⟩
+  exact ⟨r, (graphThetaLiftedDualValueSet_subset_graphThetaSchurDualValueSet G) hr⟩
+
+theorem graphThetaSchurDualLogValueSet_nonempty
+    (G : SimpleGraph V) :
+    (graphThetaSchurDualLogValueSet G).Nonempty := by
+  rcases graphThetaSchurDualValueSet_nonempty G with ⟨r, ⟨T, rfl⟩⟩
+  exact ⟨Real.log T.bound, ⟨T, rfl⟩⟩
+
+theorem graphThetaSchurDualValueSet_bddBelow
+    (G : SimpleGraph V) :
+    BddBelow (graphThetaSchurDualValueSet G) := by
+  refine ⟨1, ?_⟩
+  intro t ht
+  rcases ht with ⟨T, rfl⟩
+  exact T.one_le_bound
+
+theorem graphThetaSchurDualLogValueSet_bddBelow
+    (G : SimpleGraph V) :
+    BddBelow (graphThetaSchurDualLogValueSet G) := by
+  refine ⟨0, ?_⟩
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact Real.log_nonneg T.one_le_bound
+
+theorem graphThetaSchurDualUpper_le_graphThetaLiftedDualUpper
+    (G : SimpleGraph V) :
+    graphThetaSchurDualUpper G ≤ graphThetaLiftedDualUpper G := by
+  dsimp [graphThetaSchurDualUpper, graphThetaLiftedDualUpper]
+  exact csInf_le_csInf
+    (graphThetaSchurDualValueSet_bddBelow G)
+    (graphThetaLiftedDualValueSet_nonempty G)
+    (graphThetaLiftedDualValueSet_subset_graphThetaSchurDualValueSet G)
+
+noncomputable def ThetaSchurDualFeasible.toThetaLiftedDualFeasible
+    (T : ThetaSchurDualFeasible V G) :
+    ThetaLiftedDualFeasible V G where
+  Z :=
+    (Matrix.fromBlocks T.C
+      (fun _ _ => (1 : ℝ))
+      (fun _ _ => (1 : ℝ))
+      (1 : Matrix Unit Unit ℝ)).submatrix
+      (optionEquivSumUnit V)
+      (optionEquivSumUnit V)
+  posSemidef := by
+    let B : Matrix V Unit ℝ := fun _ _ => (1 : ℝ)
+    have hmul' : B * B.transpose = (show Matrix V V ℝ from fun _ _ => (1 : ℝ)) := by
+      ext v w
+      simp [B, Matrix.mul_apply]
+    have hsub0 : (T.C - B * B.transpose).PosSemidef := by
+      have hsub' : (T.C - (show Matrix V V ℝ from fun _ _ => (1 : ℝ))).PosSemidef := T.subJ_posSemidef
+      simpa [hmul'] using hsub'
+    have hsub : (T.C - B * (1 : Matrix Unit Unit ℝ) * Matrix.conjTranspose B).PosSemidef := by
+      simpa [Matrix.mul_assoc] using hsub0
+    have hblock :
+        (Matrix.fromBlocks T.C B (Matrix.conjTranspose B) (1 : Matrix Unit Unit ℝ)).PosSemidef := by
+      letI : Invertible (1 : Matrix Unit Unit ℝ) := invertibleOne
+      have hsub' : (T.C - B * ((1 : Matrix Unit Unit ℝ)⁻¹) * Matrix.conjTranspose B).PosSemidef := by
+        simpa [invOf_one, Matrix.mul_assoc] using hsub0
+      exact (Matrix.PosDef.fromBlocks₂₂ (A := T.C) (B := B)
+        (D := (1 : Matrix Unit Unit ℝ)) (hD := Matrix.PosDef.one)).2 hsub'
+    exact hblock.submatrix (optionEquivSumUnit V)
+  diag_none := by
+    simp [optionEquivSumUnit]
+  none_some_eq_one := by
+    intro v
+    simp [optionEquivSumUnit]
+  zero_of_nonadj := by
+    intro v w hvw hnotAdj
+    simp [optionEquivSumUnit, T.zero_of_nonadj hvw hnotAdj]
+  bound := T.bound
+  diag_some_le_bound := by
+    intro v
+    simpa [optionEquivSumUnit] using T.diag_le_bound v
+
+noncomputable def ThetaSchurDualFeasible.prod
+    {W : Type} [Fintype W] [DecidableEq W]
+    {H : SimpleGraph W}
+    (S : ThetaSchurDualFeasible V G)
+    (T : ThetaSchurDualFeasible W H) :
+    ThetaSchurDualFeasible (V × W) (strongProd G H) := by
+  let Cprod : Matrix (V × W) (V × W) ℝ := fun x y => S.C x.1 y.1 * T.C x.2 y.2
+  let JV : Matrix V V ℝ := fun _ _ => 1
+  let JW : Matrix W W ℝ := fun _ _ => 1
+  refine
+    { C := Cprod
+      posSemidef := S.posSemidef.kronecker T.posSemidef
+      subJ_posSemidef := ?_
+      zero_of_nonadj := ?_
+      bound := S.bound * T.bound
+      diag_le_bound := ?_ }
+  · have h1 :
+        ((show Matrix (V × W) (V × W) ℝ from
+          fun x y =>
+            (S.C x.1 y.1 - 1) * (T.C x.2 y.2 - 1)).PosSemidef) :=
+      by
+        simpa [Matrix.kroneckerMap] using
+          (S.subJ_posSemidef.kronecker T.subJ_posSemidef)
+    have hJVpsd : JV.PosSemidef := by
+      let B : Matrix V Unit ℝ := fun _ _ => 1
+      have hmul : B * B.transpose = JV := by
+        ext i j
+        simp [B, JV, Matrix.mul_apply]
+      rw [← hmul]
+      simpa using Matrix.posSemidef_self_mul_conjTranspose B
+    have hJWpsd : JW.PosSemidef := by
+      let B : Matrix W Unit ℝ := fun _ _ => 1
+      have hmul : B * B.transpose = JW := by
+        ext i j
+        simp [B, JW, Matrix.mul_apply]
+      rw [← hmul]
+      simpa using Matrix.posSemidef_self_mul_conjTranspose B
+    have h2 :
+        ((show Matrix (V × W) (V × W) ℝ from
+          fun x y =>
+            (S.C x.1 y.1 - 1) * 1).PosSemidef) :=
+      by
+        simpa [JV, JW, Matrix.kroneckerMap] using
+          (S.subJ_posSemidef.kronecker hJWpsd)
+    have h3 :
+        ((show Matrix (V × W) (V × W) ℝ from
+          fun x y =>
+            1 * (T.C x.2 y.2 - 1)).PosSemidef) :=
+      by
+        simpa [JV, JW, Matrix.kroneckerMap] using
+          (hJVpsd.kronecker T.subJ_posSemidef)
+    let A1 : Matrix (V × W) (V × W) ℝ :=
+      fun x y => (S.C x.1 y.1 - 1) * (T.C x.2 y.2 - 1)
+    let A2 : Matrix (V × W) (V × W) ℝ :=
+      fun x y => (S.C x.1 y.1 - 1) * 1
+    let A3 : Matrix (V × W) (V × W) ℝ :=
+      fun x y => 1 * (T.C x.2 y.2 - 1)
+    have hsum :
+        (A1 + A2 + A3).PosSemidef := by
+      simpa [A1, A2, A3, add_assoc] using (h1.add h2).add h3
+    have hdecomp :
+        (Cprod - (show Matrix (V × W) (V × W) ℝ from fun _ _ => (1 : ℝ))) =
+          (A1 + A2 + A3) := by
+      ext x y
+      simp [Cprod, A1, A2, A3]
+      ring
+    rw [hdecomp]
+    exact hsum
+  · intro x y hxy hnotAdj
+    rcases strongProd_nonadj_cases hxy hnotAdj with hbad | hbad
+    · rcases hbad with ⟨hneq, hnon⟩
+      simp [Cprod, S.zero_of_nonadj hneq hnon]
+    · rcases hbad with ⟨hneq, hnon⟩
+      simp [Cprod, T.zero_of_nonadj hneq hnon]
+  · intro x
+    have hSv : 0 ≤ S.C x.1 x.1 := S.posSemidef.diag_nonneg
+    have hTw : 0 ≤ T.C x.2 x.2 := T.posSemidef.diag_nonneg
+    calc
+      Cprod x x = S.C x.1 x.1 * T.C x.2 x.2 := by
+        simp [Cprod]
+      _ ≤ S.bound * T.bound :=
+        mul_le_mul (S.diag_le_bound x.1) (T.diag_le_bound x.2) hTw
+          (le_trans hSv (S.diag_le_bound x.1))
+
+theorem graphThetaSchurDualValueSet_subset_graphThetaLiftedDualValueSet
+    (G : SimpleGraph V) :
+    graphThetaSchurDualValueSet G ⊆ graphThetaLiftedDualValueSet G := by
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact ⟨T.toThetaLiftedDualFeasible, rfl⟩
+
+theorem graphThetaSchurDualLogValueSet_subset_graphThetaLiftedDualLogValueSet
+    (G : SimpleGraph V) :
+    graphThetaSchurDualLogValueSet G ⊆ graphThetaLiftedDualLogValueSet G := by
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  exact ⟨T.toThetaLiftedDualFeasible, rfl⟩
+
+theorem graphThetaLiftedDualUpper_le_graphThetaSchurDualUpper
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualUpper G ≤ graphThetaSchurDualUpper G := by
+  dsimp [graphThetaLiftedDualUpper, graphThetaSchurDualUpper]
+  exact csInf_le_csInf
+    (graphThetaLiftedDualValueSet_bddBelow G)
+    (graphThetaSchurDualValueSet_nonempty G)
+    (graphThetaSchurDualValueSet_subset_graphThetaLiftedDualValueSet G)
+
+theorem graphThetaLiftedDualUpper_eq_graphThetaSchurDualUpper
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualUpper G = graphThetaSchurDualUpper G := by
+  exact le_antisymm
+    (graphThetaLiftedDualUpper_le_graphThetaSchurDualUpper G)
+    (graphThetaSchurDualUpper_le_graphThetaLiftedDualUpper G)
+
+theorem graphThetaLiftedDualLogValueSet_eq_graphThetaSchurDualLogValueSet
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualLogValueSet G = graphThetaSchurDualLogValueSet G := by
+  ext r
+  constructor
+  · intro hr
+    exact graphThetaLiftedDualLogValueSet_subset_graphThetaSchurDualLogValueSet G hr
+  · intro hr
+    exact graphThetaSchurDualLogValueSet_subset_graphThetaLiftedDualLogValueSet G hr
+
+theorem graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper
+    (G : SimpleGraph V) :
+    graphThetaLiftedDualLogUpper G = graphThetaSchurDualLogUpper G := by
+  simp [graphThetaLiftedDualLogUpper, graphThetaSchurDualLogUpper,
+    graphThetaLiftedDualLogValueSet_eq_graphThetaSchurDualLogValueSet]
+
+theorem lovaszThetaDualValueSet_eq_graphThetaSchurDualValueSet
+    (G : SimpleGraph V) :
+    lovaszThetaDualValueSet G = graphThetaSchurDualValueSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toThetaSchurDualFeasible, rfl⟩
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toLovaszThetaDualFeasible, rfl⟩
+
+theorem lovaszThetaDualUpper_eq_graphThetaSchurDualUpper
+    (G : SimpleGraph V) :
+    lovaszThetaDualUpper G = graphThetaSchurDualUpper G := by
+  simp [lovaszThetaDualUpper, graphThetaSchurDualUpper,
+    lovaszThetaDualValueSet_eq_graphThetaSchurDualValueSet]
+
+theorem lovaszThetaDualLogValueSet_eq_graphThetaSchurDualLogValueSet
+    (G : SimpleGraph V) :
+    lovaszThetaDualLogValueSet G = graphThetaSchurDualLogValueSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toThetaSchurDualFeasible, rfl⟩
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toLovaszThetaDualFeasible, rfl⟩
+
+theorem lovaszThetaDualLogUpper_eq_graphThetaSchurDualLogUpper
+    (G : SimpleGraph V) :
+    lovaszThetaDualLogUpper G = graphThetaSchurDualLogUpper G := by
+  simp [lovaszThetaDualLogUpper, graphThetaSchurDualLogUpper,
+    lovaszThetaDualLogValueSet_eq_graphThetaSchurDualLogValueSet]
+
+end ThetaSchurBridge
+
+section ThetaWeakDuality
+
+variable {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+variable {G : SimpleGraph V}
+
+theorem thetaTraceObj_le_thetaSchurDualBound
+    (T : ThetaTraceFeasible V G) (S : ThetaSchurDualFeasible V G) :
+    thetaTraceObj T ≤ S.bound := by
+  let TG := T.toThetaTraceGramFeasible
+  let A : Matrix V V ℝ := TG.coordMatrix
+  let J : Matrix V V ℝ := fun _ _ => (1 : ℝ)
+  have hX : Matrix.conjTranspose A * A = T.X := by
+    have h1 := TG.coordMatrix_conjTranspose_mul
+    have h2 : TG.gram = T.X := by
+      ext i j
+      simp only [ThetaTraceGramFeasible.gram, ThetaTraceFeasible.toThetaTraceGramFeasible]
+      exact congrFun (congrFun T.sqrtEmbed_gram i) j
+    rw [h2] at h1
+    exact h1
+  have htrace_nonneg : 0 ≤ Matrix.trace ((S.C - J) * T.X) := by
+    have hpsd : (A * (S.C - J) * Matrix.conjTranspose A).PosSemidef := by
+      exact Matrix.PosSemidef.mul_mul_conjTranspose_same S.subJ_posSemidef A
+    have htr : 0 ≤ Matrix.trace (A * (S.C - J) * Matrix.conjTranspose A) :=
+      Matrix.PosSemidef.trace_nonneg hpsd
+    calc
+      0 ≤ Matrix.trace (A * (S.C - J) * Matrix.conjTranspose A) := htr
+      _ = Matrix.trace ((S.C - J) * T.X) := by
+        rw [Matrix.trace_mul_cycle, hX, Matrix.trace_mul_comm]
+  have hobj_trace : Matrix.trace (J * T.X) = thetaTraceObj T := by
+    rw [Matrix.trace_mul_comm, Matrix.trace, thetaTraceObj]
+    simp [J, Matrix.mul_apply]
+  have htrace_diag : Matrix.trace (S.C * T.X) = ∑ i, T.X i i * S.C i i := by
+    rw [Matrix.trace_mul_comm, Matrix.trace]
+    refine Finset.sum_congr rfl ?_
+    intro i _
+    simp only [Matrix.mul_apply, Matrix.diag]
+    refine Finset.sum_eq_single i ?_ ?_
+    · intro j _ hji
+      by_cases hAdj : G.Adj i j
+      · have hX0 : T.X i j = 0 := T.zero_of_adj hAdj
+        simp [hX0]
+      · have hC0 : S.C j i = 0 := by
+          have hnot : ¬ G.Adj j i := by simpa [SimpleGraph.adj_comm] using hAdj
+          exact S.zero_of_nonadj hji hnot
+        simp [hC0]
+    · intro hi'
+      simp at hi'
+  have hdiag_nonneg : ∀ i : V, 0 ≤ T.X i i := fun i => T.posSemidef.diag_nonneg
+  have htrace_le : Matrix.trace (S.C * T.X) ≤ S.bound := by
+    rw [htrace_diag]
+    have h1 : ∑ i, T.X i i * S.C i i ≤ ∑ i, T.X i i * S.bound := by
+      refine Finset.sum_le_sum ?_
+      intro i _
+      exact mul_le_mul_of_nonneg_left (S.diag_le_bound i) (hdiag_nonneg i)
+    have h2 : ∑ i, T.X i i * S.bound = Matrix.trace T.X * S.bound := by
+      rw [← Finset.sum_mul, Matrix.trace]
+      simp only [Matrix.diag_apply]
+    calc
+      ∑ i, T.X i i * S.C i i ≤ ∑ i, T.X i i * S.bound := h1
+      _ = Matrix.trace T.X * S.bound := h2
+      _ = S.bound * Matrix.trace T.X := by ring
+      _ = S.bound := by simp [T.trace_eq_one]
+  have hsub : 0 ≤ Matrix.trace (S.C * T.X) - thetaTraceObj T := by
+    calc
+      0 ≤ Matrix.trace ((S.C - J) * T.X) := htrace_nonneg
+      _ = Matrix.trace (S.C * T.X) - thetaTraceObj T := by
+        rw [Matrix.sub_mul, Matrix.trace_sub, hobj_trace]
+  linarith
+
+theorem graphThetaTraceLower_le_graphThetaSchurDualUpper
+    (G : SimpleGraph V) :
+    graphThetaTraceLower G ≤ graphThetaSchurDualUpper G := by
+  refine csSup_le (graphThetaTraceValueSet_nonempty G) ?_
+  intro r hr
+  rcases hr with ⟨T, rfl⟩
+  refine le_csInf (graphThetaSchurDualValueSet_nonempty G) ?_
+  intro s hs
+  rcases hs with ⟨S, rfl⟩
+  exact thetaTraceObj_le_thetaSchurDualBound T S
+
+theorem graphThetaTraceLower_le_graphThetaUpper
+    (G : SimpleGraph V) :
+    graphThetaTraceLower G ≤ graphThetaUpper G := by
+  calc
+    graphThetaTraceLower G ≤ graphThetaSchurDualUpper G := graphThetaTraceLower_le_graphThetaSchurDualUpper G
+    _ = graphThetaLiftedDualUpper G := (graphThetaLiftedDualUpper_eq_graphThetaSchurDualUpper G).symm
+    _ ≤ graphThetaUpper G := graphThetaLiftedDualUpper_le_graphThetaUpper G
+
+end ThetaWeakDuality
+
+section ThetaConeSetup
+
+variable {V : Type} [Fintype V] [DecidableEq V] [Nonempty V]
+
+noncomputable abbrev ThetaLiftedCarrier (V : Type) [Fintype V] [DecidableEq V] :=
+  EuclideanSpace ℝ ((Option V) × (Option V))
+
+instance thetaLiftedCarrierFiniteDimensional :
+    FiniteDimensional ℝ (ThetaLiftedCarrier V) := by
+  dsimp [ThetaLiftedCarrier]
+  infer_instance
+
+instance thetaLiftedCarrierComplete :
+    CompleteSpace (ThetaLiftedCarrier V) := by
+  exact FiniteDimensional.complete ℝ (ThetaLiftedCarrier V)
+
+noncomputable def thetaLiftedFlatten :
+    Matrix (Option V) (Option V) ℝ ≃ₗ[ℝ] ThetaLiftedCarrier V :=
+  { toFun := fun M => WithLp.toLp 2 (fun p : (Option V) × (Option V) => M p.1 p.2)
+    invFun := fun x i j => x (i, j)
+    left_inv := by intro M; ext i j; rfl
+    right_inv := by intro x; ext p; rfl
+    map_add' := by intro A B; ext p; rfl
+    map_smul' := by intro r A; ext p; rfl }
+
+noncomputable def thetaPSDProperCone (V : Type) [Fintype V] [DecidableEq V] : ProperCone ℝ (ThetaLiftedCarrier V) :=
+  ProperCone.innerDual (s := thetaLiftedFlatten ''
+    ({M : Matrix (Option V) (Option V) ℝ | M.PosSemidef} : Set (Matrix (Option V) (Option V) ℝ)))
+
+theorem thetaPSDProperCone_is_double_dual
+    (V : Type) [Fintype V] [DecidableEq V] :
+    ∃ s : Set (ThetaLiftedCarrier V), thetaPSDProperCone V = ProperCone.innerDual s := by
+  refine ⟨thetaLiftedFlatten ''
+    ({M : Matrix (Option V) (Option V) ℝ | M.PosSemidef} : Set (Matrix (Option V) (Option V) ℝ)), ?_⟩
+  rfl
+
+end ThetaConeSetup
+
+theorem graphThetaBoundSet_nonempty
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    (graphThetaBoundSet G).Nonempty := by
+  classical
+  have hW : ThetaWitness (β := α) G := thetaWitnessOfColoring ((Gᶜ).selfColoring)
+  refine ⟨hW.bound, ?_⟩
+  exact ⟨α, inferInstance, inferInstance, inferInstance, hW, rfl⟩
+
+theorem graphThetaBoundSet_bddBelow
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    BddBelow (graphThetaBoundSet G) := by
+  refine ⟨1, ?_⟩
+  intro t ht
+  rcases ht with ⟨β, _, _, _, W, rfl⟩
+  exact W.one_le_bound
+
+theorem one_le_graphThetaUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    1 ≤ graphThetaUpper G := by
+  dsimp [graphThetaUpper]
+  exact le_csInf (graphThetaBoundSet_nonempty G) (by
+    intro t ht
+    rcases ht with ⟨β, _, _, _, W, rfl⟩
+    exact W.one_le_bound)
+
 def graphThetaLogBoundSet
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) : Set ℝ :=
   { r | ∃ (β : Type) (_ : Fintype β) (_ : DecidableEq β) (_ : Nonempty β),
       ∃ W : ThetaWitness (β := β) G, r = Real.log W.bound }
+
+theorem graphThetaLogBoundSet_subset_graphThetaLiftedDualLogValueSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaLogBoundSet G ⊆ graphThetaLiftedDualLogValueSet G := by
+  intro r hr
+  rcases hr with ⟨β, _, _, _, W, rfl⟩
+  exact ⟨(ThetaMatrixFeasible.ofThetaWitness W).toThetaLiftedDualFeasible, rfl⟩
 
 noncomputable def graphThetaLogUpper
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
@@ -3187,6 +4589,27 @@ noncomputable def graphThetaPSDLogUpper
     (G : SimpleGraph α) : ℝ :=
   sInf (graphThetaPSDLogBoundSet G)
 
+def lovaszOrthoLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { r | ∃ (β : Type) (_ : Fintype β) (_ : DecidableEq β) (_ : Nonempty β),
+      ∃ L : LovaszOrthoFeasible (β := β) G, r = Real.log L.theta }
+
+noncomputable def lovaszOrthoLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (lovaszOrthoLogBoundSet G)
+
+def lovaszThetaPrimalLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Set ℝ :=
+  { r | ∃ T : LovaszThetaPrimalFeasible α G, r = Real.log T.theta }
+
+noncomputable def lovaszThetaPrimalLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  sInf (lovaszThetaPrimalLogBoundSet G)
+
 theorem graphThetaMatrixLogBoundSet_eq_graphThetaLogBoundSet
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) :
@@ -3199,6 +4622,25 @@ theorem graphThetaMatrixLogBoundSet_eq_graphThetaLogBoundSet
   · intro hr
     rcases hr with ⟨κ, _, _, _, W, rfl⟩
     exact ⟨κ, inferInstance, inferInstance, inferInstance, ThetaMatrixFeasible.ofThetaWitness W, rfl⟩
+
+theorem lovaszOrthoLogBoundSet_eq_graphThetaLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszOrthoLogBoundSet G = graphThetaLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨β, _, _, _, L, rfl⟩
+    exact ⟨β, inferInstance, inferInstance, inferInstance, L.toThetaWitness, rfl⟩
+  · intro hr
+    rcases hr with ⟨β, _, _, _, W, rfl⟩
+    exact ⟨β, inferInstance, inferInstance, inferInstance, W.toLovaszOrthoFeasible, rfl⟩
+
+theorem lovaszOrthoLogUpper_eq_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszOrthoLogUpper G = graphThetaLogUpper G := by
+  simp [lovaszOrthoLogUpper, graphThetaLogUpper, lovaszOrthoLogBoundSet_eq_graphThetaLogBoundSet]
 
 theorem graphThetaMatrixLogUpper_eq_graphThetaLogUpper
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
@@ -3246,6 +4688,26 @@ theorem graphThetaSDPLogBoundSet_eq_graphThetaPSDLogBoundSet
   · intro hr
     rcases hr with ⟨T, rfl⟩
     exact ⟨T.toThetaSDPFeasible, rfl⟩
+
+theorem lovaszThetaPrimalLogBoundSet_eq_graphThetaPSDLogBoundSet
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaPrimalLogBoundSet G = graphThetaPSDLogBoundSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toThetaPSDFeasible, rfl⟩
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨T.toLovaszThetaPrimalFeasible, rfl⟩
+
+theorem lovaszThetaPrimalLogUpper_eq_graphThetaPSDLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaPrimalLogUpper G = graphThetaPSDLogUpper G := by
+  simp [lovaszThetaPrimalLogUpper, graphThetaPSDLogUpper,
+    lovaszThetaPrimalLogBoundSet_eq_graphThetaPSDLogBoundSet]
 
 theorem graphThetaSDPLogBoundSet_nonempty
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
@@ -3399,6 +4861,70 @@ theorem graphThetaLogUpper_strongProd_le
           linarith
     _ = graphThetaLogUpper G + graphThetaLogUpper H + ε := by ring
 
+theorem graphThetaLiftedDualLogUpper_le_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaLiftedDualLogUpper G ≤ graphThetaLogUpper G := by
+  dsimp [graphThetaLiftedDualLogUpper, graphThetaLogUpper]
+  exact csInf_le_csInf
+    (by
+      refine ⟨0, ?_⟩
+      intro r hr
+      rcases hr with ⟨T, rfl⟩
+      exact Real.log_nonneg T.one_le_bound)
+    (graphThetaLogBoundSet_nonempty G)
+    (graphThetaLogBoundSet_subset_graphThetaLiftedDualLogValueSet G)
+
+theorem graphThetaSchurDualLogUpper_le_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSchurDualLogUpper G ≤ graphThetaLogUpper G := by
+  rw [← graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper]
+  exact graphThetaLiftedDualLogUpper_le_graphThetaLogUpper G
+
+theorem graphThetaSchurDualLogUpper_strongProd_le
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    (G : SimpleGraph α) (H : SimpleGraph γ) :
+    graphThetaSchurDualLogUpper (strongProd G H) ≤
+      graphThetaSchurDualLogUpper G + graphThetaSchurDualLogUpper H := by
+  refine le_of_forall_pos_lt_add ?_
+  intro ε hε
+  have hltG :
+      sInf (graphThetaSchurDualLogValueSet G) < graphThetaSchurDualLogUpper G + ε / 2 := by
+    dsimp [graphThetaSchurDualLogUpper]
+    linarith
+  have hltH :
+      sInf (graphThetaSchurDualLogValueSet H) < graphThetaSchurDualLogUpper H + ε / 2 := by
+    dsimp [graphThetaSchurDualLogUpper]
+    linarith
+  rcases exists_lt_of_csInf_lt (graphThetaSchurDualLogValueSet_nonempty G) hltG with
+    ⟨rG, hrGmem, hrGlt⟩
+  rcases exists_lt_of_csInf_lt (graphThetaSchurDualLogValueSet_nonempty H) hltH with
+    ⟨rH, hrHmem, hrHlt⟩
+  rcases hrGmem with ⟨SG, hrGdef⟩
+  rcases hrHmem with ⟨SH, hrHdef⟩
+  have hmemProd :
+      Real.log (SG.bound * SH.bound) ∈ graphThetaSchurDualLogValueSet (strongProd G H) := by
+    refine ⟨SG.prod SH, ?_⟩
+    simp [ThetaSchurDualFeasible.prod]
+  have hupper :
+      graphThetaSchurDualLogUpper (strongProd G H) ≤ Real.log (SG.bound * SH.bound) := by
+    dsimp [graphThetaSchurDualLogUpper]
+    exact csInf_le (graphThetaSchurDualLogValueSet_bddBelow (strongProd G H)) hmemProd
+  have hSGpos : 0 < SG.bound := lt_of_lt_of_le zero_lt_one SG.one_le_bound
+  have hSHpos : 0 < SH.bound := lt_of_lt_of_le zero_lt_one SH.one_le_bound
+  have hlogmul :
+      Real.log (SG.bound * SH.bound) = Real.log SG.bound + Real.log SH.bound := by
+    rw [Real.log_mul (ne_of_gt hSGpos) (ne_of_gt hSHpos)]
+  calc
+    graphThetaSchurDualLogUpper (strongProd G H)
+      ≤ Real.log (SG.bound * SH.bound) := hupper
+    _ = rG + rH := by rw [hlogmul, ← hrGdef, ← hrHdef]
+    _ < (graphThetaSchurDualLogUpper G + ε / 2) + (graphThetaSchurDualLogUpper H + ε / 2) := by
+          linarith
+    _ = graphThetaSchurDualLogUpper G + graphThetaSchurDualLogUpper H + ε := by ring
+
 theorem graphShannonCapacityReal_le_graphThetaPSDLogUpper
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) :
@@ -3464,6 +4990,39 @@ theorem graphThetaPSDLogUpper_iso_eq
     graphThetaPSDLogUpper_eq_graphThetaLogUpper,
     graphThetaLogUpper_iso_eq e]
 
+theorem graphThetaSchurDualLogValueSet_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaSchurDualLogValueSet H = graphThetaSchurDualLogValueSet G := by
+  ext r
+  constructor
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨ThetaSchurDualFeasible.reindex e.symm T, rfl⟩
+  · intro hr
+    rcases hr with ⟨T, rfl⟩
+    exact ⟨ThetaSchurDualFeasible.reindex e T, rfl⟩
+
+theorem graphThetaSchurDualLogUpper_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaSchurDualLogUpper H = graphThetaSchurDualLogUpper G := by
+  simp [graphThetaSchurDualLogUpper, graphThetaSchurDualLogValueSet_iso_eq e]
+
+theorem graphThetaLiftedDualLogUpper_iso_eq
+    {α γ : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    [Fintype γ] [DecidableEq γ] [Nonempty γ]
+    {G : SimpleGraph α} {H : SimpleGraph γ}
+    (e : H ≃g G) :
+    graphThetaLiftedDualLogUpper H = graphThetaLiftedDualLogUpper G := by
+  rw [graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper,
+    graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper,
+    graphThetaSchurDualLogUpper_iso_eq e]
+
 theorem graphThetaLogUpper_nonneg
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
     (G : SimpleGraph α) :
@@ -3480,6 +5039,141 @@ theorem graphThetaPSDLogUpper_nonneg
     0 ≤ graphThetaPSDLogUpper G := by
   rw [graphThetaPSDLogUpper_eq_graphThetaLogUpper]
   exact graphThetaLogUpper_nonneg G
+
+theorem graphThetaSchurDualLogUpper_nonneg
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    0 ≤ graphThetaSchurDualLogUpper G := by
+  dsimp [graphThetaSchurDualLogUpper]
+  exact le_csInf (graphThetaSchurDualLogValueSet_nonempty G) (by
+    intro r hr
+    rcases hr with ⟨T, rfl⟩
+    exact Real.log_nonneg T.one_le_bound)
+
+/-- The Schur-dual theta upper sequence along strong powers. -/
+noncomputable def graphThetaSchurDualLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) : ℝ :=
+  graphThetaSchurDualLogUpper (strongPow G N)
+
+theorem graphThetaSchurDualLogSeq_subadditive
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Subadditive (graphThetaSchurDualLogSeq G) := by
+  intro M N
+  dsimp [graphThetaSchurDualLogSeq]
+  rw [graphThetaSchurDualLogUpper_iso_eq (strongPow_addIsoStrongProd G M N)]
+  exact graphThetaSchurDualLogUpper_strongProd_le (strongPow G M) (strongPow G N)
+
+theorem graphThetaSchurDualLogSeq_div_bddBelow
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    BddBelow (Set.range fun N : Nat => graphThetaSchurDualLogSeq G N / (N : ℝ)) := by
+  refine ⟨0, ?_⟩
+  rintro _ ⟨N, rfl⟩
+  by_cases hN : N = 0
+  · simp [hN]
+  · have hnonneg : 0 ≤ graphThetaSchurDualLogSeq G N := by
+      dsimp [graphThetaSchurDualLogSeq]
+      exact graphThetaSchurDualLogUpper_nonneg (strongPow G N)
+    have hNnonneg : 0 ≤ (N : ℝ) := by positivity
+    have := div_nonneg hnonneg hNnonneg
+    simpa using this
+
+/-- The asymptotic Schur-dual theta upper value obtained from the subadditive power sequence. -/
+noncomputable def graphThetaSchurDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  (graphThetaSchurDualLogSeq_subadditive G).lim
+
+noncomputable def graphThetaSchurDualPowerRateNat
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) : ℝ :=
+  graphThetaSchurDualLogSeq G N / (N : ℝ)
+
+noncomputable def graphThetaSchurDualPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) : ℝ :=
+  graphThetaSchurDualLogUpper (strongPow G N.1) / (N.1 : ℝ)
+
+theorem tendsto_graphThetaSchurDualPowerRateNat_graphThetaSchurDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Tendsto (graphThetaSchurDualPowerRateNat G) atTop
+      (𝓝 (graphThetaSchurDualAsymptoticUpper G)) := by
+  have hsub := graphThetaSchurDualLogSeq_subadditive G
+  simpa [graphThetaSchurDualAsymptoticUpper, graphThetaSchurDualPowerRateNat,
+    graphThetaSchurDualLogSeq]
+    using Subadditive.tendsto_lim (h := hsub) (graphThetaSchurDualLogSeq_div_bddBelow G)
+
+theorem graphThetaSchurDualAsymptoticUpper_le_graphThetaSchurDualPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) :
+    graphThetaSchurDualAsymptoticUpper G ≤ graphThetaSchurDualPowerRate G N := by
+  have hsub := graphThetaSchurDualLogSeq_subadditive G
+  exact hsub.lim_le_div (graphThetaSchurDualLogSeq_div_bddBelow G) N.2.ne'
+
+theorem graphThetaSchurDualAsymptoticUpper_le_graphThetaSchurDualLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSchurDualAsymptoticUpper G ≤ graphThetaSchurDualLogUpper G := by
+  rw [← graphThetaSchurDualLogUpper_iso_eq (strongPow_oneIso G)]
+  simpa [graphThetaSchurDualPowerRate, graphThetaSchurDualLogSeq] using
+    graphThetaSchurDualAsymptoticUpper_le_graphThetaSchurDualPowerRate G 1
+
+theorem exists_graphThetaSchurDualPowerRate_lt_of_gt_graphThetaSchurDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) {w : ℝ}
+    (hw : graphThetaSchurDualAsymptoticUpper G < w) :
+    ∃ N : PosNat, graphThetaSchurDualPowerRate G N < w := by
+  let c := graphThetaSchurDualAsymptoticUpper G
+  let ε : ℝ := (w - c) / 2
+  have hε : 0 < ε := by
+    dsimp [ε, c]
+    linarith
+  have hnhds : {x : ℝ | |x - c| < ε} ∈ 𝓝 c := by
+    simpa [Real.dist_eq] using Metric.ball_mem_nhds c hε
+  have hEv : ∀ᶠ n : Nat in atTop, |graphThetaSchurDualPowerRateNat G n - c| < ε :=
+    tendsto_graphThetaSchurDualPowerRateNat_graphThetaSchurDualAsymptoticUpper G hnhds
+  rcases Filter.eventually_atTop.1 hEv with ⟨N0, hN0⟩
+  let Nnat : Nat := max N0 1
+  have hNnat_pos : 0 < Nnat := by
+    dsimp [Nnat]
+    exact lt_of_lt_of_le Nat.zero_lt_one (Nat.le_max_right _ _)
+  let N : PosNat := ⟨Nnat, hNnat_pos⟩
+  have hclose : |graphThetaSchurDualPowerRateNat G Nnat - c| < ε :=
+    hN0 Nnat (Nat.le_max_left _ _)
+  have hup : graphThetaSchurDualPowerRateNat G Nnat < c + ε := by
+    have hright : graphThetaSchurDualPowerRateNat G Nnat - c < ε := (abs_lt.mp hclose).2
+    linarith
+  have hw' : c + ε < w := by
+    dsimp [ε, c]
+    linarith
+  refine ⟨N, ?_⟩
+  have : graphThetaSchurDualPowerRateNat G Nnat < w := lt_trans hup hw'
+  simpa [graphThetaSchurDualPowerRateNat, graphThetaSchurDualPowerRate,
+    graphThetaSchurDualLogSeq, N, Nnat] using this
+
+theorem iInf_graphThetaSchurDualPowerRate_eq_graphThetaSchurDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    (⨅ N : PosNat, graphThetaSchurDualPowerRate G N) =
+      graphThetaSchurDualAsymptoticUpper G := by
+  refine ciInf_eq_of_forall_ge_of_forall_gt_exists_lt
+    (f := graphThetaSchurDualPowerRate G) (b := graphThetaSchurDualAsymptoticUpper G)
+    (fun N => graphThetaSchurDualAsymptoticUpper_le_graphThetaSchurDualPowerRate G N) ?_
+  intro w hw
+  exact exists_graphThetaSchurDualPowerRate_lt_of_gt_graphThetaSchurDualAsymptoticUpper G hw
+
+theorem graphThetaSchurDualPowerRate_bddBelow
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    BddBelow (Set.range (graphThetaSchurDualPowerRate G)) := by
+  refine ⟨0, ?_⟩
+  rintro _ ⟨N, rfl⟩
+  dsimp [graphThetaSchurDualPowerRate]
+  exact div_nonneg (graphThetaSchurDualLogUpper_nonneg (strongPow G N.1)) (by positivity)
+
 
 /-- The PSD theta upper sequence along strong powers. -/
 noncomputable def graphThetaPSDLogSeq
@@ -3590,6 +5284,153 @@ theorem iInf_graphThetaPSDPowerRate_eq_graphThetaPSDAsymptoticUpper
     (fun N => graphThetaPSDAsymptoticUpper_le_graphThetaPSDPowerRate G N) ?_
   intro w hw
   exact exists_graphThetaPSDPowerRate_lt_of_gt_graphThetaPSDAsymptoticUpper G hw
+
+theorem graphOneShotLogMaxIndependentCard_le_graphThetaLogUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Real.log (graphMaxIndependentCard G) ≤ graphThetaLogUpper G := by
+  dsimp [graphThetaLogUpper]
+  refine le_csInf (graphThetaLogBoundSet_nonempty G) ?_
+  intro r hr
+  rcases hr with ⟨β, _, _, _, W, rfl⟩
+  have h := graphPowerRate_le_log_thetaWitness W (1 : PosNat)
+  simpa [graphPowerRate, graphMaxIndependentCard_iso_eq (strongPow_oneIso G)] using h
+
+theorem graphPowerRate_le_graphThetaPSDPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) :
+    graphPowerRate G N ≤ graphThetaPSDPowerRate G N := by
+  dsimp [graphPowerRate, graphThetaPSDPowerRate]
+  have h :=
+    graphOneShotLogMaxIndependentCard_le_graphThetaLogUpper (G := strongPow G N.1)
+  rw [← graphThetaPSDLogUpper_eq_graphThetaLogUpper] at h
+  exact (_root_.div_le_div_of_nonneg_right h (by positivity))
+
+theorem graphPowerRateNat_le_graphThetaPSDPowerRateNat
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) :
+    graphPowerRateNat G N ≤ graphThetaPSDPowerRateNat G N := by
+  by_cases hN : N = 0
+  · simp [graphPowerRateNat, graphThetaPSDPowerRateNat, hN]
+  · let P : PosNat := ⟨N, Nat.pos_iff_ne_zero.mpr hN⟩
+    simpa [graphPowerRateNat, graphThetaPSDPowerRateNat, P, hN] using
+      graphPowerRate_le_graphThetaPSDPowerRate G P
+
+theorem graphShannonCapacityReal_le_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphShannonCapacityReal G ≤ graphThetaPSDAsymptoticUpper G := by
+  exact le_of_tendsto_of_tendsto'
+    (tendsto_graphPowerRateNat_graphShannonCapacityReal G)
+    (tendsto_graphThetaPSDPowerRateNat_graphThetaPSDAsymptoticUpper G)
+    (graphPowerRateNat_le_graphThetaPSDPowerRateNat G)
+
+/-- The standard primal-theta upper sequence along strong powers. -/
+noncomputable def lovaszThetaPrimalLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : Nat) : ℝ :=
+  lovaszThetaPrimalLogUpper (strongPow G N)
+
+theorem lovaszThetaPrimalLogSeq_eq_graphThetaPSDLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaPrimalLogSeq G = graphThetaPSDLogSeq G := by
+  funext N
+  dsimp [lovaszThetaPrimalLogSeq, graphThetaPSDLogSeq]
+  rw [lovaszThetaPrimalLogUpper_eq_graphThetaPSDLogUpper]
+
+theorem lovaszThetaPrimalLogSeq_subadditive
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Subadditive (lovaszThetaPrimalLogSeq G) := by
+  rw [lovaszThetaPrimalLogSeq_eq_graphThetaPSDLogSeq G]
+  exact graphThetaPSDLogSeq_subadditive G
+
+/-- The asymptotic standard primal-theta upper value along strong powers. -/
+noncomputable def lovaszThetaPrimalAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  (lovaszThetaPrimalLogSeq_subadditive G).lim
+
+theorem lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaPrimalAsymptoticUpper G = graphThetaPSDAsymptoticUpper G := by
+  simp [lovaszThetaPrimalAsymptoticUpper, graphThetaPSDAsymptoticUpper,
+    lovaszThetaPrimalLogSeq_eq_graphThetaPSDLogSeq]
+
+theorem graphShannonCapacityReal_le_lovaszThetaPrimalAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphShannonCapacityReal G ≤ lovaszThetaPrimalAsymptoticUpper G := by
+  rw [lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper]
+  exact graphShannonCapacityReal_le_graphThetaPSDAsymptoticUpper G
+
+theorem graphThetaSchurDualPowerRate_le_graphThetaPSDPowerRate
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) (N : PosNat) :
+    graphThetaSchurDualPowerRate G N ≤ graphThetaPSDPowerRate G N := by
+  dsimp [graphThetaSchurDualPowerRate, graphThetaPSDPowerRate]
+  have h :=
+    graphThetaSchurDualLogUpper_le_graphThetaLogUpper (G := strongPow G N.1)
+  rw [← graphThetaPSDLogUpper_eq_graphThetaLogUpper] at h
+  exact div_le_div_of_nonneg_right h (by positivity)
+
+theorem graphThetaSchurDualAsymptoticUpper_le_graphThetaPSDAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSchurDualAsymptoticUpper G ≤ graphThetaPSDAsymptoticUpper G := by
+  rw [← iInf_graphThetaPSDPowerRate_eq_graphThetaPSDAsymptoticUpper,
+    ← iInf_graphThetaSchurDualPowerRate_eq_graphThetaSchurDualAsymptoticUpper]
+  exact ciInf_mono (graphThetaSchurDualPowerRate_bddBelow G)
+    (fun N => graphThetaSchurDualPowerRate_le_graphThetaPSDPowerRate G N)
+
+theorem graphThetaSchurDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    graphThetaSchurDualAsymptoticUpper G ≤ lovaszThetaPrimalAsymptoticUpper G := by
+  rw [lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper]
+  exact graphThetaSchurDualAsymptoticUpper_le_graphThetaPSDAsymptoticUpper G
+
+noncomputable def lovaszThetaDualLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : Nat → ℝ :=
+  fun N => lovaszThetaDualLogUpper (strongPow G N)
+
+theorem lovaszThetaDualLogSeq_eq_graphThetaSchurDualLogSeq
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaDualLogSeq G = graphThetaSchurDualLogSeq G := by
+  funext N
+  simp [lovaszThetaDualLogSeq, graphThetaSchurDualLogSeq,
+    lovaszThetaDualLogUpper_eq_graphThetaSchurDualLogUpper]
+
+theorem lovaszThetaDualLogSeq_subadditive
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    Subadditive (lovaszThetaDualLogSeq G) := by
+  rw [lovaszThetaDualLogSeq_eq_graphThetaSchurDualLogSeq G]
+  exact graphThetaSchurDualLogSeq_subadditive G
+
+/-- The asymptotic standard dual-theta upper value along strong powers. -/
+noncomputable def lovaszThetaDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) : ℝ :=
+  (lovaszThetaDualLogSeq_subadditive G).lim
+
+theorem lovaszThetaDualAsymptoticUpper_eq_graphThetaSchurDualAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaDualAsymptoticUpper G = graphThetaSchurDualAsymptoticUpper G := by
+  simp [lovaszThetaDualAsymptoticUpper, graphThetaSchurDualAsymptoticUpper,
+    lovaszThetaDualLogSeq_eq_graphThetaSchurDualLogSeq]
+
+theorem lovaszThetaDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+    {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
+    (G : SimpleGraph α) :
+    lovaszThetaDualAsymptoticUpper G ≤ lovaszThetaPrimalAsymptoticUpper G := by
+  rw [lovaszThetaDualAsymptoticUpper_eq_graphThetaSchurDualAsymptoticUpper]
+  exact graphThetaSchurDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper G
 
 theorem graphShannonCapacityReal_le_log_complChromatic
     {α : Type} [Fintype α] [DecidableEq α] [Nonempty α]
