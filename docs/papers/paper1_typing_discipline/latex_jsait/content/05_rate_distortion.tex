@@ -31,7 +31,7 @@ In information-barrier domains, attribute-only observers (the $L=0$ face) satisf
 \item \textbf{Distortion}: $D > 0$ when collisions persist.
 \end{itemize}
 \end{theorem}
-\leanmeta{ \LH{LWDC1}, \LH{LWDC3}, \LH{LWDC2}}
+\leanmeta{\LHrng{LWDC}{1}{3}}
 
 \begin{proof}
 Converse item (1) is Theorem~\ref{thm:converse}. For item (2), maximal barrier means all classes are observationally colliding, so any $D=0$ scheme must carry full class identity in tag bits (Corollary~\ref{cor:max-barrier-converse}), while nominal tags realize this lower bound with one tag read. Pareto uniqueness follows because any competing $D=0$ point cannot reduce $L$ below $\log_2 k$ nor reduce $W$ below constant-time tag access under the admissibility rules of Section~\ref{sec:framework}.
@@ -47,7 +47,7 @@ When $1 < A_\pi < k$, the $D=0$ frontier can include mixed designs: a partial ta
 \item No barrier ($A_\pi=1$): $L=0$ zero-error identification is feasible.
 \end{enumerate}
 \end{remark}
-\leanmeta{ \LH{LWDC1}, \LH{LWDC2}, \LH{LWDC3}}
+\leanmeta{\LHrng{LWDC}{1}{3}}
 
 \subsection{Pareto Frontier}
 
@@ -94,12 +94,12 @@ The supplementary artifact machine-checks the full ambiguity-based converse chai
 \begin{remark}[Software-runtime instantiation (example)]
 In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}); attribute-probe schemes correspond to attribute-only observers (e.g., repeated \texttt{hasattr}-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
 \end{remark}
-\leanmeta{ \LH{ACS7}, \LH{ACS1}, \LH{FORC2}}
+\leanmeta{\LH{ACS1}, \LH{ACS7}, \LH{FORC2}}
 
 \begin{remark}[Conformance-check cost parameter]
 When conformance checks traverse $s$ members or fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
 \end{remark}
-\leanmeta{ \LH{ACS1}}
+\leanmeta{\LH{ACS1}}
 
 \subsection{Interpretation of the Zero-Error Frontier}
 
@@ -110,4 +110,4 @@ That separation is what makes the three-resource view useful. The rate coordinat
 \begin{remark}[Scope]
 The finite-block laws used here are worst-case confusability results. They sharpen the ambiguity converse with exact thresholds, while remaining distinct from full distribution-optimized K\"orner graph-entropy theory.
 \end{remark}
-\leanmeta{ \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
+\leanmeta{\LH{GPH13}, \LH{GPH16}, \LHrng{GPH}{18}{19}, \LH{GPH24}}

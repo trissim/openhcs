@@ -1,4 +1,4 @@
-# Paper: Identification Capacity and Rate-Query Tradeoffs in Classification Systems
+# Paper: Zero-Error Semantic Compression and Rate-Query Tradeoffs in Classification Systems
 
 **Status**: JSAIT-ready | **Lean**: 8092 lines, 352 theorems
 
@@ -10,27 +10,66 @@ _Abstract not available._
 
 ## The Identification Problem
 
-Consider an encoder-decoder pair communicating about entities from a large universe $\mathcal{V}$. The decoder must *identify* each entity, determining which of $k$ classes it belongs to, using only:
+Consider an encoder-decoder pair communicating about entities from a large universe $\mathcal{V}$. The paper studies a worst-case semantic compression problem in which the decoder must identify each entity, determining which of $k$ classes it belongs to, using only:
 
--   A *tag* of $L$ bits stored with the entity, and/or
+-   a *tag* of $L$ bits stored with the entity, and/or
 
--   *Queries* to a binary oracle: "does entity $v$ satisfy attribute $I$?"
+-   *queries* to a binary oracle: "does entity $v$ satisfy attribute $I$?"
 
-This is not reconstruction (the decoder need not recover $v$), but *identification* in the sense of Ahlswede and Dueck [@ahlswede1989identification]: the decoder must answer "which class?" with zero or bounded error. Our work extends this framework to consider the tradeoff between tag storage, query complexity, and identification accuracy.
+This is not reconstruction (the decoder need not recover $v$), but identification with task-relevant semantic accuracy. The resulting tradeoff is among stored naming information, interactive query effort, and semantic error under constrained observation.
 
-We prove three core theorem families, and then extend them with finite-block, open-world, and mechanization results:
+The observational bottleneck is the attribute-profile map $\pi: \mathcal{V} \to \{0,1\}^n$. Once distinct classes collide under $\pi$, attribute-only observation cannot distinguish them with zero error. The paper turns that obstruction into an exact compression law. Let $$A_\pi := \max_u |\{c : \pi(c)=u\}|$$ be the largest collision block. Then every zero-error scheme must satisfy $$L \ge \log_2 A_\pi,$$ and this lower bound is tight. The same law extends exactly to finite blocks: the minimum block tag budget is $L_t^\star = t\log_2 A_\pi$. These are the paper's main compression-facing statements.
 
-1.  **Information barrier (identifiability limit).** When the attribute profile $\pi: \mathcal{V} \to \{0,1\}^n$ is not injective on classes, zero-error identification via queries alone is impossible: any decoder produces identical output on colliding classes, so cannot be correct for both.
+We then develop a second theorem arc for the query resource. Without tags ($L=0$), zero-error identification depends on the structure of distinguishing query families. Minimal sufficient query sets form the bases of a matroid, so the distinguishing dimension $d$ is well-defined as an invariant of the observation structure rather than of a particular query strategy. Every tag-free zero-error scheme therefore has worst-case query cost at least $d$.
 
-2.  **Optimal tagging (achievability).** A tag of $L = \lceil \log_2 k \rceil$ bits achieves zero-error identification with $W = O(1)$ query cost. For maximal-barrier domains ($A_\pi = k$), this is the unique Pareto-optimal point in the $(L, W, D)$ tradeoff space at $D=0$; in general domains, the converse depends on $A_\pi := \max_u |\{c : \pi(c)=u\}|$.
+These laws are domain-independent within the stated model: the same lower bounds appear across databases, biological taxonomy, knowledge graphs, model registries, and software runtimes. Once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In maximal-barrier domains this yields a unique $D=0$ Pareto solution, so the issue is resource feasibility rather than domain-specific style conventions.
 
-3.  **Matroid structure (query complexity).** Minimal sufficient query sets form the bases of a matroid. The *distinguishing dimension* (the common cardinality of all minimal sets) is well-defined and lower-bounds the query cost $W$ for any tag-free scheme.
+The present model can be read as a zero-error semantics-aware compression problem, with direct structural connections to rate-distortion-style tradeoffs and natural privacy/security extensions.
 
-These results are domain-independent within the stated observation model: the same lower bounds appear across databases, biological taxonomy, knowledge graphs, and software runtimes. Once classes collide under observable attributes, constant-cost zero-error identification requires auxiliary naming information. In maximal-barrier domains this yields a unique $D=0$ Pareto solution, so the issue is resource feasibility, not domain-specific style conventions.
+## Main Results
 
-## The Observation Model
+We organize the paper around one primary theorem arc and one secondary consequences arc.
 
-We formalize the observational constraint as a family of binary predicates. The terminology is deliberately abstract; concrete instantiations follow in Section [\[sec:applications\]](#sec:applications){reference-type="ref" reference="sec:applications"}.
+1.  **Zero-error ambiguity converse and exact scaling.** Any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), and the finite-block confusability law gives exact scaling $L_t^\star = t\log_2 A_\pi$ (Corollary [\[cor:graph-logbit-scaling\]](#cor:graph-logbit-scaling){reference-type="ref" reference="cor:graph-logbit-scaling"}). In maximal-barrier domains ($A_\pi=k$), the nominal point $(\lceil\log_2 k\rceil,O(1),0)$ is the unique Pareto-optimal zero-error solution (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}).
+
+2.  **Query lower bound and matroid structure.** Minimal distinguishing query sets form the bases of a matroid (Theorem [\[thm:matroid-bases\]](#thm:matroid-bases){reference-type="ref" reference="thm:matroid-bases"}). Their common cardinality $d$ is the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}), and any attribute-only zero-error scheme has worst-case query cost at least $d$ (Theorem [\[thm:interface-lower-bound\]](#thm:interface-lower-bound){reference-type="ref" reference="thm:interface-lower-bound"}). The matroid theorem is what makes $d$ strategy-independent rather than a proof artifact.
+
+3.  **Foundational observational impossibility.** The information barrier theorem (Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"}) shows that attribute-only observers cannot compute properties that vary within observational equivalence classes. This is the base invariance statement from which the converse, the Pareto characterization, and the query lower bounds follow.
+
+4.  **Open-world robustness and decidability boundary.** Barrier-freedom is not extension-stable in open worlds (Theorem [\[thm:open-world-extension-instability\]](#thm:open-world-extension-instability){reference-type="ref" reference="thm:open-world-extension-instability"}), and for arbitrary generators it is not computably certifiable in advance (Theorem [\[thm:rice-barrier\]](#thm:rice-barrier){reference-type="ref" reference="thm:rice-barrier"}). A persistent zero-error guarantee therefore cannot rely on present-day collision-freedom alone.
+
+5.  **Implementation-level consequences.** When identity is carried explicitly, error localization and constraint centralization collapse to $O(1)$ sites; when systems rely on distributed attribute probes, localization and information scattering scale with the number of probe sites (Section [\[sec:applications\]](#sec:applications){reference-type="ref" reference="sec:applications"}).
+
+6.  **Machine-checked proofs.** The claims are accompanied by a supplementary Lean 4 artifact (8092 lines, 352 theorem/lemma statements, 0 `sorry`). The mechanization supports the mathematics rather than acting as a separate theorem-family contribution.
+
+Without the equicardinality result behind the matroid structure, the lower bound would depend on which distinguishing set or query strategy one chose. The matroid theorem is what makes $d$ strategy-independent.
+
+## Related Work and Positioning
+
+We study a worst-case zero-error semantic compression problem under a fixed observable family, derive an exact ambiguity converse and finite-block law, and characterize the complementary query resource via a matroid invariant.
+
+**Identification via channels.** Ahlswede and Dueck [@ahlswede1989identification; @ahlswede1989identification2] study identification over channels, where the decoder answers a hypothesis-testing question rather than reconstructing a message. Our setting identifies semantic classes under constrained observations, allows adaptive queries, and trades explicit tag bits against query cost.
+
+**Rate-distortion theory.** The $(L, W, D)$ framework is rate-distortion-adjacent in the following sense: $L$ stores explicit naming information, $W$ measures interactive disambiguation effort, and $D$ measures semantic failure through class misidentification [@shannon1959coding; @berger1971rate]. Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"} identifies the resulting zero-error frontier in terms of collision multiplicity and distinguishing dimension.
+
+**Rate-distortion-perception tradeoffs.** Blau and Michaeli [@blau2019rethinking] extend rate-distortion theory with a third resource. Our query cost $W$ measures interactive effort in the same three-resource spirit.
+
+**Zero-error information theory.** Körner [@korner1973coding] and Witsenhausen [@witsenhausen1976zero] study coding with confusability constraints. Here the central invariant is collision multiplicity $A_\pi$, which yields an explicit ambiguity converse and exact finite-block scaling.
+
+**Query complexity and communication complexity.** The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity [@buhrman2002complexity] and interactive communication [@orlitsky1991worst]. Here the query resource is the amount of interactive evidence needed once explicit naming information is absent.
+
+**Semantic compression settings.** The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), with maximal-barrier specialization $L \ge \log_2 k$.
+
+**Secondary instantiation.** In nominal-vs-structural interface settings [@Cardelli1985; @cook1990inheritance], the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
+
+## Paper Organization
+
+Section [\[sec:model\]](#sec:model){reference-type="ref" reference="sec:model"} formalizes the observation model and the foundational information barrier. Section [\[sec:zero-error\]](#sec:zero-error){reference-type="ref" reference="sec:zero-error"} develops one-shot zero-error feasibility, nominal tagging, the ambiguity-based converse, and the exact finite-block law. Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"} proves the matroid structure of distinguishing query families. Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"} gives the $(L, W, D)$ frontier. Section [\[sec:robustness\]](#sec:robustness){reference-type="ref" reference="sec:robustness"} studies open-world robustness and the decidability boundary. Section [\[sec:applications\]](#sec:applications){reference-type="ref" reference="sec:applications"} collects practical consequences and cross-domain illustrations. Section [\[sec:extensions\]](#sec:extensions){reference-type="ref" reference="sec:extensions"} sketches extensions and open directions. Section [\[sec:conclusion\]](#sec:conclusion){reference-type="ref" reference="sec:conclusion"} concludes.
+
+
+## Primitive Objects
+
+The introduction has already motivated the semantic-compression viewpoint. This section fixes the observation model once, with only the primitives and assumptions needed for the theorem chain.
 
 ::: definition
 Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary *attributes*. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
@@ -45,11 +84,11 @@ For each $I \in \mathcal{I}$, define the attribute-membership observation $q_I: 
 :::
 
 ::: remark
-We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of *query sites* (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification/verification task, we may write $s$ for the number of attributes actually queried/traversed by the procedure (e.g., interface or schema checks in software/data systems, phenotypic checks in taxonomy), with $s \le n$. The maintenance-only parameter $m$ appears only in Section [\[sec:complexity\]](#sec:complexity){reference-type="ref" reference="sec:complexity"}.
+We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of *query sites* (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
 :::
 
 ::: definition
-The attribute profile function $\pi: \mathcal{V} \to \{0,1\}^{|\mathcal{I}|}$ maps each value to its complete attribute signature: $$\pi(v) = (q_I(v))_{I \in \mathcal{I}}$$
+The attribute profile function $\pi: \mathcal{V} \to \{0,1\}^{|\mathcal{I}|}$ maps each value to its complete attribute signature: $$\pi(v) = (q_I(v))_{I \in \mathcal{I}}.$$
 :::
 
 ::: definition
@@ -59,10 +98,32 @@ Values $v, w \in \mathcal{V}$ are *attribute-indistinguishable*, written $v \sim
 The relation $\sim$ is an equivalence relation. We write $[v]_\sim$ for the equivalence class of $v$.
 
 ::: definition
+A *classification scheme* is any procedure (deterministic or randomized), with arbitrary time and memory, whose only access to a value $v \in \mathcal{V}$ is via:
+
+1.  the observation family $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$, and optionally
+
+2.  a nominal-tag primitive $\tau: \mathcal{V} \to \mathcal{T}$ returning an opaque class identifier.
+
+All theorems in this paper quantify over all such schemes.
+:::
+
+This definition is intentionally broad: schemes may be adaptive, randomized, or computationally unbounded. The constraint is *observational*, not computational.
+
+::: definition
 An *attribute-only observer* is any procedure whose interaction with a value $v \in \mathcal{V}$ is limited to queries in $\Phi_{\mathcal{I}}$. Formally, the observer interacts with $v$ only via primitive attribute queries $q_I \in \Phi_{\mathcal{I}}$; hence any transcript (and output) factors through $\pi(v)$.
 :::
 
-## The Central Question
+::: definition
+[]{#def:admissibility-contract label="def:admissibility-contract"} All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit nominal tag charged to the tag budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
+:::
+
+::: proposition
+[]{#prop:model-capture label="prop:model-capture"} Any classification protocol whose evidence consists only of the declared observation family and any explicit nominal tag is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
+:::
+
+The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
+
+## Attribute-Computable Properties
 
 The central question is: **what semantic properties can an attribute-only observer compute?**
 
@@ -71,11 +132,11 @@ A semantic property is a function $P: \mathcal{V} \to \{0,1\}$ (or more generall
 ## The Information Barrier
 
 ::: theorem
-[]{#thm:information-barrier label="thm:information-barrier"} Let $P: \mathcal{V} \to Y$ be any function. If $P$ is attribute-computable, then $P$ is constant on $\sim$-equivalence classes: $$v \sim w \implies P(v) = P(w)$$ Equivalently: no attribute-only observer can compute any property that varies within an equivalence class.
+[]{#thm:information-barrier label="thm:information-barrier"}[]{#thm:info-barrier label="thm:info-barrier"} Let $P: \mathcal{V} \to Y$ be any function. If $P$ is attribute-computable, then $P$ is constant on $\sim$-equivalence classes: $$v \sim w \implies P(v) = P(w).$$ Equivalently: no attribute-only observer can compute any property that varies within an equivalence class.
 :::
 
 ::: proof
-*Proof.* Suppose $P$ is attribute-computable via $f$, i.e., $P(v) = f(\pi(v))$ for all $v$. Let $v \sim w$, so $\pi(v) = \pi(w)$. Then: $$P(v) = f(\pi(v)) = f(\pi(w)) = P(w)$$ ◻
+*Proof.* Suppose $P$ is attribute-computable via $f$, i.e., $P(v) = f(\pi(v))$ for all $v$. Let $v \sim w$, so $\pi(v) = \pi(w)$. Then: $$P(v) = f(\pi(v)) = f(\pi(w)) = P(w).$$ ◻
 :::
 
 ::: remark
@@ -83,7 +144,7 @@ The barrier is *informational*, not computational. Given unlimited time, memory,
 :::
 
 ::: remark
-Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"} is the base invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), the Pareto characterization (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}), and the matroid/equicardinality results (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}).
+Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"} is the base invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), the Pareto characterization (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}), and the matroid or equicardinality results (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}).
 :::
 
 ::: corollary
@@ -94,16 +155,91 @@ Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type=
 *Proof.* Direct application of Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"} to $P = C$. ◻
 :::
 
+::: remark
+The relation $\sim$ partitions $\mathcal{V}$ into observational equivalence classes, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared observable family.
+:::
+
+::: remark
+A representative specialization writes the observable state as $\alpha(v)=(B(v),S(v))$, where $S(v)=\pi(v)$ is the declared profile and $B(v)$ is any explicit provenance carrier. In that viewpoint, admissible semantic properties factor through $\alpha$, and properties that vary within an $\alpha$-fiber require adding new information rather than better inference alone.
+:::
+
+::: theorem
+[]{#thm:model-completeness label="thm:model-completeness"} Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with $$P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.$$
+:::
+
+::: proof
+*Proof.* An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript. ◻
+:::
+
+::: corollary
+[]{#cor:fixed-axis-incompleteness label="cor:fixed-axis-incompleteness"} If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
+:::
+
+::: proposition
+[]{#prop:observational-quotient label="prop:observational-quotient"} For any admissible strategy using only the declared observable family, the entire interaction transcript and hence the output depend only on the observable state. Equivalently, every in-scope semantic property factors through that state.
+:::
+
+::: corollary
+[]{#cor:ad-hoc-add-axis label="cor:ad-hoc-add-axis"} If two values agree on the declared observable state, then no admissible strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs introduces additional information that should be represented explicitly in the model.
+:::
+
+
+## Running Example
+
+We use one small example throughout the paper. Let the class set be $$\mathcal C = \{A,B,C,D,E\}$$ with three observable attributes and class profiles
+
+::: center
+    class     $A$     $B$     $C$     $D$     $E$
+  --------- ------- ------- ------- ------- -------
+   profile   $000$   $000$   $100$   $110$   $111$
+:::
+
+Then $A$ and $B$ form a nontrivial collision block, so $A_\pi = 2$. One minimal distinguishing family is $\{q_1,q_2,q_3\}$, so the example also witnesses distinguishing dimension $d=3$. We will use the same example to instantiate the ambiguity converse, the exact block law, the query lower bound, and the open-world extension failure.
+
+## One-Shot Zero-Error Feasibility
+
+We now formalize the identification problem in channel-theoretic terms. Let $C: \mathcal{V} \to \{1, \ldots, k\}$ denote the class assignment function, and let $\pi: \mathcal{V} \to \{0,1\}^n$ denote the attribute profile.
+
+::: definition
+The *observation channel* induced by observation family $\Phi$ is the mapping $C \to \pi(V)$ for a random entity $V$ drawn from distribution $P_V$ over $\mathcal{V}$. The channel output is the attribute profile; the channel input is implicitly the class $C(V)$.
+:::
+
+::: theorem
+[]{#thm:identification-capacity label="thm:identification-capacity"} Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. Zero-error identification of all $k$ classes is achievable if and only if every class has a distinct attribute profile. When $\pi$ is not class-injective, no zero-error identification scheme exists without auxiliary tag information.
+:::
+
+::: proof
+*Proof.* *Achievability*: If $\pi$ is injective on classes, then observing $\pi(v)$ determines $C(v)$ uniquely. The decoder simply inverts the class-to-profile mapping.
+
+*Converse*: Suppose two distinct classes $c_1 \neq c_2$ share a profile: there exist $v_1 \in c_1, v_2 \in c_2$ with $\pi(v_1) = \pi(v_2)$. Then any decoder $g(\pi(v))$ outputs the same class label on both $v_1$ and $v_2$, so it cannot be correct for both. Hence zero-error identification of all classes is impossible. ◻
+:::
+
+::: remark
+Under any distribution with positive mass on both colliding classes, $I(C; \pi(V)) < H(C)$. This is an average-case consequence of the deterministic barrier above.
+:::
+
+::: remark
+In the identification paradigm of [@ahlswede1989identification], the decoder asks "is the message $m$?" rather than "what is the message?" This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the *class*, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
+:::
+
 ## The Positive Result: Nominal Tagging
 
 We now show that augmenting attribute observations with a single primitive, nominal-tag access, achieves constant witness cost.
 
 ::: definition
-A *nominal tag* is a value $\tau(v) \in \mathcal{T}$ associated with each $v \in \mathcal{V}$, representing the class identity of $v$. The *nominal-tag access* operation returns $\tau(v)$ in $O(1)$ time.
+A *nominal tag* is a value $\tau(v) \in \mathcal{T}$ associated with each $v \in \mathcal{V}$, representing the class identity of $v$. The nominal-tag access operation returns $\tau(v)$ in $O(1)$ time.
 :::
 
 ::: definition
 The extended primitive query set is $\Phi_{\mathcal{I}}^+ = \Phi_{\mathcal{I}} \cup \{\tau\}$, where $\tau$ denotes nominal-tag access.
+:::
+
+::: theorem
+[]{#thm:tag-restored-sufficiency label="thm:tag-restored-sufficiency"} A class-injective nominal tag of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
+:::
+
+::: proof
+*Proof.* A nominal tag $\tau: \mathcal{V} \to \{1, \ldots, k\}$ assigns a unique identifier to each class. Reading $\tau(v)$ determines $C(v)$ in $O(1)$ queries, independent of the attribute channel. ◻
 :::
 
 ::: definition
@@ -113,340 +249,37 @@ Let $W(P)$ denote the minimum number of primitive queries from $\Phi_{\mathcal{I
 
 -   $W_{\text{eq}}$: Cost to determine if two entities have the same class.
 
-Unless specified, $W$ refers to $W_{\text{eq}}$.
+Unless specified, $W$ refers to worst-case identification cost.
 :::
 
 ::: theorem
-[]{#thm:constant-witness label="thm:constant-witness"} Under nominal-tag access, class identity checking has constant witness cost: $$W(\text{class-identity}) = O(1)$$ Specifically, the witness procedure is: return $\tau(v_1) = \tau(v_2)$.
+[]{#thm:constant-witness label="thm:constant-witness"}[]{#thm:tag-restored label="thm:tag-restored"} Under nominal-tag access, class identity checking has constant witness cost: $$W(\text{class-identity}) = O(1).$$ Specifically, the witness procedure is to compare the relevant tag values.
 :::
 
 ::: proof
-*Proof.* The procedure makes exactly 2 primitive queries (one $\tau$ access per value) and one comparison. This is $O(1)$ regardless of the number of available attributes $|\mathcal{I}|$. ◻
+*Proof.* The procedure makes a constant number of primitive queries (one tag access per value) and one comparison. This is $O(1)$ regardless of the number of available attributes $|\mathcal{I}|$. ◻
 :::
 
-::: theorem
-[]{#thm:interface-lower-bound label="thm:interface-lower-bound"} For attribute-only observers, class identity checking requires: $$W(\text{class-identity}) = \Omega(d)$$ in the worst case, where $d$ is the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}).
-:::
+## Ambiguity Converse
 
-::: proof
-*Proof.* Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. Since $d$ is the cardinality of every minimal distinguishing set, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
-
-An adversary can answer the procedure's queries consistently with both $v$ and $w$ along this path. Therefore the resulting transcript (and output) is identical on $v$ and $w$, contradicting zero-error class identification. So some execution path must use at least $d$ queries, giving worst-case cost $\Omega(d)$. ◻
-:::
-
-## Main Contributions
-
-This paper establishes the following results:
-
-1.  **Information Barrier Theorem** (Theorem [\[thm:information-barrier\]](#thm:information-barrier){reference-type="ref" reference="thm:information-barrier"}): Attribute-only observers cannot compute any property that varies within $\sim$-equivalence classes. This is an observational impossibility, not a computational limitation, and it is the source of the downstream rate-query tradeoffs.
-
-2.  **Constant-Witness Theorem** (Theorem [\[thm:constant-witness\]](#thm:constant-witness){reference-type="ref" reference="thm:constant-witness"}): Nominal-tag access achieves constant witness cost for class identity. Attribute-only observers have matching lower bound $\Omega(d)$ (Theorem [\[thm:interface-lower-bound\]](#thm:interface-lower-bound){reference-type="ref" reference="thm:interface-lower-bound"}), where $d$ is the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}).
-
-3.  **Complexity Separation** (Section [\[sec:complexity\]](#sec:complexity){reference-type="ref" reference="sec:complexity"}): We establish O(1) vs O(k) vs $\Omega(d)$ complexity bounds for error localization under different observation regimes (where $d$ is the distinguishing dimension).
-
-4.  **Matroid Structure** (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}): Minimal distinguishing query sets form the bases of a matroid. All such sets have equal cardinality, so the distinguishing dimension is an invariant of the observation model rather than an artifact of a particular proof or query order.
-
-5.  **$(L, W, D)$ Optimality** (Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"}): We characterize the zero-error converse via collision multiplicity $A_\pi$ and prove uniqueness of the nominal point in the maximal-barrier regime ($A_\pi=k$), turning an informal heuristic into an explicit resource law.
-
-6.  **Finite-Block Confusability Law** (Section [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"}): We prove exact block thresholds for zero-error feasibility in the confusability formulation: at blocklength $t$, feasibility is equivalent to an alphabet threshold $A_\pi^t$, with exact linear log-bit scaling and per-coordinate stabilization.
-
-7.  **Open-World Robustness + Decidability Boundary**: We formalize that barrier-freedom is not extension-stable in open worlds (any finite barrier-free world can be extended to force a collision), and we prove a Rice-style impossibility theorem: no computable certifier can decide barrier existence/freedom for arbitrary generators.
-
-8.  **Machine-Checked Proofs**: All results formalized in Lean 4 (8092 lines, 352 theorem/lemma statements, 0 `sorry` placeholders).
-
-Without the equicardinality result behind the matroid structure, the lower bound would depend on which distinguishing set or query strategy one chose. The matroid theorem is what makes $d$ strategy-independent.
-
-## Related Work and Positioning
-
-This paper does not develop asymptotic coding theorems or claim new zero-error capacity results. Its contribution is to make explicit the bit/query/error tradeoffs governing zero-error classification under constrained observations.
-
-**Identification via channels.** Our work is adjacent to the identification paradigm introduced by Ahlswede and Dueck [@ahlswede1989identification; @ahlswede1989identification2]. In their framework, a decoder need not reconstruct a message but only answer "is the message $m$?" for a given hypothesis. Our setting is different in three ways: (1) we consider one-shot zero-error class identification rather than asymptotic vanishing-error identification, (2) queries are adaptive rather than block codes, and (3) we allow auxiliary tagging (rate $L$) to reduce query cost. The connection is motivational and terminological rather than a direct reuse of the original coding theorem.
-
-**Rate-distortion theory.** The $(L, W, D)$ framework is analogous to rate-distortion theory [@shannon1959coding; @berger1971rate]: the "distortion" $D$ is semantic (class misidentification), and there is a second resource $W$ (query cost) alongside rate $L$. Classical rate-distortion asks for the minimum rate needed to achieve distortion $D$; here the main question is which combinations of tag bits and queries permit $D=0$. Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"} gives the resulting converse in terms of collision multiplicity and identifies the unique nominal point in the maximal-barrier regime.
-
-**Rate-distortion-perception tradeoffs.** Blau and Michaeli [@blau2019rethinking] extended rate-distortion theory by adding a perception constraint, creating a three-way tradeoff. Our query cost $W$ plays an analogous role: it measures the interactive cost of achieving low distortion rather than a distributional constraint. We cite this as a structural analogy, not as a claim that the present model inherits the full geometry of that setting.
-
-**Zero-error information theory.** The matroid structure (Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"}) places the model near zero-error information theory. Körner [@korner1973coding] and Witsenhausen [@witsenhausen1976zero] studied zero-error source coding where confusable symbols must be distinguished. Here the direct theorem is simpler: when $L = 0$, the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}) is the minimum number of binary queries needed for zero-error class separation. In addition, the paper proves exact finite-block confusability laws: block feasibility threshold $A_\pi^k$, exact linear log-bit scaling, and per-coordinate stabilization in the worst-case regime. These are formalized in Lean and strengthen the operational converse while remaining distinct from full distribution-optimized graph-entropy/capacity theorems.
-
-**Query complexity and communication complexity.** The $\Omega(d)$ lower bound for attribute-only identification relates to decision tree complexity [@buhrman2002complexity] and interactive communication [@orlitsky1991worst]. The key distinction is that our queries are constrained to a fixed observable family $\mathcal{I}$, not arbitrary predicates.
-
-**Compression in classification systems.** The same ambiguity bound appears across databases, knowledge graphs, taxonomy, and software-runtime typing systems: for zero-error identification, ambiguity induces a minimum metadata requirement $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), with maximal-barrier specialization $L \ge \log_2 k$.
-
-**Runtime/schema instantiation (secondary).** In nominal-vs-structural interface settings [@Cardelli1985; @cook1990inheritance], the model yields a concrete cost statement: under attribute collisions, purely profile-based identification has worst-case $\Omega(d)$ witness cost, while explicit tags achieve $O(1)$ identification using $O(\log A_\pi)$ bits. This is one instantiation of the general bounds.
-
-## Paper Organization
-
-Section [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"} formalizes the compression framework and defines the $(L, W, D)$ tradeoff. Section [\[sec:complexity\]](#sec:complexity){reference-type="ref" reference="sec:complexity"} establishes complexity bounds for error localization. Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"} proves the matroid structure of distinguishing query families. Section [\[sec:witness\]](#sec:witness){reference-type="ref" reference="sec:witness"} analyzes witness cost in detail. Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"} proves the ambiguity-based converse and Pareto characterization. Section [\[sec:conclusion\]](#sec:conclusion){reference-type="ref" reference="sec:conclusion"} concludes. Extended instantiations and the Lean formalization are provided in the supplementary material.
-
-
-## Semantic Compression: The Problem
-
-The fundamental problem of *semantic compression* is: given a value $v$ from a large space $\mathcal{V}$, how can we represent $v$ compactly while preserving the ability to answer semantic queries about $v$? This differs from classical source coding in that the goal is not reconstruction but *identification*: determining which equivalence class $v$ belongs to.
-
-Classical rate-distortion theory [@shannon1959coding] studies the tradeoff between representation size and reconstruction fidelity. We extend this to a discrete classification setting with three dimensions: *tag length* $L$ (bits of storage), *witness cost* $W$ (queries or bits of communication required to determine class membership), and *distortion* $D$ (misclassification probability).
-
-This work treats contemporary classification problems (databases, knowledge graphs, model registries) with explicit resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
-
-## Universe of Discourse
-
-::: definition
-A *classification scheme* is any procedure (deterministic or randomized), with arbitrary time and memory, whose only access to a value $v \in \mathcal{V}$ is via:
-
-1.  The *observation family* $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$; and optionally
-
-2.  A *nominal-tag primitive* $\tau: \mathcal{V} \to \mathcal{T}$ returning an opaque class identifier.
-
-All theorems in this paper quantify over all such schemes.
-:::
-
-This definition is intentionally broad: schemes may be adaptive, randomized, or computationally unbounded. The constraint is *observational*, not computational.
-
-::: theorem
-[]{#thm:info-barrier label="thm:info-barrier"} For all classification schemes with access only to $\Phi$ (no nominal tag), the output is constant on $\sim_\Phi$-equivalence classes. Therefore, no such scheme can compute any property that varies within a $\sim_\Phi$-class.
-:::
-
-::: proof
-*Proof.* Let $v \sim_\Phi w$, meaning $q_I(v) = q_I(w)$ for all $I \in \mathcal{I}$. Any scheme's execution trace depends only on query responses. Since all queries return identical values for $v$ and $w$, the scheme cannot distinguish them. Any output must therefore be identical. ◻
-:::
-
-::: proposition
-[]{#prop:model-capture label="prop:model-capture"} Any real-world classification protocol whose evidence consists solely of attribute-membership queries is representable as a scheme in the above model. Conversely, any additional capability corresponds to adding new observations to $\Phi$.
-:::
-
-This proposition forces any objection into a precise form: to claim the theorem does not apply, one must name the additional observation capability not in $\Phi$. "Different universe" is not a coherent objection; it must reduce to "I have access to oracle $X \notin \Phi$."
-
-## Two-Axis Instantiation (Representative Domain Example)
-
-The core results require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is one representative instantiation and is not an additional axiom for the general theorems.
-
-In that instantiation, each value is characterized by:
-
--   **Provenance axis ($B$)**: source/lineage information that can distinguish entities with identical observable profiles[^1]
-
--   **Profile axis ($S$)**: the observable attribute profile induced by $\Phi$
-
-::: definition
-A value $v \in \mathcal{V}$ has representation $(B(v), S(v))$ where: $$\begin{aligned}
-B(v) &= \text{provenance}(v) \\
-S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}}
-\end{aligned}$$ The provenance axis captures *identity-bearing origin information*; the profile axis captures *observable behavior/attributes*.
-
-In concrete deployments, $B$ may be carried by lineage metadata, registry identifiers, or equivalent provenance carriers. Any implementation-specific normalization or lookup machinery is auxiliary.
-:::
-
-::: theorem
-[]{#thm:model-completeness label="thm:model-completeness"} Let a fixed-axis domain be specified by an axis map $\alpha: \mathcal{V} \to \mathcal{A}$ and an observation family $\Phi$ such that each primitive query $q \in \Phi$ factors through $\alpha$. Then every in-scope semantic property (i.e., any property computable by an admissible $\Phi$-only strategy) factors through $\alpha$: there exists $\tilde{P}$ with $$P(v) = \tilde{P}(\alpha(v)) \quad \text{for all } v \in \mathcal{V}.$$
-:::
-
-In this two-axis instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
-
-::: proof
-*Proof.* An admissible $\Phi$-only strategy observes $v$ solely through responses to primitive queries $q_I \in \Phi$. By hypothesis each such response is a function of $\alpha(v)$. Therefore every query transcript, and hence any strategy's output, depends only on $\alpha(v)$, so the computed property factors through $\alpha$. ◻
-:::
-
-::: corollary
-[]{#cor:fixed-axis-incompleteness label="cor:fixed-axis-incompleteness"} Any fixed-axis classification system is complete only for properties measurable on the fixed axis map $\alpha$, and incomplete for any property that varies within an $\alpha$-fiber. Equivalently, if $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible $\Phi$-only strategy can compute $P$ with zero error.
-:::
-
-## Attribute Equivalence and Observational Limits
-
-Recall from Section 1 the attribute equivalence relation:
-
-::: definition
-Values $v, w \in \mathcal{V}$ are attribute-equivalent, written $v \sim w$, iff $\pi(v) = \pi(w)$, i.e., they induce exactly the same attribute responses.
-:::
-
-::: proposition
-[]{#prop:equivalence-class-structure label="prop:equivalence-class-structure"} The relation $\sim$ partitions $\mathcal{V}$ into equivalence classes. Let $\mathcal{V}/{\sim}$ denote the quotient space. An attribute-only observer effectively operates on $\mathcal{V}/{\sim}$, not $\mathcal{V}$.
-:::
-
-::: corollary
-[]{#cor:information-loss-quantification label="cor:information-loss-quantification"} The information lost by attribute-only observation is: $$H(\mathcal{V}) - H(\mathcal{V}/{\sim}) = H(\mathcal{V} | \pi)$$ where $H$ denotes entropy. This quantity is positive whenever multiple classes share the same attribute profile.
-:::
-
-## One-Shot Zero-Error Feasibility {#sec:identification-capacity}
-
-We now formalize the identification problem in channel-theoretic terms. Let $C: \mathcal{V} \to \{1, \ldots, k\}$ denote the class assignment function, and let $\pi: \mathcal{V} \to \{0,1\}^n$ denote the attribute profile.
-
-::: definition
-The *observation channel* induced by observation family $\Phi$ is the mapping $C \to \pi(V)$ for a random entity $V$ drawn from distribution $P_V$ over $\mathcal{V}$. The channel output is the attribute profile; the channel input is implicitly the class $C(V)$.
-:::
-
-::: theorem
-[]{#thm:identification-capacity label="thm:identification-capacity"} Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. The *zero-error identification capacity* of the observation channel is: $$C_{\text{id}} = \begin{cases}
-\log_2 k & \text{if } \pi \text{ is injective on classes} \\
-0 & \text{otherwise}
-\end{cases}$$ That is, zero-error identification of all $k$ classes is achievable if and only if every class has a distinct attribute profile. When $\pi$ is not class-injective, no rate of identification is achievable with zero error.
-:::
-
-::: proof
-*Proof.* *Achievability*: If $\pi$ is injective on classes, then observing $\pi(v)$ determines $C(v)$ uniquely. The decoder simply inverts the class-to-profile mapping.
-
-*Converse* (deterministic): Suppose two distinct classes $c_1 \neq c_2$ share a profile: $\exists v_1 \in c_1, v_2 \in c_2$ with $\pi(v_1) = \pi(v_2)$. Then any decoder $g(\pi(v))$ outputs the same class label on both $v_1$ and $v_2$, so it cannot be correct for both. Hence zero-error identification of all classes is impossible. ◻
-:::
-
-::: remark
-Under any distribution with positive mass on both colliding classes, $I(C; \pi(V)) < H(C)$. This is an average-case consequence of the deterministic barrier above.
-:::
-
-::: remark
-In the identification paradigm of [@ahlswede1989identification], the decoder asks "is the message $m$?" rather than "what is the message?" This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the *class*, not hypothesis testing. The one-shot zero-error identification feasibility threshold ($\pi$ must be class-injective) is binary rather than a rate.
-:::
-
-::: remark
-Theorem [\[thm:identification-capacity\]](#thm:identification-capacity){reference-type="ref" reference="thm:identification-capacity"} is a one-shot feasibility statement, not a Shannon asymptotic coding theorem. The notation is retained only as a compact summary of the zero-error/non-zero-error dichotomy under the stated observation model.
-:::
-
-The key insight is that tagging provides a *side channel* that restores identifiability when the attribute channel fails:
-
-::: theorem
-[]{#thm:tag-restored label="thm:tag-restored"} A class-injective nominal tag of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
-:::
-
-::: proof
-*Proof.* A nominal tag $\tau: \mathcal{V} \to \{1, \ldots, k\}$ assigns a unique identifier to each class. Reading $\tau(v)$ determines $C(v)$ in $O(1)$ queries, independent of the attribute channel. ◻
-:::
-
-## Witness Cost: Query Complexity for Semantic Properties
-
-::: definition
-A *witness procedure* for property $P: \mathcal{V} \to Y$ is an algorithm $A$ that:
-
-1.  Takes as input a value $v \in \mathcal{V}$ (via query access only)
-
-2.  Makes queries to the primitive set $\Phi_{\mathcal{I}}^+$
-
-3.  Outputs $P(v)$
-:::
-
-::: definition
-The *witness cost* of property $P$ is: $$W(P) = \min_{A \text{ computes } P} c(A)$$ where $c(A)$ is the worst-case number of primitive queries made by $A$.
-:::
-
-::: remark
-Witness cost is a form of query complexity [@buhrman2002complexity] specialized to semantic properties. Unlike Kolmogorov complexity, $W$ is computable and depends on the primitive set, not a universal machine.
-:::
-
-::: lemma
-[]{#lem:witness-cost-lower-bounds label="lem:witness-cost-lower-bounds"} For any property $P$:
-
-1.  If $P$ is attribute-computable: $W(P) \leq |\mathcal{I}|$
-
-2.  If $P$ varies within some $\sim$-class: $W(P) = \infty$ for attribute-only observers
-
-3.  With nominal-tag access: $W(\text{class-identity}) = O(1)$
-:::
-
-## The $(L, W, D)$ Tradeoff
-
-We now define the three-dimensional tradeoff space that characterizes observation strategies, using information-theoretic units.
-
-::: definition
-For a set of class identifiers (tags) $\mathcal{T}$ with $|\mathcal{T}| = k$, the *tag rate* $L$ is the minimum number of bits required to encode a class identifier: $$L \geq \log_2 k \quad \text{bits per value}$$ For nominal-tag observers, $L = \lceil \log_2 k \rceil$ (optimal prefix-free encoding). For attribute-only observers, $L = 0$ (no explicit tag stored). Under a distribution $P$ over classes, the expected tag length is $\mathbb{E}[L] \geq H(P)$ by Shannon's source coding theorem [@shannon1959coding].
-:::
-
-::: definition
-The *witness cost* $W$ is the minimum number of primitive queries (or bits of interactive communication) required for class identification: $$W = \min_{A \text{ decides class}} c(A)$$ where $c(A)$ is the worst-case query count. This is a form of query complexity [@buhrman2002complexity] or interactive identification cost.
-:::
-
-::: definition
-Fix class map $C : \mathcal{V}\to\{1,\ldots,k\}$. An observation strategy $g$ induces an estimate $$\hat{C}_g(v;\omega) \in \{1,\ldots,k\}$$ from the available evidence (tag bits, query transcript, and optional internal randomness $\omega$).
-:::
-
-::: definition
-For strategy $g$, define $$d_g(v;\omega) := \mathbf{1}\!\left[\hat{C}_g(v;\omega)\neq C(v)\right].$$ Under data distribution $P_V$ and strategy randomness, expected distortion is $$D(g)=\Pr_{v\sim P_V,\omega}\!\big[\hat{C}_g(v;\omega)\neq C(v)\big].$$ The zero-error regime is $D(g)=0$.
-:::
-
-::: remark
-In this paper, $D$ is strictly class-misidentification probability. Additional semantic notions (e.g., hierarchical or behavior-weighted penalties) are treated as extensions in the supplementary material.
-:::
-
-## The $(L, W, D)$ Tradeoff Space
-
-**Admissible schemes.** To make the Pareto-optimality claim precise, we specify the class of admissible observation strategies:
-
--   **Deterministic or randomized**: Schemes may use randomness; $W$ is worst-case query count.
-
--   **Computationally unbounded**: No time/space restrictions; the constraint is observational.
-
--   **No preprocessing over class universe**: The scheme cannot precompute a global lookup table indexed by all possible classes.
-
--   **Tags are injective on classes**: A nominal tag $\tau(v)$ uniquely identifies the class of $v$. Variable-length or compressed tags are permitted; $L$ counts bits.
-
--   **No amortization across queries**: $W$ is per-identification cost, not amortized over a sequence.
-
-**Justification.** The "no preprocessing" and "no amortization" constraints exclude trivializations:
-
--   *Preprocessing*: With unbounded preprocessing over the class universe $\mathcal{T}$, one could build a lookup table mapping attribute profiles to classes. This reduces identification to $O(1)$ table lookup, but the table has size $O(|\mathcal{T}|)$, hiding the complexity in space rather than eliminating it. The constraint models systems that cannot afford $O(|\mathcal{T}|)$ storage per observer.
-
--   *Amortization*: If $W$ were amortized over a sequence of identifications, one could cache earlier results. This again hides complexity in state. The per-identification model captures stateless observers (typical in database queries, taxonomy lookup, and protocol/classification services).
-
-Dropping these constraints changes the achievable region but not the qualitative separation: nominal tags still dominate for $D = 0$ because they provide $O(1)$ worst-case identification without requiring $O(|\mathcal{T}|)$ preprocessing.
-
-Under these rules, "dominance" means strict improvement on at least one of $(L, W, D)$ with no regression on others.
-
-::: definition
-A point $(L, W, D)$ is *achievable* if there exists an admissible observation strategy realizing those values. Let $\mathcal{R} \subseteq \mathbb{R}_{\geq 0} \times \mathbb{R}_{\geq 0} \times [0,1]$ denote the achievable region.
-:::
-
-::: definition
-A point $(L^*, W^*, D^*)$ is *Pareto-optimal* if there is no achievable $(L, W, D)$ with $L \leq L^*$, $W \leq W^*$, $D \leq D^*$, and at least one strict inequality.
-:::
-
-The main result of Section [\[sec:lwd\]](#sec:lwd){reference-type="ref" reference="sec:lwd"} is: (i) a converse in terms of collision multiplicity $A_\pi$, and (ii) uniqueness of the nominal $D=0$ Pareto point in the maximal-barrier regime.
-
-::: definition
-[]{#def:info-barrier-domain label="def:info-barrier-domain"} A classification domain has an *information barrier* (relative to $\Phi$) if there exist distinct classes $c_1 \neq c_2$ with identical $\Phi$-profiles. Equivalently, $\pi$ is not injective on classes.
-:::
+The next theorem is the paper's main zero-error compression statement. It converts observational collision multiplicity directly into a necessary naming budget.
 
 ::: definition
 []{#def:collision-multiplicity label="def:collision-multiplicity"} Let $\mathcal{C}=\{1,\ldots,k\}$ and let $\pi_{\mathcal{C}}:\mathcal{C}\to\{0,1\}^n$ be the class-level profile map. Define $$A_\pi := \max_{u \in \operatorname{Im}(\pi_{\mathcal{C}})} \left|\{c \in \mathcal{C} : \pi_{\mathcal{C}}(c)=u\}\right|.$$ Thus $A_\pi$ is the size of the largest class-collision block under observable profiles.
+:::
+
+::: remark
+The converse is parameterized by $A_\pi$. When the class-profile map is given explicitly as a finite table, $A_\pi$ is obtained by grouping classes by profile and taking the largest fiber size. When $\pi$ is given implicitly by a large program, circuit, or learned model, computing or approximating $A_\pi$ becomes a separate representation-dependent problem. The theorem identifies the exact zero-error tag budget once $A_\pi$ is known; it does not assume that estimating $A_\pi$ is always tractable from an implicit description.
 :::
 
 ::: definition
 []{#def:max-barrier label="def:max-barrier"} The domain is *maximal-barrier* if $A_\pi = k$, i.e., all classes collide under the observation map.
 :::
 
-## Open-World Robustness and Decidability Boundary {#sec:open-world-boundary}
-
-::: definition
-Let $\mathcal{C}$ be the class universe. A *finite realized world* is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ *barrier-free* iff $$\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.$$
-:::
-
-::: definition
-An *open-world extension* is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
-:::
-
-::: theorem
-[]{#thm:open-world-extension-instability label="thm:open-world-extension-instability"} In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions: $$\neg\Big(\forall W \subseteq W',\ \text{BarrierFree}(W)\Rightarrow \text{BarrierFree}(W')\Big).$$
-:::
-
-::: proof
-*Proof.* Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes (`ConfigType` and `StepConfigType`) are shape-equivalent (same observable profile) but nominally distinct (different lineage), so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable. ◻
-:::
-
-::: definition
-For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define $$\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).$$ Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
-:::
-
-::: theorem
-[]{#thm:rice-barrier label="thm:rice-barrier"} There is no computable predicate on program codes deciding whether the generated observer has a barrier: $$\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).$$ Equivalently, barrier-freedom certification is also non-computable: $$\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{BarrierFree}(\mathrm{eval}(c))\right).$$
-:::
-
-::: proof
-*Proof.* Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. Set $$\mathcal{C}_{\mathrm{bar}}:=\{f:\mathbb{N}\rightharpoonup\mathbb{N}\mid \mathrm{HasBarrier}(f)\}.$$ Then $P(c)$ is exactly membership of $\mathrm{eval}(c)$ in $\mathcal{C}_{\mathrm{bar}}$. The property is non-trivial: $$\mathrm{HasBarrier}(\lambda x.\,0)\quad\text{and}\quad \neg\mathrm{HasBarrier}(\lambda x.\,x+1).$$ Rice's theorem (formalized in Lean and instantiated with these two witnesses) implies that if membership in $\mathcal{C}_{\mathrm{bar}}$ were computable from code, then every partial recursive function would have to lie in $\mathcal{C}_{\mathrm{bar}}$, contradicting the successor witness. Hence $P$ is not computable. The barrier-free statement is equivalent by $$\mathrm{BarrierFree}(f)\iff \neg\mathrm{HasBarrier}(f),$$ so computability of one would imply computability of the other. ◻
-:::
-
-::: corollary
-For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on "currently collision-free" attribute structure alone.
-:::
-
-## Converse: Tag Rate Lower Bound
-
 ::: theorem
 []{#thm:converse label="thm:converse"} For any classification domain, any scheme achieving $D=0$ requires $$2^L \ge A_\pi
 \quad\text{equivalently}\quad
-L \ge \log_2 A_\pi,$$ where $A_\pi$ is the collision multiplicity from Definition [\[def:collision-multiplicity\]](#def:collision-multiplicity){reference-type="ref" reference="def:collision-multiplicity"}.
+L \ge \log_2 A_\pi,$$ where $A_\pi$ is the collision multiplicity.
 :::
 
 ::: proof
@@ -457,9 +290,11 @@ L \ge \log_2 A_\pi,$$ where $A_\pi$ is the collision multiplicity from Definitio
 []{#cor:max-barrier-converse label="cor:max-barrier-converse"} If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 :::
 
-## Confusability Graph Thresholds and Block Scaling
+In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"} already forces $L \ge 1$ bit for zero-error identification.
 
-Let $\pi_{\mathcal{C}} : \mathcal{C} \to \{0,1\}^n$ be the class-profile map from Definition [\[def:collision-multiplicity\]](#def:collision-multiplicity){reference-type="ref" reference="def:collision-multiplicity"}. The induced confusability graph connects two distinct classes when they share the same observable profile.
+## Exact Finite-Block Law
+
+The ambiguity converse extends exactly to blocks, so the main compression law is not merely one-shot. The next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
 
 ::: theorem
 []{#thm:graph-one-shot-threshold label="thm:graph-one-shot-threshold"} For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and only if $$A_\pi \le n.$$
@@ -479,152 +314,61 @@ Let $\pi_{\mathcal{C}} : \mathcal{C} \to \{0,1\}^n$ be the class-profile map fro
 \frac{L_t^\star}{t} = \log_2 A_\pi.$$ So per-entity tag rate is exactly stable across block length.
 :::
 
-::: remark
-These are worst-case finite-block confusability laws. They strengthen the zero-error converse with exact block thresholds, while remaining distinct from full distribution-optimized Körner graph-entropy theory.
-:::
+In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.
 
-## Lossy Regime: Deterministic vs Noisy Models
+## Witness Cost for Class Identity
 
-The zero-error corner ($D=0$) is governed by Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}. For $D>0$, the model matters:
-
--   **Deterministic queries (this section):** there is no universal law of the form $W=O(\log(1/\epsilon)\cdot d)$. If classes collide on all deterministic observations, repeating those same observations does not reduce error.
-
--   **Noisy queries:** repeated independent observations can reduce error exponentially, yielding logarithmic-in-$1/\epsilon$ sample complexity.
-
-Thus, in the deterministic model, distortion is controlled by collision geometry and decision rules; in noisy models, repetition-based concentration bounds become relevant.
-
-## Concrete Example
-
-Consider a classification system with $k = 1000$ classes, each characterized by a subset of $n = 50$ binary attributes. Table [1](#tab:strategies){reference-type="ref" reference="tab:strategies"} compares the strategies.
-
-::: {#tab:strategies}
-  **Strategy**                                **Tag $L$**                 **Witness $W$**
-  ----------------------------- --------------------------------------- -------------------
-  Explicit-tag identification    $\lceil \log_2 1000 \rceil = 10$ bits        $O(1)$
-  Attribute-only (exhaustive)                     $0$                    $\leq 50$ queries
-  Attribute-only (adaptive)                       $0$                    $\geq d$ queries
-
-  : Identification strategies for 1000 classes with 50 attributes.
-:::
-
-Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For many practical systems, $d$ is well below $n$ but nonzero. The gap between 10 bits of storage versus 5--50 queries per identification is the cost of forgoing explicit tags.
-
-[^1]: In the Lean witness model, this axis is represented as `Bases`.
-
-
-## The Error Localization Theorem
-
-#### Scope of this section.
-
-This section studies *maintenance/localization* complexity, measured by locations to inspect ($E(\cdot)$), not per-instance identification complexity ($W$) from Sections [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"} and [\[sec:witness\]](#sec:witness){reference-type="ref" reference="sec:witness"}. The metrics are related but distinct: $W$ quantifies online class-identification effort, while $E$ quantifies where constraint logic is distributed in implementations.
-
-::: definition
-Let $E(\mathcal{O})$ be the number of locations that must be inspected to find all potential violations of a constraint under observation family $\mathcal{O}$.
-:::
+Recall from the model setup that the witness cost $W(P)$ is the minimum number of primitive queries required to compute property $P$. For class identity, we ask: what is the minimum number of queries to determine if two values have the same class?
 
 ::: theorem
-[]{#thm:nominal-localization label="thm:nominal-localization"} $E(\text{nominal-tag}) = O(1)$.
+[]{#thm:nominal-minimum-witness-cost label="thm:nominal-minimum-witness-cost"} Nominal-tag observers achieve the minimum witness cost for class identity: $$W_{\text{eq}} = O(1).$$
+
+Specifically, the witness is a single tag comparison. Attribute-only observers require $W_{\text{eq}} = \Omega(d)$ where $d$ is the distinguishing dimension (and $d \le n$, with worst-case $d = n$).
 :::
 
 ::: proof
-*Proof.* Under nominal-tag observation, the constraint "$v$ must be of class $A$" is satisfied iff $\tau(v) \in \text{subtypes}(A)$. This is determined at a single location: the definition of $\tau(v)$'s class. One location. ◻
+*Proof.*
+
+1.  Nominal-tag access is a single primitive query.
+
+2.  Attribute-only observers must query at least $d$ attributes in the worst case (a generic strategy queries all $n$).
+
+3.  No shorter witness exists for attribute-only observers by the information barrier and the distinguishing-dimension lower bound.
+
+ ◻
 :::
 
-::: theorem
-[]{#thm:declared-localization label="thm:declared-localization"} $E(\text{attribute-only, declared}) = O(k)$ where $k$ = number of entity classes.
-:::
+The supplementary artifact provides a machine-checked proof that nominal-tag access minimizes witness cost for class identity.
 
-::: proof
-*Proof.* With declared attribute sets, the constraint "$v$ must satisfy attribute $I$" requires verifying that each class satisfies all attributes in $I$. For $k$ classes, $O(k)$ locations. ◻
-:::
-
-::: theorem
-[]{#thm:attribute-localization label="thm:attribute-localization"} $E(\text{attribute-only}) = \Omega(m)$ where $m$ = number of query sites.
-:::
-
-::: proof
-*Proof.* Under attribute-only observation, each query site independently checks "does $v$ have attribute $a$?" with no centralized declaration. For $m$ query sites, each must be inspected. Lower bound is $\Omega(m)$. ◻
-:::
-
-::: corollary
-[]{#cor:strict-dominance label="cor:strict-dominance"} Nominal-tag observation strictly dominates attribute-only: $E(\text{nominal-tag}) = O(1) < \Omega(m) = E(\text{attribute-only})$ for all $m > 1$.
-:::
-
-## The Information Scattering Theorem
-
-::: definition
-Let $I(\mathcal{O}, c)$ be the set of locations where constraint $c$ is encoded under observation family $\mathcal{O}$.
-:::
-
-::: theorem
-[]{#thm:attribute-scattering label="thm:attribute-scattering"} For attribute-only observation, $|I(\text{attribute-only}, c)| = O(m)$ where $m$ = query sites using constraint $c$.
-:::
-
-::: proof
-*Proof.* Each attribute query independently encodes the constraint. No shared reference exists. Constraint encodings scale with query sites. ◻
-:::
-
-::: theorem
-[]{#thm:nominal-centralization label="thm:nominal-centralization"} For nominal-tag observation, $|I(\text{nominal-tag}, c)| = O(1)$.
-:::
-
-::: proof
-*Proof.* The constraint "must be of class $A$" is encoded once in the definition of $A$. All tag checks reference this single definition. ◻
-:::
-
-::: corollary
-[]{#cor:maintenance-entropy label="cor:maintenance-entropy"} Attribute-only observation maximizes maintenance entropy; nominal-tag observation minimizes it.
-:::
-
-
-## Model Contract (Fixed-Axis Domains)
-
-Model contract (fixed-axis domain). A domain is specified by a fixed observation family $\Phi$ derived from a fixed axis map $\alpha: \mathcal{V} \to \mathcal{A}$ (e.g., $\alpha(v) = (B(v), S(v))$). An observer is permitted to interact with $v$ only through primitive queries in $\Phi$, and each primitive query factors through $\alpha$: for every $q \in \Phi$, there exists $\tilde{q}$ such that $q(v) = \tilde{q}(\alpha(v))$. A property is in-scope semantic iff it is computable by an admissible strategy that uses only responses to queries in $\Phi$ (under our admissibility constraints: no global preprocessing tables, no amortized caching, etc.).
-
-We adopt $\Phi$ as the complete observation universe for this paper: to claim applicability to a concrete runtime one must either (i) exhibit mappings from each runtime observable into $\Phi$, or (ii) enforce the admissibility constraints (no external registries, no reflection, no preprocessing/amortization). Under either condition the theorems apply without qualification.
-
-::: proposition
-[]{#prop:observational-quotient label="prop:observational-quotient"} For any admissible strategy using only $\Phi$, the entire interaction transcript (and hence the output) depends only on $\alpha(v)$. Equivalently, any in-scope semantic property $P$ factors through $\alpha$: there exists $\tilde{P}$ with $P(v) = \tilde{P}(\alpha(v))$ for all $v$.
-:::
-
-::: corollary
-[]{#cor:ad-hoc-add-axis label="cor:ad-hoc-add-axis"} If two values $v, w$ satisfy $\alpha(v) = \alpha(w)$, then no admissible $\Phi$-only strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs must introduce additional information not present in $\alpha$ (equivalently, refine the axis map by adding a new axis/tag).
-:::
 
 ## Query Families and Distinguishing Sets
 
-The classification problem is: given a set of queries, which subsets suffice to distinguish all entities?
+We now study the query resource under the fixed observation family $\Phi$. A distinguishing set separates every pair of distinct classes. Minimal distinguishing sets will be shown to form the bases of a matroid.
+
+The running example already illustrates the basic contrast: one explicit bit resolves the only collision block, but tag-free zero-error separation still has to pay for the full distinguishing family. This section identifies the structural invariant that controls that query cost.
 
 ::: definition
 Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
 :::
 
-In this section, "queries" are the primitive attribute predicates $q \in \Phi$ (equivalently, each $q$ factors through the axis map: $q = \tilde{q} \circ \alpha$). See the Convention above where $\Phi := \mathcal{Q}$.
+In this section, "queries" are the primitive attribute predicates $q \in \Phi$.
 
 **Convention:** $\Phi := \mathcal{Q}$. All universal quantification over "queries" ranges over $q \in \Phi$ only.
 
 ::: definition
-A subset $S \subseteq \mathcal{Q}$ is *distinguishing* if, for all values $v, w$ with $\text{class}(v) \neq \text{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
+A subset $S \subseteq \mathcal{Q}$ is *distinguishing* if, for all values $v, w$ with $\mathrm{class}(v) \neq \mathrm{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
 :::
 
 ::: definition
 A distinguishing set $S$ is *minimal* if no proper subset of $S$ is distinguishing.
 :::
 
+In the running example from Section [\[sec:zero-error\]](#sec:zero-error){reference-type="ref" reference="sec:zero-error"}, $\{q_1,q_2,q_3\}$ is distinguishing and minimal, so it already witnesses the query resource needed for tag-free separation.
+
 ## Matroid Structure of Query Families
 
-**Scope and assumptions.** The matroid theorem below is unconditional within the fixed-axis observational theory defined above. In this section, "query" always means a primitive predicate $q \in \Phi$ (equivalently, $q$ factors through $\alpha$ as in the Model Contract). It depends only on:
-
--   $E = \Phi$ is the ground set of primitive queries (attribute predicates).
-
--   "Distinguishing": for all values $v,w$ with $\text{class}(v) \neq \text{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$ (Def. above).
-
--   "Minimal" means inclusion-minimal: no proper subset suffices.
-
-No further assumptions are required within this theory beyond the fixed observation family $\Phi$. In Lean, the mechanization is explicit end-to-end. Closure-operator lemmas (extensive, monotone, idempotent) are proved in `proofs/abstract_class_system.lean` via `AxisClosure`. Exchange and equicardinality lemmas are proved in `proofs/axis_framework.lean` via L4 and L1. The composition point is formalized by `closureInducedAxisMatroid` and L1, with closure-induced nodup/subset/exchange hypotheses made explicit.
-
 ::: definition
-Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries (attribute predicates). Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
+Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries. Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
 :::
 
 ::: lemma
@@ -632,15 +376,15 @@ Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries (attribute
 :::
 
 ::: proof
-*Proof.* Define the closure operator $\text{cl}(X) = \{q : X\text{-equivalence implies }q\text{-equivalence}\}$. We verify the matroid axioms:
+*Proof.* Define the closure operator $\mathrm{cl}(X) = \{q : X\text{-equivalence implies }q\text{-equivalence}\}$. We verify the matroid axioms:
 
-1.  **Closure axioms**: $\text{cl}$ is extensive, monotone, and idempotent. These follow directly from the definition of logical implication.
+1.  **Closure axioms**: $\mathrm{cl}$ is extensive, monotone, and idempotent. These follow directly from the definition of logical implication.
 
-2.  **Exchange property**: If $q \in \text{cl}(X \cup \{q'\}) \setminus \text{cl}(X)$, then $q' \in \text{cl}(X \cup \{q\})$.
+2.  **Exchange property**: If $q \in \mathrm{cl}(X \cup \{q'\}) \setminus \mathrm{cl}(X)$, then $q' \in \mathrm{cl}(X \cup \{q\})$.
 
-For exchange, take $q \in \text{cl}(X \cup \{q'\}) \setminus \text{cl}(X)$. Since $q \notin \text{cl}(X)$, there exist $v,w$ that are $X$-equivalent but disagree on $q$. Because $q \in \text{cl}(X \cup \{q'\})$, any pair that is $(X \cup \{q'\})$-equivalent must agree on $q$; therefore this witness pair cannot be $(X \cup \{q'\})$-equivalent, so it must disagree on $q'$. Now fix any pair $v',w'$ that are $(X \cup \{q\})$-equivalent. They are in particular $X$-equivalent and agree on $q$. If they disagreed on $q'$, then by the previous implication we could derive disagreement on $q$, contradiction. Hence $v',w'$ agree on $q'$, proving $q' \in \text{cl}(X \cup \{q\})$.
+For exchange, take $q \in \mathrm{cl}(X \cup \{q'\}) \setminus \mathrm{cl}(X)$. Since $q \notin \mathrm{cl}(X)$, there exist $v,w$ that are $X$-equivalent but disagree on $q$. Because $q \in \mathrm{cl}(X \cup \{q'\})$, any pair that is $(X \cup \{q'\})$-equivalent must agree on $q$; therefore this witness pair cannot be $(X \cup \{q'\})$-equivalent, so it must disagree on $q'$. Now fix any pair $v',w'$ that are $(X \cup \{q\})$-equivalent. They are in particular $X$-equivalent and agree on $q$. If they disagreed on $q'$, then by the previous implication we could derive disagreement on $q$, contradiction. Hence $v',w'$ agree on $q'$, proving $q' \in \mathrm{cl}(X \cup \{q\})$.
 
-Minimal distinguishing sets are exactly the bases of the matroid defined by this closure operator. The closure component is machine-checked in `AxisClosure`; the exchange/equicardinality component and the closure-to-matroid bridge used for distinguishing-dimension well-definedness are machine-checked in `axis_framework.lean`. ◻
+Minimal distinguishing sets are exactly the bases of the matroid defined by this closure operator. The machine-checked development verifies the closure laws, the exchange and equicardinality lemmas, and the bridge from closure to matroid structure used to make the distinguishing dimension well-defined. ◻
 :::
 
 ::: theorem
@@ -660,77 +404,60 @@ Let $n := |\mathcal{I}|$ be the ambient number of available attributes. Clearly 
 :::
 
 ::: corollary
-[]{#cor:well-defined-distinguishing-dimension label="cor:well-defined-distinguishing-dimension"} All minimal distinguishing sets have equal cardinality. Thus the distinguishing dimension (Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"}) is well-defined.
+[]{#cor:well-defined-distinguishing-dimension label="cor:well-defined-distinguishing-dimension"} All minimal distinguishing sets have equal cardinality. Thus the distinguishing dimension is well-defined.
+:::
+
+::: remark
+Despite the name, the distinguishing dimension $d$ is not a VC or shattering dimension in the usual learning-theoretic sense [@vapnik1998statistical]. VC dimension measures the largest set of examples shattered by a concept class. Here $d$ is the rank of a fixed primitive query family under the closure operator induced by class separation. The key structural fact used in this paper is basis exchange: minimal distinguishing families form the bases of a matroid, so $d$ is certified by equicardinality and exchange rather than by shattering alone.
 :::
 
 ## Implications for Witness Cost
 
-::: corollary
-[]{#cor:attribute-only-witness-lb label="cor:attribute-only-witness-lb"} For any attribute-only observer, $W(\text{class-identity}) \geq d$ where $d$ is the distinguishing dimension.
+::: theorem
+[]{#thm:interface-lower-bound label="thm:interface-lower-bound"} For attribute-only observers, class identity checking requires $$W(\text{class-identity}) = \Omega(d)$$ in the worst case, where $d$ is the distinguishing dimension.
 :::
 
 ::: proof
-*Proof.* If a procedure queried fewer than $d$ attributes on every execution path, each such queried set would be non-distinguishing by definition of $d$. For that path, there would exist two different classes with identical answers on all queried attributes, yielding identical transcripts and forcing the same output on both values. This contradicts zero-error class identification. Hence some path requires at least $d$ queries. ◻
+*Proof.* Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. Since $d$ is the cardinality of every minimal distinguishing set, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
+
+An adversary can answer the procedure's queries consistently with both $v$ and $w$ along this path. Therefore the resulting transcript (and output) is identical on $v$ and $w$, contradicting zero-error class identification. So some execution path must use at least $d$ queries, giving worst-case cost $\Omega(d)$. ◻
 :::
+
+::: corollary
+[]{#cor:attribute-only-witness-lb label="cor:attribute-only-witness-lb"} For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is the distinguishing dimension.
+:::
+
+In the running example, this yields $W \ge 3$ for any attribute-only zero-error scheme, even though the ambiguity converse will later show that one explicit tag bit already suffices to resolve the only collision block.
 
 The key insight: the distinguishing dimension is invariant across all minimal query strategies. The difference between nominal-tag and attribute-only observers lies in *witness cost*: a nominal tag achieves $W = O(1)$ by storing the identity directly, bypassing query enumeration.
 
-
-## Witness Cost for Class Identity
-
-Recall from Section 2 that the witness cost $W(P)$ is the minimum number of primitive queries required to compute property $P$. For class identity, we ask: what is the minimum number of queries to determine if two values have the same class?
-
-::: theorem
-[]{#thm:nominal-minimum-witness-cost label="thm:nominal-minimum-witness-cost"} Nominal-tag observers achieve the minimum witness cost for class identity: $$W_{\text{eq}} = O(1)$$
-
-Specifically, the witness is a single tag read: compare $\text{tag}(v_1) = \text{tag}(v_2)$.
-
-Attribute-only observers require $W_{\text{eq}} = \Omega(d)$ where $d$ is the distinguishing dimension (and $d \le n$, with worst-case $d = n$).
-:::
-
-::: proof
-*Proof.* See Lean formalization: `proofs/nominal_resolution.lean`. The proof shows:
-
-1.  Nominal-tag access is a single primitive query
-
-2.  Attribute-only observers must query at least $d$ attributes in the worst case (a generic strategy queries all $n$)
-
-3.  No shorter witness exists for attribute-only observers (by the information barrier)
-
- ◻
-:::
+This is the paper's complementary resource law. The ambiguity converse says how many bits are needed to eliminate collision multiplicity; the query lower bound says how much structure must still be traversed when those bits are absent.
 
 ## Witness Cost Comparison
 
+::: {#tab:witness-comparison}
   **Observer Class**      **Witness Procedure**      **Witness Cost $W$**
   -------------------- ---------------------------- ----------------------
   Nominal-tag                Single tag read                $O(1)$
   Attribute-only        Query a distinguishing set       $\Omega(d)$
 
   : Witness cost for class identity by observer class.
-
-The Lean 4 formalization in the supplementary artifact provides a machine-checked proof that nominal-tag access minimizes witness cost for class identity.
+:::
 
 
 ## Three-Dimensional Tradeoff: Tag Length, Witness Cost, Distortion
 
-Recall from Section 2 that observer strategies are characterized by three dimensions:
+Recall from the preceding sections that observer strategies are characterized by three dimensions:
 
--   **Tag length** $L$: bits required to encode a class identifier ($L \geq \log_2 k$ for $k$ classes under full class tagging)
+-   **Tag length** $L$: bits required to encode class information,
 
--   **Witness cost** $W$: minimum number of primitive queries for class identification
+-   **Witness cost** $W$: minimum number of primitive queries for class identification,
 
 -   **Distortion** $D$: probability of misclassification, $D = \Pr[\hat{C} \neq C]$.
 
-We compare two observer classes:
+We compare two observer classes: attribute-only observers, which query only attribute membership, and nominal-tag observers, which may read a class identifier in addition to attribute queries.
 
-::: definition
-An observer that queries only attribute membership ($q_I \in \Phi_{\mathcal{I}}$), with no access to explicit class tags.
-:::
-
-::: definition
-An observer that may read a single class identifier (nominal tag) per value, in addition to attribute queries.
-:::
+This section gathers the earlier theorem families into one frontier statement. Section [\[sec:zero-error\]](#sec:zero-error){reference-type="ref" reference="sec:zero-error"} establishes the minimum tag resource needed to eliminate ambiguity; Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"} establishes the minimum query resource needed when tags are absent. The present section places those two laws on the same geometric picture. In the semantics-aware compression language of the paper, $L$ stores explicit naming information, $W$ measures interactive disambiguation effort, and $D$ measures semantic failure.
 
 ::: theorem
 []{#thm:lwd-optimal label="thm:lwd-optimal"} Let $A_\pi$ be the collision multiplicity (Definition [\[def:collision-multiplicity\]](#def:collision-multiplicity){reference-type="ref" reference="def:collision-multiplicity"}). Then:
@@ -739,27 +466,27 @@ An observer that may read a single class identifier (nominal tag) per value, in 
 
 2.  In maximal-barrier domains ($A_\pi = k$), nominal-tag observers achieve the unique Pareto-optimal $D=0$ point:
 
-    -   **Tag length**: $L = \lceil \log_2 k \rceil$ bits for $k$ classes
+    -   **Tag length**: $L = \lceil \log_2 k \rceil$ bits,
 
-    -   **Witness cost**: $W = O(1)$ queries (one tag read)
+    -   **Witness cost**: $W = O(1)$ queries,
 
-    -   **Distortion**: $D = 0$ (zero misclassification probability)
+    -   **Distortion**: $D = 0$.
 
 3.  In general (non-maximal) domains, nominal tagging remains Pareto-optimal at $D=0$ but need not be unique: partial tags can coexist on the frontier.
 
 In information-barrier domains, attribute-only observers (the $L=0$ face) satisfy:
 
--   **Tag length**: $L = 0$ bits (no explicit tag)
+-   **Tag length**: $L = 0$ bits,
 
--   **Witness cost**: $W = \Omega(d)$ queries (must query at least one minimal distinguishing set of size $d$, see Definition [\[def:distinguishing-dimension\]](#def:distinguishing-dimension){reference-type="ref" reference="def:distinguishing-dimension"})
+-   **Witness cost**: $W = \Omega(d)$ queries,
 
--   **Distortion**: $D > 0$ (probability of misclassification is strictly positive due to collisions)
+-   **Distortion**: $D > 0$ when collisions persist.
 :::
 
 ::: proof
 *Proof.* Converse item (1) is Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}. For item (2), maximal barrier means all classes are observationally colliding, so any $D=0$ scheme must carry full class identity in tag bits (Corollary [\[cor:max-barrier-converse\]](#cor:max-barrier-converse){reference-type="ref" reference="cor:max-barrier-converse"}), while nominal tags realize this lower bound with one tag read. Pareto uniqueness follows because any competing $D=0$ point cannot reduce $L$ below $\log_2 k$ nor reduce $W$ below constant-time tag access under the admissibility rules of Section [\[sec:framework\]](#sec:framework){reference-type="ref" reference="sec:framework"}.
 
-The converse proof path is machine-checked in Lean: `proofs/lwd_converse.lean` formalizes (i) constant transcript on a collision block implies tag injectivity under zero-error decoding, and (ii) counting then yields $2^L \ge A_\pi$. The maximal-barrier corollary is formalized in the same module. Runtime cost instantiations (e.g., unbounded gap examples) remain in `proofs/python_instantiation.lean`. ◻
+The converse chain has two steps: first, a constant transcript on a collision block forces any zero-error decoder to separate classes using tag information; second, counting those tag outcomes yields $2^L \ge A_\pi$. In the maximal-barrier regime this becomes $L \ge \log_2 k$, which nominal tagging achieves with one tag read. ◻
 :::
 
 ::: remark
@@ -776,156 +503,212 @@ When $1 < A_\pi < k$, the $D=0$ frontier can include mixed designs: a partial ta
 
 The three-dimensional frontier shows:
 
--   In maximal-barrier domains, the unique $D=0$ Pareto point is nominal tagging at $L=\lceil \log_2 k\rceil$.
+-   in maximal-barrier domains, the unique $D=0$ Pareto point is nominal tagging at $L=\lceil \log_2 k\rceil$,
 
--   In general domains, attribute-only observers trade tag length for distortion on the $L=0$ face when collisions are present.
+-   in general domains, attribute-only observers trade tag length for distortion on the $L=0$ face when collisions are present.
 
-Figure [1](#fig:lwd-tradeoff){reference-type="ref" reference="fig:lwd-tradeoff"} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with the maximal-barrier special case $\log_2 k$.
+Figure [1](#fig:lwd-tradeoff){reference-type="ref" reference="fig:lwd-tradeoff"} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with maximal-barrier specialization $\log_2 k$.
+
+In the running example from Section [\[sec:zero-error\]](#sec:zero-error){reference-type="ref" reference="sec:zero-error"}, the point $(L,W,D)=(1,O(1),0)$ is feasible by tagging the collided pair $\{A,B\}$. The tag-free point $(0,\cdot,0)$ is infeasible because $A_\pi=2>1$, and the query lower bound from Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"} still forces $W\ge 3$ whenever one attempts tag-free zero-error separation.
+
+That example makes the frontier concrete. The converse does not merely say that some metadata is helpful; it identifies the exact one-bit shift needed to cross from impossible to feasible zero-error identification in the presence of the observed collision block.
 
 <figure id="fig:lwd-tradeoff">
 
-<figcaption>Schematic <span class="math inline">(<em>L</em>, <em>W</em>, <em>D</em>)</span> tradeoff across barrier regimes. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; attribute-only strategies lie on the zero-tag face and leave the zero-error frontier when collisions are present.</figcaption>
+<figcaption>Schematic <span class="math inline">(<em>L</em>, <em>W</em>, <em>D</em>)</span> tradeoff across barrier regimes. Here <span class="math inline"><em>W</em></span> counts identification operations, including a constant-time tag read, so the nominal zero-error point sits at <span class="math inline"><em>W</em> = <em>O</em>(1)</span> rather than <span class="math inline"><em>W</em> = 0</span>. The left orange point shows the collision-free attribute-only regime (<span class="math inline"><em>A</em><sub><em>π</em></sub> = 1</span>), while the red point shows a colliding attribute-only regime with <span class="math inline"><em>D</em> &gt; 0</span>. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains.</figcaption>
 </figure>
 
-The Lean 4 formalization in the supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
+The supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
 
 ::: remark
 In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's `isinstance`, Java's `.getClass()`); attribute-probe schemes correspond to attribute-only observers (e.g., repeated `hasattr`-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
 :::
 
 ::: remark
-When conformance checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
+When conformance checks traverse $s$ members or fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
+:::
+
+## Interpretation of the Zero-Error Frontier
+
+The exact block law established in Section [\[sec:zero-error\]](#sec:zero-error){reference-type="ref" reference="sec:zero-error"} determines the horizontal zero-error threshold. The query lower bound from Section [\[sec:matroid\]](#sec:matroid){reference-type="ref" reference="sec:matroid"} determines the vertical cost of remaining tag-free. The frontier therefore separates the two resources cleanly: tag bits pay for collision multiplicity, while queries pay for distinguishing structure inside the observable family.
+
+That separation is what makes the three-resource view useful. The rate coordinate does not merely summarize stored metadata, and the query coordinate does not merely summarize computation; together they describe two distinct ways of paying for semantic ambiguity.
+
+::: remark
+The finite-block laws used here are worst-case confusability results. They sharpen the ambiguity converse with exact thresholds, while remaining distinct from full distribution-optimized Körner graph-entropy theory.
 :::
 
 
-This section gives brief illustrations showing the same constraint pattern in established systems.
+## Open-World Robustness and Decidability Boundary
 
-## Compact Cross-Domain Illustrations
+The main converse addresses whatever collision structure is present in the observable world. The next two results show that a currently collision-free realized world does not escape the theorem in any durable sense: barrier-freedom is not extension-stable, and in full generality it is not computably certifiable in advance.
+
+::: definition
+Let $\mathcal{C}$ be the class universe. A *finite realized world* is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ *barrier-free* iff $$\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.$$
+:::
+
+::: definition
+An *open-world extension* is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
+:::
+
+::: theorem
+[]{#thm:open-world-extension-instability label="thm:open-world-extension-instability"} In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions: $$\neg\Big(\forall W \subseteq W',\ \mathrm{BarrierFree}(W)\Rightarrow \mathrm{BarrierFree}(W')\Big).$$
+:::
+
+::: proof
+*Proof.* Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable. ◻
+:::
+
+The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
+
+::: definition
+For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define $$\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).$$ Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
+:::
+
+::: theorem
+[]{#thm:rice-barrier label="thm:rice-barrier"} There is no computable predicate on program codes deciding whether the generated observer has a barrier: $$\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).$$ Equivalently, barrier-freedom certification is also non-computable.
+:::
+
+::: proof
+*Proof.* Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial: some generators produce collisions and some do not. Rice's theorem therefore implies that if membership in the corresponding semantic class were computable from code, every partial recursive function would have to satisfy it, contradiction. The barrier-free statement is equivalent by negation. ◻
+:::
+
+::: corollary
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on "currently collision-free" attribute structure alone.
+:::
+
+
+## Worked Example
+
+The running example now supports the whole theorem chain with almost no extra notation. The collision block $\{A,B\}$ gives $A_\pi = 2$, so the ambiguity converse forces one tag bit for zero-error identification. The minimal distinguishing family has size $d=3$, so every tag-free zero-error scheme pays at least three queries. The exact block law gives $L_t^\star = t$, and the open-world section uses the same example to show how adding $B$ destroys present collision-freedom in the realized world $\{A,C,D,E\}$.
+
+The following consequences show how the same collision structure governing the ambiguity converse reappears in maintenance locality, architectural centralization, and concrete data-management settings.
+
+## Maintenance and Localization Consequences
+
+#### Scope of this subsection.
+
+This subsection studies *maintenance or localization* complexity, measured by locations to inspect ($E(\cdot)$), not per-instance identification complexity ($W$) from earlier sections. The metrics are related but distinct: $W$ quantifies online class-identification effort, while $E$ quantifies where constraint logic is distributed in implementations.
+
+::: definition
+Let $E(\mathcal{O})$ be the number of locations that must be inspected to find all potential violations of a constraint under observation family $\mathcal{O}$.
+:::
+
+::: theorem
+[]{#thm:nominal-localization label="thm:nominal-localization"} $E(\text{nominal-tag}) = O(1)$.
+:::
+
+::: proof
+*Proof.* Under nominal-tag observation, the constraint "$v$ must be of class $A$" is satisfied iff $\tau(v) \in \mathrm{subtypes}(A)$. This is determined at a single location: the definition of $\tau(v)$'s class. ◻
+:::
+
+::: theorem
+[]{#thm:declared-localization label="thm:declared-localization"} $E(\text{attribute-only, declared}) = O(k)$ where $k$ is the number of entity classes.
+:::
+
+::: proof
+*Proof.* With declared attribute sets, the constraint "$v$ must satisfy attribute $I$" requires verifying that each class satisfies all attributes in $I$. For $k$ classes, this yields $O(k)$ locations. ◻
+:::
+
+::: theorem
+[]{#thm:attribute-localization label="thm:attribute-localization"} $E(\text{attribute-only}) = \Omega(m)$ where $m$ is the number of query sites.
+:::
+
+::: proof
+*Proof.* Under attribute-only observation, each query site independently checks "does $v$ have attribute $a$?" with no centralized declaration. For $m$ query sites, each must be inspected. The lower bound is therefore $\Omega(m)$. ◻
+:::
+
+::: corollary
+[]{#cor:strict-dominance label="cor:strict-dominance"} Nominal-tag observation strictly dominates attribute-only: $E(\text{nominal-tag}) = O(1) < \Omega(m) = E(\text{attribute-only})$ for all $m > 1$.
+:::
+
+## Information Scattering and Cross-Domain Illustrations
+
+::: definition
+Let $I(\mathcal{O}, c)$ be the set of locations where constraint $c$ is encoded under observation family $\mathcal{O}$.
+:::
+
+::: theorem
+[]{#thm:attribute-scattering label="thm:attribute-scattering"} For attribute-only observation, $|I(\text{attribute-only}, c)| = O(m)$ where $m$ is the number of query sites using constraint $c$.
+:::
+
+::: proof
+*Proof.* Each attribute query independently encodes the constraint. No shared reference exists. Constraint encodings therefore scale with query sites. ◻
+:::
+
+::: theorem
+[]{#thm:nominal-centralization label="thm:nominal-centralization"} For nominal-tag observation, $|I(\text{nominal-tag}, c)| = O(1)$.
+:::
+
+::: proof
+*Proof.* The constraint "must be of class $A$" is encoded once in the definition of $A$. All tag checks reference this single definition. ◻
+:::
+
+::: corollary
+[]{#cor:maintenance-entropy label="cor:maintenance-entropy"} Attribute-only observation maximizes maintenance entropy; nominal-tag observation minimizes it.
+:::
+
+**Databases (columns vs keys).** Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary or surrogate keys realize the nominal-tag role and provide constant-cost identity checks [@Codd1990].
+
+**Model registries and artifact stores.** Structural signatures can collide across distinct artifacts. Registry identifiers and hashes play the same nominal role as tags, while profile inspection alone inherits the ambiguity lower bounds.
 
 **Biology (phenotype vs genotype).** Distinct species can collide under phenotype, so phenotype-only observation cannot guarantee zero-error identity. DNA barcoding supplies additional naming information that resolves collision blocks in constant-time lookup style [@DNABarcoding].
 
-**Databases (columns vs keys).** Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary/surrogate keys realize the nominal-tag role and provide constant-cost identity checks [@Codd1990].
+**Software runtimes (attribute probes vs runtime identifiers).** Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class or type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model [@CPythonDocs; @JVMSpec; @JavaDocs; @TypeScriptDocs; @RustDocs].
 
-**Software runtimes (attribute probes vs runtime identifiers).** Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model [@CPythonDocs; @JVMSpec; @JavaDocs; @TypeScriptDocs; @RustDocs].
+These illustrations are not historical causality claims. They show a common resource law: when observable profiles collide, zero-error identification requires additional naming information; otherwise the system pays higher query cost, higher maintenance complexity, and/or nonzero error.
 
-## Takeaway
-
-These illustrations are not historical causality claims. They show a common resource law: when observable profiles collide, zero-error identification requires additional naming information; otherwise the system pays higher query cost and/or nonzero error.
+The operational metrics in this section complement the main $L$-, $W$-, and $D$-resource laws. The same collision structure that drives the ambiguity converse also reappears in maintenance burden, error localization, and architectural scattering.
 
 
-## Noisy Query Model
+The main theorem chain is complete in the deterministic zero-error setting. We record only brief forward-looking directions here.
 
-Throughout this paper, queries are deterministic: $q_I(v) \in \{0,1\}$ is a fixed function of $v$. In practice, observations may be corrupted. We sketch an extension to noisy queries and state the resulting open problems.
+Each extension changes one part of the model while preserving the paper's central question: once identity is only partially visible, how do stored naming information, interactive evidence, and allowable error trade off?
 
-::: definition
-A *noisy observation channel* with crossover probability $\epsilon \in [0, 1/2)$ returns: $$\tilde{q}_I(v) = \begin{cases}
-q_I(v) & \text{with probability } 1 - \epsilon \\
-1 - q_I(v) & \text{with probability } \epsilon
-\end{cases}$$ Each query response is an independent BSC$(\epsilon)$ corruption of the true value.
-:::
+## Noisy and Lossy Observation
 
-::: definition
-The *$\epsilon$-noisy identification capacity* is the supremum rate (in bits per entity) at which zero-error identification is achievable when all attribute queries pass through a BSC$(\epsilon)$.
-:::
+With noisy queries, repeated sampling can reduce error, so the natural problem becomes the tradeoff among tag rate, repeated query cost, and target error level. In this regime, the model changes by replacing deterministic attribute observations with noisy ones, and the main open question is how the ambiguity law interacts with repeated evidence. Explicit tags should continue to act as a noise-free side channel whenever they are transmitted cleanly.
 
-In the noiseless case ($\epsilon = 0$), Theorem [\[thm:identification-capacity\]](#thm:identification-capacity){reference-type="ref" reference="thm:identification-capacity"} shows the capacity is binary: $\log_2 k$ if $\pi$ is class-injective, $0$ otherwise. For $\epsilon > 0$, several questions arise.
-
-**Open problem (noisy identification cost).** For $\epsilon > 0$ and class-injective $\pi$, zero-error identification is impossible with finite queries (since BSC has nonzero error probability). With bounded error $\delta > 0$, we expect the identification cost to scale as $W = \Theta\left(\frac{\log(1/\delta)}{(1 - 2\epsilon)^2}\right)$ queries per entity. A key observation is that a nominal tag of $L \geq \lceil \log_2 k \rceil$ bits (transmitted noiselessly) should restore $O(1)$ identification regardless of query noise.
-
-The third point is the key insight: *nominal tags provide a noise-free side channel*. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for explicit tagging in noisy environments, precisely the regime where pure attribute-probe schemes would require many repeated queries to achieve confidence.
-
-**Connection to identification via channels.** The noisy model connects more directly to Ahlswede-Dueck identification [@ahlswede1989identification]. In their framework, identification capacity over a noisy channel can exceed Shannon capacity (double-exponential codebook sizes). Our setting differs: we have *adaptive queries* rather than block codes, and the decoder must identify a *class* rather than test a hypothesis. Characterizing the interplay between adaptive query strategies and channel noise is an open problem.
-
-## Rate-Distortion-Query Tradeoff Surface
-
-The $(L, W, D)$ tradeoff admits a natural geometric interpretation. In the maximal-barrier regime we identify a unique Pareto-optimal point at $D = 0$ (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}); outside that regime, the full tradeoff surface can contain multiple $D=0$ frontier points.
-
-**Fixed-$W$ slices.** For fixed query budget $W$, what is the minimum tag rate $L$ to achieve distortion $D$? When $W \geq d$ (the distinguishing dimension), zero distortion is achievable with $L = 0$ via exhaustive querying. When $W < d$, the observer cannot distinguish all classes, and either:
-
--   Accept $D > 0$ (misidentification), or
-
--   Add tags ($L > 0$) to compensate for insufficient queries.
-
-**Fixed-$L$ slices.** For fixed tag rate $L < \log_2 k$, the tag partitions the $k$ classes into $2^L$ groups. Within each group, the observer must use queries to distinguish. The query cost is determined by the distinguishing dimension *within each group*, which is potentially much smaller than the global dimension.
-
-**Open problem (subadditivity of query cost).** For a tag of rate $L$ partitioning classes into groups $G_1, \ldots, G_{2^L}$, we expect $W(L) \leq \max_i d(G_i)$, where $d(G_i)$ is the distinguishing dimension within group $G_i$. Optimal tag design should minimize this maximum. Characterizing the optimal partition remains open.
+The noisy setting asks how the same ambiguity law interacts with repeated but unreliable evidence.
 
 ## Semantic Distortion Measures
 
-We have treated distortion $D$ as binary (correct identification or not). Richer distortion measures are possible:
+The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the $(L,W,D)$ frontier changes when near misses and catastrophic confusions are not penalized equally.
 
--   **Hierarchical distortion**: Misidentifying a class within the same genus (biological) or within the same subsystem (engineered systems) is less severe than cross-group errors.
+This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
 
--   **Weighted distortion**: Some misidentifications have higher cost than others (e.g., safety-critical misrouting vs. benign confusion).
+## Privacy, Security, and Three-Resource Geometry
 
-## Privacy and Security
+Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. Here the model change is that one constrains what information may be revealed while still certifying identity or class membership, and the open question is how much explicit naming information can be exposed safely.
 
-**Privacy-preserving identification.** Nominal tags enable zero-knowledge proofs of class membership without revealing attribute profiles. An entity can prove \"I belong to class $C$\" by revealing $\tau(v) = C$ without exposing $\pi(v)$, preserving attribute privacy. Attribute-only schemes must reveal the complete profile $\pi(v)$ to prove membership, leaking structural information.
+More broadly, the $(L,W,D)$ frontier invites comparison with other three-resource tradeoff geometries, including rate-distortion-perception formulations [@blau2019rethinking]. The question left open here is whether there is a similarly sharp geometric characterization when the third resource is interactive query effort rather than perceptual fidelity.
 
-**Secure model verification.** In machine learning deployment, compressed model identifiers prevent model substitution attacks. Verifying model identity via nominal tags ($O(1)$ hash comparison) is more efficient and secure than attribute-based verification ($O(s)$ architecture inspection), which is vulnerable to adversarial perturbations that preserve structural fingerprints while altering behavior.
-
-## Connection to Rate-Distortion-Perception Theory
-
-Blau and Michaeli [@blau2019rethinking] extended classical rate-distortion theory by adding a *perception* constraint: the reconstructed distribution must match a target distribution under some divergence measure. This creates a three-way tradeoff between rate, distortion, and perceptual quality.
-
-Our $(L, W, D)$ framework admits a parallel interpretation. The query cost $W$ plays a role analogous to the perception constraint: it measures the *interactive cost* of achieving low distortion, rather than a distributional constraint. Just as rate-distortion-perception theory asks "what is the minimum rate to achieve distortion $D$ while satisfying perception constraint $P$?", we ask "what is the minimum tag rate $L$ to achieve distortion $D$ with query budget $W$?"
-
-The analogy suggests several directions:
-
--   **Perception as identification fidelity**: In classification systems that must preserve statistical properties (e.g., sampling from a type distribution), a perception constraint would require the observer's class estimates to have the correct marginal distribution, not just low expected error.
-
--   **Three-resource tradeoffs**: The $(L, W, D)$ Pareto frontier (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}) is a discrete analogue of the rate-distortion-perception tradeoff surface. Characterizing this surface for specific classification problems would extend the geometric rate-distortion program to identification settings.
-
-Formalizing these connections would unify identification capacity with the broader rate-distortion-perception literature.
+These directions preserve the paper's central viewpoint: identity can be partially stored, partially queried, and partially approximated. Changing the model changes how those resources interact, but not the need to account for them explicitly.
 
 
-This paper presents a resource-based analysis of classification under observational constraints. We establish three core theorem families and accompanying extensions:
+This paper presents a resource-based analysis of zero-error semantic compression under observational constraints. The central law is the zero-error ambiguity converse: any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$, where $A_\pi$ is the largest collision block induced by observable profiles. The finite-block confusability results sharpen that law to exact thresholds and exact linear log-bit scaling across block length. In maximal-barrier domains, nominal tagging achieves the unique Pareto-optimal zero-error point in the $(L, W, D)$ tradeoff.
 
-1.  **Information Barrier**: Observers limited to attribute-membership queries cannot compute properties that vary within indistinguishability classes. This is the structural obstruction from which the later lower bounds and tradeoffs follow.
+The second main arc characterizes the query resource. Minimal distinguishing query sets form the bases of a matroid, making the distinguishing dimension $d$ well-defined as an invariant of the observation structure. Attribute-only zero-error identification therefore pays at least $d$ queries in the worst case. Open-world and Rice-style boundary results explain why present-day collision-freedom is not enough for persistent guarantees, and the implementation-level results show how the same structure reappears as maintenance localization and information scattering.
 
-2.  **Witness Optimality**: Nominal-tag observers achieve $W(\text{identity}) = O(1)$, the minimum witness cost. The gap from attribute-only observation ($\Omega(d)$, with a worst-case family where $d = n$) is unbounded.
+Across domains, the same law recurs: when observable profiles collide, zero-error identification requires either explicit naming information or additional structure-specific work. The ambiguity converse, the exact block law, and the query lower bound formalize that tradeoff, while the open-world boundary shows why present collision-freedom does not remove it.
 
-3.  **Matroid Structure**: Minimal distinguishing query sets form the bases of a matroid. The distinguishing dimension of a classification problem is well-defined and computable.
+Biology, databases, software runtimes, and model registries instantiate the same constraint in different guises: phenotype collides where barcodes separate, non-key columns collide where primary keys separate, observable capabilities collide where runtime identifiers separate, and structural signatures collide where registry identifiers separate. The same observable collision structure governs all of them.
 
-## A Recurring Design Constraint
+Zero-error class identification is therefore governed by three structural quantities: collision multiplicity fixes the minimum naming budget, the exact block law fixes its finite-block scaling, and the distinguishing dimension fixes the tag-free query burden. The open-world results show that these costs do not disappear just because a current snapshot happens to be separable.
 
-Across domains, the same structure recurs:
+The practical consequence is equally direct. Systems can centralize identity by carrying explicit names, or they can recover it indirectly by distributing distinguishing work across queries, declarations, and maintenance sites. The theorems identify exactly where that tradeoff comes from and which parts of it are unavoidable.
 
--   **Biology**: Phenotypic observation cannot distinguish cryptic species. DNA barcoding (nominal tag) resolves them in $O(1)$.
-
--   **Databases**: Column-value queries cannot distinguish rows with identical attributes. Primary keys (nominal tag) provide $O(1)$ identity.
-
--   **Software runtimes**: Attribute observation cannot distinguish entities that collide on observed capabilities. Runtime identifiers provide $O(1)$ identity.
-
-The information barrier is not a quirk of any particular domain; it is a mathematical necessity arising from the quotient structure induced by limited observations. What varies by domain is not the existence of the constraint, but which resource the system chooses to spend to escape it.
-
-## Implications
-
--   **The necessity of nominal information is a theorem, not a preference.** Any zero-error scheme must satisfy the ambiguity converse $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}), where $A_\pi$ is the largest collision block induced by observable profiles. In maximal-barrier domains ($A_\pi = k$), this becomes $L \ge \log_2 k$ and nominal tagging gives the unique $D=0$ Pareto point with $W=O(1)$ (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}).
-
--   **The barrier is informational, not computational**: even with unbounded resources, attribute-only observers cannot overcome it.
-
--   **Finite-block confusability laws are exact**: the mechanized graph-confusability results give one-shot and block thresholds ($A_\pi$ and $A_\pi^k$) and exact linear log-bit scaling across block length.
-
--   **Open-world guarantees require explicit tags**: barrier-freedom is not extension-stable under system growth, and deciding barrier existence/freedom for arbitrary generators is not computable (Rice-style). So a persistent $D=0$ guarantee cannot rely on "currently collision-free" attribute structure alone.
-
--   **Fixed-axis systems are necessarily incomplete outside their axis**: by Corollary [\[cor:fixed-axis-incompleteness\]](#cor:fixed-axis-incompleteness){reference-type="ref" reference="cor:fixed-axis-incompleteness"}, any fixed-axis classifier is complete only for axis-measurable properties and cannot represent properties that vary within an axis fiber unless a new axis or explicit tag is introduced.
-
--   **Classification system design is constrained**: the choice of observation family determines which properties are computable.
+Collision multiplicity determines the minimum zero-error tag budget, distinguishing dimension determines the tag-free query burden, and both persist beyond any single realized world.
 
 ## Future Work
 
-Natural extensions include other classification domains, witness complexity for properties beyond identity, and hybrid observers that combine tags and attributes under non-uniform query distributions.
-
-## Conclusion
-
-Classification under observational constraints admits a clean quantitative analysis. The zero-error converse is governed by collision multiplicity: any $D=0$ scheme necessarily has $L \ge \log_2 A_\pi$ (Theorem [\[thm:converse\]](#thm:converse){reference-type="ref" reference="thm:converse"}). In maximal-barrier domains ($A_\pi=k$), nominal-tag observation achieves the unique Pareto-optimal $D=0$ point in the $(L, W, D)$ tradeoff (Theorem [\[thm:lwd-optimal\]](#thm:lwd-optimal){reference-type="ref" reference="thm:lwd-optimal"}). The mechanized graph-confusability extension further supplies exact finite-block thresholds and rate scaling. Within the stated observation model, the paper turns a familiar heuristic into explicit lower bounds, explicit dominance claims, and structural invariants, and all proofs are machine-verified in Lean 4.
+Natural extensions include other classification domains, witness complexity for semantic properties beyond identity, and hybrid observers that combine tags and attributes under non-uniform query distributions.
 
 ## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
 
-Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX and structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean and LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
 
-The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion or exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
 
 
 

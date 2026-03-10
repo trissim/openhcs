@@ -7,7 +7,7 @@ The running example already illustrates the basic contrast: one explicit bit res
 \begin{definition}[Query family]
 Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
 \end{definition}
-\leanmeta{ \LH{ACS1}}
+\leanmeta{\LH{ACS1}}
 
 \noindent In this section, ``queries'' are the primitive attribute predicates $q \in \Phi$.
 
@@ -16,12 +16,12 @@ Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. 
 \begin{definition}[Distinguishing set]
 A subset $S \subseteq \mathcal{Q}$ is \emph{distinguishing} if, for all values $v, w$ with $\mathrm{class}(v) \neq \mathrm{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
 \end{definition}
-\leanmeta{ \LH{L4}, \LH{L5}}
+\leanmeta{\LHrng{L}{4}{5}}
 
 \begin{definition}[Minimal distinguishing set]
 A distinguishing set $S$ is \emph{minimal} if no proper subset of $S$ is distinguishing.
 \end{definition}
-\leanmeta{ \LH{L1}, \LH{L4}}
+\leanmeta{\LH{L1}, \LH{L4}}
 
 In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is distinguishing and minimal, so it already witnesses the query resource needed for tag-free separation.
 
@@ -30,12 +30,12 @@ In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is d
 \begin{definition}[Bases family]
 Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries. Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
 \end{definition}
-\leanmeta{ \LH{L1}, \LH{L5}}
+\leanmeta{\LH{L1}, \LH{L5}}
 
 \begin{lemma}[Basis exchange]\label{lem:basis-exchange}
 For any $B_1, B_2 \in \mathcal{B}$ and any $q \in B_1 \setminus B_2$, there exists $q' \in B_2 \setminus B_1$ such that $(B_1 \setminus \{q\}) \cup \{q'\} \in \mathcal{B}$.
 \end{lemma}
-\leanmeta{ \LH{L4}, \LH{L5}}
+\leanmeta{\LHrng{L}{4}{5}}
 
 \begin{proof}
 Define the closure operator $\mathrm{cl}(X) = \{q : X\text{-equivalence implies }q\text{-equivalence}\}$. We verify the matroid axioms:
@@ -52,7 +52,7 @@ Minimal distinguishing sets are exactly the bases of the matroid defined by this
 \begin{theorem}[Matroid bases]\label{thm:matroid-bases}
 $\mathcal{B}$ is the set of bases of a matroid on ground set $E$.
 \end{theorem}
-\leanmeta{ \LH{L1}, \LH{L5}}
+\leanmeta{\LH{L1}, \LH{L5}}
 
 \begin{proof}
 By the basis-exchange lemma and the standard characterization of matroid bases \cite{Welsh1976}.
@@ -61,17 +61,21 @@ By the basis-exchange lemma and the standard characterization of matroid bases \
 \begin{definition}[Distinguishing dimension]\label{def:distinguishing-dimension}
 The \emph{distinguishing dimension} of a classification system is the common cardinality of all minimal distinguishing sets.
 \end{definition}
-\leanmeta{ \LH{L1}}
+\leanmeta{\LH{L1}}
 
 \begin{remark}[Ambient attribute count vs. distinguishing dimension]
 Let $n := |\mathcal{I}|$ be the ambient number of available attributes. Clearly $d \le n$, and there exist worst-case families with $d = n$.
 \end{remark}
-\leanmeta{ \LH{ACS1}, \LH{L1}}
+\leanmeta{\LH{ACS1}, \LH{L1}}
 
 \begin{corollary}[Well-defined distinguishing dimension]\label{cor:well-defined-distinguishing-dimension}
 All minimal distinguishing sets have equal cardinality. Thus the distinguishing dimension is well-defined.
 \end{corollary}
-\leanmeta{ \LH{L1}}
+\leanmeta{\LH{L1}}
+
+\begin{remark}[Relation to VC-style dimensions]
+Despite the name, the distinguishing dimension $d$ is not a VC or shattering dimension in the usual learning-theoretic sense \cite{vapnik1998statistical}. VC dimension measures the largest set of examples shattered by a concept class. Here $d$ is the rank of a fixed primitive query family under the closure operator induced by class separation. The key structural fact used in this paper is basis exchange: minimal distinguishing families form the bases of a matroid, so $d$ is certified by equicardinality and exchange rather than by shattering alone.
+\end{remark}
 
 \subsection{Implications for Witness Cost}
 
@@ -82,7 +86,7 @@ W(\text{class-identity}) = \Omega(d)
 \]
 in the worst case, where $d$ is the distinguishing dimension.
 \end{theorem}
-\leanmeta{ \LH{ACS1}}
+\leanmeta{\LH{ACS1}}
 
 \begin{proof}
 Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. Since $d$ is the cardinality of every minimal distinguishing set, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
@@ -93,7 +97,7 @@ An adversary can answer the procedure's queries consistently with both $v$ and $
 \begin{corollary}[Lower bound on attribute-only witness cost]\label{cor:attribute-only-witness-lb}
 For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is the distinguishing dimension.
 \end{corollary}
-\leanmeta{ \LH{ACS1}}
+\leanmeta{\LH{ACS1}}
 
 In the running example, this yields $W \ge 3$ for any attribute-only zero-error scheme, even though the ambiguity converse will later show that one explicit tag bit already suffices to resolve the only collision block.
 

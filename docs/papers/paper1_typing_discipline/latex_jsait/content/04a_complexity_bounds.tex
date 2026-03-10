@@ -8,12 +8,12 @@ Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a fin
 \forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.
 \]
 \end{definition}
-\leanmeta{ \LH{ROB1}}
+\leanmeta{\LH{ROB1}}
 
 \begin{definition}[Open-world extension]
 An \emph{open-world extension} is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
 \end{definition}
-\leanmeta{ \LH{ROB1}, \LH{ROB2}}
+\leanmeta{\LHrng{ROB}{1}{2}}
 
 \begin{theorem}[Barrier-freedom is not extension-stable]\label{thm:open-world-extension-instability}
 In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions:
@@ -21,7 +21,7 @@ In the open-world class model formalized in Lean, it is not true that barrier-fr
 \neg\Big(\forall W \subseteq W',\ \mathrm{BarrierFree}(W)\Rightarrow \mathrm{BarrierFree}(W')\Big).
 \]
 \end{theorem}
-\leanmeta{ \LH{ROB1}, \LH{ROB2}}
+\leanmeta{\LHrng{ROB}{1}{2}}
 
 \begin{proof}
 Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
@@ -36,7 +36,7 @@ For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
 \]
 Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
 \end{definition}
-\leanmeta{ \LH{UND1}, \LH{UND2}}
+\leanmeta{\LHrng{UND}{1}{2}}
 
 \begin{theorem}[Rice-style non-computability of barrier certification]\label{thm:rice-barrier}
 There is no computable predicate on program codes deciding whether the generated observer has a barrier:
@@ -45,7 +45,7 @@ There is no computable predicate on program codes deciding whether the generated
 \]
 Equivalently, barrier-freedom certification is also non-computable.
 \end{theorem}
-\leanmeta{ \LH{UND1}, \LH{UND2}}
+\leanmeta{\LHrng{UND}{1}{2}}
 
 \begin{proof}
 Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial: some generators produce collisions and some do not. Rice's theorem therefore implies that if membership in the corresponding semantic class were computable from code, every partial recursive function would have to satisfy it, contradiction. The barrier-free statement is equivalent by negation.
@@ -54,4 +54,4 @@ Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{ev
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
 For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
 \end{corollary}
-\leanmeta{ \LH{ROB1}, \LH{ROB2}, \LH{UND1}, \LH{UND2}}
+\leanmeta{\LHrng{ROB}{1}{2}, \LHrng{UND}{1}{2}}

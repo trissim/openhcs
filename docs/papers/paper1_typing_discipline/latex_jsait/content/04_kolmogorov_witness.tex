@@ -25,7 +25,7 @@ The \emph{observation channel} induced by observation family $\Phi$ is the mappi
 \begin{theorem}[One-Shot Zero-Error Feasibility]\label{thm:identification-capacity}
 Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. Zero-error identification of all $k$ classes is achievable if and only if every class has a distinct attribute profile. When $\pi$ is not class-injective, no zero-error identification scheme exists without auxiliary tag information.
 \end{theorem}
-\leanmeta{ \LH{ACS8}}
+\leanmeta{\LH{ACS8}}
 
 \begin{proof}
 \emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(v)$ determines $C(v)$ uniquely. The decoder simply inverts the class-to-profile mapping.
@@ -36,12 +36,12 @@ Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. Zero-error identificati
 \begin{remark}[Information-theoretic corollary]
 Under any distribution with positive mass on both colliding classes, $I(C; \pi(V)) < H(C)$. This is an average-case consequence of the deterministic barrier above.
 \end{remark}
-\leanmeta{ \LH{ACS8}}
+\leanmeta{\LH{ACS8}}
 
 \begin{remark}[Relation to Ahlswede-Dueck]
 In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold is binary rather than asymptotic.
 \end{remark}
-\leanmeta{ \LH{ACS8}}
+\leanmeta{\LH{ACS8}}
 
 \subsection{The Positive Result: Nominal Tagging}
 
@@ -50,17 +50,17 @@ We now show that augmenting attribute observations with a single primitive, nomi
 \begin{definition}[Nominal-tag access]
 A \emph{nominal tag} is a value $\tau(v) \in \mathcal{T}$ associated with each $v \in \mathcal{V}$, representing the class identity of $v$. The nominal-tag access operation returns $\tau(v)$ in $O(1)$ time.
 \end{definition}
-\leanmeta{ \LH{ACS7}}
+\leanmeta{\LH{ACS7}}
 
 \begin{definition}[Primitive query set]
 The extended primitive query set is $\Phi_{\mathcal{I}}^+ = \Phi_{\mathcal{I}} \cup \{\tau\}$, where $\tau$ denotes nominal-tag access.
 \end{definition}
-\leanmeta{ \LH{FORC2}}
+\leanmeta{\LH{FORC2}}
 
 \begin{theorem}[Tag-Restored Zero Error (Sufficiency)]\label{thm:tag-restored-sufficiency}
 A class-injective nominal tag of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
 \end{theorem}
-\leanmeta{ \LH{ACS7}}
+\leanmeta{\LH{ACS7}}
 
 \begin{proof}
 A nominal tag $\tau: \mathcal{V} \to \{1, \ldots, k\}$ assigns a unique identifier to each class. Reading $\tau(v)$ determines $C(v)$ in $O(1)$ queries, independent of the attribute channel.
@@ -74,7 +74,7 @@ Let $W(P)$ denote the minimum number of primitive queries from $\Phi_{\mathcal{I
 \end{itemize}
 Unless specified, $W$ refers to worst-case identification cost.
 \end{definition}
-\leanmeta{ \LH{ACS1}, \LH{ACS7}}
+\leanmeta{\LH{ACS1}, \LH{ACS7}}
 
 \begin{theorem}[Constant witness for class identity]\label{thm:constant-witness}\label{thm:tag-restored}
 Under nominal-tag access, class identity checking has constant witness cost:
@@ -83,7 +83,7 @@ W(\text{class-identity}) = O(1).
 \]
 Specifically, the witness procedure is to compare the relevant tag values.
 \end{theorem}
-\leanmeta{ \LH{ACS7}, \LH{FORC2}, \LH{DOM1}}
+\leanmeta{\LH{ACS7}, \LH{FORC2}, \LH{DOM1}}
 
 \begin{proof}
 The procedure makes a constant number of primitive queries (one tag access per value) and one comparison. This is $O(1)$ regardless of the number of available attributes $|\mathcal{I}|$.
@@ -100,12 +100,16 @@ A_\pi := \max_{u \in \operatorname{Im}(\pi_{\mathcal{C}})} \left|\{c \in \mathca
 \]
 Thus $A_\pi$ is the size of the largest class-collision block under observable profiles.
 \end{definition}
-\leanmeta{ \LH{LWDC1}, \LH{LWDC3}}
+\leanmeta{\LH{LWDC1}, \LH{LWDC3}}
+
+\begin{remark}[Computing the collision multiplicity]
+The converse is parameterized by $A_\pi$. When the class-profile map is given explicitly as a finite table, $A_\pi$ is obtained by grouping classes by profile and taking the largest fiber size. When $\pi$ is given implicitly by a large program, circuit, or learned model, computing or approximating $A_\pi$ becomes a separate representation-dependent problem. The theorem identifies the exact zero-error tag budget once $A_\pi$ is known; it does not assume that estimating $A_\pi$ is always tractable from an implicit description.
+\end{remark}
 
 \begin{definition}[Maximal-Barrier Regime]\label{def:max-barrier}
 The domain is \emph{maximal-barrier} if $A_\pi = k$, i.e., all classes collide under the observation map.
 \end{definition}
-\leanmeta{ \LH{LWDC3}}
+\leanmeta{\LH{LWDC3}}
 
 \begin{theorem}[Converse]\label{thm:converse}
 For any classification domain, any scheme achieving $D=0$ requires
@@ -116,7 +120,7 @@ L \ge \log_2 A_\pi,
 \]
 where $A_\pi$ is the collision multiplicity.
 \end{theorem}
-\leanmeta{ \LH{LWDC1}}
+\leanmeta{\LH{LWDC1}}
 
 \begin{proof}
 Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical observable profile. For classes in $G$, query transcripts are identical, so zero-error decoding must separate those classes using tag outcomes. With $L$ tag bits there are at most $2^L$ outcomes, hence $2^L \ge |G| = A_\pi$.
@@ -125,7 +129,7 @@ Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical o
 \begin{corollary}[Maximal-Barrier Converse]\label{cor:max-barrier-converse}
 If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
 \end{corollary}
-\leanmeta{ \LH{LWDC3}}
+\leanmeta{\LH{LWDC3}}
 
 In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so Theorem~\ref{thm:converse} already forces $L \ge 1$ bit for zero-error identification.
 
@@ -139,7 +143,7 @@ For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and
 A_\pi \le n.
 \]
 \end{theorem}
-\leanmeta{ \LH{GPH13}}
+\leanmeta{\LH{GPH13}}
 
 \begin{proof}
 Classes in the same profile fiber are pairwise confusable, so each such fiber is a clique in the confusability graph. Zero-error tagging is equivalent to a proper graph coloring; therefore feasibility is equivalent to having at least as many colors as the largest clique size, which is exactly $A_\pi$.
@@ -152,7 +156,7 @@ A_\pi^t \le n_t.
 \]
 Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
 \end{theorem}
-\leanmeta{ \LH{GPH16}, \LH{GPH17}, \LH{GPH20}}
+\leanmeta{\LHrng{GPH}{16}{17}, \LH{GPH20}}
 
 \begin{corollary}[Linear log-bit scaling]\label{cor:graph-logbit-scaling}
 Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block tag budget in bits. Then
@@ -163,7 +167,7 @@ L_t^\star = t\,\log_2 A_\pi,
 \]
 So per-entity tag rate is exactly stable across block length.
 \end{corollary}
-\leanmeta{ \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
+\leanmeta{\LHrng{GPH}{18}{19}, \LH{GPH24}}
 
 In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.
 
@@ -179,7 +183,7 @@ W_{\text{eq}} = O(1).
 
 Specifically, the witness is a single tag comparison. Attribute-only observers require $W_{\text{eq}} = \Omega(d)$ where $d$ is the distinguishing dimension (and $d \le n$, with worst-case $d = n$).
 \end{theorem}
-\leanmeta{ \LH{ACS7}, \LH{ACS1}}
+\leanmeta{\LH{ACS1}, \LH{ACS7}}
 
 \begin{proof}
 \begin{enumerate}

@@ -5,7 +5,7 @@ The introduction has already motivated the semantic-compression viewpoint. This 
 \begin{definition}[Entity space and attribute family]
 Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary \emph{attributes}. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
 \end{definition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}}
 
 \begin{remark}[Terminology]
 We use ``attribute'' for the abstract concept. Depending on domain, attributes may be interfaces/signatures, database columns, phenotypic characters, or catalog facets. The mathematics is identical.
@@ -18,7 +18,7 @@ q_I(v) = \begin{cases} 1 & \text{if } v \text{ satisfies attribute } I \\ 0 & \t
 \]
 Let $\Phi_{\mathcal{I}} = \{q_I : I \in \mathcal{I}\}$ denote the attribute observation family.
 \end{definition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}}
 
 \begin{remark}[Notation for size parameters]
 We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
@@ -30,12 +30,12 @@ The attribute profile function $\pi: \mathcal{V} \to \{0,1\}^{|\mathcal{I}|}$ ma
 \pi(v) = (q_I(v))_{I \in \mathcal{I}}.
 \]
 \end{definition}
-\leanmeta{ \LH{ACS8}, \LH{COMPL1}}
+\leanmeta{\LH{ACS8}, \LH{COMPL1}}
 
 \begin{definition}[Attribute indistinguishability]
 Values $v, w \in \mathcal{V}$ are \emph{attribute-indistinguishable}, written $v \sim w$, iff $\pi(v) = \pi(w)$.
 \end{definition}
-\leanmeta{ \LH{ACS8}, \LH{ACS9}}
+\leanmeta{\LHrng{ACS}{8}{9}}
 
 The relation $\sim$ is an equivalence relation. We write $[v]_\sim$ for the equivalence class of $v$.
 
@@ -47,24 +47,24 @@ A \emph{classification scheme} is any procedure (deterministic or randomized), w
 \end{enumerate}
 All theorems in this paper quantify over all such schemes.
 \end{definition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 This definition is intentionally broad: schemes may be adaptive, randomized, or computationally unbounded. The constraint is \emph{observational}, not computational.
 
 \begin{definition}[Attribute-only observer]
 An \emph{attribute-only observer} is any procedure whose interaction with a value $v \in \mathcal{V}$ is limited to queries in $\Phi_{\mathcal{I}}$. Formally, the observer interacts with $v$ only via primitive attribute queries $q_I \in \Phi_{\mathcal{I}}$; hence any transcript (and output) factors through $\pi(v)$.
 \end{definition}
-\leanmeta{ \LH{ACS8}, \LH{COMPL1}}
+\leanmeta{\LH{ACS8}, \LH{COMPL1}}
 
 \begin{definition}[Admissibility contract]\label{def:admissibility-contract}
 All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit nominal tag charged to the tag budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
 \end{definition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 \begin{proposition}[Model capture]\label{prop:model-capture}
 Any classification protocol whose evidence consists only of the declared observation family and any explicit nominal tag is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
 \end{proposition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
 
@@ -83,7 +83,7 @@ v \sim w \implies P(v) = P(w).
 \]
 Equivalently: no attribute-only observer can compute any property that varies within an equivalence class.
 \end{theorem}
-\leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}}
+\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}}
 
 \begin{proof}
 Suppose $P$ is attribute-computable via $f$, i.e., $P(v) = f(\pi(v))$ for all $v$. Let $v \sim w$, so $\pi(v) = \pi(w)$. Then:
@@ -103,7 +103,7 @@ Theorem~\ref{thm:information-barrier} is the base invariance statement. The tech
 \begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
 Let $C: \mathcal{V} \to \{1,\ldots,k\}$ be the class assignment function. If there exist values $v, w$ with $\pi(v) = \pi(w)$ but $C(v) \neq C(w)$, then class identity is not attribute-computable.
 \end{corollary}
-\leanmeta{ \LH{ACS9}}
+\leanmeta{\LH{ACS9}}
 
 \begin{proof}
 Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
@@ -112,12 +112,12 @@ Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
 \begin{remark}[Quotient viewpoint]
 The relation $\sim$ partitions $\mathcal{V}$ into observational equivalence classes, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared observable family.
 \end{remark}
-\leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}, \LH{COMPL1}, \LH{FORC2}}
+\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}, \LH{COMPL1}, \LH{FORC2}}
 
 \begin{remark}[Fixed-axis viewpoint]
 A representative specialization writes the observable state as $\alpha(v)=(B(v),S(v))$, where $S(v)=\pi(v)$ is the declared profile and $B(v)$ is any explicit provenance carrier. In that viewpoint, admissible semantic properties factor through $\alpha$, and properties that vary within an $\alpha$-fiber require adding new information rather than better inference alone.
 \end{remark}
-\leanmeta{ \LH{ACS5}, \LH{DOM1}, \LH{L6}}
+\leanmeta{\LH{ACS5}, \LH{DOM1}, \LH{L6}}
 
 \begin{theorem}[Fixed-axis completeness]\label{thm:model-completeness}
 Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
@@ -125,7 +125,7 @@ Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible p
 P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
 \]
 \end{theorem}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
 
 \begin{proof}
 An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript.
@@ -134,14 +134,14 @@ An admissible strategy observes $v$ only through responses to primitive queries 
 \begin{corollary}[Fixed-axis incompleteness]\label{cor:fixed-axis-incompleteness}
 If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{ \LH{L6}}
+\leanmeta{\LH{L6}}
 
 \begin{proposition}[Observational quotient]\label{prop:observational-quotient}
 For any admissible strategy using only the declared observable family, the entire interaction transcript and hence the output depend only on the observable state. Equivalently, every in-scope semantic property factors through that state.
 \end{proposition}
-\leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}}
+\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}}
 
 \begin{corollary}[Adding information changes the state space]\label{cor:ad-hoc-add-axis}
 If two values agree on the declared observable state, then no admissible strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs introduces additional information that should be represented explicitly in the model.
 \end{corollary}
-\leanmeta{ \LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
+\leanmeta{\LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
