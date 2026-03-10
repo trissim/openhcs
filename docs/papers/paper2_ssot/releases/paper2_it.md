@@ -10,32 +10,24 @@ _Abstract not available._
 
 # Introduction
 
-When one latent fact is represented at several modifiable locations, exact consistency becomes a zero-error inference problem. The current system state either identifies one authoritative value or leaves a nontrivial ambiguity class of mutually incompatible latent states.
-
-An abstract multi-location encoding model is used throughout. A fact $F$ is represented across locations $\{L_1,\dots,L_n\}$, some independently writable and some derived from others. Two questions drive the analysis:
-
-1.  When does the encoding architecture itself guarantee exact consistency?
-
-2.  When it does not, how much side information is needed for zero-error resolution?
-
-The resulting theory belongs to the intersection of zero-error information theory, side-information source coding, and finite converses [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @witsenhausen1976zero; @slepian1973noiseless; @cover2006elements].
+When one latent fact is represented at several modifiable locations, exact consistency becomes a zero-error inference problem for a deterministic multi-location encoding. The current system state either identifies one authoritative value or leaves a nontrivial ambiguity class of mutually incompatible latent states. The paper asks when the encoding architecture itself guarantees exact consistency and, when it does not, how much side information is needed for zero-error resolution. The resulting theory belongs to the intersection of zero-error information theory, side-information source coding, and finite converses [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @witsenhausen1976zero; @slepian1973noiseless; @cover2006elements].
 
 ## Problem Formulation {#sec:encoding-problem}
 
-The model yields an exact-consistency analogue of zero-error resolvability for modifiable encodings. Rate is measured by the number of independently writable locations; we refer to this quantity as the *independent rate* and use *degrees of freedom* (DOF) only as shorthand. The fundamental threshold is
+The model yields an exact-consistency analogue of zero-error resolvability for modifiable encodings. Rate is measured by the number of independently writable locations; we refer to this quantity as the *independent rate* and use *degrees of freedom* (DOF) only as shorthand. The central theorem family is a deterministic finite converse: once ambiguity survives the observation transcript, the same finite information budget reappears in several classical forms.
+
+::: theorem
+Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible exactly when the pair map $x \mapsto (Y(x),T(x))$ is injective on the surviving ambiguity class. This same injectivity requirement yields confusability and counting converses, conditional-entropy and decoder-output reformulations, finite alphabet-gap constraints, and a budgeted finite-error extension. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.
+:::
+
+The structural threshold then follows as the special case in which exact zero incoherence is possible:
 
 ::: center
 :::
 
 where $C_0$ denotes the largest independent rate that guarantees zero incoherence.
 
-A finite converse family shows that once ambiguity survives the observation transcript, the same finite information budget reappears in several classical forms.
-
-::: theorem
-Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $\hat X$ be any deterministic decoder output. If $Y$ does not isolate the true state, then the same finite observation/side-information budget simultaneously governs exact zero-error resolution of ambiguity classes, bounds the conditional entropy $H(X\mid Y)$, bounds the decoder-output entropy $H(\hat X)$, and appears as an output-entropy or KL gap relative to the corresponding finite alphabet ceiling. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.
-:::
-
-The threshold theorem and the converse family interact: $C_0=1$ identifies the unique zero-incoherence regime, while the converse explains what fails once the architecture moves above that regime.
+The converse family and the threshold theorem therefore play different roles: the converse identifies the finite obstruction, and $C_0=1$ identifies the unique regime in which that obstruction is absent.
 
 ## Relation to Classical Information Theory {#sec:connection-it}
 
@@ -43,11 +35,11 @@ Three classical lines are particularly relevant.
 
 **Zero-error information theory.** Shannon's zero-error framework and its graph-theoretic refinements describe exact communication under confusability constraints [@shannon1956zero; @korner1973graphs; @lovasz1979shannon]. Our model translates that perspective from one-shot channels to persistent encodings under edits.
 
-**Source coding with side information.** In Slepian--Wolf theory, and in Witsenhausen's zero-error side-information problem, decoder side information lowers the rate or label budget needed for correct recovery [@slepian1973noiseless; @witsenhausen1976zero]. Coding-for-computing and functional-compression results make the same structure explicit when the decoder seeks a deterministic function rather than the full source [@orlitsky2001coding; @doshi2010functional]. Here the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery is impossible unless the available tags or observations separate all remaining alternatives.
+**Source coding with side information.** In Slepian--Wolf theory and Witsenhausen's zero-error side-information problem, decoder side information lowers the rate or label budget needed for correct recovery [@slepian1973noiseless; @witsenhausen1976zero]. Here the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery is impossible unless the available tags or observations separate all remaining alternatives.
 
 **Finite entropy converses.** Classical Fano inequalities and related entropy bounds convert decoding difficulty into information bounds [@fano1961transmission; @witsenhausen1975conditional; @cover2006elements]. Our setting yields a deterministic finite-source analogue in which counting, conditional entropy, decoder-output entropy, and output-gap formulations become different normal forms of the same obstruction.
 
-## Realizability and Applications {#sec:realizability}
+## Realizability and Verification {#sec:realizability}
 
 Beyond the abstract threshold, a second question is when a concrete host system can realize the rate-$1$ regime. We show that two structural properties are required:
 
@@ -57,7 +49,7 @@ Beyond the abstract threshold, a second question is when a concrete host system 
 
 ## Paper Organization {#overview}
 
-Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"} interprets derivation as the dependence structure achieving rate $1$. Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} gives the realizability theorem. Section [\[sec:bounds\]](#sec:bounds){reference-type="ref" reference="sec:bounds"} develops the finite converse family and its rate-complexity consequence. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} provide brief computational illustrations. A supplementary Lean 4 artifact machine-checks the core counting, threshold, realizability, and complexity chains [@demoura2021lean4].
+Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} formalizes the encoding model, the zero-incoherence threshold, and the base side-information lower bound. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"} interprets derivation as the dependence structure achieving rate $1$. Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} gives the realizability theorem. Section [\[sec:bounds\]](#sec:bounds){reference-type="ref" reference="sec:bounds"} develops the finite converse family and its rate-complexity consequence. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} verify the realizability criterion on concrete host systems. A supplementary Lean 4 artifact machine-checks the converse family, threshold chain, realizability theorem, and rate-complexity arguments [@demoura2021lean4].
 
 ## Scope {#sec:scope}
 
@@ -67,13 +59,15 @@ The scope is finite facts represented at multiple locations under admissible edi
 
 The main contributions are:
 
--   **A deterministic finite converse family** for exact consistency, starting from the $\log_2 k$ side-information lower bound and extending to confusability, conditional-entropy, decoder-output, and entropy-gap formulations.
+-   **A deterministic finite converse family** for exact consistency, presented through confusability, counting, conditional-entropy, decoder-output, and entropy-gap formulations of the same finite obstruction, together with a deterministic data-processing step and a budgeted finite-error extension.
 
--   **A sharp threshold corollary** showing that zero-incoherence capacity is exactly one independent source.
+-   **A sharp threshold corollary** showing that zero-incoherence capacity is exactly one independent source; this is the structural rate-$1$ consequence of the converse family.
 
 -   **A realizability theorem** identifying causal propagation and provenance observability as the conditions needed to attain the rate-$1$ regime in concrete systems.
 
 -   **An operational consequence** showing $O(1)$ manual update cost at rate $1$ and $\Omega(n)$ cost above it, with an unbounded asymptotic gap.
+
+-   **A supplementary machine-checked artifact** verifying the converse family, threshold chain, realizability theorem, and rate-complexity arguments in Lean 4.
 
 
 # Encoding Systems and Coherence {#sec:foundations}
@@ -481,7 +475,7 @@ A host system realizes the rate-$1$ regime when one location is authoritative an
 
 ## Confusability and Side Information {#sec:confusability}
 
-To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same kind of zero-error obstruction studied earlier.
+To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same zero-error obstruction analyzed in Section [\[sec:bounds\]](#sec:bounds){reference-type="ref" reference="sec:bounds"}: if the host cannot separate the surviving ambiguity class, exact verification requires additional structural side information.
 
 ::: lemma
 []{#lem:confusability-clique label="lem:confusability-clique"} If the confusability graph for $F$ contains a clique of size $k$, then any zero-error side-information scheme distinguishing those $k$ alternatives requires at least $k$ distinct tags, equivalently at least $\log_2 k$ bits of side information.
@@ -570,31 +564,211 @@ The two requirements are logically separate.
 The application section specializes the theorem to computational examples.
 
 
-# Application: Computational Realizations {#sec:evaluation}
+# Verification of the Realizability Criterion {#sec:evaluation}
 
-This section records representative computational instantiations of Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}.
+This section tests Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"} on representative host systems.
 
 ::: corollary
 []{#cor:lang-realizability label="cor:lang-realizability"} A computational platform realizes verifiable independent rate $1$ for structural facts if and only if it combines automatic propagation of derived representations with queryable provenance for those representations.
 :::
 
-The corollary is a direct restatement of Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. What changes across applications is the implementation of the two required capabilities.
+The corollary is a direct restatement of Theorem [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. What changes across examples is the host mechanism that provides propagation and provenance. The tables below record whether the theorem's prediction is confirmed on concrete systems.
 
-:::: center
-::: tabularx
-@\>p0.22YY@ **Domain** & **Authoritative source and derived views** & **How the theorem specializes**\
-Language-level artifacts & one declarative definition plus maintained registries, interface views, or metadata projections & definition-time or build-time hooks supply propagation; reflection or metadata APIs supply provenance\
-Databases & one base relation or schema declaration plus maintained views, indexes, or summaries & transactional maintenance supplies propagation; system catalogs expose provenance\
-Configuration and deployment systems & one source declaration plus dependency outputs or rendered manifests & dependency-driven recomputation supplies propagation; resource graphs expose provenance\
+#### Programming-language runtimes (selected).
+
+For language-level artifacts, the realizability question becomes concrete: does the host language/runtime itself provide both (i) automatic propagation from one structural definition to its derived runtime views and (ii) queryable provenance for those views, without relying on external build tooling? Table [\[tab:selected-pl\]](#tab:selected-pl){reference-type="ref" reference="tab:selected-pl"} records a compact comparison for representative mainstream runtimes drawn from widely used languages in current usage surveys and rankings [@stackoverflow2025; @tiobe2024].
+
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Language**                                             **Prop.**   **Prov.**   **Rate 1**   **Feature**        **Reason**
+  -------------------------------------------------------- ----------- ----------- ------------ ------------------ --------------------------------------------------------------------------------------------------------
+  Python [@pep487; @pythondatamodel2025]                   yes         yes         yes          \_\_init\_-\       Host runtime provides class-definition hooks and hierarchy introspection.
+                                                                                                subclass\_\_\      
+                                                                                                \_\_sub-\          
+                                                                                                classes\_\_()      
+
+  Java [@gosling2021java]                                  no          no          no           annotations only   Annotations/tooling are external; the JVM lacks subclass-enumeration provenance.
+
+  Rust [@rustref2024]                                      partial     no          no           proc macros        Proc macros generate code at compile time, but generated provenance is unavailable at runtime.
+
+  Go [@gospec2024]                                         no          no          no           reflection only    No definition-time hooks and no host-level registry of implementers.
+
+  TypeScript/\                                             partial     no          no           decorators         Decorators attach metadata, but type erasure and missing subclass provenance block exact verification.
+  JavaScript\                                                                                                      
+  [@typescriptDecorators2025; @javascriptDecorators2025]                                                           
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+**Table V.1.** Selected mainstream programming-language runtimes under Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"}. []{#tab:selected-pl label="tab:selected-pl"}
+
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} predicts verifiable rate $1$ exactly when both host-level conditions hold. In this selected runtime set, Python is the only positive case; the negative rows fail for the missing condition listed in the table. Table [\[tab:selected-db\]](#tab:selected-db){reference-type="ref" reference="tab:selected-db"} shows the same separation in a non-programming-language setting.
+
+#### Database systems.
+
+The same criterion separates native maintained views from external synchronization pipelines.
+
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Database pattern**                                                                            **Prop.**   **Prov.**   **Rate 1**   **Reason**
+  ----------------------------------------------------------------------------------------------- ----------- ----------- ------------ ----------------------------------------------------------------------------------------------------------------------------
+  Engine-maintained materialized view [@postgresMaterializedViews2025; @postgresPgMatviews2025]   yes         yes         yes          The database engine maintains the derived relation and exposes catalog metadata for the maintained object.
+
+  External ETL copy / duplicate summary table                                                     no          no          no           Synchronization can be skipped or forked, and provenance for the derived copy is no longer intrinsic to the host database.
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+**Table V.2.** Database realizations under the same criterion. []{#tab:selected-db label="tab:selected-db"}
+
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} again predicts the outcome exactly: engine-maintained views satisfy both conditions, whereas externalized synchronization does not.
+
+#### Dependency-resolution systems.
+
+A third everyday regime appears in dependency-resolution systems. Package managers often provide strong provenance observability for resolved dependency graphs, but they do not provide causal propagation in the sense of Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"}: editing the authoritative manifest does not itself update the lockfile or installed graph until a separate host operation is executed.
+
+::: center
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **System**                                                  **Prop.**   **Prov.**   **Rate 1**   **Feature**          **Reason**
+  ----------------------------------------------------------- ----------- ----------- ------------ -------------------- ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  npm\                                                        no          yes         no           lockfile + explain   The lockfile records the resolved tree and npm exposes dependency provenance, but manifest edits and lock/tree synchronization are separated by explicit npm operations.
+  [@npmLock2026; @npmExplain2026; @npmLs2026]                                                                           
+
+  Cargo\                                                      no          yes         no           lockfile + tree      Cargo exposes resolved-dependency provenance clearly, but `Cargo.lock` remains a distinct derived artifact synchronized through Cargo commands rather than at source-edit time.
+  [@cargoLockGuide2026; @cargoTree2026; @cargoMetadata2026]                                                             
+
+  Poetry\                                                     no          yes         no           `show –tree`         The resolved graph is queryable, but lock regeneration is an explicit step, so propagation is not intrinsic to the source edit itself.
+  [@poetryCli2026]                                                                                                      
+
+  pnpm\                                                       no          yes         no           lockfile + why       The host exposes dependency provenance, but the lockfile is still a separately maintained derived artifact rather than an automatically updated structural view at edit time.
+  [@pnpmInstall2026; @pnpmWhy2026; @pnpmList2026]                                                                       
+  -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+**Table V.3.** Dependency-resolution systems are typically provenance-rich but propagation-incomplete under the realizability criterion. []{#tab:selected-deps label="tab:selected-deps"}
 :::
-::::
 
-Platforms that rely solely on external batch synchronization or opaque code generation do not automatically satisfy the corollary: if propagation can be bypassed or provenance is not available to the host system, exact verification of the single-source regime remains unresolved. Supplement A contains additional case-study material.
+Corollary [\[cor:lang-realizability\]](#cor:lang-realizability){reference-type="ref" reference="cor:lang-realizability"} also predicts the mixed regime in Table [\[tab:selected-deps\]](#tab:selected-deps){reference-type="ref" reference="tab:selected-deps"}: provenance can be present without host-native propagation, and then verifiable rate $1$ still fails. Supplement A contains additional case-study material.
 
 
-# Rate-Complexity Bounds {#sec:bounds}
+# Finite Converse Family and Rate-Complexity Bounds {#sec:bounds}
 
-The threshold $C_0=1$ has an operational consequence: independent rate governs manual synchronization cost. This section states that consequence in the same finite, deterministic model used for the zero-error theorems.
+This section states the deterministic finite converse family and then derives its operational rate-complexity consequence.
+
+## Finite Converse Family {#sec:finite-converse-family}
+
+The cleanest zero-error formulation starts from the joint observation-tag map itself.
+
+::: theorem
+[]{#thm:pair-injective label="thm:pair-injective"} Let $X$ range over a finite latent alphabet, let $Y$ be the deterministic observation transcript, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible if and only if the pair map $x \mapsto (Y(x),T(x))$ is injective on the ambiguity class under consideration.
+:::
+
+::: proof
+*Proof.* If two distinct latent states induce the same pair $(Y,T)$, then every deterministic decoder receives the same input on both states and must err on at least one of them. Conversely, if the pair map is injective, define the decoder by inversion on the image of $(Y,T)$; injectivity makes that inverse single-valued and exact. ◻
+:::
+
+::: theorem
+[]{#thm:confusability-converse label="thm:confusability-converse"} Fix a deterministic observation transcript and an $L$-bit side-information tag. If $K$ latent states induce the same observation transcript, then exact zero-error decoding on that ambiguity class requires $K$ distinct tag outcomes. Equivalently, a $K$-way ambiguity class forms a confusability clique whose size cannot exceed the available tag alphabet.
+:::
+
+::: proof
+*Proof.* Apply Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} on an ambiguity class on which the observation is constant. Then injectivity of $(Y,T)$ reduces to injectivity of the tag coordinate alone on that class. Since an $L$-bit tag provides at most $2^L$ outcomes, the clique size cannot exceed $2^L$. ◻
+:::
+
+::: corollary
+[]{#cor:global-budget label="cor:global-budget"} If the observation alphabet has size $O$ and the auxiliary tag alphabet has size $T$, then exact zero-error recovery on a latent alphabet of size $K$ requires $$K \le O\,T.$$
+:::
+
+::: proof
+*Proof.* Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} requires injectivity of the map into the product alphabet $\mathcal Y \times \mathcal T$. A product alphabet of size $O\,T$ cannot support an injective image of more than $O\,T$ latent states. ◻
+:::
+
+::: theorem
+[]{#thm:fiber-cardinality label="thm:fiber-cardinality"} Fix an observation value $y$. On the observation fiber $$\mathcal F_y=\{x : Y(x)=y\},$$ exact zero-error recovery forces the tag map to be injective. Consequently, $$|\mathcal F_y| \le |\mathcal T|.$$
+:::
+
+::: proof
+*Proof.* Restrict Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} to $\mathcal F_y$. Since $Y$ is constant on the fiber, injectivity of the pair map reduces to injectivity of the tag coordinate alone. An injective map from $\mathcal F_y$ into the tag alphabet immediately gives $|\mathcal F_y| \le |\mathcal T|$. ◻
+:::
+
+::: theorem
+[]{#thm:fano-converse label="thm:fano-converse"} Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then $$K \le 2^L.$$ Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
+:::
+
+::: proof
+*Proof.* This is Theorem [\[thm:confusability-converse\]](#thm:confusability-converse){reference-type="ref" reference="thm:confusability-converse"} specialized to a single $K$-way ambiguity class. ◻
+:::
+
+The counting bound is the coarsest form of the obstruction. The next step is to weight the same argument by source mass. Exact recovery still enforces injectivity on successful confusability classes, but now the question is how much entropy can remain once the source is partitioned into success and failure branches.
+
+::: theorem
+[]{#thm:conditional-entropy-converse label="thm:conditional-entropy-converse"} Let $X$ be uniform on a $K$-way ambiguity class and let $Y$ be the deterministic observation transcript. If $Y$ is constant on that class, then $H(X\mid Y)=\log_2 K$. In particular, any tag-observation pair $(Y,T)$ that resolves the class exactly must satisfy $$H(X\mid Y,T)=0
+\qquad\text{and}\qquad
+H(T\mid Y)\ge \log_2 K .$$
+:::
+
+::: proof
+*Proof.* If $Y$ is constant on the class, conditioning on $Y$ leaves the uniform prior unchanged, hence $H(X\mid Y)=\log_2 K$. Exact recovery from $(Y,T)$ forces $H(X\mid Y,T)=0$, so the side information carried by $T$ must close the entire $\log_2 K$ gap. ◻
+:::
+
+::: theorem
+[]{#thm:weighted-clique-entropy label="thm:weighted-clique-entropy"} Let $S$ be a success set for a zero-error decoder, and suppose $S$ forms a confusability clique under the observation transcript. If $p_S$ denotes the total probability mass of $S$, then the entropy carried by the successful states obeys $$\sum_{x\in S} p(x)\log_2 \frac{1}{p(x)}
+\;\le\;
+h_2(p_S) + p_S \log_2 |\mathcal T|,$$ where $h_2$ is binary entropy and $|\mathcal T|$ is the tag alphabet size.
+:::
+
+::: proof
+*Proof.* Inside a confusability clique, exact recovery on the success set still forces tag injectivity. The successful states therefore contribute at most $\log_2 |\mathcal T|$ bits per unit success mass. Separating success from failure adds the Bernoulli term $h_2(p_S)$, which yields the stated bound. ◻
+:::
+
+::: theorem
+[]{#thm:success-set-injective label="thm:success-set-injective"} Let $S$ be the decoder success set inside a confusability clique. Then the restriction of the observation-tag map to $S$ is injective, and the weighted entropy of the successful states is bounded by the logarithm of the available tag budget: $$\sum_{x\in S} p(x)\log_2 \frac{1}{p(x)}
+\le
+h_2(p_S)+ p_S \log_2 |\mathcal T|.$$
+:::
+
+::: proof
+*Proof.* On the success set, exact decoding holds by definition, so Theorem [\[thm:pair-injective\]](#thm:pair-injective){reference-type="ref" reference="thm:pair-injective"} applies directly to the restricted map. Because the clique assumption makes the observation coordinate constant up to confusability, injectivity must be carried by the tag coordinate. The successful branch therefore occupies at most $|\mathcal T|$ distinguishable states, and weighting by its total mass $p_S$ yields the stated entropy bound. ◻
+:::
+
+::: theorem
+[]{#thm:decoder-gap-converse label="thm:decoder-gap-converse"} In the same deterministic finite model, the obstruction can also be expressed as output-entropy and finite-budget gap constraints: any deterministic decoder output $\hat X$ satisfies $$H(\hat X)\le H(Y,T)\le H(X),$$ and the observation-tag entropy and decoded-output entropy are bounded by their corresponding finite alphabet ceilings, so the deficits $$\log_2 |\mathcal Y\times \mathcal T|-H(Y,T),
+\qquad
+\log_2 |\widehat{\mathcal X}|-H(\hat X)$$ are nonnegative and vanish only in the uniform saturation cases formalized in the supplement.
+:::
+
+::: proof
+*Proof.* The decoder output is a deterministic function of $(Y,T)$, so Theorem [\[thm:deterministic-data-processing\]](#thm:deterministic-data-processing){reference-type="ref" reference="thm:deterministic-data-processing"} gives $H(\hat X)\le H(Y,T)$. The pair entropy is itself bounded by the source entropy and by the logarithm of the available pair alphabet, which yields the nonnegative gap constraints. ◻
+:::
+
+::: theorem
+[]{#thm:deterministic-data-processing label="thm:deterministic-data-processing"} Let $\kappa$ be any deterministic coarsening of the observation-tag pair $(Y,T)$. Then $$H(\kappa(Y,T)) \le H(Y,T).$$ In particular, since any deterministic decoder output $\hat X$ is a coarsening of $(Y,T)$, $$H(\hat X)\le H(Y,T)\le \log_2 |\mathcal Y\times \mathcal T|.$$
+:::
+
+::: proof
+*Proof.* Deterministic coarsening merges atoms of the distribution on $(Y,T)$ and therefore cannot increase entropy. A decoder is one such coarsening. The ceiling follows because $(Y,T)$ takes values in a finite alphabet of size $|\mathcal Y\times\mathcal T|$. ◻
+:::
+
+::: theorem
+[]{#thm:equivalence-viewpoint label="thm:equivalence-viewpoint"} The confusability, counting, conditional-entropy, decoder-output, and finite-gap statements above are different normal forms of the same deterministic finite zero-error obstruction: a surviving $K$-way ambiguity class requires a budget of at least $\log_2 K$ bits to be resolved exactly.
+:::
+
+::: proof
+*Proof.* Pair injectivity is the structural core. The confusability and counting theorems express the injectivity requirement combinatorially; the conditional-entropy and weighted-entropy theorems express it in source-mass coordinates; the decoder-output and gap theorems express it through deterministic coarsening and finite alphabet ceilings; and the finite-error theorem is the relaxed version obtained by allowing a nonzero failure branch. Each theorem therefore measures the same failure of exact isolation in a different coordinate system. ◻
+:::
+
+## Finite-error extension {#sec:finite-error-extension}
+
+The main body of the paper studies exact zero error. The same deterministic finite model also supports a budgeted finite-error extension.
+
+::: theorem
+[]{#thm:finite-error-budgeted label="thm:finite-error-budgeted"} Let $P_e$ denote the decoder error probability on a finite source of size $K$, observed through a deterministic transcript alphabet of size $O$ together with a tag alphabet of size $T$. Then the decoded-output entropy obeys $$H(\hat X)
+\;\le\;
+h_2(P_e) + (1-P_e)\log_2 (OT) + P_e \log_2 (K-1).$$
+:::
+
+::: proof
+*Proof.* Partition the source into success and failure events. On the success branch, the decoded output is constrained by the observation-tag budget and contributes at most $\log_2(OT)$. On the failure branch, the decoder can still output at most one of the remaining $K-1$ alternatives. The Bernoulli split between the two branches contributes the binary-entropy term. Equivalently, $$H(\hat X)=H(\hat X \mid \text{success/failure}) + H(\text{success/failure})$$ is bounded by combining the support bound on each branch with the binary entropy of the branch variable itself. ◻
+:::
+
+The zero-error theorems are the $P_e=0$ boundary of this inequality. In that regime the success branch occupies all probability mass, the Bernoulli term vanishes, the failure contribution disappears, and the budget collapses back to the finite converse family above.
+
+## Rate-Complexity Consequence {#sec:rate-complexity-consequence}
+
+The threshold $C_0=1$ has an operational consequence: independent rate governs manual synchronization cost in the same finite deterministic model.
 
 ## Cost Model {#sec:cost-model}
 
@@ -624,18 +798,6 @@ Only manual edits are counted. Derived locations updated automatically by the ho
 *Proof.* Each independent location can retain an outdated value unless it is edited directly. To restore exact consistency after changing $F$, each of the $n$ independent locations must therefore be synchronized manually. Hence the effective modification complexity grows at least linearly in $n$. ◻
 :::
 
-## Finite Counting Converse {#sec:info-converse}
-
-The update-cost lower bound is the operational face of the same information obstruction studied earlier: insufficient side information prevents exact recovery of the correct latent value.
-
-::: theorem
-[]{#thm:fano-converse label="thm:fano-converse"} Let $F$ range over $K$ possible latent values. Suppose exact recovery is attempted from a fixed observation transcript together with an $L$-bit side-information tag. Then $$K \le 2^L.$$ Equivalently, exact zero-error recovery of $K$ ambiguous states requires at least $\log_2 K$ bits of side information.
-:::
-
-::: proof
-*Proof.* An $L$-bit tag yields at most $2^L$ distinct labels. If the base observation transcript is fixed across the ambiguous states, exact recovery requires the tag assignment to distinguish all $K$ possibilities. Distinct states therefore need distinct tags, which is possible only when $K\le 2^L$. ◻
-:::
-
 ::: lemma
 []{#lem:info-dof label="lem:info-dof"} If the available side-information mechanism exposes at most $2^L$ distinguishable tags while the latent ambiguity class has size $K>2^L$, then no zero-error resolver can identify the true state from those tags alone. Any architecture that still guarantees exact correctness must therefore rely on additional independently accessible discriminating support, moving the system above the single-source regime.
 :::
@@ -643,30 +805,6 @@ The update-cost lower bound is the operational face of the same information obst
 ::: proof
 *Proof.* Theorem [\[thm:fano-converse\]](#thm:fano-converse){reference-type="ref" reference="thm:fano-converse"} rules out exact recovery from the available tag budget. If exact correctness is nevertheless required, the architecture must supplement the insufficient side-information channel with additional independently accessible information. In the present model, that means leaving the rate-$1$ regime and paying the synchronization cost of Theorem [\[thm:lower-bound\]](#thm:lower-bound){reference-type="ref" reference="thm:lower-bound"}. ◻
 :::
-
-## Worked Example {#sec:worked-mi}
-
-Consider a fact with $K=4$ admissible values while the available side-information channel supplies only one bit. Since $2^1 < 4$, Theorem [\[thm:fano-converse\]](#thm:fano-converse){reference-type="ref" reference="thm:fano-converse"} rules out zero-error recovery. The architecture must either enlarge the side-information alphabet or expose additional independent support. The theorem does not depend on software; the same logic applies to any host system whose observation transcript leaves four mutually compatible alternatives.
-
-## Unified Converse Viewpoint {#sec:unified-converse}
-
-The counting theorem is the basic form of the converse, but it is not the only one. In the deterministic finite model, the same budget obstruction can be restated in several classical languages.
-
-::: theorem
-Let $X$ be the latent source, let $Y$ denote the deterministic observation/side-information transcript, and let $\hat X$ be any deterministic decoder output. If $Y$ does not identify the true state exactly, then the same finite budget simultaneously:
-
-1.  lower-bounds zero-error ambiguity resolution and confusability-clique separation,
-
-2.  upper-bounds the conditional entropy $H(X\mid Y)$,
-
-3.  upper-bounds the decoder-output entropy $H(\hat X)$,
-
-4.  and appears as an output-entropy or KL gap relative to the ambient finite alphabets.
-
-These are different normal forms of one deterministic finite converse family rather than unrelated lemmas.
-:::
-
-The zero-incoherence threshold identifies the unique exact-consistency regime; the converse family explains how departures from that regime reappear as finite information-budget obstructions.
 
 ## The Unbounded Gap {#sec:gap}
 
@@ -678,7 +816,7 @@ The zero-incoherence threshold identifies the unique exact-consistency regime; t
 *Proof.* By Theorem [\[thm:upper-bound\]](#thm:upper-bound){reference-type="ref" reference="thm:upper-bound"}, a rate-$1$ architecture has constant effective modification complexity. By Theorem [\[thm:lower-bound\]](#thm:lower-bound){reference-type="ref" reference="thm:lower-bound"}, an architecture with $n$ independent encodings incurs linear cost in $n$. The ratio therefore grows without bound. ◻
 :::
 
-The asymptotic statement has a simple practical reading: once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not merely with the visibility of the fact.
+Once a fact is duplicated across many independently writable locations, the cost of preserving exact consistency scales with the number of independent copies, not merely with the visibility of the fact.
 
 
 # Application: Supplementary Case Study Pointer {#sec:empirical}
@@ -709,17 +847,21 @@ The Lean 4 formalization places the work in the tradition of mechanized mathemat
 
 # Conclusion {#sec:conclusion}
 
-Exact consistency in modifiable multi-location encodings yields a deterministic finite converse problem. Once the observation transcript leaves a nontrivial ambiguity class, exact recovery requires side information of sufficient cardinality, and the same finite budget reappears in confusability, conditional-entropy, decoder-output, and entropy-gap formulations.
+Exact consistency in modifiable multi-location encodings yields a deterministic finite converse family. Once the observation transcript leaves a nontrivial ambiguity class, the same finite obstruction can be stated as a confusability-clique bound, a counting converse, a conditional-entropy lower bound, and decoder-output or finite-gap constraints. The same model also supports deterministic data-processing and a budgeted finite-error extension.
 
-Exact $k$-way ambiguity requires at least $\log_2 k$ bits of side information. The zero-incoherence capacity of the model is exactly one independent source: one authoritative location with deterministic views achieves exact consistency, while any higher independent rate makes ambiguity reachable. This threshold has an operational consequence: manual update cost is $O(1)$ at rate $1$ and $\Omega(n)$ above it, with an unbounded asymptotic gap. The realizability theorem identifies causal propagation and provenance observability as the conditions for attaining the rate-$1$ regime in host systems.
-
-These results describe one obstruction: insufficient information to distinguish competing latent states exactly.
+The threshold $C_0=1$ is the structural corollary of that converse family: one authoritative location with deterministic views is the unique zero-incoherence regime, and any higher independent rate makes ambiguity reachable. The same obstruction then reappears operationally as manual update cost, yielding $O(1)$ cost at rate $1$ and $\Omega(n)$ cost above it, with an unbounded asymptotic gap. The realizability theorem identifies causal propagation and provenance observability as the host-level conditions under which the rate-$1$ regime is actually attained.
 
 **Limitations and future work.** The present model is finite and exact. Natural extensions include probabilistic coherence, networked encodings with communication constraints, and partial-correlation regimes that move closer to classical stochastic side-information models.
 
 ## Artifacts {#sec:data-availability}
 
-The Lean 4 formalization is included as supplementary material. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} record computational instantiations and case-study material.
+The Lean 4 formalization is included as supplementary material. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} record theorem-level realizability checks and case-study material.
+
+## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
+
+Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
+
+The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
 
 
 # Mechanized Verification (Lean 4) {#sec:lean .unnumbered}
@@ -734,7 +876,7 @@ The artifact covers four groups of claims used in the paper:
 
 -   the rate-complexity chain, including the $O(1)$ upper bound, the $\Omega(n)$ lower bound, and the unbounded-gap consequence;
 
--   the finite entropy layer supporting the conditional-entropy, decoder-output, and KL-gap reformulations.
+-   the finite entropy layer supporting pair injectivity, clique/fiber budget bounds, conditional-entropy reformulations, deterministic data processing, decoder-output bounds, KL-gap reformulations, and the budgeted finite-error extension.
 
 The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.
 

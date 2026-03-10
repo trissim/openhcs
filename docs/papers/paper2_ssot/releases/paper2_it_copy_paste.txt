@@ -1,15 +1,15 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-08T14:59:29.200336
+Generated: 2026-03-09T00:17:53.907345
 
 === HUMAN COPY/PASTE ===
 
 Title: Exact Consistency in Multi-Location Encodings: Zero-Error Thresholds and Side Information Bounds
 
 Abstract (Unicode, for Zenodo):
-We study exact consistency in finite multi-location encodings, where one latent value is represented at several writable or derived locations and an observer sees a deterministic transcript of the current state. Our main contribution is a deterministic finite converse: if the observation transcript leaves a k-way ambiguity class, any zero-error resolver requires at least log₂k bits of side information, and the same finite obstruction admits confusability, conditional-entropy, decoder-output, and entropy-gap formulations. As a threshold corollary, the largest independent rate compatible with zero incoherence is exactly 1: one authoritative source with deterministic views achieves exact consistency, whereas more than one independently writable source makes ambiguity reachable. This threshold has an operational consequence for updates, giving O(1) manual modification cost at rate 1 and Ω(n) cost above it. A supplementary Lean 4 artifact machine-checks the core threshold, converse, realizability, and rate-complexity arguments. Index Terms: zero-error information theory, side information, confusability, exact consistency, deterministic converse
+We study exact consistency in finite multi-location encodings, where one latent value is represented at several writable or derived locations and an observer sees a deterministic transcript of the current state. Our main contribution is a deterministic finite converse family: exact zero-error recovery from observation and auxiliary tags is equivalent to injectivity of the induced observation-tag map, and this same obstruction yields confusability, counting, conditional-entropy, decoder-output, and finite-gap formulations. In particular, if the observation transcript leaves a k-way ambiguity class, any zero-error resolver requires at least log₂k bits of side information. The same model also supports deterministic data processing and a budgeted finite-error extension. As a threshold corollary, the largest independent rate compatible with zero incoherence is exactly 1: one authoritative source with deterministic views achieves exact consistency, whereas more than one independently writable source makes ambiguity reachable. A realizability theorem identifies causal propagation and provenance observability as the host-level conditions for attaining that regime, and the threshold has an operational consequence for updates, giving O(1) manual modification cost at rate 1 and Ω(n) cost above it. A supplementary Lean 4 artifact machine-checks the converse family, threshold chain, realizability theorem, and rate-complexity arguments. Index Terms: zero-error information theory, side information, confusability, exact consistency, deterministic converse
 
 Abstract (MathJax, for arXiv):
-We study exact consistency in finite multi-location encodings, where one latent value is represented at several writable or derived locations and an observer sees a deterministic transcript of the current state. Our main contribution is a deterministic finite converse: if the observation transcript leaves a $k$-way ambiguity class, any zero-error resolver requires at least $\log_2 k$ bits of side information, and the same finite obstruction admits confusability, conditional-entropy, decoder-output, and entropy-gap formulations. As a threshold corollary, the largest independent rate compatible with zero incoherence is exactly $1$: one authoritative source with deterministic views achieves exact consistency, whereas more than one independently writable source makes ambiguity reachable. This threshold has an operational consequence for updates, giving $O(1)$ manual modification cost at rate $1$ and $\Omega(n)$ cost above it. A supplementary Lean 4 artifact machine-checks the core threshold, converse, realizability, and rate-complexity arguments. Index Terms: zero-error information theory, side information, confusability, exact consistency, deterministic converse
+We study exact consistency in finite multi-location encodings, where one latent value is represented at several writable or derived locations and an observer sees a deterministic transcript of the current state. Our main contribution is a deterministic finite converse family: exact zero-error recovery from observation and auxiliary tags is equivalent to injectivity of the induced observation-tag map, and this same obstruction yields confusability, counting, conditional-entropy, decoder-output, and finite-gap formulations. In particular, if the observation transcript leaves a $k$-way ambiguity class, any zero-error resolver requires at least $\log_2 k$ bits of side information. The same model also supports deterministic data processing and a budgeted finite-error extension. As a threshold corollary, the largest independent rate compatible with zero incoherence is exactly $1$: one authoritative source with deterministic views achieves exact consistency, whereas more than one independently writable source makes ambiguity reachable. A realizability theorem identifies causal propagation and provenance observability as the host-level conditions for attaining that regime, and the threshold has an operational consequence for updates, giving $O(1)$ manual modification cost at rate $1$ and $\Omega(n)$ cost above it. A supplementary Lean 4 artifact machine-checks the converse family, threshold chain, realizability theorem, and rate-complexity arguments. Index Terms: zero-error information theory, side information, confusability, exact consistency, deterministic converse
 
 arXiv Comments:
 IEEE Transactions on Information Theory submission. Lean 4 artifact: 14898 lines, 703 theorems/lemmas across 60 files (0 sorry placeholders).
@@ -24,66 +24,86 @@ zenodo:
   abstract: 'We study exact consistency in finite multi-location encodings, where
     one latent value is represented at several writable or derived locations and an
     observer sees a deterministic transcript of the current state. Our main contribution
-    is a deterministic finite converse: if the observation transcript leaves a k-way
-    ambiguity class, any zero-error resolver requires at least log₂k bits of side
-    information, and the same finite obstruction admits confusability, conditional-entropy,
-    decoder-output, and entropy-gap formulations. As a threshold corollary, the largest
-    independent rate compatible with zero incoherence is exactly 1: one authoritative
-    source with deterministic views achieves exact consistency, whereas more than
-    one independently writable source makes ambiguity reachable. This threshold has
-    an operational consequence for updates, giving O(1) manual modification cost at
-    rate 1 and Ω(n) cost above it. A supplementary Lean 4 artifact machine-checks
-    the core threshold, converse, realizability, and rate-complexity arguments. Index
-    Terms: zero-error information theory, side information, confusability, exact consistency,
-    deterministic converse'
+    is a deterministic finite converse family: exact zero-error recovery from observation
+    and auxiliary tags is equivalent to injectivity of the induced observation-tag
+    map, and this same obstruction yields confusability, counting, conditional-entropy,
+    decoder-output, and finite-gap formulations. In particular, if the observation
+    transcript leaves a k-way ambiguity class, any zero-error resolver requires at
+    least log₂k bits of side information. The same model also supports deterministic
+    data processing and a budgeted finite-error extension. As a threshold corollary,
+    the largest independent rate compatible with zero incoherence is exactly 1: one
+    authoritative source with deterministic views achieves exact consistency, whereas
+    more than one independently writable source makes ambiguity reachable. A realizability
+    theorem identifies causal propagation and provenance observability as the host-level
+    conditions for attaining that regime, and the threshold has an operational consequence
+    for updates, giving O(1) manual modification cost at rate 1 and Ω(n) cost above
+    it. A supplementary Lean 4 artifact machine-checks the converse family, threshold
+    chain, realizability theorem, and rate-complexity arguments. Index Terms: zero-error
+    information theory, side information, confusability, exact consistency, deterministic
+    converse'
 arxiv:
   title: 'Exact Consistency in Multi-Location Encodings: Zero-Error Thresholds and
     Side Information Bounds'
   abstract: 'We study exact consistency in finite multi-location encodings, where
     one latent value is represented at several writable or derived locations and an
     observer sees a deterministic transcript of the current state. Our main contribution
-    is a deterministic finite converse: if the observation transcript leaves a $k$-way
-    ambiguity class, any zero-error resolver requires at least $\log_2 k$ bits of
-    side information, and the same finite obstruction admits confusability, conditional-entropy,
-    decoder-output, and entropy-gap formulations. As a threshold corollary, the largest
-    independent rate compatible with zero incoherence is exactly $1$: one authoritative
-    source with deterministic views achieves exact consistency, whereas more than
-    one independently writable source makes ambiguity reachable. This threshold has
+    is a deterministic finite converse family: exact zero-error recovery from observation
+    and auxiliary tags is equivalent to injectivity of the induced observation-tag
+    map, and this same obstruction yields confusability, counting, conditional-entropy,
+    decoder-output, and finite-gap formulations. In particular, if the observation
+    transcript leaves a $k$-way ambiguity class, any zero-error resolver requires
+    at least $\log_2 k$ bits of side information. The same model also supports deterministic
+    data processing and a budgeted finite-error extension. As a threshold corollary,
+    the largest independent rate compatible with zero incoherence is exactly $1$:
+    one authoritative source with deterministic views achieves exact consistency,
+    whereas more than one independently writable source makes ambiguity reachable.
+    A realizability theorem identifies causal propagation and provenance observability
+    as the host-level conditions for attaining that regime, and the threshold has
     an operational consequence for updates, giving $O(1)$ manual modification cost
     at rate $1$ and $\Omega(n)$ cost above it. A supplementary Lean 4 artifact machine-checks
-    the core threshold, converse, realizability, and rate-complexity arguments. Index
-    Terms: zero-error information theory, side information, confusability, exact consistency,
-    deterministic converse'
+    the converse family, threshold chain, realizability theorem, and rate-complexity
+    arguments. Index Terms: zero-error information theory, side information, confusability,
+    exact consistency, deterministic converse'
   comments: 'IEEE Transactions on Information Theory submission. Lean 4 artifact:
     14898 lines, 703 theorems/lemmas across 60 files (0 sorry placeholders).'
 abstract_variants:
   unicode: 'We study exact consistency in finite multi-location encodings, where one
     latent value is represented at several writable or derived locations and an observer
     sees a deterministic transcript of the current state. Our main contribution is
-    a deterministic finite converse: if the observation transcript leaves a k-way
-    ambiguity class, any zero-error resolver requires at least log₂k bits of side
-    information, and the same finite obstruction admits confusability, conditional-entropy,
-    decoder-output, and entropy-gap formulations. As a threshold corollary, the largest
-    independent rate compatible with zero incoherence is exactly 1: one authoritative
-    source with deterministic views achieves exact consistency, whereas more than
-    one independently writable source makes ambiguity reachable. This threshold has
-    an operational consequence for updates, giving O(1) manual modification cost at
-    rate 1 and Ω(n) cost above it. A supplementary Lean 4 artifact machine-checks
-    the core threshold, converse, realizability, and rate-complexity arguments. Index
-    Terms: zero-error information theory, side information, confusability, exact consistency,
-    deterministic converse'
+    a deterministic finite converse family: exact zero-error recovery from observation
+    and auxiliary tags is equivalent to injectivity of the induced observation-tag
+    map, and this same obstruction yields confusability, counting, conditional-entropy,
+    decoder-output, and finite-gap formulations. In particular, if the observation
+    transcript leaves a k-way ambiguity class, any zero-error resolver requires at
+    least log₂k bits of side information. The same model also supports deterministic
+    data processing and a budgeted finite-error extension. As a threshold corollary,
+    the largest independent rate compatible with zero incoherence is exactly 1: one
+    authoritative source with deterministic views achieves exact consistency, whereas
+    more than one independently writable source makes ambiguity reachable. A realizability
+    theorem identifies causal propagation and provenance observability as the host-level
+    conditions for attaining that regime, and the threshold has an operational consequence
+    for updates, giving O(1) manual modification cost at rate 1 and Ω(n) cost above
+    it. A supplementary Lean 4 artifact machine-checks the converse family, threshold
+    chain, realizability theorem, and rate-complexity arguments. Index Terms: zero-error
+    information theory, side information, confusability, exact consistency, deterministic
+    converse'
   mathjax: 'We study exact consistency in finite multi-location encodings, where one
     latent value is represented at several writable or derived locations and an observer
     sees a deterministic transcript of the current state. Our main contribution is
-    a deterministic finite converse: if the observation transcript leaves a $k$-way
-    ambiguity class, any zero-error resolver requires at least $\log_2 k$ bits of
-    side information, and the same finite obstruction admits confusability, conditional-entropy,
-    decoder-output, and entropy-gap formulations. As a threshold corollary, the largest
-    independent rate compatible with zero incoherence is exactly $1$: one authoritative
-    source with deterministic views achieves exact consistency, whereas more than
-    one independently writable source makes ambiguity reachable. This threshold has
+    a deterministic finite converse family: exact zero-error recovery from observation
+    and auxiliary tags is equivalent to injectivity of the induced observation-tag
+    map, and this same obstruction yields confusability, counting, conditional-entropy,
+    decoder-output, and finite-gap formulations. In particular, if the observation
+    transcript leaves a $k$-way ambiguity class, any zero-error resolver requires
+    at least $\log_2 k$ bits of side information. The same model also supports deterministic
+    data processing and a budgeted finite-error extension. As a threshold corollary,
+    the largest independent rate compatible with zero incoherence is exactly $1$:
+    one authoritative source with deterministic views achieves exact consistency,
+    whereas more than one independently writable source makes ambiguity reachable.
+    A realizability theorem identifies causal propagation and provenance observability
+    as the host-level conditions for attaining that regime, and the threshold has
     an operational consequence for updates, giving $O(1)$ manual modification cost
     at rate $1$ and $\Omega(n)$ cost above it. A supplementary Lean 4 artifact machine-checks
-    the core threshold, converse, realizability, and rate-complexity arguments. Index
-    Terms: zero-error information theory, side information, confusability, exact consistency,
-    deterministic converse'
+    the converse family, threshold chain, realizability theorem, and rate-complexity
+    arguments. Index Terms: zero-error information theory, side information, confusability,
+    exact consistency, deterministic converse'
