@@ -1,0 +1,25 @@
+\section{Affine Fact-Side Structure}\label{sec:affine}
+%==============================================================================
+
+
+This section records a secondary structural theorem from the same model. The preceding sections study distinguishability of latent states from partial observations. The same latent-state model also has a fact-side structural question: which fact coordinates determine others? Under an affine restriction on the realized state family, that determination problem has its own rank geometry.
+
+\begin{theorem}[Affine fact-matroid theorem]\label{thm:affine-fact-matroid}
+Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.\leanmeta{\LHrng{AFM}{1}{5}}
+\end{theorem}
+
+\begin{proof}
+Let the affine realized-state family be $A=a_0+V$, where $a_0$ is a fixed origin and $V$ is a linear subspace of the ambient fact space. Fix a fact set $S$ and a fact index $i$.
+
+By definition, fact $i$ is semantically determined by $S$ exactly when for all $x,x'\in A$, agreement on every coordinate in $S$ forces agreement on coordinate $i$. Writing $d=x-x'$, this is equivalent to the statement that every direction vector $d\in V$ whose coordinates in $S$ vanish also satisfies $d_i=0$.
+
+Let $e_j$ denote the coordinate functional for fact $j$. The condition above says precisely that
+\[
+V\cap \bigcap_{j\in S}\ker(e_j)\subseteq \ker(e_i).
+\]
+In finite-dimensional linear algebra, this is equivalent to $e_i$ lying in the span of the coordinate functionals $\{e_j:j\in S\}$. Thus semantic determination by $S$ is exactly span membership of the corresponding coordinate functional.
+
+The coordinate functionals therefore realize a representable matroid on fact indices. In that matroid, independence is linear independence of the coordinate functionals, bases are the maximal independent spanning sets, and every basis has the common rank cardinality. Since span corresponds exactly to semantic determination, the minimal determining fact sets are precisely those bases.
+\end{proof}
+
+The paper does not claim a general implication from this affine fact-side matroid to the confusability graph on latent states, or conversely. The two structures coexist because they are induced by the same realized-state model under different questions: observation-side distinguishability yields the graph, while coordinate-side determination yields the matroid in the affine regime. Characterizing deeper interactions between these two structures is left open.

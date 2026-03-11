@@ -1,7 +1,7 @@
-\section{Realizability Requirements for the Capacity-Achieving Regime}\label{sec:requirements}
+\section{Realizability Theorem}\label{sec:requirements}
 %==============================================================================
 
-The threshold theorem identifies the unique independent rate compatible with exact consistency. A separate question is whether a concrete host system can realize that rate. This section isolates the two structural properties needed for that purpose.
+This section asks when a concrete host system can realize the unit-rate corner isolated earlier and identifies the two structural properties needed for that purpose.
 
 A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Two capabilities are required:
 \begin{enumerate}
@@ -11,7 +11,7 @@ A host system realizes the rate-$1$ regime when one location is authoritative an
 
 \subsection{Confusability and Side Information}\label{sec:confusability}
 
-To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same zero-error obstruction analyzed in Section~\ref{sec:bounds}: if the host cannot separate the surviving ambiguity class, exact verification requires additional structural side information.
+To connect realizability to information available at verification time, fix a fact $F$ and consider the alternatives that remain compatible with the available observations. These alternatives form the same zero-error obstruction analyzed in Sections~\ref{sec:converse}--\ref{sec:equality}: if the host cannot separate the surviving ambiguity class, exact verification requires additional structural side information.
 
 \begin{lemma}[Confusability Clique Bound]\label{lem:confusability-clique}
 If the confusability graph for $F$ contains a clique of size $k$, then any zero-error side-information scheme distinguishing those $k$ alternatives requires at least $k$ distinct tags, equivalently at least $\log_2 k$ bits of side information.
@@ -35,6 +35,7 @@ Structural facts are the natural exact-consistency setting because they expose a
 \begin{theorem}[Timing Constraint for Structural Derivation]\label{thm:timing-forces}
 For structural facts, derivation must occur no later than the moment at which the relevant encoding locations become fixed.
 \end{theorem}
+\leanmeta{\LH{REQ1}, \LH{TRI1}}
 
 \begin{proof}
 Let $t_{\mathrm{fix}}$ denote the time at which the structural encoding becomes fixed. A derivation performed strictly before $t_{\mathrm{fix}}$ cannot depend on the completed source value; a derivation performed strictly after $t_{\mathrm{fix}}$ cannot alter the already fixed structural representation. Therefore structural derivation must occur at $t_{\mathrm{fix}}$ or as part of the same creation/update event.
@@ -43,7 +44,7 @@ Let $t_{\mathrm{fix}}$ denote the time at which the structural encoding becomes 
 \subsection{Requirement 1: Causal Update Propagation}\label{sec:causal-propagation}
 
 \begin{definition}[Causal Update Propagation]\label{def:causal-propagation}
-An encoding system has \emph{causal update propagation} if every update to a source location automatically updates each location derived from that source, without requiring a separate manual synchronization step.
+An encoding system has \emph{causal update propagation} if every update to a source location is followed by updates to all locations derived from that source with no reachable intermediate state in which source and derived locations disagree. Equivalently, propagation is part of the same admissible update event for the purposes of reachable-state analysis, rather than an asynchronous repair step with observable stale states.
 \end{definition}
 
 This is the host-system manifestation of deterministic dependence. Without it, a temporal gap appears between source modification and derived-view repair.
@@ -102,6 +103,6 @@ An encoding system can achieve verifiable independent rate $1$ for structural fa
 Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$.
 \end{proof}
 
-The application section specializes the theorem to computational examples.
+The next section records representative readings of the theorem on familiar host systems.
 
 %==============================================================================
