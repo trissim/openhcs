@@ -1,23 +1,27 @@
-The main theorem chain is complete in the deterministic zero-error setting. We record only brief forward-looking directions here.
+The main theorem chain is complete for the deterministic finite side-information model studied here. This section records only brief forward-looking directions and is not part of the core theorem arc.
 
-Each extension changes one part of the model while preserving the paper's central question: once identity is only partially visible, how do stored naming information, interactive evidence, and allowable error trade off?
+Each extension changes one part of the model while preserving the paper's central question: once the representation is noninjective, how much additional information is needed for exact or approximate recovery? The common theme is that residual ambiguity left by the representation must still be paid for in some currency---side-information bits, repeated evidence, allowable distortion, or additional disclosure.
 
 \subsection{Noisy and Lossy Observation}
 
-With noisy queries, repeated sampling can reduce error, so the natural problem becomes the tradeoff among tag rate, repeated query cost, and target error level. In this regime, the model changes by replacing deterministic attribute observations with noisy ones, and the main open question is how the ambiguity law interacts with repeated evidence. Explicit tags should continue to act as a noise-free side channel whenever they are transmitted cleanly.
-
-The noisy setting asks how the same ambiguity law interacts with repeated but unreliable evidence.
+With noisy representations or noisy side channels, repeated sampling can reduce error, so the natural problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems.
 
 \subsection{Semantic Distortion Measures}
 
-The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the $(L,W,D)$ frontier changes when near misses and catastrophic confusions are not penalized equally.
+The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.
 
 This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
 
 \subsection{Privacy, Security, and Three-Resource Geometry}
 
-Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. Here the model change is that one constrains what information may be revealed while still certifying identity or class membership, and the open question is how much explicit naming information can be exposed safely.
+Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. The intro and main results already record the finite explicit disclosure separation: nominal access has unit disclosure budget, while tag-free zero-error identity resolution can require $n-1$ primitive disclosures in the adversarial family (\LH{PRIV3}). This is another facet of the same residual ambiguity: one may pay for exact identification with side-information bits or with additional disclosures. The extension question is what happens after one imposes an explicit leakage constraint and asks how much naming information may be exposed while still certifying identity or class membership.
 
-More broadly, the $(L,W,D)$ frontier invites comparison with other three-resource tradeoff geometries, including rate-distortion-perception formulations \cite{blau2019rethinking}. The question left open here is whether there is a similarly sharp geometric characterization when the third resource is interactive query effort rather than perceptual fidelity.
+More broadly, the present side-information viewpoint invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking} and with conditional source coding more directly. The main missing theorem is a genuinely entropy-sensitive zero-error variable-length characterization.
 
-These directions preserve the paper's central viewpoint: identity can be partially stored, partially queried, and partially approximated. Changing the model changes how those resources interact, but not the need to account for them explicitly.
+In explicit finite registries, auditing residual ambiguity means computing fiber statistics exactly. In learned or implicit models, the same quantities become representation-analysis targets: one may estimate collision profiles only after discretization, quantization, certified bounding, or task-conditioned surrogates such as $A_{\pi \to Y}$. The theoremic contribution of the present paper is to identify what these quantities mean once they are available, not to solve the computational problem of extracting them from arbitrary models.
+
+The present distortion floor should therefore be read as a deterministic exact-recovery analogue of rate-distortion-perception constraints, not as a full solution of that stochastic theory.
+
+\subsection{Learned Representations and Embedding Collapse}
+
+In learned classification systems, the observation map $\pi$ can be instantiated by an embedding or representation map whose coordinates are then queried or thresholded. The earlier sections isolate the finite explicit corollaries: one-symbol zero-error feasibility is equivalent to injectivity (\LH{GPH27}), and refining the observation channel cannot increase collision multiplicity (\LH{GPH28}). The extension question is how far that representation reading can be pushed once $\pi$ is implicit, high-dimensional, or learned from data. In that setting, the fixed-length and adaptive fiber laws become a formal measure of residual ambiguity under the representation: unresolved embedding collisions must be paid for either by explicit naming information or by accepting nonzero semantic error.

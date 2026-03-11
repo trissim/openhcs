@@ -1,81 +1,33 @@
 \subsection{Query Families and Distinguishing Sets}
 
-We now study the query resource under the fixed observation family $\Phi$. A distinguishing set separates every pair of distinct classes. Minimal distinguishing sets will be shown to form the bases of a matroid.
+We now record the query-side version of the same representation-sufficiency problem. The preceding sections quantify how many auxiliary bits are needed to resolve representation collisions directly. An alternative operational response to the same residual ambiguity is to spend query resources rather than transmission resources: instead of sending side information to separate a fiber, one can interrogate additional primitive attributes until the class is determined. Equivalently, a query family induces an additional deterministic helper view, and the question is how large that helper view must be before exact recovery becomes possible. A distinguishing set separates every pair of distinct classes. In full generality, inclusion-minimal distinguishing sets need not have the same size, so the first invariant we use is the minimum number of primitive queries needed for zero-error separation.
 
-The running example already illustrates the basic contrast: one explicit bit resolves the only collision block, but tag-free zero-error separation still has to pay for the full distinguishing family. This section identifies the structural invariant that controls that query cost.
+This section is secondary to the main side-information results, but it belongs to the same second arc. Its role is to quantify how much adaptive interrogation is needed when one chooses not to send the required side information up front. In that sense, the minimum distinguishing number $d$ is the minimum size of a sufficiency-restoring helper view built from primitive observables. It is to queries what fiber size is to side-information bits: both measure how much unresolved ambiguity remains after the representation is fixed.
 
 \begin{definition}[Query family]
 Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
 \end{definition}
 \leanmeta{\LH{ACS1}}
 
-\noindent In this section, ``queries'' are the primitive attribute predicates $q \in \Phi$.
-
-\noindent\textbf{Convention:} $\Phi := \mathcal{Q}$. All universal quantification over ``queries'' ranges over $q \in \Phi$ only.
+\noindent In this section, ``queries'' means primitive attribute predicates from $\Phi=\mathcal Q$.
 
 \begin{definition}[Distinguishing set]
 A subset $S \subseteq \mathcal{Q}$ is \emph{distinguishing} if, for all values $v, w$ with $\mathrm{class}(v) \neq \mathrm{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
 \end{definition}
-\leanmeta{\LHrng{L}{4}{5}}
 
-\begin{definition}[Minimal distinguishing set]
-A distinguishing set $S$ is \emph{minimal} if no proper subset of $S$ is distinguishing.
+\begin{definition}[Minimum distinguishing number]\label{def:distinguishing-dimension}
+The \emph{minimum distinguishing number} of a classification system is
+\[
+d := \min\{|S| : S \subseteq \mathcal Q \text{ is distinguishing}\}.
+\]
+Equivalently, $d$ is the smallest number of primitive queries that suffices to separate all classes with zero error.
 \end{definition}
-\leanmeta{\LH{L1}, \LH{L4}}
 
-In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is distinguishing and minimal, so it already witnesses the query resource needed for tag-free separation.
-
-\subsection{Matroid Structure of Query Families}
-
-\begin{definition}[Bases family]
-Let $E = \Phi\;(=\mathcal{Q})$ be the ground set of primitive queries. Let $\mathcal{B} \subseteq 2^E$ be the family of minimal distinguishing sets.
-\end{definition}
-\leanmeta{\LH{L1}, \LH{L5}}
-
-\begin{lemma}[Basis exchange]\label{lem:basis-exchange}
-For any $B_1, B_2 \in \mathcal{B}$ and any $q \in B_1 \setminus B_2$, there exists $q' \in B_2 \setminus B_1$ such that $(B_1 \setminus \{q\}) \cup \{q'\} \in \mathcal{B}$.
-\end{lemma}
-\leanmeta{\LHrng{L}{4}{5}}
-
-\begin{proof}
-Define the closure operator $\mathrm{cl}(X) = \{q : X\text{-equivalence implies }q\text{-equivalence}\}$. We verify the matroid axioms:
-\begin{enumerate}
-\item \textbf{Closure axioms}: $\mathrm{cl}$ is extensive, monotone, and idempotent. These follow directly from the definition of logical implication.
-\item \textbf{Exchange property}: If $q \in \mathrm{cl}(X \cup \{q'\}) \setminus \mathrm{cl}(X)$, then $q' \in \mathrm{cl}(X \cup \{q\})$.
-\end{enumerate}
-
-For exchange, take $q \in \mathrm{cl}(X \cup \{q'\}) \setminus \mathrm{cl}(X)$. Since $q \notin \mathrm{cl}(X)$, there exist $v,w$ that are $X$-equivalent but disagree on $q$. Because $q \in \mathrm{cl}(X \cup \{q'\})$, any pair that is $(X \cup \{q'\})$-equivalent must agree on $q$; therefore this witness pair cannot be $(X \cup \{q'\})$-equivalent, so it must disagree on $q'$. Now fix any pair $v',w'$ that are $(X \cup \{q\})$-equivalent. They are in particular $X$-equivalent and agree on $q$. If they disagreed on $q'$, then by the previous implication we could derive disagreement on $q$, contradiction. Hence $v',w'$ agree on $q'$, proving $q' \in \mathrm{cl}(X \cup \{q\})$.
-
-Minimal distinguishing sets are exactly the bases of the matroid defined by this closure operator. The machine-checked development verifies the closure laws, the exchange and equicardinality lemmas, and the bridge from closure to matroid structure used to make the distinguishing dimension well-defined.
-\end{proof}
-
-\begin{theorem}[Matroid bases]\label{thm:matroid-bases}
-$\mathcal{B}$ is the set of bases of a matroid on ground set $E$.
-\end{theorem}
-\leanmeta{\LH{L1}, \LH{L5}}
-
-\begin{proof}
-By the basis-exchange lemma and the standard characterization of matroid bases \cite{Welsh1976}.
-\end{proof}
-
-\begin{definition}[Distinguishing dimension]\label{def:distinguishing-dimension}
-The \emph{distinguishing dimension} of a classification system is the common cardinality of all minimal distinguishing sets.
-\end{definition}
-\leanmeta{\LH{L1}}
-
-\begin{remark}[Ambient attribute count vs. distinguishing dimension]
-Let $n := |\mathcal{I}|$ be the ambient number of available attributes. Clearly $d \le n$, and there exist worst-case families with $d = n$.
+\begin{remark}[Inclusion-minimal versus minimum-cardinality]
+These notions differ: an inclusion-minimal distinguishing set may still be larger than a minimum-cardinality one. The lower bound below depends only on the operational quantity $d$.
 \end{remark}
-\leanmeta{\LH{ACS1}, \LH{L1}}
 
-\begin{corollary}[Well-defined distinguishing dimension]\label{cor:well-defined-distinguishing-dimension}
-All minimal distinguishing sets have equal cardinality. Thus the distinguishing dimension is well-defined.
-\end{corollary}
-\leanmeta{\LH{L1}}
-
-\begin{remark}[Relation to VC-style dimensions]
-Despite the name, the distinguishing dimension $d$ is not a VC or shattering dimension in the usual learning-theoretic sense \cite{vapnik1998statistical}. VC dimension measures the largest set of examples shattered by a concept class. Here $d$ is the rank of a fixed primitive query family under the closure operator induced by class separation. The key structural fact used in this paper is basis exchange: minimal distinguishing families form the bases of a matroid, so $d$ is certified by equicardinality and exchange rather than by shattering alone.
-\end{remark}
+In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$.
 
 \subsection{Implications for Witness Cost}
 
@@ -84,26 +36,53 @@ For attribute-only observers, class identity checking requires
 \[
 W(\text{class-identity}) = \Omega(d)
 \]
-in the worst case, where $d$ is the distinguishing dimension.
+in the worst case, where $d$ is the minimum distinguishing number.
 \end{theorem}
 \leanmeta{\LH{ACS1}}
 
 \begin{proof}
-Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. Since $d$ is the cardinality of every minimal distinguishing set, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
+Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. By definition of $d$, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
 
 An adversary can answer the procedure's queries consistently with both $v$ and $w$ along this path. Therefore the resulting transcript (and output) is identical on $v$ and $w$, contradicting zero-error class identification. So some execution path must use at least $d$ queries, giving worst-case cost $\Omega(d)$.
 \end{proof}
 
 \begin{corollary}[Lower bound on attribute-only witness cost]\label{cor:attribute-only-witness-lb}
-For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is the distinguishing dimension.
+For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is the minimum distinguishing number.
 \end{corollary}
 \leanmeta{\LH{ACS1}}
 
 In the running example, this yields $W \ge 3$ for any attribute-only zero-error scheme, even though the ambiguity converse will later show that one explicit tag bit already suffices to resolve the only collision block.
 
-The key insight: the distinguishing dimension is invariant across all minimal query strategies. The difference between nominal-tag and attribute-only observers lies in \emph{witness cost}: a nominal tag achieves $W = O(1)$ by storing the identity directly, bypassing query enumeration.
+This is the complementary resource law. The ambiguity converse says how many bits are needed to eliminate collision multiplicity; the query lower bound says how much additional structure must still be traversed when those bits are absent. Read through the second arc, the bit law measures the residual description cost of restoring sufficiency, while the query law measures the minimal observable augmentation needed to restore it operationally. When side information is cheap but interrogation is costly, the fiber-size bound governs; when transmission is expensive but queries are available, the distinguishing-number bound governs.
 
-This is the paper's complementary resource law. The ambiguity converse says how many bits are needed to eliminate collision multiplicity; the query lower bound says how much structure must still be traversed when those bits are absent.
+\subsection{Structured Query Families and Matroid Behavior}
+
+The general attribute-query model above does not force inclusion-minimal distinguishing sets to be equicardinal. A finite explicit counterexample is available even for four classes and four primitive binary queries (\LH{GPH31}). A stronger structural theorem becomes valid only after one restricts the query family. In that restricted setting, the question becomes: when primitive observables are treated as irreducible helper-view coordinates, what is the structure of the minimal coordinate families that restore exact recoverability?
+
+\begin{definition}[Structured axis model]
+A \emph{structured axis model} is a query family presented together with an explicit derivability relation between primitive observables, so that one query may semantically subsume another. A query family is \emph{orthogonal} if no primitive observable is derivable from a distinct primitive observable in the family.
+\end{definition}
+
+\begin{remark}[Why this restriction is coherent]
+This restriction is natural when primitive queries are intended to be stored or transmitted as irreducible semantic coordinates rather than as an arbitrary sparse encoding of the class table. If the observable family contains redundant or semantically derivable coordinates, then inclusion-minimality depends on representational accidents. The structured axis model removes that artifact by quotienting out derivable observables and restricting attention to orthogonal primitive axes.
+\end{remark}
+
+\begin{theorem}[Restricted matroid theorem for structured axes]\label{thm:matroid-bases}
+In the structured axis model, semantically minimal complete axis families form the bases of a matroid. Consequently, all such families have equal cardinality.
+\end{theorem}
+\leanmeta{\LH{L1}, \LH{L5}}
+
+\begin{proof}
+The formal theorem is proved for the axis-based representation in which semantic minimality implies orthogonality, orthogonality implies exchange, and standard matroid theory then gives equicardinality of maximal independent sets. The key point is that the theorem is about structured primitive axes modulo derivability, not about arbitrary subsets of binary class-indicator queries.
+\end{proof}
+
+\begin{remark}[Relation to the general query invariant]
+The restricted matroid theorem strengthens the general lower-bound story when the primitive queries come from a derivability-aware axis presentation. In the unrestricted attribute-query model, the invariant used in the paper is the minimum distinguishing number $d$; in the structured axis model, the same quantity is certified by matroid basis cardinality.
+\end{remark}
+
+\begin{remark}[Relation to VC-style dimensions]
+The minimum distinguishing number $d$ is not a VC or shattering dimension in the usual learning-theoretic sense \cite{vapnik1998statistical}. VC dimension measures the largest set of examples shattered by a concept class. Here $d$ measures the smallest primitive query budget needed for zero-error class separation. In the structured axis model, this budget is additionally certified by a matroid exchange law, but that extra structure is not present in arbitrary binary query families.
+\end{remark}
 
 \subsection{Witness Cost Comparison}
 
@@ -114,7 +93,7 @@ This is the paper's complementary resource law. The ambiguity converse says how 
 \textbf{Observer Class} & \textbf{Witness Procedure} & \textbf{Witness Cost $W$} \\
 \hline
 Nominal-tag & Single tag read & $O(1)$ \\
-Attribute-only & Query a distinguishing set & $\Omega(d)$ \\
+Attribute-only & Query a distinguishing family of minimum size & $\Omega(d)$ \\
 \hline
 \end{tabular}
 \vspace{3pt}

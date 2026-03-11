@@ -1,6 +1,16 @@
 \subsection{Primitive Objects}
 
-The introduction has already motivated the semantic-compression viewpoint. This section fixes the observation model once, with only the primitives and assumptions needed for the theorem chain.
+The introduction has already motivated the side-information viewpoint. For the main theorem arc, the primitive object is the pair $(C,U)$ with $U=\pi(C)$. This section fixes one concrete realization of that coding model: a declared attribute family that induces the representation map $\pi$. The attribute-family formalism is retained because it supports the paper's broader semantic-identification interpretations, but the coding statements depend only on the induced representation together with any charged auxiliary description.
+
+\begin{definition}[Coding model induced by a representation]
+Let $C$ be a finite class variable, let $U=\pi(C)$ be the representation available to the decoder, and let $M$ be any auxiliary description transmitted by the encoder. The main theorem arc studies the minimum length of $M$ needed for exact recovery of $C$ from $(U,M)$, in both fixed-length and representation-adaptive regimes.
+\end{definition}
+
+\begin{remark}[Entity and random-variable notation]
+The coding statements are written in terms of a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ together with a class assignment map $C(V)$. Thus $U=\pi(V)$ is the representation of the realized entity, and the induced class label is $C(V)$. The two viewpoints are interchangeable; the coding arc should be read through the pair $(C,U)$.
+\end{remark}
+
+The remaining definitions explain one concrete way of generating the representation map $\pi$ from an attribute family.
 
 \begin{definition}[Entity space and attribute family]
 Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary \emph{attributes}. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
@@ -21,7 +31,7 @@ Let $\Phi_{\mathcal{I}} = \{q_I : I \in \mathcal{I}\}$ denote the attribute obse
 \leanmeta{\LH{ACS5}, \LH{COMPL1}}
 
 \begin{remark}[Notation for size parameters]
-We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the distinguishing dimension (the common size of all minimal distinguishing query sets; Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the complexity-of-maintenance discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
+We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the minimum distinguishing number (Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the secondary query-side discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
 \end{remark}
 
 \begin{definition}[Attribute profile]
@@ -39,11 +49,15 @@ Values $v, w \in \mathcal{V}$ are \emph{attribute-indistinguishable}, written $v
 
 The relation $\sim$ is an equivalence relation. We write $[v]_\sim$ for the equivalence class of $v$.
 
+\begin{remark}[Why the admissibility contract is explicit]
+The model intentionally forbids hidden side channels. If an external registry, whole-universe preprocessing table, reflection oracle, or cached cross-instance state is allowed to distinguish values that the declared observation family cannot distinguish, then the effective observable family has changed. The point of Definition~\ref{def:admissibility-contract} is to keep the resource accounting honest: extra distinguishing information must either be represented as part of the observation model or charged to the auxiliary-description resource.
+\end{remark}
+
 \begin{definition}[Classification scheme]
 A \emph{classification scheme} is any procedure (deterministic or randomized), with arbitrary time and memory, whose only access to a value $v \in \mathcal{V}$ is via:
 \begin{enumerate}
 \item the observation family $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$, and optionally
-\item a nominal-tag primitive $\tau: \mathcal{V} \to \mathcal{T}$ returning an opaque class identifier.
+\item an auxiliary description primitive returning charged side information about the class.
 \end{enumerate}
 All theorems in this paper quantify over all such schemes.
 \end{definition}
@@ -57,22 +71,29 @@ An \emph{attribute-only observer} is any procedure whose interaction with a valu
 \leanmeta{\LH{ACS8}, \LH{COMPL1}}
 
 \begin{definition}[Admissibility contract]\label{def:admissibility-contract}
-All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit nominal tag charged to the tag budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
+All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit auxiliary description charged to the side-information budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
 \end{definition}
 \leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 \begin{proposition}[Model capture]\label{prop:model-capture}
-Any classification protocol whose evidence consists only of the declared observation family and any explicit nominal tag is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
+Any classification protocol whose evidence consists only of the declared observation family and any explicit charged side information is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
 \end{proposition}
 \leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
 
-\subsection{Attribute-Computable Properties}
+\subsection{Representation-Induced Information Barrier}
 
-The central question is: \textbf{what semantic properties can an attribute-only observer compute?}
+The basic coding obstruction is immediate: equal representations give the decoder the same side information. The next theorem records that invariant once, in the attribute-generated realization of the model.
 
-A semantic property is a function $P: \mathcal{V} \to \{0,1\}$ (or more generally, $P: \mathcal{V} \to Y$ for some codomain $Y$). We say $P$ is \emph{attribute-computable} if there exists a function $f: \{0,1\}^{|\mathcal{I}|} \to Y$ such that $P(v) = f(\pi(v))$ for all $v$.
+\begin{definition}[Attribute-computable property]
+A property $P:\mathcal V \to Y$ is \emph{attribute-computable} if there exists a function $f:\{0,1\}^{|\mathcal I|}\to Y$ such that
+\[
+P(v)=f(\pi(v))
+\qquad\text{for all } v\in\mathcal V.
+\]
+Equivalently, $P$ depends only on the representation induced by the declared attribute family.
+\end{definition}
 
 \subsection{The Information Barrier}
 
@@ -92,12 +113,16 @@ P(v) = f(\pi(v)) = f(\pi(w)) = P(w).
 \]
 \end{proof}
 
+\begin{remark}[Why state the barrier explicitly]
+The information barrier is immediate from the definition of representation side information: equal profiles induce identical admissible transcripts, so no attribute-only procedure can separate them. We state it explicitly because the later converse and secondary results use it as a reusable formal premise.
+\end{remark}
+
 \begin{remark}[Information-theoretic nature]
-The barrier is \emph{informational}, not computational. Given unlimited time, memory, and computational power, an attribute-only observer still cannot distinguish $v$ from $w$ when $\pi(v) = \pi(w)$. The constraint is on the evidence itself.
+The barrier is \emph{informational}, not computational. Unlimited time or memory does not help once the representation is identical.
 \end{remark}
 
 \begin{remark}[Role in the paper]
-Theorem~\ref{thm:information-barrier} is the base invariance statement. The technical contribution is the downstream structure built on top of it: the ambiguity-based converse (Theorem~\ref{thm:converse}), the Pareto characterization (Theorem~\ref{thm:lwd-optimal}), and the matroid or equicardinality results (Section~\ref{sec:matroid}).
+Theorem~\ref{thm:information-barrier} is the base invariance statement. The main technical contribution is the downstream coding structure built on top of it: the ambiguity-based converse (Theorem~\ref{thm:converse}) and the adaptive side-information theorems of Section~\ref{sec:lwd}. The later query-side and robustness results reuse the same invariant in secondary ways.
 \end{remark}
 
 \begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
@@ -110,16 +135,13 @@ Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
 \end{proof}
 
 \begin{remark}[Quotient viewpoint]
-The relation $\sim$ partitions $\mathcal{V}$ into observational equivalence classes, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared observable family.
+The relation $\sim$ partitions $\mathcal{V}$ into representation fibers, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared representation.
 \end{remark}
 \leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}, \LH{COMPL1}, \LH{FORC2}}
 
-\begin{remark}[Fixed-axis viewpoint]
-A representative specialization writes the observable state as $\alpha(v)=(B(v),S(v))$, where $S(v)=\pi(v)$ is the declared profile and $B(v)$ is any explicit provenance carrier. In that viewpoint, admissible semantic properties factor through $\alpha$, and properties that vary within an $\alpha$-fiber require adding new information rather than better inference alone.
-\end{remark}
-\leanmeta{\LH{ACS5}, \LH{DOM1}, \LH{L6}}
+The remaining statements in this section are axis-specialized restatements of the same barrier and are used only by later secondary results. Read through the paper's second arc, an axis map $\alpha$ is simply a candidate helper view: if all admissible observables factor through $\alpha$, then $\alpha$ is sufficient for every in-scope semantic property; if a task varies inside one $\alpha$-fiber, then that helper view is not sufficient and must be refined. These statements are therefore sufficiency-language restatements of the same residual-ambiguity theme, not a separate theorem family.
 
-\begin{theorem}[Fixed-axis completeness]\label{thm:model-completeness}
+\begin{theorem}[Fixed-axis sufficiency]\label{thm:model-completeness}
 Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
 \[
 P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
@@ -131,10 +153,10 @@ P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
 An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript.
 \end{proof}
 
-\begin{corollary}[Fixed-axis incompleteness]\label{cor:fixed-axis-incompleteness}
+\begin{corollary}[Fixed-axis insufficiency]\label{cor:fixed-axis-incompleteness}
 If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{\LH{L6}}
+\leanmeta{\LH{L2}}
 
 \begin{proposition}[Observational quotient]\label{prop:observational-quotient}
 For any admissible strategy using only the declared observable family, the entire interaction transcript and hence the output depend only on the observable state. Equivalently, every in-scope semantic property factors through that state.

@@ -1,6 +1,6 @@
 \subsection{Formalization and Verification}\label{formalization-and-verification}
 
-The core claims in this paper are machine-checked in Lean 4. We keep the appendix concise for JSAIT and move full operational listings and implementation-level proof scripts to the supplementary artifact.
+The role of the Lean formalization in this paper is definitional precision rather than proof-volume display. It checks that the coding model, the admissibility constraints, and the cited theorem chain are stated with no hidden side channels or omitted assumptions. We keep the appendix concise for JSAIT and move full operational listings and implementation-level proof scripts to the supplementary artifact.
 
 \newcommand{\LeanLinesAbstractClassSystemAggregate}{\number\numexpr\LeanLinesAbstractClassSystemBZeroFourFiveefNineFour+\LeanLinesAbstractClassSystemAxisClosure+\LeanLinesAbstractClassSystemBridge+\LeanLinesAbstractClassSystemCore+\LeanLinesAbstractClassSystemExtended+\LeanLinesAbstractClassSystemGraphBridges+\LeanLinesAbstractClassSystemTyping+\LeanLinesAbstractClassSystemEightOneSixTwoFourOnebFour\relax}
 \newcommand{\LeanTheoremsAbstractClassSystemAggregate}{\number\numexpr\LeanTheoremsAbstractClassSystemBZeroFourFiveefNineFour+\LeanTheoremsAbstractClassSystemAxisClosure+\LeanTheoremsAbstractClassSystemBridge+\LeanTheoremsAbstractClassSystemCore+\LeanTheoremsAbstractClassSystemExtended+\LeanTheoremsAbstractClassSystemGraphBridges+\LeanTheoremsAbstractClassSystemTyping+\LeanTheoremsAbstractClassSystemEightOneSixTwoFourOnebFour\relax}
@@ -11,7 +11,7 @@ The core claims in this paper are machine-checked in Lean 4. We keep the appendi
 
 \begin{table*}[t]
 \centering
-\caption{Lean 4 Formalization Modules}
+\caption{Representative Lean 4 Modules Cited by the Main Text}
 \label{tab:lean-modules}
 \small
 \begin{tabular}{@{}llll@{}}
@@ -19,7 +19,7 @@ The core claims in this paper are machine-checked in Lean 4. We keep the appendi
 Module & Lines & Theorems & Purpose \\
 \midrule
 \texttt{abstract\_class\_system.lean} & \LeanLinesAbstractClassSystemAggregate & \LeanTheoremsAbstractClassSystemAggregate & Two-axis instantiation, barrier, dominance \\
-\texttt{axis\_framework.lean} & \LeanLinesAxisFramework & \LeanTheoremsAxisFramework & Query families, closure, matroid bridge \\
+\texttt{axis\_framework.lean} & \LeanLinesAxisFramework & \LeanTheoremsAxisFramework & Structured axis families, derivability, matroid bridge \\
 \texttt{nominal\_resolution.lean} & \LeanLinesNominalResolution & \LeanTheoremsNominalResolution & Nominal identification and witness procedures \\
 \texttt{discipline\_migration.lean} & \LeanLinesDisciplineMigration & \LeanTheoremsDisciplineMigration & Discipline vs. migration consequences \\
 \texttt{context\_formalization.lean} & \LeanLinesContextFormalization & \LeanTheoremsContextFormalization & Greenfield/retrofit context model \\
@@ -35,13 +35,13 @@ Module & Lines & Theorems & Purpose \\
 \end{table*}
 
 \paragraph{What is in scope in the mechanization.}
-The formalization covers the abstract observer model, the information barrier, constant-witness versus query lower-bound separation, matroid structure of minimal distinguishing query sets, and the $(L,W,D)$ zero-error frontier claims stated in the main text. The matroid layer includes closure, exchange, equicardinality, and basis results, with representative handles \LH{L1}, \LH{L4}, and \LH{L5}. The converse chain includes \LH{LWDC1}, \LH{LWDC2}, and \LH{LWDC3}. The graph-confusability threshold and block-scaling results include \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, and \LH{GPH24}. The Lean development works in the finite explicit setting used by the theorem statements: finite class sets, finite attribute families, and explicit profile maps or induced finite relations. It certifies the converse and block-scaling laws in that setting rather than the complexity of estimating $A_\pi$ from an implicit representation.
+The formalization covers the abstract observer model, the information barrier, adaptive fiberwise side-information budgets, task-level sufficiency under fixed representations, helper-view fusion laws, exact product-fiber laws for factorized representations, structured axis families with derivability-aware closure, and the zero-error frontier claims stated in the main text. The structured-axis layer includes closure, exchange, equicardinality, and basis results, with representative handles \LH{L1}, \LH{L4}, and \LH{L5}. The converse chain includes \LH{LWDC1}, \LH{LWDC2}, and \LH{LWDC3}. The graph-confusability threshold and block-scaling results include \LH{GPH13}, \LH{GPH16}, \LH{GPH18}, \LH{GPH19}, and \LH{GPH24}. The adaptive side-information layer includes the pointwise fiber budget and expected-length lower bounds \LH{GPH32}, \LH{GPH33}, together with a conditional-entropy comparison \LH{GPH34} and a fiberwise prefix-coding achievability theorem \LH{GPH35}. The task-level layer adds exact task sufficiency, monotonicity under representation coarsening, pair-view recovery criteria, and factorized product laws \LH{GPH38}, \LH{GPH39}, \LH{GPH40}, \LH{GPH41}, \LH{GPH42}, \LH{GPH43}. The positive-distortion slice also includes a uniform-fiber error bound \LH{GPH30}. Follow-up finite explicit corollaries for learned-representation settings include \LH{GPH27}, \LH{GPH28}, \LH{GPH36}, and \LH{GPH37}. The Lean development works in the finite explicit setting used by the theorem statements: finite class sets, finite attribute families, and explicit profile maps or induced finite relations. It certifies the converse, block-scaling laws, adaptive fiberwise lower and upper bounds, task-level sufficiency, helper-view fusion laws, factorized product laws, the finite deterministic distortion floor, and the restricted structured-axis matroid bridge in that setting rather than the complexity of estimating $A_\pi$ from an implicit representation such as a circuit, program, or learned model.
+
+\paragraph{How the backing is exposed in the paper.}
+The main text uses inline handle tags of the form \LH{GPH35}. These are claim-level links into the formalization, and the automatically generated handle index records the corresponding Lean declarations. The claims-only verification pass for the current release marks 10 main-text claims with explicit proof paths, so the emphasis is on which claims are backed rather than on aggregate artifact size.
 
 \paragraph{What is moved to supplementary artifact.}
 Implementation-specific operational details and extended code listings are included in supplementary material and are not required to follow the IT contribution in the main paper.
-
-\paragraph{Artifact totals.}
-The complete artifact contains \LeanTotalFiles\ Lean files totaling \LeanTotalLines\ lines and \LeanTotalTheorems\ theorem/lemma statements. The table above highlights the core modules directly used by the main-text derivations. The remaining support files contribute \LeanLinesSupportFiles\ lines and \LeanTheoremsSupportFiles\ theorem/lemma statements.
 
 \subsection{Attribute-Only Formalization}\label{interface-only-formalization}
 

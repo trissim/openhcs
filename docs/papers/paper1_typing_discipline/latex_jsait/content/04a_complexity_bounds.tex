@@ -1,6 +1,6 @@
-\subsection{Open-World Robustness and Decidability Boundary}
+\subsection{Secondary Robustness and Decidability Boundary}
 
-The main converse addresses whatever collision structure is present in the observable world. The next two results show that a currently collision-free realized world does not escape the theorem in any durable sense: barrier-freedom is not extension-stable, and in full generality it is not computably certifiable in advance.
+The main side-information theorems address whatever collision structure is present in the realized representation. A complementary question is whether that fiber geometry is stable under system evolution: can a representation that is currently collision-free become noninjective when the class universe grows? The next two results are secondary robustness statements quantifying that fragility.
 
 \begin{definition}[Finite realized world]
 Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ \emph{barrier-free} iff
@@ -16,7 +16,7 @@ An \emph{open-world extension} is a super-world $W' \supseteq W$ obtained by add
 \leanmeta{\LHrng{ROB}{1}{2}}
 
 \begin{theorem}[Barrier-freedom is not extension-stable]\label{thm:open-world-extension-instability}
-In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions:
+In the open-world class model used here, it is not true that barrier-freedom is preserved under all extensions:
 \[
 \neg\Big(\forall W \subseteq W',\ \mathrm{BarrierFree}(W)\Rightarrow \mathrm{BarrierFree}(W')\Big).
 \]
@@ -24,8 +24,12 @@ In the open-world class model formalized in Lean, it is not true that barrier-fr
 \leanmeta{\LHrng{ROB}{1}{2}}
 
 \begin{proof}
-Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
+Take the empty world $W_0=\varnothing$, which is barrier-free. In this model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
 \end{proof}
+
+\begin{remark}[Safety interpretation]
+The theorem formalizes a basic fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. In applications where correctness depends on persistent zero-error identification, extension-stability must be proved under an explicit growth model rather than inferred from the current snapshot alone.
+\end{remark}
 
 The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
 
@@ -50,6 +54,10 @@ Equivalently, barrier-freedom certification is also non-computable.
 \begin{proof}
 Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial: some generators produce collisions and some do not. Rice's theorem therefore implies that if membership in the corresponding semantic class were computable from code, every partial recursive function would have to satisfy it, contradiction. The barrier-free statement is equivalent by negation.
 \end{proof}
+
+\begin{remark}[Certification interpretation]
+The Rice-style theorem gives the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. Formal guarantees therefore require either a restricted extension model or explicit identity-carrying information that remains valid under growth.
+\end{remark}
 
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
 For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
