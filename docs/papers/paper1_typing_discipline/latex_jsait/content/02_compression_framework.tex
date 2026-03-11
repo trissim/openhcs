@@ -17,10 +17,6 @@ Let $\mathcal{V}$ be a set of entities (program objects, database records, biolo
 \end{definition}
 \leanmeta{\LH{ACS5}, \LH{COMPL1}}
 
-\begin{remark}[Terminology]
-We use ``attribute'' for the abstract concept. Depending on domain, attributes may be interfaces/signatures, database columns, phenotypic characters, or catalog facets. The mathematics is identical.
-\end{remark}
-
 \begin{definition}[Attribute observation family]
 For each $I \in \mathcal{I}$, define the attribute-membership observation $q_I: \mathcal{V} \to \{0,1\}$:
 \[
@@ -75,11 +71,6 @@ All impossibility and optimality statements in this paper quantify over schemes 
 \end{definition}
 \leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
-\begin{proposition}[Model capture]\label{prop:model-capture}
-Any classification protocol whose evidence consists only of the declared observation family and any explicit charged side information is representable in this model. Any additional capability changes the model by enlarging the observable family or by introducing auxiliary information that must be charged explicitly.
-\end{proposition}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
-
 The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
 
 \subsection{Representation-Induced Information Barrier}
@@ -94,8 +85,6 @@ P(v)=f(\pi(v))
 \]
 Equivalently, $P$ depends only on the representation induced by the declared attribute family.
 \end{definition}
-
-\subsection{The Information Barrier}
 
 \begin{theorem}[Information barrier]\label{thm:information-barrier}\label{thm:info-barrier}
 Let $P: \mathcal{V} \to Y$ be any function. If $P$ is attribute-computable, then $P$ is constant on $\sim$-equivalence classes:
@@ -113,16 +102,8 @@ P(v) = f(\pi(v)) = f(\pi(w)) = P(w).
 \]
 \end{proof}
 
-\begin{remark}[Why state the barrier explicitly]
-The information barrier is immediate from the definition of representation side information: equal profiles induce identical admissible transcripts, so no attribute-only procedure can separate them. We state it explicitly because the later converse and secondary results use it as a reusable formal premise.
-\end{remark}
-
-\begin{remark}[Information-theoretic nature]
-The barrier is \emph{informational}, not computational. Unlimited time or memory does not help once the representation is identical.
-\end{remark}
-
-\begin{remark}[Role in the paper]
-Theorem~\ref{thm:information-barrier} is the base invariance statement. The main technical contribution is the downstream coding structure built on top of it: the ambiguity-based converse (Theorem~\ref{thm:converse}) and the adaptive side-information theorems of Section~\ref{sec:lwd}. The later query-side and robustness results reuse the same invariant in secondary ways.
+\begin{remark}[Role of the barrier]
+The barrier is \emph{informational}, not computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
 \end{remark}
 
 \begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
@@ -134,12 +115,7 @@ Let $C: \mathcal{V} \to \{1,\ldots,k\}$ be the class assignment function. If the
 Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
 \end{proof}
 
-\begin{remark}[Quotient viewpoint]
-The relation $\sim$ partitions $\mathcal{V}$ into representation fibers, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. Any strategy that distinguishes values within one $\sim$-class must import new information beyond the declared representation.
-\end{remark}
-\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}, \LH{COMPL1}, \LH{FORC2}}
-
-The remaining statements in this section are axis-specialized restatements of the same barrier and are used only by later secondary results. Read through the paper's second arc, an axis map $\alpha$ is simply a candidate helper view: if all admissible observables factor through $\alpha$, then $\alpha$ is sufficient for every in-scope semantic property; if a task varies inside one $\alpha$-fiber, then that helper view is not sufficient and must be refined. These statements are therefore sufficiency-language restatements of the same residual-ambiguity theme, not a separate theorem family.
+The relation $\sim$ partitions $\mathcal{V}$ into representation fibers, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. The remaining statements are axis-specialized restatements of the same barrier and are used only by later secondary results. Read through the paper's second arc, an axis map $\alpha$ is simply a candidate helper view: if all admissible observables factor through $\alpha$, then $\alpha$ is sufficient for every in-scope semantic property; if a task varies inside one $\alpha$-fiber, then that helper view is not sufficient and must be refined.
 
 \begin{theorem}[Fixed-axis sufficiency]\label{thm:model-completeness}
 Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
@@ -158,12 +134,6 @@ If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can co
 \end{corollary}
 \leanmeta{\LH{L2}}
 
-\begin{proposition}[Observational quotient]\label{prop:observational-quotient}
-For any admissible strategy using only the declared observable family, the entire interaction transcript and hence the output depend only on the observable state. Equivalently, every in-scope semantic property factors through that state.
-\end{proposition}
-\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}}
-
-\begin{corollary}[Adding information changes the state space]\label{cor:ad-hoc-add-axis}
-If two values agree on the declared observable state, then no admissible strategy can distinguish them with zero error. Any mechanism that does distinguish such pairs introduces additional information that should be represented explicitly in the model.
-\end{corollary}
-\leanmeta{\LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
+\begin{remark}[Axis-specialized reading]
+The fixed-axis sufficiency and insufficiency statements are simply the helper-view version of the information barrier: if a semantic task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
+\end{remark}

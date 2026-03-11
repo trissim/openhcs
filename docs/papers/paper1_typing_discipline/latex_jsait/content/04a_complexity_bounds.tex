@@ -28,10 +28,12 @@ Take the empty world $W_0=\varnothing$, which is barrier-free. In this model, tw
 \end{proof}
 
 \begin{remark}[Safety interpretation]
-The theorem formalizes a basic fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. In applications where correctness depends on persistent zero-error identification, extension-stability must be proved under an explicit growth model rather than inferred from the current snapshot alone.
+The theorem formalizes a basic fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. Persistent zero-error claims therefore need an explicit growth model rather than a one-time snapshot argument.
 \end{remark}
 
 The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
+
+For compression system design, the point is direct: a representation that currently needs no auxiliary identification bits can require a positive residual coding budget after extension if new classes enter existing fibers. Thus open-world growth can change the optimal exact side-information rate even when nothing about the deployed decoder changes.
 
 \begin{definition}[Function-level barrier predicate]
 For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
@@ -56,7 +58,7 @@ Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{ev
 \end{proof}
 
 \begin{remark}[Certification interpretation]
-The Rice-style theorem gives the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. Formal guarantees therefore require either a restricted extension model or explicit identity-carrying information that remains valid under growth.
+The Rice-style theorem is the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. Formal guarantees therefore require either a restricted extension model or explicit identity-carrying information that remains valid under growth.
 \end{remark}
 
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]

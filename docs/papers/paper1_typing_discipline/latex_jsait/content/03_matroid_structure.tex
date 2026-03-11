@@ -64,7 +64,7 @@ A \emph{structured axis model} is a query family presented together with an expl
 \end{definition}
 
 \begin{remark}[Why this restriction is coherent]
-This restriction is natural when primitive queries are intended to be stored or transmitted as irreducible semantic coordinates rather than as an arbitrary sparse encoding of the class table. If the observable family contains redundant or semantically derivable coordinates, then inclusion-minimality depends on representational accidents. The structured axis model removes that artifact by quotienting out derivable observables and restricting attention to orthogonal primitive axes.
+If the observable family contains redundant or semantically derivable coordinates, then inclusion-minimality depends on representational accidents. The structured axis model removes that artifact by quotienting out derivable observables and restricting attention to orthogonal primitive axes.
 \end{remark}
 
 \begin{theorem}[Restricted matroid theorem for structured axes]\label{thm:matroid-bases}
@@ -78,10 +78,6 @@ The formal theorem is proved for the axis-based representation in which semantic
 
 \begin{remark}[Relation to the general query invariant]
 The restricted matroid theorem strengthens the general lower-bound story when the primitive queries come from a derivability-aware axis presentation. In the unrestricted attribute-query model, the invariant used in the paper is the minimum distinguishing number $d$; in the structured axis model, the same quantity is certified by matroid basis cardinality.
-\end{remark}
-
-\begin{remark}[Relation to VC-style dimensions]
-The minimum distinguishing number $d$ is not a VC or shattering dimension in the usual learning-theoretic sense \cite{vapnik1998statistical}. VC dimension measures the largest set of examples shattered by a concept class. Here $d$ measures the smallest primitive query budget needed for zero-error class separation. In the structured axis model, this budget is additionally certified by a matroid exchange law, but that extra structure is not present in arbitrary binary query families.
 \end{remark}
 
 \subsection{Witness Cost Comparison}
