@@ -86,12 +86,20 @@ The same fiber picture also clarifies the long-standing distinction between nomi
 
 This reading transfers directly to neuro-symbolic systems. A neural encoder supplies the semantic side of the story by producing a learned representation; a symbolic layer then attempts to recover or reason about exact class-level distinctions. The fiber geometry says precisely when this is possible without extra scaffolding and when it is not: symbolic reasoning cannot recover distinctions already collapsed by the encoder, except by receiving additional identifiers, additional observables, or additional disclosures.
 
-\paragraph{The neurosymbolic linking theorem.}
-We now make this precise. Let $\pi_{\mathrm{sem}}$ be a neural encoder that maps entities to semantic representations (shapes). Let $\sigma$ be a symbolic handle that maps entities to nominal identifiers. The neurosymbolic link $(\pi_{\mathrm{sem}}, \sigma)$ achieves zero-error identity recovery if and only if the handle is injective (\LH{NSL1}). This is tight: semantic representation alone cannot achieve zero-error identity when collisions exist (\LH{NSL2}), and no decoder can recover collapsed identities without identity-resolving side information (\LH{NSL3}).
+\paragraph{Instantiated neurosymbolic linking theorems.}
+The generic GPH theorems specialize to the AbstractClassSystem domain by setting the class space to $\mathsf{Typ}$ (the type of class descriptors) and the task to identity $Y = C$. The mechanization (\LH{NSL1}--\LH{NSL6}) proves:
 
-The exact characterization is the helper-view theorem specialized to identity recovery: the pair $(\pi_{\mathrm{sem}}, \sigma)$ recovers identity if and only if the handle distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective handle suffices (\LH{NSL5}). This architectural pattern (semantic encoder + injective nominal handle) is the canonical helper-view for open-world semantic systems (\LH{NSL6}).
+\begin{itemize}
+\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (\LH{NSL1}). This instantiates \LH{GPH25} to the identity task on $\mathsf{Typ}$.
 
-In compression-theoretic terms: the neural encoder compresses semantic structure, possibly at the cost of identity collisions. The symbolic handle pays the identity bit budget. Together they achieve lossless identity compression. Neither alone suffices when the encoder is non-injective. The neurosymbolic architecture is not a design preference but an information-theoretic necessity for zero-error open-world systems.
+\item If $\pi$ has collisions ($\exists c_1 \neq c_2$ with $\pi(c_1) = \pi(c_2)$), then semantic representation alone cannot achieve zero-error identity (\LH{NSL2}) and no decoder can recover the collapsed identities without side information (\LH{NSL3}).
+
+\item The exact characterization: $(\pi, \sigma)$ recovers identity iff $\sigma$ distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective $\sigma$ suffices (\LH{NSL5}). This instantiates \LH{GPH40} to the identity task.
+
+\item The pair $(\pi, \sigma)$ is the canonical helper-view for open-world identity systems (\LH{NSL6}).
+\end{itemize}
+
+The significance is that these are not merely interpretations but \emph{instantiated theorems} connecting the information-theoretic helper-view framework (\LH{GPH40}) to the concrete domain of type systems (\LH{AXI1}, \LH{IMP1}, \LH{EMB1}). The compression-theoretic reading follows: if $\pi$ is non-injective, the symbolic handle pays the identity bit budget. Neither alone suffices when $\pi$ has collisions. The neurosymbolic architecture is information-theoretically necessary, not optional.
 
 \subsection{One Additional Semantic-Identification Example}
 
