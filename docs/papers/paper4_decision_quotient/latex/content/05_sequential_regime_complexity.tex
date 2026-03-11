@@ -21,7 +21,7 @@ This is the sequential state-based certification predicate used throughout the p
 \end{definition}
 
 \paragraph{Two interpretations.}
-There are two closely related readings of this definition. The formal reading used in the paper and artifact is the state-based predicate above. Its intended interpretation is policy-level: hidden information may be irrelevant at time zero and still become relevant later because it changes future contingent choices. The sequential results are stated for the induced state-based optimizer predicate formalized in the artifact; the policy-level reading is motivational rather than the formal theorem object.
+There are two closely related readings of this definition. Formally, the sequential row studies sufficiency for the optimizer induced by the sequential model. Its intended interpretation is policy-level: hidden information may be irrelevant at time zero and still become relevant later because it changes future contingent choices.
 
 One can also read the same construction heuristically as a coordinate-restricted POMDP abstraction question. A full controller conditions on evolving observations and therefore on induced beliefs over latent states. Hiding coordinates does not merely erase information about the present state; it changes the informational interface through which future decisions are made. That heuristic is useful for intuition and for understanding the TQBF gadget, but the formal theorems in this paper are stated for the state-based predicate above rather than for a fully developed history-dependent policy class.
 
@@ -72,7 +72,7 @@ For membership, the verifier ranges over state pairs or candidate witnesses whil
 For hardness, reduce TQBF. Encode alternating quantifiers into the reduced sequential instance so that the induced optimizer is state-independent exactly when the quantified instance is true. Then empty-set sequential sufficiency holds exactly when the source TQBF instance is true.
 \end{proof}
 
-The proof can be read operationally as follows. A sequential certificate must rule out the possibility that some hidden bit becomes decision-relevant only after several temporally mediated updates. That means the verifier cannot stop at a single static comparison; it has to account for contingent future structure in the induced optimizer. TQBF is therefore the correct benchmark: the same alternation between ``there exists a choice'' and ``for every resolution'' is already built into the reduced sequential instance.
+The proof can be read operationally as follows. A sequential certificate must rule out the possibility that some hidden bit becomes decision-relevant only after several temporally mediated updates. That means the verifier cannot stop at a single static comparison; it has to account for contingent future structure in the induced optimizer. TQBF is therefore the correct reduction target: the same alternation between ``there exists a choice'' and ``for every resolution'' is already built into the reduced sequential instance.
 
 \begin{proposition}[Sequential Sufficiency Refines to Sequential Anchor Sufficiency]\label{prop:sequential-anchor-refinement}
 If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.

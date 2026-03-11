@@ -11,6 +11,7 @@ import DecisionQuotient.StochasticSequential.Hierarchy
 import DecisionQuotient.StochasticSequential.Tractability
 import DecisionQuotient.StochasticSequential.SubstrateCost
 import DecisionQuotient.StochasticSequential.CrossRegime
+import DecisionQuotient.StochasticSequential.PreservationVariants
 
 namespace DecisionQuotient.StochasticSequential
 
@@ -29,6 +30,16 @@ open DecisionQuotient.DimensionalComplexity
 #check product_distribution_tractable
 #check bounded_horizon_tractable
 
+-- Preservation variants
+#check StochasticMinimumPreservation
+#check StochasticAnchorPreservation
+#check stochastic_minimum_preservation_iff_static_of_full_support
+#check stochastic_anchor_preservation_implies_static_anchor
+#check static_anchor_implies_stochastic_anchor_preservation_of_full_support
+#check stochastic_anchor_preservation_iff_static_anchor_of_full_support
+#check stochasticMinimumPreservation_counted_search_witness
+#check stochasticAnchorPreservation_counted_search_witness
+
 /-! ## Complexity Summary
 
 Summary of complexity results and mechanization status:
@@ -36,7 +47,7 @@ Summary of complexity results and mechanization status:
 | Regime       | Problem                              | Complexity |
 |--------------|--------------------------------------|------------|
 | Static       | SUFFICIENCY / MINIMUM / ANCHOR       | coNP-c / coNP-c / Sigma2P-c |
-| Stochastic   | SUFFICIENCY / MINIMUM / ANCHOR       | PP-c / PP-hard / PP-hard |
+| Stochastic   | preservation base / decisiveness / decisiveness min / decisiveness anchor | P(explicit) / PP-hard / PP-hard / PP-hard |
 | Sequential   | SUFFICIENCY / MINIMUM / ANCHOR       | PSPACE-c / PSPACE-hard / PSPACE-hard |
 
 Transfer conditions:

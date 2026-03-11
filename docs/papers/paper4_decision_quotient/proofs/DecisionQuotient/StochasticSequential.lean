@@ -20,6 +20,7 @@ import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.NPPPHardness
 import DecisionQuotient.StochasticSequential.ExistentialHardness
 import DecisionQuotient.StochasticSequential.SetValued
+import DecisionQuotient.StochasticSequential.PreservationVariants
 import DecisionQuotient.StochasticSequential.Instances
 import DecisionQuotient.StochasticSequential.Quotient
 import DecisionQuotient.StochasticSequential.Summary
