@@ -1,10 +1,10 @@
 \section{Stochastic Regime Complexity}\label{sec:stochastic}
 
-We now add a distribution over states. This does not merely make the certification problem harder; it bifurcates it into two inequivalent exact questions. Once utilities are compared through conditional expectations, there are two natural exact predicates. The first is a preservation question: does the optimizer seen after hiding coordinates agree with the optimizer seen when the full state is known? The second is a determinacy question: does each observed fiber admit a unique Bayes-optimal action? We call these \emph{stochastic sufficiency} and \emph{stochastic decisiveness}, respectively. The first is a fidelity notion; the second is a decision-completeness notion. They are distinct, and probability makes both natural. Stochastic sufficiency gives the direct stochastic analogue of static sufficiency and the bridge back to the optimizer quotient; under full support, its minimum and anchor variants inherit the static coNP and $\Sigma_2^P$ classifications. Stochastic decisiveness yields the strongest succinct-encoding complexity classification established in the paper.
+We now add a distribution over states. Once utilities are compared through conditional expectations, the stochastic regime has two exact predicates rather than one. The first is a preservation predicate: does the optimizer seen after hiding coordinates agree with the optimizer seen when the full state is known? The second is a decisiveness predicate: does each observed fiber admit a unique Bayes-optimal action? Formally, these are stochastic sufficiency and stochastic decisiveness. Stochastic sufficiency gives the direct stochastic analogue of static sufficiency and the bridge back to the optimizer quotient; under full support, its minimum and anchor variants inherit the static coNP and $\Sigma_2^P$ classifications. Stochastic decisiveness yields the strongest succinct-encoding complexity classification established in the paper.
 
-\subsection{Why the Stochastic Row Bifurcates}
+\subsection{Preservation and Decisiveness}
 
-In static decision problems, there is one natural exact question: does hiding coordinates preserve the optimizer? In stochastic decision problems, exact analysis naturally bifurcates. Preservation asks whether coarse information reproduces the full-information optimizer: does the optimizer induced by the retained coordinates agree with the optimizer seen when the entire state is known? Determinacy asks whether the coarse information itself yields a unique Bayes-optimal action on each observable fiber: is the retained signal itself a complete decision interface? The first is a fidelity notion; the second is a decision-completeness notion. They are not equivalent. A set of coordinates may preserve the full-information optimizer without being decisive, and it may be decisive without preserving the full-information optimizer. Probability makes both questions natural, and the complexity landscape splits accordingly.
+In static decision problems, the natural exact question is whether hiding coordinates preserves the optimizer. In stochastic decision problems, preservation is still natural, but it is no longer the only exact question. One can also ask whether the retained signal is itself a complete decision interface, meaning that every observable fiber has a unique conditional optimum. That is the decisiveness predicate. The two predicates are not equivalent: a coordinate set may preserve the full-information optimizer without being decisive, and it may be decisive without preserving the full-information optimizer. Probability therefore produces two parallel exact questions rather than one uniform stochastic analogue.
 
 \subsection{Stochastic Decision Problems}
 
@@ -37,7 +37,7 @@ Using the same conditional optimizer map $\Opt^{\mathrm{stoch}}_I$, a coordinate
 \[
 \forall \alpha \in \mathrm{supp}(S_I)\; \exists a \in A:\quad \Opt^{\mathrm{stoch}}_I(\alpha)=\{a\}.
 \]
-In the paper, we refer to this as \emph{stochastic decisiveness}. In the current artifact, this is the stochastic predicate with the strongest mechanized complexity package.
+In the paper, we refer to this as \emph{stochastic decisiveness}. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
 \end{definition}
 
 \paragraph{Why this changes complexity.}
@@ -130,7 +130,8 @@ For stochastic sufficiency in the preservation sense, this paper proves explicit
 \textbf{Question:} Is $I$ stochastically decisive?
 \end{problem}
 
-The next two queries retain the traditional names ``stochastic anchor sufficiency'' and ``stochastic minimum sufficiency,'' although formally they are singleton-optimum queries in the decisiveness family rather than preservation queries.
+\paragraph{Naming convention.}
+From this point onward, the historical names ``stochastic anchor sufficiency'' and ``stochastic minimum sufficiency'' refer to the decisiveness family, not the preservation family introduced above.
 
 \begin{definition}[Stochastic Anchor Sufficiency]\label{def:stochastic-anchor-sufficient}
 A coordinate set $I$ is \emph{stochastically anchor-sufficient} if there exists an admissible fiber value $\alpha \in \mathrm{supp}(S_I)$ and an action $a \in A$ such that
@@ -170,7 +171,7 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},
 \]
 with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact now packages exactly this no-witness characterization: stochastic decisiveness fits an oracle-style complement schema, its complement fits the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} This is not yet a full oracle-machine $\textsf{coNP}^{\textsf{PP}}$ formalization, but it is a genuine mechanized succinct upper-bound package for the decisiveness predicate.
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization: stochastic decisiveness fits an oracle-style complement schema, its complement fits the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} The proof artifact does not formalize oracle Turing machines or oracle complexity classes directly; instead, it mechanizes the finite witness/checking schemata and reduction cores used in the paper-level oracle-class arguments. That yields a genuine mechanized succinct upper-bound core for the decisiveness predicate without claiming a full oracle-machine $\textsf{coNP}^{\textsf{PP}}$ formalization.
 \end{proof}
 
 \begin{proposition}[Stochastic Decisiveness Yields Stochastic Anchor Sufficiency]\label{prop:stochastic-anchor-refinement}
@@ -244,7 +245,7 @@ Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for sto
 
 The remaining gap is not a bookkeeping omission but a real structural issue. Stochastic decisiveness is a pure verification problem: once $I$ is fixed, one must check a family of majority-style conditional comparisons, which yields the stated encoding-sensitive complexity. By contrast, stochastic anchor and minimum sufficiency add an outer existential choice, namely to guess an anchor witness or a candidate coordinate set, before performing the same conditional verification. The current collapse theorem \LH{PA3} shows that anchor sufficiency reduces to existence of a fiber with a singleton conditional optimum, and the new existential-majority reduction shows that this extra witness layer is not vacuous. So the open question is genuinely whether that existential layer can be absorbed into PP under the present encoding, not whether the paper has simply stopped one step short of an obvious closure argument.
 
-For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as one undifferentiated theorem about one predicate. Instead, it presents the bifurcation: probability splits the exact question into preservation and determinacy. Preservation gives the direct stochastic analogue of the static question and the bridge back to the optimizer quotient. Determinacy yields the strongest succinct-encoding complexity classification established in the paper. The split is part of the proved theory, not a temporary patch.
+For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as one undifferentiated theorem about one predicate. Instead, it treats preservation and decisiveness as parallel exact questions. Preservation gives the direct stochastic analogue of the static question and the bridge back to the optimizer quotient. Decisiveness yields the strongest succinct-encoding complexity classification established in the paper. The split is part of the proved theory, not a temporary patch.
 
 \paragraph{Relevance boundary.}
 The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$
