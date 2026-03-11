@@ -1,6 +1,6 @@
 \section{Sequential Regime Complexity}\label{sec:sequential}
 
-We now move to sequential settings with transitions and observations. Here the same certification question is asked at the policy level: can one suppress some coordinates of the evolving information state without changing the optimal policy? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore compare policies across temporally unfolding contingencies rather than compare one-shot optimizers or conditional expectations. In succinct models, that policy-preservation task naturally supports the same kind of alternating contingency that drives PSPACE hardness in planning and quantified-logic reductions.
+We now move to sequential settings with transitions and observations. Here the same certification question is asked for a sequential decision model carrying transitions, observations, and a planning horizon. In the current formalization, the certified predicate is state-based: after packaging the sequential instance as its induced one-step decision map, can one suppress some coordinates without changing the resulting optimal-action set? This is where the complexity reaches PSPACE. The structural reason is that hidden information can matter later even when it appears irrelevant now. Certification must therefore account for temporally unfolding contingencies rather than compare only one-shot optimizers or conditional expectations. In succinct models, that temporal contingency naturally supports the same kind of alternation that drives PSPACE hardness in planning and quantified-logic reductions.
 
 \subsection{Sequential Decision Problems}
 
@@ -13,13 +13,17 @@ with state space $S=X_1\times\cdots\times X_n$, transition kernel $T:A\times S\t
 \end{definition}
 
 \begin{definition}[Sequential Sufficiency]\label{def:sequential-sufficient}
-Coordinate set $I$ is \emph{sequentially sufficient} if the optimal policy using full observation history equals the optimal policy obtained when histories are restricted to $I$-coordinates.
+For a sequential instance $\mathcal D_{\mathrm{seq}}$, let $\Opt_{\mathrm{seq}}(s)$ denote the optimal-action set of its induced decision map on state $s$. A coordinate set $I$ is \emph{sequentially sufficient} if
+\[
+\forall s,s'\in S:\quad s_I=s'_I \implies \Opt_{\mathrm{seq}}(s)=\Opt_{\mathrm{seq}}(s').
+\]
+This is the sequential state-based certification predicate used throughout the paper and in the artifact.
 \end{definition}
 
 \paragraph{Two interpretations.}
-There are two closely related readings of this definition. The policy-level reading is the one used for the paper's PSPACE classification: hidden information may be irrelevant at time zero and still become relevant later because it changes future contingent choices. The artifact's finite core packages this through explicit state-based verifiers and search procedures over the induced optimizer structure. The point of the sequential section is therefore not that everything reduces to a static one-step check, but that exact relevance certification in temporal models must account for information whose effect is delayed until later belief or policy updates.
+There are two closely related readings of this definition. The formal reading used in the paper and artifact is the state-based predicate above. Its intended interpretation is policy-level: hidden information may be irrelevant at time zero and still become relevant later because it changes future contingent choices. The artifact packages the certified finite core through explicit state-based verifiers and search procedures over the induced optimizer structure. The point of the sequential section is therefore not that everything reduces to a static one-step check, but that the certified state-based predicate is being used as a surrogate for temporal relevance in models where delayed informational effects matter.
 
-Equivalently, one can read the sequential problem as a coordinate-restricted POMDP abstraction question. A full controller conditions on the evolving observation history and therefore on the induced belief over latent states. Hiding coordinates does not merely erase information about the present state; it changes the belief process itself, because future posteriors are formed from a coarser observation interface. Exact sequential sufficiency therefore asks whether the restricted belief evolution preserves the optimal policy, not just whether the current stage reward is unchanged. This is why the sequential problem is qualitatively stronger than the stochastic one-shot problem: omitted information can remain dormant for several steps and only later affect the optimal continuation.
+One can also read the same construction heuristically as a coordinate-restricted POMDP abstraction question. A full controller conditions on evolving observations and therefore on induced beliefs over latent states. Hiding coordinates does not merely erase information about the present state; it changes the informational interface through which future decisions are made. That heuristic is useful for intuition and for understanding the TQBF gadget, but the formal theorems in this paper are stated for the state-based predicate above rather than for a fully developed history-dependent policy class.
 
 \begin{problem}[SEQUENTIAL-SUFFICIENCY-CHECK]\label{prob:sequential-sufficiency}
 \textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$. \\
@@ -52,9 +56,9 @@ In the current formalization, sequential sufficiency is defined as sufficiency o
 
 \subsection{PSPACE-Completeness}
 
-The sequential regime is the strongest of the three because hidden information can matter not only for the current optimizer but for the future evolution of the decision problem. The same relevance question therefore becomes a policy-comparison problem over dynamic information states. Static certification asks whether bad state pairs exist; stochastic certification asks whether conditional averages cross a threshold; sequential certification asks whether omitted coordinates can change the value of future contingent choices. That added temporal contingency is exactly what the TQBF reduction exploits.
+The sequential regime is the strongest of the three because hidden information can matter not only for the current optimizer but for the future evolution of the decision problem. Static certification asks whether bad state pairs exist; stochastic certification asks whether conditional averages cross a threshold; sequential certification asks whether omitted coordinates can change the induced optimizer after temporal structure is taken into account. That added temporal contingency is exactly what the TQBF reduction exploits.
 
-The reduction is natural for the same reason that quantified formulas and partially observed control problems are natural companions elsewhere in the planning literature. Existential quantifier blocks correspond to controller choices, universal blocks correspond to adversarial or environment-controlled resolutions, and the terminal truth value of the formula becomes terminal reward. A hidden coordinate can look locally irrelevant after one transition yet still encode which branch of the quantified game has been entered, so forgetting it can alter the set of policies that remain optimal later. In that sense the reduction is not merely a correctness gadget: it exposes the precise source of PSPACE hardness, namely that exact relevance certification must reason about information that affects future contingent optimization rather than present-stage utility alone.
+The reduction is natural for the same reason that quantified formulas and temporally structured control problems are natural companions elsewhere in the planning literature. Existential quantifier blocks correspond to controller-side choices, universal blocks correspond to adversarial or environment-controlled resolutions, and the truth value of the quantified formula is encoded into the induced optimizer of the reduced sequential instance. A hidden coordinate can look locally irrelevant after one transition yet still encode which branch of the quantified game has been entered. In that sense the reduction is not merely a correctness gadget: it exposes the source of PSPACE hardness, namely that exact relevance certification must reason about information whose effect is mediated by temporal contingency rather than by a single one-shot comparison.
 
 \begin{theorem}[Sequential Sufficiency is PSPACE-complete]\label{thm:sequential-pspace}
 SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
@@ -63,12 +67,12 @@ SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
 \leanmeta{\LH{DC46}, \LH{DC66}, \LH{DC74}.}
 
 \begin{proof}
-For membership, finite-horizon policy comparison for POMDP-style models is decidable in polynomial space by dynamic programming over belief and state summaries.
+For membership, the verifier ranges over state pairs or candidate witnesses while evaluating the induced sequential optimizer of the input instance. Under the present finite-horizon encoding, that induced optimizer can be evaluated using only polynomial space in the succinct input description of the reduction gadgets, and the outer search can likewise be carried out in polynomial space. This is the verifier pattern abstracted by the explicit finite-search layer formalized in the artifact.
 
-For hardness, reduce TQBF. Encode alternating quantifiers as alternating controlled and adversarial transitions, and let the terminal reward evaluate the quantified formula. Then full-history sufficiency holds exactly when the quantified instance is true.
+For hardness, reduce TQBF. Encode alternating quantifiers into the reduced sequential instance so that the induced optimizer is state-independent exactly when the quantified instance is true. Then empty-set sequential sufficiency holds exactly when the source TQBF instance is true.
 \end{proof}
 
-The proof can be read operationally as follows. A sequential certificate must rule out the possibility that some hidden bit becomes decision-relevant only after several observation-update steps. That means the verifier cannot stop at stagewise equality of current optimizers; it has to compare the continuation value of future contingent branches. TQBF is therefore the correct benchmark: the same alternation between ``there exists a control choice'' and ``for every environment resolution'' is already built into the meaning of exact policy preservation under partial information.
+The proof can be read operationally as follows. A sequential certificate must rule out the possibility that some hidden bit becomes decision-relevant only after several temporally mediated updates. That means the verifier cannot stop at a single static comparison; it has to account for contingent future structure in the induced optimizer. TQBF is therefore the correct benchmark: the same alternation between ``there exists a choice'' and ``for every resolution'' is already built into the reduced sequential instance.
 
 \begin{proposition}[Sequential Sufficiency Refines to Sequential Anchor Sufficiency]\label{prop:sequential-anchor-refinement}
 If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.

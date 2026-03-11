@@ -673,6 +673,15 @@ abbrev DC65 := @StochasticSequential.countedStochasticAnchorSearch_steps
 abbrev DC66 := @StochasticSequential.countedSequentialSufficiencySearch_spec
 abbrev DC67 := @StochasticSequential.countedSequentialSufficiencySearch_steps
 abbrev DC68 := @StochasticSequential.countedSequentialAnchorSearch_spec
+abbrev DC91 := @StochasticSequential.countedStochasticPreservationSearch_spec
+abbrev DC92 := @StochasticSequential.countedStochasticPreservationSearch_steps
+abbrev DC93 := @StochasticSequential.stochastic_preservation_inP_explicit
+abbrev DC94 := @StochasticSequential.stochastic_preservation_implies_static_sufficiency
+abbrev DC95 := @StochasticSequential.static_sufficiency_implies_stochastic_preservation_of_full_support
+abbrev DC96 := @StochasticSequential.static_sufficiency_iff_stochastic_preservation_of_full_support
+abbrev DC97 := @StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_preservation
+abbrev DC98 := @StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_full_support
+abbrev DC99 := @StochasticSequential.stochasticEquivSetoid_eq_decisionSetoid_of_full_support
 abbrev DC69 := @StochasticSequential.countedSequentialAnchorSearch_steps
 abbrev DC70 := @static_sufficiency_inP_explicit
 abbrev DC71 := @static_anchor_inP_explicit
@@ -971,6 +980,11 @@ abbrev OU4 := @StochasticSequential.fitsNPOverPPStyle_of_exists_witness
 abbrev OU5 := @StochasticSequential.inP_of_poly_witness_list
 abbrev OU6 := @StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema
 abbrev OU7 := @StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema
+abbrev OU8 := @StochasticSequential.fitsCoNPOverPPStyle_of_no_witness
+abbrev OU9 := @StochasticSequential.stochastic_decisiveness_query_fits_conp_over_ppstyle
+abbrev OU10 := @StochasticSequential.stochastic_decisiveness_complement_fits_np_over_ppstyle
+abbrev OU11 := @StochasticSequential.stochastic_decisiveness_scoped_oracle_bounds
+abbrev OU12 := @StochasticSequential.stochastic_preservation_explicit_summary
 
 -- Existential-hardness (EH) handles - honest existential-majority packaging
 abbrev EH1 := @StochasticSequential.existential_anchor_source_fits_np_over_ppstyle_honest
@@ -978,6 +992,11 @@ abbrev EH2 := @StochasticSequential.existential_anchor_hard_honest
 abbrev EH3 := @StochasticSequential.existential_anchor_query_family_hard_honest
 abbrev EH4 := @StochasticSequential.existential_anchor_np_over_ppstyle_hard_honest
 abbrev EH5 := @StochasticSequential.existential_anchor_query_family_np_over_ppstyle_hard_honest
+abbrev EH6 := @StochasticSequential.existential_anchor_query_family_np_over_ppstyle_complete_honest
+abbrev EH7 := @StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_hard_honest
+abbrev EH8 := @StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_complete_honest
+abbrev EH9 := @StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_hard_honest
+abbrev EH10 := @StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_complete_honest
 
 -- Graph nontriviality (GN) handles - cycles, observer surprisal, Bayes/DQ/physics bridge
 abbrev GN1 := @LogicGraph.isCycle

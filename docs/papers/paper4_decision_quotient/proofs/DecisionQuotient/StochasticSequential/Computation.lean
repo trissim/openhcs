@@ -97,6 +97,22 @@ theorem decide_imp_true_iff (P Q : Prop) [Decidable P] [Decidable Q] :
 
 /-! ## Stochastic Query Deciders -/
 
+/-- Exact boolean decider for stochastic preservation sufficiency. -/
+noncomputable def stochasticPreservationBool
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Bool := by
+  classical
+  exact decide (StochasticPreservationSufficient P I)
+
+theorem stochasticPreservationBool_spec
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    stochasticPreservationBool P I = true ↔ StochasticPreservationSufficient P I := by
+  classical
+  simp [stochasticPreservationBool]
+
 /-- Exact boolean decider for stochastic sufficiency. -/
 noncomputable def stochasticSufficientBool
     {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
@@ -165,6 +181,13 @@ theorem stochastic_minimum_has_exact_bool_decider
     (P : StochasticDecisionProblem A S) (k : ℕ) :
     HasExactBoolDecider (StochasticMinimumSufficiencyCheck P k) := by
   exact ⟨stochasticMinimumSufficiencyBool P k, stochasticMinimumSufficiencyBool_spec P k⟩
+
+theorem stochastic_preservation_has_exact_bool_decider
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    HasExactBoolDecider (StochasticPreservationSufficient P I) := by
+  exact ⟨stochasticPreservationBool P I, stochasticPreservationBool_spec P I⟩
 
 /-- Explicit exhaustive-search decider for the stochastic minimum query over all
     coordinate subsets. -/
@@ -271,6 +294,77 @@ theorem countedStochasticSufficiencySearch_steps
   simpa [Counted.steps] using countedAnyList_steps_le_length
     (Finset.univ.toList : List S)
     (fun s => decide (¬ ∃ a : A, fiberOpt P I s = {a}))
+
+/-- Explicit counted violation scan for stochastic preservation on a fixed
+    information set. It searches for a state where the conditional fiber optimum
+    differs from the full-information optimizer. -/
+noncomputable def countedStochasticPreservationSearch
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Counted Bool :=
+  let c := countedAnyList (Finset.univ.toList : List S)
+    (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))
+  (c.steps, !c.result)
+
+theorem countedStochasticPreservationSearch_spec
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    (countedStochasticPreservationSearch P I).result = true ↔ StochasticPreservationSufficient P I := by
+  constructor
+  · intro h s
+    have hInnerFalse : (countedAnyList
+        (Finset.univ.toList : List S)
+        (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))).result = false := by
+      unfold countedStochasticPreservationSearch at h
+      simpa [Counted.result] using h
+    have hfalse := (countedAnyList_result_false_iff
+      (Finset.univ.toList : List S)
+      (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))).mp hInnerFalse
+    have hsMem : s ∈ (Finset.univ.toList : List S) := by
+      simpa using (Finset.mem_toList.mpr (Finset.mem_univ s))
+    have hsFalse : decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s) = false := hfalse s hsMem
+    by_cases hsNe : fiberOpt P I s ≠ P.toDecisionProblem.Opt s
+    · have hsTrue : decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s) = true := by
+        simp [hsNe]
+      rw [hsTrue] at hsFalse
+      cases hsFalse
+    · exact by_contra fun hEq => hsNe hEq
+  · intro h
+    have hInnerFalse : (countedAnyList
+        (Finset.univ.toList : List S)
+        (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))).result = false :=
+      (countedAnyList_result_false_iff
+        (Finset.univ.toList : List S)
+        (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))).mpr (by
+          intro s hsMem
+          by_cases hbad : fiberOpt P I s ≠ P.toDecisionProblem.Opt s
+          · exact False.elim (hbad (h s))
+          · simp [hbad])
+    unfold countedStochasticPreservationSearch
+    simpa [Counted.result] using hInnerFalse
+
+theorem countedStochasticPreservationSearch_steps
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    (countedStochasticPreservationSearch P I).steps ≤ Fintype.card S := by
+  unfold countedStochasticPreservationSearch
+  simpa [Counted.steps] using countedAnyList_steps_le_length
+    (Finset.univ.toList : List S)
+    (fun s => decide (fiberOpt P I s ≠ P.toDecisionProblem.Opt s))
+
+theorem stochasticPreservation_counted_search_witness
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    HasCountedSearchWitness
+      (StochasticPreservationSufficient P I)
+      (countedStochasticPreservationSearch P I)
+      (Fintype.card S) := by
+  constructor
+  · exact countedStochasticPreservationSearch_spec P I
+  · exact countedStochasticPreservationSearch_steps P I
 
 /-- Explicit counted witness search for stochastic anchor sufficiency. -/
 noncomputable def countedStochasticAnchorSearch
@@ -683,6 +777,22 @@ theorem stochastic_sufficiency_inP_explicit
   · intro q
     exact countedStochasticSufficiencySearch_spec _ _
 
+theorem stochastic_preservation_inP_explicit
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : StochasticExplicitInput A S n => StochasticPreservationSufficient q.problem q.infoSet) := by
+  use (fun q => countedStochasticPreservationSearch q.problem q.infoSet), 1, 1
+  constructor
+  · intro q
+    calc
+      (countedStochasticPreservationSearch q.problem q.infoSet).steps ≤ Fintype.card S :=
+        countedStochasticPreservationSearch_steps _ _
+      _ ≤ q.stateBudget := q.state_bound
+      _ ≤ sizeOf q := stochasticExplicit_size_ge_state q
+      _ ≤ 1 * (sizeOf q) ^ 1 + 1 := by simp
+  · intro q
+    exact countedStochasticPreservationSearch_spec _ _
+
 theorem stochastic_anchor_inP_explicit
     {A S : Type*} {n : ℕ}
     [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
@@ -755,5 +865,33 @@ theorem sequential_anchor_inP_explicit
       _ ≤ 1 * (sizeOf q) ^ 1 + 1 := by simp
   · intro q
     exact countedSequentialAnchorSearch_spec _ _
+
+/-- Paper-facing summary wrapper for the explicit-state sequential sufficiency
+upper bound. -/
+theorem sequential_sufficiency_upper_bound_summary
+    {A S O : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : SequentialExplicitInput A S O n => SequentialSufficient q.problem q.infoSet) :=
+  sequential_sufficiency_inP_explicit
+
+/-- Paper-facing summary wrapper for the explicit-state sequential anchor upper
+bound. -/
+theorem sequential_anchor_upper_bound_summary
+    {A S O : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : SequentialExplicitInput A S O n => SequentialAnchorSufficiencyCheck q.problem q.infoSet) :=
+  sequential_anchor_inP_explicit
+
+/-- Paper-facing summary wrapper for the explicit counted-search package for
+sequential minimum queries. -/
+theorem sequential_minimum_upper_bound_summary
+    {A S O : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (k : ℕ) :
+    HasCountedSearchWitness
+      (SequentialMinimumSufficiencyCheck P k)
+      (countedSequentialMinimumSearch P k)
+      (2 ^ n) :=
+  sequentialMinimum_counted_search_witness P k
 
 end DecisionQuotient.StochasticSequential

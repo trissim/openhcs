@@ -1,6 +1,6 @@
 \section{Encoding Dichotomy and ETH Lower Bounds}\label{sec:dichotomy}
 
-The regime hierarchy identifies where exact relevance certification sits in the standard complexity landscape. This section extracts the complementary algorithmic message: under the encodings of Section~\ref{sec:encoding}, there is a genuine dichotomy between explicit-state instances whose true relevant support is small and succinct instances whose relevant support is extensive. The former admit direct algorithms; the latter inherit exponential lower bounds under ETH. The practical takeaway is a sharp phase transition: logarithmic relevant support can still be certified exactly in polynomial time under explicit encodings, while linear relevant support under succinct encodings already forces ETH-conditioned exponential cost.
+The regime hierarchy identifies where exact relevance certification sits in the standard complexity landscape. This section extracts the complementary algorithmic message: under the encodings of Section~\ref{sec:encoding}, there is a strong contrast between explicit-state instances whose true relevant support is small and succinct instances whose relevant support is extensive. The former admit direct algorithms; the latter inherit exponential lower bounds under ETH. The practical takeaway is cross-model rather than single-model: logarithmic relevant support can still be certified exactly in polynomial time under explicit encodings, while linear relevant support under succinct encodings already forces ETH-conditioned exponential cost.
 
 \paragraph{Model note.} Part~1 is an explicit-state upper bound (time polynomial in $|S|$). Part~2 is a succinct-encoding lower bound under ETH (time exponential in $n$). The encodings are defined in Section~\ref{sec:encoding}.
 
@@ -18,10 +18,10 @@ Succinct & $k^* = \Omega(n)$ & exact certification inherits an ETH-conditioned $
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Boundary summary.} The tractable--hard transition is controlled jointly by encoding and by the size of the true sufficient support.
+\textbf{Boundary summary.} The tractable-hard contrast is controlled jointly by encoding and by the size of the true sufficient support.
 \endgroup
 
-\begin{theorem}[Complexity Dichotomy]\label{thm:dichotomy}
+\begin{theorem}[Encoding-Sensitive Contrast]\label{thm:dichotomy}
 Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N$ states. Let $k^*$ be the size of the minimal sufficient set.
 
 \begin{enumerate}
@@ -66,15 +66,15 @@ The TAUTOLOGY reduction (Theorem~\ref{thm:sufficiency-conp}) constructs:
 When $\varphi$ has $n$ variables, the constructed problem has $n+1$ coordinates. The asymptotic lower bound is $2^{\Omega(n)}$ with the same constant $\delta$ from ETH.
 \end{proof}
 
-\subsection{Phase Transition}
+\subsection{Cross-Model Contrast}
 
-\begin{corollary}[Phase Transition for Exact Certification]\label{cor:phase-transition}
-The tractable-hard boundary for exact certification is sharp at the logarithmic scale (with respect to the encodings in Section~\ref{sec:encoding}):
+\begin{corollary}[Cross-Model Contrast for Exact Certification]\label{cor:phase-transition}
+Across the explicit-state and succinct encodings of Section~\ref{sec:encoding}, exact certification exhibits the following contrast:
 \begin{itemize}
 \item If $k^* = O(\log N)$, SUFFICIENCY-CHECK is polynomial in $N$ under the explicit-state encoding
 \item If $k^* = \Omega(n)$, SUFFICIENCY-CHECK is exponential in $n$ under ETH in the succinct encoding
 \end{itemize}
-For Boolean coordinate spaces ($N = 2^n$), the transition is between $k^* = O(\log n)$ (explicit-state tractable) and $k^* = \Omega(n)$ (succinct-encoding intractable).
+For Boolean coordinate spaces ($N = 2^n$), one has $\log N = n$. So the explicit-state upper bound should be read as polynomial in the explicit table size when $k^* = O(n)$, while the succinct lower bound is exponential in the succinct variable count when $k^* = \Omega(n)$. The comparison is therefore between two encodings of the same Boolean family, not between $O(\log n)$ and $\Omega(n)$ inside a single model.
 \end{corollary}
 
 \leanmeta{\LH{DQ3}, \LH{DQ26}.}
@@ -84,14 +84,14 @@ The logarithmic case (Part 1 of Theorem~\ref{thm:dichotomy}) gives polynomial ti
 
 The linear case (Part 2) gives exponential time when $k^* = \Omega(n)$.
 
-The transition point is where $2^{k^*} = N^{k^*/\log N}$ stops being polynomial in $N$, i.e., when $k^* = \omega(\log N)$. For Boolean coordinate spaces ($N = 2^n$), this corresponds to the gap between $k^* = O(\log n)$ and $k^* = \Omega(n)$.
+The transition point inside the explicit-state bound is where $2^{k^*} = N^{k^*/\log N}$ stops being polynomial in $N$, i.e., when $k^* = \omega(\log N)$. For Boolean coordinate spaces, however, the present theorem should be read only as a cross-encoding contrast, because $\log N = n$ and the succinct lower bound is parameterized directly by the succinct variable count.
 \end{proof}
 
-\begin{remark}[Sharpness of Dichotomy]
+\begin{remark}[Asymptotic Tightness Within Each Encoding]
 Under ETH, the lower bound is asymptotically tight in the succinct encoding. The explicit-state upper bound is tight in the sense that it matches enumeration complexity in $N$.
 \end{remark}
 
-This dichotomy explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can still be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
+This encoding-sensitive contrast explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can still be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
 
 \paragraph{Interpretation.} The ETH chain composes with the structural rank viewpoint introduced earlier. When relevance is extensive, the same objects that drive the regime hierarchy also force the exponential obstruction in the succinct model. In that sense, the dichotomy theorem complements the hierarchy rather than standing apart from it: the hierarchy locates exact certification in the standard class landscape, while the dichotomy explains when explicit structure can still make exact certification feasible.
 

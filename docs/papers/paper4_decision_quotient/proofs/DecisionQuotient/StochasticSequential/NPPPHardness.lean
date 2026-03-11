@@ -364,6 +364,42 @@ theorem reduceExistsMajorityPureAnchor_correct
       (reduceMAJSATPureAnchor_correct (ExistsMajorityFormula.fixX x φ.formula) hny).2 hanchor'
     exact ⟨x, hmaj⟩
 
+theorem reduceExistsNonMajorityPureDecisiveness_correct
+    (φ : ExistsMajorityFormula) (hny : φ.ny ≥ 1) :
+    (∃ x : XAssign φ.nx, ¬ Formula.majorityTrue (ExistsMajorityFormula.fixX x φ.formula)) ↔
+      ¬ StochasticSufficient (reduceExistsMajorityPureAnchor φ)
+        (xCoordsEM φ.nx φ.ny) := by
+  constructor
+  · rintro ⟨x, hnm⟩ hsuff
+    have hfiber :
+        fiberOpt (reduceExistsMajorityPureAnchor φ) (xCoordsEM φ.nx φ.ny) (x, fun _ => false)
+          = (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)).stochasticOpt := by
+      simpa using fiberOpt_eq_fixed_pureAnchor_stochasticOpt φ x (fun _ => false)
+    have hsuff' :
+        StochasticSufficient (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula))
+          (∅ : Finset (Fin φ.ny)) := by
+      rw [stochasticSufficient_empty_iff]
+      rcases hsuff (x, fun _ => false) with ⟨a, ha⟩
+      refine ⟨a, ?_⟩
+      simpa [hfiber] using ha
+    exact hnm ((reduceMAJSATPureSufficiency_correct (ExistsMajorityFormula.fixX x φ.formula) hny).2 hsuff')
+  · intro hnot
+    by_contra hforall
+    push_neg at hforall
+    have hsuff :
+        StochasticSufficient (reduceExistsMajorityPureAnchor φ)
+          (xCoordsEM φ.nx φ.ny) := by
+      intro s
+      cases s with
+      | mk x y =>
+          have huniq :
+              (reduceMAJSATPureAnchor (ExistsMajorityFormula.fixX x φ.formula)).stochasticOpt
+                = {PureAnchorStochAction.accept} :=
+            pureAnchor_accept_unique_of_majsat _ hny (hforall x)
+          refine ⟨PureAnchorStochAction.accept, ?_⟩
+          simpa [fiberOpt_eq_fixed_pureAnchor_stochasticOpt] using huniq
+    exact hnot hsuff
+
 abbrev ExistsMajorityInput := {φ : ExistsMajorityFormula // φ.ny ≥ 1}
 
 abbrev ExistsMajorityFixed (nx ny : ℕ) := QFormula (Sum (Fin nx) (Fin ny))
@@ -403,6 +439,10 @@ def ExistsMajorityPackedWitnessRel
 def ExistsMajoritySourceLanguage : Set ExistsMajorityInput :=
   {q | ExistsMajorityFormula.satisfiable q.1}
 
+def ExistsNonMajoritySourceLanguage : Set ExistsMajorityInput :=
+  {q | ∃ x : XAssign q.1.nx,
+      ¬ Formula.majorityTrue (ExistsMajorityFormula.fixX x q.1.formula)}
+
 theorem existsMajorityPackedWitnessRel_exact
     (q : ExistsMajorityInput) (w : PackedXWitness) :
     HasExactBoolDecider (ExistsMajorityPackedWitnessRel q w) := by
@@ -427,8 +467,41 @@ theorem existsMajority_source_fits_np_over_ppstyle :
     refine ⟨x, ?_⟩
     simpa [castXAssign] using hx
 
+def ExistsNonMajorityPackedWitnessRel
+    (q : ExistsMajorityInput) (w : PackedXWitness) : Prop :=
+  ∃ h : w.1 = q.1.nx,
+    ¬ Formula.majorityTrue (ExistsMajorityFormula.fixX (castXAssign h w.2) q.1.formula)
+
+theorem existsNonMajorityPackedWitnessRel_exact
+    (q : ExistsMajorityInput) (w : PackedXWitness) :
+    HasExactBoolDecider (ExistsNonMajorityPackedWitnessRel q w) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsNonMajority_source_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityInput PackedXWitness
+      (fun q => q ∈ ExistsNonMajoritySourceLanguage)
+      ExistsNonMajorityPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsNonMajorityPackedWitnessRel existsNonMajorityPackedWitnessRel_exact ?_
+  intro q
+  constructor
+  · intro hsat
+    rcases hsat with ⟨x, hx⟩
+    refine ⟨⟨q.1.nx, x⟩, rfl, ?_⟩
+    simpa [castXAssign] using hx
+  · intro hw
+    rcases hw with ⟨⟨m, x⟩, hm, hx⟩
+    cases hm
+    refine ⟨x, ?_⟩
+    simpa [castXAssign] using hx
+
 def ExistsMajorityAnchorLanguage : Set ExistsMajorityInput :=
   {q | StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1)
+      (xCoordsEM q.1.nx q.1.ny)}
+
+def ExistsMajorityDecisivenessComplementLanguage : Set ExistsMajorityInput :=
+  {q | ¬ StochasticSufficient (reduceExistsMajorityPureAnchor q.1)
       (xCoordsEM q.1.nx q.1.ny)}
 
 noncomputable def reduceExistsMajorityAnchorQuery
@@ -452,9 +525,41 @@ noncomputable def reduceExistsMajorityToAnchorQueryInstance
 def ExistsMajorityAnchorQueryLanguage : Set ExistsMajorityAnchorQueryInstance :=
   {inst | StochasticAnchorSufficiencyCheck inst.2.problem inst.2.infoSet}
 
+noncomputable def reduceExistsMajorityDecisivenessQuery
+    (q : ExistsMajorityInput) :
+    StochasticDecisivenessQueryInput PureAnchorStochAction (EMState q.1.nx q.1.ny)
+      (q.1.nx + q.1.ny) where
+  problem := reduceExistsMajorityPureAnchor q.1
+  infoSet := xCoordsEM q.1.nx q.1.ny
+
+abbrev ExistsMajorityDecisivenessQueryInstance :=
+  Σ q : ExistsMajorityInput,
+    StochasticDecisivenessQueryInput PureAnchorStochAction (EMState q.1.nx q.1.ny)
+      (q.1.nx + q.1.ny)
+
+noncomputable instance instSizeOfExistsMajorityDecisivenessQueryInstance :
+    SizeOf ExistsMajorityDecisivenessQueryInstance where
+  sizeOf inst := sizeOf inst.1 + 1
+
+noncomputable def reduceExistsMajorityToDecisivenessQueryInstance
+    (q : ExistsMajorityInput) : ExistsMajorityDecisivenessQueryInstance :=
+  ⟨q, reduceExistsMajorityDecisivenessQuery q⟩
+
+def ExistsMajorityDecisivenessQueryLanguage : Set ExistsMajorityDecisivenessQueryInstance :=
+  {inst | ¬ StochasticSufficient inst.2.problem inst.2.infoSet}
+
 theorem reduceExistsMajorityToAnchorQueryInstance_poly :
     ∃ (c k : ℕ), ∀ q : ExistsMajorityInput,
       sizeOf (reduceExistsMajorityToAnchorQueryInstance q) ≤ c * (sizeOf q) ^ k + c := by
+  refine ⟨2, 1, ?_⟩
+  intro q
+  change sizeOf q + 1 ≤ 2 * (sizeOf q) ^ 1 + 2
+  simp
+  omega
+
+theorem reduceExistsMajorityToDecisivenessQueryInstance_poly :
+    ∃ (c k : ℕ), ∀ q : ExistsMajorityInput,
+      sizeOf (reduceExistsMajorityToDecisivenessQueryInstance q) ≤ c * (sizeOf q) ^ k + c := by
   refine ⟨2, 1, ?_⟩
   intro q
   change sizeOf q + 1 ≤ 2 * (sizeOf q) ^ 1 + 2
@@ -468,6 +573,41 @@ theorem reduceExistsMajorityToAnchorQueryInstance_correct
   change ExistsMajorityFormula.satisfiable q.1 ↔
     StochasticAnchorSufficiencyCheck (reduceExistsMajorityPureAnchor q.1) (xCoordsEM q.1.nx q.1.ny)
   exact reduceExistsMajorityPureAnchor_correct q.1 q.2
+
+theorem reduceExistsMajorityToDecisivenessComplement_correct
+    (q : ExistsMajorityInput) :
+    q ∈ ExistsNonMajoritySourceLanguage ↔
+      q ∈ ExistsMajorityDecisivenessComplementLanguage := by
+  change (∃ x : XAssign q.1.nx,
+      ¬ Formula.majorityTrue (ExistsMajorityFormula.fixX x q.1.formula)) ↔
+    ¬ StochasticSufficient (reduceExistsMajorityPureAnchor q.1)
+      (xCoordsEM q.1.nx q.1.ny)
+  exact reduceExistsNonMajorityPureDecisiveness_correct q.1 q.2
+
+theorem reduceExistsMajorityToDecisivenessQueryInstance_correct
+    (q : ExistsMajorityInput) :
+    q ∈ ExistsNonMajoritySourceLanguage ↔
+      reduceExistsMajorityToDecisivenessQueryInstance q ∈ ExistsMajorityDecisivenessQueryLanguage := by
+  change (∃ x : XAssign q.1.nx,
+      ¬ Formula.majorityTrue (ExistsMajorityFormula.fixX x q.1.formula)) ↔
+    ¬ StochasticSufficient (reduceExistsMajorityPureAnchor q.1)
+      (xCoordsEM q.1.nx q.1.ny)
+  exact reduceExistsNonMajorityPureDecisiveness_correct q.1 q.2
+
+theorem existsMajority_decisiveness_complement_language_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityInput PackedXWitness
+      (fun q => q ∈ ExistsMajorityDecisivenessComplementLanguage)
+      ExistsNonMajorityPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsNonMajorityPackedWitnessRel existsNonMajorityPackedWitnessRel_exact ?_
+  intro q
+  calc
+    q ∈ ExistsMajorityDecisivenessComplementLanguage
+      ↔ q ∈ ExistsNonMajoritySourceLanguage := by
+          symm
+          exact reduceExistsMajorityToDecisivenessComplement_correct q
+    _ ↔ ∃ w : PackedXWitness, ExistsNonMajorityPackedWitnessRel q w := by
+          exact existsNonMajority_source_fits_np_over_ppstyle.2 q
 
 /-- Honest reduction wrapper for the existential-majority source problem into the
 stochastic anchor query family. The target language is stated on the same input
@@ -562,6 +702,36 @@ theorem existsMajority_anchor_query_family_honest_np_over_ppstyle_hard :
   exact honestNPOverPPStyleHard_of_reduction
     existsMajority_source_fits_np_over_ppstyle
     reduceExistsMajority_to_stochastic_anchor_query_family_reduction
+
+theorem existsMajority_decisiveness_complement_honest_np_over_ppstyle_hard :
+    HonestNPOverPPStyleHard ExistsMajorityInput
+      ExistsMajorityDecisivenessComplementLanguage := by
+  refine honestNPOverPPStyleHard_of_reduction
+    existsNonMajority_source_fits_np_over_ppstyle ?_
+  refine {
+    f := id
+    poly_time := by
+      refine ⟨1, 1, ?_⟩
+      intro q
+      simp
+    correct := by
+      intro q
+      exact reduceExistsMajorityToDecisivenessComplement_correct q
+  }
+
+noncomputable def reduceExistsMajority_to_stochastic_decisiveness_query_family_reduction :
+    PolyReduction4b ExistsMajorityInput ExistsMajorityDecisivenessQueryInstance
+      ExistsNonMajoritySourceLanguage ExistsMajorityDecisivenessQueryLanguage where
+  f := reduceExistsMajorityToDecisivenessQueryInstance
+  poly_time := reduceExistsMajorityToDecisivenessQueryInstance_poly
+  correct := reduceExistsMajorityToDecisivenessQueryInstance_correct
+
+theorem existsMajority_decisiveness_query_family_honest_np_over_ppstyle_hard :
+    HonestNPOverPPStyleHard ExistsMajorityDecisivenessQueryInstance
+      ExistsMajorityDecisivenessQueryLanguage := by
+  refine honestNPOverPPStyleHard_of_reduction
+    existsNonMajority_source_fits_np_over_ppstyle
+    reduceExistsMajority_to_stochastic_decisiveness_query_family_reduction
 
 def castEMState {q q' : ExistsMajorityInput} (h : q = q') :
     EMState q.1.nx q.1.ny → EMState q'.1.nx q'.1.ny := by
@@ -694,6 +864,56 @@ theorem existsMajority_anchor_query_family_honest_np_over_ppstyle_complete :
   exact honestNPOverPPStyleComplete_of_fits_and_hard
     existsMajority_anchor_query_family_fits_np_over_ppstyle
     existsMajority_anchor_query_family_honest_np_over_ppstyle_hard
+
+abbrev ExistsMajorityDecisivenessPackedWitness :=
+  Σ q : ExistsMajorityInput, EMState q.1.nx q.1.ny
+
+def ExistsMajorityDecisivenessQueryPackedWitnessRel
+    (inst : ExistsMajorityDecisivenessQueryInstance)
+    (w : ExistsMajorityDecisivenessPackedWitness) : Prop :=
+  ∃ h : w.1 = inst.1,
+    stochasticDecisivenessCounterWitnessRel inst.2 (castEMState h w.2)
+
+theorem existsMajorityDecisivenessQueryPackedWitnessRel_exact
+    (inst : ExistsMajorityDecisivenessQueryInstance)
+    (w : ExistsMajorityDecisivenessPackedWitness) :
+    HasExactBoolDecider (ExistsMajorityDecisivenessQueryPackedWitnessRel inst w) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+theorem existsMajority_decisiveness_query_family_fits_np_over_ppstyle :
+    FitsNPOverPPStyle ExistsMajorityDecisivenessQueryInstance
+      ExistsMajorityDecisivenessPackedWitness
+      (fun inst => inst ∈ ExistsMajorityDecisivenessQueryLanguage)
+      ExistsMajorityDecisivenessQueryPackedWitnessRel := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    ExistsMajorityDecisivenessQueryPackedWitnessRel
+    existsMajorityDecisivenessQueryPackedWitnessRel_exact ?_
+  rintro ⟨q, qi⟩
+  change (¬ StochasticSufficient qi.problem qi.infoSet) ↔
+    ∃ w, ExistsMajorityDecisivenessQueryPackedWitnessRel ⟨q, qi⟩ w
+  constructor
+  · intro h
+    rcases (stochastic_decisiveness_complement_fits_np_over_ppstyle.2 qi).1 h with ⟨s, hs⟩
+    exact ⟨⟨q, s⟩, rfl, hs⟩
+  · intro h
+    rcases h with ⟨⟨q, s⟩, hq, hs⟩
+    cases hq
+    exact (stochastic_decisiveness_complement_fits_np_over_ppstyle.2 qi).2 ⟨s, hs⟩
+
+theorem existsMajority_decisiveness_complement_honest_np_over_ppstyle_complete :
+    HonestNPOverPPStyleComplete ExistsMajorityInput
+      ExistsMajorityDecisivenessComplementLanguage := by
+  exact honestNPOverPPStyleComplete_of_fits_and_hard
+    existsMajority_decisiveness_complement_language_fits_np_over_ppstyle
+    existsMajority_decisiveness_complement_honest_np_over_ppstyle_hard
+
+theorem existsMajority_decisiveness_query_family_honest_np_over_ppstyle_complete :
+    HonestNPOverPPStyleComplete ExistsMajorityDecisivenessQueryInstance
+      ExistsMajorityDecisivenessQueryLanguage := by
+  exact honestNPOverPPStyleComplete_of_fits_and_hard
+    existsMajority_decisiveness_query_family_fits_np_over_ppstyle
+    existsMajority_decisiveness_query_family_honest_np_over_ppstyle_hard
 
 theorem honestNPOverPPStyleHard_transfer
     {β γ : Type} [SizeOf β] [SizeOf γ]

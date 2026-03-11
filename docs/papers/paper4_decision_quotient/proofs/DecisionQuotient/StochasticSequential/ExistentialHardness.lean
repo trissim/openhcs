@@ -33,6 +33,26 @@ abbrev HonestExistentialAnchorQueryFamilyNPOverPPStyleHard : Prop :=
   HonestNPOverPPStyleHard ExistsMajorityAnchorQueryInstance
     ExistsMajorityAnchorQueryLanguage
 
+abbrev HonestExistentialAnchorQueryFamilyNPOverPPStyleComplete : Prop :=
+  HonestNPOverPPStyleComplete ExistsMajorityAnchorQueryInstance
+    ExistsMajorityAnchorQueryLanguage
+
+abbrev HonestExistentialDecisivenessComplementNPOverPPStyleHard : Prop :=
+  HonestNPOverPPStyleHard ExistsMajorityInput
+    ExistsMajorityDecisivenessComplementLanguage
+
+abbrev HonestExistentialDecisivenessComplementNPOverPPStyleComplete : Prop :=
+  HonestNPOverPPStyleComplete ExistsMajorityInput
+    ExistsMajorityDecisivenessComplementLanguage
+
+abbrev HonestExistentialDecisivenessQueryFamilyNPOverPPStyleHard : Prop :=
+  HonestNPOverPPStyleHard ExistsMajorityDecisivenessQueryInstance
+    ExistsMajorityDecisivenessQueryLanguage
+
+abbrev HonestExistentialDecisivenessQueryFamilyNPOverPPStyleComplete : Prop :=
+  HonestNPOverPPStyleComplete ExistsMajorityDecisivenessQueryInstance
+    ExistsMajorityDecisivenessQueryLanguage
+
 theorem existential_anchor_source_fits_np_over_ppstyle_honest :
     FitsNPOverPPStyle ExistsMajorityInput PackedXWitness
       (fun q => q ∈ ExistsMajoritySourceLanguage)
@@ -54,5 +74,25 @@ theorem existential_anchor_np_over_ppstyle_hard_honest :
 theorem existential_anchor_query_family_np_over_ppstyle_hard_honest :
     HonestExistentialAnchorQueryFamilyNPOverPPStyleHard :=
   existsMajority_anchor_query_family_honest_np_over_ppstyle_hard
+
+theorem existential_anchor_query_family_np_over_ppstyle_complete_honest :
+    HonestExistentialAnchorQueryFamilyNPOverPPStyleComplete :=
+  existsMajority_anchor_query_family_honest_np_over_ppstyle_complete
+
+theorem existential_decisiveness_complement_np_over_ppstyle_hard_honest :
+    HonestExistentialDecisivenessComplementNPOverPPStyleHard :=
+  existsMajority_decisiveness_complement_honest_np_over_ppstyle_hard
+
+theorem existential_decisiveness_complement_np_over_ppstyle_complete_honest :
+    HonestExistentialDecisivenessComplementNPOverPPStyleComplete :=
+  existsMajority_decisiveness_complement_honest_np_over_ppstyle_complete
+
+theorem existential_decisiveness_query_family_np_over_ppstyle_hard_honest :
+    HonestExistentialDecisivenessQueryFamilyNPOverPPStyleHard :=
+  existsMajority_decisiveness_query_family_honest_np_over_ppstyle_hard
+
+theorem existential_decisiveness_query_family_np_over_ppstyle_complete_honest :
+    HonestExistentialDecisivenessQueryFamilyNPOverPPStyleComplete :=
+  existsMajority_decisiveness_query_family_honest_np_over_ppstyle_complete
 
 end DecisionQuotient.StochasticSequential

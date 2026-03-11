@@ -45,6 +45,13 @@ def FitsNPOverPPStyle (α ω : Type*) (p : α → Prop) (R : α → ω → Prop)
   (∀ x : α, ∀ w : ω, HasExactBoolDecider (R x w)) ∧
   (∀ x : α, p x ↔ ∃ w : ω, R x w)
 
+/-- Lightweight surrogate for a universal no-witness characterization over a
+PP-style verifier. This is the scoped complement analogue of
+`FitsNPOverPPStyle`, matching paper-level `coNP^PP` upper-bound arguments. -/
+def FitsCoNPOverPPStyle (α ω : Type*) (p : α → Prop) (R : α → ω → Prop) : Prop :=
+  (∀ x : α, ∀ w : ω, HasExactBoolDecider (R x w)) ∧
+  (∀ x : α, p x ↔ ¬ ∃ w : ω, R x w)
+
 /-- Generic constructor: any witness characterization over a verifier relation
 with exact boolean deciders fits the scoped `NP-over-PP` schema. -/
 theorem fitsNPOverPPStyle_of_exists_witness
@@ -52,6 +59,16 @@ theorem fitsNPOverPPStyle_of_exists_witness
     (hdec : ∀ x : α, ∀ w : ω, HasExactBoolDecider (R x w))
     (hspec : ∀ x : α, p x ↔ ∃ w : ω, R x w) :
     FitsNPOverPPStyle α ω p R :=
+  ⟨hdec, hspec⟩
+
+/-- Generic constructor for the scoped complement schema: if a language is
+characterized by absence of an explicit bad witness accepted by an exact-decider
+verifier relation, then it fits the paper's `coNP-over-PP` style. -/
+theorem fitsCoNPOverPPStyle_of_no_witness
+    {α ω : Type*} {p : α → Prop} (R : α → ω → Prop)
+    (hdec : ∀ x : α, ∀ w : ω, HasExactBoolDecider (R x w))
+    (hspec : ∀ x : α, p x ↔ ¬ ∃ w : ω, R x w) :
+    FitsCoNPOverPPStyle α ω p R :=
   ⟨hdec, hspec⟩
 
 /-- Any decidable verifier relation is automatically a PP-style verifier in the
@@ -111,6 +128,107 @@ theorem stochastic_anchor_query_fits_np_over_ppstyle
     rw [Physics.AnchorChecks.stochastic_anchor_check_iff_exists_anchor_singleton
       (P := q.problem) (I := q.infoSet)]
     exact ⟨s₀, a, ha⟩
+
+/-- Input package for the stochastic decisiveness query family. -/
+structure StochasticDecisivenessQueryInput (A S : Type*) (n : ℕ)
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] where
+  problem : StochasticDecisionProblem A S
+  infoSet : Finset (Fin n)
+
+/-- Counter-witness relation for stochastic decisiveness: a state whose observed
+fiber does not have a unique conditional optimum. Its existence certifies
+failure of decisiveness. -/
+def stochasticDecisivenessCounterWitnessRel
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n]
+    (q : StochasticDecisivenessQueryInput A S n) (s : S) : Prop :=
+  ¬ ∃ a : A, fiberOpt q.problem q.infoSet s = ({a} : Set A)
+
+/-- The bad-fiber witness relation for stochastic decisiveness has exact boolean
+deciders inside the current finite artifact. -/
+theorem stochasticDecisivenessCounterWitnessRel_exact
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n]
+    (q : StochasticDecisivenessQueryInput A S n) (s : S) :
+    HasExactBoolDecider (stochasticDecisivenessCounterWitnessRel q s) := by
+  classical
+  exact hasExactBoolDecider_of_decidable _
+
+/-- The stochastic decisiveness query fits the scoped complement witness schema
+used for paper-level `coNP^PP` upper bounds: decisiveness holds iff there is no
+state witnessing a non-singleton conditional optimum. -/
+theorem stochastic_decisiveness_query_fits_conp_over_ppstyle
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    FitsCoNPOverPPStyle (StochasticDecisivenessQueryInput A S n) S
+      (fun q => StochasticSufficient q.problem q.infoSet)
+      (fun q s => stochasticDecisivenessCounterWitnessRel q s) := by
+  refine fitsCoNPOverPPStyle_of_no_witness
+    (fun q s => stochasticDecisivenessCounterWitnessRel q s)
+    (fun q s => stochasticDecisivenessCounterWitnessRel_exact q s) ?_
+  intro q
+  constructor
+  · intro h
+    intro hw
+    rcases hw with ⟨s, hs⟩
+    exact hs (h s)
+  · intro h
+    intro s
+    by_contra hs
+    exact h ⟨s, hs⟩
+
+/-- Equivalent existential form for the complement of stochastic decisiveness:
+failure of decisiveness is witnessed by one bad fiber/state. This packages the
+paper-level `NP^PP` upper bound for the complement, and hence a `coNP^PP`
+upper bound for decisiveness itself. -/
+theorem stochastic_decisiveness_complement_fits_np_over_ppstyle
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    FitsNPOverPPStyle (StochasticDecisivenessQueryInput A S n) S
+      (fun q => ¬ StochasticSufficient q.problem q.infoSet)
+      (fun q s => stochasticDecisivenessCounterWitnessRel q s) := by
+  refine fitsNPOverPPStyle_of_exists_witness
+    (fun q s => stochasticDecisivenessCounterWitnessRel q s)
+    (fun q s => stochasticDecisivenessCounterWitnessRel_exact q s) ?_
+  intro q
+  constructor
+  · intro h
+    by_contra hnone
+    apply h
+    intro s
+    by_contra hs
+    exact hnone ⟨s, hs⟩
+  · intro h
+    intro hsuff
+    rcases h with ⟨s, hs⟩
+    exact hs (hsuff s)
+
+/-- Summary packaging for succinct stochastic decisiveness: the language itself
+fits the scoped complement schema, and its complement fits the scoped
+existential witness schema. This is the strongest current mechanized upper-bound
+package before introducing a full oracle-machine complexity library. -/
+theorem stochastic_decisiveness_scoped_oracle_bounds
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    FitsCoNPOverPPStyle (StochasticDecisivenessQueryInput A S n) S
+      (fun q => StochasticSufficient q.problem q.infoSet)
+      (fun q s => stochasticDecisivenessCounterWitnessRel q s)
+    ∧
+    FitsNPOverPPStyle (StochasticDecisivenessQueryInput A S n) S
+      (fun q => ¬ StochasticSufficient q.problem q.infoSet)
+      (fun q s => stochasticDecisivenessCounterWitnessRel q s) := by
+  exact ⟨stochastic_decisiveness_query_fits_conp_over_ppstyle,
+    stochastic_decisiveness_complement_fits_np_over_ppstyle⟩
+
+/-- Summary wrapper for the explicit-state stochastic preservation upper bound.
+This packages the counted-search result in the same theorem-family file as the
+oracle-style upper bounds. -/
+theorem stochastic_preservation_explicit_summary
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : StochasticExplicitInput A S n =>
+      StochasticPreservationSufficient q.problem q.infoSet) :=
+  stochastic_preservation_inP_explicit
 
 /-- Input package for the stochastic minimum query family. -/
 structure StochasticMinimumQueryInput (A S : Type*) (n : ℕ)

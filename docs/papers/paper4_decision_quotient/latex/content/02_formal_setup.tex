@@ -2,6 +2,25 @@
 
 This section fixes the abstract vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results. The same setup will support the paper's three core regime classifications, the encoding-sensitive boundary, and the later consequence sections.
 
+\begingroup
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}p{0.20\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.24\linewidth}@{}}
+\toprule
+\textbf{Object} & \textbf{Quantifier shape} & \textbf{Certifies} & \textbf{Role} \\
+\midrule
+SUFFICIENCY-CHECK & universal over state pairs & exact coordinate sufficiency & baseline certification predicate \\
+MINIMUM-SUFFICIENT-SET & apparent $\exists I\,\forall$ pair check & smallest sufficient support & collapses to relevance containment in the static regime \\
+ANCHOR-SUFFICIENCY & $\exists$ anchor, then universal fiber check & exact preservation on one chosen fiber & retains the outer existential layer \\
+Optimizer quotient & universal factorization property & coarsest decision-preserving abstraction & canonical structural object \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\textbf{Setup map.} The four central objects differ mainly in quantifier shape: minimum sufficiency collapses in the static regime, while anchor sufficiency keeps its existential fiber choice.
+\endgroup
+
 \subsection{Decision Problems with Coordinate Structure}
 
 \begin{definition}[Decision Problem]\label{def:decision-problem}
@@ -83,7 +102,7 @@ i \in I \iff i \text{ is relevant}.
 Hence every minimal sufficient set is exactly the relevant-coordinate set.
 \end{proposition}
 
-\leanmeta{\LH{DP1}, \LH{DP2}.}
+\leanmeta{\LHrng{DP}{1}{2}.}
 
 \begin{proof}
 If $i \in I$ were not relevant, then changing coordinate $i$ while keeping all others fixed would never alter the optimal-action set, so removing $i$ would preserve sufficiency, contradicting minimality. Conversely, every sufficient set must contain each relevant coordinate, because omitting a relevant coordinate leaves a witness pair with identical $I$-projection but different optimal-action sets.
@@ -124,7 +143,7 @@ Its equivalence classes are exactly the maximal subsets of states on which the o
 The decision quotient $Q_{\mathcal{D}}$ is canonically in bijection with $\operatorname{range}(\Opt)$. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map.
 \end{proposition}
 
-\leanmeta{\LH{DQ7}, \LH{DQ6}.}
+\leanmeta{\LHrng{DQ}{6}{7}.}
 
 \begin{proof}
 Two states are identified by $\sim_{\Opt}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\Opt$.

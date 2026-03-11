@@ -2,19 +2,40 @@
 
 We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
+\begingroup
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.20\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.22\linewidth}@{}}
+\toprule
+\textbf{Restriction} & \textbf{Why it helps} & \textbf{Complexity} \\
+\midrule
+Bounded actions & brute-force action comparison stays polynomial once $|A|$ is fixed & $O(|S|^2 \cdot k^2)$ \\
+Separable utility & optimizer is independent of the state coordinates & $O(1)$ \\
+Low tensor rank & factored evaluation avoids full state enumeration & $O(|A| \cdot R \cdot n)$ \\
+Tree structure & dynamic programming over the dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
+Bounded treewidth & interaction checking reduces to low-width CSP & $O(n \cdot k^{w+1})$ \\
+Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$ \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\textbf{Tractability map.} Each island works by collapsing the universal state-pair search to a smaller structured representation.
+\endgroup
+
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
-SUFFICIENCY-CHECK is polynomial-time solvable in the following cases:
+The following tractable subcases are supported at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit decision procedures for \textsc{Sufficiency-Check}. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity bounds that connect these subcases to standard polynomial-time algorithmic backbones.
 \begin{enumerate}
 \item \textbf{Bounded actions (explicit-state encoding):} The input contains the full utility table over $A \times S$ with $|A| \leq k$ for constant $k$. Complexity: $O(|S|^2 \cdot k^2)$.
 \item \textbf{Separable utility (rank 1):} $U(a, s) = f(a) + g(s)$. Complexity: $O(1)$ (trivially sufficient).
-\item \textbf{Low tensor rank:} The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. Complexity: $O(|A| \cdot R \cdot n)$.
-\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1, \ldots, s_{i-1})$. Complexity: $O(n \cdot |A| \cdot k_{\max})$ where $k_{\max} = \max_i |X_i|$.
-\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\leq w$ and utility factors over edges. Complexity: $O(n \cdot k^{w+1})$ via standard CSP algorithms.
-\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. Complexity: $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$ orbit-type pairs.
+\item \textbf{Low tensor rank:} The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$.
+\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1, \ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class.
+\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\leq w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with the bound $O(n \cdot k^{w+1})$ inherited from the standard CSP algorithm.
+\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with the resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
 \end{enumerate}
 \end{theorem}
 
-\leanmeta{\LH{DQ44}, \LH{DQ51}, \LH{DQ57}, \LH{DQ77}, \LH{DQ63}, \LH{DQ81}, \LH{DQ85}.}
+\leanmeta{\LH{DQ44}, \LH{DQ51}, \LH{DQ57}, \LH{DQ63}, \LH{DQ77}, \LH{DQ81}, \LH{DQ85}.}
 
 The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
 
@@ -82,20 +103,14 @@ U(a, s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_{i=1}^n g_{ri}(s_i)
 Separable utility (Definition~\ref{def:separable}) is the special case $R = 1$ with $w_1 = 1$, $f_1(a) = f(a)$, and $\prod_i g_{1i}(s_i) = g(s)$.
 \end{remark}
 
-\begin{theorem}[Low Tensor Rank Tractability]\label{thm:tensor-rank}
-If utility has tensor rank $R$, then SUFFICIENCY-CHECK runs in $O(|A| \cdot R \cdot n)$ time per state.
+\begin{theorem}[Low Tensor Rank Reduction]\label{thm:tensor-rank}
+If utility has tensor rank $R$, the artifact certifies a reduction of the relevant optimization step to factored computation with bound $O(|A| \cdot R \cdot n)$.
 \end{theorem}
 
-\leanmeta{\LH{DQ76}, \LH{DQ77}, \LH{DQ75}.}
+\leanmeta{\LHrng{DQ}{75}{77}.}
 
 \begin{proof}
-The factored representation enables efficient computation:
-\begin{enumerate}
-\item For each rank component $r$, the contribution $w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$ factors over coordinates.
-\item Two states $s, s'$ agreeing on $I$ have $g_{ri}(s_i) = g_{ri}(s'_i)$ for $i \in I$.
-\item The partial product $\prod_{i \in I} g_{ri}(s_i)$ is identical for agreeing states.
-\item This reduces sufficiency checking to comparing factored sums over orbit representatives.
-\end{enumerate}
+The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. So the correct formal takeaway here is a certified reduction-to-standard-algorithm statement.
 \end{proof}
 
 %% ============================================================
@@ -149,19 +164,14 @@ U(a, s) = \sum_{i=1}^n u_i(a, s_i) + \sum_{(i,j) \in E} u_{ij}(a, s_i, s_j)
 with unary terms $u_i$ and binary terms $u_{ij}$ given explicitly.
 \end{definition}
 
-\begin{theorem}[Bounded Treewidth Tractability]\label{thm:treewidth}
-If the interaction graph has treewidth $\leq w$ and utility is pairwise with explicit factors, then SUFFICIENCY-CHECK runs in $O(n \cdot k^{w+1})$ time where $k = \max_i |X_i|$.
+\begin{theorem}[Bounded Treewidth Reduction]\label{thm:treewidth}
+If the interaction graph has treewidth $\leq w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with the standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$.
 \end{theorem}
 
-\leanmeta{\LH{DQ79}, \LH{DQ80}, \LH{DQ81}.}
+\leanmeta{\LHrng{DQ}{79}{81}.}
 
 \begin{proof}
-We reduce SUFFICIENCY-CHECK to constraint satisfaction on the interaction graph:
-\begin{enumerate}
-\item \textbf{Reduction:} For each action $a \in A$, checking whether $\Opt(s) = \Opt(s')$ for states agreeing on $I$ reduces to a CSP on $G$ with variables $\{s_i : i \notin I\}$.
-\item \textbf{Standard algorithm:} CSP on graphs of treewidth $w$ is solvable in $O(n \cdot k^{w+1})$ via tree decomposition~\cite{bodlaender1993tourist,freuder1990complexity}.
-\end{enumerate}
-The reduction is polynomial; the algorithm is standard.
+The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus the formal support here is a verified reduction plus a cited standard algorithmic theorem.
 \end{proof}
 
 %% ============================================================
@@ -207,7 +217,7 @@ Under symmetric utility, optimal actions depend only on orbit type:
 Thus SUFFICIENCY-CHECK reduces to checking pairs with \emph{different} orbit types.
 \end{theorem}
 
-\leanmeta{\LH{DQ83}, \LH{DQ84}.}
+\leanmeta{\LHrng{DQ}{83}{84}.}
 
 \begin{proof}
 If $\text{orbitType}(s) = \text{orbitType}(s')$, then by Theorem~\ref{thm:orbit-type} there exists $\sigma$ with $\sigma \cdot s = s'$. By symmetry, $U(a, s) = U(a, s')$ for all $a$, so $\Opt(s) = \Opt(s')$.
@@ -216,11 +226,11 @@ For sufficiency, we need only check pairs $(s, s')$ agreeing on $I$ with \emph{d
 \end{proof}
 
 \begin{theorem}[Symmetric Complexity Bound]\label{thm:symmetric-complexity}
-The number of orbit types is bounded by the stars-and-bars count:
+Under symmetric utility, the artifact certifies that the number of orbit types is bounded by the stars-and-bars count:
 \[
 |\text{OrbitTypes}| = \binom{d + k - 1}{k - 1}
 \]
-Thus SUFFICIENCY-CHECK requires at most $\binom{d + k - 1}{k - 1}^2$ orbit-type pair checks, which is polynomial in $d$ for fixed $k$.
+and that sufficiency checking reduces to cross-orbit comparisons. Thus the effective number of representative pair checks is at most $\binom{d + k - 1}{k - 1}^2$, which is polynomial in $d$ for fixed $k$.
 \end{theorem}
 
 \leanmeta{\LH{DQ56}, \LH{DQ85}.}
