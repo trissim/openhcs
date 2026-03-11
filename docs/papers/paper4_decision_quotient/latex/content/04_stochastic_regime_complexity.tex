@@ -26,6 +26,8 @@ A coordinate set $I$ is \emph{stochastically sufficient} if conditioning on $I$ 
 Here $S \sim P$ is the random state drawn from the instance distribution.
 \end{definition}
 
+The map $\Opt^{\mathrm{stoch}}_I$ is the optimizer seen through the coarse information retained by $I$. The comparison target $\Opt(s)$ is the fully conditioned optimizer obtained when the whole state is known.
+
 \begin{definition}[Stochastic Decisiveness]\label{def:stochastic-singleton-sufficient}
 Using the same conditional optimizer map $\Opt^{\mathrm{stoch}}_I$, a coordinate set $I$ is \emph{stochastically decisive} if every admissible fiber has a uniquely determined conditional optimal action:
 \[
@@ -109,10 +111,10 @@ Equivalently, some $I$-fiber has a unique conditional optimal action.
 
 \subsection{Encoding-Sensitive Complexity of Stochastic Decisiveness}
 
-The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine a regime-induced optimizer, but asks it after conditioning and expectation have been introduced. The current complexity package concerns stochastic decisiveness because it admits a clean mechanized reduction core and directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
+The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The current complexity package concerns stochastic decisiveness because it admits a clean mechanized reduction core and directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
 
 \begin{theorem}[Stochastic Decisiveness is Encoding-Sensitive]\label{thm:stochastic-pp}
-For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard and has a mechanized scoped complement upper bound of coNP-over-PP style; equivalently, its complement fits the artifact's scoped NP-over-PP witness schema.
+For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard and has a mechanized oracle-style complement upper bound; equivalently, its complement fits the artifact's scoped NP-over-PP witness package.
 \end{theorem}
 
 \leanmeta{\LH{DC45}, \LH{DC62}, \LH{DC72}, \LHrng{OU}{8}{11}.}
@@ -127,7 +129,7 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},
 \]
 with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact now packages exactly this no-witness characterization: stochastic decisiveness fits a scoped coNP-over-PP schema, its complement fits the corresponding existential NP-over-PP witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} This is not yet a full oracle-machine $\textsf{coNP}^{\textsf{PP}}$ formalization, but it is a genuine mechanized succinct upper-bound package for the decisiveness predicate.
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact now packages exactly this no-witness characterization: stochastic decisiveness fits an oracle-style complement schema, its complement fits the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} This is not yet a full oracle-machine $\textsf{coNP}^{\textsf{PP}}$ formalization, but it is a genuine mechanized succinct upper-bound package for the decisiveness predicate.
 \end{proof}
 
 \begin{proposition}[Stochastic Decisiveness Yields Stochastic Anchor Sufficiency]\label{prop:stochastic-anchor-refinement}
@@ -197,11 +199,11 @@ is already available in the artifact \LH{PA3}. A nondeterministic polynomial-tim
 For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically decisive. The same witness-over-verifier template used for the anchor case yields the required PP-style verifier for the guessed set, so the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
 \end{proof}
 
-Theorem~\ref{thm:stochastic-nppp-upper} completes the theorem-backed complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model, PP-hard in the succinct model, and accompanied by a mechanized scoped complement upper bound of coNP-over-PP style, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and scoped witness-over-PP upper bounds supporting their $\textsf{NP}^{\textsf{PP}}$ placement. The artifact does not package a full oracle-Turing-machine formalization of these oracle classes. What it does mechanize is the finite core behind that classification: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
+Theorem~\ref{thm:stochastic-nppp-upper} completes the theorem-backed complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model, PP-hard in the succinct model, and accompanied by a mechanized oracle-style complement upper bound, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and witness-based upper bounds supporting their $\textsf{NP}^{\textsf{PP}}$ interpretation. The artifact does not package a full oracle-Turing-machine formalization of these oracle classes. What it does mechanize is the finite core behind that classification: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
 
 The remaining gap is not a bookkeeping omission but a real structural issue. Stochastic decisiveness is a pure verification problem: once $I$ is fixed, one must check a family of majority-style conditional comparisons, which yields the stated encoding-sensitive complexity. By contrast, stochastic anchor and minimum add an outer existential choice, namely to guess an anchor witness or a candidate coordinate set, before performing the same conditional verification. The current collapse theorem \LH{PA3} shows that anchor sufficiency reduces to existence of a fiber with a singleton conditional optimum, and the new existential-majority reduction shows that this extra witness layer is not vacuous. So the open question is genuinely whether that existential layer can be absorbed into PP under the present encoding, not whether the paper has simply stopped one step short of an obvious closure argument.
 
-For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as a single uniform theorem about one predicate. Instead, it distinguishes stochastic sufficiency from stochastic decisiveness. The former is the closest stochastic analogue of the static question. The latter is the stochastic family that currently admits the strongest complexity and mechanization package. Closing the remaining gaps would strengthen stochastic decisiveness further, but the present results already isolate the structural source of its hardness.
+For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as one undifferentiated theorem about one predicate. Instead, it distinguishes stochastic sufficiency from stochastic decisiveness. The former is the closest stochastic analogue of the static question. The latter is the stochastic family that currently admits the strongest complexity and mechanization package. The split is part of the proved theory, not a temporary patch.
 
 \paragraph{Relevance boundary.}
 The stochastic decisiveness query is fiber-indexed: fixing a candidate information set $I$
@@ -261,5 +263,5 @@ The stochastic regime therefore gives the middle layer of the paper's hierarchy:
 conditioning already raises exact certification beyond the static setting by
 turning exact certification into a counting comparison problem. Adding time
 will lift us further still: the next section shows how temporal contingency
-presents, alongside stochastic sufficiency, a decisiveness complexity family and then pushes the same regime-induced optimizer question from PP-style comparisons to
+presents, alongside stochastic sufficiency, a decisiveness complexity family and then pushes the same underlying question from PP-style comparisons to
 PSPACE-level temporal certification.

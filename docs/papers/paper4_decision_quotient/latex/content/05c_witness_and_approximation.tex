@@ -12,6 +12,8 @@ For the empty-set sufficiency core on Boolean state space $S=\{0,1\}^n$, a \emph
 and, for each queried slot, learns whether the optimizer agrees or disagrees on the two states in that slot. The checker is \emph{sound} if it never accepts a non-sufficient instance and never rejects a sufficient one.
 \end{definition}
 
+The lower bound below is for deterministic checkers in exactly this access model.
+
 \begin{theorem}[Witness-Checking Lower Bound]\label{thm:witness-lower-bound-4}
 For Boolean decision problems with $n$ coordinates, any sound slot-inspection checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
 \end{theorem}
