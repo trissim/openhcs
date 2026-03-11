@@ -2,6 +2,7 @@ import AbstractClassSystem.Core
 import AbstractClassSystem.Bridge
 import AbstractClassSystem.Extended
 import AbstractClassSystem.Undecidability
+import AbstractClassSystem.Neurosymbolic
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
@@ -103,6 +104,17 @@ abbrev FORC3 := capability_foreclosure_irreversible -- Capability foreclosure ir
 
 -- Dominance theorems (DOM*): Strict ordering between disciplines
 abbrev DOM1 := strict_dominance                  -- Strict dominance
+
+/-- ## NEUROSYMBOLIC LINKING THEOREMS (NSL*)
+    These theorems formalize the neurosymbolic pattern: neural encoder + symbolic handle.
+    Key insight: the pair (encoder, handle) achieves zero-error identity recovery
+    when the handle is injective, even if the encoder alone does not. -/
+abbrev NSL1 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_zero_error_identity
+abbrev NSL2 := @AbstractClassSystem.Neurosymbolic.shape_alone_not_zero_error
+abbrev NSL3 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_necessary_for_zero_error
+abbrev NSL4 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_identity_recovery
+abbrev NSL5 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_injective_implies_recoverable
+abbrev NSL6 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_is_canonical_helper_view
 
 -- Coherence theorems (COH*): Why hedging/preference is incoherent
 abbrev COH1 := preference_incoherent             -- Preference position incoherent
