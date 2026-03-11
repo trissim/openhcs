@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Classification Theory (JSAIT).
 
-- **Lines:** 8092
-- **Theorems:** 352
+- **Lines:** 9166
+- **Theorems:** 399
 - **`sorry` placeholders:** 0
 
 
@@ -30,6 +30,7 @@ lake build
 | `Core.lean` | Core |
 | `Extended.lean` | Extended |
 | `GraphBridges.lean` | GraphBridges |
+| `Neurosymbolic.lean` | Neurosymbolic |
 | `Typing.lean` | Typing |
 | `Undecidability.lean` | Undecidability |
 | `AbstractClassSystem.lean` | AbstractClassSystem |

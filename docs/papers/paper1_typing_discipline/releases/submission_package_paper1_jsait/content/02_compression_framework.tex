@@ -1,435 +1,139 @@
-\subsection{Semantic Compression: The Problem}
+\subsection{Primitive Objects}
 
-The fundamental problem of \emph{semantic compression} is: given a value $v$ from a large space $\mathcal{V}$, how can we represent $v$ compactly while preserving the ability to answer semantic queries about $v$? This differs from classical source coding in that the goal is not reconstruction but \emph{identification}: determining which equivalence class $v$ belongs to.
+The introduction has already motivated the side-information viewpoint. For the main theorem arc, the primitive object is the pair $(C,U)$ with $U=\pi(C)$. This section fixes one concrete realization of that coding model: a declared attribute family that induces the representation map $\pi$. The attribute-family formalism is retained because it supports the paper's broader semantic-identification interpretations, but the coding statements depend only on the induced representation together with any charged auxiliary description.
 
-Classical rate-distortion theory \cite{shannon1959coding} studies the tradeoff between representation size and reconstruction fidelity. We extend this to a discrete classification setting with three dimensions: \emph{tag length} $L$ (bits of storage), \emph{witness cost} $W$ (queries or bits of communication required to determine class membership), and \emph{distortion} $D$ (misclassification probability).
+\begin{definition}[Coding model induced by a representation]
+Let $C$ be a finite class variable, let $U=\pi(C)$ be the representation available to the decoder, and let $M$ be any auxiliary description transmitted by the encoder. The main theorem arc studies the minimum length of $M$ needed for exact recovery of $C$ from $(U,M)$, in both fixed-length and representation-adaptive regimes.
+\end{definition}
 
-This work treats contemporary classification problems (databases, knowledge graphs, model registries) with explicit resource accounting. The point is not to claim a new Shannon-style asymptotic coding theorem, but to make explicit the bit/query/error tradeoffs that already constrain zero-error identification in practice.
+\begin{remark}[Entity and random-variable notation]
+The coding statements are written in terms of a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ together with a class assignment map $C(V)$. Thus $U=\pi(V)$ is the representation of the realized entity, and the induced class label is $C(V)$. The two viewpoints are interchangeable; the coding arc should be read through the pair $(C,U)$.
+\end{remark}
 
-\subsection{Universe of Discourse}
+The remaining definitions explain one concrete way of generating the representation map $\pi$ from an attribute family.
+
+\begin{definition}[Entity space and attribute family]
+Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary \emph{attributes}. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
+\end{definition}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}}
+
+\begin{definition}[Attribute observation family]
+For each $I \in \mathcal{I}$, define the attribute-membership observation $q_I: \mathcal{V} \to \{0,1\}$:
+\[
+q_I(v) = \begin{cases} 1 & \text{if } v \text{ satisfies attribute } I \\ 0 & \text{otherwise} \end{cases}
+\]
+Let $\Phi_{\mathcal{I}} = \{q_I : I \in \mathcal{I}\}$ denote the attribute observation family.
+\end{definition}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}}
+
+\begin{remark}[Notation for size parameters]
+We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the minimum distinguishing number (Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the secondary query-side discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
+\end{remark}
+
+\begin{definition}[Attribute profile]
+The attribute profile function $\pi: \mathcal{V} \to \{0,1\}^{|\mathcal{I}|}$ maps each value to its complete attribute signature:
+\[
+\pi(v) = (q_I(v))_{I \in \mathcal{I}}.
+\]
+\end{definition}
+\leanmeta{\LH{ACS8}, \LH{COMPL1}}
+
+\begin{definition}[Attribute indistinguishability]
+Values $v, w \in \mathcal{V}$ are \emph{attribute-indistinguishable}, written $v \sim w$, iff $\pi(v) = \pi(w)$.
+\end{definition}
+\leanmeta{\LHrng{ACS}{8}{9}}
+
+The relation $\sim$ is an equivalence relation. We write $[v]_\sim$ for the equivalence class of $v$.
+
+\begin{remark}[Why the admissibility contract is explicit]
+The model intentionally forbids hidden side channels. If an external registry, whole-universe preprocessing table, reflection oracle, or cached cross-instance state is allowed to distinguish values that the declared observation family cannot distinguish, then the effective observable family has changed. The point of Definition~\ref{def:admissibility-contract} is to keep the resource accounting honest: extra distinguishing information must either be represented as part of the observation model or charged to the auxiliary-description resource.
+\end{remark}
 
 \begin{definition}[Classification scheme]
 A \emph{classification scheme} is any procedure (deterministic or randomized), with arbitrary time and memory, whose only access to a value $v \in \mathcal{V}$ is via:
 \begin{enumerate}
-\item The \emph{observation family} $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$; and optionally
-\item A \emph{nominal-tag primitive} $\tau: \mathcal{V} \to \mathcal{T}$ returning an opaque class identifier.
+\item the observation family $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$, and optionally
+\item an auxiliary description primitive returning charged side information about the class.
 \end{enumerate}
 All theorems in this paper quantify over all such schemes.
 \end{definition}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
 This definition is intentionally broad: schemes may be adaptive, randomized, or computationally unbounded. The constraint is \emph{observational}, not computational.
 
-\begin{theorem}[Information barrier]\label{thm:info-barrier}
-For all classification schemes with access only to $\Phi$ (no nominal tag), the output is constant on $\sim_\Phi$-equivalence classes. Therefore, no such scheme can compute any property that varies within a $\sim_\Phi$-class.
-\end{theorem}
-\leanmeta{ \LH{ACS8}, \LH{ACS9}, \LH{COH1}}
+\begin{definition}[Attribute-only observer]
+An \emph{attribute-only observer} is any procedure whose interaction with a value $v \in \mathcal{V}$ is limited to queries in $\Phi_{\mathcal{I}}$. Formally, the observer interacts with $v$ only via primitive attribute queries $q_I \in \Phi_{\mathcal{I}}$; hence any transcript (and output) factors through $\pi(v)$.
+\end{definition}
+\leanmeta{\LH{ACS8}, \LH{COMPL1}}
 
-\begin{proof}
-Let $v \sim_\Phi w$, meaning $q_I(v) = q_I(w)$ for all $I \in \mathcal{I}$. Any scheme's execution trace depends only on query responses. Since all queries return identical values for $v$ and $w$, the scheme cannot distinguish them. Any output must therefore be identical.
-\end{proof}
+\begin{definition}[Admissibility contract]\label{def:admissibility-contract}
+All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit auxiliary description charged to the side-information budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
+\end{definition}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
 
-\begin{proposition}[Model capture]\label{prop:model-capture}
-Any real-world classification protocol whose evidence consists solely of attribute-membership queries is representable as a scheme in the above model. Conversely, any additional capability corresponds to adding new observations to $\Phi$.
-\end{proposition}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
+The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
 
-This proposition forces any objection into a precise form: to claim the theorem does not apply, one must name the additional observation capability not in $\Phi$. ``Different universe'' is not a coherent objection; it must reduce to ``I have access to oracle $X \notin \Phi$.''
+\subsection{Representation-Induced Information Barrier}
 
-\subsection{Two-Axis Instantiation (Representative Domain Example)}
+The basic coding obstruction is immediate: equal representations give the decoder the same side information. The next theorem records that invariant once, in the attribute-generated realization of the model.
 
-The core results require only $(\mathcal{V}, C, \pi)$ and the observation family $\Phi$. The two-axis decomposition below is one representative instantiation and is not an additional axiom for the general theorems.
-
-In that instantiation, each value is characterized by:
-\begin{itemize}
-\item \textbf{Provenance axis ($B$)}: source/lineage information that can distinguish entities with identical observable profiles\footnote{In the Lean witness model, this axis is represented as \texttt{Bases}.}
-\item \textbf{Profile axis ($S$)}: the observable attribute profile induced by $\Phi$
-\end{itemize}
-
-\begin{definition}[Two-axis representation]
-A value $v \in \mathcal{V}$ has representation $(B(v), S(v))$ where:
-\begin{align}
-B(v) &= \text{provenance}(v) \\
-S(v) &= \pi(v) = (q_I(v))_{I \in \mathcal{I}}
-\end{align}
-The provenance axis captures \emph{identity-bearing origin information}; the profile axis captures \emph{observable behavior/attributes}.
-
-In concrete deployments, $B$ may be carried by lineage metadata, registry identifiers, or equivalent provenance carriers. Any implementation-specific normalization or lookup machinery is auxiliary.
+\begin{definition}[Attribute-computable property]
+A property $P:\mathcal V \to Y$ is \emph{attribute-computable} if there exists a function $f:\{0,1\}^{|\mathcal I|}\to Y$ such that
+\[
+P(v)=f(\pi(v))
+\qquad\text{for all } v\in\mathcal V.
+\]
+Equivalently, $P$ depends only on the representation induced by the declared attribute family.
 \end{definition}
 
-\begin{theorem}[Fixed-axis completeness]\label{thm:model-completeness}
-Let a fixed-axis domain be specified by an axis map $\alpha: \mathcal{V} \to \mathcal{A}$ and an observation family $\Phi$ such that each primitive query $q \in \Phi$ factors through $\alpha$. Then every in-scope semantic property (i.e., any property computable by an admissible $\Phi$-only strategy) factors through $\alpha$: there exists $\tilde{P}$ with
+\begin{theorem}[Information barrier]\label{thm:information-barrier}\label{thm:info-barrier}
+Let $P: \mathcal{V} \to Y$ be any function. If $P$ is attribute-computable, then $P$ is constant on $\sim$-equivalence classes:
 \[
-P(v) = \tilde{P}(\alpha(v)) \quad \text{for all } v \in \mathcal{V}.
+v \sim w \implies P(v) = P(w).
 \]
+Equivalently: no attribute-only observer can compute any property that varies within an equivalence class.
 \end{theorem}
-\leanmeta{ \LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
-
-In this two-axis instantiation, $\alpha(v) = (B(v), S(v))$, so in-scope semantic properties are functions of $(B,S)$.
+\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}}
 
 \begin{proof}
-An admissible $\Phi$-only strategy observes $v$ solely through responses to primitive queries $q_I \in \Phi$. By hypothesis each such response is a function of $\alpha(v)$. Therefore every query transcript, and hence any strategy's output, depends only on $\alpha(v)$, so the computed property factors through $\alpha$.
+Suppose $P$ is attribute-computable via $f$, i.e., $P(v) = f(\pi(v))$ for all $v$. Let $v \sim w$, so $\pi(v) = \pi(w)$. Then:
+\[
+P(v) = f(\pi(v)) = f(\pi(w)) = P(w).
+\]
 \end{proof}
 
-\begin{corollary}[Fixed-Axis Incompleteness]\label{cor:fixed-axis-incompleteness}
-Any fixed-axis classification system is complete only for properties measurable on the fixed axis map $\alpha$, and incomplete for any property that varies within an $\alpha$-fiber. Equivalently, if $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible $\Phi$-only strategy can compute $P$ with zero error.
+\begin{remark}[Role of the barrier]
+The barrier is \emph{informational}, not computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
+\end{remark}
+
+\begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
+Let $C: \mathcal{V} \to \{1,\ldots,k\}$ be the class assignment function. If there exist values $v, w$ with $\pi(v) = \pi(w)$ but $C(v) \neq C(w)$, then class identity is not attribute-computable.
 \end{corollary}
-\leanmeta{ \LH{L2}}
+\leanmeta{\LH{ACS9}}
 
-\subsection{Attribute Equivalence and Observational Limits}
+\begin{proof}
+Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
+\end{proof}
 
-Recall from Section 1 the attribute equivalence relation:
+The relation $\sim$ partitions $\mathcal{V}$ into representation fibers, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. The remaining statements are axis-specialized restatements of the same barrier and are used only by later secondary results. Read through the paper's second arc, an axis map $\alpha$ is simply a candidate helper view: if all admissible observables factor through $\alpha$, then $\alpha$ is sufficient for every in-scope semantic property; if a task varies inside one $\alpha$-fiber, then that helper view is not sufficient and must be refined.
 
-\begin{definition}[Attribute equivalence (restated)]
-Values $v, w \in \mathcal{V}$ are attribute-equivalent, written $v \sim w$, iff $\pi(v) = \pi(w)$, i.e., they induce exactly the same attribute responses.
-\end{definition}
-
-\begin{proposition}[Equivalence class structure]\label{prop:equivalence-class-structure}
-The relation $\sim$ partitions $\mathcal{V}$ into equivalence classes. Let $\mathcal{V}/{\sim}$ denote the quotient space. An attribute-only observer effectively operates on $\mathcal{V}/{\sim}$, not $\mathcal{V}$.
-\end{proposition}
-\leanmeta{ \LH{ACS8}, \LH{COMPL1}, \LH{FORC2}}
-
-\begin{corollary}[Information loss quantification]\label{cor:information-loss-quantification}
-The information lost by attribute-only observation is:
+\begin{theorem}[Fixed-axis sufficiency]\label{thm:model-completeness}
+Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
 \[
-H(\mathcal{V}) - H(\mathcal{V}/{\sim}) = H(\mathcal{V} | \pi)
+P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
 \]
-where $H$ denotes entropy. This quantity is positive whenever multiple classes share the same attribute profile.
+\end{theorem}
+\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
+
+\begin{proof}
+An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript.
+\end{proof}
+
+\begin{corollary}[Fixed-axis insufficiency]\label{cor:fixed-axis-incompleteness}
+If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{ \LH{ACS8}}
+\leanmeta{\LH{L2}}
 
-\subsection{One-Shot Zero-Error Feasibility}\label{sec:identification-capacity}
-
-We now formalize the identification problem in channel-theoretic terms. Let $C: \mathcal{V} \to \{1, \ldots, k\}$ denote the class assignment function, and let $\pi: \mathcal{V} \to \{0,1\}^n$ denote the attribute profile.
-
-\begin{definition}[Observation channel]
-The \emph{observation channel} induced by observation family $\Phi$ is the mapping $C \to \pi(V)$ for a random entity $V$ drawn from distribution $P_V$ over $\mathcal{V}$. The channel output is the attribute profile; the channel input is implicitly the class $C(V)$.
-\end{definition}
-
-\begin{theorem}[One-Shot Zero-Error Identification Feasibility]\label{thm:identification-capacity}
-Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. The \emph{zero-error identification capacity} of the observation channel is:
-\[
-C_{\text{id}} = \begin{cases}
-\log_2 k & \text{if } \pi \text{ is injective on classes} \\
-0 & \text{otherwise}
-\end{cases}
-\]
-That is, zero-error identification of all $k$ classes is achievable if and only if every class has a distinct attribute profile. When $\pi$ is not class-injective, no rate of identification is achievable with zero error.
-\end{theorem}
-\leanmeta{ \LH{ACS8}}
-
-\begin{proof}
-\emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(v)$ determines $C(v)$ uniquely. The decoder simply inverts the class-to-profile mapping.
-
-\emph{Converse} (deterministic): Suppose two distinct classes $c_1 \neq c_2$ share a profile: $\exists v_1 \in c_1, v_2 \in c_2$ with $\pi(v_1) = \pi(v_2)$. Then any decoder $g(\pi(v))$ outputs the same class label on both $v_1$ and $v_2$, so it cannot be correct for both. Hence zero-error identification of all classes is impossible.
-\end{proof}
-
-\begin{remark}[Information-theoretic corollary]
-Under any distribution with positive mass on both colliding classes, $I(C; \pi(V)) < H(C)$. This is an average-case consequence of the deterministic barrier above.
+\begin{remark}[Axis-specialized reading]
+The fixed-axis sufficiency and insufficiency statements are simply the helper-view version of the information barrier: if a semantic task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
 \end{remark}
-
-\begin{remark}[Relation to Ahlswede-Dueck]
-In the identification paradigm of \cite{ahlswede1989identification}, the decoder asks ``is the message $m$?'' rather than ``what is the message?'' This yields double-exponential codebook sizes. Our setting is different: we require zero-error identification of the \emph{class}, not hypothesis testing. The one-shot zero-error identification feasibility threshold ($\pi$ must be class-injective) is binary rather than a rate.
-\end{remark}
-
-\begin{remark}[Terminology]
-Theorem~\ref{thm:identification-capacity} is a one-shot feasibility statement, not a Shannon asymptotic coding theorem. The notation is retained only as a compact summary of the zero-error/non-zero-error dichotomy under the stated observation model.
-\end{remark}
-
-The key insight is that tagging provides a \emph{side channel} that restores identifiability when the attribute channel fails:
-
-\begin{theorem}[Tag-Restored Zero Error (Sufficiency)]\label{thm:tag-restored}
-A class-injective nominal tag of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
-\end{theorem}
-\leanmeta{ \LH{ACS7}}
-
-\begin{proof}
-A nominal tag $\tau: \mathcal{V} \to \{1, \ldots, k\}$ assigns a unique identifier to each class. Reading $\tau(v)$ determines $C(v)$ in $O(1)$ queries, independent of the attribute channel.
-\end{proof}
-
-\subsection{Witness Cost: Query Complexity for Semantic Properties}
-
-\begin{definition}[Witness procedure]
-A \emph{witness procedure} for property $P: \mathcal{V} \to Y$ is an algorithm $A$ that:
-\begin{enumerate}
-\item Takes as input a value $v \in \mathcal{V}$ (via query access only)
-\item Makes queries to the primitive set $\Phi_{\mathcal{I}}^+$
-\item Outputs $P(v)$
-\end{enumerate}
-\end{definition}
-
-\begin{definition}[Witness cost]
-The \emph{witness cost} of property $P$ is:
-\[
-W(P) = \min_{A \text{ computes } P} c(A)
-\]
-where $c(A)$ is the worst-case number of primitive queries made by $A$.
-\end{definition}
-
-\begin{remark}[Relationship to query complexity]
-Witness cost is a form of query complexity \cite{buhrman2002complexity} specialized to semantic properties. Unlike Kolmogorov complexity, $W$ is computable and depends on the primitive set, not a universal machine.
-\end{remark}
-
-\begin{lemma}[Witness cost lower bounds]\label{lem:witness-cost-lower-bounds}
-For any property $P$:
-\begin{enumerate}
-\item If $P$ is attribute-computable: $W(P) \leq |\mathcal{I}|$
-\item If $P$ varies within some $\sim$-class: $W(P) = \infty$ for attribute-only observers
-\item With nominal-tag access: $W(\text{class-identity}) = O(1)$
-\end{enumerate}
-\end{lemma}
-\leanmeta{ \LH{ACS8}, \LH{ACS7}, \LH{ACS1}}
-
-\subsection{\texorpdfstring{The $(L, W, D)$ Tradeoff}{The (L, W, D) Tradeoff}}
-
-We now define the three-dimensional tradeoff space that characterizes observation strategies, using information-theoretic units.
-
-\begin{definition}[Tag rate]
-For a set of class identifiers (tags) $\mathcal{T}$ with $|\mathcal{T}| = k$, the \emph{tag rate} $L$ is the minimum number of bits required to encode a class identifier:
-\[
-L \geq \log_2 k \quad \text{bits per value}
-\]
-For nominal-tag observers, $L = \lceil \log_2 k \rceil$ (optimal prefix-free encoding). For attribute-only observers, $L = 0$ (no explicit tag stored). Under a distribution $P$ over classes, the expected tag length is $\mathbb{E}[L] \geq H(P)$ by Shannon's source coding theorem \cite{shannon1959coding}.
-\end{definition}
-
-\begin{definition}[Witness cost (Query/Communication complexity)]
-The \emph{witness cost} $W$ is the minimum number of primitive queries (or bits of interactive communication) required for class identification:
-\[
-W = \min_{A \text{ decides class}} c(A)
-\]
-where $c(A)$ is the worst-case query count. This is a form of query complexity \cite{buhrman2002complexity} or interactive identification cost.
-\end{definition}
-
-\begin{definition}[Class estimator]
-Fix class map $C : \mathcal{V}\to\{1,\ldots,k\}$. An observation strategy $g$ induces an estimate
-\[
-\hat{C}_g(v;\omega) \in \{1,\ldots,k\}
-\]
-from the available evidence (tag bits, query transcript, and optional internal randomness $\omega$).
-\end{definition}
-
-\begin{definition}[Distortion indicator and expected distortion]
-For strategy $g$, define
-\[
-d_g(v;\omega) := \mathbf{1}\!\left[\hat{C}_g(v;\omega)\neq C(v)\right].
-\]
-Under data distribution $P_V$ and strategy randomness, expected distortion is
-\[
-D(g)=\Pr_{v\sim P_V,\omega}\!\big[\hat{C}_g(v;\omega)\neq C(v)\big].
-\]
-The zero-error regime is $D(g)=0$.
-\end{definition}
-
-\begin{remark}[Interpretation]
-In this paper, $D$ is strictly class-misidentification probability. Additional semantic notions (e.g., hierarchical or behavior-weighted penalties) are treated as extensions in the supplementary material.
-\end{remark}
-
-\subsection{\texorpdfstring{The $(L, W, D)$ Tradeoff Space}{The (L, W, D) Tradeoff Space}}
-
-\textbf{Admissible schemes.} To make the Pareto-optimality claim precise, we specify the class of admissible observation strategies:
-\begin{itemize}
-\item \textbf{Deterministic or randomized}: Schemes may use randomness; $W$ is worst-case query count.
-\item \textbf{Computationally unbounded}: No time/space restrictions; the constraint is observational.
-\item \textbf{No preprocessing over class universe}: The scheme cannot precompute a global lookup table indexed by all possible classes.
-\item \textbf{Tags are injective on classes}: A nominal tag $\tau(v)$ uniquely identifies the class of $v$. Variable-length or compressed tags are permitted; $L$ counts bits.
-\item \textbf{No amortization across queries}: $W$ is per-identification cost, not amortized over a sequence.
-\end{itemize}
-
-\textbf{Justification.} The ``no preprocessing'' and ``no amortization'' constraints exclude trivializations:
-\begin{itemize}
-\item \emph{Preprocessing}: With unbounded preprocessing over the class universe $\mathcal{T}$, one could build a lookup table mapping attribute profiles to classes. This reduces identification to $O(1)$ table lookup, but the table has size $O(|\mathcal{T}|)$, hiding the complexity in space rather than eliminating it. The constraint models systems that cannot afford $O(|\mathcal{T}|)$ storage per observer.
-\item \emph{Amortization}: If $W$ were amortized over a sequence of identifications, one could cache earlier results. This again hides complexity in state. The per-identification model captures stateless observers (typical in database queries, taxonomy lookup, and protocol/classification services).
-\end{itemize}
-Dropping these constraints changes the achievable region but not the qualitative separation: nominal tags still dominate for $D = 0$ because they provide $O(1)$ worst-case identification without requiring $O(|\mathcal{T}|)$ preprocessing.
-
-Under these rules, ``dominance'' means strict improvement on at least one of $(L, W, D)$ with no regression on others.
-
-\begin{definition}[Achievable region]
-A point $(L, W, D)$ is \emph{achievable} if there exists an admissible observation strategy realizing those values. Let $\mathcal{R} \subseteq \mathbb{R}_{\geq 0} \times \mathbb{R}_{\geq 0} \times [0,1]$ denote the achievable region.
-\end{definition}
-
-\begin{definition}[Pareto optimality]
-A point $(L^*, W^*, D^*)$ is \emph{Pareto-optimal} if there is no achievable $(L, W, D)$ with $L \leq L^*$, $W \leq W^*$, $D \leq D^*$, and at least one strict inequality.
-\end{definition}
-
-The main result of Section~\ref{sec:lwd} is: (i) a converse in terms of collision multiplicity $A_\pi$, and (ii) uniqueness of the nominal $D=0$ Pareto point in the maximal-barrier regime.
-
-\begin{definition}[Information-barrier domain]
-\label{def:info-barrier-domain}
-A classification domain has an \emph{information barrier} (relative to $\Phi$) if there exist distinct classes $c_1 \neq c_2$ with identical $\Phi$-profiles. Equivalently, $\pi$ is not injective on classes.
-\end{definition}
-
-\begin{definition}[Collision multiplicity]
-\label{def:collision-multiplicity}
-Let $\mathcal{C}=\{1,\ldots,k\}$ and let $\pi_{\mathcal{C}}:\mathcal{C}\to\{0,1\}^n$ be the class-level profile map. Define
-\[
-A_\pi := \max_{u \in \operatorname{Im}(\pi_{\mathcal{C}})} \left|\{c \in \mathcal{C} : \pi_{\mathcal{C}}(c)=u\}\right|.
-\]
-Thus $A_\pi$ is the size of the largest class-collision block under observable profiles.
-\end{definition}
-
-\begin{definition}[Maximal-Barrier Regime]
-\label{def:max-barrier}
-The domain is \emph{maximal-barrier} if $A_\pi = k$, i.e., all classes collide under the observation map.
-\end{definition}
-
-\subsection{Open-World Robustness and Decidability Boundary}\label{sec:open-world-boundary}
-
-\begin{definition}[Finite realized world]
-Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ \emph{barrier-free} iff
-\[
-\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.
-\]
-\end{definition}
-
-\begin{definition}[Open-world extension]
-An \emph{open-world extension} is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
-\end{definition}
-
-\begin{theorem}[Barrier-freedom is not extension-stable]\label{thm:open-world-extension-instability}
-In the open-world class model formalized in Lean, it is not true that barrier-freedom is preserved under all extensions:
-\[
-\neg\Big(\forall W \subseteq W',\ \text{BarrierFree}(W)\Rightarrow \text{BarrierFree}(W')\Big).
-\]
-\end{theorem}
-\leanmeta{ \LH{ROB1}, \LH{ROB2}}
-
-\begin{proof}
-Take the empty world $W_0=\varnothing$, which is barrier-free. In the Lean model, two concrete classes (\texttt{ConfigType} and \texttt{StepConfigType}) are shape-equivalent (same observable profile) but nominally distinct (different lineage), so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
-\end{proof}
-
-\begin{definition}[Function-level barrier predicate]
-For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
-\[
-\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).
-\]
-Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
-\end{definition}
-
-\begin{theorem}[Rice-style non-computability of barrier certification]\label{thm:rice-barrier}
-There is no computable predicate on program codes deciding whether the generated observer has a barrier:
-\[
-\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).
-\]
-Equivalently, barrier-freedom certification is also non-computable:
-\[
-\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{BarrierFree}(\mathrm{eval}(c))\right).
-\]
-\end{theorem}
-\leanmeta{ \LH{UND1}, \LH{UND2}}
-
-\begin{proof}
-Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. Set
-\[
-\mathcal{C}_{\mathrm{bar}}:=\{f:\mathbb{N}\rightharpoonup\mathbb{N}\mid \mathrm{HasBarrier}(f)\}.
-\]
-Then $P(c)$ is exactly membership of $\mathrm{eval}(c)$ in $\mathcal{C}_{\mathrm{bar}}$. The property is non-trivial:
-\[
-\mathrm{HasBarrier}(\lambda x.\,0)\quad\text{and}\quad \neg\mathrm{HasBarrier}(\lambda x.\,x+1).
-\]
-Rice's theorem (formalized in Lean and instantiated with these two witnesses) implies that if membership in $\mathcal{C}_{\mathrm{bar}}$ were computable from code, then every partial recursive function would have to lie in $\mathcal{C}_{\mathrm{bar}}$, contradicting the successor witness. Hence $P$ is not computable. The barrier-free statement is equivalent by
-\[
-\mathrm{BarrierFree}(f)\iff \neg\mathrm{HasBarrier}(f),
-\]
-so computability of one would imply computability of the other.
-\end{proof}
-
-\begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
-For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
-\end{corollary}
-
-\subsection{Converse: Tag Rate Lower Bound}
-
-\begin{theorem}[Converse]\label{thm:converse}
-For any classification domain, any scheme achieving $D=0$ requires
-\[
-2^L \ge A_\pi
-\quad\text{equivalently}\quad
-L \ge \log_2 A_\pi,
-\]
-where $A_\pi$ is the collision multiplicity from Definition~\ref{def:collision-multiplicity}.
-\end{theorem}
-\leanmeta{ \LH{LWDC1}}
-
-\begin{proof}
-Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical observable profile. For classes in $G$, query transcripts are identical, so zero-error decoding must separate those classes using tag outcomes. With $L$ tag bits there are at most $2^L$ outcomes, hence $2^L \ge |G| = A_\pi$.
-\end{proof}
-
-\begin{corollary}[Maximal-Barrier Converse]
-\label{cor:max-barrier-converse}
-If the domain is maximal-barrier ($A_\pi = k$), any zero-error scheme satisfies $L \ge \log_2 k$.
-\end{corollary}
-\leanmeta{ \LH{LWDC3}}
-
-\subsection{Confusability Graph Thresholds and Block Scaling}
-
-Let $\pi_{\mathcal{C}} : \mathcal{C} \to \{0,1\}^n$ be the class-profile map from Definition~\ref{def:collision-multiplicity}. The induced confusability graph connects two distinct classes when they share the same observable profile.
-
-\begin{theorem}[Exact one-shot feasibility threshold]
-\label{thm:graph-one-shot-threshold}
-For an alphabet of $n$ nominal tags, zero-error class tagging is feasible if and only if
-\[
-A_\pi \le n.
-\]
-\end{theorem}
-\leanmeta{ \LH{GPH13}}
-
-\begin{proof}
-Classes in the same profile fiber are pairwise confusable, so each such fiber is a clique in the confusability graph. Zero-error tagging is equivalent to a proper graph coloring; therefore feasibility is equivalent to having at least as many colors as the largest clique size, which is exactly $A_\pi$.
-\end{proof}
-
-\begin{theorem}[Exact block feasibility law]
-\label{thm:graph-block-threshold}
-For block length $t\ge 1$ with coordinatewise observation on $\mathcal{C}^t$, zero-error tagging with alphabet size $n_t$ is feasible if and only if
-\[
-A_\pi^t \le n_t.
-\]
-Equivalently, the minimal feasible block alphabet is exactly $A_\pi^t$.
-\end{theorem}
-\leanmeta{ \LH{GPH16}, \LH{GPH17}, \LH{GPH20}}
-
-\begin{corollary}[Linear log-bit scaling]
-\label{cor:graph-logbit-scaling}
-Let $L_t^\star := \log_2(A_\pi^t)$ be the minimum block tag budget in bits. Then
-\[
-L_t^\star = t\,\log_2 A_\pi,
-\qquad
-\frac{L_t^\star}{t} = \log_2 A_\pi.
-\]
-So per-entity tag rate is exactly stable across block length.
-\end{corollary}
-\leanmeta{ \LH{GPH18}, \LH{GPH19}, \LH{GPH24}}
-
-\begin{remark}[Scope]
-These are worst-case finite-block confusability laws. They strengthen the zero-error converse with exact block thresholds, while remaining distinct from full distribution-optimized K\"orner graph-entropy theory.
-\end{remark}
-
-\subsection{Lossy Regime: Deterministic vs Noisy Models}
-
-The zero-error corner ($D=0$) is governed by Theorem~\ref{thm:converse}. For $D>0$, the model matters:
-\begin{itemize}
-\item \textbf{Deterministic queries (this section):} there is no universal law of the form $W=O(\log(1/\epsilon)\cdot d)$. If classes collide on all deterministic observations, repeating those same observations does not reduce error.
-\item \textbf{Noisy queries:} repeated independent observations can reduce error exponentially, yielding logarithmic-in-$1/\epsilon$ sample complexity.
-\end{itemize}
-
-Thus, in the deterministic model, distortion is controlled by collision geometry and decision rules; in noisy models, repetition-based concentration bounds become relevant.
-
-\subsection{Concrete Example}
-
-Consider a classification system with $k = 1000$ classes, each characterized by a subset of $n = 50$ binary attributes. Table~\ref{tab:strategies} compares the strategies.
-
-\begin{table}[t]
-\centering
-\caption{Identification strategies for 1000 classes with 50 attributes.}
-\label{tab:strategies}
-\begin{tabular}{lcc}
-\toprule
-\textbf{Strategy} & \textbf{Tag $L$} & \textbf{Witness $W$} \\
-\midrule
-Explicit-tag identification & $\lceil \log_2 1000 \rceil = 10$ bits & $O(1)$ \\
-Attribute-only (exhaustive) & $0$ & $\leq 50$ queries \\
-Attribute-only (adaptive) & $0$ & $\geq d$ queries \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Here $d$ is the distinguishing dimension, the size of any minimal distinguishing query set. For many practical systems, $d$ is well below $n$ but nonzero. The gap between 10 bits of storage versus 5--50 queries per identification is the cost of forgoing explicit tags.

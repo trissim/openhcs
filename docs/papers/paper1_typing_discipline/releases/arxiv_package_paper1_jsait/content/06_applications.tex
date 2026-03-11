@@ -1,13 +1,123 @@
-This section gives brief illustrations showing the same constraint pattern in established systems.
+\paragraph{Why semantic representation alone cannot distinguish.}
+The mechanization proves that semantic representation cannot distinguish entities with identical observable profiles (\LH{ACS8}), cannot track provenance or source identity (\LH{ACS9}), and cannot embed explicit identity information into the semantic layer (\LH{EMB1}). These impossibility theorems establish that the information barrier is not a limitation of specific encodings but a fundamental property of representation-level observation. In compression-theoretic terms, semantic representation alone is a \emph{lossy} identity compressor. When distinct entities map to the same semantic representation, no decoder can recover the original identity without additional side information (\LH{NSL2}, \LH{NSL3}).
 
-\subsection{Compact Cross-Domain Illustrations}
+The coding laws above quantify how much ambiguity a fixed representation leaves unresolved. We now turn that same fiber geometry into a representation-sufficiency theory: which downstream tasks factor through the representation, when auxiliary views genuinely help, and when modular latent structure adds exact information rather than architectural redundancy.
 
-\textbf{Biology (phenotype vs genotype).} Distinct species can collide under phenotype, so phenotype-only observation cannot guarantee zero-error identity. DNA barcoding supplies additional naming information that resolves collision blocks in constant-time lookup style \cite{DNABarcoding}.
+The fixed-length law measures the worst unresolved collision,
+\[
+L^\star_{\mathrm{fix}} = \log_2 A_\pi,
+\]
+while the adaptive law measures the source-weighted cost of the individual fibers,
+\[
+L^\star_{\mathrm{adapt}} = \mathbb E\!\left[\left\lceil \log_2 |\pi^{-1}(U)| \right\rceil\right].
+\]
+Thus representation collisions translate directly into auxiliary metadata cost. Injective representations need no additional description; noninjective ones require either extra side information or nonzero error.
 
-\textbf{Databases (columns vs keys).} Rows may collide on non-key columns, so attribute-only identification is insufficient for guaranteed identity. Primary/surrogate keys realize the nominal-tag role and provide constant-cost identity checks \cite{Codd1990}.
+\subsection{Semantic, Identity, and Neuro-Symbolic Readings}
 
-\textbf{Software runtimes (attribute probes vs runtime identifiers).} Attribute-probe checks recover identity from observed capabilities and pay query cost that scales with inspected structure. Runtime class/type identifiers behave as explicit tags and collapse identity checks to near-constant cost in the model \cite{CPythonDocs,JVMSpec,JavaDocs,TypeScriptDocs,RustDocs}.
+The same fiber picture clarifies the distinction between semantic description and exact identity. Semantic information is what the representation exposes. Identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the semantic representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that must be restored by explicit metadata.
 
-\subsection{Takeaway}
+This transfers directly to neuro-symbolic systems. A neural encoder supplies the semantic side by producing a learned representation; a symbolic layer attempts to recover or reason about exact class-level distinctions. The fiber geometry says precisely when this is possible without extra scaffolding and when it is not: symbolic reasoning cannot recover distinctions already collapsed by the encoder, except by receiving additional identifiers, additional observables, or additional disclosures.
 
-These illustrations are not historical causality claims. They show a common resource law: when observable profiles collide, zero-error identification requires additional naming information; otherwise the system pays higher query cost and/or nonzero error.
+\paragraph{Instantiated neurosymbolic linking theorems.}
+The generic helper-view theorems specialize to a concrete formal identity domain by setting the class space to $\mathsf{Typ}$ and the task to identity $Y = C$. The mechanization (\LH{NSL1}--\LH{NSL6}) proves the following instantiated claims.
+
+\begin{itemize}
+\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (\LH{NSL1}). This is the identity-task instantiation of the injectivity criterion \LH{GPH25}.
+
+\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity (\LH{NSL2}), and no decoder can recover the collapsed identities without identity-resolving side information (\LH{NSL3}).
+
+\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective handle therefore suffices (\LH{NSL5}). This is the identity-task instantiation of the helper-view theorem \LH{GPH40}.
+
+\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (\LH{NSL6}).
+\end{itemize}
+
+These are not merely prose interpretations. They are instantiated theorems connecting the generic information-theoretic helper-view framework to a concrete formal identity domain. Together with \LH{ACS8}, \LH{ACS9}, and \LH{EMB1}, they show that the symbolic layer pays the identity bit budget that the semantic layer leaves unresolved.
+
+\paragraph{What this means for ML systems.}
+The instantiated theorems have immediate implications for learned representation systems.
+
+\begin{itemize}
+\item \textbf{Concept bottleneck models.} If the intermediate concept representation has collisions, then no downstream classifier can distinguish the collapsed concepts without extra identity information. Operationally, exact concept-level decisions require an added disambiguation channel, a retrieval key, or an explicit symbolic concept identifier.
+
+\item \textbf{Retrieval-augmented systems.} The retrieval index pays the identity bit budget. If two artifacts have the same embedding, the system must store distinguishing metadata elsewhere, such as document identifiers, source pointers, or exact lookup keys. Otherwise exact retrieval is impossible on the collided fiber.
+
+\item \textbf{Pure representation schemes.} Systems that attempt to avoid any nominal layer do not escape the theorem. They can still be useful, but they cannot guarantee zero-error open-world identity when the representation is non-injective.
+
+\item \textbf{Open-world deployments.} Any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. There is no third option.
+\end{itemize}
+
+The neurosymbolic point is therefore stronger than an architectural recommendation. It is a necessity statement. Semantic representation alone is lossy identity compression. The symbolic handle restores the missing identity bits. In deployed systems, those bits may appear as identifiers, registry entries, retrieval keys, or explicit symbolic names, but they must appear somewhere if zero-error identity is the goal.
+
+\subsection{Task Sufficiency, Helper Views, and Factorization}
+
+The neurosymbolic reading is one specialization of a broader theorem family. The same fiber geometry characterizes when a representation is sufficient for an arbitrary downstream task, when helper views genuinely help, and when factorized modules contribute real exact information.
+
+\begin{definition}[Task-fiber ambiguity]
+Let $Y=f(C)$ be a downstream task label induced by the class. For a fixed representation $\pi$, define
+\[
+A_{\pi \to Y} := \max_u \left|\{f(c) : \pi(c)=u\}\right|.
+\]
+This is the maximum number of task labels that remain unresolved inside one representation fiber.
+\end{definition}
+
+\begin{theorem}[Task sufficiency criterion]\label{thm:task-sufficiency}
+The representation alone supports zero-error recovery of $Y$ if and only if $A_{\pi \to Y} \le 1$.
+\end{theorem}
+\leanmeta{\LH{GPH38}}
+
+\begin{proof}
+Zero-error recovery of $Y$ from $U$ alone is possible exactly when every representation fiber carries a single task label. That condition is equivalent to the statement that the largest task-fiber ambiguity is at most one.
+\end{proof}
+
+\begin{corollary}[Task-level coarsening monotonicity]\label{cor:task-coarsening-mono}
+If $\pi_{\mathrm{coarse}} = g \circ \pi_{\mathrm{fine}}$, then
+\[
+A_{\pi_{\mathrm{fine}} \to Y} \le A_{\pi_{\mathrm{coarse}} \to Y}.
+\]
+In particular, coarsening a representation cannot improve exact downstream task sufficiency.
+\end{corollary}
+\leanmeta{\LH{GPH39}}
+
+\begin{proof}
+Every coarse fiber is a union of fine fibers, so collapsing from $\pi_{\mathrm{fine}}$ to $\pi_{\mathrm{coarse}}$ cannot reduce the number of task labels realizable inside the worst fiber.
+\end{proof}
+
+\begin{theorem}[Helper-view sufficiency]\label{thm:helper-view-sufficiency}
+Let $S=\sigma(C)$ be an additional deterministic view available to the decoder. Then exact recovery of $Y$ from $(U,S)$ is possible if and only if each joint fiber of $(\pi,\sigma)$ carries at most one task label.
+\end{theorem}
+\leanmeta{\LH{GPH40}}
+
+\begin{proof}
+The pair $(U,S)$ is just a refined deterministic representation. Exact recovery is therefore possible exactly when the downstream task is constant on the fibers of that refined representation.
+\end{proof}
+
+\begin{corollary}[Helper-view monotonicity]\label{cor:helper-view-mono}
+Adding a deterministic helper view cannot worsen task ambiguity. In particular, the task-fiber ambiguity under $(U,S)$ is at most the task-fiber ambiguity under $U$ alone.
+\end{corollary}
+\leanmeta{\LH{GPH41}}
+
+\begin{proof}
+Passing from $U$ to $(U,S)$ refines the representation fibers, so the largest number of task labels per fiber can only decrease.
+\end{proof}
+
+\begin{corollary}[Factorized product law]\label{cor:factorized-product-law}
+In a genuinely factorized product setting, where the class space decomposes as a product and the representation decomposes coordinatewise, the joint fiber is the product of the component fibers and the worst-case residual ambiguity multiplies exactly across modules.
+\end{corollary}
+\leanmeta{\LHrng{GPH}{42}{43}}
+
+\begin{proof}
+For coordinatewise product representations, each joint fiber is exactly the product of the corresponding component fibers, so their cardinalities multiply. Taking the largest such product yields multiplicativity of the worst-case residual ambiguity.
+\end{proof}
+
+For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to Y}$, or the adaptive fiber profile is itself a representation-analysis problem rather than part of the theorem. In a finite explicit registry or index this is just fiber counting; for a large learned embedding one would need either exact collision enumeration after discretization or provable upper and lower bounds on the induced fibers. The point of the present results is to identify what those quantities mean once they are known.
+
+Read concretely, the task-sufficiency theorem is the exact-recovery analogue of a sufficient-statistic condition for the downstream task $Y$: the representation is sufficient precisely when every fiber carries one task label. The helper-view and factorized laws then say when concept bottlenecks, retrieval-augmented pipelines, multimodal encoders, or modular neural architectures contribute genuinely new exact information rather than repackaging ambiguity already present in the base representation.
+
+In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity (\LH{GPH27}, \LH{GPH28}). The same setting also yields a disclosure separation between nominal access and tag-free identity resolution (\LH{PRIV3}).
+
+\subsection{One Additional Semantic-Identification Example}
+
+Consider a model registry in which artifacts are indexed by a semantic representation $\pi$ built from declared capabilities or structural signatures. If two distinct artifacts have the same representation value, then the representation alone cannot support exact registry identification. The fixed-length theorem says that the worst-case auxiliary identifier length is determined by the largest collision bucket. The adaptive theorem says that rare collision buckets contribute little to expected metadata cost, while large or frequent buckets dominate it.
+
+This example is close to the intended task-aware compression reading: the representation is already useful for search and organization, but exact identification may still require additional stored metadata. The theorem identifies the exact price of that residual ambiguity.

@@ -1,69 +1,67 @@
-\subsection{The Error Localization Theorem}\label{the-error-localization-theorem}
+\subsection{Secondary Robustness and Decidability Boundary}
 
-\paragraph{Scope of this section.}
-This section studies \emph{maintenance/localization} complexity, measured by locations to inspect ($E(\cdot)$), not per-instance identification complexity ($W$) from Sections~\ref{sec:framework} and~\ref{sec:witness}. The metrics are related but distinct: $W$ quantifies online class-identification effort, while $E$ quantifies where constraint logic is distributed in implementations.
+The main side-information theorems address whatever collision structure is present in the realized representation. A complementary question is whether that fiber geometry is stable under system evolution: can a representation that is currently collision-free become noninjective when the class universe grows? The next two results are secondary robustness statements quantifying that fragility.
 
-\begin{definition}[Error location count]
-Let $E(\mathcal{O})$ be the number of locations that must be inspected to find all potential violations of a constraint under observation family $\mathcal{O}$.
+\begin{definition}[Finite realized world]
+Let $\mathcal{C}$ be the class universe. A \emph{finite realized world} is a finite subset $W \subseteq \mathcal{C}$ of classes currently present in a deployed system snapshot. We call $W$ \emph{barrier-free} iff
+\[
+\forall c_1,c_2 \in W,\ \pi_{\mathcal C}(c_1)=\pi_{\mathcal C}(c_2) \Rightarrow c_1=c_2.
+\]
 \end{definition}
+\leanmeta{\LH{ROB1}}
 
-\begin{theorem}[Nominal-tag localization]\label{thm:nominal-localization}
-$E(\text{nominal-tag}) = O(1)$.
-\end{theorem}
-\leanmeta{ \LH{ACS7}, \LH{DOM1}, \LH{FORC2}}
-
-\begin{proof}
-Under nominal-tag observation, the constraint ``$v$ must be of class $A$'' is satisfied iff $\tau(v) \in \text{subtypes}(A)$. This is determined at a single location: the definition of $\tau(v)$'s class. One location.
-\end{proof}
-
-\begin{theorem}[Declared-attribute localization]\label{thm:declared-localization}
-$E(\text{attribute-only, declared}) = O(k)$ where $k$ = number of entity classes.
-\end{theorem}
-\leanmeta{ \LH{ACS3}}
-
-\begin{proof}
-With declared attribute sets, the constraint ``$v$ must satisfy attribute $I$'' requires verifying that each class satisfies all attributes in $I$. For $k$ classes, $O(k)$ locations.
-\end{proof}
-
-\begin{theorem}[Attribute-only localization]\label{thm:attribute-localization}
-$E(\text{attribute-only}) = \Omega(m)$ where $m$ = number of query sites.
-\end{theorem}
-\leanmeta{ \LH{ACS3}, \LH{ACS9}, \LH{COH1}}
-
-\begin{proof}
-Under attribute-only observation, each query site independently checks ``does $v$ have attribute $a$?'' with no centralized declaration. For $m$ query sites, each must be inspected. Lower bound is $\Omega(m)$.
-\end{proof}
-
-\begin{corollary}[Strict dominance]\label{cor:strict-dominance}
-Nominal-tag observation strictly dominates attribute-only: $E(\text{nominal-tag}) = O(1) < \Omega(m) = E(\text{attribute-only})$ for all $m > 1$.
-\end{corollary}
-\leanmeta{ \LH{ACS4}, \LH{DOM1}, \LH{FORC2}}
-
-\subsection{The Information Scattering Theorem}\label{the-information-scattering-theorem}
-
-\begin{definition}[Constraint encoding locations]
-Let $I(\mathcal{O}, c)$ be the set of locations where constraint $c$ is encoded under observation family $\mathcal{O}$.
+\begin{definition}[Open-world extension]
+An \emph{open-world extension} is a super-world $W' \supseteq W$ obtained by adding classes while keeping the observation family $\Phi$ fixed.
 \end{definition}
+\leanmeta{\LHrng{ROB}{1}{2}}
 
-\begin{theorem}[Attribute-only scattering]\label{thm:attribute-scattering}
-For attribute-only observation, $|I(\text{attribute-only}, c)| = O(m)$ where $m$ = query sites using constraint $c$.
+\begin{theorem}[Barrier-freedom is not extension-stable]\label{thm:open-world-extension-instability}
+In the open-world class model used here, it is not true that barrier-freedom is preserved under all extensions:
+\[
+\neg\Big(\forall W \subseteq W',\ \mathrm{BarrierFree}(W)\Rightarrow \mathrm{BarrierFree}(W')\Big).
+\]
 \end{theorem}
-\leanmeta{ \LH{ACS3}}
+\leanmeta{\LHrng{ROB}{1}{2}}
 
 \begin{proof}
-Each attribute query independently encodes the constraint. No shared reference exists. Constraint encodings scale with query sites.
+Take the empty world $W_0=\varnothing$, which is barrier-free. In this model, two concrete classes are shape-equivalent (same observable profile) but nominally distinct, so adding them yields an extension $W_1\supseteq W_0$ that is not barrier-free. Therefore barrier-freedom is not extension-stable.
 \end{proof}
 
-\begin{theorem}[Nominal-tag centralization]\label{thm:nominal-centralization}
-For nominal-tag observation, $|I(\text{nominal-tag}, c)| = O(1)$.
+\begin{remark}[Safety interpretation]
+The theorem formalizes a basic fact about open-world systems: present collision-freedom does not by itself yield a stable future guarantee. Persistent zero-error claims therefore need an explicit growth model rather than a one-time snapshot argument.
+\end{remark}
+
+The running example offers the same intuition in finite form: the realized world $\{A,C,D,E\}$ is collision-free, but adding class $B$ immediately restores the collision block $\{A,B\}$.
+
+For compression system design, the point is direct: a representation that currently needs no auxiliary identification bits can require a positive residual coding budget after extension if new classes enter existing fibers. Thus open-world growth can change the optimal exact side-information rate even when nothing about the deployed decoder changes.
+
+\begin{definition}[Function-level barrier predicate]
+For a partial observer generator $f:\mathbb{N}\rightharpoonup\mathbb{N}$, define
+\[
+\mathrm{HasBarrier}(f)\;:\Leftrightarrow\;\exists x\neq y,\exists z,\ z\in f(x)\land z\in f(y).
+\]
+Define $\mathrm{BarrierFree}(f):\Leftrightarrow \neg\mathrm{HasBarrier}(f)$.
+\end{definition}
+\leanmeta{\LHrng{UND}{1}{2}}
+
+\begin{theorem}[Rice-style non-computability of barrier certification]\label{thm:rice-barrier}
+There is no computable predicate on program codes deciding whether the generated observer has a barrier:
+\[
+\neg\mathrm{ComputablePred}\!\left(c\mapsto \mathrm{HasBarrier}(\mathrm{eval}(c))\right).
+\]
+Equivalently, barrier-freedom certification is also non-computable.
 \end{theorem}
-\leanmeta{ \LH{ACS6}, \LH{UNIQ1}, \LH{DOM1}}
+\leanmeta{\LHrng{UND}{1}{2}}
 
 \begin{proof}
-The constraint ``must be of class $A$'' is encoded once in the definition of $A$. All tag checks reference this single definition.
+Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{eval}(c))$. The property is non-trivial: some generators produce collisions and some do not. Rice's theorem therefore implies that if membership in the corresponding semantic class were computable from code, every partial recursive function would have to satisfy it, contradiction. The barrier-free statement is equivalent by negation.
 \end{proof}
 
-\begin{corollary}[Maintenance entropy]\label{cor:maintenance-entropy}
-Attribute-only observation maximizes maintenance entropy; nominal-tag observation minimizes it.
+\begin{remark}[Certification interpretation]
+The Rice-style theorem is the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. Formal guarantees therefore require either a restricted extension model or explicit identity-carrying information that remains valid under growth.
+\end{remark}
+
+\begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]
+For unrestricted open-world generators, one cannot computably certify that attribute-only identification remains barrier-free under all future extensions. Consequently, persistent $D=0$ guarantees cannot rely on ``currently collision-free'' attribute structure alone.
 \end{corollary}
-\leanmeta{ \LH{ACS2}, \LH{COH1}, \LH{FORC2}}
+\leanmeta{\LHrng{ROB}{1}{2}, \LHrng{UND}{1}{2}}

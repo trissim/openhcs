@@ -1,69 +1,27 @@
-\subsection{Noisy Query Model}
+The main theorem chain is complete for the deterministic finite side-information model studied here. This section records only brief forward-looking directions and is not part of the core theorem arc.
 
-Throughout this paper, queries are deterministic: $q_I(v) \in \{0,1\}$ is a fixed function of $v$. In practice, observations may be corrupted. We sketch an extension to noisy queries and state the resulting open problems.
+Each extension changes one part of the model while preserving the paper's central question: once the representation is noninjective, how much additional information is needed for exact or approximate recovery? The common theme is that residual ambiguity left by the representation must still be paid for in some currency---side-information bits, repeated evidence, allowable distortion, or additional disclosure.
 
-\begin{definition}[Noisy observation channel]
-A \emph{noisy observation channel} with crossover probability $\epsilon \in [0, 1/2)$ returns:
-\[
-\tilde{q}_I(v) = \begin{cases}
-q_I(v) & \text{with probability } 1 - \epsilon \\
-1 - q_I(v) & \text{with probability } \epsilon
-\end{cases}
-\]
-Each query response is an independent BSC$(\epsilon)$ corruption of the true value.
-\end{definition}
+\subsection{Noisy and Lossy Observation}
 
-\begin{definition}[Noisy identification capacity]
-The \emph{$\epsilon$-noisy identification capacity} is the supremum rate (in bits per entity) at which zero-error identification is achievable when all attribute queries pass through a BSC$(\epsilon)$.
-\end{definition}
-
-In the noiseless case ($\epsilon = 0$), Theorem~\ref{thm:identification-capacity} shows the capacity is binary: $\log_2 k$ if $\pi$ is class-injective, $0$ otherwise. For $\epsilon > 0$, several questions arise.
-
-\textbf{Open problem (noisy identification cost).} For $\epsilon > 0$ and class-injective $\pi$, zero-error identification is impossible with finite queries (since BSC has nonzero error probability). With bounded error $\delta > 0$, we expect the identification cost to scale as $W = \Theta\left(\frac{\log(1/\delta)}{(1 - 2\epsilon)^2}\right)$ queries per entity. A key observation is that a nominal tag of $L \geq \lceil \log_2 k \rceil$ bits (transmitted noiselessly) should restore $O(1)$ identification regardless of query noise.
-
-The third point is the key insight: \emph{nominal tags provide a noise-free side channel}. Even when attribute observations are corrupted, a clean tag enables $O(1)$ identification. This strengthens the case for explicit tagging in noisy environments, precisely the regime where pure attribute-probe schemes would require many repeated queries to achieve confidence.
-
-\textbf{Connection to identification via channels.} The noisy model connects more directly to Ahlswede-Dueck identification \cite{ahlswede1989identification}. In their framework, identification capacity over a noisy channel can exceed Shannon capacity (double-exponential codebook sizes). Our setting differs: we have \emph{adaptive queries} rather than block codes, and the decoder must identify a \emph{class} rather than test a hypothesis. Characterizing the interplay between adaptive query strategies and channel noise is an open problem.
-
-\subsection{Rate-Distortion-Query Tradeoff Surface}
-
-The $(L, W, D)$ tradeoff admits a natural geometric interpretation. In the maximal-barrier regime we identify a unique Pareto-optimal point at $D = 0$ (Theorem~\ref{thm:lwd-optimal}); outside that regime, the full tradeoff surface can contain multiple $D=0$ frontier points.
-
-\textbf{Fixed-$W$ slices.} For fixed query budget $W$, what is the minimum tag rate $L$ to achieve distortion $D$? When $W \geq d$ (the distinguishing dimension), zero distortion is achievable with $L = 0$ via exhaustive querying. When $W < d$, the observer cannot distinguish all classes, and either:
-\begin{itemize}
-\item Accept $D > 0$ (misidentification), or
-\item Add tags ($L > 0$) to compensate for insufficient queries.
-\end{itemize}
-
-\textbf{Fixed-$L$ slices.} For fixed tag rate $L < \log_2 k$, the tag partitions the $k$ classes into $2^L$ groups. Within each group, the observer must use queries to distinguish. The query cost is determined by the distinguishing dimension \emph{within each group}, which is potentially much smaller than the global dimension.
-
-\textbf{Open problem (subadditivity of query cost).} For a tag of rate $L$ partitioning classes into groups $G_1, \ldots, G_{2^L}$, we expect $W(L) \leq \max_i d(G_i)$, where $d(G_i)$ is the distinguishing dimension within group $G_i$. Optimal tag design should minimize this maximum. Characterizing the optimal partition remains open.
+With noisy representations or noisy side channels, repeated sampling can reduce error, so the natural problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems. Once the deterministic representation assumption is relaxed, the confusability structure is no longer a disjoint union of cliques, and the problem moves closer to the richer graph-entropy regime studied by K\"orner and Witsenhausen.
 
 \subsection{Semantic Distortion Measures}
 
-We have treated distortion $D$ as binary (correct identification or not). Richer distortion measures are possible:
+The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.
 
-\begin{itemize}
-\item \textbf{Hierarchical distortion}: Misidentifying a class within the same genus (biological) or within the same subsystem (engineered systems) is less severe than cross-group errors.
-\item \textbf{Weighted distortion}: Some misidentifications have higher cost than others (e.g., safety-critical misrouting vs. benign confusion).
-\end{itemize}
+This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
 
-\subsection{Privacy and Security}
+\subsection{Privacy, Security, and Three-Resource Geometry}
 
-\textbf{Privacy-preserving identification.} Nominal tags enable zero-knowledge proofs of class membership without revealing attribute profiles. An entity can prove "I belong to class $C$" by revealing $\tau(v) = C$ without exposing $\pi(v)$, preserving attribute privacy. Attribute-only schemes must reveal the complete profile $\pi(v)$ to prove membership, leaking structural information.
+Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. The intro and main results already record the finite explicit disclosure separation: nominal access has unit disclosure budget, while tag-free zero-error identity resolution can require $n-1$ primitive disclosures in the adversarial family (\LH{PRIV3}). This is another facet of the same residual ambiguity: one may pay for exact identification with side-information bits or with additional disclosures. The extension question is what happens after one imposes an explicit leakage constraint and asks how much naming information may be exposed while still certifying identity or class membership.
 
-\textbf{Secure model verification.} In machine learning deployment, compressed model identifiers prevent model substitution attacks. Verifying model identity via nominal tags ($O(1)$ hash comparison) is more efficient and secure than attribute-based verification ($O(s)$ architecture inspection), which is vulnerable to adversarial perturbations that preserve structural fingerprints while altering behavior.
+More broadly, the present side-information viewpoint invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking} and with conditional source coding more directly. The main missing theorem is a genuinely entropy-sensitive zero-error variable-length characterization.
 
-\subsection{Connection to Rate-Distortion-Perception Theory}
+In explicit finite registries, auditing residual ambiguity means computing fiber statistics exactly. In learned or implicit models, the same quantities become representation-analysis targets: one may estimate collision profiles through discretization bounds, quantized or empirical collision statistics, class-conditional entropy surrogates, or task-conditioned quantities such as $A_{\pi \to Y}$. The theoremic contribution of the present paper is to identify what these quantities mean once they are available, not to solve the computational problem of extracting them from arbitrary models.
 
-Blau and Michaeli \cite{blau2019rethinking} extended classical rate-distortion theory by adding a \emph{perception} constraint: the reconstructed distribution must match a target distribution under some divergence measure. This creates a three-way tradeoff between rate, distortion, and perceptual quality.
+The present distortion floor should therefore be read as a deterministic exact-recovery analogue of rate-distortion-perception constraints, not as a full solution of that stochastic theory.
 
-Our $(L, W, D)$ framework admits a parallel interpretation. The query cost $W$ plays a role analogous to the perception constraint: it measures the \emph{interactive cost} of achieving low distortion, rather than a distributional constraint. Just as rate-distortion-perception theory asks ``what is the minimum rate to achieve distortion $D$ while satisfying perception constraint $P$?'', we ask ``what is the minimum tag rate $L$ to achieve distortion $D$ with query budget $W$?''
+\subsection{Learned Representations and Embedding Collapse}
 
-The analogy suggests several directions:
-\begin{itemize}
-\item \textbf{Perception as identification fidelity}: In classification systems that must preserve statistical properties (e.g., sampling from a type distribution), a perception constraint would require the observer's class estimates to have the correct marginal distribution, not just low expected error.
-\item \textbf{Three-resource tradeoffs}: The $(L, W, D)$ Pareto frontier (Theorem~\ref{thm:lwd-optimal}) is a discrete analogue of the rate-distortion-perception tradeoff surface. Characterizing this surface for specific classification problems would extend the geometric rate-distortion program to identification settings.
-\end{itemize}
-
-Formalizing these connections would unify identification capacity with the broader rate-distortion-perception literature.
+In learned classification systems, the observation map $\pi$ can be instantiated by an embedding or representation map whose coordinates are then queried or thresholded. The earlier sections isolate the finite explicit corollaries: one-symbol zero-error feasibility is equivalent to injectivity (\LH{GPH27}), and refining the observation channel cannot increase collision multiplicity (\LH{GPH28}). The extension question is how far that representation reading can be pushed once $\pi$ is implicit, high-dimensional, or learned from data. In that setting, the fixed-length and adaptive fiber laws become a formal measure of residual ambiguity under the representation: unresolved embedding collisions must be paid for either by explicit naming information or by accepting nonzero semantic error.

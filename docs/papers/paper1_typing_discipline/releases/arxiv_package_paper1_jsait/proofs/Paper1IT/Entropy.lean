@@ -60,6 +60,10 @@ noncomputable def uniform (n : ℕ) (hn : n > 0) : FiniteDist n where
 
 end FiniteDist
 
+/-- Expected code length of a finite distribution under a natural-valued length function. -/
+noncomputable def expectedLength {n : ℕ} (p : FiniteDist n) (ℓ : Fin n → ℕ) : ℝ :=
+  ∑ i, p.prob i * (ℓ i : ℝ)
+
 /-!
 ## Shannon Entropy
 
@@ -95,6 +99,11 @@ class ClassicalEntropyAssumptions : Prop where
       entropy (FiniteDist.uniform n hn) = Real.log n
   entropy_zero_iff_ax : ∀ {n : ℕ} (p : FiniteDist n),
       entropy p = 0 ↔ p.isDeterministic
+
+/-- Standard coding-theoretic achievability assumptions used for conditional upper bounds. -/
+class ClassicalCodingAssumptions : Prop extends ClassicalEntropyAssumptions where
+  expected_length_le_entropy_bits_plus_one_ax : ∀ {n : ℕ} (p : FiniteDist n),
+      ∃ ℓ : Fin n → ℕ, expectedLength p ℓ ≤ entropy p / Real.log 2 + 1
 
 variable [ClassicalEntropyAssumptions]
 
@@ -140,3 +149,14 @@ theorem entropy_zero_iff {n : ℕ} (p : FiniteDist n) :
   exact ClassicalEntropyAssumptions.entropy_zero_iff_ax p
 
 end Entropy
+
+namespace Coding
+
+variable [Entropy.ClassicalCodingAssumptions]
+
+/-- Standard prefix-coding upper bound, exposed as a reusable theorem. -/
+theorem expectedLength_le_entropy_bits_plus_one {n : ℕ} (p : FiniteDist n) :
+    ∃ ℓ : Fin n → ℕ, expectedLength p ℓ ≤ entropy p / Real.log 2 + 1 := by
+  exact Entropy.ClassicalCodingAssumptions.expected_length_le_entropy_bits_plus_one_ax p
+
+end Coding

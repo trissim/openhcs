@@ -1,114 +1,142 @@
-\subsection{Three-Dimensional Tradeoff: Tag Length, Witness Cost, Distortion}
+\subsection{Representation-Adaptive Side Information}
 
-Recall from Section 2 that observer strategies are characterized by three dimensions:
-\begin{itemize}
-\item \textbf{Tag length} $L$: bits required to encode a class identifier ($L \geq \log_2 k$ for $k$ classes under full class tagging)
-\item \textbf{Witness cost} $W$: minimum number of primitive queries for class identification
-\item \textbf{Distortion} $D$: probability of misclassification, $D = \Pr[\hat{C} \neq C]$.
-\end{itemize}
+The fixed-length theorem treats all representation fibers through the worst case $A_\pi$. A finer coding problem allows the auxiliary description length to depend on the observed representation value $u$. Then the relevant budget is not the maximum fiber size but the size of the individual fiber $\pi^{-1}(u)$. This section therefore resolves the same residual ambiguity object at a finer scale: first fiberwise, then in source-weighted expectation, and finally through active binary clarification protocols.
 
-We compare two observer classes:
-
-\begin{definition}[Attribute-only observer]
-An observer that queries only attribute membership ($q_I \in \Phi_{\mathcal{I}}$), with no access to explicit class tags.
+\begin{definition}[Representation-adaptive auxiliary description]
+An \emph{adaptive auxiliary scheme} assigns to each representation value $u$ a binary description budget $\ell(u)$ and a decoder that, given $u$ together with a binary string of length at most $\ell(u)$, recovers the class exactly whenever $\pi(C)=u$.
 \end{definition}
 
-\begin{definition}[Nominal-tag observer]
-An observer that may read a single class identifier (nominal tag) per value, in addition to attribute queries.
-\end{definition}
-
-\begin{theorem}[Pareto Optimality of Nominal-Tag Observers]\label{thm:lwd-optimal}
-Let $A_\pi$ be the collision multiplicity (Definition~\ref{def:collision-multiplicity}). Then:
-\begin{enumerate}
-\item Any $D=0$ scheme must satisfy $L \ge \log_2 A_\pi$ (Theorem~\ref{thm:converse}).
-\item In maximal-barrier domains ($A_\pi = k$), nominal-tag observers achieve the unique Pareto-optimal $D=0$ point:
-\begin{itemize}
-\item \textbf{Tag length}: $L = \lceil \log_2 k \rceil$ bits for $k$ classes
-\item \textbf{Witness cost}: $W = O(1)$ queries (one tag read)
-\item \textbf{Distortion}: $D = 0$ (zero misclassification probability)
-\end{itemize}
-\item In general (non-maximal) domains, nominal tagging remains Pareto-optimal at $D=0$ but need not be unique: partial tags can coexist on the frontier.
-\end{enumerate}
-
-In information-barrier domains, attribute-only observers (the $L=0$ face) satisfy:
-\begin{itemize}
-\item \textbf{Tag length}: $L = 0$ bits (no explicit tag)
-\item \textbf{Witness cost}: $W = \Omega(d)$ queries (must query at least one minimal distinguishing set of size $d$, see Definition~\ref{def:distinguishing-dimension})
-\item \textbf{Distortion}: $D > 0$ (probability of misclassification is strictly positive due to collisions)
-\end{itemize}
+\begin{theorem}[Pointwise optimal adaptive bit budget]\label{thm:adaptive-fiber-budget}
+For a representation fiber of size $|\pi^{-1}(u)|$, zero-error recovery under a binary auxiliary alphabet is feasible if and only if
+\[
+|\pi^{-1}(u)| \le 2^{\ell(u)}.
+\]
+Consequently, the pointwise optimal number of auxiliary bits on fiber $u$ is
+\[
+\ell^\star(u) = \left\lceil \log_2 |\pi^{-1}(u)| \right\rceil.
+\]
 \end{theorem}
-\leanmeta{ \LH{LWDC1}, \LH{LWDC3}, \LH{LWDC2}}
+\leanmeta{\LH{GPH32}}
 
 \begin{proof}
-Converse item (1) is Theorem~\ref{thm:converse}. For item (2), maximal barrier means all classes are observationally colliding, so any $D=0$ scheme must carry full class identity in tag bits (Corollary~\ref{cor:max-barrier-converse}), while nominal tags realize this lower bound with one tag read. Pareto uniqueness follows because any competing $D=0$ point cannot reduce $L$ below $\log_2 k$ nor reduce $W$ below constant-time tag access under the admissibility rules of Section~\ref{sec:framework}.
-
-The converse proof path is machine-checked in Lean: \texttt{proofs/lwd\_converse.lean} formalizes (i) constant transcript on a collision block implies tag injectivity under zero-error decoding, and (ii) counting then yields $2^L \ge A_\pi$. The maximal-barrier corollary is formalized in the same module. Runtime cost instantiations (e.g., unbounded gap examples) remain in \texttt{proofs/python\_instantiation.lean}.
+Once $u$ is fixed, the decoder only needs to distinguish classes inside the fiber $\pi^{-1}(u)$. With $\ell(u)$ binary bits there are at most $2^{\ell(u)}$ auxiliary outcomes, so exact recovery is possible exactly when that many outcomes suffice to name the fiber elements injectively. The minimal feasible budget is therefore the least integer whose power of two dominates the fiber size, namely $\lceil \log_2 |\pi^{-1}(u)| \rceil$.
 \end{proof}
 
-\begin{remark}[General $D=0$ Frontier]
-When $1 < A_\pi < k$, the $D=0$ frontier can include mixed designs: a partial tag identifies collision blocks and queries resolve within blocks. This does not contradict nominal optimality; it only removes global uniqueness outside maximal-barrier domains.
-\begin{enumerate}
-\item Maximal barrier ($A_\pi=k$): unique $D=0$ nominal point.
-\item Intermediate barrier ($1<A_\pi<k$): multiple $D=0$ Pareto points may exist.
-\item No barrier ($A_\pi=1$): $L=0$ zero-error identification is feasible.
-\end{enumerate}
+\begin{definition}[Expected adaptive description length]
+Let $U=\pi(C)$ be the induced representation random variable under a source law on classes. For an adaptive budget $\ell$, define its expected auxiliary length by
+\[
+\mathbb E[\ell(U)] = \sum_u P_U(u)\,\ell(u).
+\]
+\end{definition}
+
+\begin{theorem}[Adaptive expected-rate lower bound]\label{thm:adaptive-expected-rate-lower-bound}
+Any feasible adaptive auxiliary scheme satisfies
+\[
+\mathbb E[\ell(U)] \ge \mathbb E\!\left[\left\lceil \log_2 |\pi^{-1}(U)| \right\rceil\right].
+\]
+Moreover, the pointwise optimal budget from Theorem~\ref{thm:adaptive-fiber-budget} attains equality.
+\end{theorem}
+\leanmeta{\LHrng{GPH}{32}{33}}
+
+\begin{proof}
+By Theorem~\ref{thm:adaptive-fiber-budget}, feasibility on fiber $u$ requires
+\[
+\ell(u) \ge \left\lceil \log_2 |\pi^{-1}(u)| \right\rceil
+\]
+for every representation value $u$. Multiplying pointwise by $P_U(u)$ and summing over $u$ gives the lower bound on expected length. Equality is achieved by choosing the pointwise optimal budget on every fiber.
+\end{proof}
+
+\begin{corollary}[Conditional-entropy lower bound]
+Let $C$ be drawn from any source distribution and let $U=\pi(C)$. Then any feasible adaptive auxiliary scheme satisfies
+\[
+\mathbb E[\ell(U)] \ge \frac{H(C\mid U)}{\log 2},
+\]
+where $H(C\mid U)$ is conditional Shannon entropy in natural-log units.
+\end{corollary}
+\leanmeta{\LH{GPH34}}
+
+\begin{proof}
+For each representation value $u$, the conditional law of $C$ given $U=u$ is supported on the fiber $\pi^{-1}(u)$, so its entropy is at most $\log |\pi^{-1}(u)|$. Averaging over $u$ gives
+\[
+H(C\mid U) \le \mathbb E[\log |\pi^{-1}(U)|].
+\]
+Since $\log |\pi^{-1}(u)| \le \lceil \log_2 |\pi^{-1}(u)| \rceil \log 2$ fiberwise, Theorem~\ref{thm:adaptive-expected-rate-lower-bound} yields the stated lower bound.
+\end{proof}
+
+\begin{theorem}[Fiberwise prefix-coding upper bound]
+Assume standard prefix-coding achievability on each finite fiber. Then there exists an adaptive zero-error auxiliary code satisfying
+\[
+\mathbb E[\ell(U)] \le \frac{H(C\mid U)}{\log 2} + 1.
+\]
+\end{theorem}
+\leanmeta{\LH{GPH35}}
+
+\begin{proof}
+Because the decoder already knows $U=u$, prefix-freeness is required only within each fiber $\pi^{-1}(u)$. Applying a standard prefix-coding theorem separately to the conditional source on each nonempty fiber gives an expected conditional code length at most $H(C\mid U=u)/\log 2 + 1$. Averaging over $u$ yields the stated bound.
+\end{proof}
+
+\begin{corollary}[Active binary clarification]
+If, after observing $U$, the decoder is allowed to ask adaptive binary clarification questions whose leaves identify the class exactly, then the minimum expected number of clarification questions is bounded between
+\[
+\frac{H(C\mid U)}{\log 2}
+\qquad\text{and}\qquad
+\frac{H(C\mid U)}{\log 2}+1.
+\]
+\end{corollary}
+\leanmeta{\LHrng{GPH}{34}{35}}
+
+\begin{proof}
+Each binary clarification protocol induces a binary code over the conditional source on each fiber, and conversely any fiberwise binary prefix code can be implemented as an adaptive yes/no decision tree. The lower and upper bounds therefore follow from the preceding conditional-entropy comparison and fiberwise prefix-coding theorem.
+\end{proof}
+
+\begin{corollary}[Representation-respecting noisy transcripts cannot beat the fiber law]
+Let $T$ be any repeated or noisy observation transcript whose realized value factors through the fixed representation, i.e., $T = h(U)$ for some map $h$. Then recovering $C$ from $T$ cannot require less worst-case or pointwise adaptive side information than recovering $C$ from $U$ itself.
+\end{corollary}
+\leanmeta{\LH{GPH28}, \LH{GPH37}}
+
+\begin{proof}
+If the entire transcript factors through $U$, then it is a coarsening of the original representation. Corollary~\ref{cor:concept-bottleneck-mono} applies directly: coarsening cannot reduce the largest collision fiber and cannot reduce the pointwise adaptive fiber budget. Thus repeated or noisy observations that never break the original fibers cannot remove the residual zero-error coding burden.
+\end{proof}
+
+\begin{remark}[Coding interpretation]
+Theorem~\ref{thm:adaptive-expected-rate-lower-bound} is the average-case counterpart of the max-fiber law. The fixed-length theorem pays for the worst collision fiber; the adaptive theorem pays for each fiber separately and averages under the source-induced law of $U$. Thus the fixed-length law, the pointwise fiber law, and the entropy sandwich are three resolutions of the same object: the cost of naming the classes that remain collapsed inside each representation fiber.
 \end{remark}
 
-\subsection{Pareto Frontier}
-
-The three-dimensional frontier shows:
-\begin{itemize}
-\item In maximal-barrier domains, the unique $D=0$ Pareto point is nominal tagging at $L=\lceil \log_2 k\rceil$.
-\item In general domains, attribute-only observers trade tag length for distortion on the $L=0$ face when collisions are present.
-\end{itemize}
-
-Figure~\ref{fig:lwd-tradeoff} visualizes the $(L, W, D)$ tradeoff space. The key observation is the ambiguity converse: the minimum zero-error tag rate is $\log_2 A_\pi$, with the maximal-barrier special case $\log_2 k$.
-
-\begin{figure}[t]
-\centering
-\begin{tikzpicture}[scale=0.8]
-  % Shaded D=0 achievable region (draw FIRST)
-  \fill[blue!8] (0,0) -- (5,0) -- (5,0.6) -- (0,2.8) -- cycle;
-
-  % D=0 Pareto frontier
-  \draw[thick, blue] (0,2.8) -- (5,0.6);
-
-  % Axes (draw after shading)
-  \draw[->] (0,0) -- (5.8,0) node[right] {Tag rate $L$};
-  \draw[->] (0,0) -- (0,3.5) node[above] {Query cost $W$};
-
-  % Axis labels
-  \node[below left] at (0,0) {$0$};
-  \node[below] at (5,0) {$\log_2 k$};
-  \draw (5,0.08) -- (5,-0.08);
-
-  % Region labels
-  \node[blue] at (3.2,2.3) {\small $D = 0$};
-  \node[blue] at (3.2,1.95) {\small frontier};
-  \node[gray] at (2.2,0.8) {\footnotesize achievable};
-
-  % Points on the D=0 frontier
-  \filldraw[orange] (0,2.8) circle (2.5pt);
-  \node[orange, anchor=west] at (0.12,2.8) {\footnotesize Attr-only ($A_\pi{=}1$)};
-
-  \filldraw[green!60!black] (5,0.6) circle (2.5pt);
-  \node[green!60!black, anchor=east] at (4.9,0.82) {\footnotesize Nominal ($D{=}0$)};
-
-  % Probe-only strategy: below frontier, accepts D>0
-  \filldraw[red] (0,1.8) circle (2.5pt);
-  \node[red, anchor=west] at (0.12,1.8) {\footnotesize Probe-only ($D{>}0$)};
-
-\end{tikzpicture}
-\caption{Schematic $(L,W,D)$ tradeoff across barrier regimes. Nominal tagging is the unique zero-error Pareto point in maximal-barrier domains; attribute-only strategies lie on the zero-tag face and leave the zero-error frontier when collisions are present.}
-\label{fig:lwd-tradeoff}
-\end{figure}
-
-The Lean 4 formalization in the supplementary artifact machine-checks the full ambiguity-based converse chain and maximal-barrier lower bound that anchor this tradeoff analysis.
-
-\begin{remark}[Software-runtime instantiation (example)]
-In one software-runtime instantiation: explicit runtime identifiers correspond to nominal-tag observers (e.g., CPython's \texttt{isinstance}, Java's \texttt{.getClass()}); attribute-probe schemes correspond to attribute-only observers (e.g., repeated \texttt{hasattr}-style checks); and interface-conformance checks are an intermediate case with $D=0$ but $W=O(s)$.
+\begin{remark}[Entropy comparison]
+The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language: zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the exact zero-error rate is still controlled fiberwise by finite collision structure rather than by entropy alone.
 \end{remark}
 
-\begin{remark}[Conformance-check cost parameter]
-When conformance checks traverse $s$ members/fields (rather than ranging over the full attribute universe), the natural bound is $W = O(s)$ with $s \le n$.
-\end{remark}
+\subsection{Positive Distortion Below the Fixed-Length Threshold}
+
+The zero-error threshold does not exhaust the geometry. On a nontrivial collision block carrying a fixed source, subcritical fixed-length budgets force an explicit distortion floor even if the decoder is otherwise unrestricted.
+
+\begin{theorem}[Positive-distortion floor below the ambiguity threshold]\label{thm:positive-distortion-floor}
+Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then any fixed-length scheme with auxiliary budget $L$ bits satisfies
+\[
+\Pr[\hat C = C] \le \frac{2^L}{a},
+\qquad
+D = \Pr[\hat C \neq C] \ge 1 - \frac{2^L}{a}.
+\]
+In particular, if $a = A_\pi$ and $L < \log_2 A_\pi$, then every scheme has strictly positive distortion.
+\end{theorem}
+\leanmeta{\LH{GPH30}}
+
+\begin{proof}
+Fix a realization of all internal randomness used by the scheme. Because every class in $G$ has the same representation profile, the decoder's side information is the same on all classes in $G$; on that block, the decoder can therefore distinguish classes only through the auxiliary outcome. With $L$ bits there are at most $2^L$ outcomes, and for each such outcome the decoder can be correct on at most one class in $G$. Hence, for the fixed randomness, the scheme is correct on at most $2^L$ of the $a$ classes in $G$, so its success probability under the uniform distribution on $G$ is at most $2^L/a$. Averaging over the scheme's randomness preserves the same bound. The distortion lower bound is the complement of the success bound.
+\end{proof}
+
+\subsection{Worked Example}
+
+Return to the running example with profiles
+\[
+A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.
+\]
+The fixed-length theorem gives $A_\pi=2$, so one extra bit is necessary and sufficient for exact recovery. The adaptive theorem says more: the fiber over profile $000$ requires one bit, while the singleton fibers over $100$, $110$, and $111$ require zero bits. Thus the expected auxiliary rate is exactly the probability of landing in the collided fiber.
+
+This is the representation-level interpretation the paper emphasizes. The representation already resolves three of the four fibers completely; the only irreducible metadata cost is the one residual collision between $A$ and $B$.
+
+The next section turns this coding object into a representation-sufficiency theory: once the residual ambiguity of each fiber is explicit, one can ask exactly which downstream tasks, helper views, and modular factors eliminate it and which do not.
+
+\subsection{Secondary Query and Frontier View}
+
+The paper also studies a query resource $W$ for settings where the decoder is allowed to interrogate primitive attributes rather than receive all auxiliary information up front. That query-side viewpoint is secondary here: the main compression object is the side-information rate needed to resolve representation collisions. We retain the query-side results later because they show one alternative way to pay for the same unresolved ambiguity.

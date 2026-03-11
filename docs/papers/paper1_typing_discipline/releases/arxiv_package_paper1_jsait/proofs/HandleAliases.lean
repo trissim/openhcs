@@ -2,6 +2,7 @@ import AbstractClassSystem.Core
 import AbstractClassSystem.Bridge
 import AbstractClassSystem.Extended
 import AbstractClassSystem.Undecidability
+import AbstractClassSystem.Neurosymbolic
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
@@ -51,6 +52,25 @@ abbrev GPH21 := @Ssot.GraphEntropy.minBlockFeasibleBits_eq_blockTagRateBits
 abbrev GPH22 := @Ssot.GraphEntropy.tendsto_blockTagRateBitsPerCoordinate_succ
 abbrev GPH23 := @Ssot.GraphEntropy.block_tagFeasible_pow_budget_iff
 abbrev GPH24 := @Ssot.GraphEntropy.feasibleAtAlphabetBase_iff
+abbrev GPH25 := @Ssot.GraphEntropy.maxFiberCard_le_one_of_injective
+abbrev GPH26 := @Ssot.GraphEntropy.maxFiberCard_eq_one_iff_injective
+abbrev GPH27 := @Ssot.GraphEntropy.tagFeasible_one_iff_injective
+abbrev GPH28 := @Ssot.GraphEntropy.maxFiberCard_mono_of_factors_through
+abbrev GPH29 := @Ssot.GraphEntropy.uniformFiberSuccessRate_le_tag_ratio
+abbrev GPH30 := @Ssot.GraphEntropy.uniformFiberErrorRate_ge_one_sub_tag_ratio
+abbrev GPH31 := @Ssot.GraphEntropy.inclusionMinimalCoordinateDistinguishing_not_equicardinal
+abbrev GPH32 := @Ssot.GraphEntropy.optimalFiberBitLength_feasible
+abbrev GPH33 := @Ssot.GraphEntropy.optimalExpectedAdaptiveBitLength_le
+abbrev GPH34 := @Ssot.GraphEntropy.conditionalEntropyGiven_le_log2_mul_expectedAdaptiveBitLength
+abbrev GPH35 := @Ssot.GraphEntropy.exists_conditionalCodes_expectedLength_le_entropy_bits_plus_one
+abbrev GPH36 := @Ssot.GraphEntropy.fiberCard_mono_of_factors_through
+abbrev GPH37 := @Ssot.GraphEntropy.optimalFiberBitLength_mono_of_factors_through
+abbrev GPH38 := @Ssot.GraphEntropy.taskRecoverable_iff_maxTaskFiberCard_le_one
+abbrev GPH39 := @Ssot.GraphEntropy.maxTaskFiberCard_mono_of_factors_through
+abbrev GPH40 := @Ssot.GraphEntropy.taskRecoverable_pair_iff
+abbrev GPH41 := @Ssot.GraphEntropy.maxTaskFiberCard_pair_le_left
+abbrev GPH42 := @Ssot.GraphEntropy.observeFiber_prod_card
+abbrev GPH43 := @Ssot.GraphEntropy.maxFiberCard_prod
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
@@ -85,6 +105,17 @@ abbrev FORC3 := capability_foreclosure_irreversible -- Capability foreclosure ir
 -- Dominance theorems (DOM*): Strict ordering between disciplines
 abbrev DOM1 := strict_dominance                  -- Strict dominance
 
+/-- ## NEUROSYMBOLIC LINKING THEOREMS (NSL*)
+    These theorems formalize the neurosymbolic pattern: neural encoder + symbolic handle.
+    Key insight: the pair (encoder, handle) achieves zero-error identity recovery
+    when the handle is injective, even if the encoder alone does not. -/
+abbrev NSL1 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_zero_error_identity
+abbrev NSL2 := @AbstractClassSystem.Neurosymbolic.shape_alone_not_zero_error
+abbrev NSL3 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_necessary_for_zero_error
+abbrev NSL4 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_identity_recovery
+abbrev NSL5 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_injective_implies_recoverable
+abbrev NSL6 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_is_canonical_helper_view
+
 -- Coherence theorems (COH*): Why hedging/preference is incoherent
 abbrev COH1 := preference_incoherent             -- Preference position incoherent
 abbrev COH2 := AbstractClassSystem.hedging_incoherent  -- Hedging is incoherent
@@ -110,6 +141,9 @@ abbrev ACS6 := nominal_centralized
 abbrev ACS7 := nominal_localization_constant_semantic
 abbrev ACS8 := @shape_cannot_distinguish
 abbrev ACS9 := @shape_provenance_impossible
+abbrev PRIV1 := @AbstractClassSystem.nominal_identity_disclosure_constant
+abbrev PRIV2 := @AbstractClassSystem.attribute_only_identity_disclosure_lower_bound
+abbrev PRIV3 := @AbstractClassSystem.identity_disclosure_separation
 
 abbrev L1 := @matroid_basis_equicardinality
 abbrev L2 := fixed_axis_incompleteness
@@ -125,6 +159,7 @@ theorem l5_exchange_wrapper {A : _root_.AxisSet}
 
 abbrev L4 := @l4_exchange_wrapper
 abbrev L5 := @l5_exchange_wrapper
+abbrev L6 := fixed_axis_incompleteness
 abbrev L7 := adversary_forces_n_minus_1_queries
 
 abbrev LWDC1 := @LWDConverse.collision_block_requires_bits

@@ -106,24 +106,65 @@ Theorem~\ref{thm:adaptive-expected-rate-lower-bound} is the average-case counter
 The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language: zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the exact zero-error rate is still controlled fiberwise by finite collision structure rather than by entropy alone.
 \end{remark}
 
-\subsection{Positive Distortion Below the Fixed-Length Threshold}
+\subsection{Semantic Identity Rate-Distortion Curve on a Collision Block}
 
-The zero-error threshold does not exhaust the geometry. On a nontrivial collision block carrying a fixed source, subcritical fixed-length budgets force an explicit distortion floor even if the decoder is otherwise unrestricted.
+The zero-error threshold does not exhaust the geometry. On a nontrivial collision block carrying a fixed source, the same collision structure determines the full distortion curve as a function of the auxiliary budget. This is the paper's deterministic semantic identity rate-distortion law: once the identity budget falls below the exact recovery threshold, distortion rises in a quantitatively sharp way dictated by collision geometry.
 
-\begin{theorem}[Positive-distortion floor below the ambiguity threshold]\label{thm:positive-distortion-floor}
-Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then any fixed-length scheme with auxiliary budget $L$ bits satisfies
+\begin{theorem}[Exact semantic identity rate-distortion law on a collision block]\label{thm:positive-distortion-floor}
+Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then the optimal distortion under a fixed-length auxiliary budget of $L$ bits is exactly
+\[
+D^\star(L)=\max\!\left(0, 1 - \frac{2^L}{a}\right).
+\]
+Equivalently, every fixed-length scheme with auxiliary budget $L$ bits satisfies
 \[
 \Pr[\hat C = C] \le \frac{2^L}{a},
 \qquad
 D = \Pr[\hat C \neq C] \ge 1 - \frac{2^L}{a}.
 \]
-In particular, if $a = A_\pi$ and $L < \log_2 A_\pi$, then every scheme has strictly positive distortion.
+If $2^L \ge a$, then zero distortion is achievable; if $2^L < a$, then the lower bound is tight.
 \end{theorem}
 \leanmeta{\LH{GPH30}}
 
 \begin{proof}
 Fix a realization of all internal randomness used by the scheme. Because every class in $G$ has the same representation profile, the decoder's side information is the same on all classes in $G$; on that block, the decoder can therefore distinguish classes only through the auxiliary outcome. With $L$ bits there are at most $2^L$ outcomes, and for each such outcome the decoder can be correct on at most one class in $G$. Hence, for the fixed randomness, the scheme is correct on at most $2^L$ of the $a$ classes in $G$, so its success probability under the uniform distribution on $G$ is at most $2^L/a$. Averaging over the scheme's randomness preserves the same bound. The distortion lower bound is the complement of the success bound.
+
+If $2^L \ge a$, assign distinct auxiliary outcomes to the classes in $G$ and decode injectively; this gives zero distortion. If $2^L < a$, choose $2^L$ classes in $G$, assign them distinct auxiliary outcomes, and map all remaining classes to arbitrary auxiliary outcomes. Then the decoder is correct on exactly $2^L$ of the $a$ classes, so the success probability is $2^L/a$ and the distortion is exactly $1-2^L/a$. This matches the converse.
 \end{proof}
+
+\begin{corollary}[Zero-error threshold]\label{cor:zero-error-threshold-distortion}
+Under the hypotheses of Theorem~\ref{thm:positive-distortion-floor}, zero distortion is achievable if and only if
+\[
+L \ge \log_2 a.
+\]
+\end{corollary}
+
+\begin{proof}
+By Theorem~\ref{thm:positive-distortion-floor}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
+\end{proof}
+
+\begin{corollary}[Zero-budget error floor]\label{cor:zero-budget-error-floor}
+If $L=0$ and the source is uniform on a collision block of size $a$, then any scheme relying only on the representation satisfies
+\[
+D \ge 1 - \frac{1}{a}.
+\]
+In particular, if the source is uniform on a worst collision block with $a=A_\pi$, then
+\[
+D \ge 1 - \frac{1}{A_\pi}.
+\]
+\end{corollary}
+\leanmeta{\LH{GPH30}}
+
+\begin{proof}
+Set $L=0$ in Theorem~\ref{thm:positive-distortion-floor}. Since $2^0=1$, the distortion lower bound becomes $1-1/a$. Choosing a worst collision block gives the second statement.
+\end{proof}
+
+\begin{remark}[The cost of omission]
+This corollary quantifies the price of relying exclusively on semantic attributes. If one chooses not to store the auxiliary identifier required by the fixed-length coding law, the saved $\lceil \log_2 A_\pi \rceil$ bits are exchanged for a nonzero error floor. On a collision fiber of size $2$, omitting the one-bit tag forces an error rate of at least $50\%$. On a collision fiber of size $100$, omitting the seven-bit tag forces an error rate of at least $99\%$. One pays for identity either in stored bits or in distortion. There is no third option in which identity is both free and exact.
+\end{remark}
+
+\begin{remark}[Why this matters]
+The distortion theorem is not only a converse to the zero-error law. It identifies the operational cost of omission in semantics-aware compression systems. If a system declines to store the identity bits needed to separate collided fibers, then the penalty is not abstract suboptimality but a concrete minimum error rate. The important feature is the steepness of the curve: because distortion scales as $1-2^L/a$, small deficits in the coding budget can cause catastrophic losses in identity accuracy. This is the exact storage-versus-distortion tradeoff induced by semantic abstraction.
+\end{remark}
 
 \subsection{Worked Example}
 
