@@ -1,6 +1,6 @@
 \section{Implications for Exact Certification}\label{sec:engineering-corollaries}
 
-The regime hierarchy matters for more than class labels. The same exact question, which coordinates can be omitted without changing the decision boundary, reappears when one tries to simplify models, build reliable certifiers, check witnesses, approximate exact minimizers, or compress a central interface. This section collects those consequences in one place. The common lesson is that exact relevance is expensive to certify, subject to a trilemma in the hard regime, and easy to displace rather than remove.
+The regime hierarchy matters for more than class labels. The same exact question, which coordinates can be omitted without changing the decision boundary, reappears when one tries to simplify models, build reliable certifiers, check witnesses, approximate exact minimizers, or compress a central interface. This section collects those consequences in one place. The common lesson is that exact relevance is expensive to certify, subject to a trilemma in the hard regime, and easy to displace rather than remove. The organizing practical takeaway is the trilemma itself: once exact certification is hard, every downstream simplification or interface-compression story must be read under the possibility of abstention, weakened guarantees, or overclaiming.
 
 \subsection{Exact Simplification and Over-Specification}
 
@@ -22,6 +22,9 @@ Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking action
 \paragraph{Concrete case study.}
 Consider a simplified service configuration with three parameters: cache mode $p_1\in\{\mathrm{off},\mathrm{on}\}$, retry policy $p_2\in\{1,3\}$, and replica count $p_3\in\{1,2\}$. Let the observable behavior set be $B=\{\mathrm{latency\text{-}ok},\mathrm{write\text{-}safe},\mathrm{cost\text{-}ok}\}$. Suppose enabling the cache affects only latency, increasing retries affects only write safety, and replica count affects write safety and cost. Then Theorem~\ref{prop:config-sufficiency} turns the simplification question into an exact sufficiency question on the induced decision problem: which parameter subsets preserve the optimal-behavior set? In this toy instance, if the target simplification must preserve write safety and cost but is indifferent to latency, the exact behavior-preserving core is $\{p_2,p_3\}$, while $p_1$ is irrelevant to that target behavior set. The example is small enough to inspect by hand, but it is already an instance of the general Lean-backed reduction from behavior preservation to sufficiency.
 
+\paragraph{OpenHCS-style pipeline configuration.}
+The same issue appears in scientific workflow orchestration, where a controller assembles a pipeline from a partially nested configuration object and then compiles work only for the selected outputs and wells. In the OpenHCS codebase bundled with this repository, one execution path builds a global pipeline configuration from parameters such as the worker count, output-directory suffix, and well filter before compiling the pipeline and materializing only the selected wells; see, e.g., the configuration construction in \texttt{openhcs/runtime/execution\_server.py} and the scenario table in \texttt{tests/pyqt\_gui/integration/test\_end\_to\_end\_workflow\_foundation.py}. In that setting, the exact practical question is not merely whether two configurations often behave similarly, but whether a smaller visible parameter interface provably preserves the induced compilation and execution decisions for every admissible dataset and run condition. The results of this paper say that such exact interface minimization is a genuine certification problem: on structured cases it can be tractable, but in the general succinct regime one should expect worst-case hardness even when a single compiled execution is easy to obtain.
+
 \leanmeta{\LH{CR1}, \LH{CT12}.}
 
 \begin{corollary}[No General-Purpose Exact Configuration Minimizer]
@@ -29,7 +32,7 @@ Consider a simplified service configuration with three parameters: cache mode $p
 Assuming $\Pclass \neq \coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
 \end{corollary}
 
-\leanmeta{\LH{DQ37}, \LH{DQ36}.}
+\leanmeta{\LHrng{DQ}{36}{37}.}
 
 \begin{proof}
 Such a procedure would solve \textsc{Minimum-Sufficient-Set} in polynomial time for arbitrary succinctly encoded instances, contradicting Theorem~\ref{thm:minsuff-conp} under the assumption $\Pclass \neq \coNP$.
@@ -63,7 +66,7 @@ This does not rule out useful simplification tools. It rules out a fully general
 Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections~\ref{sec:hardness} and~\ref{sec:dichotomy}. In the structured regimes of Section~\ref{sec:tractable}, exact certification becomes available in polynomial time.
 \end{proposition}
 
-\leanmeta{\LH{DQ40}, \LH{DQ36}, \LH{DQ44}.}
+\leanmeta{\LH{DQ36}, \LH{DQ40}, \LH{DQ44}.}
 
 \begin{proof}
 The negative side is given by Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, together with the ETH-conditioned lower bounds summarized in Section~\ref{sec:dichotomy}. The positive side is given by the tractability results of Section~\ref{sec:tractable}, which provide explicit polynomial-time certification procedures under structural restrictions.

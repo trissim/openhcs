@@ -4,6 +4,23 @@ The regime hierarchy identifies where exact relevance certification sits in the 
 
 \paragraph{Model note.} Part~1 is an explicit-state upper bound (time polynomial in $|S|$). Part~2 is a succinct-encoding lower bound under ETH (time exponential in $n$). The encodings are defined in Section~\ref{sec:encoding}.
 
+\begingroup
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.19\linewidth}>{\RaggedRight\arraybackslash}p{0.19\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Encoding} & \textbf{Support regime} & \textbf{Complexity consequence} & \textbf{Source} \\
+\midrule
+Explicit-state & $k^* = O(\log N)$ & exact certification is polynomial in $N$ by projection enumeration & Theorem~\ref{thm:dichotomy}(1) \\
+Succinct & $k^* = \Omega(n)$ & exact certification inherits an ETH-conditioned $2^{\Omega(n)}$ lower bound & Theorem~\ref{thm:dichotomy}(2) \\
+\bottomrule
+\end{tabularx}
+\par\smallskip
+\textbf{Boundary summary.} The tractable--hard transition is controlled jointly by encoding and by the size of the true sufficient support.
+\endgroup
+
 \begin{theorem}[Complexity Dichotomy]\label{thm:dichotomy}
 Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N$ states. Let $k^*$ be the size of the minimal sufficient set.
 
@@ -14,40 +31,21 @@ Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N
 \end{enumerate}
 \end{theorem}
 
-\leanmeta{\LH{DQ29}, \LH{DQ30}, \LH{DQ26}.}
+\leanmeta{\LH{DQ26}, \LHrng{DQ}{29}{30}.}
 
 \begin{proof}
 \textbf{Part 1 (Logarithmic case):} If $k^* = O(\log N)$, then the number of distinct projections $|S_{I^*}|$ is at most $2^{k^*} = O(N^c)$ for some constant $c$. Under the explicit-state encoding, we enumerate all projections and verify sufficiency in polynomial time.
 
-\textbf{Part 2 (Linear case):} We establish this via an explicit reduction chain from the Exponential Time Hypothesis under the succinct encoding.
+\textbf{Part 2 (Linear case):} We establish this by a standard ETH transfer under the succinct encoding.
 \end{proof}
 
 \subsection{The ETH Reduction Chain}\label{sec:eth-chain}
 
-The lower bound in Part 2 of Theorem~\ref{thm:dichotomy} follows from a chain of reductions originating in the Exponential Time Hypothesis. We make this chain explicit.
+The lower bound in Part 2 of Theorem~\ref{thm:dichotomy} follows from a short standard ETH transfer. Under ETH, 3-SAT requires $2^{\Omega(n)}$ time. Negation gives a linear-time reduction from 3-SAT to TAUTOLOGY. The static reduction of Theorem~\ref{thm:sufficiency-conp} then maps an $n$-variable tautology instance to a sufficiency instance with the same asymptotic coordinate count. Therefore, if \textsc{Sufficiency-Check} were solvable in $2^{o(n)}$ time under the succinct encoding, then so would TAUTOLOGY and hence 3-SAT, contradicting ETH.
 
 \begin{definition}[Exponential Time Hypothesis (ETH)]
 There exists a constant $\delta > 0$ such that 3-SAT on $n$ variables cannot be solved in time $O(2^{\delta n})$~\cite{impagliazzo2001complexity}.
 \end{definition}
-
-The chain proceeds as follows:
-
-\begin{enumerate}
-\item \textbf{ETH $\Rightarrow$ 3-SAT requires $2^{\Omega(n)}$:} This is the definition of ETH.
-
-\item \textbf{3-SAT $\leq_p$ TAUTOLOGY:} Given 3-SAT formula $\varphi(x_1, \ldots, x_n)$, define $\psi = \neg\varphi$. Then $\varphi$ is satisfiable iff $\psi$ is not a tautology. This is a linear-time reduction preserving the number of variables.
-
-\item \textbf{TAUTOLOGY requires $2^{\Omega(n)}$ (under ETH):} By the contrapositive of step 2, if TAUTOLOGY is solvable in $o(2^{\delta n})$ time, then 3-SAT is solvable in $o(2^{\delta n})$ time, contradicting ETH.
-
-\item \textbf{TAUTOLOGY $\leq_p$ SUFFICIENCY-CHECK:} This is Theorem~\ref{thm:sufficiency-conp}. Given formula $\varphi(x_1, \ldots, x_n)$, we construct a decision problem where:
-\begin{itemize}
-\item The empty set $I = \emptyset$ is sufficient iff $\varphi$ is a tautology
-\item When $\varphi$ is not a tautology, all $n$ coordinates are relevant
-\end{itemize}
-The reduction is polynomial-time and preserves the number of coordinates.
-
-\item \textbf{SUFFICIENCY-CHECK requires $2^{\Omega(n)}$ (under ETH):} Combining steps 3 and 4: if SUFFICIENCY-CHECK is solvable in $o(2^{\delta n/c})$ time for some constant $c$, then TAUTOLOGY (and hence 3-SAT) is solvable in subexponential time, contradicting ETH.
-\end{enumerate}
 
 \begin{proposition}[Tight Constant]\label{prop:eth-constant}
 The reduction in Theorem~\ref{thm:sufficiency-conp} preserves the number of variables up to an additive constant: an $n$-variable formula yields an $(n+1)$-coordinate decision problem. Therefore, the constant $c$ in the $2^{n/c}$ lower bound is asymptotically 1:
@@ -57,7 +55,7 @@ The reduction in Theorem~\ref{thm:sufficiency-conp} preserves the number of vari
 where $\delta$ is the ETH constant for 3-SAT.
 \end{proposition}
 
-\leanmeta{\LH{DQ30}, \LH{DQ27}.}
+\leanmeta{\LH{DQ27}, \LH{DQ30}.}
 
 \begin{proof}
 The TAUTOLOGY reduction (Theorem~\ref{thm:sufficiency-conp}) constructs:
@@ -79,7 +77,7 @@ The tractable-hard boundary for exact certification is sharp at the logarithmic 
 For Boolean coordinate spaces ($N = 2^n$), the transition is between $k^* = O(\log n)$ (explicit-state tractable) and $k^* = \Omega(n)$ (succinct-encoding intractable).
 \end{corollary}
 
-\leanmeta{\LH{DQ26}, \LH{DQ3}.}
+\leanmeta{\LH{DQ3}, \LH{DQ26}.}
 
 \begin{proof}
 The logarithmic case (Part 1 of Theorem~\ref{thm:dichotomy}) gives polynomial time when $k^* = O(\log N)$. More precisely, when $k^* \leq c \log N$ for constant $c$, the algorithm runs in time $O(N^c \cdot \text{poly}(n))$.
@@ -93,7 +91,7 @@ The transition point is where $2^{k^*} = N^{k^*/\log N}$ stops being polynomial 
 Under ETH, the lower bound is asymptotically tight in the succinct encoding. The explicit-state upper bound is tight in the sense that it matches enumeration complexity in $N$.
 \end{remark}
 
-This dichotomy explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
+This dichotomy explains why exact simplification can be straightforward on some instance families and computationally prohibitive on others. When the true sufficient support is tiny and the state space is explicit, exhaustive certification can still be polynomial. When the true support is extensive and the problem is given succinctly, the same certification task inherits a worst-case $2^{\Omega(n)}$ lower bound under ETH in addition to the class-level coNP hardness statement.
 
 \paragraph{Interpretation.} The ETH chain composes with the structural rank viewpoint introduced earlier. When relevance is extensive, the same objects that drive the regime hierarchy also force the exponential obstruction in the succinct model. In that sense, the dichotomy theorem complements the hierarchy rather than standing apart from it: the hierarchy locates exact certification in the standard class landscape, while the dichotomy explains when explicit structure can still make exact certification feasible.
 

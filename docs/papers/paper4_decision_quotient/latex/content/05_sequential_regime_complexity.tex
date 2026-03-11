@@ -16,6 +16,11 @@ with state space $S=X_1\times\cdots\times X_n$, transition kernel $T:A\times S\t
 Coordinate set $I$ is \emph{sequentially sufficient} if the optimal policy using full observation history equals the optimal policy obtained when histories are restricted to $I$-coordinates.
 \end{definition}
 
+\paragraph{Two interpretations.}
+There are two closely related readings of this definition. The policy-level reading is the one used for the paper's PSPACE classification: hidden information may be irrelevant at time zero and still become relevant later because it changes future contingent choices. The artifact's finite core packages this through explicit state-based verifiers and search procedures over the induced optimizer structure. The point of the sequential section is therefore not that everything reduces to a static one-step check, but that exact relevance certification in temporal models must account for information whose effect is delayed until later belief or policy updates.
+
+Equivalently, one can read the sequential problem as a coordinate-restricted POMDP abstraction question. A full controller conditions on the evolving observation history and therefore on the induced belief over latent states. Hiding coordinates does not merely erase information about the present state; it changes the belief process itself, because future posteriors are formed from a coarser observation interface. Exact sequential sufficiency therefore asks whether the restricted belief evolution preserves the optimal policy, not just whether the current stage reward is unchanged. This is why the sequential problem is qualitatively stronger than the stochastic one-shot problem: omitted information can remain dormant for several steps and only later affect the optimal continuation.
+
 \begin{problem}[SEQUENTIAL-SUFFICIENCY-CHECK]\label{prob:sequential-sufficiency}
 \textbf{Input:} $\mathcal{D}_{\mathrm{seq}}$ and $I\subseteq\{1,\ldots,n\}$. \\
 \textbf{Question:} Is $I$ sequentially sufficient?
@@ -39,7 +44,7 @@ A coordinate set $I$ is \emph{sequentially anchor-sufficient} if there exists an
 For any minimal sequentially sufficient set $I$, a coordinate lies in $I$ if and only if it is relevant for the underlying decision boundary.
 \end{proposition}
 
-\leanmeta{\LH{DC49}, \LH{DC50}.}
+\leanmeta{\LHrng{DC}{49}{50}.}
 
 \begin{proof}
 In the current formalization, sequential sufficiency is defined as sufficiency of the underlying one-step optimizer map on the state space. The static minimal-set/relevance equivalence therefore transports directly to the sequential setting.
@@ -48,6 +53,8 @@ In the current formalization, sequential sufficiency is defined as sufficiency o
 \subsection{PSPACE-Completeness}
 
 The sequential regime is the strongest of the three because hidden information can matter not only for the current optimizer but for the future evolution of the decision problem. The same relevance question therefore becomes a policy-comparison problem over dynamic information states. Static certification asks whether bad state pairs exist; stochastic certification asks whether conditional averages cross a threshold; sequential certification asks whether omitted coordinates can change the value of future contingent choices. That added temporal contingency is exactly what the TQBF reduction exploits.
+
+The reduction is natural for the same reason that quantified formulas and partially observed control problems are natural companions elsewhere in the planning literature. Existential quantifier blocks correspond to controller choices, universal blocks correspond to adversarial or environment-controlled resolutions, and the terminal truth value of the formula becomes terminal reward. A hidden coordinate can look locally irrelevant after one transition yet still encode which branch of the quantified game has been entered, so forgetting it can alter the set of policies that remain optimal later. In that sense the reduction is not merely a correctness gadget: it exposes the precise source of PSPACE hardness, namely that exact relevance certification must reason about information that affects future contingent optimization rather than present-stage utility alone.
 
 \begin{theorem}[Sequential Sufficiency is PSPACE-complete]\label{thm:sequential-pspace}
 SEQUENTIAL-SUFFICIENCY-CHECK is PSPACE-complete.
@@ -60,6 +67,8 @@ For membership, finite-horizon policy comparison for POMDP-style models is decid
 
 For hardness, reduce TQBF. Encode alternating quantifiers as alternating controlled and adversarial transitions, and let the terminal reward evaluate the quantified formula. Then full-history sufficiency holds exactly when the quantified instance is true.
 \end{proof}
+
+The proof can be read operationally as follows. A sequential certificate must rule out the possibility that some hidden bit becomes decision-relevant only after several observation-update steps. That means the verifier cannot stop at stagewise equality of current optimizers; it has to compare the continuation value of future contingent branches. TQBF is therefore the correct benchmark: the same alternation between ``there exists a control choice'' and ``for every environment resolution'' is already built into the meaning of exact policy preservation under partial information.
 
 \begin{proposition}[Sequential Sufficiency Refines to Sequential Anchor Sufficiency]\label{prop:sequential-anchor-refinement}
 If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.
@@ -75,7 +84,7 @@ If optimal-action sets are preserved for every pair of states agreeing on $I$, t
 The sequential anchor query is PSPACE-complete.
 \end{theorem}
 
-\leanmeta{\LH{DC28}, \LH{DC29}, \LH{DC44}.}
+\leanmeta{\LHrng{DC}{28}{29}, \LH{DC44}.}
 
 \begin{proof}
 Membership is in PSPACE. By definition, the query asks whether there exists an anchor state $s_0$ such that every state agreeing with $s_0$ on $I$ preserves the same optimal-action set. A nondeterministic polynomial-space procedure can guess $s_0$ and then scan candidate states one at a time, verifying the agreement condition and comparing the corresponding optimal-action sets. Since NPSPACE = PSPACE, the query lies in PSPACE.
@@ -105,7 +114,7 @@ Reduce TQBF to the $k=0$ slice. There exists a sequentially sufficient set of si
 For finite instances, the development contains counted exhaustive-search procedures for sequential sufficiency, sequential anchor sufficiency, and sequential minimum sufficiency. Their certified step bounds are respectively $O(|S|^2)$, $O(|S|)$, and $O(2^n)$.
 \end{proposition}
 
-\leanmeta{\LH{DC66}, \LH{DC67}, \LH{DC68}, \LH{DC69}, \LH{DC74}, \LH{DC75}, \LH{DC76}.}
+\leanmeta{\LHrng{DC}{66}{69}, \LHrng{DC}{74}{76}.}
 
 \begin{proof}
 The sufficiency search scans for an agreeing pair of states with different optimal sets; the anchor search scans over candidate anchor states; and the minimum query scans the subset lattice. Each procedure admits a counted boolean search formulation with both a correctness theorem and an explicit step bound.
@@ -123,7 +132,7 @@ The sequential sufficiency problem is polynomial-time solvable under each of the
 \end{enumerate}
 \end{proposition}
 
-\leanmeta{\LH{DQ14}, \LH{DQ12}, \LH{DQ45}.}
+\leanmeta{\LH{DQ12}, \LH{DQ14}, \LH{DQ45}.}
 
 \begin{proof}
 Each restriction reduces policy search to dynamic programming over a polynomially bounded representation.
@@ -143,7 +152,8 @@ There exist instances where $I$ is sufficient in the stochastic one-shot sense b
 Construct a process in which the same one-step expected optimizer is preserved under $I$, but hidden-state memory affects future information states and therefore optimal policies. The temporal dependence blocks one-shot sufficiency transfer.
 \end{proof}
 
-With the static, stochastic, and sequential classifications in place, the next
-section consolidates them into a single regime hierarchy and makes the
-escalation explicit: counterexample exclusion, then counting comparison, then
-policy preservation over time.
+With the static, stochastic, and sequential classifications in place, the regime
+hierarchy is now complete. The next section consolidates that hierarchy into a
+single matrix, and the following section refines it with the encoding-sensitive
+ETH lower bounds that explain when exact certification remains feasible despite
+the worst-case class barriers.

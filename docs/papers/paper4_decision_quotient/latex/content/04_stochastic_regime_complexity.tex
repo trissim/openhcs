@@ -22,6 +22,9 @@ A coordinate set $I$ is \emph{stochastically sufficient} if conditioning on $s_I
 for all admissible $I$-fibers.
 \end{definition}
 
+\paragraph{Why this changes complexity.}
+Static sufficiency asks whether any counterexample pair exists. Stochastic sufficiency asks whether conditional expected utilities compare the right way on every admissible fiber. The first question is about ruling out disagreeing state pairs; the second is about majority-style weighted comparisons of conditional expectations. That shift from witness exclusion to counting comparison is exactly what brings PP into the picture.
+
 \begin{problem}[STOCHASTIC-SUFFICIENCY-CHECK]\label{prob:stochastic-sufficiency}
 \textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
 \textbf{Question:} Is $I$ stochastically sufficient?
@@ -126,6 +129,10 @@ For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ 
 
 Theorem~\ref{thm:stochastic-nppp-upper} completes the paper-level stochastic landscape: stochastic sufficiency is PP-complete, while stochastic anchor and minimum occupy the existential counting boundary between PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership. The artifact does not package a full oracle-Turing-machine formalization of $\textsf{NP}^{\textsf{PP}}$. What it does mechanize is the finite core behind that classification: the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and an existential-majority reduction package giving an internal completeness-style surrogate for the stochastic anchor family \leanmeta{\LHrng{EH}{2}{5}.}
 
+The remaining gap is not a bookkeeping omission but a real structural issue. Stochastic sufficiency is a pure verification problem: once $I$ is fixed, one must check a family of majority-style conditional comparisons, which lands naturally in PP. By contrast, stochastic anchor and minimum add an outer existential choice, namely to guess an anchor witness or a candidate coordinate set, before performing the same PP-style conditional verification. The current collapse theorem \LH{PA3} shows that anchor sufficiency reduces to existence of a fiber with a singleton conditional optimum, and the new existential-majority reduction shows that this extra witness layer is not vacuous. So the open question is genuinely whether that existential layer can be absorbed into PP under the present encoding, not whether the paper has simply stopped one step short of an obvious closure argument.
+
+For that reason, the paper's claim is intentionally calibrated. It does not present the stochastic row as a partially explored corner; it presents it as a complete boundary classification at the paper level. Every cell is pinned either to a complete class or to an explicit interval with both sides justified. Closing the gap to PP-completeness would strengthen the stochastic row, but it is not needed to understand where the exact-certification problem lives or why the stochastic existential queries are harder to certify than stochastic sufficiency itself.
+
 \paragraph{Relevance boundary.}
 The stochastic query is fiber-indexed: fixing a candidate information set $I$
 induces a derived decision problem whose optimizer is the conditional fiber
@@ -178,6 +185,7 @@ Under product factorization, conditioning on $I$ does not introduce cross-coordi
 
 The stochastic regime therefore gives the middle layer of the paper's hierarchy:
 conditioning already raises exact certification beyond the static setting by
-turning exact certification into a counting comparison problem, but the full
-temporal escalation is deferred until sequential dynamics are added in the next
-section.
+turning exact certification into a counting comparison problem. Adding time
+will lift us further still: the next section shows how temporal contingency
+pushes the same exact-certification question from PP-style comparisons to
+PSPACE-level policy preservation.
