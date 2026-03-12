@@ -57,6 +57,24 @@ theorem exists_optimal_budget_split
   refine ⟨rOpt, ?_⟩
   simp [costs, m, hne, hrOpt]
 
+theorem exists_optimal_budget_split_le_reference
+    (reprCost tagCost : ρ → Nat) [Nonempty ρ] (rRef : ρ) :
+    ∃ rOpt : ρ, totalBudget reprCost tagCost rOpt ≤ totalBudget reprCost tagCost rRef := by
+  rcases exists_minimizing_split reprCost tagCost with ⟨rOpt, hOpt⟩
+  exact ⟨rOpt, hOpt rRef⟩
+
+theorem minimizing_split_beats_componentwise_improvement
+    (reprCost tagCost : ρ → Nat) [Nonempty ρ]
+    {rOpt r : ρ}
+    (hmin : ∀ s : ρ, totalBudget reprCost tagCost rOpt ≤ totalBudget reprCost tagCost s)
+    (hrepr : reprCost r ≤ reprCost rOpt)
+    (htag : tagCost r ≤ tagCost rOpt) :
+    totalBudget reprCost tagCost r = totalBudget reprCost tagCost rOpt := by
+  have hle1 : totalBudget reprCost tagCost r ≤ totalBudget reprCost tagCost rOpt :=
+    totalBudget_mono reprCost tagCost hrepr htag
+  have hle2 : totalBudget reprCost tagCost rOpt ≤ totalBudget reprCost tagCost r := hmin r
+  exact le_antisymm hle1 hle2
+
 end AbstractBudgetSplit
 
 end Paper1IT

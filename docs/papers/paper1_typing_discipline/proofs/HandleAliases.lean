@@ -136,11 +136,14 @@ abbrev FAL2 := @ObserverModel.allocatedDistortion_anti
 /-- Growth / collision and tag-budget handles. -/
 abbrev GRC1 := @Ssot.Paper1IT.poissonCellCollisionProb_eq_one_sub_exp_mul_one_add
 abbrev GRC2 := @Ssot.Paper1IT.poissonCollisionUnionBound_eq_sum_formula
+abbrev GRC3 := @Ssot.Paper1IT.poissonCellCollisionProb_pos_iff
 abbrev GTB1 := @Ssot.Paper1IT.requiredTagBits_positive_iff_two_le
+abbrev GTB2 := @Ssot.Paper1IT.requiredTagBits_eq_zero_iff_le_one
 
 /-- Abstract representation-vs-tag budget split handles. -/
 abbrev BST1 := @Ssot.Paper1IT.exists_minimizing_split
 abbrev BST2 := @Ssot.Paper1IT.exists_optimal_budget_split
+abbrev BST3 := @Ssot.Paper1IT.exists_optimal_budget_split_le_reference
 
 -- Coherence theorems (COH*): Why hedging/preference is incoherent
 abbrev COH1 := preference_incoherent             -- Preference position incoherent

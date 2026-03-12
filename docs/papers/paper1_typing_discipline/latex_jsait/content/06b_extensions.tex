@@ -22,9 +22,9 @@ The deterministic theorems also suggest operational extensions for systems that 
 \[
 1 - e^{-\lambda}(1+\lambda),
 \]
-which isolates the onset of identity pressure as occupancy grows (\LH{GRC1}). On the budgeting side, the required exact tag budget becomes positive exactly when occupancy reaches two or more items in a cell (\LH{GTB1}). These formulas are still coarse, but they show how the static collision laws induce dynamic trigger conditions for when auxiliary identity information becomes necessary.
+which isolates the onset of identity pressure as occupancy grows (\LH{GRC1}). In particular, the collision pressure is strictly positive exactly when the arrival rate is positive (\LH{GRC3}). On the budgeting side, the required exact tag budget becomes positive exactly when occupancy reaches two or more items in a cell (\LH{GTB1}), and vanishes exactly when occupancy is at most one (\LH{GTB2}). These formulas are still coarse, but they show how the static collision laws induce dynamic trigger conditions for when auxiliary identity information becomes necessary.
 
-At a more abstract level, one may ask how to divide a total budget between representation refinement and auxiliary identity information. The current mechanization already proves that an optimal split exists on any finite search space (\LH{BST1}, \LH{BST2}). What it does not yet provide is a learned-model-specific law for how representation refinement shrinks collision geometry. That remains a separate modeling problem.
+At a more abstract level, one may ask how to divide a total budget between representation refinement and auxiliary identity information. The current mechanization already proves that an optimal split exists on any finite search space and can be compared against any reference split (\LH{BST1}, \LH{BST2}, \LH{BST3}). What it does not yet provide is a learned-model-specific law for how representation refinement shrinks collision geometry. That remains a separate modeling problem.
 
 \subsection{Semantic Distortion Measures}
 

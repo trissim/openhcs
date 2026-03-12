@@ -54,5 +54,15 @@ theorem requiredTagBits_positive_iff_two_le {n : Nat} :
   · intro hn
     exact one_le_requiredTagBits_of_two_le hn
 
+theorem requiredTagBits_eq_zero_iff_le_one {n : Nat} :
+    requiredTagBits n = 0 ↔ n ≤ 1 := by
+  constructor
+  · intro h
+    by_contra hn
+    have hpos : 0 < requiredTagBits n := (requiredTagBits_positive_iff_two_le).2 (by omega)
+    rw [h] at hpos
+    omega
+  · exact requiredTagBits_eq_zero_of_le_one
+
 end Paper1IT
 end Ssot
