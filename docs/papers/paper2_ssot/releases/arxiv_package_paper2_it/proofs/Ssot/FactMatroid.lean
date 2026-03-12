@@ -55,6 +55,46 @@ abbrev factSpanFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (V : DirectionSpace K ι) (S : Finset ι) : Submodule K (Module.Dual K V) :=
   factSpan V (S : Set ι)
 
+noncomputable abbrev factRankFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) : Nat :=
+  Module.finrank K (factSpanFinset V S)
+
+noncomputable def coordProjection {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) : V →ₗ[K] (↑S → K) where
+  toFun := fun x i => x.1 i.1
+  map_add' _ _ := by ext i; rfl
+  map_smul' _ _ := by ext i; rfl
+
+@[simp] theorem coordProjection_apply {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) (x : V) (i : ↑S) :
+    coordProjection V S x i = x.1 i.1 := rfl
+
+theorem factRankFinset_le_card {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    factRankFinset V S ≤ S.card := by
+  classical
+  let simg : Finset (Module.Dual K V) := S.image (coordFun V)
+  have hsimg_eq :
+      (simg : Set (Module.Dual K V)) = (coordFun V) '' (S : Set ι) := by
+    ext φ
+    simp [simg]
+  calc
+    factRankFinset V S = Module.finrank K (Submodule.span K (simg : Set (Module.Dual K V))) := by
+      rw [show factRankFinset V S = Module.finrank K (Submodule.span K ((coordFun V) '' (S : Set ι))) by rfl]
+      rw [hsimg_eq]
+    _ ≤ simg.card := by
+      simpa using (finrank_span_finset_le_card (R := K) simg)
+    _ ≤ S.card := Finset.card_image_le
+
+theorem coordProjection_range_le_card {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    Module.finrank K (LinearMap.range (coordProjection V S)) ≤ S.card := by
+  classical
+  calc
+    Module.finrank K (LinearMap.range (coordProjection V S)) ≤ Module.finrank K (↑S → K) :=
+      Submodule.finrank_le _
+    _ = S.card := by simp
+
 def DeterminesDiff {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (V : DirectionSpace K ι) (S : Set ι) (i : ι) : Prop :=
   ∀ x : V, (∀ j ∈ S, coordFun V j x = 0) → coordFun V i x = 0

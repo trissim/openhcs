@@ -1,5 +1,5 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-12T13:49:14.741649
+Generated: 2026-03-12T17:44:13.450373
 
 === HUMAN COPY/PASTE ===
 
@@ -24,7 +24,7 @@ The paper also characterizes when this upper theory is sharp. On the cluster-col
 Beneath this graph-capacity arc lies a deterministic finite converse: exact zero-error recovery is equivalent to injectivity of the observation-tag map, and the same obstruction appears in counting and entropy forms together with deterministic data processing and a budgeted finite-error extension. This yields a formal integrity guarantee family inside the model: rate $1$ is exactly the structural-integrity regime, higher rate makes integrity violations reachable, and causal propagation together with provenance observability characterize verifiable structural integrity in concrete hosts. A supplementary Lean 4 artifact machine-checks the converse, graph, equality, affine, and realizability chains. Index Terms: zero-error information theory, side information, confusability, graph capacity, structural integrity
 
 arXiv Comments:
-IEEE Transactions on Information Theory submission. Lean 4 artifact: 24527 lines, 1163 theorems/lemmas across 77 files (0 sorry placeholders).
+IEEE Transactions on Information Theory submission. Lean 4 artifact: 25175 lines, 1203 theorems/lemmas across 79 files (0 sorry placeholders).
 
 === MACHINE YAML ===
 paper_id: paper2_it
@@ -123,7 +123,7 @@ arxiv:
     graph, equality, affine, and realizability chains. Index Terms: zero-error information
     theory, side information, confusability, graph capacity, structural integrity'
   comments: 'IEEE Transactions on Information Theory submission. Lean 4 artifact:
-    24527 lines, 1163 theorems/lemmas across 77 files (0 sorry placeholders).'
+    25175 lines, 1203 theorems/lemmas across 79 files (0 sorry placeholders).'
 abstract_variants:
   unicode: 'We construct a structural theory of failure for multi-location encodings.
     Admissible partial views induce a confusability graph on latent tuples; this graph

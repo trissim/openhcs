@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Coherence Theory (IT).
 
-- **Lines:** 11520
-- **Theorems:** 528
+- **Lines:** 11791
+- **Theorems:** 544
 - **`sorry` placeholders:** 0
 
 

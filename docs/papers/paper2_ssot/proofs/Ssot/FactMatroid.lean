@@ -55,6 +55,87 @@ abbrev factSpanFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (V : DirectionSpace K ι) (S : Finset ι) : Submodule K (Module.Dual K V) :=
   factSpan V (S : Set ι)
 
+noncomputable abbrev factRankFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) : Nat :=
+  Module.finrank K (factSpanFinset V S)
+
+noncomputable def coordProjection {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) : V →ₗ[K] (↑S → K) where
+  toFun := fun x i => x.1 i.1
+  map_add' _ _ := by ext i; rfl
+  map_smul' _ _ := by ext i; rfl
+
+@[simp] theorem coordProjection_apply {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) (x : V) (i : ↑S) :
+    coordProjection V S x i = x.1 i.1 := rfl
+
+theorem factRankFinset_le_card {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    factRankFinset V S ≤ S.card := by
+  classical
+  let simg : Finset (Module.Dual K V) := S.image (coordFun V)
+  have hsimg_eq :
+      (simg : Set (Module.Dual K V)) = (coordFun V) '' (S : Set ι) := by
+    ext φ
+    simp [simg]
+  calc
+    factRankFinset V S = Module.finrank K (Submodule.span K (simg : Set (Module.Dual K V))) := by
+      rw [show factRankFinset V S = Module.finrank K (Submodule.span K ((coordFun V) '' (S : Set ι))) by rfl]
+      rw [hsimg_eq]
+    _ ≤ simg.card := by
+      simpa using (finrank_span_finset_le_card (R := K) simg)
+    _ ≤ S.card := Finset.card_image_le
+
+theorem coordProjection_range_le_card {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    Module.finrank K (LinearMap.range (coordProjection V S)) ≤ S.card := by
+  classical
+  calc
+    Module.finrank K (LinearMap.range (coordProjection V S)) ≤ Module.finrank K (↑S → K) :=
+      Submodule.finrank_le _
+    _ = S.card := by simp
+
+theorem factSpanFinset_eq_range_coordProjection_dualMap
+    {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    factSpanFinset V S = LinearMap.range (coordProjection V S).dualMap := by
+  classical
+  let b : Module.Basis ↑S K (Module.Dual K (↑S → K)) := (Pi.basisFun K (↑S)).dualBasis
+  have himage : ((coordProjection V S).dualMap '' (Set.range b)) = (coordFun V) '' (S : Set ι) := by
+    ext φ
+    constructor
+    · rintro ⟨ψ, ⟨i, rfl⟩, rfl⟩
+      refine ⟨i.1, i.2, ?_⟩
+      ext x
+      simp [b, coordProjection, Module.Basis.dualBasis_apply, Pi.basisFun_repr]
+    · rintro ⟨i, hi, hφ⟩
+      subst hφ
+      refine ⟨b ⟨i, hi⟩, ⟨⟨i, hi⟩, rfl⟩, ?_⟩
+      ext x
+      simp [b, coordProjection, Module.Basis.dualBasis_apply, Pi.basisFun_repr]
+  calc
+    factSpanFinset V S = Submodule.span K ((coordFun V) '' (S : Set ι)) := rfl
+    _ = Submodule.span K ((coordProjection V S).dualMap '' (Set.range b)) := by rw [himage]
+    _ = Submodule.map (coordProjection V S).dualMap (Submodule.span K (Set.range b)) := by
+          rw [Submodule.map_span]
+    _ = Submodule.map (coordProjection V S).dualMap ⊤ := by rw [b.span_eq]
+    _ = LinearMap.range (coordProjection V S).dualMap := by rw [LinearMap.range_eq_map]
+
+theorem factRankFinset_eq_finrank_range_coordProjection
+    {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    factRankFinset V S = Module.finrank K (LinearMap.range (coordProjection V S)) := by
+  rw [show factRankFinset V S = Module.finrank K (factSpanFinset V S) by rfl]
+  rw [factSpanFinset_eq_range_coordProjection_dualMap (V := V) (S := S)]
+  exact LinearMap.finrank_range_dualMap_eq_finrank_range (coordProjection V S)
+
+theorem factRankFinset_le_finrank_directionSpace
+    {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (V : DirectionSpace K ι) (S : Finset ι) :
+    factRankFinset V S ≤ Module.finrank K V := by
+  rw [factRankFinset_eq_finrank_range_coordProjection]
+  exact LinearMap.finrank_range_le (coordProjection V S)
+
 def DeterminesDiff {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (V : DirectionSpace K ι) (S : Set ι) (i : ι) : Prop :=
   ∀ x : V, (∀ j ∈ S, coordFun V j x = 0) → coordFun V i x = 0
@@ -165,6 +246,31 @@ lemma indepFacts_mono {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     IndepFacts A I :=
   hJ.mono (by simpa using hIJ)
 
+lemma factRankFinset_eq_card_of_indepFacts {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (A : AffineFamily K ι) {S : Finset ι} (hS : IndepFacts A S) :
+    factRankFinset A.directions S = S.card := by
+  classical
+  let simg : Finset (Module.Dual K A.directions) := S.image (coordFun A.directions)
+  have hsimg_ind : LinearIndepOn K _root_.id (simg : Set (Module.Dual K A.directions)) := by
+    simpa [simg] using hS.id_image
+  have hsimg_eq :
+      (simg : Set (Module.Dual K A.directions)) = (coordFun A.directions) '' (S : Set ι) := by
+    ext φ
+    simp [simg]
+  have hfinrank :
+      Module.finrank K (Submodule.span K (simg : Set (Module.Dual K A.directions))) = simg.card :=
+    finrank_span_finset_eq_card hsimg_ind
+  have hSinj : Set.InjOn (coordFun A.directions) (S : Set ι) := hS.injOn
+  have hcardimg : simg.card = S.card := Finset.card_image_of_injOn (by simpa using hSinj)
+  calc
+    factRankFinset A.directions S
+        = Module.finrank K (Submodule.span K (simg : Set (Module.Dual K A.directions))) := by
+            rw [show factRankFinset A.directions S =
+              Module.finrank K (Submodule.span K ((coordFun A.directions) '' (S : Set ι))) by rfl]
+            rw [hsimg_eq]
+    _ = simg.card := hfinrank
+    _ = S.card := hcardimg
+
 lemma indepFacts_aug {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (A : AffineFamily K ι) {I J : Finset ι}
     (hI : IndepFacts A I) (hJ : IndepFacts A J) (hcard : I.card < J.card) :
@@ -243,6 +349,24 @@ lemma determinesAllFinset_iff_span_eq {K ι} [Field K] [Fintype ι] [DecidableEq
     DeterminesAllFinset A S ↔
       factSpanFinset A.directions S = factSpan A.directions (Set.univ : Set ι) := by
   simpa [DeterminesAllFinset, factSpanFinset] using determinesAll_iff_span_eq A (S : Set ι)
+
+lemma factRankFinset_eq_total_of_determinesAllFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (A : AffineFamily K ι) {S : Finset ι} (hS : DeterminesAllFinset A S) :
+    factRankFinset A.directions S = Module.finrank K (factSpan A.directions (Set.univ : Set ι)) := by
+  rw [show factRankFinset A.directions S = Module.finrank K (factSpanFinset A.directions S) by rfl]
+  rw [(determinesAllFinset_iff_span_eq A S).1 hS]
+
+lemma coordProjection_range_eq_card_of_indepFacts {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (A : AffineFamily K ι) {S : Finset ι} (hS : IndepFacts A S) :
+    Module.finrank K (LinearMap.range (coordProjection A.directions S)) = S.card := by
+  rw [← factRankFinset_eq_finrank_range_coordProjection, factRankFinset_eq_card_of_indepFacts A hS]
+
+lemma coordProjection_range_eq_total_of_determinesAllFinset {K ι} [Field K] [Fintype ι] [DecidableEq ι]
+    (A : AffineFamily K ι) {S : Finset ι} (hS : DeterminesAllFinset A S) :
+    Module.finrank K (LinearMap.range (coordProjection A.directions S)) =
+      Module.finrank K (factSpan A.directions (Set.univ : Set ι)) := by
+  rw [← factRankFinset_eq_finrank_range_coordProjection,
+    factRankFinset_eq_total_of_determinesAllFinset A hS]
 
 abbrev BasisFacts {K ι} [Field K] [Fintype ι] [DecidableEq ι]
     (A : AffineFamily K ι) (S : Finset ι) : Prop :=

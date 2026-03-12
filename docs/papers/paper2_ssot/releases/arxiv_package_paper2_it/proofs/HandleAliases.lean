@@ -11,9 +11,11 @@ import Paper1IT.FiberRateDistortion
 import Paper1IT.GrowthCollisions
 import Paper1IT.GrowthTagBudget
 import Paper1IT.PMFEntropy
+import Paper1IT.QueryBitBridge
 import Paper1IT.RateDistortion
 import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
+import Paper1IT.ComputabilityQuantization
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
 import lwd_converse
@@ -81,6 +83,22 @@ abbrev GPH40 := @Ssot.GraphEntropy.taskRecoverable_pair_iff
 abbrev GPH41 := @Ssot.GraphEntropy.maxTaskFiberCard_pair_le_left
 abbrev GPH42 := @Ssot.GraphEntropy.observeFiber_prod_card
 abbrev GPH43 := @Ssot.GraphEntropy.maxFiberCard_prod
+abbrev GPH44 := @Ssot.GraphEntropy.maxFiberCard_eq_finiteSup
+abbrev GPH45 := @Ssot.GraphEntropy.maxFiberCard_computable_by_fiber_enumeration
+abbrev GPH46 := @Ssot.GraphEntropy.card_le_card_mul_maxFiberCard
+abbrev GPH47 := @Ssot.GraphEntropy.ceilDiv_card_le_maxFiberCard
+abbrev GPH48 := @Ssot.GraphEntropy.quantization_lower_bound_fin
+abbrev GPH49 := @Ssot.GraphEntropy.card_le_card_mul_of_maxFiberCard_le
+abbrev GPH50 := @Ssot.GraphEntropy.precision_requirement
+abbrev GPH51 := @Ssot.GraphEntropy.precision_requirement_fin
+abbrev GPH52 := @Ssot.GraphEntropy.fiber_is_clique
+abbrev GPH53 := @Ssot.GraphEntropy.fiber_finset_is_clique
+abbrev GPH54 := @Ssot.QueryBitBridge.card_distinguished_set_le_two_pow_card
+abbrev GPH55 := @Ssot.QueryBitBridge.clog_card_le_query_count
+abbrev GPH56 := @Ssot.QueryBitBridge.fiber_card_le_two_pow_query_count
+abbrev GPH57 := @Ssot.QueryBitBridge.maxFiberCard_clog_le_query_count
+abbrev GPH58 := @Ssot.QueryBitBridge.distinguishesOn_mono
+abbrev GPH59 := @Ssot.QueryBitBridge.clog_card_le_query_count_mono
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
@@ -208,8 +226,9 @@ theorem l5_exchange_wrapper {A : _root_.AxisSet}
 
 abbrev L4 := @l4_exchange_wrapper
 abbrev L5 := @l5_exchange_wrapper
-abbrev L6 := fixed_axis_incompleteness
-abbrev L7 := adversary_forces_n_minus_1_queries
+abbrev L6 := @nonorthogonal_complete_has_redundant_axis
+abbrev L7 := @exists_semanticallyMinimal_subset
+abbrev L8 := @exists_orthogonal_semanticallyMinimal_subset
 
 abbrev LWDC1 := @LWDConverse.collision_block_requires_bits
 abbrev LWDC2 := @LWDConverse.impossible_when_bits_too_small
