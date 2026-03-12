@@ -4,10 +4,14 @@ import AbstractClassSystem.Extended
 import AbstractClassSystem.Undecidability
 import AbstractClassSystem.Neurosymbolic
 import Paper1IT.BudgetSplit
+import Paper1IT.FiniteRateDistortionConverse
+import Paper1IT.FiniteRateDistortionBounds
 import Paper1IT.FiberAllocation
 import Paper1IT.FiberRateDistortion
 import Paper1IT.GrowthCollisions
 import Paper1IT.GrowthTagBudget
+import Paper1IT.PMFEntropy
+import Paper1IT.RateDistortion
 import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
@@ -125,6 +129,22 @@ abbrev NSL6 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_is_canonical_hel
 /-- Deterministic finite fiberwise rate-distortion extensions (FRD*). -/
 abbrev FRD1 := @ObserverModel.feasible_subsetMass_le_optimalFeasibleMass
 abbrev FRD2 := @ObserverModel.optimalSubset_attains_optimalFeasibleMass
+
+/-- Entropy-sensitive finite converse layer (RDC*). -/
+abbrev RDC1 := @ObserverModel.finiteRateDistortionConverse
+abbrev RDC2 := @ObserverModel.finiteConditionalRateDistortionConverse
+abbrev RDC3 := @ObserverModel.finiteObservationOnlyRateDistortionConverse
+abbrev RDC4 := @ObserverModel.finiteMinEntropyBudgetConverse
+abbrev RDC5 := @ObserverModel.uniformFiniteRateDistortionConverse
+abbrev RDC6 := @ObserverModel.finiteRateDistortionBound
+abbrev RDC7 := @ObserverModel.logBudgetLowerBoundFromError
+abbrev RDC8 := @ObserverModel.observationOnlyRateDistortionConverse
+abbrev RDC9 := @ObserverModel.observationOnlyMinEntropyBound
+
+/-- PMF entropy bridge layer (PMF*). -/
+abbrev PMF1 := @ObserverModel.pmfEntropy_source_eq_sourceEntropy
+abbrev PMF2 := @ObserverModel.conditionalEntropyGivenPair_eq_source_minus_pmfEntropy_pair
+abbrev PMF3 := @ObserverModel.mutualInfoDeterministic_eq_pmfEntropy_pair
 
 /-- Zero-error conditional-entropy sandwich (ZEC*). -/
 abbrev ZEC1 := @Ssot.GraphEntropy.zeroErrorConditionalEntropySandwich
