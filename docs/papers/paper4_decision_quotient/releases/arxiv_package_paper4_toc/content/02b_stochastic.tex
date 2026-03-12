@@ -59,6 +59,7 @@ STOCHASTIC-SUFFICIENCY-CHECK is \PP-complete.
 \begin{claim}{Stochastic anchor refinement}{prop:stochastic-anchor-refinement}
 If $I$ is stochastically sufficient, then $I$ is stochastically anchor-sufficient.
 \claimstamp{P\ref{prop:stochastic-anchor-refinement}}{PP}
+\leanmeta{\LH{DC19}.}
 \end{claim}
 
 \leanmeta{\LH{DC19}.}
@@ -76,6 +77,7 @@ For each formula $\varphi$ on $n \ge 1$ variables:
 \end{aligned}
 \]
 \claimstamp{P\ref{prop:stochastic-anchor-strict-reduction}}{PP}
+\leanmeta{\LH{DC24},\LH{DC25},\LH{DC26}.}
 \end{claim}
 
 \leanmeta{\LH{DC24},\LH{DC25},\LH{DC26}.}
@@ -153,6 +155,7 @@ and for all $a,a'$:
 \mathbb{E}[\Phi\mid a']\le \mathbb{E}[\Phi\mid a].
 \]
 \claimstamp{P\ref{prop:stochastic-potential-duality}}{PP}
+\leanmeta{\LH{DC31},\LH{DC33},\LH{DC34}.}
 \end{claim}
 
 \leanmeta{\LH{DC31},\LH{DC33},\LH{DC34}.}
@@ -168,6 +171,7 @@ At the room-temperature specialization used here:
 \mathrm{thermodynamicCost}(\mathcal{D}_S)=\mathrm{landauerConstant}\cdot |S|.
 \]
 \claimstamp{P\ref{prop:stochastic-landauer-floor}}{AR,H=cost-growth}
+\leanmeta{\LH{DC35},\LH{DC36},\LH{DC37}.}
 \end{claim}
 
 \leanmeta{\LH{DC35},\LH{DC36},\LH{DC37}.}
@@ -189,6 +193,7 @@ so expected utility decomposes. This reduces stochastic sufficiency to static su
 \begin{claim}{Tractability under product distributions}{prop:stochastic-product-tractable}
 If $P = P_1 \otimes \cdots \otimes P_n$ is a product distribution, then STOCHASTIC-SUFFICIENCY-CHECK reduces to checking static sufficiency on each marginal.
 \claimstamp{P\ref{prop:stochastic-product-tractable}}{PD}
+\leanmeta{\LH{CC60}.}
 \end{claim}
 
 \leanmeta{\LH{CC60}}
@@ -196,6 +201,7 @@ If $P = P_1 \otimes \cdots \otimes P_n$ is a product distribution, then STOCHAST
 \begin{claim}{Tractability under bounded support}{prop:stochastic-bounded-support}
 If $|\text{supp}(P)| \leq k$, then STOCHASTIC-SUFFICIENCY-CHECK is solvable in $O(k \cdot |A| \cdot n)$ time.
 \claimstamp{P\ref{prop:stochastic-bounded-support}}{BS}
+\leanmeta{\LH{CC59}.}
 \end{claim}
 
 \leanmeta{\LH{CC59}}
@@ -209,6 +215,7 @@ However, under product distributions, static sufficiency transfers:
 \begin{claim}{Static to stochastic transfer}{prop:static-stochastic-transfer}
 If $P = P_1 \otimes \cdots \otimes P_n$ is a product distribution and $I$ is statically sufficient for $(A,S,U)$, then $I$ is stochastically sufficient for $(A,S,U,P)$.
 \claimstamp{P\ref{prop:static-stochastic-transfer}}{PD}
+\leanmeta{\LH{CC52}.}
 \end{claim}
 
 \leanmeta{\LH{CC52}}

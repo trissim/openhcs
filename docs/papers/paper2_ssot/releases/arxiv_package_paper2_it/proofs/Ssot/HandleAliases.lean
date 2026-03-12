@@ -7,8 +7,10 @@ import Ssot.CrossPaperDependencies  -- Bridge theorems linking Paper 2 → Paper
 import Ssot.Foundations
 import Ssot.Inconsistency
 import Ssot.LangPython
+import Ssot.MultiFact
 import Ssot.ObserverModel
-import Ssot.EntropyGeneral
+import Paper1IT.EntropyGeneral
+import Ssot.FactMatroid
 import Ssot.Probabilistic
 import Ssot.Requirements
 import axis_framework
@@ -188,6 +190,132 @@ abbrev SOT1 := ssot_iff
 abbrev GEN1 := generated_file_is_second_encoding
 abbrev LNG1 := ClaimClosure.language_realizability_criterion
 
+/-! ## MULTI-FACT / NON-CLIQUE EXTENSION -/
+abbrev MFT1 := @MultiFact.exactRecovery_implies_properColoring
+abbrev MFT2 := @MultiFact.properColoring_implies_exactRecovery
+abbrev MFT3 := @MultiFact.exactRecovery_iff_properColoring
+abbrev MFT4 := @MultiFact.exists_exactRecovery_iff_colorable
+abbrev MFT5 := MultiFact.binaryViews_nonclique_witness
+abbrev MFT6 := MultiFact.binaryViews_colorable_two
+abbrev MFT7 := MultiFact.binaryViews_not_colorable_one
+abbrev MFT8 := MultiFact.binaryViews_oneTag_uniform_successProb_le_half
+abbrev MFT9 := @MultiFact.exists_exactOn_iff_colorableOn
+abbrev MFT10 := @MultiFact.binaryViews_oneTag_exactOn_card_le_two
+abbrev MFT11 := @MultiFact.pairProperColoring_of_componentColorings
+abbrev MFT12 := @MultiFact.pairColorable_of_colorable
+abbrev MFT13 := @MultiFact.pair_product_clique_budget_lower_bound
+abbrev MFT14 := @MultiFact.exists_exactOn_card_eq_maxColorableCard
+abbrev MFT15 := MultiFact.binaryViews_maxColorableCard_one_eq_two
+abbrev MFT16 := @MultiFact.pair_product_success_card_lower_bound
+abbrev MFT17 := @MultiFact.pair_product_independent_lower_bound
+abbrev MFT18 := @MultiFact.exactOn_mass_le_maxColorableMass
+abbrev MFT19 := @MultiFact.exists_exactOn_mass_eq_maxColorableMass
+abbrev MFT20 := @MultiFact.colorable_iff_graphColorable
+abbrev MFT21 := @MultiFact.block_power_independent_lower_bound
+abbrev MFT22 := @MultiFact.block_add_independent_lower_bound
+abbrev MFT23 := @MultiFact.exactRateDistortionValue_upper
+abbrev MFT24 := @MultiFact.exists_exactRateDistortionValue
+abbrev MFT25 := @MultiFact.pairConfusable_iff_strongProdAdj
+abbrev MFT26 := @MultiFact.pairConfusabilityGraph_eq_strongProd
+abbrev MFT27 := @MultiFact.blockRate_le_shannonLowerCapacity
+abbrev MFT28 := @MultiFact.oneShotLogRate_le_shannonLowerCapacity
+abbrev MFT29 := @MultiFact.concatBlockConfusable_iff_strongProdAdj
+abbrev MFT30 := @MultiFact.blockConfusabilityGraph_addIsoStrongProd
+abbrev MFT31 := @MultiFact.blockMaxIndependentCard_eq_graphMaxIndependentCard
+abbrev MFT32 := @MultiFact.shannonLowerCapacity_eq_iSup_graphRates
+abbrev MFT33 := @MultiFact.blockRate_le_blockRate_mul
+abbrev MFT34 := @MultiFact.blockConfusable_iff_strongPowAdj
+abbrev MFT35 := @MultiFact.blockConfusabilityGraph_eq_strongPow
+abbrev MFT36 := @MultiFact.shannonLowerCapacity_eq_graphShannonLowerCapacity
+abbrev MFT37 := @MultiFact.strongPowAdj_add_iff_strongProd
+abbrev MFT38 := @MultiFact.strongPow_addIsoStrongProd
+abbrev MFT39 := @MultiFact.graphMaxIndependentCard_strongPow_add_eq_strongProd
+abbrev MFT40 := @MultiFact.graphMaxIndependentCard_strongProd_lower_bound
+abbrev MFT41 := @MultiFact.graphMaxIndependentCard_strongPow_mul_lower_bound
+abbrev MFT42 := @MultiFact.graphPowerRate_le_graphPowerRate_mul
+abbrev MFT43 := @MultiFact.graphNegLogSeq_subadditive
+abbrev MFT44 := @MultiFact.tendsto_graphPowerRateNat_graphShannonCapacityReal
+abbrev MFT45 := @MultiFact.graphPowerRate_le_graphShannonCapacityReal
+abbrev MFT46 := @MultiFact.graphShannonCapacityReal_nonneg
+abbrev MFT47 := @MultiFact.iSup_graphPowerRate_eq_graphShannonCapacityReal
+abbrev MFT48 := @MultiFact.shannonCapacityReal_eq_iSup_blockRate
+abbrev MFT49 := @MultiFact.blockRate_le_shannonCapacityReal
+abbrev MFT50 := @MultiFact.compl_strongPow_adj_iff_exists
+abbrev MFT51 := @MultiFact.complStrongPow_colorable
+abbrev MFT52 := @MultiFact.graphMaxIndependentCard_strongPow_le_complChromaticPow
+abbrev MFT53 := @MultiFact.graphPowerRate_le_log_complChromatic
+abbrev MFT54 := @MultiFact.graphShannonCapacityReal_le_log_complChromatic
+abbrev MFT55 := @MultiFact.graphShannonCapacityReal_le_log_complChromaticNumber
+abbrev MFT56 := @MultiFact.graphShannonLowerCapacity_eq_ofReal_graphShannonCapacityReal
+abbrev MFT57 := @MultiFact.graphThetaPSDLogUpper_eq_graphThetaLogUpper
+abbrev MFT58 := @MultiFact.graphShannonCapacityReal_le_graphThetaPSDLogUpper
+abbrev MFT59 := @MultiFact.graphThetaPSDLogUpper_strongProd_le
+abbrev MFT60 := @MultiFact.graphThetaPSDLogSeq_subadditive
+abbrev MFT61 := @MultiFact.tendsto_graphThetaPSDPowerRateNat_graphThetaPSDAsymptoticUpper
+abbrev MFT62 := @MultiFact.graphThetaPSDAsymptoticUpper_le_graphThetaPSDLogUpper
+abbrev MFT63 := @MultiFact.iInf_graphThetaPSDPowerRate_eq_graphThetaPSDAsymptoticUpper
+abbrev MFT64 := @MultiFact.lovaszOrthoLogUpper_eq_graphThetaLogUpper
+abbrev MFT65 := @MultiFact.lovaszThetaPrimalLogUpper_eq_graphThetaPSDLogUpper
+abbrev MFT66 := @MultiFact.graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper
+abbrev MFT67 := @MultiFact.graphOneShotLogMaxIndependentCard_le_graphThetaLogUpper
+abbrev MFT68 := @MultiFact.graphPowerRate_le_graphThetaPSDPowerRate
+abbrev MFT69 := @MultiFact.graphShannonCapacityReal_le_graphThetaPSDAsymptoticUpper
+abbrev MFT70 := @MultiFact.lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper
+abbrev MFT71 := @MultiFact.graphShannonCapacityReal_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT72 := @MultiFact.graphThetaSchurDualLogUpper_strongProd_le
+abbrev MFT73 := @MultiFact.graphThetaSchurDualLogUpper_iso_eq
+abbrev MFT74 := @MultiFact.graphThetaSchurDualLogSeq_subadditive
+abbrev MFT75 := @MultiFact.tendsto_graphThetaSchurDualPowerRateNat_graphThetaSchurDualAsymptoticUpper
+abbrev MFT76 := @MultiFact.iInf_graphThetaSchurDualPowerRate_eq_graphThetaSchurDualAsymptoticUpper
+abbrev MFT77 := @MultiFact.graphThetaSchurDualAsymptoticUpper_le_graphThetaPSDAsymptoticUpper
+abbrev MFT78 := @MultiFact.graphThetaSchurDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT79 := @MultiFact.lovaszThetaDualLogUpper_eq_graphThetaSchurDualLogUpper
+abbrev MFT80 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_graphThetaSchurDualAsymptoticUpper
+abbrev MFT81 := @MultiFact.lovaszThetaDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT82 := @MultiFact.lovaszThetaDualLogUpper_eq_lovaszThetaPrimalLogUpper
+abbrev MFT83 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT84 := @MultiFact.graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
+abbrev MFT85 := @MultiFact.graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph
+abbrev MFT86 := @MultiFact.graphShannonCapacityReal_eq_log_card_clusterGraph
+abbrev MFT87 := @MultiFact.lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph
+abbrev MFT88 := @MultiFact.confusabilityGraph_eq_clusterGraph_transcriptLabel
+abbrev MFT89 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_fiberCoherent
+abbrev MFT90 := @MultiFact.shannonCapacityReal_eq_log_transcriptFiberCard_of_fiberCoherent
+abbrev MFT91 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_transcriptFiberCard_of_fiberCoherent
+abbrev MFT92 := @MultiFact.fiberCoherent_confusableTransitive
+abbrev MFT93 := @MultiFact.confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
+abbrev MFT94 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_confusableTransitive
+abbrev MFT95 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_confusableTransitive
+abbrev MFT96 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusableTransitive
+abbrev MFT97 := @MultiFact.MeetWitnessed
+abbrev MFT98 := @MultiFact.meetWitnessed_confusableTransitive
+abbrev MFT99 := @MultiFact.confusableTransitive_iff_clusterCollapse
+abbrev MFT100 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_meetWitnessed
+abbrev MFT101 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT102 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT103 := @MultiFact.fiberCoherent_meetWitnessed
+abbrev MFT104 := @MultiFact.binaryViews_not_meetWitnessed
+abbrev MFT105 := @MultiFact.meetWitnessViews_meetWitnessed
+abbrev MFT106 := @MultiFact.meetWitnessViews_not_fiberCoherent
+abbrev MFT107 := @MultiFact.ViewCompositionClosed
+abbrev MFT108 := @MultiFact.confusableTransitive_iff_viewCompositionClosed
+abbrev MFT109 := @MultiFact.confusable_iff_exists_viewClusterAdj
+abbrev MFT110 := @MultiFact.SupportConfusable
+abbrev MFT111 := @MultiFact.deterministicSupportConfusable_iff_confusable
+abbrev MFT112 := @MultiFact.deterministicSupportConfusabilityGraph_eq_confusabilityGraph
+abbrev MFT113 := @MultiFact.card_state_eq
+abbrev MFT114 := @MultiFact.confusableOracle_eq_true_iff
+abbrev MFT115 := @MultiFact.confusableOrderedPairs
+abbrev MFT116 := @MultiFact.card_state_prod_eq
+abbrev MFT117 := @MultiFact.card_confusableOrderedPairs_le_naive_bound
+abbrev MFT118 := @MultiFact.observe_eq_iff_subset_agreeSet
+abbrev MFT119 := @MultiFact.confusable_iff_exists_view_subset_agreeSet
+abbrev MFT120 := @MultiFact.agreeSet_statePerm_eq
+abbrev MFT121 := @MultiFact.confusable_statePerm_iff
+abbrev MFT122 := @MultiFact.confusable_congr_agreeSet
+abbrev MFT123 := @MultiFact.confusabilityGraph_statePermIso
+abbrev MFT124 := @MultiFact.exists_confusabilityGraph_iso_send
+
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
 abbrev BND3 := ssot_advantage_unbounded
@@ -199,6 +327,13 @@ abbrev REG4 := ClaimClosure.amortized_complexity_core
 
 abbrev PYH1 := Python.python_has_hooks
 abbrev PYI1 := Python.python_has_introspection
+
+-- Affine fact-matroid layer (AFM*): fact closure becomes a representable matroid
+abbrev AFM1 := @FactMatroid.determinesFact_iff_mem_factSpan
+abbrev AFM2 := @FactMatroid.factMatroid_indep_iff
+abbrev AFM3 := @FactMatroid.basisFacts_card_eq_finrank
+abbrev AFM4 := @FactMatroid.basisFacts_minimal
+abbrev AFM5 := @FactMatroid.minimalDetermining_basis
 
 /-! ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that SSOT is FORCED by first principles.

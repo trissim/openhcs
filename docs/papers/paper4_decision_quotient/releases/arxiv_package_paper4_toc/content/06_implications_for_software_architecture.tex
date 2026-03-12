@@ -18,7 +18,7 @@ Equivalently, repeated distributed cycles create a thermal duty: more update cyc
 \begin{corollary}[Persistent Over-Specification]\label{cor:overmodel-diagnostic-implication}
 \claimstamp{C\ref{cor:overmodel-diagnostic-implication}}{H=succinct-hard}
 In the mechanized Boolean-coordinate model, if a coordinate is relevant and omitted from a candidate set $I$, then $I$ is not sufficient.
-\leanmeta{\LH{S2P6}}
+\leanmeta{\LH{DG18}}
 \end{corollary}
 
 \begin{proof}
@@ -34,12 +34,12 @@ I \text{ is exactly relevance-identifying}
 \bigl(I \text{ is sufficient and } I \subseteq R_{\mathrm{rel}}\bigr),
 \]
 where $R_{\mathrm{rel}}$ is the full relevant-coordinate set.
-\leanmeta{\LH{S2P1}}
+\leanmeta{\LH{DP1},\LH{DP2}}
 \end{corollary}
 
 \begin{proof}
 This is exactly
-\LH{S2P1},
+\LH{DP1},
 with $R_{\mathrm{rel}}=\texttt{relevantFinset}$.
 \end{proof}
 
@@ -55,7 +55,7 @@ Once exact competence is available in the active regime (Corollaries~\ref{cor:pr
 \LH{CC71},
 \LH{CC73},
 \LH{CC72},
-\LH{S2P1}.}
+\LH{DP1}.}
 \end{remark}
 
 \subsection{Architectural Decision Quotient}
@@ -81,11 +81,11 @@ The denominator $|B|$ is shared. Thus $\mathrm{ADQ}(I) < \mathrm{ADQ}(J)$ is equ
 \begin{corollary}[Cardinality Criterion for Exact Minimization]\label{cor:practice-diagnostic}
 \claimstamp{C\ref{cor:practice-diagnostic}}{H=succinct-hard}
 In the mechanized Boolean-coordinate model, existence of a sufficient set of size at most $k$ is equivalent to the relevance set having cardinality at most $k$.
-\leanmeta{\LH{S2P2}}
+\leanmeta{\LH{DP1},\LH{SK1}}
 \end{corollary}
 
 \begin{proof}
-By \LH{S2P2}, sufficiency of size $\le k$ is equivalent to a relevance-cardinality bound $\le k$ in the Boolean-coordinate model.
+By \LH{DP1} together with \LH{SK1}, sufficiency of size $\le k$ aligns with a relevance-cardinality bound $\le k$ in the Boolean-coordinate model.
 \end{proof}
 
 \begin{corollary}[Bounded-Regime Tractability]\label{cor:practice-bounded}

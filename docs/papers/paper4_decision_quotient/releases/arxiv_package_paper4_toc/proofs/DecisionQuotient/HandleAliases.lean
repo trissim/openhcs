@@ -58,10 +58,13 @@ import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
 import DecisionQuotient.Information.RDSrank
 import DecisionQuotient.ThermodynamicLift
+import DecisionQuotient.InflationEntropyBridge
+import DecisionQuotient.InflationEntropyMinimality
 import DecisionQuotient.Statistics.FisherInformation
 import DecisionQuotient.StochasticSequential.ClaimClosure
 import DecisionQuotient.StochasticSequential.Basic
 import DecisionQuotient.StochasticSequential.Quotient
+import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Hardness
 import DecisionQuotient.StochasticSequential.Hierarchy
 import DecisionQuotient.StochasticSequential.PolynomialReduction
@@ -702,6 +705,11 @@ abbrev IA10 := ClaimClosure.IA10
 abbrev IA11 := ClaimClosure.IA11
 abbrev IA12 := ClaimClosure.IA12
 abbrev IA13 := ClaimClosure.IA13
+abbrev IA14 := @Physics.InvariantAgreement.IA14_observer_disagreement_impossible
+abbrev IA15 := @Physics.InvariantAgreement.sameUniverse
+abbrev IA16 := @Physics.InvariantAgreement.IA16_no_invariant_undefined_membership
+abbrev IA17 := @Physics.InvariantAgreement.IA17_ego_trap
+abbrev IA18 := @Physics.InvariantAgreement.IA18_escalation_complete
 
 -- Gap Energy (GE) handles
 abbrev GE1 := ClaimClosure.GE1
@@ -1410,5 +1418,53 @@ abbrev SK1 := @DecisionProblem.srank_eq_relevant_card
 abbrev SK2 := @DecisionProblem.srank_le_n
 -- SK3: srank = 0 iff the decision boundary is coordinate-constant
 abbrev SK3 := @DecisionProblem.srank_zero_iff_constant
+
+/-! ## Inflation-entropy bridge handles (IEB)
+    InflationEntropyBridge.lean + InflationEntropyMinimality.lean
+-/
+
+-- IEB1: Monotone optimizer-class growth under embedding compatibility
+abbrev IEB1 := @InflationEntropyBridge.classes_monotone
+-- IEB2: Monotone quotient entropy under embedding compatibility
+abbrev IEB2 := @InflationEntropyBridge.entropy_monotone
+-- IEB3: Strict optimizer-class growth from new-class witness
+abbrev IEB3 := @InflationEntropyBridge.classes_strict_increase
+-- IEB4: Strict entropy growth from new-class witness
+abbrev IEB4 := @InflationEntropyBridge.entropy_strict_increase
+-- IEB5: Utility compatibility implies optimizer compatibility
+abbrev IEB5 := @InflationEntropyBridge.optCompat_of_utilityCompat
+-- IEB6: Thermal floor monotone under class monotonicity
+abbrev IEB6 := @InflationEntropyBridge.thermal_floor_monotone_of_classes
+-- IEB7: Thermal floor strict growth under new-class witness
+abbrev IEB7 := @InflationEntropyBridge.thermal_floor_strict_of_new_class
+-- IEB8: Later floor implies earlier floor
+abbrev IEB8 := @InflationEntropyBridge.later_energy_floor_implies_earlier_floor
+-- IEB9: A2 irreducibility witness (compatibility needed)
+abbrev IEB9 := @InflationEntropyMinimality.not_redundant_A2_for_mono_classes
+-- IEB10: A3 irreducibility witness (strictness needs new class)
+abbrev IEB10 := @InflationEntropyMinimality.not_redundant_A3_for_strict_entropy
+-- IEB11: P1 irreducibility witness (kB positivity)
+abbrev IEB11 := @InflationEntropyMinimality.not_redundant_P1_for_positive_floor
+-- IEB12: P2 irreducibility witness (temperature positivity)
+abbrev IEB12 := @InflationEntropyMinimality.not_redundant_P2_for_positive_floor
+-- IEB13: A1 irreducibility witness in weak (no-embedding) family
+abbrev IEB13 := @InflationEntropyMinimality.not_redundant_A1_for_mono_classes_weak
+-- IEB16: F1 irreducibility witness (finite counting requirement)
+abbrev IEB16 := @InflationEntropyMinimality.not_redundant_F1_for_finite_counting_requirement
+-- IEB14: F2 irreducibility witness (nonempty needed for positivity branch)
+abbrev IEB14 := @InflationEntropyMinimality.not_redundant_F2_for_numOptClasses_pos
+-- IEB15: P3 irreducibility witness (energy floor premise needed)
+abbrev IEB15 := @InflationEntropyMinimality.not_redundant_P3_for_energy_from_entropy_bridge
+
+/-! ## Stochastic set-valued bridge handles (SSV)
+    StochasticSequential/SetValued.lean
+-/
+
+-- SSV1: agreeOn-equivalent anchors induce equal fiber expected utility partitions
+abbrev SSV1 := @StochasticSequential.fiberExpectedUtility_eq_of_agreeOn
+-- SSV2: agreeOn-equivalent anchors induce equal fiber optimal sets
+abbrev SSV2 := @StochasticSequential.fiberOpt_eq_of_agreeOn
+-- SSV3: set-valued stochastic sufficiency holds (ties allowed)
+abbrev SSV3 := @StochasticSequential.stochasticSetSufficient_universal
 
 end DecisionQuotient

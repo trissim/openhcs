@@ -1,68 +1,15 @@
-\section{Lean 4 Proof Listings}\label{app:lean}
+\section{Lean Handle Index}\label{app:lean}
 
-The complete Lean 4 formalization is available at:
-\begin{center}
-\url{https://doi.org/10.5281/zenodo.18140966}
-\end{center}
+The table below lists the auto-generated Lean handle identifiers cited inline in the paper.
 
-The formalization is not a transcription of the paper text. It exposes reusable definitions for reductions, decision problems, hardness transfers, and tractable subcases, so the main complexity claims can be checked mechanically.
+\IfFileExists{content/lean_handle_ids_auto.tex}{
+\input{content/lean_handle_ids_auto.tex}
+}{
+\textit{Auto handle-id table not found. Run the paper build script to generate \texttt{content/lean\_handle\_ids\_auto.tex}.}
+}
 
-\subsection{What the Artifact Covers}
+\subsection*{Mechanized Witness Schemas and Oracle-Class Arguments}
 
-The appendix supports the non-physical theorem stack of the paper:
-\begin{itemize}
-\item core decision-problem and sufficiency definitions
-\item polynomial-time reduction infrastructure
-\item coNP, PP, PSPACE, and $\Sigma_2^P$ hardness reductions
-\item shifted-family approximation-gap and counted-runtime threshold constructions
-\item ETH-conditioned dichotomy statements
-\item cross-regime bridge lemmas (static/stochastic/sequential)
-\item tractable subcases under explicit structural assumptions
-\end{itemize}
+The paper uses standard oracle-class language for several stochastic upper bounds, especially the $\textsf{coNP}^{\textsf{PP}}$-style complement packaging for decisiveness and the $\textsf{NP}^{\textsf{PP}}$ upper bounds for the anchor and minimum decisiveness queries. The corresponding oracle-class memberships are proved in the paper text, following standard complexity-theoretic proof conventions. The proof artifact complements those proofs by mechanizing the finite witness/checking schemata and reduction cores that the oracle arguments require.
 
-The point of the artifact is precision. Once the definitions are fixed, Lean verifies that the reductions preserve the intended predicates and that the later theorems invoke the correct formal statements.
-
-\subsection{Module Structure}
-
-The formalization consists of \LeanTotalFiles\ files organized as follows:
-
-\begin{itemize}
-\item \texttt{Basic.lean} and \texttt{Sufficiency.lean}: core definitions for decision problems, projections, optimizer maps, and sufficiency
-\item \texttt{AlgorithmComplexity.lean} and \texttt{PolynomialReduction.lean}: polynomial-time reduction infrastructure and composition
-\item \texttt{Reduction.lean} and \texttt{Hardness/}: the TAUTOLOGY, SET-COVER, ETH, approximation-gap, and $\Sigma_2^P$ reduction stack
-\item \texttt{StochasticSequential*.lean}: PP/PSPACE regime definitions, hardness, and hierarchy bridges
-\item \texttt{QueryComplexity.lean}, \texttt{Dichotomy.lean}, and \texttt{ComplexityMain.lean}: query lower bounds and summary complexity statements
-\item \texttt{Tractability/}: bounded actions, separable utility, tensor-rank, tree-structured, treewidth, and symmetry arguments
-\end{itemize}
-
-\subsection{Key Theorems}
-
-\begin{theorem}[Polynomial Composition, Lean]\label{thm:poly-compose}
-Polynomial-time reductions compose to polynomial-time reductions.
-\end{theorem}
-
-\begin{verbatim}
-theorem PolyReduction.comp_exists
-    (f : PolyReduction A B) (g : PolyReduction B C) :
-    exists h : PolyReduction A C,
-      forall a, h.reduce a = g.reduce (f.reduce a)
-\end{verbatim}
-
-\begin{theorem}[TAUTOLOGY Reduction Correctness, Lean]
-The canonical reduction used in Theorem~\ref{thm:sufficiency-conp} is mechanized and proves that the empty set is sufficient exactly when the source formula is a tautology.
-\end{theorem}
-
-\begin{verbatim}
-theorem reduction_correct
-    (φ : QBF) :
-    empty_sufficient (reduce φ) ↔ QBF.eval φ
-\end{verbatim}
-
-\subsection{Verification Status}
-
-\begin{itemize}
-\item Total lines: \LeanTotalLines
-\item Theorems/lemmas: \LeanTotalTheorems
-\item Files: \LeanTotalFiles
-\item Status: All proofs compile with \LeanTotalSorry\ \texttt{sorry}
-\end{itemize}
+Concretely, the mechanized layer certifies ingredients of the following form: a bad fiber witnesses failure of decisiveness; an existentially guessed coordinate set or anchor witness reduces the anchor/minimum queries to the corresponding decisiveness-style verifier; and the bounded explicit-state procedures agree with the abstract predicates they are intended to decide. The paper then translates these certified witness/checking packages into the stated oracle-class membership arguments by the usual guess-and-query reasoning in complexity theory. Thus the artifact provides independent verification of the finite combinatorial core, while the oracle-class interpretation is established in the manuscript.

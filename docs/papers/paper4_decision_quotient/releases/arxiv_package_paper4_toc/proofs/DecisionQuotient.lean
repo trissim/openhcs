@@ -30,6 +30,8 @@ import DecisionQuotient.Information
 import DecisionQuotient.IntegrityCompetence
 import DecisionQuotient.PhysicalBudgetCrossover
 import DecisionQuotient.ThermodynamicLift
+import DecisionQuotient.InflationEntropyBridge
+import DecisionQuotient.InflationEntropyMinimality
 import DecisionQuotient.FunctionalInformation
 import DecisionQuotient.Physics.AccessRegime
 import DecisionQuotient.Physics.PhysicalHardness
