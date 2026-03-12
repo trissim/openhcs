@@ -1,0 +1,21 @@
+import DependencyGraph
+import Ssot.HandleAliases
+
+#graph_bridge "Ssot.all_derived_from_source" => "Ssot.trichotomy_necessary_for_causality"
+#graph_bridge "Ssot.cost_ratio_eq_dof" => "Ssot.model_completeness"
+#graph_bridge "Ssot.determinate_truth_forces_ssot" => "Ssot.uniqueness"
+#graph_bridge "Ssot.dof_gt_one_incoherence_possible" => "Ssot.derivation_impossibility"
+#graph_bridge "Ssot.dof_gt_one_inconsistent" => "Ssot.derivation_impossibility"
+#graph_bridge "Ssot.dof_inconsistency_potential" => "Ssot.derivation_impossibility"
+#graph_bridge "Ssot.dof_one_implies_coherent" => "Ssot.uniqueness"
+#graph_bridge "Ssot.non_ssot_lower_bound" => "Ssot.derivation_impossibility"
+#graph_bridge "Ssot.non_ssot_permits_incoherence" => "Ssot.derivation_impossibility"
+#graph_bridge "Ssot.only_at_definition_works" => "Ssot.trichotomy_necessary_for_mechanism"
+#graph_bridge "Ssot.oracle_arbitrary" => "Ssot.adversary_construction"
+#graph_bridge "Ssot.ssot_upper_bound" => "Ssot.model_completeness"
+#graph_bridge "Ssot.structural_facts_fixed_at_definition" => "Ssot.only_at_definition_works"
+#graph_bridge "Ssot.trichotomy_necessary_for_causality" => "Ssot.timing_trichotomy_exhaustive"
+#graph_bridge "Ssot.no_mechanism_outside_trichotomy" => "Ssot.timing_trichotomy_exhaustive"
+#graph_bridge "Ssot.adversary_construction" => "Ssot.only_at_definition_works"
+#graph_bridge "Ssot.mechanism_structural_capability" => "Ssot.only_at_definition_works"
+#graph_bridge "Ssot.model_completeness" => "Ssot.mechanism_structural_capability"

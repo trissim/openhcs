@@ -4,8 +4,8 @@
   Tractability.lean - Polynomial-time solvable special cases
 
   Maps stochastic/sequential tractability to the 6 tractable subcases from
-  Paper 4's dimensional complexity layer. Polynomial-time algorithms are
-  standard; we only mechanize the structural mappings.
+  IntegrityEquilibrium.lean. Polynomial-time algorithms are standard; we only
+  mechanize the structural mappings.
 -/
 
 import DecisionQuotient.StochasticSequential.Basic
@@ -16,7 +16,7 @@ import Mathlib.Data.Finset.Card
 namespace DecisionQuotient.StochasticSequential
 
 open DecisionQuotient
-open DecisionQuotient.DimensionalComplexity
+open DecisionQuotient.Physics.DimensionalComplexity
 
 /-! ## Tractability Structures
 
@@ -74,24 +74,24 @@ we mechanize only the structural mapping. -/
 
 /-- Product distribution implies tractability via separable utility -/
 theorem product_distribution_tractable {S : Type*} [Fintype S] {n : ℕ}
-    (_struct : ProductDistribution S n) :
+    (struct : ProductDistribution S n) :
     subcaseComplexity productToSubcase = ComplexityClass.P := by
   rfl
 
 /-- Bounded support implies tractability via enumeration -/
 theorem bounded_support_tractable {S : Type*} [Fintype S]
-    (_struct : BoundedSupport S) :
+    (struct : BoundedSupport S) :
     subcaseComplexity boundedSupportToSubcase = ComplexityClass.P := by
   rfl
 
 /-- Bounded horizon implies tractability via bounded treewidth -/
-theorem bounded_horizon_tractable (_struct : BoundedHorizon) :
+theorem bounded_horizon_tractable (struct : BoundedHorizon) :
     subcaseComplexity boundedHorizonToSubcase = ComplexityClass.P := by
   rfl
 
 /-- Fully observable MDP implies tractability via tree structure -/
 theorem fully_observable_tractable {A S O : Type*}
-    (_struct : FullyObservable A S O) :
+    (struct : FullyObservable A S O) :
     subcaseComplexity fullyObservableToSubcase = ComplexityClass.P := by
   rfl
 

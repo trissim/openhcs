@@ -32,12 +32,6 @@ open BigOperators
 abbrev XAssign (nx : ℕ) := AssignX nx
 abbrev YAssign (ny : ℕ) := AssignY ny
 
-local instance instFintypeXAssign (nx : ℕ) : Fintype (XAssign nx) :=
-  Pi.instFintype
-
-local instance instFintypeYAssign (ny : ℕ) : Fintype (YAssign ny) :=
-  Pi.instFintype
-
 /-- Source problem for the stochastic existential layer: `∃x` such that a
 majority of `y` assignments satisfy the formula. -/
 structure ExistsMajorityFormula where

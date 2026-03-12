@@ -9,8 +9,6 @@
 \usepackage{listings}
 \usepackage{ragged2e}
 \usepackage{tabularx}
-\usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, shapes}
 
 % Make long lines less likely to overflow margins.
 \setlength{\emergencystretch}{3em}
@@ -47,7 +45,8 @@
 \newtheorem{observation}[theorem]{Observation}
 
 % Lean-handle helpers for terse, reviewer-facing proof navigation.
-\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
+\providecommand{\LH}[1]{\nolinkurl{#1}}
+\providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}
 
 % Use filled black square for QED symbol, inline (left-aligned) instead of right-aligned
 \renewcommand{\qedsymbol}{$\blacksquare$}

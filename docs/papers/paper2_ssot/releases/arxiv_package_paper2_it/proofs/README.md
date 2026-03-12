@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Coherence Theory (IT).
 
-- **Lines:** 11520
-- **Theorems:** 528
+- **Lines:** 6806
+- **Theorems:** 351
 - **`sorry` placeholders:** 0
 
 
@@ -39,7 +39,7 @@ lake build
 | `Derivation.lean` | Derivation |
 | `Dof.lean` | Dof |
 | `EditDynamics.lean` | EditDynamics |
-| `FactMatroid.lean` | FactMatroid |
+| `EntropyGeneral.lean` | EntropyGeneral |
 | `Foundations.lean` | Foundations |
 | `GraphBridges.lean` | GraphBridges |
 | `HandleAliases.lean` | HandleAliases |
@@ -49,7 +49,6 @@ lake build
 | `LangRust.lean` | LangRust |
 | `LangStatic.lean` | LangStatic |
 | `Languages.lean` | Languages |
-| `MultiFact.lean` | MultiFact |
 | `ObserverModel.lean` | ObserverModel |
 | `Probabilistic.lean` | Probabilistic |
 | `Requirements.lean` | Requirements |

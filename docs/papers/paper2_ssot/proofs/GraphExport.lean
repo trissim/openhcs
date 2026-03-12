@@ -11,6 +11,7 @@ import Ssot.DependencyBridge
 import Ssot.Derivation
 import Ssot.Dof
 import Ssot.EditDynamics
+import Ssot.EntropyGeneral
 import Ssot.FactMatroid
 import Ssot.Foundations
 import Ssot.GraphBridges

@@ -1,6 +1,6 @@
-\subsection{Integrity, Competence, and the Trilemma of Exact Certification}\label{sec:integrity-competence}
+\section{Integrity-Competence Impossibility}\label{sec:integrity-competence}
 
-Once exact certification is hard, the natural systems question is not only whether the predicate can be computed, but whether a solver can stay exact, non-abstaining, and polynomial-budgeted on the whole hard regime. The result below is a direct complexity-theoretic corollary: those three goals are incompatible. We refer to this incompatibility as the \emph{trilemma of exact certification}.
+This section gives an impossibility theorem for reliable exact certification under polynomial budgets in the hard regime.
 
 \begin{definition}[Certifying Solver]
 For exact sufficiency on a declared regime $\Gamma$, a certifying solver is a pair $(Q,V)$ where:
@@ -26,17 +26,13 @@ An \emph{exact reliability claim} on $\Gamma$ is the conjunction of universal no
 Integrity and competence are distinct: integrity constrains what can be asserted, while competence adds full coverage under resource bounds.
 \end{proposition}
 
-\leanmeta{\LH{DQ10}, \LH{IC33}.}
-
 \begin{proof}
 The always-abstain solver is integrity-preserving (it makes no uncertified assertion) but fails competence whenever the in-scope set is non-empty.
 \end{proof}
 
-\begin{theorem}[Integrity-Resource Bound (Conditional)]\label{thm:integrity-resource}
+\begin{theorem}[Integrity-Resource Bound (Conditional)]
 Fix a regime $\Gamma$ whose exact-sufficiency decision problem is coNP-complete under the declared encoding. Under $\Pclass\neq\coNP$, no solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
 \end{theorem}
-
-\leanmeta{\LH{IC34}, \LH{DQ31}.}
 
 \begin{proof}
 Assume such a solver $(Q,V)$ exists. We build a polynomial-time decider for exact sufficiency on $\Gamma$.
@@ -52,10 +48,6 @@ This yields a polynomial-time algorithm for a coNP-complete problem on $\Gamma$,
 Under the assumptions of the theorem, exact reliability claims are impossible on the full hard regime.
 \end{corollary}
 
-\leanmeta{\LH{DQ28}, \LH{DQ38}.}
-
-\begin{corollary}[Trilemma of Exact Certification]
-In the hard regime, no exact certifier can simultaneously be sound, complete on all in-scope instances, and polynomial-budgeted. Operationally, one of three concessions is unavoidable: abstain on some instances, weaken the guarantee, or risk overclaiming.
+\begin{corollary}[No Middle Ground Under Polynomial Budgets]
+In the hard regime, a solver cannot simultaneously maintain integrity, full exact coverage, and polynomial budgets. Operationally: abstain, weaken guarantees, or overclaim.
 \end{corollary}
-
-\leanmeta{\LH{IC30}, \LH{IC32}.}

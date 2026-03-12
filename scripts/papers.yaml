@@ -95,7 +95,7 @@ papers:
       - "paper1"
     assumption_ledger_sources:
       - "Ssot/ClaimClosure.lean"
-    claim_mapping_file: "content/claim_mapping_auto.tex"
+    claim_mapping_file: "content/11_lean_proofs.tex"
     forcing_prefixes: ["ENT", "COH", "BAS", "INS", "CAP", "AXM"]
 
   paper3:

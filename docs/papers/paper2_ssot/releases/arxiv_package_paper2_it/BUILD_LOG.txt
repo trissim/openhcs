@@ -1,15 +1,15 @@
 OpenHCS Paper Build Log
 ========================
 
-Paper: paper2_it - Exact Consistency Under Partial Views: Graph Colorability, Capacity, and Equality in Multi-Location Encodings
-Package Date: 2026-03-12T13:49:15.005291
+Paper: paper2_it - Exact Consistency in Multi-Location Encodings: Zero-Error Thresholds and Side Information Bounds
+Package Date: 2026-03-08T14:59:29.488832
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
 -----------------
-Lean Files: 31
-Lines of Code: 11520
-Theorems: 528
+Lean Files: 30
+Lines of Code: 6806
+Theorems: 351
 Sorry Placeholders: 0
 
 
@@ -29,7 +29,7 @@ Proof Files:
   - Derivation.lean
   - Dof.lean
   - EditDynamics.lean
-  - FactMatroid.lean
+  - EntropyGeneral.lean
   - Foundations.lean
   - GraphBridges.lean
   - HandleAliases.lean
@@ -39,7 +39,6 @@ Proof Files:
   - LangRust.lean
   - LangStatic.lean
   - Languages.lean
-  - MultiFact.lean
   - ObserverModel.lean
   - Probabilistic.lean
   - Requirements.lean
@@ -51,315 +50,7 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-⚠ [3180/3252] Replayed Ssot.MultiFact
-warning: Ssot/MultiFact.lean:54:27: This simp argument is unused:
-  card_state_eq
-
-Hint: Omit it from the simp argument list.
-  simp [Fintype.card_prod,̵ ̵c̵a̵r̵d̵_̵s̵t̵a̵t̵e̵_̵e̵q̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:124:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:195:24: This simp argument is unused:
-  hiT
-
-Hint: Omit it from the simp argument list.
-  simp [observe, hiS,̵ ̵h̵i̵T̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:199:26: This simp argument is unused:
-  hiT
-
-Hint: Omit it from the simp argument list.
-  simp [observe, hiS,̵ ̵h̵i̵T̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:213:20: This simp argument is unused:
-  hiS
-
-Hint: Omit it from the simp argument list.
-  simp [agreeSet, h̵i̵S̵,̵ ̵Option.some.inj hcoord]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:335:32: This simp argument is unused:
-  Function.update
-
-Hint: Omit it from the simp argument list.
-  simp [observe, hj₁, x, y, F̵u̵n̵c̵t̵i̵o̵n̵.̵u̵p̵d̵a̵t̵e̵,̵ ̵hji]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:340:45: This simp argument is unused:
-  Function.update
-
-Hint: Omit it from the simp argument list.
-  simp [fullTranscript, observe, hi₂', x, y,̵ ̵F̵u̵n̵c̵t̵i̵o̵n̵.̵u̵p̵d̵a̵t̵e̵] at hcoord
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:392:38: This simp argument is unused:
-  and_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [confusableOracle_eq_true_iff, a̵n̵d̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵and_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:392:53: This simp argument is unused:
-  and_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [confusableOracle_eq_true_iff, and_left_comm,̵ ̵a̵n̵d̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:889:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1005:34: This simp argument is unused:
-  real_inner_self_eq_norm_sq
-
-Hint: Omit it from the simp argument list.
-  simp [ThetaMatrixFeasible.gram, r̵e̵a̵l̵_̵i̵n̵n̵e̵r̵_̵s̵e̵l̵f̵_̵e̵q̵_̵n̵o̵r̵m̵_̵s̵q̵,̵ ̵T.unit_none]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1011:34: This simp argument is unused:
-  real_inner_self_eq_norm_sq
-
-Hint: Omit it from the simp argument list.
-  simp [ThetaMatrixFeasible.gram, r̵e̵a̵l̵_̵i̵n̵n̵e̵r̵_̵s̵e̵l̵f̵_̵e̵q̵_̵n̵o̵r̵m̵_̵s̵q̵,̵ ̵T.unit_some]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1289:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1338:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1299:57: This simp argument is unused:
-  inv_pow
-
-Hint: Omit it from the simp argument list.
-  simp only [EuclideanSpace.equiv, Real.norm_eq_abs, i̵n̵v̵_̵p̵o̵w̵,̵ ̵sq_abs, Finset.sum_const,
-  ̵  ̵ ̵ ̵ ̵ ̵ ̵ ̵Finset.card_univ]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1299:74: This simp argument is unused:
-  Finset.sum_const
-
-Hint: Omit it from the simp argument list.
-  simp only [EuclideanSpace.equiv, Real.norm_eq_abs, inv_pow, sq_abs, F̵i̵n̵s̵e̵t̵.̵s̵u̵m̵_̵c̵o̵n̵s̵t̵,̵Finset.card_univ]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1300:8: This simp argument is unused:
-  Finset.card_univ
-
-Hint: Omit it from the simp argument list.
-  simp only [EuclideanSpace.equiv, Real.norm_eq_abs, inv_pow, sq_abs, Finset.sum_const,̵
-  ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵ ̵F̵i̵n̵s̵e̵t̵.̵c̵a̵r̵d̵_̵u̵n̵i̵v̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1352:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1413:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1660:10: Try `simp at hi0` instead of `simpa using hi0`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:1846:27: This simp argument is unused:
-  thetaWitnessZeroPackage
-
-Hint: Omit it from the simp argument list.
-  simp [thetaWitnessPowPackage, thetaWitnessPowPackage_bound W n, thetaWitnessOnePackage,
-          ThetaWitnessPackage.reindex, ThetaWitnessPackage.prod, ThetaWitness.reindex,
-          ThetaWitness.prod, t̵h̵e̵t̵a̵W̵i̵t̵n̵e̵s̵s̵Z̵e̵r̵o̵P̵a̵c̵k̵a̵g̵e̵,̵ ̵pow_succ, mul_assoc, mul_left_comm, mul_comm]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1846:62: This simp argument is unused:
-  mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [thetaWitnessPowPackage, thetaWitnessPowPackage_bound W n, thetaWitnessOnePackage,
-          ThetaWitnessPackage.reindex, ThetaWitnessPackage.prod, ThetaWitness.reindex,
-          ThetaWitness.prod, thetaWitnessZeroPackage, pow_succ, mul_a̵s̵s̵o̵c̵,̵ ̵m̵u̵l_̵l̵eft_comm, mul_comm]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:1846:73: This simp argument is unused:
-  mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [thetaWitnessPowPackage, thetaWitnessPowPackage_bound W n, thetaWitnessOnePackage,
-          ThetaWitnessPackage.reindex, ThetaWitnessPackage.prod, ThetaWitness.reindex,
-          ThetaWitness.prod, thetaWitnessZeroPackage, pow_succ, mul_assoc, mul_l̵e̵f̵t̵_̵comm,̵ ̵m̵u̵l̵_̵c̵o̵m̵m̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:2350:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:2596:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:2883:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:2898:8: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:3459:26: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:3554:12: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:3775:6: Try `simp at hc` instead of `simpa using hc`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:4110:10: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:4262:0: automatically included section variable(s) unused in theorem `MultiFact.ThetaPSDFeasible.handleEntry_ne_zero`:
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:4287:8: automatically included section variable(s) unused in theorem `MultiFact.ThetaPSDFeasible.normalizedMatrix_none_none`:
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:4316:0: automatically included section variable(s) unused in theorem `MultiFact.ThetaPSDFeasible.normalizedMatrix_zero_of_nonadj`:
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:4354:0: automatically included section variable(s) unused in theorem `MultiFact.ThetaMatrixFeasible.handleCoeff_ne_zero`:
-  [Fintype V]
-  [DecidableEq V]
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype V] [DecidableEq V] [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:4378:56: This simp argument is unused:
-  Matrix.conjTranspose_apply
-
-Hint: Omit it from the simp argument list.
-  simp [A, EuclideanSpace.inner_eq_star_dotProduct, M̵a̵t̵r̵i̵x̵.̵c̵o̵n̵j̵T̵r̵a̵n̵s̵p̵o̵s̵e̵_̵a̵p̵p̵l̵y̵,̵ ̵Matrix.mul_apply, dotProduct, mul_comm]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4400:41: This simp argument is unused:
-  hne1
-
-Hint: Omit it from the simp argument list.
-  simp [T.ortho_of_nonadj hvw hnotAdj, hne1̵,̵ ̵h̵n̵e̵2]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4400:47: This simp argument is unused:
-  hne2
-
-Hint: Omit it from the simp argument list.
-  simp [T.ortho_of_nonadj hvw hnotAdj, hne1,̵ ̵h̵n̵e̵2̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4409:10: This simp argument is unused:
-  hne
-
-Hint: Omit it from the simp argument list.
-  simp [̵h̵n̵e̵]̵ ̵at hone ⊢
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4432:0: automatically included section variable(s) unused in theorem `MultiFact.ThetaLiftedDualFeasible.sqrtEmbed_gram`:
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:4498:40: This simp argument is unused:
-  Matrix.conjTranspose_apply
-
-Hint: Omit it from the simp argument list.
-  simp [Matrix.mul_apply, M̵a̵t̵r̵i̵x̵.̵c̵o̵n̵j̵T̵r̵a̵n̵s̵p̵o̵s̵e̵_̵a̵p̵p̵l̵y̵,̵ ̵dotProduct]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4501:61: This simp argument is unused:
-  mul_comm
-
-Hint: Omit it from the simp argument list.
-  simp [A, dotProduct, mul_assoc, mul_left_comm,̵ ̵m̵u̵l̵_̵c̵o̵m̵m̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4572:53: This simp argument is unused:
-  hsqrt_ne
-
-Hint: Omit it from the simp argument list.
-  simp [ThetaLiftedDualFeasible.diagScale, hone,̵ ̵h̵s̵q̵r̵t̵_̵n̵e̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:4748:0: automatically included section variable(s) unused in theorem `MultiFact.ThetaLiftedDualFeasible.some_none_eq_one`:
-  [Nonempty V]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Nonempty V] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/MultiFact.lean:5114:46: This simp argument is unused:
-  ThetaTraceFeasible.toThetaTraceGramFeasible
-
-Hint: Omit it from the simp argument list.
-  simp only [ThetaTraceGramFeasible.gram,̵ ̵T̵h̵e̵t̵a̵T̵r̵a̵c̵e̵F̵e̵a̵s̵i̵b̵l̵e̵.̵t̵o̵T̵h̵e̵t̵a̵T̵r̵a̵c̵e̵G̵r̵a̵m̵F̵e̵a̵s̵i̵b̵l̵e̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:5533:6: Try `simp at hc` instead of `simpa using hc`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6774:45: This simp argument is unused:
-  hK0
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_mul, mul_assoc, mul_comm, hK̵0̵,̵ ̵h̵M0]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:6774:50: This simp argument is unused:
-  hM0
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_mul, mul_assoc, mul_comm, hK0,̵ ̵h̵M̵0̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: Ssot/MultiFact.lean:6862:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6865:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6866:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6868:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6870:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6871:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6872:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6873:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/MultiFact.lean:6874:45: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3190/3252] Replayed lwd_converse
-warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3196/3252] Replayed AbstractClassSystem.Typing
+ℹ [587/838] Replayed AbstractClassSystem.Typing
 info: AbstractClassSystem/Typing.lean:110:0: []
 info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
 info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
@@ -367,53 +58,11 @@ info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapabil
  AbstractClassSystem.UnifiedCapability.enumeration,
  AbstractClassSystem.UnifiedCapability.conflictResolution,
  AbstractClassSystem.UnifiedCapability.interfaceCheck]
-⚠ [3211/3252] Replayed Ssot.FactMatroid
-warning: Ssot/FactMatroid.lean:29:8: automatically included section variable(s) unused in theorem `Ssot.FactMatroid.AffineFamily.origin_mem_stateSet`:
-  [Field K]
-  [Fintype ι]
-  [DecidableEq ι]
-  [Fintype ι]
-  [DecidableEq ι]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Field K] [Fintype ι] [DecidableEq ι] [Fintype ι] [DecidableEq ι] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/FactMatroid.lean:32:0: automatically included section variable(s) unused in theorem `Ssot.FactMatroid.AffineFamily.sub_mem_directions_of_mem_stateSet`:
-  [Field K]
-  [Fintype ι]
-  [DecidableEq ι]
-  [Fintype ι]
-  [DecidableEq ι]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Field K] [Fintype ι] [DecidableEq ι] [Fintype ι] [DecidableEq ι] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: Ssot/FactMatroid.lean:161:2: try 'simp' instead of 'simpa'
+⚠ [3083/3151] Replayed lwd_converse
+warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/FactMatroid.lean:227:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: Ssot/FactMatroid.lean:234:27: 'intro I hI' tactic does nothing
-
-Note: This linter can be disabled with `set_option linter.unusedTactic false`
-warning: Ssot/FactMatroid.lean:234:39: 'simp' tactic does nothing
-
-Note: This linter can be disabled with `set_option linter.unusedTactic false`
-warning: Ssot/FactMatroid.lean:234:27: this tactic is never executed
-
-Note: This linter can be disabled with `set_option linter.unreachableTactic false`
-warning: Ssot/FactMatroid.lean:234:39: this tactic is never executed
-
-Note: This linter can be disabled with `set_option linter.unreachableTactic false`
-warning: Ssot/FactMatroid.lean:368:52: This simp argument is unused:
-  T
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵T̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-ℹ [3285/3288] Replayed Ssot.LangEvaluation
+ℹ [3166/3169] Replayed Ssot.LangEvaluation
 info: Ssot/LangEvaluation.lean:83:0: init_subclass_in_class_definition : ∀ (rt : PyRuntime) (name : PyId) (bases : List PyId)
   (attrs methods : List (String × String)) (parent : PyId),
   parent ∈ bases →
@@ -429,7 +78,7 @@ info: Ssot/LangEvaluation.lean:103:0: runtime_item_eq_iff : ∀ (ri1 ri2 : Runti
 info: Ssot/LangEvaluation.lean:136:0: java_lacks_definition_hooks : ∀ (def_ : StaticTypeDef) (e : ExecutionEvent),
   e ∈ java_class_definition_events def_ → is_definition_time_user_code e = false
 info: Ssot/LangEvaluation.lean:137:0: ts_types_erased : ∀ (type_name : String), TSCompileEvent.type_erased type_name ∈ typescript_compile_events type_name
-Build completed successfully (3288 jobs).
+Build completed successfully (3169 jobs).
 
 
 ================================================================================

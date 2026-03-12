@@ -4,7 +4,7 @@
   CrossRegime.lean - Transfer conditions between regimes
 
   When does sufficiency in one regime transfer to another?
-  Uses the Paper 4 dimensional-complexity hierarchy.
+  Uses complexity hierarchy from IntegrityEquilibrium.
 -/
 
 import DecisionQuotient.StochasticSequential.Basic
@@ -15,7 +15,7 @@ import Mathlib.Data.Set.Basic
 namespace DecisionQuotient.StochasticSequential
 
 open Classical
-open DecisionQuotient.DimensionalComplexity
+open DecisionQuotient.Physics.DimensionalComplexity
 
 /-! ## Cross-Regime Transfer via Complexity Classes
 
@@ -61,16 +61,16 @@ Sufficiency transfers between regimes under structural conditions:
 
 /-- Product distribution enables static-to-stochastic transfer -/
 theorem product_enables_transfer {S : Type*} [Fintype S] {n : ℕ}
-    (_struct : ProductDistribution S n) :
+    (struct : ProductDistribution S n) :
     productToSubcase = TractableSubcase.separableUtility := rfl
 
 /-- Bounded horizon enables stochastic-to-sequential transfer -/
-theorem bounded_horizon_enables_transfer (_struct : BoundedHorizon) :
+theorem bounded_horizon_enables_transfer (struct : BoundedHorizon) :
     boundedHorizonToSubcase = TractableSubcase.boundedTreewidth := rfl
 
 /-- Fully observable enables tree structure -/
 theorem fully_observable_enables_transfer {A S O : Type*}
-    (_struct : FullyObservable A S O) :
+    (struct : FullyObservable A S O) :
     fullyObservableToSubcase = TractableSubcase.treeStructure := rfl
 
 end DecisionQuotient.StochasticSequential

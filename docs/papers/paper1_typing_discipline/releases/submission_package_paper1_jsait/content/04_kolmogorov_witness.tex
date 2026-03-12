@@ -1,26 +1,26 @@
 \subsection{Fixed-Length Zero-Error Recovery}
 
-We now state the zero-error coding problem in generic representation-map form. Let $C$ be a finite class variable and let $U=\pi(C)$ be the representation observed by the decoder. If the representation is non-injective on classes, then the decoder cannot determine $C$ from $U$ alone; the unresolved ambiguity is exactly the ambiguity inside the fibers of $\pi$.
+We now formalize the exact side-information problem in channel-theoretic terms. Let $C: \mathcal{V} \to \{1, \ldots, k\}$ denote the class assignment function, and let $\pi: \mathcal{V} \to \{0,1\}^n$ denote the representation or attribute profile observed by the decoder.
 
 \begin{definition}[Observation channel]
-Let $C$ be a random class label, let $U=\pi(C)$ be its representation, and let the decoder observe $U$ together with any charged auxiliary description supplied by the encoder.
+Let $V$ be a random entity drawn from distribution $P_V$ over $\mathcal{V}$, let $C(V)$ be its class label, and let $U=\pi(V)$ be its representation. The decoder sees the representation value $U$ and may additionally receive auxiliary side information from the encoder.
 \end{definition}
 
 \begin{theorem}[Zero auxiliary description iff injective representation]\label{thm:identification-capacity}
-Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal{U}$ be a representation map. Zero-error recovery of $C$ from $U=\pi(C)$ with no auxiliary description is achievable if and only if $\pi$ is injective on classes.
+Let $\mathcal{C} = \{1, \ldots, k\}$ be the class space. Zero-error identification with no auxiliary side information is achievable if and only if every class has a distinct representation profile. When $\pi$ is not class-injective, no zero-error identification scheme exists without additional side information.
 \end{theorem}
 \leanmeta{\LH{ACS8}}
 
 \begin{proof}
-\emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(c)$ determines $c$ uniquely. The decoder simply inverts the class-to-representation map.
+\emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(v)$ determines $C(v)$ uniquely. The decoder simply inverts the class-to-profile mapping.
 
-\emph{Converse}: Suppose two distinct classes $c_1 \neq c_2$ share the same representation value: $\pi(c_1)=\pi(c_2)$. Then any decoder $g(U)$ outputs the same class label on both inputs, so it cannot be correct for both. Hence zero-error recovery without auxiliary description is impossible.
+\emph{Converse}: Suppose two distinct classes $c_1 \neq c_2$ share a profile: there exist $v_1 \in c_1, v_2 \in c_2$ with $\pi(v_1) = \pi(v_2)$. Then any decoder $g(\pi(v))$ outputs the same class label on both $v_1$ and $v_2$, so it cannot be correct for both. Hence zero-error identification without auxiliary side information is impossible.
 \end{proof}
 
 In the finite explicit setting, the same condition can be read directly from the representation channel: one-symbol zero-error feasibility is equivalent to injectivity (\LH{GPH27}). Interpreting $\pi$ as a learned embedding, this is the exact threshold for zero-error class recovery from the representation alone.
 
 \begin{remark}[Information-theoretic corollary]
-Under any distribution with positive mass on both colliding classes, $I(C;U) < H(C)$. This is an average-case consequence of the deterministic barrier above.
+Under any distribution with positive mass on both colliding classes, $I(C; \pi(V)) < H(C)$. This is an average-case consequence of the deterministic barrier above.
 \end{remark}
 \leanmeta{\LH{ACS8}}
 
@@ -34,17 +34,17 @@ In the identification paradigm of \cite{ahlswede1989identification}, the decoder
 We now show that augmenting the representation with an auxiliary codeword restores exact recovery.
 
 \begin{definition}[Auxiliary description]
-An \emph{auxiliary description} is a value $M(c)$ associated with each class $c \in \mathcal C$ and transmitted in addition to the representation value $\pi(c)$. In the fixed-length setting, the auxiliary description alphabet has size $2^L$.
+An \emph{auxiliary description} is a value $M(v)$ associated with each $v \in \mathcal{V}$ and transmitted in addition to the representation value $\pi(v)$. In the fixed-length setting, the auxiliary description alphabet has size $2^L$.
 \end{definition}
 \leanmeta{\LH{ACS7}}
 
 \begin{theorem}[Fixed-length sufficiency]\label{thm:tag-restored-sufficiency}
-If $|\mathcal C|=k$, then an auxiliary description of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
+An auxiliary description of length $L \geq \lceil \log_2 k \rceil$ bits suffices for zero-error identification, regardless of whether $\pi$ is class-injective.
 \end{theorem}
 \leanmeta{\LH{ACS7}}
 
 \begin{proof}
-A class-injective auxiliary description assigns a unique identifier to each class. Reading that description together with the representation determines the class exactly.
+A class-injective auxiliary description assigns a unique identifier to each class. Reading that description together with the representation determines $C(v)$ exactly.
 \end{proof}
 
 \subsection{Ambiguity Converse}
@@ -54,9 +54,9 @@ The next theorem is the paper's main zero-error compression statement. It conver
 In graph terms, the present fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. The point of the section is therefore not a new general graph-entropy theorem, but the identification of the exact primitive governing this deterministic side-information regime and the theoremic consequences that follow from it.
 
 \begin{definition}[Collision multiplicity]\label{def:collision-multiplicity}
-Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal U$ be a representation map. Define
+Let $\mathcal{C}=\{1,\ldots,k\}$ and let $\pi_{\mathcal{C}}:\mathcal{C}\to\{0,1\}^n$ be the class-level profile map. Define
 \[
-A_\pi := \max_{u \in \operatorname{Im}(\pi)} \left|\{c \in \mathcal{C} : \pi(c)=u\}\right|.
+A_\pi := \max_{u \in \operatorname{Im}(\pi_{\mathcal{C}})} \left|\{c \in \mathcal{C} : \pi_{\mathcal{C}}(c)=u\}\right|.
 \]
 Thus $A_\pi$ is the size of the largest class-collision block under the representation.
 \end{definition}

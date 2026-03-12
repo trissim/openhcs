@@ -1,25 +1,6 @@
 \section{Formal Setup}\label{sec:formal-setup}
 
-This section fixes the abstract vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results. The same setup will support the paper's three core regime classifications, the encoding-sensitive boundary, and the later consequence sections.
-
-\begingroup
-\centering
-\small
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}p{0.20\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.24\linewidth}@{}}
-\toprule
-\textbf{Object} & \textbf{Quantifier shape} & \textbf{Certifies} & \textbf{Role} \\
-\midrule
-SUFFICIENCY-CHECK & universal over state pairs & exact coordinate sufficiency & baseline certification predicate \\
-MINIMUM-SUFFICIENT-SET & apparent $\exists I\,\forall$ pair check & smallest sufficient support & collapses to relevance containment in the static regime \\
-ANCHOR-SUFFICIENCY & $\exists$ anchor, then universal fiber check & exact preservation on one chosen fiber & retains the outer existential layer \\
-Optimizer quotient & universal factorization property & coarsest decision-preserving abstraction & canonical structural object \\
-\bottomrule
-\end{tabularx}
-\par\smallskip
-\textbf{Setup map.} The four central objects differ mainly in quantifier shape: minimum sufficiency collapses in the static regime, while anchor sufficiency keeps its existential fiber choice.
-\endgroup
+This section fixes the abstract, non-physical vocabulary used throughout the paper. We work with finite decision problems whose state spaces factor into coordinates, and we isolate the minimal terminology needed to state the later complexity results.
 
 \subsection{Decision Problems with Coordinate Structure}
 
@@ -62,8 +43,6 @@ Equivalently, the optimal action depends only on coordinates in $I$.
 The empty set $\emptyset$ is sufficient if and only if $\Opt(s)$ is constant over the entire state space.
 \end{proposition}
 
-\leanmeta{\LH{DP6}.}
-
 \begin{proof}
 If $\emptyset$ is sufficient, then every two states agree on their empty projection, so sufficiency forces $\Opt(s)=\Opt(s')$ for all $s,s' \in S$. The converse is immediate.
 \end{proof}
@@ -71,8 +50,6 @@ If $\emptyset$ is sufficient, then every two states agree on their empty project
 \begin{proposition}[Insufficiency Equals Counterexample Witness]\label{prop:insufficiency-counterexample}
 Coordinate set $I$ is not sufficient if and only if there exist states $s,s' \in S$ such that $s_I=s'_I$ but $\Opt(s)\neq\Opt(s')$.
 \end{proposition}
-
-\leanmeta{\LH{DP7}.}
 
 \begin{proof}
 This is the direct negation of Definition~\ref{def:sufficient}.
@@ -101,8 +78,6 @@ i \in I \iff i \text{ is relevant}.
 \]
 Hence every minimal sufficient set is exactly the relevant-coordinate set.
 \end{proposition}
-
-\leanmeta{\LHrng{DP}{1}{2}.}
 
 \begin{proof}
 If $i \in I$ were not relevant, then changing coordinate $i$ while keeping all others fixed would never alter the optimal-action set, so removing $i$ would preserve sufficiency, contradicting minimality. Conversely, every sufficient set must contain each relevant coordinate, because omitting a relevant coordinate leaves a witness pair with identical $I$-projection but different optimal-action sets.
@@ -143,40 +118,9 @@ Its equivalence classes are exactly the maximal subsets of states on which the o
 The decision quotient $Q_{\mathcal{D}}$ is canonically in bijection with $\operatorname{range}(\Opt)$. Equivalently, in \textbf{Set}, it is the coimage/image factorization of the optimizer map.
 \end{proposition}
 
-\leanmeta{\LHrng{DQ}{6}{7}.}
-
 \begin{proof}
 Two states are identified by $\sim_{\Opt}$ exactly when they have the same optimizer value. Hence quotient classes are in one-to-one correspondence with attained values of $\Opt$.
 \end{proof}
-
-\begin{theorem}[Universal Property of the Optimizer Quotient]\label{thm:quotient-universal}
-Let $Q_{\mathcal{D}}=S/{\sim_{\Opt}}$ be the decision quotient with quotient map $\pi:S\to Q_{\mathcal{D}}$. For any surjective abstraction $\phi:S\to T$ such that
-\[
-\phi(s)=\phi(s') \implies \Opt(s)=\Opt(s'),
-\]
-there exists a unique map $\psi:T\to Q_{\mathcal{D}}$ such that
-\[
-\pi = \psi \circ \phi.
-\]
-\end{theorem}
-
-\leanmeta{\LH{QT1}, \LH{QT7}.}
-
-\begin{proof}
-Because $\phi$ preserves optimizer values on its fibers, any two states identified by $\phi$ are decision-equivalent. So each fiber of $\phi$ is contained in a single $\sim_{\Opt}$-class.
-
-For each $t \in T$, choose any $s \in S$ with $\phi(s)=t$ and define $\psi(t):=\pi(s)$. This is well defined because any two such choices lie in the same $\sim_{\Opt}$-class. By construction, $(\psi\circ\phi)(s)=\pi(s)$ for every $s\in S$, so $\pi=\psi\circ\phi$. Uniqueness follows from surjectivity of $\phi$: if $\psi'$ also satisfies $\pi=\psi'\circ\phi$, then every $t\in T$ has the form $t=\phi(s)$ and therefore
-\[
-\psi(t)=\psi(\phi(s))=\pi(s)=\psi'(\phi(s))=\psi'(t).
-\]
-Hence $\psi=\psi'$.
-\end{proof}
-
-\begin{remark}[Canonical Status]\label{rem:quotient-canonical}
-The optimizer quotient is therefore the coarsest abstraction of the state space that preserves optimal-action distinctions. Any surjective abstraction that is strictly coarser must erase some decision-relevant distinction.
-\end{remark}
-
-\leanmeta{\LH{QT7}, \LH{AB2}.}
 
 \begin{proposition}[Sufficiency Characterization]\label{prop:sufficiency-char}
 Coordinate set $I$ is sufficient if and only if the optimizer map factors through the projection $\pi_I : S \to S_I$. Equivalently, there exists a function $\overline{\Opt}_I : S_I \to \mathcal{P}(A)$ such that
@@ -184,8 +128,6 @@ Coordinate set $I$ is sufficient if and only if the optimizer map factors throug
 \Opt = \overline{\Opt}_I \circ \pi_I.
 \]
 \end{proposition}
-
-\leanmeta{\LH{DQ42}.}
 
 \begin{proof}
 If $I$ is sufficient, define $\overline{\Opt}_I(x)$ to be $\Opt(s)$ for any state $s$ with $s_I = x$; this is well defined exactly because sufficiency makes $\Opt$ constant on each projection fiber. Conversely, any such factorization forces states with equal $I$-projection to have equal optimal-action sets.
@@ -220,8 +162,4 @@ The solver is given oracle access to $\Opt(s)$ or to the utility values needed t
 
 \begin{remark}[Decision Questions vs Decision Problems]\label{rem:question-vs-problem}
 The predicate ``is coordinate set $I$ sufficient for $\mathcal{D}$?'' is an encoding-independent mathematical question. A \emph{decision problem} arises only after fixing how $\mathcal{D}$ and $I$ are represented. Complexity classes are properties of these encoded problems, not of the abstract predicate in isolation.
-\end{remark}
-
-\begin{remark}[Later Stochastic Comparison]
-In the stochastic row, the preservation predicate compares the optimizer seen under coarse conditioning on $I$ with the fully conditioned optimizer. Under full support, the later bridge package reconnects this stochastic notion to the same quotient picture as the static regime.
 \end{remark}

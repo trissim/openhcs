@@ -44,32 +44,12 @@ instance instDecidableEqPartialObservation (F A : Nat) : DecidableEq (PartialObs
   dsimp [PartialObservation]
   infer_instance
 
-theorem card_state_eq (F A : Nat) :
-    Fintype.card (State F A) = A ^ F := by
-  dsimp [State]
-  rw [Fintype.card_fun, Fintype.card_fin, Fintype.card_fin]
-
-theorem card_state_prod_eq (F A : Nat) :
-    Fintype.card (State F A × State F A) = (A ^ F) * (A ^ F) := by
-  simp [Fintype.card_prod, card_state_eq]
-
 /-- A location reveals exactly the coordinates in its finite view. -/
 def observe {F A : Nat} (view : Finset (Fin F)) (x : State F A) : PartialObservation F A :=
   fun i => if i ∈ view then some (x i) else none
 
-/-- The coordinates on which two latent states agree. -/
-def agreeSet {F A : Nat} (x y : State F A) : Finset (Fin F) :=
-  (Finset.univ : Finset (Fin F)).filter (fun i => x i = y i)
-
 /-- A family of observation locations, each with its own revealed coordinate set. -/
 abbrev ViewFamily (F L : Nat) := Fin L → Finset (Fin F)
-
-/-- A stochastic observation support model: at each location and latent state, the observer may emit
-any observation in a finite support set. For zero-error purposes only support overlap matters. -/
-abbrev SupportView (α β : Type) := α → Finset β
-
-/-- A family of stochastic observation supports, one per allowed location. -/
-abbrev SupportViewFamily (α β : Type) (L : Nat) := Fin L → SupportView α β
 
 /-- The full deterministic observation transcript across all allowed locations. -/
 abbrev FullTranscript (F A L : Nat) := Fin L → PartialObservation F A
@@ -85,50 +65,6 @@ all allowed locations.
 -/
 def Confusable {F A L : Nat} (views : ViewFamily F L) (x y : State F A) : Prop :=
   x ≠ y ∧ ∃ ℓ : Fin L, observe (views ℓ) x = observe (views ℓ) y
-
-/-- In the support-overlap extension, two states are confusable when some allowed location admits an
-observation lying in both support sets. This is the natural zero-error notion for stochastic views. -/
-def SupportConfusable {α β : Type} {L : Nat}
-    [DecidableEq α] [DecidableEq β]
-    (views : SupportViewFamily α β L) (x y : α) : Prop :=
-  x ≠ y ∧ ∃ ℓ : Fin L, ∃ o : β, o ∈ views ℓ x ∧ o ∈ views ℓ y
-
-/-- Deterministic views embed into the support-overlap model as singleton supports. -/
-def deterministicSupportFamily {F A L : Nat} (views : ViewFamily F L) :
-    SupportViewFamily (State F A) (PartialObservation F A) L :=
-  fun ℓ x => {observe (views ℓ) x}
-
-theorem supportConfusable_iff_exists_shared_support
-    {α β : Type} {L : Nat}
-    [DecidableEq α] [DecidableEq β]
-    (views : SupportViewFamily α β L) {x y : α} :
-    SupportConfusable views x y ↔
-      x ≠ y ∧ ∃ ℓ : Fin L, ∃ o : β, o ∈ views ℓ x ∧ o ∈ views ℓ y := by
-  rfl
-
-theorem deterministicSupportConfusable_iff_confusable
-    {F A L : Nat} (views : ViewFamily F L) {x y : State F A} :
-    SupportConfusable (deterministicSupportFamily (A := A) views) x y ↔
-      Confusable (A := A) views x y := by
-  constructor
-  · rintro ⟨hxy, ℓ, o, hox, hoy⟩
-    have hox' : o = observe (views ℓ) x := by
-      simpa [deterministicSupportFamily] using hox
-    have hoy' : o = observe (views ℓ) y := by
-      simpa [deterministicSupportFamily] using hoy
-    refine ⟨hxy, ℓ, ?_⟩
-    exact hox'.symm.trans hoy'
-  · rintro ⟨hxy, ℓ, hobs⟩
-    refine ⟨hxy, ℓ, observe (views ℓ) x, ?_, ?_⟩
-    · simp [deterministicSupportFamily]
-    · simpa [deterministicSupportFamily, hobs]
-
-instance instDecidableSupportConfusable {α β : Type} {L : Nat}
-    [DecidableEq α] [DecidableEq β]
-    (views : SupportViewFamily α β L) (x y : α) :
-    Decidable (SupportConfusable views x y) := by
-  unfold SupportConfusable
-  infer_instance
 
 /-- A structural coherence condition: agreement at one allowed location forces agreement
 of the full observation transcript. Under this condition, the confusability relation collapses
@@ -197,88 +133,6 @@ theorem observe_eq_of_subset
   · by_cases hiT : i ∈ T
     · simp [observe, hiS]
     · simp [observe, hiS, hiT]
-
-theorem mem_agreeSet_iff
-    {F A : Nat} {x y : State F A} {i : Fin F} :
-    i ∈ agreeSet x y ↔ x i = y i := by
-  simp [agreeSet]
-
-theorem observe_eq_iff_subset_agreeSet
-    {F A : Nat} {S : Finset (Fin F)} {x y : State F A} :
-    observe S x = observe S y ↔ S ⊆ agreeSet x y := by
-  constructor
-  · intro h i hiS
-    have hcoord : some (x i) = some (y i) := by
-      simpa [observe, hiS] using congrArg (fun obs => obs i) h
-    simp [agreeSet, hiS, Option.some.inj hcoord]
-  · intro h
-    funext i
-    by_cases hiS : i ∈ S
-    · have hagree : x i = y i := by
-        exact (mem_agreeSet_iff.mp (h hiS))
-      simp [observe, hiS, hagree]
-    · simp [observe, hiS]
-
-theorem confusable_iff_exists_view_subset_agreeSet
-    {F A L : Nat} (views : ViewFamily F L) {x y : State F A} :
-    Confusable views x y ↔ x ≠ y ∧ ∃ ℓ : Fin L, views ℓ ⊆ agreeSet x y := by
-  constructor
-  · rintro ⟨hxy, ℓ, hobs⟩
-    exact ⟨hxy, ℓ, (observe_eq_iff_subset_agreeSet.mp hobs)⟩
-  · rintro ⟨hxy, ℓ, hsub⟩
-    exact ⟨hxy, ℓ, observe_eq_iff_subset_agreeSet.mpr hsub⟩
-
-/-- Coordinatewise alphabet permutation of latent states. -/
-def statePerm {F A : Nat} (σ : Fin F → Equiv.Perm (Fin A)) : State F A ≃ State F A where
-  toFun := fun x i => σ i (x i)
-  invFun := fun x i => (σ i).symm (x i)
-  left_inv := by
-    intro x
-    funext i
-    exact (σ i).left_inv (x i)
-  right_inv := by
-    intro x
-    funext i
-    exact (σ i).right_inv (x i)
-
-theorem agreeSet_statePerm_eq
-    {F A : Nat} (σ : Fin F → Equiv.Perm (Fin A)) (x y : State F A) :
-    agreeSet (statePerm σ x) (statePerm σ y) = agreeSet x y := by
-  ext i
-  simp [agreeSet, statePerm]
-
-theorem observe_eq_statePerm_iff
-    {F A : Nat} {S : Finset (Fin F)}
-    (σ : Fin F → Equiv.Perm (Fin A)) {x y : State F A} :
-    observe S (statePerm σ x) = observe S (statePerm σ y) ↔ observe S x = observe S y := by
-  rw [observe_eq_iff_subset_agreeSet, observe_eq_iff_subset_agreeSet, agreeSet_statePerm_eq]
-
-theorem confusable_statePerm_iff
-    {F A L : Nat} (views : ViewFamily F L)
-    (σ : Fin F → Equiv.Perm (Fin A)) {x y : State F A} :
-    Confusable views (statePerm σ x) (statePerm σ y) ↔ Confusable views x y := by
-  rw [confusable_iff_exists_view_subset_agreeSet, confusable_iff_exists_view_subset_agreeSet,
-    agreeSet_statePerm_eq]
-  constructor
-  · rintro ⟨hneq, hview⟩
-    refine ⟨?_, hview⟩
-    intro hxy
-    apply hneq
-    simpa [statePerm] using congrArg (statePerm σ) hxy
-  · rintro ⟨hneq, hview⟩
-    refine ⟨?_, hview⟩
-    intro hxy
-    apply hneq
-    exact (statePerm σ).injective hxy
-
-theorem confusable_congr_agreeSet
-    {F A L : Nat} (views : ViewFamily F L)
-    {x y x' y' : State F A}
-    (hxy : x ≠ y) (hx'y' : x' ≠ y')
-    (hset : agreeSet x y = agreeSet x' y') :
-    Confusable views x y ↔ Confusable views x' y' := by
-  rw [confusable_iff_exists_view_subset_agreeSet, confusable_iff_exists_view_subset_agreeSet, hset]
-  simp [hxy, hx'y']
 
 theorem fiberCoherent_confusableTransitive
     {F A L : Nat} (views : ViewFamily F L)
@@ -369,37 +223,6 @@ instance instDecidableConfusable {F A L : Nat}
     (views : ViewFamily F L) (x y : State F A) : Decidable (Confusable views x y) := by
   unfold Confusable
   infer_instance
-
-def confusableOracle {F A L : Nat}
-    (views : ViewFamily F L) (x y : State F A) : Bool :=
-  decide (Confusable (A := A) views x y)
-
-theorem confusableOracle_eq_true_iff
-    {F A L : Nat} (views : ViewFamily F L) {x y : State F A} :
-    confusableOracle (A := A) views x y = true ↔ Confusable (A := A) views x y := by
-  unfold confusableOracle
-  simp
-
-def confusableOrderedPairs {F A L : Nat}
-    (views : ViewFamily F L) : Finset (State F A × State F A) :=
-  (Finset.univ : Finset (State F A × State F A)).filter
-    (fun p => confusableOracle (A := A) views p.1 p.2)
-
-theorem mem_confusableOrderedPairs_iff
-    {F A L : Nat} (views : ViewFamily F L) {p : State F A × State F A} :
-    p ∈ confusableOrderedPairs (A := A) views ↔ Confusable (A := A) views p.1 p.2 := by
-  unfold confusableOrderedPairs
-  simp [confusableOracle_eq_true_iff, and_left_comm, and_assoc]
-
-theorem card_confusableOrderedPairs_le_naive_bound
-    {F A L : Nat} (views : ViewFamily F L) :
-    (confusableOrderedPairs (A := A) views).card ≤ (A ^ F) * (A ^ F) := by
-  calc
-    (confusableOrderedPairs (A := A) views).card ≤ Fintype.card (State F A × State F A) := by
-      unfold confusableOrderedPairs
-      simpa using Finset.card_filter_le (s := (Finset.univ : Finset (State F A × State F A)))
-        (p := fun p => confusableOracle (A := A) views p.1 p.2)
-    _ = (A ^ F) * (A ^ F) := card_state_prod_eq F A
 
 /-- A finite auxiliary tag is a proper coloring when it separates every confusable pair. -/
 def ProperColoring {F A L T : Nat} (views : ViewFamily F L) (tag : State F A → Fin T) : Prop :=
@@ -523,27 +346,6 @@ theorem confusable_symm
   rintro ⟨hxy, ℓ, hobs⟩
   exact ⟨hxy.symm, ℓ, hobs.symm⟩
 
-theorem supportConfusable_symm
-    {α β : Type} {L : Nat}
-    [DecidableEq α] [DecidableEq β]
-    (views : SupportViewFamily α β L)
-    {x y : α} :
-    SupportConfusable views x y → SupportConfusable views y x := by
-  rintro ⟨hxy, ℓ, o, hox, hoy⟩
-  exact ⟨hxy.symm, ℓ, o, hoy, hox⟩
-
-/-- The simple confusability graph induced by a support-overlap stochastic view family. -/
-def supportConfusabilityGraph {α β : Type} {L : Nat}
-    [DecidableEq α] [DecidableEq β]
-    (views : SupportViewFamily α β L) : SimpleGraph α where
-  Adj := SupportConfusable views
-  symm := by
-    intro x y h
-    exact supportConfusable_symm views h
-  loopless := by
-    intro x h
-    exact h.1 rfl
-
 /-- The simple confusability graph induced by the observation family. -/
 def confusabilityGraph {F A L : Nat} (views : ViewFamily F L) : SimpleGraph (State F A) where
   Adj := Confusable views
@@ -553,41 +355,6 @@ def confusabilityGraph {F A L : Nat} (views : ViewFamily F L) : SimpleGraph (Sta
   loopless := by
     intro x h
     exact h.1 rfl
-
-def confusabilityGraph_statePermIso
-    {F A L : Nat} (views : ViewFamily F L)
-    (σ : Fin F → Equiv.Perm (Fin A)) :
-    confusabilityGraph (A := A) views ≃g confusabilityGraph (A := A) views :=
-  ⟨statePerm σ, by
-    intro x y
-    exact confusable_statePerm_iff (A := A) views σ⟩
-
-def stateSwap {F A : Nat} (x y : State F A) : State F A ≃ State F A :=
-  statePerm (fun i => Equiv.swap (x i) (y i))
-
-theorem stateSwap_apply_left
-    {F A : Nat} (x y : State F A) : stateSwap x y x = y := by
-  funext i
-  simp [stateSwap, statePerm]
-
-theorem stateSwap_apply_right
-    {F A : Nat} (x y : State F A) : stateSwap x y y = x := by
-  funext i
-  simp [stateSwap, statePerm]
-
-theorem exists_confusabilityGraph_iso_send
-    {F A L : Nat} (views : ViewFamily F L) (x y : State F A) :
-    ∃ e : confusabilityGraph (A := A) views ≃g confusabilityGraph (A := A) views, e x = y := by
-  refine ⟨confusabilityGraph_statePermIso (A := A) views (fun i => Equiv.swap (x i) (y i)), ?_⟩
-  exact stateSwap_apply_left x y
-
-theorem deterministicSupportConfusabilityGraph_eq_confusabilityGraph
-    {F A L : Nat} (views : ViewFamily F L) :
-    supportConfusabilityGraph (α := State F A) (β := PartialObservation F A)
-        (deterministicSupportFamily (A := A) views) =
-      confusabilityGraph (A := A) views := by
-  ext x y
-  exact deterministicSupportConfusable_iff_confusable views
 
 
 def graphColoringOfProperColoring

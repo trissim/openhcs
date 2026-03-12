@@ -1,17 +1,13 @@
-\section{Operational Realizability Criterion}\label{sec:requirements}
+\section{Realizability Theorem}\label{sec:requirements}
 %==============================================================================
 
-The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section asks a downstream operational question about the opposite boundary case: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
+This section asks when a concrete host system can realize the unit-rate corner isolated earlier and identifies the two structural properties needed for that purpose.
 
 A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Two capabilities are required:
 \begin{enumerate}
 \item \textbf{Causal update propagation}: updates to the authoritative source must automatically propagate to derived locations.
 \item \textbf{Provenance observability}: the system must expose enough structural information to verify which locations are authoritative and which are derived.
 \end{enumerate}
-
-\begin{definition}[Verifiable Structural Integrity]\label{def:verifiable-integrity}
-An encoding system has \emph{verifiable structural integrity} for structural facts if it both realizes structural integrity in reachable states and exposes enough host-native information to certify that this integrity-preserving dependence structure holds.
-\end{definition}
 
 \subsection{Confusability and Side Information}\label{sec:confusability}
 
@@ -26,7 +22,7 @@ If the confusability graph for $F$ contains a clique of size $k$, then any zero-
 Within a $k$-clique, every pair of alternatives is confusable under the base observation. A zero-error tag assignment must therefore separate all $k$ states. Distinct states cannot share a tag, so at least $k$ tags are required.
 \end{proof}
 
-If a host system does not expose enough structural information to separate the remaining alternatives, exact verification of the rate-$1$ regime is impossible. In security-adjacent terms, the host cannot certify that an apparently coherent state is genuinely authoritative rather than an undetected stale coincidence.
+If a host system does not expose enough structural information to separate the remaining alternatives, exact verification of the rate-$1$ regime is impossible.
 
 \subsection{The Structural Timing Constraint}\label{sec:timing}
 
@@ -98,13 +94,13 @@ For (1), consider a system that automatically refreshes all derived views after 
 
 \subsection{The Realizability Theorem}\label{sec:realizability-theorem}
 
-\begin{corollary}[Operational Realizability Criterion]\label{thm:ssot-iff}
-An encoding system can achieve verifiable independent rate $1$, equivalently verifiable structural integrity, for structural facts if and only if it provides both causal update propagation and provenance observability.
-\end{corollary}
+\begin{theorem}[Necessary and Sufficient Realizability Conditions]\label{thm:ssot-iff}
+An encoding system can achieve verifiable independent rate $1$ for structural facts if and only if it provides both causal update propagation and provenance observability.
+\end{theorem}
 \leanmeta{\LH{SOT1}}
 
 \begin{proof}
-Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$, which is exactly verifiable structural integrity in the sense of Definition~\ref{def:verifiable-integrity}.
+Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$.
 \end{proof}
 
 The next section records representative readings of the theorem on familiar host systems.

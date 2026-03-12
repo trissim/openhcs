@@ -1,100 +1,386 @@
-\section{Model and Basic Quantities}\label{sec:foundations}
+\section{Encoding Systems and Coherence}\label{sec:foundations}
 %==============================================================================
 
-This section introduces only the minimum structure needed to state the deterministic converse foundation and its boundary threshold corollary: latent states, deterministic observations, auxiliary tags, ambiguity classes, and independent rate.
+We formalize exact consistency for multi-location encodings with modification constraints. Facts take values in finite alphabets, system states expose multiple representations of those facts, edits move the system among reachable states, and the observer must determine whether the represented fact is uniquely recoverable.
 
 \subsection{Model assumptions and notation}\label{sec:assumptions}
 
-We use the following standing assumptions.
+We state the modeling assumptions used throughout the paper.
+
 \begin{enumerate}
-\item \textbf{Finite latent state:} each fact takes values in a finite alphabet.
-\item \textbf{Deterministic observations:} a system state exposes a deterministic observation transcript.
-\item \textbf{Independent rate:} the independent rate counts the number of independently writable source locations for the same latent fact.
-\item \textbf{Finite side information:} any auxiliary tag is drawn from a finite alphabet.
+\item \textbf{Fact value model (A1):} Each fact $F$ takes values in a finite set $\mathcal{V}_F$; $H(F)=\log_2|\mathcal{V}_F|$ denotes its entropy under a chosen prior. When we write ``zero probability of incoherence'' we mean $\Pr(\text{incoherent})=0$ under the model for edits and randomness specified below.
+\item \textbf{Update model (A2):} Modifications occur as discrete events. An edit $\delta_F$ changes the source value for $F$; derived locations update deterministically when causal propagation is present. We do not require a blocklength parameter; asymptotic statements are in the number of encoding locations $n$.
+\item \textbf{Adversary / randomness (A3):} When randomness is needed we assume a benign stochastic edit model for illustration. For impossibility and converse statements we make no cooperative assumptions: adversarial edit sequences that produce incoherence are allowed whenever the independent rate exceeds $1$.
+\item \textbf{Side-information channel (A4):} Derived locations and runtime queries collectively form side information $S$ available to any verifier. In the finite zero-error layer, the relevant quantity is the number of distinguishable tags that $S$ can expose.
 \end{enumerate}
 
-These are the only ingredients needed for the deterministic zero-error theory developed below.
+References to these assumptions use labels (A1)--(A4). Full formal versions of the operational model are given in the mechanized supplement (Supplement~A).
 
-\subsection{Latent states, ambiguity, and independent rate}\label{sec:epistemic}
+\subsection{The Encoding Model}\label{sec:epistemic}
 
-An \emph{encoding system} for a fact $F$ is a finite collection of locations $\{L_1,\dots,L_n\}$ whose current values jointly determine the observation transcript available to a resolver. For a system state $x$, the \emph{ambiguity class} is the set of latent values still compatible with that transcript; when the ambiguity class has size greater than one, the transcript alone does not identify a unique authoritative value. In this single-fact setting, latent-state ambiguity and value ambiguity coincide because the latent state is just the fact value. In the later multi-fact extension, ambiguity is instead over full latent tuples compatible with the partial observations. A \emph{fact} is an atomic semantic attribute of the represented object that can vary independently of other attributes, and a fact is \emph{structural} if the locations encoding it are fixed when the underlying object, declaration, or artifact is created.
+We begin with the abstract encoding model: locations, values, reachable states, and ambiguity.
 
-The admissible edit set $E(C)$ is part of the primitive specification of an encoding system $C$. It records which edit events or edit sequences are considered reachable by the model. The paper does not derive $E(C)$ from a particular concurrency policy, protocol, or consensus mechanism; those are downstream instantiations. Independence and independent rate are therefore always defined \emph{relative to the chosen admissible edit model}.
-
-\begin{definition}[Independent Location]\label{def:independent}
-Let $E(C)$ denote the admissible edit set of encoding system $C$. Two locations encoding the same fact are \emph{independent relative to $E(C)$} if some admissible edit sequence in $E(C)$ can change one without forcing the other to match it, equivalently if some admissible edit sequence reaches a state in which the two locations disagree.
+\begin{definition}[Encoding System]\label{def:encoding-system}
+An \emph{encoding system} for a fact $F$ is a collection of locations $\{L_1, \ldots, L_n\}$, each capable of holding a value for $F$.
 \end{definition}
 
-\begin{definition}[Derived Location]\label{def:derived}
-A location is \emph{derived} from a source location if updating the source determines the derived value without an additional manual edit.
+\begin{definition}[Coherence]\label{def:coherence}
+An encoding system is \emph{coherent} iff all locations hold the same value:
+\[
+\forall i, j: \text{value}(L_i) = \text{value}(L_j)
+\]
 \end{definition}
 
-\begin{definition}[Degrees of Freedom]\label{def:dof}
-The \emph{degrees of freedom} (DOF), or \emph{independent rate}, of an encoding system for fact $F$ is the number of pairwise independent source locations encoding $F$ under the specified admissible edit set $E(C)$. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
+\begin{definition}[Incoherence]\label{def:incoherence}
+An encoding system is \emph{incoherent} iff some locations disagree:
+\[
+\exists i, j: \text{value}(L_i) \neq \text{value}(L_j)
+\]
 \end{definition}
 
-\begin{definition}[Structural Integrity]\label{def:structural-integrity}
-An encoding system has \emph{structural integrity} for fact $F$ if every reachable state is coherent, so no reachable system state presents mutually incompatible encodings of $F$.
+\begin{definition}[Ambiguity Class]\label{def:ambiguity-class}
+For a system state $x$, the \emph{ambiguity class} of $x$ is the set
+\[
+\mathcal A(x) = \{v : \exists L \text{ with } \text{value}(L)=v\}.
+\]
+When $|\mathcal A(x)|>1$, the state presents multiple internally supported candidate values for the same fact.
 \end{definition}
 
-\begin{definition}[Integrity Violation]\label{def:integrity-violation}
-A reachable \emph{integrity violation} is a reachable incoherent state for fact $F$.
+\textbf{The zero-error resolution problem.} Given a state $x$, a resolver must output the correct value of $F$ with zero error. When $|\mathcal A(x)|>1$, the internal state alone may fail to identify a unique answer.
+
+\begin{theorem}[Oracle Arbitrariness]\label{thm:oracle-arbitrary}
+For any incoherent encoding system state $x$ and any oracle $O$ that resolves $x$ to a value $v \in \mathcal A(x)$, there exists a value $v' \in \mathcal A(x)$ such that $v' \neq v$.
+\end{theorem}
+
+\begin{proof}
+By incoherence, $|\mathcal A(x)|>1$, so there exist $v_1,v_2\in\mathcal A(x)$ with $v_1\neq v_2$. Either $O$ picks $v_1$ (then $v_2$ disagrees) or it does not pick $v_1$ (then $v_1$ disagrees).
+\end{proof}
+
+\begin{definition}[Degrees of Freedom]\label{def:dof-epistemic}
+The \emph{degrees of freedom} (DOF), or \emph{independent rate}, of an encoding system is the number of locations that can be modified independently.
 \end{definition}
 
-\begin{proposition}[Unit Independent Rate Guarantees Coherence]\label{thm:dof-one-coherence}
-If the independent rate is $1$, then all reachable states are coherent.
-\end{proposition}
+\begin{theorem}[Unit Independent Rate Guarantees Coherence]\label{thm:dof-one-coherence}
+If the independent rate is $1$, then the encoding system is coherent in all reachable states.
+\end{theorem}
 \leanmeta{\LH{COH1}}
 
 \begin{proof}
-At independent rate $1$, exactly one location is independent and all remaining locations are derived from it. Derived locations cannot diverge from their source, so disagreement is unreachable.
+At independent rate $1$, exactly one location is independent. All other locations are derived (automatically updated when the source changes). Derived locations cannot diverge from their source. Therefore, all locations hold the value determined by the single independent source. Disagreement is impossible.
 \end{proof}
 
-\begin{proposition}[Independent Rate Above One Permits Incoherence]\label{thm:dof-gt-one-incoherence}
+\begin{theorem}[Independent Rate Above One Permits Incoherence]\label{thm:dof-gt-one-incoherence}
 If the independent rate exceeds $1$, then incoherent states are reachable.
-\end{proposition}
+\end{theorem}
 \leanmeta{\LH{COH2}}
 
 \begin{proof}
-With at least two independent locations, admissible edits can assign different values to those locations, producing a reachable disagreement state.
+With DOF $> 1$, at least two locations are independent. Independent locations can be modified separately. A sequence of edits can set $L_1 = v_1$ and $L_2 = v_2$ where $v_1 \neq v_2$. This is an incoherent state.
 \end{proof}
 
-\subsection{Zero-Incoherence Threshold}\label{sec:capacity}
+\begin{corollary}[Exact Consistency Forces Unit Rate]\label{cor:coherence-forces-ssot}
+If coherence must be guaranteed, then the independent rate $1$ is necessary and sufficient.
+\end{corollary}
 
-\begin{definition}[Zero-Incoherence Threshold]\label{def:coherence-capacity}
-The \emph{zero-incoherence threshold} is the largest independent rate for which incoherent states are unreachable.
+This is the basic exact-consistency criterion in the model.
+
+The following subsections refine the model and introduce the quantities used in the later converse statements.
+
+% Section divider
+
+\subsection{Host Systems}\label{sec:edit-space}
+
+The abstract model applies to any host system that exposes a finite family of addressable locations, an admissible edit set, and a correctness condition that can be violated by inconsistent updates.
+
+\begin{definition}[Host System]
+A \emph{host system} $C$ is a finite collection of addressable locations together with a set $E(C)$ of admissible edits. Each edit $\delta\in E(C)$ transforms the current state of $C$ into another reachable state.
 \end{definition}
 
-\begin{corollary}[Threshold Corollary]\label{thm:coherence-capacity}
-For deterministic multi-location encodings, the zero-incoherence threshold equals $1$.
-\end{corollary}
-\leanmeta{\LH{RAT1}, \LHrng{CAP}{2}{3}}
+\begin{definition}[Location]
+A \emph{location} $L\in C$ is an addressable component of the host system whose value may participate in the representation of a fact.
+\end{definition}
+
+\begin{definition}[Modification Space]
+For host system $C$, the \emph{modification space} $E(C)$ is the set of admissible edits on $C$.
+\end{definition}
+
+The modification space can be large, but only edits that change one designated fact are considered here.
+
+\subsection{Facts: Atomic Units of Specification}\label{sec:facts}
+
+\begin{definition}[Fact]\label{def:fact}
+A \emph{fact} $F$ is an atomic semantic attribute of the represented object that can change independently of other attributes.
+\end{definition}
+
+The granularity of facts is determined by correctness, not by storage layout. If two pieces of information must change together, they form one fact; if they can change independently, they are distinct facts.
+
+\begin{definition}[Structural Fact]\label{def:structural-fact}
+A fact $F$ is \emph{structural} with respect to encoding system $C$ iff the locations encoding $F$ are fixed at definition time:
+\[
+\begin{aligned}
+\text{structural}(F, C) \Longleftrightarrow {} &
+\{L : \text{encodes}(L, F)\} \\
+& \subseteq \text{DefinitionSyntax}(C)
+\end{aligned}
+\]
+where $\text{DefinitionSyntax}(C)$ denotes the part of the host-system description that fixes the encoding locations when the relevant object is created.
+\end{definition}
+
+Structural facts are fixed when the relevant object is created or declared. Once fixed, the structure cannot be repaired retroactively without a new structural edit. Non-structural facts may require reactive or feedback-based mechanisms not studied here.
+
+\subsection{Encoding: The Correctness Relationship}\label{sec:encoding}
+
+\begin{definition}[Encodes]\label{def:encodes}
+Location $L$ \emph{encodes} fact $F$, written $\text{encodes}(L, F)$, iff correctness requires updating $L$ when $F$ changes.
+
+Formally:
+\[
+\begin{aligned}
+\text{encodes}(L, F) \Longleftrightarrow {} &
+\forall \delta_F:\; \neg\text{updated}(L, \delta_F) \\
+& \rightarrow \text{incorrect}(\delta_F(C))
+\end{aligned}
+\]
+
+where $\delta_F$ is an edit targeting fact $F$.
+\end{definition}
+
+\subsection{Modification Complexity}\label{sec:mod-complexity}
+
+\begin{definition}[Modification Complexity]\label{def:mod-complexity}
+\[
+M(C, \delta_F) = |\{L \in C : \text{encodes}(L, F)\}|
+\]
+The number of locations that must be updated when fact $F$ changes.
+\end{definition}
+
+Modification complexity is the central operational metric of the paper. It measures the cost of changing a fact in terms of locations that must be updated for correctness.
+
+\begin{theorem}[Correctness Forcing]\label{thm:correctness-forcing}
+$M(C, \delta_F)$ is the \textbf{minimum} number of edits required for correctness. Fewer edits imply an incorrect system state.
+\end{theorem}
 
 \begin{proof}
-\emph{Achievability.} Suppose $\mathrm{DOF}(C,F)=1$, and let $L_s$ be the unique independent location. By Definition~\ref{def:dof}, every other encoding location is non-independent and is therefore treated in this model as a derived view of $L_s$. By Definition~\ref{def:derived}, updating $L_s$ determines the value of each such derived location without an additional manual edit. Hence all encoding locations agree in every reachable state, so zero incoherence is achieved.
+Suppose $M(C, \delta_F) = k$, meaning $k$ locations encode $F$. By Definition~\ref{def:encodes}, each encoding location must be updated when $F$ changes. If only $j < k$ locations are updated, then $k - j$ locations still reflect the old value of $F$. These locations create inconsistencies:
 
-\emph{Converse.} Suppose $\mathrm{DOF}(C,F)=k>1$. By Definition~\ref{def:independent}, there exist at least two independent locations $L_1,L_2$ and an admissible edit sequence that can make them disagree. Equivalently, choose values $v_1\neq v_2$ and apply edits setting $L_1\leftarrow v_1$ and then $L_2\leftarrow v_2$. By independence, the second edit does not force $L_1$ to change. The resulting reachable state satisfies $\mathrm{value}(L_1)\neq \mathrm{value}(L_2)$ and is therefore incoherent.
+\begin{enumerate}
+\tightlist
+\item The specification says $F$ has value $v'$ (new)
+\item Locations $L_1, \ldots, L_j$ reflect $v'$
+\item Locations $L_{j+1}, \ldots, L_k$ reflect $v$ (old)
+\end{enumerate}
 
-Thus zero-error recovery is possible exactly at independent rate $1$, so the zero-incoherence threshold equals $1$.
+By Definition~\ref{def:encodes}, the resulting state is incorrect. Therefore, all $k$ locations must be updated, and $k$ is the minimum.
 \end{proof}
 
-\begin{corollary}[Exact Structural-Integrity Threshold]\label{cor:integrity-threshold}
-A deterministic multi-location encoding has structural integrity if and only if its independent rate equals $1$.
-\end{corollary}
+\subsection{Independence and Degrees of Freedom}\label{sec:dof}
+
+Not all encoding locations are created equal. Some are \emph{derived} from others.
+
+\begin{definition}[Independent Locations]\label{def:independent}
+Locations $L_1, L_2$ are \emph{independent} for fact $F$ iff they can diverge. Updating $L_1$ does not automatically update $L_2$, and vice versa.
+
+Formally: $L_1$ and $L_2$ are independent iff there exists a sequence of edits that makes $L_1$ and $L_2$ encode different values for $F$.
+\end{definition}
+
+\begin{definition}[Derived Location]\label{def:derived}
+Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ iff updating $L_{\text{source}}$ automatically updates $L_{\text{derived}}$. Derived locations are not independent of their sources.
+\end{definition}
+
+\begin{definition}[Degrees of Freedom]\label{def:dof}
+\[
+\text{DOF}(C, F) = |\{L \in C : \text{encodes}(L, F) \land \text{independent}(L)\}|
+\]
+The number of \emph{independent} locations encoding fact $F$, i.e., the independent rate for that fact.
+\end{definition}
+
+The independent rate is the key metric. Modification complexity $M$ counts all encoding locations. DOF counts only the independent ones. If all but one encoding location is derived, the independent rate remains $1$ even though $M$ can be large.
+
+\begin{theorem}[DOF = Incoherence Potential]\label{thm:dof-inconsistency}
+$\text{DOF}(C, F) = k$ implies that up to $k$ distinct values for $F$ can coexist simultaneously. In particular, $k>1$ makes ambiguity reachable.
+\end{theorem}
 
 \begin{proof}
-If the independent rate is $1$, Proposition~\ref{thm:dof-one-coherence} shows that all reachable states are coherent, hence Definition~\ref{def:structural-integrity} holds. If the independent rate exceeds $1$, Proposition~\ref{thm:dof-gt-one-incoherence} gives a reachable incoherent state, so structural integrity fails.
+Each independent location can hold a different value. By Definition~\ref{def:independent}, no constraint forces agreement between independent locations. Therefore, $k$ independent locations can simultaneously realize up to $k$ distinct values.
 \end{proof}
 
-This threshold is an early architectural consequence of the deterministic model. It identifies the unique trivial no-failure corner and, equivalently, the exact structural-integrity regime. Above that boundary, integrity violations are reachable by construction. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
-
-\begin{corollary}[Side-Information Lower Bound]\label{thm:side-info}
-If a surviving ambiguity class has size $k$, then exact zero-error resolution requires at least $\log_2 k$ bits of side information.
+\begin{corollary}[DOF $>$ 1 Implies Incoherence Risk]\label{cor:dof-risk}
+$\text{DOF}(C, F) > 1$ implies incoherent states are reachable.
 \end{corollary}
+
+\subsection{Information-Theoretic Quantities}\label{sec:it-quantities}
+
+Before establishing the main threshold result, we define the information-theoretic quantities used to express ambiguity, redundancy, and side-information requirements.
+
+\begin{definition}[Independent Rate]\label{def:encoding-rate}
+The \emph{independent rate} of system $C$ for fact $F$ is $R(C, F) = \text{DOF}(C, F)$, the number of independent encoding locations.
+\end{definition}
+
+\begin{definition}[Value Entropy]\label{def:value-entropy}
+For a fact $F$ with value space $\mathcal{V}_F$, the \emph{value entropy} is:
+\[
+H(F) = \log_2 |\mathcal{V}_F|
+\]
+This is the information content of specifying $F$'s value.
+\end{definition}
+
+\begin{definition}[Encoding Redundancy]\label{def:redundancy}
+The \emph{encoding redundancy} of system $C$ for fact $F$ is:
+\[
+\rho(C, F) = \text{DOF}(C, F) - 1
+\]
+Redundancy measures excess independent encodings beyond the minimum needed to represent $F$.
+\end{definition}
+
+\begin{theorem}[Redundancy-Incoherence Equivalence]\label{thm:redundancy-incoherence}
+Encoding redundancy $\rho > 0$ is necessary and sufficient for incoherence reachability:
+\[
+\rho(C, F) > 0 \Longleftrightarrow \text{incoherent states reachable}
+\]
+\end{theorem}
+
+\begin{proof}
+$(\Rightarrow)$ If $\rho > 0$, then DOF $> 1$. By Theorem~\ref{thm:dof-gt-one-incoherence}, incoherent states are reachable.
+
+$(\Leftarrow)$ If incoherent states are reachable, then by contrapositive of Theorem~\ref{thm:dof-one-coherence}, DOF $\neq 1$. Since the fact is encoded, DOF $\geq 1$, so DOF $> 1$, hence $\rho > 0$.
+\end{proof}
+
+\begin{definition}[Incoherence Entropy]\label{def:incoherence-entropy}
+For a state whose ambiguity class has size $k$, the \emph{incoherence entropy} is:
+\[
+H_{\text{inc}} = \log_2 k
+\]
+This quantifies the uncertainty about which value is authoritative.
+\end{definition}
+
+%==============================================================================
+\subsection{Zero-Incoherence Capacity Theorem}\label{sec:capacity}
+
+We now establish the central exact-consistency threshold. The argument is combinatorial, and its role is to expose the single-source regime on which the later converse and rate-complexity results are built.
+
+\textbf{Background: Zero-Error Capacity.} Shannon~\cite{shannon1956zero} introduced zero-error capacity: the maximum rate at which information can be transmitted with \emph{zero} probability of error. Körner~\cite{korner1973graphs} and Lovász~\cite{lovasz1979shannon} linked such questions to confusability structure. Our zero-incoherence capacity is the corresponding exact-consistency threshold for modifiable encodings.
+
+\begin{definition}[Zero-Incoherence Capacity]\label{def:coherence-capacity}
+The \emph{zero-incoherence capacity} of an encoding system is:
+\[
+\begin{aligned}
+C_0 = \sup\{R : {} & \text{independent rate } R \\
+& \Rightarrow \text{incoherence probability} = 0\}
+\end{aligned}
+\]
+where ``incoherence probability = 0'' means no incoherent state is reachable under any modification sequence.
+\end{definition}
+
+\begin{theorem}[Zero-Incoherence Threshold]\label{thm:coherence-capacity}
+The zero-incoherence capacity of any encoding system under independent modification is exactly 1:
+\[
+C_0 = 1
+\]
+\end{theorem}
+\leanmeta{\LH{CAP1}, \LH{CAP2}, \LH{CAP3}}
+
+We state the result in achievability/converse form because later sections attach the nontrivial converse and complexity consequences to the same threshold.
+
+\begin{theorem}[Achievability]\label{thm:capacity-achievability}
+Independent rate $1$ achieves zero incoherence. Therefore $C_0 \geq 1$.
+\end{theorem}
+
+\begin{proof}
+Let DOF$(C, F) = 1$. By Definition~\ref{def:dof}, exactly one location $L_s$ is independent; all other locations $\{L_i\}$ are derived from $L_s$.
+
+By Definition~\ref{def:derived}, derived locations satisfy: $\text{update}(L_s) \Rightarrow \text{automatically\_updated}(L_i)$. Therefore, for any reachable state:
+\[
+\forall i: \text{value}(L_i) = f_i(\text{value}(L_s))
+\]
+where $f_i$ is the derivation function. All values are determined by $L_s$. Disagreement requires two locations with different determining sources, but only $L_s$ exists. Therefore, no incoherent state is reachable.
+\end{proof}
+
+\begin{theorem}[Converse]\label{thm:capacity-converse}
+Any independent rate greater than $1$ fails to achieve zero incoherence. Therefore $C_0 < R$ for all $R > 1$.
+\end{theorem}
+
+\begin{proof}
+Let DOF$(C, F) = k > 1$. By Definition~\ref{def:independent}, there exist locations $L_1, L_2$ that can be modified independently.
+
+\textbf{Construction of incoherent state:} Consider the modification sequence:
+\begin{enumerate}
+\tightlist
+\item $\delta_1$: Set $L_1 = v_1$ for some $v_1 \in \mathcal{V}_F$
+\item $\delta_2$: Set $L_2 = v_2$ for some $v_2 \neq v_1$
+\end{enumerate}
+
+Both modifications are valid (each location accepts values from $\mathcal{V}_F$). By independence, $\delta_2$ does not affect $L_1$. The resulting state has:
+\[
+\text{value}(L_1) = v_1 \neq v_2 = \text{value}(L_2)
+\]
+
+By Definition~\ref{def:incoherence}, this state is incoherent. Since it is reachable, zero incoherence is not achieved.
+
+The converse is intentionally combinatorial: once two independently writable locations exist, one can construct a reachable disagreement state. Later sections refine the same obstruction using finite zero-error side-information counting arguments.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:coherence-capacity}]
+By Theorem~\ref{thm:capacity-achievability}, $C_0 \geq 1$.
+
+By Theorem~\ref{thm:capacity-converse}, $C_0 < R$ for all $R > 1$.
+
+Therefore $C_0 = 1$ exactly. The bound is tight: achieved at DOF $= 1$, not achieved at any DOF $> 1$.
+\end{proof}
+
+\textbf{Relation to Shannon capacity.} The analogy is structural rather than literal: Shannon studies zero-error communication over confusable channel outputs, whereas here the object is exact consistency under admissible edits. The role of ``rate'' is played by the number of independently writable locations.
+
+\begin{corollary}[Capacity-Achieving Rate is Unique]\label{cor:capacity-unique}
+Independent rate $1$ is the unique capacity-achieving encoding rate. No alternative achieves zero incoherence at higher rate.
+\end{corollary}
+
+\begin{corollary}[Redundancy Above Capacity]\label{cor:redundancy-above}
+Any encoding with $\rho > 0$ (redundancy) operates above capacity and cannot guarantee coherence.
+\end{corollary}
+
+\subsection{Side Information for Resolution}\label{sec:side-information}
+
+When an encoding system is incoherent, exact resolution requires external side information.
+
+\begin{theorem}[Side Information Requirement]\label{thm:side-info}
+Given a state whose ambiguity class has size $k$, resolving to the correct value requires at least $\log_2 k$ bits of side information.
+\end{theorem}
 \leanmeta{\LH{CIA1}}
 
 \begin{proof}
-Exact resolution of $k$ surviving alternatives requires at least $k$ distinguishable tags, hence at least $\log_2 k$ bits.
+The ambiguity class presents $k$ internally supported alternatives. By Theorem~\ref{thm:oracle-arbitrary}, no internal rule distinguishes them.
+
+Let $S \in \{1, \ldots, k\}$ denote the index of the correct source. The decoder must determine $S$ to resolve correctly. Since $S$ is uniformly distributed over $k$ alternatives (by symmetry of the incoherent state):
+\[
+H(S) = \log_2 k
+\]
+
+Any resolution procedure is a function $R: \text{State} \to \mathcal{V}_F$. Without side information $Y$:
+\[
+H(S | R(\text{State})) = H(S) = \log_2 k
+\]
+because $R$ can be computed from the state, which contains no information about which source is correct.
+
+With side information $Y$ that identifies the correct source:
+\[
+H(S | Y) = 0 \Rightarrow I(S; Y) = H(S) = \log_2 k
+\]
+
+Therefore, side information must expose at least $\log_2 k$ bits' worth of distinguishable tags.
 \end{proof}
 
-The remainder of the paper sharpens this counting statement into a unified finite converse family, asks how that one-shot obstruction acquires non-clique topology under partial views, and then develops the corresponding asymptotic capacity and upper-bound theory.
+\begin{corollary}[Unit Rate Requires Zero Side Information]\label{cor:dof1-zero-side}
+At independent rate $1$, resolution requires 0 bits of side information.
+\end{corollary}
+
+\begin{proof}
+With $k = 1$, there is one independent location. $H(S) = \log_2 1 = 0$. No uncertainty exists about the authoritative source.
+\end{proof}
+
+\begin{corollary}[Side Information Scales with Redundancy]\label{cor:side-info-redundancy}
+The required side information equals $\log_2(1 + \rho)$ where $\rho$ is encoding redundancy:
+\[
+\text{Side information required} = \log_2(\text{DOF}) = \log_2(1 + \rho)
+\]
+\end{corollary}
+
+%==============================================================================

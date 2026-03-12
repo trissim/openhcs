@@ -1,17 +1,27 @@
-\section{Operational Implications of the Unit-Rate Boundary}\label{sec:evaluation}
+\section{Application: Computational Realizations}\label{sec:evaluation}
 %==============================================================================
 
-The preceding sections characterized the graph-capacity tradeoffs for independent rate $k > 1$. We now return to the boundary case $k = 1$ (Corollary~\ref{thm:ssot-iff}), which identified the necessary and sufficient conditions for verifiable structural integrity: causal propagation and provenance observability.
+This section records representative computational instantiations of Theorem~\ref{thm:ssot-iff}.
 
-While these conditions appear abstract, they correspond to distinct architectural classes in real-world systems.
+\begin{corollary}[Computational-Realization Criterion]\label{cor:lang-realizability}
+A computational platform realizes verifiable independent rate $1$ for structural facts if and only if it combines automatic propagation of derived representations with queryable provenance for those representations.
+\end{corollary}
+\leanmeta{\LH{LNG1}}
 
-\paragraph{Blind Update (Pattern A).}
-Systems where independent locations can diverge lack causal propagation. Dependency managers such as npm, Cargo, Poetry, and pnpm are canonical examples: manifest edits do not automatically update the lock artifact. Corollary~\ref{thm:ssot-iff} predicts these systems cannot guarantee structural integrity, which aligns with the observed consistency maintenance costs in practice.
+The corollary is a direct restatement of Theorem~\ref{thm:ssot-iff}. What changes across applications is the implementation of the two required capabilities.
 
-\paragraph{Amnesiac Derivation (Pattern B).}
-Systems that compute derived values but discard the derivation graph lack provenance observability. Under the runtime-only interpretation used here, Rust and TypeScript/JavaScript fall into this pattern because compile-time or decorator-style generation does not survive as host-native provenance in the runtime artifact. Corollary~\ref{thm:ssot-iff} predicts these systems cannot certify integrity, even if it holds accidentally.
+\begin{center}
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.22\linewidth}YY@{}}
+\toprule
+\textbf{Domain} & \textbf{Authoritative source and derived views} & \textbf{How the theorem specializes} \\
+\midrule
+Language-level artifacts & one declarative definition plus maintained registries, interface views, or metadata projections & definition-time or build-time hooks supply propagation; reflection or metadata APIs supply provenance \\
+Databases & one base relation or schema declaration plus maintained views, indexes, or summaries & transactional maintenance supplies propagation; system catalogs expose provenance \\
+Configuration and deployment systems & one source declaration plus dependency outputs or rendered manifests & dependency-driven recomputation supplies propagation; resource graphs expose provenance \\
+\bottomrule
+\end{tabularx}
+\end{center}
 
-\paragraph{Coherent Kernel (Pattern C).}
-Systems supplying both causal propagation and provenance observability realize the verifiable rate-$1$ regime. Engine-maintained materialized views and Python's runtime metaprogramming hooks are representative examples: the derivation is maintained automatically and the derivation structure is inspectable.
-
-These observations suggest that the theoretical unit-rate regime is not merely a mathematical curiosity but a structural property that distinguishes verifiable architectures from unverifiable ones. The majority of common infrastructure falls into Pattern A, Pattern B, or their intersection, so structural incoherence or unverifiability is the norm rather than the exception. A detailed classification of representative systems is provided in Appendix~\ref{sec:appendix-classification}.
+Platforms that rely solely on external batch synchronization or opaque code generation do not automatically satisfy the corollary: if propagation can be bypassed or provenance is not available to the host system, exact verification of the single-source regime remains unresolved. Supplement~A contains additional case-study material.

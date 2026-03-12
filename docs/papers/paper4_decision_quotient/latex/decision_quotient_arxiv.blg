@@ -1,46 +1,48 @@
-This is BibTeX, Version 0.99e (TeX Live 2026/Arch Linux)
+This is BibTeX, Version 0.99d (TeX Live 2026/dev/Arch Linux)
 Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
 The top-level auxiliary file: decision_quotient_arxiv.aux
 The style file: plain.bst
 Database file #1: references.bib
-You've used 30 entries,
+Warning--can't use both volume and number fields in cichocki2016tensor
+You've used 35 entries,
             2118 wiz_defined-function locations,
-            676 strings with 8515 characters,
-and the built_in function-call counts, 10302 in all, are:
-= -- 1065
-> -- 381
-< -- 10
-+ -- 159
-- -- 120
-* -- 674
-:= -- 1642
-add.period$ -- 95
-call.type$ -- 30
-change.case$ -- 146
+            719 strings with 9580 characters,
+and the built_in function-call counts, 12129 in all, are:
+= -- 1233
+> -- 471
+< -- 13
++ -- 196
+- -- 152
+* -- 819
+:= -- 1942
+add.period$ -- 108
+call.type$ -- 35
+change.case$ -- 176
 chr.to.int$ -- 0
-cite$ -- 30
-duplicate$ -- 428
-empty$ -- 862
-format.name$ -- 120
-if$ -- 2212
+cite$ -- 36
+duplicate$ -- 491
+empty$ -- 1000
+format.name$ -- 152
+if$ -- 2581
 int.to.chr$ -- 0
-int.to.str$ -- 30
-missing$ -- 34
-newline$ -- 153
-num.names$ -- 60
-pop$ -- 159
+int.to.str$ -- 35
+missing$ -- 43
+newline$ -- 178
+num.names$ -- 70
+pop$ -- 189
 preamble$ -- 1
-purify$ -- 120
+purify$ -- 146
 quote$ -- 0
-skip$ -- 309
+skip$ -- 355
 stack$ -- 0
-substring$ -- 752
-swap$ -- 109
-text.length$ -- 10
+substring$ -- 887
+swap$ -- 124
+text.length$ -- 13
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 110
-warning$ -- 0
-while$ -- 114
-width$ -- 32
-write$ -- 335
+type$ -- 124
+warning$ -- 1
+while$ -- 132
+width$ -- 37
+write$ -- 389
+(There was 1 warning)

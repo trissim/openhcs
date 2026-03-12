@@ -2,25 +2,7 @@
 %==============================================================================
 
 
-This section studies how the induced failure topology scales. Once exact recovery is governed by colorability of the one-shot confusability graph, repeated composition does not reset the ambiguity; it composes the same failure structure across blocks. The next results identify the correct strong-power object and the resulting asymptotic zero-error rate.
-
-\subsection{Motivation: Repeated Composition}
-
-What happens if we repeat the partial-view experiment $n$ times? If we compose $n$ independent copies of the same encoding system, does the ambiguity explode uncontrollably, or does it grow at a predictable rate?
-
-The answer depends on the failure topology:
-\begin{itemize}
-\item If the system were \emph{fully} incoherent (confusability graph is a clique), every block would multiply the confusion. The ambiguity would grow without any exploitable structure.
-\item Because our confusability graph has \emph{structure} (as in the 4-cycle example of Section~\ref{sec:binary-square}), the ambiguity growth is controlled by that structure. Some state pairs remain distinguishable even across multiple blocks.
-\end{itemize}
-
-The key mathematical insight is that $n$-fold block composition turns the confusability graph into its $n$-fold \emph{strong power}:
-\[
-G_n \;=\; G^{\boxtimes n}.
-\]
-Independent sets in the strong power relate systematically to independent sets in the base graph, yielding a supermultiplicative growth law that converges to a well-defined asymptotic rate. The theorem below quantifies this rate.
-
-\subsection{Block Composition Law}
+This section lifts the one-shot graph characterization to strong powers and asymptotic rates. The graph characterization already forces a block theory, because repeated composition preserves confusability structure rather than erasing it. The next results identify the correct strong-power object and the resulting asymptotic zero-error rate.
 
 A genuine supermultiplicative block law holds:
 \[
@@ -28,37 +10,21 @@ A genuine supermultiplicative block law holds:
 \]
 where $\alpha_n$ denotes the largest one-shot zero-error code size in the $n$-block composed system. This is the correct discrete precursor to Shannon-capacity analysis: the admissible code-size sequence is already supermultiplicative at the graph level.\leanmeta{\LH{MFT22}}
 
-More sharply, the block-level graph itself factors correctly. Confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged formally as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object for the same induced failure map.\leanmeta{\LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
-
-\paragraph{Why the strong product arises.}
-The strong product structure may appear surprising at first. One might expect that if block 1 is confusable and block 2 is not, the pair should still be confusable (an ``OR-product'' over blocks). The key is that block confusability requires a \emph{single location tuple} $\ell = (\ell_1, \ell_2)$ that works \emph{simultaneously} for both blocks:
-\begin{itemize}
-\item Block 1: observe location $\ell_1$, must match
-\item Block 2: observe location $\ell_2$, must match
-\end{itemize}
-Two $(m+n)$-block states are confusable iff there exists one location tuple making observations match across \emph{all} blocks. This is not ``confusable in block 1 OR confusable in block 2'' but rather ``$\exists$ location tuple, $\forall$ blocks: match.'' That universal quantification over blocks is exactly the strong product condition: for each block, either equal or confusable (matching on some location), with at least one block strictly confusable.
-
-\paragraph{Concrete example.}
-Consider two copies of the binary square. State $((0,0), (0,0))$ vs $((0,1), (1,1))$:
-\begin{itemize}
-\item Block 1: $(0,0) \sim (0,1)$ in $C_4$ (agree on $x_1$)
-\item Block 2: $(0,0) \not\sim (1,1)$ in $C_4$ (disagree on both coordinates)
-\end{itemize}
-An ``OR-product'' would mark these confusable because block 1 matches. But the actual model requires \emph{one} location pair $(\ell_1, \ell_2)$ matching \emph{both} blocks. Block 1 can match via $\ell_1 = 1$ (observing $x_1$). Block 2 cannot match: location 1 gives $0$ vs $1$, location 2 gives $0$ vs $1$. No location pair works, so these states are not confusable, exactly as the strong product predicts.
+More sharply, the block-level graph itself now factors correctly. The mechanized development proves both a generic strong-power addition theorem for graphs and the induced model-specific statement that confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object in the mechanized theory.\leanmeta{\LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
 
 Iterating the same construction yields the derived $n$-block lower bound. If $\alpha_1$ denotes the one-shot maximum independent-set code size, then the mechanized block-power theorem gives
 \[
 \alpha_1^n \;\le\; \alpha_n,
 \]
-where $\alpha_n$ is the largest one-shot zero-error code size in the $n$-fold block-composed system. This is the first asymptotic-capacity scaffold in the extended model: repeated block composition already forces the expected exponential growth law before any Shannon-capacity or $\vartheta$-style upper theory is introduced. Once the architecture determines the one-shot failure graph, that same graph already controls the asymptotic lower law.\leanmeta{\LH{MFT21}}
+where $\alpha_n$ is the largest one-shot zero-error code size in the $n$-fold block-composed system. This is the first asymptotic-capacity scaffold in the extended model: repeated block composition already forces the expected exponential growth law before any Shannon-capacity or $\vartheta$-style upper theory is introduced.\leanmeta{\LH{MFT21}}
 
-For notation, write $\Theta(G)$ for the Shannon capacity of a confusability graph $G$ in logarithmic units, and write $\vartheta_\infty(G)$ for the corresponding asymptotic Lov\'asz-$\vartheta$ upper value. When the object is a view family $\mathcal V$ rather than an abstract graph, we write $\Theta(G_{\mathcal V})$ and $\vartheta_\infty(G_{\mathcal V})$ for the same quantities computed on the induced confusability graph $G_{\mathcal V}$.
+For notation, write $\Theta(G)$ for the Shannon capacity of a confusability graph $G$ in logarithmic units, and write $\vartheta_\infty(G)$ for the corresponding asymptotic Lov\'asz-$\vartheta$ upper value. When the object is a view family rather than an abstract graph, we write $C_\infty(\text{views})$ and $\vartheta_\infty(\text{views})$ for the same quantities computed on its induced confusability graph.
 
 These normalized block rates can be packaged into an explicit lower asymptotic capacity envelope
 \[
 C_* \;:=\; \sup_{n\ge 1} \frac{\log \alpha_n}{n},
 \]
-implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. Formally, $\alpha_n$ is identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
+implemented as an $\mathrm{ENNReal}$ supremum of the positive block-rate sequence. In the mechanized development, $\alpha_n$ is now identified directly with the maximum finite independent-set size of the $n$-block confusability graph, the block graph is identified with the $n$-fold strong power of the one-shot confusability graph, and the same envelope is proved equal to the graph-side Shannon lower-capacity expression built from those strong powers.\leanmeta{\LHrng{MFT}{31}{32}, \LHrng{MFT}{35}{36}}
 
 The asymptotic scaffold is also not limited to a lower envelope statement. On the graph side itself, strong-product lower bounds for independent-set cardinality induce monotonicity of normalized strong-power rates along repeated multiples. Specializing those generic graph theorems back to the model-generated confusability graph yields the repeated-block statement below.\leanmeta{\LHrng{MFT}{40}{42}}
 
@@ -70,9 +36,7 @@ and hence
 \[
 \frac{\log \alpha_m}{m} \;\le\; \frac{\log \alpha_{km}}{km}.
 \]
-Thus rates along repeated block multiples are monotone from below toward the same capacity envelope. This is still a lower theory rather than a full Shannon-capacity theorem, but it is already a genuine asymptotic graph-rate statement for the induced failure topology.\leanmeta{\LH{MFT33}}
-
-Once the block confusability graph has been identified with strong powers of the one-shot graph, the asymptotic rate theory is exactly the classical Shannon-capacity framework specialized back to the model-generated graph family.
+Thus rates along repeated block multiples are monotone from below toward the same capacity envelope. This is still a lower theory rather than a full Shannon-capacity theorem, but it is already a genuine asymptotic graph-rate statement inside the mechanized development.\leanmeta{\LH{MFT33}}
 
 \begin{theorem}[Asymptotic Shannon-capacity theorem]\label{thm:asymptotic-capacity}
 Let $\alpha_n$ denote the largest one-shot zero-error code size in the $n$-block composed system. Then the normalized block rates
@@ -84,21 +48,8 @@ converge to a real asymptotic Shannon-capacity value, and that value is equal to
 \leanmeta{\LHrng{MFT}{43}{49}, \LH{MFT56}}
 
 \begin{proof}
-The argument rests on two observations: supermultiplicativity of independent-set sizes under strong product, and Fekete's lemma.
-
-\emph{Supermultiplicativity.} Recall that the $n$-block confusability graph $G_n$ is the $n$-fold strong power $G^{\boxtimes n}$ of the one-shot graph $G$. For any two graphs $H$ and $K$, an independent set in $H\boxtimes K$ can be constructed from independent sets in $H$ and $K$ as follows. If $I_H\subseteq V(H)$ and $I_K\subseteq V(K)$ are independent, then the Cartesian product $I_H\times I_K\subseteq V(H)\times V(K)$ is independent in $H\boxtimes K$: if $(u,v)$ and $(u',v')$ are adjacent in the strong product, then either $u=u'$ and $v\sim v'$, or $u\sim u'$ and $v=v'$, or $u\sim u'$ and $v\sim v'$. In each case at least one of $u,u'$ or $v,v'$ is an edge within the respective independent set, which is impossible. Hence $\alpha(H\boxtimes K)\ge\alpha(H)\alpha(K)$. Iterating gives $\alpha_{m+n}=\alpha(G^{\boxtimes(m+n)})\ge\alpha(G^{\boxtimes m})\alpha(G^{\boxtimes n})=\alpha_m\alpha_n$, so the sequence $\{\alpha_n\}$ is supermultiplicative.
-
-\emph{Fekete convergence.} The inequality $\alpha_{m+n}\ge\alpha_m\alpha_n$ is equivalent to subadditivity of the sequence $\{-\log\alpha_n\}$. The trivial bound $\alpha_n\le|V(G)|^n$ ensures that $-\log\alpha_n\ge -n\log|V(G)|$, so the sequence is bounded below. By Fekete's subadditivity lemma, the normalized limit
-\[
-\lim_{n\to\infty}\frac{\log\alpha_n}{n}=\sup_{n\ge1}\frac{\log\alpha_n}{n}
-\]
-exists and equals the supremum of the finite block-rate sequence. This limit is the asymptotic Shannon capacity $\Theta(G)$ in logarithmic units.
-
-The mechanized development packages the same argument with explicit sequence objects and convergence lemmas; the textual expansion above makes the independent-set product construction and Fekete application explicit for accessibility.
+The block law above gives supermultiplicativity of the code-size sequence, equivalently subadditivity of the negative log-independence sequence on strong powers. The trivial vertex-count bound supplies a lower bound on the normalized quotients, so Fekete's lemma applies and yields convergence of the normalized rates. The same mechanized argument then identifies the limit with the supremum of the finite block-rate sequence and matches the older $\mathrm{ENNReal}$ lower-capacity envelope with the resulting real asymptotic value.
 \end{proof}
 
-\paragraph{Running example: Binary square.}
-For the 4-cycle $C_4$ from Section~\ref{sec:binary-square}, the independence number is $\alpha(C_4) = 2$ (choose either diagonal). The strong power $C_4^{\boxtimes n}$ has $\alpha(C_4^{\boxtimes n}) = 2^n$, giving normalized rate $(\log 2^n)/n = \log 2$. The asymptotic Shannon capacity is therefore $\Theta(C_4) = \log 2$, which matches the one-shot chromatic bound: the 4-cycle is 2-colorable, so exact recovery requires 2 tags at every blocklength.
-
 \paragraph{Relation to graph capacity theory.}
-This places the extended model directly in the classical zero-error graph-capacity setting. The difference from the classical channel picture is generative rather than formal: here the confusability graphs arise from deterministic view families and partial observations on latent tuples. We do not claim a new general Shannon-capacity theorem for arbitrary graphs; the new content is that this partial-view model reaches the classical graph machinery in a non-clique regime, so the architecture determines the graph once and that graph then determines both one-shot and asymptotic recoverability. The clique-fiber regime recovers the classical cluster-graph equality case, while the transitivity criterion identifies when that case is produced by the view-family model. The non-clique witness already shows that the model also generates genuinely nontrivial graph behavior.
+This places the extended model directly in the classical zero-error graph-capacity setting. The difference from the classical channel picture is generative rather than formal: here the confusability graphs arise from deterministic view families and partial observations on latent tuples. We do not claim a new general Shannon-capacity theorem for arbitrary graphs; the new content is that this partial-view model reaches the classical graph machinery in a non-clique regime and supports a structurally characterized equality subclass. The clique-fiber regime recovers the classical cluster-graph equality case, while the transitivity criterion identifies when that case is produced by the view-family model. The non-clique witness already shows that the model also generates genuinely nontrivial graph behavior.

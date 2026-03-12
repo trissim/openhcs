@@ -1,7 +1,7 @@
 \section{Model and Basic Quantities}\label{sec:foundations}
 %==============================================================================
 
-This section introduces only the minimum structure needed to state the deterministic converse foundation and its boundary threshold corollary: latent states, deterministic observations, auxiliary tags, ambiguity classes, and independent rate.
+This section introduces only the minimum structure needed to state the deterministic converse foundation and its threshold corollary: latent states, deterministic observations, auxiliary tags, ambiguity classes, and independent rate.
 
 \subsection{Model assumptions and notation}\label{sec:assumptions}
 
@@ -19,10 +19,8 @@ These are the only ingredients needed for the deterministic zero-error theory de
 
 An \emph{encoding system} for a fact $F$ is a finite collection of locations $\{L_1,\dots,L_n\}$ whose current values jointly determine the observation transcript available to a resolver. For a system state $x$, the \emph{ambiguity class} is the set of latent values still compatible with that transcript; when the ambiguity class has size greater than one, the transcript alone does not identify a unique authoritative value. In this single-fact setting, latent-state ambiguity and value ambiguity coincide because the latent state is just the fact value. In the later multi-fact extension, ambiguity is instead over full latent tuples compatible with the partial observations. A \emph{fact} is an atomic semantic attribute of the represented object that can vary independently of other attributes, and a fact is \emph{structural} if the locations encoding it are fixed when the underlying object, declaration, or artifact is created.
 
-The admissible edit set $E(C)$ is part of the primitive specification of an encoding system $C$. It records which edit events or edit sequences are considered reachable by the model. The paper does not derive $E(C)$ from a particular concurrency policy, protocol, or consensus mechanism; those are downstream instantiations. Independence and independent rate are therefore always defined \emph{relative to the chosen admissible edit model}.
-
 \begin{definition}[Independent Location]\label{def:independent}
-Let $E(C)$ denote the admissible edit set of encoding system $C$. Two locations encoding the same fact are \emph{independent relative to $E(C)$} if some admissible edit sequence in $E(C)$ can change one without forcing the other to match it, equivalently if some admissible edit sequence reaches a state in which the two locations disagree.
+Let $E(C)$ denote the admissible edit set of encoding system $C$. Two locations encoding the same fact are \emph{independent} if there exists a sequence of edits from $E(C)$ that makes them disagree.
 \end{definition}
 
 \begin{definition}[Derived Location]\label{def:derived}
@@ -30,15 +28,7 @@ A location is \emph{derived} from a source location if updating the source deter
 \end{definition}
 
 \begin{definition}[Degrees of Freedom]\label{def:dof}
-The \emph{degrees of freedom} (DOF), or \emph{independent rate}, of an encoding system for fact $F$ is the number of pairwise independent source locations encoding $F$ under the specified admissible edit set $E(C)$. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
-\end{definition}
-
-\begin{definition}[Structural Integrity]\label{def:structural-integrity}
-An encoding system has \emph{structural integrity} for fact $F$ if every reachable state is coherent, so no reachable system state presents mutually incompatible encodings of $F$.
-\end{definition}
-
-\begin{definition}[Integrity Violation]\label{def:integrity-violation}
-A reachable \emph{integrity violation} is a reachable incoherent state for fact $F$.
+The \emph{degrees of freedom} (DOF), or \emph{independent rate}, of an encoding system for fact $F$ is the number of independently writable locations encoding $F$ under the admissible edit set. In the single-fact model, the remaining encoding locations are treated as derived views of those independent sources.
 \end{definition}
 
 \begin{proposition}[Unit Independent Rate Guarantees Coherence]\label{thm:dof-one-coherence}
@@ -78,15 +68,7 @@ For deterministic multi-location encodings, the zero-incoherence threshold equal
 Thus zero-error recovery is possible exactly at independent rate $1$, so the zero-incoherence threshold equals $1$.
 \end{proof}
 
-\begin{corollary}[Exact Structural-Integrity Threshold]\label{cor:integrity-threshold}
-A deterministic multi-location encoding has structural integrity if and only if its independent rate equals $1$.
-\end{corollary}
-
-\begin{proof}
-If the independent rate is $1$, Proposition~\ref{thm:dof-one-coherence} shows that all reachable states are coherent, hence Definition~\ref{def:structural-integrity} holds. If the independent rate exceeds $1$, Proposition~\ref{thm:dof-gt-one-incoherence} gives a reachable incoherent state, so structural integrity fails.
-\end{proof}
-
-This threshold is an early architectural consequence of the deterministic model. It identifies the unique trivial no-failure corner and, equivalently, the exact structural-integrity regime. Above that boundary, integrity violations are reachable by construction. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
+This threshold is an early architectural consequence of the deterministic model. The deeper theorems of the paper begin once one asks how much finite side information is needed whenever the transcript leaves a nontrivial ambiguity class.
 
 \begin{corollary}[Side-Information Lower Bound]\label{thm:side-info}
 If a surviving ambiguity class has size $k$, then exact zero-error resolution requires at least $\log_2 k$ bits of side information.
@@ -97,4 +79,4 @@ If a surviving ambiguity class has size $k$, then exact zero-error resolution re
 Exact resolution of $k$ surviving alternatives requires at least $k$ distinguishable tags, hence at least $\log_2 k$ bits.
 \end{proof}
 
-The remainder of the paper sharpens this counting statement into a unified finite converse family, asks how that one-shot obstruction acquires non-clique topology under partial views, and then develops the corresponding asymptotic capacity and upper-bound theory.
+The remainder of the paper sharpens this counting statement into a unified finite converse family, extends it to non-clique confusability graphs, and then develops the corresponding asymptotic capacity and upper-bound theory.

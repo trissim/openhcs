@@ -13,18 +13,26 @@ L^\star_{\mathrm{adapt}} = \mathbb E\!\left[\left\lceil \log_2 |\pi^{-1}(U)| \ri
 \]
 Thus representation collisions translate directly into auxiliary metadata cost. Injective representations need no additional description; noninjective ones require either extra side information or nonzero error.
 
-\subsection{Instantiations: Learned Representations and Formal Witnesses}
-
-The abstract coding framework applies to any representation map. We begin with the learned-representation setting that motivates many modern systems, and then turn to a formal entity-attribute model that gives a machine-checked formal instance of the same laws.
+\subsection{Semantic, Identity, and Neuro-Symbolic Readings}
 
 The same fiber picture clarifies the distinction between semantic description and exact identity. Semantic information is what the representation exposes. Identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the semantic representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that must be restored by explicit metadata.
 
 This transfers directly to neuro-symbolic systems. A neural encoder supplies the semantic side by producing a learned representation; a symbolic layer attempts to recover or reason about exact class-level distinctions. The fiber geometry says precisely when this is possible without extra scaffolding and when it is not: symbolic reasoning cannot recover distinctions already collapsed by the encoder, except by receiving additional identifiers, additional observables, or additional disclosures.
 
-\paragraph{Why symbols are necessary for systems with semantics.}
-Semantic representations derive their utility from abstraction: they compress varied instances into shared categories, concepts, or embedding regions. That abstraction is typically non-injective. It creates semantic fibers in which distinct identities are deliberately conflated. The coding laws then force an exact consequence: recovering identity from a fiber $\pi^{-1}(u)$ requires an auxiliary description of $\lceil \log_2 |\pi^{-1}(u)| \rceil$ bits, and in the worst case requires $\log_2 A_\pi$ bits by Theorem~\ref{thm:converse}. A system therefore needs a mechanism to supply those bits. In computational systems, that mechanism is usually a symbolic handle: a pointer, a unique identifier, a variable name, a primary key, or an index entry.
+\paragraph{Instantiated neurosymbolic linking theorems.}
+The generic helper-view theorems specialize to a concrete formal identity domain by setting the class space to $\mathsf{Typ}$ and the task to identity $Y = C$. The mechanization (\LH{NSL1}--\LH{NSL6}) proves the following instantiated claims.
 
-This clarifies the theoremic and systems-level claims. The theorem says that injective auxiliary information is necessary. The systems implication is that symbolic handles are the standard way real systems implement that injective auxiliary channel. In that sense, the neuro component provides the semantic compression, while the symbolic component pays the identity-bit budget mandated by the coding laws.
+\begin{itemize}
+\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (\LH{NSL1}). This is the identity-task instantiation of the injectivity criterion \LH{GPH25}.
+
+\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity (\LH{NSL2}), and no decoder can recover the collapsed identities without identity-resolving side information (\LH{NSL3}).
+
+\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective handle therefore suffices (\LH{NSL5}). This is the identity-task instantiation of the helper-view theorem \LH{GPH40}.
+
+\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (\LH{NSL6}).
+\end{itemize}
+
+These are not merely prose interpretations. They are instantiated theorems connecting the generic information-theoretic helper-view framework to a concrete formal identity domain. Together with \LH{ACS8}, \LH{ACS9}, and \LH{EMB1}, they show that the symbolic layer pays the identity bit budget that the semantic layer leaves unresolved.
 
 \paragraph{What this means for ML systems.}
 The instantiated theorems have immediate implications for learned representation systems.
@@ -39,37 +47,7 @@ The instantiated theorems have immediate implications for learned representation
 \item \textbf{Open-world deployments.} Any system that must identify entities exactly in an open world must either use an injective encoder or carry explicit identity metadata. There is no third option.
 \end{itemize}
 
-\paragraph{Systems-level reading.}
-The coding laws clarify several common design patterns. Pure embedding retrieval without identifiers cannot guarantee exact retrieval on collided fibers; if two documents share the same embedding, distinguishing metadata must be stored somewhere else. Concept bottleneck systems without concept-level identifiers cannot recover which ground-truth instance generated a collapsed concept representation. Semantic caches keyed only by semantic hashes can preserve approximate meaning while still returning the wrong identity when collisions occur. In each case, the coding laws identify what additional information restores exactness, and what distortion floor is inherited if that information is omitted.
-
-Semantic representation alone is lossy identity compression. The auxiliary identity channel restores the missing distinguishing information. In deployed systems, that information may appear as identifiers, registry entries, retrieval keys, or explicit symbolic names, but it must appear somewhere if zero-error identity is the goal.
-
-The same necessity extends beyond neural models. Compilers use symbol tables because semantic structure alone does not distinguish different bindings of the same name. Databases use primary keys because attribute descriptions can collide across records. Retrieval systems use document identifiers because embeddings can collide across sources. The contribution of this paper is to quantify that systems-level identity deficit exactly: $\log_2 A_\pi$ bits in the worst case, or $\lceil \log_2 |\pi^{-1}(u)| \rceil$ bits on fiber $u$.
-
-\paragraph{Attribute-only versus tag-augmented design.}
-The coding laws imply a sharp system-design dichotomy whenever $A_\pi>1$. In an attribute-only strategy, the system stores or transmits only the semantic representation $\pi(v)$. This pays only for the semantic description, but it inherits the distortion floor forced by the collision fibers; in the zero-budget case, the worst collided block incurs error at least $1-1/A_\pi$ by Corollary~\ref{cor:zero-budget-error-floor}. In a tag-augmented strategy, the system stores $\pi(v)$ together with auxiliary identity information. This increases storage by the exact identity budget, up to $\lceil \log_2 A_\pi \rceil$ bits in the worst case, but restores zero-error identity recovery. Operationally, the semantic layer handles the ``what,'' while the auxiliary tag handles the ``which.''
-
-This tradeoff explains the ubiquity of symbolic identifiers in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are not mere conveniences; they are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. If the application requires exact retrieval, verification, provenance tracking, or entity-level consistency, the attribute-only strategy is infeasible and the tag-augmented strategy is mandatory.
-
-\paragraph{Formal instantiation.}
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. In this setting, representation-computable properties reduce to attribute-computable ones, and the generic coding laws specialize to a machine-checked formal instance.
-
-The formal theorems establish that equal observable profiles cannot distinguish identity (\LH{ACS8}), that provenance is not recoverable from the profile alone when collisions exist (\LH{ACS9}), and that nominal identity cannot be embedded back into the semantic layer (\LH{EMB1}). Readers interested only in the information-theoretic content may treat this development as a rigorous formal instantiation rather than as a prerequisite for the main theorem arc.
-
-\paragraph{Instantiated neurosymbolic linking theorems.}
-Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization (\LH{NSL1}--\LH{NSL6}) proves the following instantiated claims.
-
-\begin{itemize}
-\item If the symbolic handle $\sigma$ is injective, the neurosymbolic link $(\pi, \sigma)$ achieves zero-error identity recovery (\LH{NSL1}). This is the identity-task instantiation of the injectivity criterion \LH{GPH25}.
-
-\item If $\pi$ has collisions, semantic representation alone cannot achieve zero-error identity (\LH{NSL2}), and no decoder can recover the collapsed identities without identity-resolving side information (\LH{NSL3}).
-
-\item The exact characterization is: $(\pi, \sigma)$ recovers identity if and only if $\sigma$ distinguishes all entities within each semantic fiber (\LH{NSL4}). An injective handle therefore suffices (\LH{NSL5}). This is the identity-task instantiation of the helper-view theorem \LH{GPH40}.
-
-\item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (\LH{NSL6}).
-\end{itemize}
-
-These instantiated theorems connect the generic information-theoretic helper-view framework to a concrete formal identity domain. Together with \LH{ACS8}, \LH{ACS9}, and \LH{EMB1}, they show how the auxiliary identity channel pays for the ambiguity that the semantic layer leaves unresolved.
+The neurosymbolic point is therefore stronger than an architectural recommendation. It is a necessity statement. Semantic representation alone is lossy identity compression. The symbolic handle restores the missing identity bits. In deployed systems, those bits may appear as identifiers, registry entries, retrieval keys, or explicit symbolic names, but they must appear somewhere if zero-error identity is the goal.
 
 \subsection{Task Sufficiency, Helper Views, and Factorization}
 

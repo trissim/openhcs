@@ -4,19 +4,17 @@
   Hierarchy.lean - Regime hierarchy and complexity class inclusion
 
   Establishes the strict inclusion: Static ⊂ Stochastic ⊂ Sequential
-  using Paper 4's dimensional complexity layer.
+  Uses the ComplexityClass from IntegrityEquilibrium.
 -/
 
 import DecisionQuotient.StochasticSequential.Basic
-import DecisionQuotient.StochasticSequential.Computation
-import DecisionQuotient.StochasticSequential.OracleUpperBounds
 import DecisionQuotient.StochasticSequential.Tractability
 import Mathlib.Logic.Basic
 
 namespace DecisionQuotient.StochasticSequential
 
 open Classical
-open DecisionQuotient.DimensionalComplexity
+open DecisionQuotient.Physics.DimensionalComplexity
 
 /-! ## Regime Hierarchy
 
@@ -146,34 +144,5 @@ theorem complexity_dichotomy_hierarchy :
     ComplexityClass.PP ≤ ComplexityClass.PSPACE ∧
     ComplexityClass.coNP ≤ ComplexityClass.PSPACE :=
   ⟨coNP_subset_PP, PP_subset_PSPACE, coNP_subset_PSPACE⟩
-
-/-- Careful benchmark summary for the current proof artifact: static lives at the
-coNP baseline, stochastic preservation has an explicit-state polynomial-time
-checker, stochastic decisiveness has scoped oracle-style upper bounds, the
-stochastic existential queries fit the witness-over-PP schema, and the
-sequential baseline lives at PSPACE. This is the strongest proof-side benchmark
-matrix available without introducing a full oracle-machine complexity library. -/
-theorem benchmark_escalation_summary
-    {A S O : Type*} {n : ℕ}
-    [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n] :
-    baseComplexity 0 = ComplexityClass.coNP
-    ∧ InP (fun q : StochasticExplicitInput A S n =>
-        StochasticPreservationSufficient q.problem q.infoSet)
-    ∧ FitsCoNPOverPPStyle (StochasticDecisivenessQueryInput A S n) S
-        (fun q => StochasticSufficient q.problem q.infoSet)
-        (fun q s => stochasticDecisivenessCounterWitnessRel q s)
-    ∧ FitsNPOverPPStyle (StochasticAnchorQueryInput A S n) (S × A)
-        (fun q => StochasticAnchorSufficiencyCheck q.problem q.infoSet)
-        stochasticAnchorWitnessRel
-    ∧ FitsNPOverPPStyle (StochasticMinimumQueryInput A S n) (Finset (Fin n))
-        (fun q => StochasticMinimumSufficiencyCheck q.problem q.bound)
-        stochasticMinimumWitnessRel
-    ∧ baseComplexity 2 = ComplexityClass.PSPACE := by
-  exact ⟨rfl,
-    stochastic_preservation_inP_explicit,
-    stochastic_decisiveness_query_fits_conp_over_ppstyle,
-    stochastic_anchor_query_fits_np_over_ppstyle,
-    stochastic_minimum_query_fits_np_over_ppstyle,
-    rfl⟩
 
 end DecisionQuotient.StochasticSequential

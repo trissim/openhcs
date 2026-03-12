@@ -9,7 +9,7 @@ import Ssot.Inconsistency
 import Ssot.LangPython
 import Ssot.MultiFact
 import Ssot.ObserverModel
-import Paper1IT.EntropyGeneral
+import Ssot.EntropyGeneral
 import Ssot.FactMatroid
 import Ssot.Probabilistic
 import Ssot.Requirements
@@ -300,21 +300,6 @@ abbrev MFT106 := @MultiFact.meetWitnessViews_not_fiberCoherent
 abbrev MFT107 := @MultiFact.ViewCompositionClosed
 abbrev MFT108 := @MultiFact.confusableTransitive_iff_viewCompositionClosed
 abbrev MFT109 := @MultiFact.confusable_iff_exists_viewClusterAdj
-abbrev MFT110 := @MultiFact.SupportConfusable
-abbrev MFT111 := @MultiFact.deterministicSupportConfusable_iff_confusable
-abbrev MFT112 := @MultiFact.deterministicSupportConfusabilityGraph_eq_confusabilityGraph
-abbrev MFT113 := @MultiFact.card_state_eq
-abbrev MFT114 := @MultiFact.confusableOracle_eq_true_iff
-abbrev MFT115 := @MultiFact.confusableOrderedPairs
-abbrev MFT116 := @MultiFact.card_state_prod_eq
-abbrev MFT117 := @MultiFact.card_confusableOrderedPairs_le_naive_bound
-abbrev MFT118 := @MultiFact.observe_eq_iff_subset_agreeSet
-abbrev MFT119 := @MultiFact.confusable_iff_exists_view_subset_agreeSet
-abbrev MFT120 := @MultiFact.agreeSet_statePerm_eq
-abbrev MFT121 := @MultiFact.confusable_statePerm_iff
-abbrev MFT122 := @MultiFact.confusable_congr_agreeSet
-abbrev MFT123 := @MultiFact.confusabilityGraph_statePermIso
-abbrev MFT124 := @MultiFact.exists_confusabilityGraph_iso_send
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound

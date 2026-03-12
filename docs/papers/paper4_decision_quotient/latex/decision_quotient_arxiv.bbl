@@ -1,36 +1,57 @@
 \begin{thebibliography}{10}
 
+\bibitem{akaike1974new}
+Hirotugu Akaike.
+\newblock A new look at the statistical model identification.
+\newblock {\em IEEE Transactions on Automatic Control}, 19(6):716--723, 1974.
+
 \bibitem{amaldi1998complexity}
 Edoardo Amaldi and Viggo Kann.
 \newblock On the approximability of minimizing nonzero variables or unsatisfied
   relations in linear systems.
 \newblock {\em Theoretical Computer Science}, 209(1-2):237--260, 1998.
 
-\bibitem{blackwell1953equivalent}
-David Blackwell.
-\newblock Equivalent comparisons of experiments.
-\newblock {\em The Annals of Mathematical Statistics}, 24(2):265--272, 1953.
+\bibitem{arora2009computational}
+Sanjeev Arora and Boaz Barak.
+\newblock {\em Computational Complexity: A Modern Approach}.
+\newblock Cambridge University Press, 2009.
+
+\bibitem{bessiere2013detecting}
+Christian Bessiere, Clement Carbonnel, Emmanuel Hebrard, George Katsirelos, and
+  Toby Walsh.
+\newblock Detecting and exploiting subproblem tractability.
+\newblock In {\em Proceedings of the Twenty-Third International Joint
+  Conference on Artificial Intelligence (IJCAI)}, pages 468--474, 2013.
 
 \bibitem{blum1997selection}
 Avrim~L. Blum and Pat Langley.
 \newblock Selection of relevant features and examples in machine learning.
 \newblock {\em Artificial Intelligence}, 97(1-2):245--271, 1997.
 
-\bibitem{chockler2004responsibility}
-Hana Chockler and Joseph~Y. Halpern.
-\newblock Responsibility and blame: A structural-model approach.
-\newblock {\em Journal of Artificial Intelligence Research}, 22:93--115, 2004.
+\bibitem{bodlaender1993tourist}
+Hans~L. Bodlaender.
+\newblock A tourist guide through treewidth.
+\newblock In {\em Acta Cybernetica}, volume~11, pages 1--21, 1993.
 
-\bibitem{darwiche2023reasons}
-Adnan Darwiche and Auguste Hirth.
-\newblock On the (complete) reasons behind decisions.
-\newblock {\em Journal of Logic, Language and Information}, 32(1):63--88, 2023.
+\bibitem{cai2025pns}
+Ruichu Cai, Yuxuan Zhu, Xuexin Chen, Yuan Fang, Min Wu, Jie Qiao, and Zhifeng
+  Hao.
+\newblock On the probability of necessity and sufficiency of explaining graph
+  neural networks: A lower bound optimization approach.
+\newblock {\em Neural Networks}, 184:107065, 2025.
 
-\bibitem{moura2021lean4}
-Leonardo de~Moura and Sebastian Ullrich.
-\newblock The lean 4 theorem prover and programming language.
-\newblock In {\em International Conference on Automated Deduction}, pages
-  625--635. Springer, 2021.
+\bibitem{chickering2004large}
+David~Maxwell Chickering, David Heckerman, and Christopher Meek.
+\newblock Large-sample learning of {Bayesian} networks is {NP}-hard.
+\newblock In {\em Journal of Machine Learning Research}, volume~5, pages
+  1287--1330, 2004.
+
+\bibitem{cichocki2016tensor}
+Andrzej Cichocki, Namgil Lee, Ivan Oseledets, Anh-Huy Phan, Qibin Zhao, and
+  Danilo~P. Mandic.
+\newblock {\em Tensor Networks for Dimensionality Reduction and Large-Scale
+  Optimization}, volume~9.
+\newblock Now Publishers, 2016.
 
 \bibitem{dobzinski2012query}
 Shahar Dobzinski and Jan Vondr{\'a}k.
@@ -38,10 +59,11 @@ Shahar Dobzinski and Jan Vondr{\'a}k.
 \newblock In {\em Proceedings of the 44th ACM Symposium on Theory of
   Computing}, pages 1107--1116, 2012.
 
-\bibitem{eiter1995abduction}
-Thomas Eiter and Georg Gottlob.
-\newblock The complexity of logic-based abduction.
-\newblock {\em Journal of the ACM}, 42(1):3--42, 1995.
+\bibitem{fisher1922mathematical}
+Ronald~A. Fisher.
+\newblock On the mathematical foundations of theoretical statistics.
+\newblock {\em Philosophical Transactions of the Royal Society of London.
+  Series A}, 222:309--368, 1922.
 
 \bibitem{forster2019verified}
 Yannick Forster, Edith Heiter, and Gert Smolka.
@@ -49,18 +71,15 @@ Yannick Forster, Edith Heiter, and Gert Smolka.
 \newblock In {\em Proceedings of the 8th ACM SIGPLAN International Conference
   on Certified Programs and Proofs}, pages 114--127. ACM, 2019.
 
-\bibitem{givan2003equivalence}
-Robert Givan, Thomas Dean, and Matthew Greig.
-\newblock Equivalence notions and model minimization in markov decision
-  processes.
-\newblock {\em Artificial Intelligence}, 147(1-2):163--223, 2003.
+\bibitem{freuder1990complexity}
+Eugene~C. Freuder.
+\newblock Complexity of k-tree structured constraint satisfaction problems.
+\newblock {\em Proceedings of AAAI}, pages 4--9, 1990.
 
-\bibitem{halpern2001explanations}
-Joseph~Y. Halpern and Judea Pearl.
-\newblock Causes and explanations: A structural-model approach. part ii:
-  Explanations.
-\newblock In {\em Proceedings of the 17th International Joint Conference on
-  Artificial Intelligence}, pages 27--34, 2001.
+\bibitem{grunwald2007minimum}
+Peter~D. Gr{\"u}nwald.
+\newblock {\em The Minimum Description Length Principle}.
+\newblock MIT Press, 2007.
 
 \bibitem{haslbeck2021verified}
 Maximilian P.~L. Haslbeck and Tobias Nipkow.
@@ -79,18 +98,10 @@ Russell Impagliazzo and Ramamohan Paturi.
 \newblock On the complexity of $k$-sat.
 \newblock {\em Journal of Computer and System Sciences}, 62(2):367--375, 2001.
 
-\bibitem{jensen2008rough}
-Richard Jensen.
-\newblock Rough set-based feature selection: A review.
-\newblock In {\em Rough Computing: Theories, Technologies and Applications},
-  pages 91--129. IGI Global, 2008.
-
-\bibitem{jensen2004semantics}
-Richard Jensen and Qiang Shen.
-\newblock Semantics-preserving dimensionality reduction: Rough and
-  fuzzy-rough-based approaches.
-\newblock {\em IEEE Transactions on Knowledge and Data Engineering},
-  16(12):1457--1471, 2004.
+\bibitem{kolda2009tensor}
+Tamara~G. Kolda and Brett~W. Bader.
+\newblock Tensor decompositions and applications.
+\newblock {\em SIAM Review}, 51(3):455--500, 2009.
 
 \bibitem{kunze2019formal}
 Fabian Kunze, Gert Smolka, and Yannick Forster.
@@ -98,6 +109,23 @@ Fabian Kunze, Gert Smolka, and Yannick Forster.
   machine.
 \newblock In {\em Asian Symposium on Programming Languages and Systems}, pages
   264--283. Springer, 2019.
+
+\bibitem{lehmann1950completeness}
+Erich~L. Lehmann and Henry Scheff{\'e}.
+\newblock Completeness, similar regions, and unbiased estimation.
+\newblock {\em Sankhyā: The Indian Journal of Statistics}, 10(4):305--340,
+  1950.
+
+\bibitem{li2008introduction}
+Ming Li and Paul Vit{\'a}nyi.
+\newblock {\em An Introduction to {Kolmogorov} Complexity and Its
+  Applications}.
+\newblock Springer, 3rd edition, 2008.
+
+\bibitem{lipton2009np}
+Richard~J. Lipton.
+\newblock The {P}={NP} question and {Gödel's} lost letter.
+\newblock {\em Communications of the ACM}, 52(5):31--33, 2009.
 
 \bibitem{littman1998probplanning}
 Michael~L. Littman, Judy Goldsmith, and Martin Mundhenk.
@@ -114,52 +142,55 @@ Tobias Nipkow, Lawrence~C. Paulson, and Markus Wenzel.
 \newblock {\em {Isabelle/HOL}: A Proof Assistant for Higher-Order Logic}.
 \newblock Springer, 2002.
 
+\bibitem{papadimitriou1994complexity}
+Christos~H. Papadimitriou.
+\newblock {\em Computational Complexity}.
+\newblock Addison-Wesley, 1994.
+
 \bibitem{papadimitriou1987mdp}
 Christos~H. Papadimitriou and John~N. Tsitsiklis.
 \newblock The complexity of markov decision processes.
 \newblock {\em Mathematics of Operations Research}, 12(3):441--450, 1987.
-
-\bibitem{pawlak1982rough}
-Zdzis{\\l}aw Pawlak.
-\newblock Rough sets.
-\newblock {\em International Journal of Parallel Programming}, 11(5):341--356,
-  1982.
 
 \bibitem{pearl2009causality}
 Judea Pearl.
 \newblock {\em Causality: Models, Reasoning, and Inference}.
 \newblock Cambridge University Press, 2nd edition, 2009.
 
-\bibitem{raiffa1961applied}
-Howard Raiffa and Robert Schlaifer.
-\newblock {\em Applied Statistical Decision Theory}.
-\newblock Harvard University Press, 1961.
+\bibitem{rissanen1978modeling}
+Jorma Rissanen.
+\newblock Modeling by shortest data description.
+\newblock {\em Automatica}, 14(5):465--471, 1978.
 
-\bibitem{ravindran2004algebraic}
-Balaraman Ravindran.
-\newblock {\em An Algebraic Approach to Abstraction in Reinforcement Learning}.
-\newblock PhD thesis, University of Massachusetts Amherst, 2004.
+\bibitem{schwarz1978estimating}
+Gideon Schwarz.
+\newblock Estimating the dimension of a model.
+\newblock {\em The Annals of Statistics}, 6(2):461--464, 1978.
 
-\bibitem{reiter1987diagnosis}
-Raymond Reiter.
-\newblock A theory of diagnosis from first principles.
-\newblock {\em Artificial Intelligence}, 32(1):57--95, 1987.
+\bibitem{shpitser2006identification}
+Ilya Shpitser and Judea Pearl.
+\newblock Identification of joint interventional distributions in recursive
+  semi-{Markovian} causal models.
+\newblock {\em Proceedings of the National Conference on Artificial
+  Intelligence}, 21(2):1219--1226, 2006.
 
-\bibitem{ribeiro2018anchors}
-Marco~Tulio Ribeiro, Sameer Singh, and Carlos Guestrin.
-\newblock Anchors: High-precision model-agnostic explanations.
-\newblock In {\em Proceedings of the AAAI Conference on Artificial
-  Intelligence}, volume~32, 2018.
-
-\bibitem{savage1954foundations}
-Leonard~J. Savage.
-\newblock {\em The Foundations of Statistics}.
-\newblock John Wiley \& Sons, 1954.
+\bibitem{sobol2001global}
+Ilya~M. Sobol.
+\newblock Global sensitivity indices for nonlinear mathematical models and
+  their {Monte Carlo} estimates.
+\newblock {\em Mathematics and Computers in Simulation}, 55(1-3):271--280,
+  2001.
 
 \bibitem{spirtes2000causation}
 Peter Spirtes, Clark Glymour, and Richard Scheines.
 \newblock {\em Causation, Prediction, and Search}.
 \newblock MIT Press, 2nd edition, 2000.
+
+\bibitem{stone1974cross}
+Mervyn Stone.
+\newblock Cross-validatory choice and assessment of statistical predictions.
+\newblock {\em Journal of the Royal Statistical Society: Series B
+  (Methodological)}, 36(2):111--133, 1974.
 
 \bibitem{mathlib2020}
 {The mathlib Community}.

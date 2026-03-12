@@ -1,8 +1,10 @@
-\section{Implications for Exact Certification}\label{sec:engineering-corollaries}
+\section{Hardness Transfers and Exact-Simplification Consequences}\label{sec:engineering-corollaries}
 
-The regime hierarchy matters for more than class labels. The same exact question, which coordinates can be omitted without changing the decision boundary, reappears when one tries to simplify models, build reliable certifiers, check witnesses, approximate exact minimizers, or compress a central interface. This section collects those consequences in one place. The common lesson is that exact relevance is expensive to certify and easy to displace rather than remove. One downstream corollary is a simple trilemma for exact certifiers in the hard regime: once exact certification is hard, every interface-compression story must be read under the possibility of abstention, weakened guarantees, or overclaiming.
+The complexity results of Sections~\ref{sec:hardness} through~\ref{sec:tractable} transfer directly to exact simplification tasks. This section records hardness transfers and exact-simplification consequences of the preceding theorems when the coordinate model is used to represent configuration, feature, or interface choices.
 
-\subsection{Exact Simplification and Over-Specification}
+Every claim in this section is model-conditional. The conclusions apply when a design problem is faithfully represented as a decision problem with coordinate structure and when the relevant computational cost is the cost of certifying sufficiency or finding a minimal sufficient set.
+
+\subsection{Hardness Transfer to Configuration Simplification}
 
 \begin{proposition}[Configuration Simplification as \textsc{Sufficiency-Check}]
 \label{prop:config-sufficiency}
@@ -10,33 +12,29 @@ Let $P=\{p_1,\ldots,p_n\}$ be configuration parameters and let $B$ be a finite s
 \[
 \text{``Does parameter subset } I \subseteq P \text{ preserve all decision-relevant behavior?''}
 \]
-is an instance of \textnormal{\textsc{Sufficiency-Check}}.
+is an instance of \textsc{Sufficiency-Check}.
 \end{proposition}
-
-\leanmeta{\LH{CR1}, \LH{CT12}.}
 
 \begin{proof}
 Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking actions $A=B$, coordinate domains $X_i$ equal to the domains of the parameters $p_i$, and defining $U(b,s)=1$ exactly when behavior $b$ is realized or admissible under configuration state $s$. Then $\Opt(s)$ is the behavior set induced by $s$, and coordinate subset $I$ is sufficient exactly when agreement on the parameters in $I$ forces agreement on the induced optimal-behavior set.
 \end{proof}
 
-\paragraph{Concrete case study.}
-Consider a simplified service configuration with three parameters: cache mode $p_1\in\{\mathrm{off},\mathrm{on}\}$, retry policy $p_2\in\{1,3\}$, and replica count $p_3\in\{1,2\}$. Let the observable behavior set be $B=\{\mathrm{latency\text{-}ok},\mathrm{write\text{-}safe},\mathrm{cost\text{-}ok}\}$. Suppose enabling the cache affects only latency, increasing retries affects only write safety, and replica count affects write safety and cost. Then Theorem~\ref{prop:config-sufficiency} turns the simplification question into an exact sufficiency question on the induced decision problem: which parameter subsets preserve the optimal-behavior set? In this toy instance, if the target simplification must preserve write safety and cost but is indifferent to latency, the exact behavior-preserving core is $\{p_2,p_3\}$, while $p_1$ is irrelevant to that target behavior set. The example is small enough to inspect by hand, but it is already an instance of the general Lean-backed reduction from behavior preservation to sufficiency.
-
-\paragraph{OpenHCS-style pipeline configuration.}
-The same issue appears in scientific workflow orchestration, where a controller assembles a pipeline from a partially nested configuration object and then compiles work only for the selected outputs and wells. In the OpenHCS codebase bundled with this repository, one execution path builds a global pipeline configuration from parameters such as the worker count, output-directory suffix, and well filter before compiling the pipeline and materializing only the selected wells; see, e.g., the configuration construction in \texttt{openhcs/runtime/execution\_server.py} and the scenario table in \texttt{tests/pyqt\_gui/integration/test\_end\_to\_end\_workflow\_foundation.py}. In that setting, the exact practical question is not merely whether two configurations often behave similarly, but whether a smaller visible parameter interface provably preserves the induced compilation and execution decisions for every admissible dataset and run condition. The results of this paper say that such exact interface minimization is a genuine certification problem: on structured cases it can be tractable, but in the general succinct regime one should expect worst-case hardness even when a single compiled execution is easy to obtain.
-
-\leanmeta{\LH{CR1}, \LH{CT12}.}
+\subsection{Exact-Minimization Impossibility}
 
 \begin{corollary}[No General-Purpose Exact Configuration Minimizer]
 \label{cor:no-general-minimizer}
 Assuming $\Pclass \neq \coNP$, there is no polynomial-time general-purpose procedure that takes an arbitrary succinctly encoded configuration problem and always returns a smallest behavior-preserving parameter subset.
 \end{corollary}
 
-\leanmeta{\LHrng{DQ}{36}{37}.}
-
 \begin{proof}
 Such a procedure would solve \textsc{Minimum-Sufficient-Set} in polynomial time for arbitrary succinctly encoded instances, contradicting Theorem~\ref{thm:minsuff-conp} under the assumption $\Pclass \neq \coNP$.
 \end{proof}
+
+\begin{remark}
+This does not rule out useful tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. Domain restrictions of the kind isolated in Section~\ref{sec:tractable} remain viable.
+\end{remark}
+
+\subsection{Over-Specification Under Hardness}
 
 \begin{proposition}[Model-Conditional Rationality of Over-Specification]
 \label{prop:rational-overspecification}
@@ -46,30 +44,32 @@ Consider a design process in which:
 \item exact irrelevance certification is charged according to the computational model of Section~\ref{sec:encoding}, and
 \item carrying an extra parameter incurs only linear or otherwise low-order maintenance overhead.
 \end{enumerate}
-Then, for sufficiently expressive succinctly encoded instances, retaining extra parameters can minimize total cost under the stated cost model.
+Then, for sufficiently expressive succinctly encoded instances, retaining extra parameters can be an economically rational response to the hardness of exact minimization.
 \end{proposition}
 
-\leanmeta{\LH{DQ26}, \LH{HD14}.}
-
 \begin{proof}
-By Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, exact sufficiency certification and exact minimization are coNP-complete in the general succinct regime. By Section~\ref{sec:dichotomy}, this hardness is accompanied by exponential lower bounds under ETH in the linear-support regime. If the cost of carrying extra parameters grows only linearly while exact minimization inherits worst-case exponential cost, then beyond a problem-dependent threshold the latter dominates the former. Under that cost model, retaining extra parameters minimizes total cost.
+By Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, exact sufficiency certification and exact minimization are coNP-complete in the general succinct regime. By Section~\ref{sec:dichotomy}, this hardness is accompanied by exponential lower bounds under ETH in the linear-support regime. If the cost of carrying extra parameters grows only linearly while exact minimization inherits worst-case exponential cost, then beyond a problem-dependent threshold the latter dominates the former. Under that cost model, over-specification is a rational hedge against intractable exact pruning.
 \end{proof}
 
 \begin{remark}
-This does not rule out useful simplification tools. It rules out a fully general exact minimizer with worst-case polynomial guarantees. The structured regimes isolated in Section~\ref{sec:tractable} remain viable precisely because they restrict the source of hardness.
+The conclusion is not that over-specification is always best. It is that, in the absence of tractable structure, exact minimality need not be a computationally reasonable target.
 \end{remark}
 
-\subsection{Regime-Limited Exact Certification}
+\subsection{Tractability Boundary for Simplification}
+
+The tractable regimes of Section~\ref{sec:tractable} explain when exact simplification is computationally realistic. When bounded action sets, separable utility, low tensor rank, tree structure, bounded treewidth, or coordinate symmetry are present, exact certification becomes feasible. Outside such regimes, approximate selection, conservative over-inclusion, and domain-specific simplification strategies are often better aligned with the complexity landscape than unconditional demands for exact minimality.
+
+\subsection{Exact-Certification Competence by Regime}
 
 \begin{proposition}[Exact Certification Competence Depends on Regime]
 \label{prop:competence-by-regime}
 Within the model of this paper, exact certification competence is regime-dependent. In the general succinct regime, exact relevance certification and exact minimization inherit the hardness results of Sections~\ref{sec:hardness} and~\ref{sec:dichotomy}. In the structured regimes of Section~\ref{sec:tractable}, exact certification becomes available in polynomial time.
 \end{proposition}
 
-\leanmeta{\LH{DQ36}, \LH{DQ40}, \LH{DQ44}.}
-
 \begin{proof}
 The negative side is given by Theorems~\ref{thm:sufficiency-conp} and~\ref{thm:minsuff-conp}, together with the ETH-conditioned lower bounds summarized in Section~\ref{sec:dichotomy}. The positive side is given by the tractability results of Section~\ref{sec:tractable}, which provide explicit polynomial-time certification procedures under structural restrictions.
 \end{proof}
 
-The next three subsections sharpen that basic regime distinction in different directions: exact reliability under polynomial budgets, witness-checking and approximation limits, and the cost of compressing a central interface while leaving exact relevance unresolved.
+\begin{remark}
+This is the only competence distinction needed in Paper~A: not a general theory of reporting or abstention, but a theorem-driven separation between regimes in which exact certification is computationally available and regimes in which it is not.
+\end{remark}

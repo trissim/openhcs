@@ -1,32 +1,44 @@
 OpenHCS Paper Build Log
 ========================
 
-Paper: paper4 - Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
-Package Date: 2026-03-12T11:20:58.003677
+Paper: paper4 - Decision Quotient: Complexity of Exact Relevance Certification
+Package Date: 2026-03-08T14:57:30.328806
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
 -----------------
-Lean Files: 61
-Lines of Code: 20653
-Theorems: 966
+Lean Files: 129
+Lines of Code: 34846
+Theorems: 1449
 Sorry Placeholders: 0
 
 
 Proof Files:
 ------------
+  - AbstractionCollapse.lean
   - AlgorithmComplexity.lean
   - Basic.lean
+  - BayesFoundations.lean
   - BayesFromDQ.lean
   - BayesOptimalityProof.lean
+  - BayesianBridge.lean
+  - Bridges.lean
+  - CheckAxioms.lean
   - ClaimClosure.lean
   - Complexity.lean
   - ComplexityMain.lean
   - Computation.lean
+  - ComputationalDecisionProblem.lean
+  - CrossPaperDependencies.lean
+  - DecisionGeometry.lean
   - Dichotomy.lean
-  - DimensionalComplexity.lean
-  - ExplicitStateMembership.lean
+  - Approximation.lean
+  - Elicitation.lean
+  - ValueOfInformation.lean
   - Finite.lean
+  - FunctionalInformation.lean
+  - GraphNontriviality.lean
+  - HandleAliases.lean
   - ApproximationHardness.lean
   - ConfigReduction.lean
   - CountingComplexity.lean
@@ -37,35 +49,85 @@ Proof Files:
   - SAT.lean
   - SetCoverReduction.lean
   - AnchorSufficiency.lean
+  - Summary.lean
+  - VectorE_CoNP.lean
   - Sigma2PHardness.lean
   - Hardness.lean
   - HardnessDistribution.lean
+  - InflationEntropyBridge.lean
+  - InflationEntropyMinimality.lean
+  - RDSrank.lean
+  - RateDistortion.lean
   - Information.lean
   - Instances.lean
   - IntegrityCompetence.lean
+  - InteriorVerification.lean
   - PhysicalBudgetCrossover.lean
+  - AccessRegime.lean
   - AnchorChecks.lean
+  - AssumptionNecessity.lean
+  - BoundedAcquisition.lean
   - ClaimTransport.lean
+  - ConstraintForcing.lean
+  - Conversation.lean
   - DecisionEquivalence.lean
+  - DecisionTime.lean
   - DiscreteSpacetime.lean
+  - HeisenbergStrong.lean
+  - Instantiation.lean
   - IntegrityEquilibrium.lean
+  - InvariantAgreement.lean
+  - LocalityPhysics.lean
+  - MeasureNecessity.lean
   - MolecularIntegrity.lean
   - ObserverRelativeState.lean
+  - PhysicalCore.lean
+  - PhysicalHardness.lean
+  - PhysicalIncompleteness.lean
+  - TUR.lean
+  - TemporalCountingGap.lean
+  - TransportCost.lean
+  - Uncertainty.lean
+  - WassersteinIntegrity.lean
+  - WolpertConstraints.lean
+  - WolpertDecomposition.lean
+  - WolpertMismatch.lean
+  - WolpertResidual.lean
   - PolynomialReduction.lean
   - QueryComplexity.lean
+  - Quotient.lean
   - Reduction.lean
   - Reduction_AllCoords.lean
+  - FisherInformation.lean
+  - ProbabilisticBridge.lean
+  - AlgorithmComplexity.lean
   - Basic.lean
+  - ClaimClosure.lean
   - Computation.lean
   - CrossRegime.lean
+  - Dichotomy.lean
+  - Economics.lean
   - Finite.lean
+  - Hardness.lean
+  - HardnessDistribution.lean
   - Hierarchy.lean
-  - OracleUpperBounds.lean
+  - Information.lean
+  - Instances.lean
+  - PolynomialReduction.lean
+  - QueryComplexity.lean
   - Quotient.lean
+  - SetValued.lean
+  - SubstrateCost.lean
+  - Summary.lean
+  - TemporalIntegrity.lean
+  - TemporalLearning.lean
+  - ThermodynamicLift.lean
   - Tractability.lean
+  - StochasticSequential.lean
   - Sufficiency.lean
   - Summary.lean
   - ThermodynamicLift.lean
+  - ToolCollapse.lean
   - BoundedActions.lean
   - Dimensional.lean
   - FPT.lean
@@ -76,41 +138,242 @@ Proof Files:
   - Tractable.lean
   - UniverseObjective.lean
   - WitnessCheckingDuality.lean
+  - DecisionQuotient.lean
+  - DeclInfoExport.lean
+  - DependencyGraph.lean
+  - GraphExport.lean
+  - InflationEntropyDryRun.lean
+  - lakefile.lean
 
 ================================================================================
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-⚠ [3096/3252] Replayed DecisionQuotient.DimensionalComplexity
-warning: DecisionQuotient/DimensionalComplexity.lean:48:68: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:51:54: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:54:61: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:57:49: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:60:63: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:63:53: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:77:5: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/DimensionalComplexity.lean:93:66: unused variable `regime`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3106/3252] Replayed DecisionQuotient.BayesFromDQ
-warning: DecisionQuotient/BayesFromDQ.lean:208:8: try 'simp' instead of 'simpa'
+⚠ [890/1077] Replayed DecisionQuotient.Reduction
+warning: DecisionQuotient/Reduction.lean:140:4: Try this: intro _ a'
+warning: DecisionQuotient/Reduction.lean:184:14: Try `simp at hi` instead of `simpa using hi`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3110/3252] Replayed DecisionQuotient.IntegrityCompetence
+⚠ [912/1077] Replayed DecisionQuotient.Hardness.QBF
+warning: DecisionQuotient/Hardness/QBF.lean:132:39: This simp argument is unused:
+  Fin.ext_iff
+
+Hint: Omit it from the simp argument list.
+  simp [restrictY, y', Fin.castLT,̵ ̵F̵i̵n̵.̵e̵x̵t̵_̵i̵f̵f̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [913/1077] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.AnchorSufficiency
+warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:176:43: This simp argument is unused:
+  hφ
+
+Hint: Omit it from the simp argument list.
+  simp [qbfProblem, qbfUtility, hφ̵,̵ ̵h̵y]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:186:4: Try this: intro _ a'
+warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:293:16: This simp argument is unused:
+  yAllFalse
+
+Hint: Omit it from the simp argument list.
+  simp [yA̵l̵l̵F̵a̵l̵s̵e̵,̵ ̵y̵Part, s0', y0]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [963/1077] Replayed DecisionQuotient.Hardness.CoveringLowerBound
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:50:28: This simp argument is unused:
+  hi
+
+Hint: Omit it from the simp argument list.
+  simp [agreementSet, h',̵ ̵h̵i̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:82:44: This simp argument is unused:
+  Nat.mul_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.two_mul,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵c̵o̵m̵m̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:115:44: This simp argument is unused:
+  Nat.mul_left_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:115:63: This simp argument is unused:
+  Nat.mul_assoc
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:315:31: This simp argument is unused:
+  Nat.add_left_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.add_assoc, N̵a̵t̵.̵a̵d̵d̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.add_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:320:44: This simp argument is unused:
+  Nat.mul_left_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:320:63: This simp argument is unused:
+  Nat.mul_assoc
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [1175/1323] Replayed DecisionQuotient.AlgorithmComplexity
+warning: DecisionQuotient/AlgorithmComplexity.lean:100:17: This simp argument is unused:
+  Prod.fst
+
+Hint: Omit it from the simp argument list.
+  simp only [P̵r̵o̵d̵.̵f̵s̵t̵,̵ ̵heq']
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/AlgorithmComplexity.lean:125:46: This simp argument is unused:
+  Prod.fst
+
+Hint: Omit it from the simp argument list.
+  simp only [Counted.pure, Counted.steps,̵ ̵P̵r̵o̵d̵.̵f̵s̵t̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [1230/1323] Replayed DecisionQuotient.QueryComplexity
+warning: DecisionQuotient/QueryComplexity.lean:119:33: This simp argument is unused:
+  Bool.true_eq_false
+
+Hint: Omit it from the simp argument list.
+  simp only [hmatch, ↓reduceIte, B̵o̵o̵l̵.̵t̵r̵u̵e̵_̵e̵q̵_̵f̵a̵l̵s̵e̵,̵ ̵Bool.false_eq_true]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/QueryComplexity.lean:119:53: This simp argument is unused:
+  Bool.false_eq_true
+
+Hint: Omit it from the simp argument list.
+  simp only [hmatch, ↓reduceIte, Bool.true_eq_false,̵ ̵B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/QueryComplexity.lean:141:36: This simp argument is unused:
+  Bool.true_eq_false
+
+Hint: Omit it from the simp argument list.
+  simp only [hnotmatch, ↓reduceIte, B̵o̵o̵l̵.̵t̵r̵u̵e̵_̵e̵q̵_̵f̵a̵l̵s̵e̵,̵ ̵Bool.false_eq_true]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/QueryComplexity.lean:141:56: This simp argument is unused:
+  Bool.false_eq_true
+
+Hint: Omit it from the simp argument list.
+  simp only [hnotmatch, ↓reduceIte, Bool.true_eq_false,̵ ̵B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/QueryComplexity.lean:363:39: Try `simp at hmem` instead of `simpa using hmem`
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:506:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:529:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:590:54: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:754:39: Try `simp at hmem` instead of `simpa using hmem`
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:794:4: Try `simp at hAt` instead of `simpa using hAt`
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:799:39: Try `simp at hmem` instead of `simpa using hmem`
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/QueryComplexity.lean:822:33: This simp argument is unused:
+  ha
+
+Hint: Omit it from the simp argument list.
+  simp [hq,̵ ̵h̵a̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3103/3246] Replayed DecisionQuotient.PolynomialReduction
+warning: DecisionQuotient/PolynomialReduction.lean:226:36: This simp argument is unused:
+  Nat.mul_comm
+
+Hint: Omit it from the simp argument list.
+  simp [hK_def,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵c̵o̵m̵m̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/PolynomialReduction.lean:274:56: This simp argument is unused:
+  Nat.mul_left_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/PolynomialReduction.lean:274:75: This simp argument is unused:
+  Nat.mul_assoc
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/PolynomialReduction.lean:310:92: This simp argument is unused:
+  Nat.mul_add
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.mul_assoc, Nat.pow_add, Nat.mul_comm, Nat.mul_left_comm, Nat.mul_assoc,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵d̵d̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/PolynomialReduction.lean:351:46: This simp argument is unused:
+  ge_iff_le
+
+Hint: Omit it from the simp argument list.
+  simp only [g̵e̵_̵i̵f̵f̵_̵l̵e̵,̵ ̵pow_one]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3136/3246] Replayed DecisionQuotient.HardnessDistribution
+warning: DecisionQuotient/HardnessDistribution.lean:237:12: This simp argument is unused:
+  Nat.succ_sub_one
+
+Hint: Omit it from the simp argument list.
+  simp ̵[̵N̵a̵t̵.̵s̵u̵c̵c̵_̵s̵u̵b̵_̵o̵n̵e̵]̵
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/HardnessDistribution.lean:568:10: This simp argument is unused:
+  hle
+
+Hint: Omit it from the simp argument list.
+  simp [hl̵e̵,̵ ̵h̵Eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/HardnessDistribution.lean:579:10: This simp argument is unused:
+  hle
+
+Hint: Omit it from the simp argument list.
+  simp [hl̵e̵,̵ ̵h̵Eq]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3137/3246] Replayed DecisionQuotient.Hardness.Sigma2PHardness
+warning: DecisionQuotient/Hardness/Sigma2PHardness.lean:118:56: This simp argument is unused:
+  hbit
+
+Hint: Omit it from the simp argument list.
+  simp ̵[̵h̵b̵i̵t̵]̵
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/Sigma2PHardness.lean:174:29: This simp argument is unused:
+  hx
+
+Hint: Omit it from the simp argument list.
+  simp ̵[̵h̵x̵]̵
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3138/3246] Replayed DecisionQuotient.IntegrityCompetence
 warning: DecisionQuotient/IntegrityCompetence.lean:326:4: Try `simp at hPos` instead of `simpa using hPos`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
@@ -129,9 +392,236 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/IntegrityCompetence.lean:844:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3111/3252] Replayed DecisionQuotient.PhysicalBudgetCrossover
+⚠ [3139/3246] Replayed DecisionQuotient.PhysicalBudgetCrossover
 warning: DecisionQuotient/PhysicalBudgetCrossover.lean:97:2: Try this: intro m hm hCrossM
-⚠ [3114/3252] Replayed DecisionQuotient.Hardness.CountingComplexity
+⚠ [3143/3246] Replayed DecisionQuotient.Tractability.StructuralRank
+warning: DecisionQuotient/Tractability/StructuralRank.lean:161:40: unused variable `hn`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Tractability/StructuralRank.lean:172:40: This simp argument is unused:
+  Finset.card_fin
+
+Hint: Omit it from the simp argument list.
+  simp [DecisionProblem.srank, hfilter,̵ ̵F̵i̵n̵s̵e̵t̵.̵c̵a̵r̵d̵_̵f̵i̵n̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Tractability/StructuralRank.lean:223:49: unused variable `hn`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3145/3246] Replayed DecisionQuotient.ThermodynamicLift
+warning: DecisionQuotient/ThermodynamicLift.lean:79:5: unused variable `hkB`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/ThermodynamicLift.lean:79:20: unused variable `hT`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/ThermodynamicLift.lean:96:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/ThermodynamicLift.lean:135:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3148/3246] Replayed DecisionQuotient.Physics.IntegrityEquilibrium
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1067:52: unused variable `hReceived`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1168:5: unused variable `hPaid`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1357:23: unused variable `s`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1381:68: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1385:54: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1389:61: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1393:49: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1397:63: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1401:53: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1418:5: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1436:66: unused variable `regime`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3150/3246] Replayed DecisionQuotient.BayesFromDQ
+warning: DecisionQuotient/BayesFromDQ.lean:208:8: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3151/3246] Replayed DecisionQuotient.ClaimClosure
+warning: DecisionQuotient/ClaimClosure.lean:386:23: This simp argument is unused:
+  TwoStepObjective.Opt
+
+Hint: Omit it from the simp argument list.
+  simp [TwoStepObjective.O̵p̵t̵,̵ ̵T̵w̵o̵S̵t̵e̵p̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵score, horizonTwoWitness, s0_bridge, i0_bridge]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:390:10: This simp argument is unused:
+  TwoStepObjective.Opt
+
+Hint: Omit it from the simp argument list.
+  simp [TwoStepObjective.O̵p̵t̵,̵ ̵T̵w̵o̵S̵t̵e̵p̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵score, horizonTwoWitness, s1_bridge, i0_bridge] at h
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:438:25: This simp argument is unused:
+  StochasticCriterionObjective.OptChance
+
+Hint: Omit it from the simp argument list.
+  simp [̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵C̵r̵i̵t̵e̵r̵i̵o̵n̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵C̵h̵a̵n̵c̵e̵,̵ ̵s̵t̵o̵c̵h̵a̵s̵t̵i̵c̵W̵i̵t̵n̵e̵s̵s̵,̵[̲s̲t̲o̲c̲h̲a̲s̲t̲i̲c̲W̲i̲t̲n̲e̲s̲s̲,̲ s0_bridge, i0_bridge]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:443:12: This simp argument is unused:
+  StochasticCriterionObjective.OptChance
+
+Hint: Omit it from the simp argument list.
+  simp [̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵C̵r̵i̵t̵e̵r̵i̵o̵n̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵C̵h̵a̵n̵c̵e̵,̵ ̵s̵t̵o̵c̵h̵a̵s̵t̵i̵c̵W̵i̵t̵n̵e̵s̵s̵,̵[̲s̲t̲o̲c̲h̲a̲s̲t̲i̲c̲W̲i̲t̲n̲e̲s̲s̲,̲ s1_bridge, i0_bridge] at h
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:490:25: This simp argument is unused:
+  TransitionCoupledObjective.Opt
+
+Hint: Omit it from the simp argument list.
+  simp [̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵,̵ ̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵s̵c̵o̵r̵e̵,̵[̲T̲r̲a̲n̲s̲i̲t̲i̲o̲n̲C̲o̲u̲p̲l̲e̲d̲O̲b̲j̲e̲c̲t̲i̲v̲e̲.̲s̲c̲o̲r̲e̲,̲ transitionWitness, s0_bridge, i0_bridge]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:496:12: This simp argument is unused:
+  TransitionCoupledObjective.Opt
+
+Hint: Omit it from the simp argument list.
+  simp [̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵,̵ ̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵s̵c̵o̵r̵e̵,̵[̲T̲r̲a̲n̲s̲i̲t̲i̲o̲n̲C̲o̲u̲p̲l̲e̲d̲O̲b̲j̲e̲c̲t̲i̲v̲e̲.̲s̲c̲o̲r̲e̲,̲ transitionWitness, s1_bridge, i0_bridge] at h
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/ClaimClosure.lean:1844:4: Try this: intro hI s s' hs
+warning: DecisionQuotient/ClaimClosure.lean:1848:4: Try this: intro hI s s' hs
+⚠ [3153/3246] Replayed DecisionQuotient.AbstractionCollapse
+warning: DecisionQuotient/AbstractionCollapse.lean:43:4: Try this: intro hErase hPres
+⚠ [3155/3246] Replayed DecisionQuotient.Physics.BoundedAcquisition
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:250:20: unused variable `R`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:250:57: unused variable `hStates`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:353:5: unused variable `hJ`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:364:5: unused variable `hI`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:394:5: unused variable `hJ`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:407:5: unused variable `hI`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/BoundedAcquisition.lean:491:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3157/3246] Replayed DecisionQuotient.Physics.TUR
+warning: DecisionQuotient/Physics/TUR.lean:195:5: unused variable `hAsym`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3159/3246] Replayed DecisionQuotient.Physics.WolpertDecomposition
+warning: DecisionQuotient/Physics/WolpertDecomposition.lean:386:45: This simp argument is unused:
+  Nat.add_assoc
+
+Hint: Omit it from the simp argument list.
+  simp [energyLowerBound, Nat.add_mul,̵ ̵N̵a̵t̵.̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3162/3246] Replayed DecisionQuotient.UniverseObjective
+warning: DecisionQuotient/UniverseObjective.lean:145:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3163/3246] Replayed DecisionQuotient.Hardness.ConfigReduction
+warning: DecisionQuotient/Hardness/ConfigReduction.lean:120:8: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/Hardness/ConfigReduction.lean:100:4: Try this: intro hnone hAny
+warning: DecisionQuotient/Hardness/ConfigReduction.lean:142:4: Try this: intro hsuff s s' hagree b
+warning: DecisionQuotient/Hardness/ConfigReduction.lean:159:4: Try this: intro hpres s s' hagree
+⚠ [3168/3246] Replayed DecisionQuotient.Physics.TemporalCountingGap
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:177:37: unused variable `h_lt`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:389:5: unused variable `h_noise_pos`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:436:5: unused variable `T`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:448:16: unused variable `T`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:465:6: unused variable `T`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TemporalCountingGap.lean:503:7: unused variable `gst`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3169/3246] Replayed DecisionQuotient.StochasticSequential.Basic
+warning: DecisionQuotient/StochasticSequential/Basic.lean:45:25: This simp argument is unused:
+  Finset.sum_ite_eq
+
+Hint: Omit it from the simp argument list.
+  simp [̵F̵i̵n̵s̵e̵t̵.̵s̵u̵m̵_̵i̵t̵e̵_̵e̵q̵,̵ ̵F̵i̵n̵s̵e̵t̵.̵m̵e̵m̵_̵u̵n̵i̵v̵]̵[̲F̲i̲n̲s̲e̲t̲.̲m̲e̲m̲_̲u̲n̲i̲v̲]̲
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:277:48: This simp argument is unused:
+  mul_assoc
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.cast_pow, pow_succ, m̵u̵l̵_̵a̵s̵s̵o̵c̵,̵ ̵mul_comm, mul_left_comm]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:277:69: This simp argument is unused:
+  mul_left_comm
+
+Hint: Omit it from the simp argument list.
+  simp [Nat.cast_pow, pow_succ, mul_assoc, mul_comm,̵ ̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:299:36: This simp argument is unused:
+  Fintype.card_fun
+
+Hint: Omit it from the simp argument list.
+  simp [Assignment, Fintype.card_f̵u̵n̵,̵ ̵F̵i̵n̵t̵y̵p̵e̵.̵c̵a̵r̵d̵_̵bool, Fintype.card_fin]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:378:25: This simp argument is unused:
+  Nat.div_self (by omega : 0 < 1)
+
+Hint: Omit it from the simp argument list.
+  s̵i̵m̵p̵ ̵o̵n̵l̵y̵ ̵[̵p̵o̵w̵_̵z̵e̵r̵o̵,̵ ̵N̵a̵t̵.̵d̵i̵v̵_̵s̵e̵l̵f̵ ̵(̵b̵y̵ ̵o̵m̵e̵g̵a̵ ̵:̵ ̵0̵ ̵<̵ ̵1̵)̵]̵ ̵a̵t̵ ̵h̵s̵t̵r̵i̵c̵t̵ ̵⊢̵s̲i̲m̲p̲ ̲o̲n̲l̲y̲ ̲[̲p̲o̲w̲_̲z̲e̲r̲o̲]̲ ̲a̲t̲ ̲h̲s̲t̲r̲i̲c̲t̲
+  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲⊢̲
+  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲-̲-̲ ̲h̲s̲t̲r̲i̲c̲t̲:̲ ̲s̲a̲t̲C̲o̲u̲n̲t̲ ̲>̲ ̲0̲,̲ ̲s̲o̲ ̲s̲a̲t̲C̲o̲u̲n̲t̲ ̲≥̲ ̲1̲
+  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:559:51: unused variable `hmaj`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:593:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:735:5: unused variable `h`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/StochasticSequential/Basic.lean:760:34: unused variable `r`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3171/3246] Replayed DecisionQuotient.Hardness.CountingComplexity
 warning: DecisionQuotient/Hardness/CountingComplexity.lean:96:67: This simp argument is unused:
   Fintype.card_fun
 
@@ -213,440 +703,229 @@ Hint: Omit it from the simp argument list.
   simp [Nat.add_comm, Nat.add_left_comm,̵ ̵N̵a̵t̵.̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3115/3252] Replayed DecisionQuotient.Reduction
-warning: DecisionQuotient/Reduction.lean:140:4: Try this: intro _ a'
-warning: DecisionQuotient/Reduction.lean:184:14: Try `simp at hi` instead of `simpa using hi`
+⚠ [3173/3246] Replayed DecisionQuotient.InteriorVerification
+warning: DecisionQuotient/InteriorVerification.lean:104:0: automatically included section variable(s) unused in theorem `DecisionQuotient.InteriorVerification.interior_dominance_implies_universal_non_rejection`:
+  [CoordinateSpace S n]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [CoordinateSpace S n] in theorem ...
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3117/3252] Replayed DecisionQuotient.Hardness.QBF
-warning: DecisionQuotient/Hardness/QBF.lean:132:39: This simp argument is unused:
-  Fin.ext_iff
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/InteriorVerification.lean:132:0: automatically included section variable(s) unused in theorem `DecisionQuotient.InteriorVerification.interior_verification_tractable_certificate`:
+  [CoordinateSpace S n]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [CoordinateSpace S n] in theorem ...
 
-Hint: Omit it from the simp argument list.
-  simp [restrictY, y', Fin.castLT,̵ ̵F̵i̵n̵.̵e̵x̵t̵_̵i̵f̵f̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3118/3252] Replayed DecisionQuotient.HardnessDistribution
-warning: DecisionQuotient/HardnessDistribution.lean:237:12: This simp argument is unused:
-  Nat.succ_sub_one
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵N̵a̵t̵.̵s̵u̵c̵c̵_̵s̵u̵b̵_̵o̵n̵e̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/HardnessDistribution.lean:568:10: This simp argument is unused:
-  hle
-
-Hint: Omit it from the simp argument list.
-  simp [hl̵e̵,̵ ̵h̵Eq]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/HardnessDistribution.lean:579:10: This simp argument is unused:
-  hle
-
-Hint: Omit it from the simp argument list.
-  simp [hl̵e̵,̵ ̵h̵Eq]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3119/3252] Replayed DecisionQuotient.Hardness.Sigma2PHardness
-warning: DecisionQuotient/Hardness/Sigma2PHardness.lean:118:56: This simp argument is unused:
-  hbit
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵h̵b̵i̵t̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/Sigma2PHardness.lean:174:29: This simp argument is unused:
-  hx
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵h̵x̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3120/3252] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.AnchorSufficiency
-warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:176:43: This simp argument is unused:
-  hφ
-
-Hint: Omit it from the simp argument list.
-  simp [qbfProblem, qbfUtility, hφ̵,̵ ̵h̵y]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:186:4: Try this: intro _ a'
-warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:293:16: This simp argument is unused:
-  yAllFalse
-
-Hint: Omit it from the simp argument list.
-  simp [yA̵l̵l̵F̵a̵l̵s̵e̵,̵ ̵y̵Part, s0', y0]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3121/3252] Replayed DecisionQuotient.AlgorithmComplexity
-warning: DecisionQuotient/AlgorithmComplexity.lean:119:18: This simp argument is unused:
-  countedAnyList
-
-Hint: Omit it from the simp argument list.
-  simp [c̵o̵u̵n̵t̵e̵d̵A̵n̵y̵L̵i̵s̵t̵,̵ ̵Counted.bind, Counted.tick, Counted.steps, hx, hrec] at ih ⊢
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:119:34: This simp argument is unused:
-  Counted.bind
-
-Hint: Omit it from the simp argument list.
-  simp [countedAnyList, C̵o̵u̵n̵t̵e̵d̵.̵b̵i̵n̵d̵,̵ ̵Counted.tick, Counted.steps, hx, hrec] at ih ⊢
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:119:48: This simp argument is unused:
-  Counted.tick
-
-Hint: Omit it from the simp argument list.
-  simp [countedAnyList, Counted.bind, Counted.t̵i̵c̵k̵,̵ ̵C̵o̵u̵n̵t̵e̵d̵.̵steps, hx, hrec] at ih ⊢
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:119:77: This simp argument is unused:
-  hx
-
-Hint: Omit it from the simp argument list.
-  simp [countedAnyList, Counted.bind, Counted.tick, Counted.steps, hx̵,̵ ̵h̵rec] at ih ⊢
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:144:17: This simp argument is unused:
-  Prod.fst
-
-Hint: Omit it from the simp argument list.
-  simp only [P̵r̵o̵d̵.̵f̵s̵t̵,̵ ̵heq']
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:169:46: This simp argument is unused:
-  Prod.fst
-
-Hint: Omit it from the simp argument list.
-  simp only [Counted.pure, Counted.steps,̵ ̵P̵r̵o̵d̵.̵f̵s̵t̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:271:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:305:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/AlgorithmComplexity.lean:376:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3122/3252] Replayed DecisionQuotient.Hardness.MinSufficientApproximation
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:92:4: Try this: intro _ a'
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:104:4: Try `simp at hi` instead of `simpa using hi`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:111:4: Try this: intro _ a'
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:126:34: This simp argument is unused:
-  hs
-
-Hint: Omit it from the simp argument list.
-  simp [reductionUtility, hs,̵ ̵h̵s̵at]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:156:8: Try this: intro _ a'
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:172:4: Try `simp at hmemOpen` instead of `simpa using hmemOpen`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:206:8: Try `simp at hmemOpen` instead of `simpa using hmemOpen`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:281:7: unused variable `n`
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3179/3246] Replayed DecisionQuotient.StochasticSequential.Tractability
+warning: DecisionQuotient/StochasticSequential/Tractability.lean:77:5: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3123/3252] Replayed DecisionQuotient.Hardness.SetCoverReduction
-warning: DecisionQuotient/Hardness/SetCoverReduction.lean:68:4: Try this: intro _ a'
-warning: DecisionQuotient/Hardness/SetCoverReduction.lean:84:19: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3124/3252] Replayed DecisionQuotient.Hardness.ApproximationHardness
-warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:46: This simp argument is unused:
-  add_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_add, Nat.cast_one, add_c̵o̵m̵m̵,̵ ̵a̵d̵d̵_̵left_comm, add_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:56: This simp argument is unused:
-  add_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_add, Nat.cast_one, add_comm, a̵d̵d̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵add_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:71: This simp argument is unused:
-  add_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_add, Nat.cast_one, add_comm, add_left_comm,̵ ̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3137/3252] Replayed DecisionQuotient.Tractability.StructuralRank
-warning: DecisionQuotient/Tractability/StructuralRank.lean:161:40: unused variable `hn`
+warning: DecisionQuotient/StochasticSequential/Tractability.lean:83:5: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Tractability/StructuralRank.lean:172:40: This simp argument is unused:
-  Finset.card_fin
-
-Hint: Omit it from the simp argument list.
-  simp [DecisionProblem.srank, hfilter,̵ ̵F̵i̵n̵s̵e̵t̵.̵c̵a̵r̵d̵_̵f̵i̵n̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Tractability/StructuralRank.lean:223:49: unused variable `hn`
+warning: DecisionQuotient/StochasticSequential/Tractability.lean:88:35: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3139/3252] Replayed DecisionQuotient.QueryComplexity
-warning: DecisionQuotient/QueryComplexity.lean:119:33: This simp argument is unused:
-  Bool.true_eq_false
-
-Hint: Omit it from the simp argument list.
-  simp only [hmatch, ↓reduceIte, B̵o̵o̵l̵.̵t̵r̵u̵e̵_̵e̵q̵_̵f̵a̵l̵s̵e̵,̵ ̵Bool.false_eq_true]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/QueryComplexity.lean:119:53: This simp argument is unused:
-  Bool.false_eq_true
-
-Hint: Omit it from the simp argument list.
-  simp only [hmatch, ↓reduceIte, Bool.true_eq_false,̵ ̵B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/QueryComplexity.lean:141:36: This simp argument is unused:
-  Bool.true_eq_false
-
-Hint: Omit it from the simp argument list.
-  simp only [hnotmatch, ↓reduceIte, B̵o̵o̵l̵.̵t̵r̵u̵e̵_̵e̵q̵_̵f̵a̵l̵s̵e̵,̵ ̵Bool.false_eq_true]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/QueryComplexity.lean:141:56: This simp argument is unused:
-  Bool.false_eq_true
-
-Hint: Omit it from the simp argument list.
-  simp only [hnotmatch, ↓reduceIte, Bool.true_eq_false,̵ ̵B̵o̵o̵l̵.̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/QueryComplexity.lean:363:39: Try `simp at hmem` instead of `simpa using hmem`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:506:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:529:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:590:54: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:754:39: Try `simp at hmem` instead of `simpa using hmem`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:794:4: Try `simp at hAt` instead of `simpa using hAt`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:799:39: Try `simp at hmem` instead of `simpa using hmem`
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/QueryComplexity.lean:822:33: This simp argument is unused:
-  ha
-
-Hint: Omit it from the simp argument list.
-  simp [hq,̵ ̵h̵a̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3145/3252] Replayed DecisionQuotient.PolynomialReduction
-warning: DecisionQuotient/PolynomialReduction.lean:226:36: This simp argument is unused:
-  Nat.mul_comm
-
-Hint: Omit it from the simp argument list.
-  simp [hK_def,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵c̵o̵m̵m̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/PolynomialReduction.lean:274:56: This simp argument is unused:
-  Nat.mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/PolynomialReduction.lean:274:75: This simp argument is unused:
-  Nat.mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/PolynomialReduction.lean:310:92: This simp argument is unused:
-  Nat.mul_add
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.mul_assoc, Nat.pow_add, Nat.mul_comm, Nat.mul_left_comm, Nat.mul_assoc,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵d̵d̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/PolynomialReduction.lean:351:46: This simp argument is unused:
-  ge_iff_le
-
-Hint: Omit it from the simp argument list.
-  simp only [g̵e̵_̵i̵f̵f̵_̵l̵e̵,̵ ̵pow_one]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3146/3252] Replayed DecisionQuotient.StochasticSequential.Basic
-warning: DecisionQuotient/StochasticSequential/Basic.lean:45:25: This simp argument is unused:
-  Finset.sum_ite_eq
-
-Hint: Omit it from the simp argument list.
-  simp [̵F̵i̵n̵s̵e̵t̵.̵s̵u̵m̵_̵i̵t̵e̵_̵e̵q̵,̵ ̵F̵i̵n̵s̵e̵t̵.̵m̵e̵m̵_̵u̵n̵i̵v̵]̵[̲F̲i̲n̲s̲e̲t̲.̲m̲e̲m̲_̲u̲n̲i̲v̲]̲
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:302:4: Try this: intro ha a'
-warning: DecisionQuotient/StochasticSequential/Basic.lean:515:48: This simp argument is unused:
-  mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_pow, pow_succ, m̵u̵l̵_̵a̵s̵s̵o̵c̵,̵ ̵mul_comm, mul_left_comm]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:515:69: This simp argument is unused:
-  mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.cast_pow, pow_succ, mul_assoc, mul_comm,̵ ̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:537:36: This simp argument is unused:
-  Fintype.card_fun
-
-Hint: Omit it from the simp argument list.
-  simp [Assignment, Fintype.card_f̵u̵n̵,̵ ̵F̵i̵n̵t̵y̵p̵e̵.̵c̵a̵r̵d̵_̵bool, Fintype.card_fin]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:616:25: This simp argument is unused:
-  Nat.div_self (by omega : 0 < 1)
-
-Hint: Omit it from the simp argument list.
-  s̵i̵m̵p̵ ̵o̵n̵l̵y̵ ̵[̵p̵o̵w̵_̵z̵e̵r̵o̵,̵ ̵N̵a̵t̵.̵d̵i̵v̵_̵s̵e̵l̵f̵ ̵(̵b̵y̵ ̵o̵m̵e̵g̵a̵ ̵:̵ ̵0̵ ̵<̵ ̵1̵)̵]̵ ̵a̵t̵ ̵h̵s̵t̵r̵i̵c̵t̵ ̵⊢̵s̲i̲m̲p̲ ̲o̲n̲l̲y̲ ̲[̲p̲o̲w̲_̲z̲e̲r̲o̲]̲ ̲a̲t̲ ̲h̲s̲t̲r̲i̲c̲t̲
-  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲⊢̲
-  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲-̲-̲ ̲h̲s̲t̲r̲i̲c̲t̲:̲ ̲s̲a̲t̲C̲o̲u̲n̲t̲ ̲>̲ ̲0̲,̲ ̲s̲o̲ ̲s̲a̲t̲C̲o̲u̲n̲t̲ ̲≥̲ ̲1̲
-  ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲ ̲
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:797:51: unused variable `hmaj`
+warning: DecisionQuotient/StochasticSequential/Tractability.lean:94:5: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:831:2: try 'simp' instead of 'simpa'
+⚠ [3182/3246] Replayed DecisionQuotient.DecisionGeometry
+warning: DecisionQuotient/DecisionGeometry.lean:70:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:1046:5: unused variable `h`
+⚠ [3185/3246] Replayed DecisionQuotient.StochasticSequential.ThermodynamicLift
+warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:79:10: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:81:10: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3187/3246] Replayed DecisionQuotient.StochasticSequential.CrossRegime
+warning: DecisionQuotient/StochasticSequential/CrossRegime.lean:64:5: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/StochasticSequential/Basic.lean:1071:34: unused variable `r`
+warning: DecisionQuotient/StochasticSequential/CrossRegime.lean:68:42: unused variable `struct`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3147/3252] Replayed DecisionQuotient.StochasticSequential.Computation
-warning: DecisionQuotient/StochasticSequential/Computation.lean:60:18: This simp argument is unused:
-  countedAnyList
+warning: DecisionQuotient/StochasticSequential/CrossRegime.lean:73:5: unused variable `struct`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+ℹ [3189/3246] Replayed DecisionQuotient.StochasticSequential.ClaimClosure
+info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:55:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_verdict_substrate_independent (c : MatrixCell)
+  (τ₁ τ₂ : SubstrateType) : evaluateCell τ₁ c = evaluateCell τ₂ c
+info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:56:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_hierarchy :
+  baseComplexity 0 = ComplexityClass.coNP ∧
+    baseComplexity 1 = ComplexityClass.PP ∧ baseComplexity 2 = ComplexityClass.PSPACE
+info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:57:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_tractable_subcases_to_P (s : TractableSubcase) :
+  subcaseComplexity s = ComplexityClass.P
+info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:58:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_six_subcases :
+  [TractableSubcase.boundedActions, TractableSubcase.separableUtility, TractableSubcase.lowTensorRank,
+        TractableSubcase.treeStructure, TractableSubcase.boundedTreewidth, TractableSubcase.coordinateSymmetry].length =
+    6
+⚠ [3192/3246] Replayed DecisionQuotient.StochasticSequential.TemporalLearning
+warning: DecisionQuotient/StochasticSequential/TemporalLearning.lean:56:5: unused variable `hLike_other`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+ℹ [3193/3246] Replayed DecisionQuotient.StochasticSequential.Summary
+info: DecisionQuotient/StochasticSequential/Summary.lean:22:0: DecisionQuotient.StochasticSequential.static_simpler_than_stochastic :
+  baseComplexity 0 = ComplexityClass.coNP ∧ baseComplexity 1 = ComplexityClass.PP
+info: DecisionQuotient/StochasticSequential/Summary.lean:23:0: DecisionQuotient.StochasticSequential.stochastic_simpler_than_sequential :
+  baseComplexity 1 = ComplexityClass.PP ∧ baseComplexity 2 = ComplexityClass.PSPACE
+info: DecisionQuotient/StochasticSequential/Summary.lean:26:0: DecisionQuotient.StochasticSequential.substrate_independence_verdict (c : MatrixCell) (τ₁ τ₂ : SubstrateType) :
+  evaluateCell τ₁ c = evaluateCell τ₂ c
+info: DecisionQuotient/StochasticSequential/Summary.lean:29:0: DecisionQuotient.StochasticSequential.product_distribution_tractable.{u_1} {S : Type u_1} [Fintype S] {n : ℕ}
+  (struct : ProductDistribution S n) : subcaseComplexity productToSubcase = ComplexityClass.P
+info: DecisionQuotient/StochasticSequential/Summary.lean:30:0: DecisionQuotient.StochasticSequential.bounded_horizon_tractable (struct : BoundedHorizon) :
+  subcaseComplexity boundedHorizonToSubcase = ComplexityClass.P
+⚠ [3194/3246] Replayed DecisionQuotient.StochasticSequential.TemporalIntegrity
+warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:45:2: `List.Chain'` has been deprecated: Use `List.IsChain` instead
+warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:57:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
+warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:63:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
+⚠ [3195/3246] Replayed DecisionQuotient.StochasticSequential.PolynomialReduction
+warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:78:23: unused variable `s`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:92:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:160:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:218:4: Try this: intro hq s s' _
+ℹ [3200/3246] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.Summary
+info: DecisionQuotient/Hardness/Sigma2PExhaustive/Summary.lean:75:0: @DecisionProblem.sufficient_contains_relevant : ∀ {A : Type u_1} {S : Type u_2} {n : ℕ} [inst : CoordinateSpace S n]
+  (dp : DecisionProblem A S) (I : Finset (Fin n)), dp.isSufficient I → ∀ (i : Fin n), dp.isRelevant i → i ∈ I
+⚠ [3203/3246] Replayed DecisionQuotient.Physics.DecisionTime
+warning: DecisionQuotient/Physics/DecisionTime.lean:95:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3212/3246] Replayed DecisionQuotient.Physics.WassersteinIntegrity
+warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:105:41: unused variable `hn`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:146:16: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:149:16: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:146:6: 'all_goals omega' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:149:6: 'all_goals omega' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+⚠ [3225/3246] Replayed DecisionQuotient.Statistics.FisherInformation
+warning: DecisionQuotient/Statistics/FisherInformation.lean:221:35: This simp argument is unused:
+  one_ne_zero
 
 Hint: Omit it from the simp argument list.
-  simp [c̵o̵u̵n̵t̵e̵d̵A̵n̵y̵L̵i̵s̵t̵,̵ ̵Counted.bind, Counted.tick, Counted.steps, hx, hrec] at ih ⊢
+  simp only [fisherScore, ne_eq, o̵n̵e̵_̵n̵e̵_̵z̵e̵r̵o̵,̵ ̵not_false_eq_true, iff_self]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:60:34: This simp argument is unused:
-  Counted.bind
+warning: DecisionQuotient/Statistics/FisherInformation.lean:221:48: This simp argument is unused:
+  not_false_eq_true
 
 Hint: Omit it from the simp argument list.
-  simp [countedAnyList, C̵o̵u̵n̵t̵e̵d̵.̵b̵i̵n̵d̵,̵ ̵Counted.tick, Counted.steps, hx, hrec] at ih ⊢
+  simp only [fisherScore, ne_eq, one_ne_zero, n̵o̵t̵_̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵,̵ ̵iff_self]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:60:48: This simp argument is unused:
-  Counted.tick
+warning: DecisionQuotient/Statistics/FisherInformation.lean:221:67: This simp argument is unused:
+  iff_self
 
 Hint: Omit it from the simp argument list.
-  simp [countedAnyList, Counted.bind, Counted.t̵i̵c̵k̵,̵ ̵C̵o̵u̵n̵t̵e̵d̵.̵steps, hx, hrec] at ih ⊢
+  simp only [fisherScore, ne_eq, one_ne_zero, not_false_eq_true,̵ ̵i̵f̵f̵_̵s̵e̵l̵f̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:60:77: This simp argument is unused:
-  hx
+⚠ [3226/3246] Replayed DecisionQuotient.Physics.TransportCost
+warning: DecisionQuotient/Physics/TransportCost.lean:51:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.srank_determines_states`:
+  [Fintype A]
+  [Fintype S]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Physics/TransportCost.lean:58:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.more_states_more_transport`:
+  [Fintype A]
+  [Fintype S]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Physics/TransportCost.lean:68:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.transport_lower_bound`:
+  [Fintype A]
+  [Fintype S]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Physics/TransportCost.lean:69:5: unused variable `hPos`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Physics/TransportCost.lean:114:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.srank_unified_complexity`:
+  [Fintype A]
+  [Fintype S]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3228/3246] Replayed DecisionQuotient.Information.RateDistortion
+warning: DecisionQuotient/Information/RateDistortion.lean:72:8: This simp argument is unused:
+  neg_nonneg
 
 Hint: Omit it from the simp argument list.
-  simp [countedAnyList, Counted.bind, Counted.tick, Counted.steps, hx̵,̵ ̵h̵rec] at ih ⊢
+  simp ̵[̵n̵e̵g̵_̵n̵o̵n̵n̵e̵g̵]̵
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:221:6: try 'simp' instead of 'simpa'
+warning: DecisionQuotient/Information/RateDistortion.lean:145:30: unused variable `d`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:267:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Information/RateDistortion.lean:145:58: unused variable `D`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:325:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Information/RateDistortion.lean:156:5: unused variable `hZero`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:391:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Information/RateDistortion.lean:157:5: unused variable `hPos`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:541:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Information/RateDistortion.lean:165:17: unused variable `h`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:586:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3229/3246] Replayed DecisionQuotient.Information.RDSrank
+warning: DecisionQuotient/Information/RDSrank.lean:88:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.rate_equals_srank`:
+  [DecidableEq (Fin n)]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq (Fin n)] in theorem ...
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:639:6: try 'simp' instead of 'simpa'
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Information/RDSrank.lean:88:27: unused variable `ds`
 
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:753:23: This simp argument is unused:
-  instSizeOfStochasticExplicitInput
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Information/RDSrank.lean:98:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.compression_below_srank_fails`:
+  [Fintype A]
+  [Fintype S]
+  [DecidableEq (Fin n)]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] [DecidableEq (Fin n)] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Information/RDSrank.lean:113:12: This simp argument is unused:
+  Finset.filter_eq_empty_iff
 
 Hint: Omit it from the simp argument list.
-  simp [SizeOf.sizeOf,̵ ̵i̵n̵s̵t̵S̵i̵z̵e̵O̵f̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵E̵x̵p̵l̵i̵c̵i̵t̵I̵n̵p̵u̵t̵]
+  simp [F̵i̵n̵s̵e̵t̵.̵f̵i̵l̵t̵e̵r̵_̵e̵q̵_̵e̵m̵p̵t̵y̵_̵i̵f̵f̵,̵ ̵hnone]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:761:23: This simp argument is unused:
-  instSizeOfStochasticExplicitInput
+warning: DecisionQuotient/Information/RDSrank.lean:149:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.rate_distortion_bridge`:
+  [Fintype A]
+  [Fintype S]
+  [DecidableEq (Fin n)]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype A] [Fintype S] [DecidableEq (Fin n)] in theorem ...
 
-Hint: Omit it from the simp argument list.
-  simp [SizeOf.sizeOf,̵ ̵i̵n̵s̵t̵S̵i̵z̵e̵O̵f̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵E̵x̵p̵l̵i̵c̵i̵t̵I̵n̵p̵u̵t̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/Computation.lean:833:23: This simp argument is unused:
-  instSizeOfSequentialExplicitInput
-
-Hint: Omit it from the simp argument list.
-  simp [SizeOf.sizeOf,̵ ̵i̵n̵s̵t̵S̵i̵z̵e̵O̵f̵S̵e̵q̵u̵e̵n̵t̵i̵a̵l̵E̵x̵p̵l̵i̵c̵i̵t̵I̵n̵p̵u̵t̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3149/3252] Replayed DecisionQuotient.ThermodynamicLift
-warning: DecisionQuotient/ThermodynamicLift.lean:79:5: unused variable `hkB`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/ThermodynamicLift.lean:79:20: unused variable `hT`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/ThermodynamicLift.lean:96:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/ThermodynamicLift.lean:135:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3152/3252] Replayed DecisionQuotient.Physics.BoundedAcquisition
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:250:20: unused variable `R`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:250:57: unused variable `hStates`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:353:5: unused variable `hJ`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:364:5: unused variable `hI`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:394:5: unused variable `hJ`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:407:5: unused variable `hI`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/BoundedAcquisition.lean:491:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3153/3252] Replayed DecisionQuotient.CrossPaperDependencies
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3232/3246] Replayed DecisionQuotient.CrossPaperDependencies
 warning: DecisionQuotient/CrossPaperDependencies.lean:43:26: This simp argument is unused:
   Fintype.card_unit
 
@@ -654,7 +933,7 @@ Hint: Omit it from the simp argument list.
   simp [Fintype.card_sum,̵ ̵F̵i̵n̵t̵y̵p̵e̵.̵c̵a̵r̵d̵_̵u̵n̵i̵t̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3154/3252] Replayed DecisionQuotient.Statistics.ProbabilisticBridge
+⚠ [3233/3246] Replayed DecisionQuotient.Statistics.ProbabilisticBridge
 warning: DecisionQuotient/Statistics/ProbabilisticBridge.lean:114:5: unused variable `d`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -705,157 +984,62 @@ Note: This linter can be disabled with `set_option linter.unusedSectionVars fals
 warning: DecisionQuotient/Statistics/ProbabilisticBridge.lean:304:13: unused variable `hw`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3167/3252] Replayed DecisionQuotient.Statistics.FisherInformation
-warning: DecisionQuotient/Statistics/FisherInformation.lean:221:35: This simp argument is unused:
-  one_ne_zero
-
-Hint: Omit it from the simp argument list.
-  simp only [fisherScore, ne_eq, o̵n̵e̵_̵n̵e̵_̵z̵e̵r̵o̵,̵ ̵not_false_eq_true, iff_self]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Statistics/FisherInformation.lean:221:48: This simp argument is unused:
-  not_false_eq_true
-
-Hint: Omit it from the simp argument list.
-  simp only [fisherScore, ne_eq, one_ne_zero, n̵o̵t̵_̵f̵a̵l̵s̵e̵_̵e̵q̵_̵t̵r̵u̵e̵,̵ ̵iff_self]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Statistics/FisherInformation.lean:221:67: This simp argument is unused:
-  iff_self
-
-Hint: Omit it from the simp argument list.
-  simp only [fisherScore, ne_eq, one_ne_zero, not_false_eq_true,̵ ̵i̵f̵f̵_̵s̵e̵l̵f̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3168/3252] Replayed DecisionQuotient.Hardness.CoveringLowerBound
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:50:28: This simp argument is unused:
-  hi
-
-Hint: Omit it from the simp argument list.
-  simp [agreementSet, h',̵ ̵h̵i̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:82:44: This simp argument is unused:
-  Nat.mul_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.two_mul,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵c̵o̵m̵m̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:115:44: This simp argument is unused:
-  Nat.mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:115:63: This simp argument is unused:
-  Nat.mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:315:31: This simp argument is unused:
-  Nat.add_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.add_assoc, N̵a̵t̵.̵a̵d̵d̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.add_comm]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:320:44: This simp argument is unused:
-  Nat.mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:320:63: This simp argument is unused:
-  Nat.mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3170/3252] Replayed DecisionQuotient.UniverseObjective
-warning: DecisionQuotient/UniverseObjective.lean:145:4: try 'simp' instead of 'simpa'
+⚠ [3234/3246] Built DecisionQuotient.StochasticSequential.SetValued (4.1s)
+warning: DecisionQuotient/StochasticSequential/SetValued.lean:46:4: Try this: intro ha a'
+warning: DecisionQuotient/StochasticSequential/SetValued.lean:56:4: Try this: intro ha a'
+⚠ [3235/3246] Built DecisionQuotient.Hardness.SetCoverReduction (4.7s)
+warning: DecisionQuotient/Hardness/SetCoverReduction.lean:68:4: Try this: intro _ a'
+warning: DecisionQuotient/Hardness/SetCoverReduction.lean:84:19: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3171/3252] Replayed DecisionQuotient.Hardness.ConfigReduction
-warning: DecisionQuotient/Hardness/ConfigReduction.lean:120:8: try 'simp' instead of 'simpa'
+⚠ [3236/3246] Built DecisionQuotient.Hardness.MinSufficientApproximation (5.1s)
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:92:4: Try this: intro _ a'
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:104:4: Try `simp at hi` instead of `simpa using hi`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/Hardness/ConfigReduction.lean:100:4: Try this: intro hnone hAny
-warning: DecisionQuotient/Hardness/ConfigReduction.lean:142:4: Try this: intro hsuff s s' hagree b
-warning: DecisionQuotient/Hardness/ConfigReduction.lean:159:4: Try this: intro hpres s s' hagree
-⚠ [3173/3252] Replayed DecisionQuotient.Physics.DecisionTime
-warning: DecisionQuotient/Physics/DecisionTime.lean:95:2: try 'simp' instead of 'simpa'
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:111:4: Try this: intro _ a'
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:126:34: This simp argument is unused:
+  hs
+
+Hint: Omit it from the simp argument list.
+  simp [reductionUtility, hs,̵ ̵h̵s̵at]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:156:8: Try this: intro _ a'
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:172:4: Try `simp at hmemOpen` instead of `simpa using hmemOpen`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3175/3252] Replayed DecisionQuotient.Physics.MeasureNecessity
-warning: DecisionQuotient/Physics/MeasureNecessity.lean:99:2: try 'simp' instead of 'simpa'
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:206:8: Try `simp at hmemOpen` instead of `simpa using hmemOpen`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/Physics/MeasureNecessity.lean:109:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3176/3252] Replayed DecisionQuotient.Physics.IntegrityEquilibrium
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1067:52: unused variable `hReceived`
+warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:281:7: unused variable `n`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1168:5: unused variable `hPaid`
+✔ [3237/3246] Built DecisionQuotient.InflationEntropyBridge (5.2s)
+✔ [3238/3246] Built DecisionQuotient.StochasticSequential (3.6s)
+⚠ [3239/3246] Built DecisionQuotient.Hardness.ApproximationHardness (4.2s)
+warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:46: This simp argument is unused:
+  add_comm
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1357:23: unused variable `s`
+Hint: Omit it from the simp argument list.
+  simp [Nat.cast_add, Nat.cast_one, add_c̵o̵m̵m̵,̵ ̵a̵d̵d̵_̵left_comm, add_assoc]
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1381:68: unused variable `h`
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:56: This simp argument is unused:
+  add_left_comm
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1385:54: unused variable `h`
+Hint: Omit it from the simp argument list.
+  simp [Nat.cast_add, Nat.cast_one, add_comm, a̵d̵d̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵add_assoc]
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1389:61: unused variable `h`
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:71: This simp argument is unused:
+  add_assoc
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1393:49: unused variable `h`
+Hint: Omit it from the simp argument list.
+  simp [Nat.cast_add, Nat.cast_one, add_comm, add_left_comm,̵ ̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
 
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1397:63: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1401:53: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1418:5: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1436:66: unused variable `regime`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3181/3252] Replayed DecisionQuotient.Physics.TemporalCountingGap
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:177:37: unused variable `h_lt`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:389:5: unused variable `h_noise_pos`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:436:5: unused variable `T`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:448:16: unused variable `T`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:465:6: unused variable `T`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TemporalCountingGap.lean:503:7: unused variable `gst`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-ℹ [3186/3252] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.Summary
-info: DecisionQuotient/Hardness/Sigma2PExhaustive/Summary.lean:75:0: @DecisionProblem.sufficient_contains_relevant : ∀ {A : Type u_1} {S : Type u_2} {n : ℕ} [inst : CoordinateSpace S n]
-  (dp : DecisionProblem A S) (I : Finset (Fin n)), dp.isSufficient I → ∀ (i : Fin n), dp.isRelevant i → i ∈ I
-⚠ [3187/3252] Replayed DecisionQuotient.InflationEntropyMinimality
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3240/3246] Built DecisionQuotient.InflationEntropyMinimality (4.4s)
 warning: DecisionQuotient/InflationEntropyMinimality.lean:59:6: Try `simp at hInTrue` instead of `simpa using hInTrue`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
@@ -865,652 +1049,176 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/InflationEntropyMinimality.lean:121:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3189/3252] Replayed DecisionQuotient.ClaimClosure
-warning: DecisionQuotient/ClaimClosure.lean:386:23: This simp argument is unused:
-  TwoStepObjective.Opt
-
-Hint: Omit it from the simp argument list.
-  simp [TwoStepObjective.O̵p̵t̵,̵ ̵T̵w̵o̵S̵t̵e̵p̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵score, horizonTwoWitness, s0_bridge, i0_bridge]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:390:10: This simp argument is unused:
-  TwoStepObjective.Opt
-
-Hint: Omit it from the simp argument list.
-  simp [TwoStepObjective.O̵p̵t̵,̵ ̵T̵w̵o̵S̵t̵e̵p̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵score, horizonTwoWitness, s1_bridge, i0_bridge] at h
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:438:25: This simp argument is unused:
-  StochasticCriterionObjective.OptChance
-
-Hint: Omit it from the simp argument list.
-  simp [̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵C̵r̵i̵t̵e̵r̵i̵o̵n̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵C̵h̵a̵n̵c̵e̵,̵ ̵s̵t̵o̵c̵h̵a̵s̵t̵i̵c̵W̵i̵t̵n̵e̵s̵s̵,̵[̲s̲t̲o̲c̲h̲a̲s̲t̲i̲c̲W̲i̲t̲n̲e̲s̲s̲,̲ s0_bridge, i0_bridge]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:443:12: This simp argument is unused:
-  StochasticCriterionObjective.OptChance
-
-Hint: Omit it from the simp argument list.
-  simp [̵S̵t̵o̵c̵h̵a̵s̵t̵i̵c̵C̵r̵i̵t̵e̵r̵i̵o̵n̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵C̵h̵a̵n̵c̵e̵,̵ ̵s̵t̵o̵c̵h̵a̵s̵t̵i̵c̵W̵i̵t̵n̵e̵s̵s̵,̵[̲s̲t̲o̲c̲h̲a̲s̲t̲i̲c̲W̲i̲t̲n̲e̲s̲s̲,̲ s1_bridge, i0_bridge] at h
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:490:25: This simp argument is unused:
-  TransitionCoupledObjective.Opt
-
-Hint: Omit it from the simp argument list.
-  simp [̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵,̵ ̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵s̵c̵o̵r̵e̵,̵[̲T̲r̲a̲n̲s̲i̲t̲i̲o̲n̲C̲o̲u̲p̲l̲e̲d̲O̲b̲j̲e̲c̲t̲i̲v̲e̲.̲s̲c̲o̲r̲e̲,̲ transitionWitness, s0_bridge, i0_bridge]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:496:12: This simp argument is unused:
-  TransitionCoupledObjective.Opt
-
-Hint: Omit it from the simp argument list.
-  simp [̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵O̵p̵t̵,̵ ̵T̵r̵a̵n̵s̵i̵t̵i̵o̵n̵C̵o̵u̵p̵l̵e̵d̵O̵b̵j̵e̵c̵t̵i̵v̵e̵.̵s̵c̵o̵r̵e̵,̵[̲T̲r̲a̲n̲s̲i̲t̲i̲o̲n̲C̲o̲u̲p̲l̲e̲d̲O̲b̲j̲e̲c̲t̲i̲v̲e̲.̲s̲c̲o̲r̲e̲,̲ transitionWitness, s1_bridge, i0_bridge] at h
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/ClaimClosure.lean:1844:4: Try this: intro hI s s' hs
-warning: DecisionQuotient/ClaimClosure.lean:1848:4: Try this: intro hI s s' hs
-⚠ [3191/3252] Replayed DecisionQuotient.InteriorVerification
-warning: DecisionQuotient/InteriorVerification.lean:104:0: automatically included section variable(s) unused in theorem `DecisionQuotient.InteriorVerification.interior_dominance_implies_universal_non_rejection`:
-  [CoordinateSpace S n]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [CoordinateSpace S n] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/InteriorVerification.lean:132:0: automatically included section variable(s) unused in theorem `DecisionQuotient.InteriorVerification.interior_verification_tractable_certificate`:
-  [CoordinateSpace S n]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [CoordinateSpace S n] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3192/3252] Replayed DecisionQuotient.DecisionGeometry
-warning: DecisionQuotient/DecisionGeometry.lean:70:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3206/3252] Replayed DecisionQuotient.Physics.TUR
-warning: DecisionQuotient/Physics/TUR.lean:195:5: unused variable `hAsym`
+✔ [3241/3246] Built DecisionQuotient.Economics.Approximation (3.7s)
+✔ [3242/3246] Built DecisionQuotient.Economics.ValueOfInformation (3.8s)
+⚠ [3243/3246] Built DecisionQuotient.Bridges (3.7s)
+warning: DecisionQuotient/Bridges.lean:1275:35: unused variable `hdp`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3208/3252] Replayed DecisionQuotient.Physics.WolpertDecomposition
-warning: DecisionQuotient/Physics/WolpertDecomposition.lean:386:45: This simp argument is unused:
-  Nat.add_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [energyLowerBound, Nat.add_mul,̵ ̵N̵a̵t̵.̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3209/3252] Replayed DecisionQuotient.Physics.WassersteinIntegrity
-warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:105:41: unused variable `hn`
+warning: DecisionQuotient/Bridges.lean:1276:19: unused variable `hDom`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:146:16: this tactic is never executed
-
-Note: This linter can be disabled with `set_option linter.unreachableTactic false`
-warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:149:16: this tactic is never executed
-
-Note: This linter can be disabled with `set_option linter.unreachableTactic false`
-warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:146:6: 'all_goals omega' tactic does nothing
-
-Note: This linter can be disabled with `set_option linter.unusedTactic false`
-warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:149:6: 'all_goals omega' tactic does nothing
-
-Note: This linter can be disabled with `set_option linter.unusedTactic false`
-⚠ [3210/3252] Replayed DecisionQuotient.Physics.TransportCost
-warning: DecisionQuotient/Physics/TransportCost.lean:51:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.srank_determines_states`:
-  [Fintype A]
-  [Fintype S]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/Physics/TransportCost.lean:58:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.more_states_more_transport`:
-  [Fintype A]
-  [Fintype S]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/Physics/TransportCost.lean:68:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.transport_lower_bound`:
-  [Fintype A]
-  [Fintype S]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/Physics/TransportCost.lean:69:5: unused variable `hPos`
+warning: DecisionQuotient/Bridges.lean:1433:8: unused variable `regime`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Physics/TransportCost.lean:114:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.srank_unified_complexity`:
-  [Fintype A]
-  [Fintype S]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3217/3252] Replayed DecisionQuotient.Information.RateDistortion
-warning: DecisionQuotient/Information/RateDistortion.lean:72:8: This simp argument is unused:
-  neg_nonneg
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵n̵e̵g̵_̵n̵o̵n̵n̵e̵g̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Information/RateDistortion.lean:145:30: unused variable `d`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Information/RateDistortion.lean:145:58: unused variable `D`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Information/RateDistortion.lean:156:5: unused variable `hZero`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Information/RateDistortion.lean:157:5: unused variable `hPos`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Information/RateDistortion.lean:165:17: unused variable `h`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3218/3252] Replayed DecisionQuotient.Information.RDSrank
-warning: DecisionQuotient/Information/RDSrank.lean:88:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.rate_equals_srank`:
-  [DecidableEq (Fin n)]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [DecidableEq (Fin n)] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/Information/RDSrank.lean:88:27: unused variable `ds`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Information/RDSrank.lean:98:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.compression_below_srank_fails`:
-  [Fintype A]
-  [Fintype S]
-  [DecidableEq (Fin n)]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] [DecidableEq (Fin n)] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-warning: DecisionQuotient/Information/RDSrank.lean:113:12: This simp argument is unused:
-  Finset.filter_eq_empty_iff
-
-Hint: Omit it from the simp argument list.
-  simp [F̵i̵n̵s̵e̵t̵.̵f̵i̵l̵t̵e̵r̵_̵e̵q̵_̵e̵m̵p̵t̵y̵_̵i̵f̵f̵,̵ ̵hnone]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/Information/RDSrank.lean:149:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.rate_distortion_bridge`:
-  [Fintype A]
-  [Fintype S]
-  [DecidableEq (Fin n)]
-consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
-  omit [Fintype A] [Fintype S] [DecidableEq (Fin n)] in theorem ...
-
-Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3219/3252] Replayed DecisionQuotient.StochasticSequential.OracleUpperBounds
-warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:171:4: Try this: intro h hw
-warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:175:4: Try this: intro h s
-warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:201:4: Try this: intro h hsuff
-warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:336:12: unused variable `q`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-ℹ [3226/3252] Replayed DecisionQuotient.StochasticSequential.ClaimClosure
-info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:55:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_verdict_substrate_independent (c : MatrixCell)
-  (τ₁ τ₂ : SubstrateType) : evaluateCell τ₁ c = evaluateCell τ₂ c
-info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:56:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_hierarchy :
-  baseComplexity 0 = ComplexityClass.coNP ∧
-    baseComplexity 1 = ComplexityClass.PP ∧ baseComplexity 2 = ComplexityClass.PSPACE
-info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:57:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_tractable_subcases_to_P (s : TractableSubcase) :
-  subcaseComplexity s = ComplexityClass.P
-info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:58:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_six_subcases :
-  [TractableSubcase.boundedActions, TractableSubcase.separableUtility, TractableSubcase.lowTensorRank,
-        TractableSubcase.treeStructure, TractableSubcase.boundedTreewidth, TractableSubcase.coordinateSymmetry].length =
-    6
-⚠ [3227/3252] Replayed DecisionQuotient.StochasticSequential.SetValued
-warning: DecisionQuotient/StochasticSequential/SetValued.lean:46:4: Try this: intro ha a'
-warning: DecisionQuotient/StochasticSequential/SetValued.lean:56:4: Try this: intro ha a'
-⚠ [3228/3252] Replayed DecisionQuotient.StochasticSequential.PolynomialReduction
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:78:23: unused variable `s`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:92:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:184:32: This simp argument is unused:
-  pureAnchorUtility
-
-Hint: Omit it from the simp argument list.
-  simp [reduceMAJSATPureAnchor,̵ ̵p̵u̵r̵e̵A̵n̵c̵h̵o̵r̵U̵t̵i̵l̵i̵t̵y̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:232:38: This simp argument is unused:
-  Nat.mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [pow_succ, Nat.mul_comm, N̵a̵t̵.̵m̵u̵l̵_̵l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵Nat.mul_assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:232:57: This simp argument is unused:
-  Nat.mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:258:44: This simp argument is unused:
-  mul_left_comm
-
-Hint: Omit it from the simp argument list.
-  simp [pow_succ, mul_comm, mul_l̵e̵f̵t̵_̵c̵o̵m̵m̵,̵ ̵m̵u̵l̵_̵assoc]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:258:59: This simp argument is unused:
-  mul_assoc
-
-Hint: Omit it from the simp argument list.
-  simp [pow_succ, mul_comm, mul_left_comm,̵ ̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:547:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:605:4: Try this: intro hq s s' _
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:643:22: This simp argument is unused:
-  reduceTQBFUtility
-
-Hint: Omit it from the simp argument list.
-  simp [reduceTQBF,̵ ̵r̵e̵d̵u̵c̵e̵T̵Q̵B̵F̵U̵t̵i̵l̵i̵t̵y̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:662:22: This simp argument is unused:
-  reduceTQBFUtility
-
-Hint: Omit it from the simp argument list.
-  simp [reduceTQBF,̵ ̵r̵e̵d̵u̵c̵e̵T̵Q̵B̵F̵U̵t̵i̵l̵i̵t̵y̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:681:22: This simp argument is unused:
-  reduceTQBFUtility
-
-Hint: Omit it from the simp argument list.
-  simp [reduceTQBF,̵ ̵r̵e̵d̵u̵c̵e̵T̵Q̵B̵F̵U̵t̵i̵l̵i̵t̵y̵]
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3229/3252] Replayed DecisionQuotient.StochasticSequential.NPPPHardness
-warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:100:4: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:128:2: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:321:4: Try this: intro ha a'
-warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:326:4: Try this: intro ha a'
-⚠ [3234/3252] Replayed DecisionQuotient.StochasticSequential.ThermodynamicLift
-warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:79:10: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:81:10: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3235/3252] Replayed DecisionQuotient.StochasticSequential.TemporalLearning
-warning: DecisionQuotient/StochasticSequential/TemporalLearning.lean:56:5: unused variable `hLike_other`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3239/3252] Replayed DecisionQuotient.AbstractionCollapse
-warning: DecisionQuotient/AbstractionCollapse.lean:43:4: Try this: intro hErase hPres
-⚠ [3240/3252] Replayed DecisionQuotient.Bridges
-warning: DecisionQuotient/Bridges.lean:1278:35: unused variable `hdp`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Bridges.lean:1279:19: unused variable `hDom`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Bridges.lean:1313:5: unused variable `P`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-warning: DecisionQuotient/Bridges.lean:1441:8: unused variable `regime`
-
-Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3243/3252] Replayed DecisionQuotient.StochasticSequential.TemporalIntegrity
-warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:45:2: `List.Chain'` has been deprecated: Use `List.IsChain` instead
-warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:57:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
-warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:63:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
-⚠ [3246/3252] Replayed DecisionQuotient.StochasticSequential.PreservationVariants
-warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:185:6: Try this: intro ha a'
-warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:253:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:292:6: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3248/3252] Replayed DecisionQuotient.StochasticSequential.Summary
-info: DecisionQuotient/StochasticSequential/Summary.lean:23:0: DecisionQuotient.StochasticSequential.static_simpler_than_stochastic :
-  baseComplexity 0 = ComplexityClass.coNP ∧ baseComplexity 1 = ComplexityClass.PP
-info: DecisionQuotient/StochasticSequential/Summary.lean:24:0: DecisionQuotient.StochasticSequential.stochastic_simpler_than_sequential :
-  baseComplexity 1 = ComplexityClass.PP ∧ baseComplexity 2 = ComplexityClass.PSPACE
-info: DecisionQuotient/StochasticSequential/Summary.lean:27:0: DecisionQuotient.StochasticSequential.substrate_independence_verdict (c : MatrixCell) (τ₁ τ₂ : SubstrateType) :
-  evaluateCell τ₁ c = evaluateCell τ₂ c
-info: DecisionQuotient/StochasticSequential/Summary.lean:30:0: DecisionQuotient.StochasticSequential.product_distribution_tractable.{u_1} {S : Type u_1} [Fintype S] {n : ℕ}
-  (_struct : ProductDistribution S n) : subcaseComplexity productToSubcase = ComplexityClass.P
-info: DecisionQuotient/StochasticSequential/Summary.lean:31:0: DecisionQuotient.StochasticSequential.bounded_horizon_tractable (_struct : BoundedHorizon) :
-  subcaseComplexity boundedHorizonToSubcase = ComplexityClass.P
-info: DecisionQuotient/StochasticSequential/Summary.lean:34:0: DecisionQuotient.StochasticSequential.StochasticMinimumPreservation.{u_1, u_2, u_3} {A : Type u_1} {S : Type u_2}
-  {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] (P : StochasticDecisionProblem A S) (k : ℕ) :
-  Prop
-info: DecisionQuotient/StochasticSequential/Summary.lean:35:0: DecisionQuotient.StochasticSequential.StochasticAnchorPreservation.{u_1, u_2, u_3} {A : Type u_1} {S : Type u_2} {n : ℕ}
-  [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] (P : StochasticDecisionProblem A S)
-  (I : Finset (Fin n)) : Prop
-info: DecisionQuotient/StochasticSequential/Summary.lean:36:0: DecisionQuotient.StochasticSequential.stochastic_minimum_preservation_iff_static_of_full_support.{u_1, u_2, u_3}
-  {A : Type u_1} {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] [Nonempty A]
-  (P : StochasticDecisionProblem A S) (k : ℕ) (hpos : ∀ (s : S), 0 < P.distribution s) :
-  StochasticMinimumPreservation P k ↔ ∃ I, I.card ≤ k ∧ P.isSufficient I
-info: DecisionQuotient/StochasticSequential/Summary.lean:37:0: DecisionQuotient.StochasticSequential.stochastic_anchor_preservation_implies_static_anchor.{u_1, u_2, u_3}
-  {A : Type u_1} {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n]
-  (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : StochasticAnchorPreservation P I → P.anchorSufficient I
-info: DecisionQuotient/StochasticSequential/Summary.lean:38:0: DecisionQuotient.StochasticSequential.static_anchor_implies_stochastic_anchor_preservation_of_full_support.{u_1, u_2,
-    u_3}
-  {A : Type u_1} {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] [Nonempty A]
-  (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) (hpos : ∀ (s : S), 0 < P.distribution s) :
-  P.anchorSufficient I → StochasticAnchorPreservation P I
-info: DecisionQuotient/StochasticSequential/Summary.lean:39:0: DecisionQuotient.StochasticSequential.stochastic_anchor_preservation_iff_static_anchor_of_full_support.{u_1, u_2, u_3}
-  {A : Type u_1} {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] [Nonempty A]
-  (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) (hpos : ∀ (s : S), 0 < P.distribution s) :
-  StochasticAnchorPreservation P I ↔ P.anchorSufficient I
-info: DecisionQuotient/StochasticSequential/Summary.lean:40:0: DecisionQuotient.StochasticSequential.stochasticMinimumPreservation_counted_search_witness.{u_1, u_2, u_3}
-  {A : Type u_1} {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n]
-  (P : StochasticDecisionProblem A S) (k : ℕ) :
-  HasCountedSearchWitness (StochasticMinimumPreservation P k) (countedStochasticMinimumPreservationSearch P k) (2 ^ n)
-info: DecisionQuotient/StochasticSequential/Summary.lean:41:0: DecisionQuotient.StochasticSequential.stochasticAnchorPreservation_counted_search_witness.{u_1, u_2, u_3} {A : Type u_1}
-  {S : Type u_2} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n]
-  (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
-  HasCountedSearchWitness (StochasticAnchorPreservation P I) (countedStochasticAnchorPreservationSearch P I)
-    (Fintype.card S)
-ℹ [3250/3252] Replayed DecisionQuotient.CheckAxioms
-info: DecisionQuotient/CheckAxioms.lean:32:0: 'DecisionQuotient.sufficiency_check_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:33:0: 'DecisionQuotient.min_sufficient_set_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:34:0: 'DecisionQuotient.anchor_sufficiency_sigma2p' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:35:0: 'DecisionQuotient.tractable_small_state_space' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:36:0: 'DecisionQuotient.checking_witnessing_duality_summary' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:37:0: 'DecisionQuotient.min_sufficient_set_inapprox_statement' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:38:0: 'DecisionQuotient.min_sufficient_inapproximability_conditional' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:39:0: 'DecisionQuotient.min_sufficient_ratio_inapprox_of_set_cover_ratio_inapprox' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:40:0: 'DecisionQuotient.counted_min_sufficient_inapproximability_conditional' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:41:0: 'DecisionQuotient.counted_min_sufficient_ratio_inapprox_of_counted_set_cover_ratio_inapprox' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:42:0: 'DecisionQuotient.countedGapTautologyRun_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:43:0: 'DecisionQuotient.countedGapTautologyRun_polytime' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:44:0: 'DecisionQuotient.SetCoverInstance.sufficiency_iff_cover' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:45:0: 'DecisionQuotient.SetCoverInstance.min_sufficient_iff_set_cover' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:48:0: 'DecisionQuotient.BayesOptimalityProof.bayes_is_optimal' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:49:0: 'DecisionQuotient.BayesOptimalityProof.KL_nonneg' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:50:0: 'DecisionQuotient.BayesOptimalityProof.crossEntropy_eq_entropy_add_KL' depends on axioms: [propext,
+✔ [3244/3246] Built DecisionQuotient.HandleAliases (3.9s)
+ℹ [3245/3246] Built DecisionQuotient.CheckAxioms (22s)
+info: DecisionQuotient/CheckAxioms.lean:30:0: 'DecisionQuotient.sufficiency_check_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:31:0: 'DecisionQuotient.min_sufficient_set_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:32:0: 'DecisionQuotient.anchor_sufficiency_sigma2p' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:33:0: 'DecisionQuotient.tractable_small_state_space' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:34:0: 'DecisionQuotient.checking_witnessing_duality_summary' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:35:0: 'DecisionQuotient.min_sufficient_set_inapprox_statement' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:36:0: 'DecisionQuotient.min_sufficient_inapproximability_conditional' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:53:0: 'DecisionQuotient.DecisionProblem.opt_factors_through_quotient' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:37:0: 'DecisionQuotient.min_sufficient_ratio_inapprox_of_set_cover_ratio_inapprox' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:54:0: 'DecisionQuotient.DecisionProblem.surjective_abstraction_with_feasible_collapse_map_factors' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:38:0: 'DecisionQuotient.counted_min_sufficient_inapproximability_conditional' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:57:0: 'DecisionQuotient.relevantSet_isSufficient' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:58:0: 'DecisionQuotient.numOptClasses_le_pow_srank_binary' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:62:0: 'DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit_pos' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:64:0: 'DecisionQuotient.ThermodynamicLift.energy_ge_kbt_nat_entropy' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:39:0: 'DecisionQuotient.counted_min_sufficient_ratio_inapprox_of_counted_set_cover_ratio_inapprox' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:66:0: 'DecisionQuotient.ThermodynamicLift.hardness_thermo_bundle_conditional' does not depend on any axioms
-info: DecisionQuotient/CheckAxioms.lean:68:0: 'DecisionQuotient.ThermodynamicLift.neukart_vinokur_bundle' does not depend on any axioms
-info: DecisionQuotient/CheckAxioms.lean:70:0: 'DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_floor' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:40:0: 'DecisionQuotient.countedGapTautologyRun_correct' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:41:0: 'DecisionQuotient.countedGapTautologyRun_polytime' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:42:0: 'DecisionQuotient.SetCoverInstance.sufficiency_iff_cover' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:43:0: 'DecisionQuotient.SetCoverInstance.min_sufficient_iff_set_cover' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:72:0: 'DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_calibration' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:46:0: 'DecisionQuotient.BayesOptimalityProof.bayes_is_optimal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:47:0: 'DecisionQuotient.BayesOptimalityProof.KL_nonneg' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:48:0: 'DecisionQuotient.BayesOptimalityProof.crossEntropy_eq_entropy_add_KL' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:74:0: 'DecisionQuotient.Physics.WolpertMismatch.mismatchKL_pos_of_exists_ne' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:51:0: 'DecisionQuotient.DecisionProblem.opt_factors_through_quotient' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:76:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:52:0: 'DecisionQuotient.DecisionProblem.surjective_abstraction_with_feasible_collapse_map_factors' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:78:0: 'DecisionQuotient.Physics.WolpertResidual.pairwiseResidualKL_pos_of_asymmetry' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:55:0: 'DecisionQuotient.relevantSet_isSufficient' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:56:0: 'DecisionQuotient.numOptClasses_le_pow_srank_binary' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:60:0: 'DecisionQuotient.ThermodynamicLift.landauerJoulesPerBit_pos' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:62:0: 'DecisionQuotient.ThermodynamicLift.energy_ge_kbt_nat_entropy' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:80:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_pairwise_flow_asymmetry' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:64:0: 'DecisionQuotient.ThermodynamicLift.hardness_thermo_bundle_conditional' does not depend on any axioms
+info: DecisionQuotient/CheckAxioms.lean:66:0: 'DecisionQuotient.ThermodynamicLift.neukart_vinokur_bundle' does not depend on any axioms
+info: DecisionQuotient/CheckAxioms.lean:68:0: 'DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_floor' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:82:0: 'DecisionQuotient.Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:70:0: 'DecisionQuotient.ThermodynamicLift.energy_lower_mandatory_of_landauer_calibration' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:84:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_discrete_edge_split' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:72:0: 'DecisionQuotient.Physics.WolpertMismatch.mismatchKL_pos_of_exists_ne' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:86:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:74:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_distribution_mismatch' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:88:0: 'DecisionQuotient.Physics.WolpertConstraints.physical_grounding_bundle_with_wolpert_overhead' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:76:0: 'DecisionQuotient.Physics.WolpertResidual.pairwiseResidualKL_pos_of_asymmetry' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:90:0: 'DecisionQuotient.Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:78:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_pairwise_flow_asymmetry' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:94:0: 'PhysicalComplexity.coNP_physically_impossible' depends on axioms: [propext]
-info: DecisionQuotient/CheckAxioms.lean:96:0: 'PhysicalComplexity.p_eq_np_physically_impossible_of_collapse_map' depends on axioms: [propext]
-info: DecisionQuotient/CheckAxioms.lean:98:0: 'PhysicalComplexity.p_eq_np_physically_impossible_canonical' depends on axioms: [propext]
-info: DecisionQuotient/CheckAxioms.lean:100:0: 'PhysicalComplexity.kernel_assumption_set_minimal' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:102:0: 'PhysicalComplexity.collapse_implies_assumption_failure_disjunction' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:80:0: 'DecisionQuotient.Physics.WolpertResidual.discreteResidualNatLowerBound_pos_of_asymmetry_or_oneway' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:106:0: 'DecisionQuotient.IntegrityCompetence.integrity_resource_bound' does not depend on any axioms
-info: DecisionQuotient/CheckAxioms.lean:108:0: 'DecisionQuotient.IntegrityCompetence.integrity_forces_abstention' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:82:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_discrete_edge_split' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:110:0: 'DecisionQuotient.IntegrityCompetence.exactCertaintyInflation_iff_no_exact_competence' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:84:0: 'DecisionQuotient.Physics.WolpertDecomposition.effective_model_strictly_exceeds_landauer_of_finite_discrete_witness' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:112:0: 'DecisionQuotient.IntegrityCompetence.rlff_maximizer_has_evidence' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:86:0: 'DecisionQuotient.Physics.WolpertConstraints.physical_grounding_bundle_with_wolpert_overhead' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:115:0: 'DecisionQuotient.InflationEntropyBridge.classes_monotone' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:116:0: 'DecisionQuotient.InflationEntropyBridge.entropy_monotone' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:117:0: 'DecisionQuotient.InflationEntropyBridge.classes_strict_increase' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:88:0: 'DecisionQuotient.Physics.WolpertDecomposition.physical_grounding_bundle_with_wolpert_decomposition' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:118:0: 'DecisionQuotient.InflationEntropyBridge.entropy_strict_increase' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:92:0: 'PhysicalComplexity.coNP_physically_impossible' depends on axioms: [propext]
+info: DecisionQuotient/CheckAxioms.lean:94:0: 'PhysicalComplexity.p_eq_np_physically_impossible_of_collapse_map' depends on axioms: [propext]
+info: DecisionQuotient/CheckAxioms.lean:96:0: 'PhysicalComplexity.p_eq_np_physically_impossible_canonical' depends on axioms: [propext]
+info: DecisionQuotient/CheckAxioms.lean:98:0: 'PhysicalComplexity.kernel_assumption_set_minimal' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:100:0: 'PhysicalComplexity.collapse_implies_assumption_failure_disjunction' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:119:0: 'DecisionQuotient.InflationEntropyBridge.optCompat_of_utilityCompat' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:104:0: 'DecisionQuotient.IntegrityCompetence.integrity_resource_bound' does not depend on any axioms
+info: DecisionQuotient/CheckAxioms.lean:106:0: 'DecisionQuotient.IntegrityCompetence.integrity_forces_abstention' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:120:0: 'DecisionQuotient.InflationEntropyBridge.classes_monotone_of_utilityCompat' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:108:0: 'DecisionQuotient.IntegrityCompetence.exactCertaintyInflation_iff_no_exact_competence' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:121:0: 'DecisionQuotient.InflationEntropyBridge.entropy_monotone_of_utilityCompat' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:110:0: 'DecisionQuotient.IntegrityCompetence.rlff_maximizer_has_evidence' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:122:0: 'DecisionQuotient.InflationEntropyBridge.thermal_floor_monotone_of_classes' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:113:0: 'DecisionQuotient.InflationEntropyBridge.classes_monotone' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:114:0: 'DecisionQuotient.InflationEntropyBridge.entropy_monotone' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: DecisionQuotient/CheckAxioms.lean:115:0: 'DecisionQuotient.InflationEntropyBridge.classes_strict_increase' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:123:0: 'DecisionQuotient.InflationEntropyBridge.thermal_floor_strict_of_new_class' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:116:0: 'DecisionQuotient.InflationEntropyBridge.entropy_strict_increase' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:124:0: 'DecisionQuotient.InflationEntropyBridge.later_energy_floor_implies_earlier_floor' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:117:0: 'DecisionQuotient.InflationEntropyBridge.optCompat_of_utilityCompat' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:125:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.canonicalValidAnswerSemantics_identifies_StateAt' depends on axioms: [propext]
-info: DecisionQuotient/CheckAxioms.lean:126:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.state_cardinality_gt_one_of_positive_time' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:118:0: 'DecisionQuotient.InflationEntropyBridge.classes_monotone_of_utilityCompat' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:127:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.uniformPrior_uncertainty_of_positive_time' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:119:0: 'DecisionQuotient.InflationEntropyBridge.entropy_monotone_of_utilityCompat' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:128:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.uniformPrior_nondegenerate_of_positive_time' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:120:0: 'DecisionQuotient.InflationEntropyBridge.thermal_floor_monotone_of_classes' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:129:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.counting_measure_not_probability_on_stateAt_of_positive_time' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:121:0: 'DecisionQuotient.InflationEntropyBridge.thermal_floor_strict_of_new_class' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:130:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.cosmological_expansion_forces_probabilistic_reasoning' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:122:0: 'DecisionQuotient.InflationEntropyBridge.later_energy_floor_implies_earlier_floor' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:131:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.cosmological_expansion_forces_support_complete_probabilistic_reasoning' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:123:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.temporal_classes_monotone_of_utilityCompat' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:132:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.stateIndexedPhysicalEncoding_identifies_StateAt' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:124:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.temporal_entropy_monotone_of_utilityCompat' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:133:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.temporal_classes_monotone_of_utilityCompat' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:127:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A2_for_mono_classes' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:134:0: 'DecisionQuotient.InflationEntropyBridge.Temporal.temporal_entropy_monotone_of_utilityCompat' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:128:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A3_for_strict_entropy' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:137:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A2_for_mono_classes' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:129:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P1_for_positive_floor' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:138:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A3_for_strict_entropy' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:130:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P2_for_positive_floor' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:139:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P1_for_positive_floor' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:131:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A1_for_mono_classes_weak' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:140:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P2_for_positive_floor' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:132:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_F1_for_finite_counting_requirement' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:141:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_A1_for_mono_classes_weak' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:133:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_F2_for_numOptClasses_pos' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:142:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_F1_for_finite_counting_requirement' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:134:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P3_for_energy_from_entropy_bridge' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:143:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_F2_for_numOptClasses_pos' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:137:0: 'DecisionQuotient.StochasticSequential.stochasticSetSufficient_universal' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:144:0: 'DecisionQuotient.InflationEntropyMinimality.not_redundant_P3_for_energy_from_entropy_bridge' depends on axioms: [propext,
+info: DecisionQuotient/CheckAxioms.lean:138:0: 'DecisionQuotient.StochasticSequential.stochasticSufficient_implies_setSufficient' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:147:0: 'DecisionQuotient.StochasticSequential.stochasticSetSufficient_universal' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:148:0: 'DecisionQuotient.StochasticSequential.stochasticSufficient_implies_setSufficient' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:149:0: 'DecisionQuotient.StochasticSequential.stochastic_sufficiency_pp_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:150:0: 'DecisionQuotient.StochasticSequential.stochastic_minimum_sufficiency_pp_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:151:0: 'DecisionQuotient.StochasticSequential.stochasticSufficientBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:152:0: 'DecisionQuotient.StochasticSequential.stochasticAnchorSufficientBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:153:0: 'DecisionQuotient.StochasticSequential.stochasticMinimumSufficiencyBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:154:0: 'DecisionQuotient.StochasticSequential.fiberDecisionProblem_sufficient' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:155:0: 'DecisionQuotient.StochasticSequential.reduceMAJSAT_correct_anchor_strict' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:156:0: 'DecisionQuotient.StochasticSequential.reduceMAJSATPureAnchor_correct' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:157:0: 'DecisionQuotient.StochasticSequential.stochastic_anchor_check_pp_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:158:0: 'DecisionQuotient.StochasticSequential.sequential_sufficiency_pspace_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:159:0: 'DecisionQuotient.StochasticSequential.sequential_minimum_sufficiency_pspace_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:160:0: 'DecisionQuotient.StochasticSequential.sequentialSufficientBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:161:0: 'DecisionQuotient.StochasticSequential.sequentialAnchorSufficientBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:162:0: 'DecisionQuotient.StochasticSequential.sequentialMinimumSufficiencyBool_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:163:0: 'DecisionQuotient.StochasticSequential.countedStochasticMinimumSearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:164:0: 'DecisionQuotient.StochasticSequential.countedStochasticMinimumSearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:165:0: 'DecisionQuotient.StochasticSequential.countedStochasticSufficiencySearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:166:0: 'DecisionQuotient.StochasticSequential.countedStochasticSufficiencySearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:167:0: 'DecisionQuotient.StochasticSequential.countedStochasticAnchorSearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:168:0: 'DecisionQuotient.StochasticSequential.countedStochasticAnchorSearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:169:0: 'DecisionQuotient.StochasticSequential.countedSequentialMinimumSearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:170:0: 'DecisionQuotient.StochasticSequential.countedSequentialMinimumSearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:171:0: 'DecisionQuotient.StochasticSequential.countedSequentialSufficiencySearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:172:0: 'DecisionQuotient.StochasticSequential.countedSequentialSufficiencySearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:173:0: 'DecisionQuotient.StochasticSequential.countedSequentialAnchorSearch_spec' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:174:0: 'DecisionQuotient.StochasticSequential.countedSequentialAnchorSearch_steps' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:175:0: 'DecisionQuotient.static_sufficiency_inP_explicit' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:176:0: 'DecisionQuotient.static_anchor_inP_explicit' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:177:0: 'DecisionQuotient.static_minimum_inP_explicit' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:178:0: 'DecisionQuotient.StochasticSequential.stochastic_sufficiency_inP_explicit' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:179:0: 'DecisionQuotient.StochasticSequential.stochastic_anchor_inP_explicit' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:180:0: 'DecisionQuotient.stochastic_minimum_inP_explicit' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:181:0: 'DecisionQuotient.StochasticSequential.sequential_sufficiency_inP_explicit' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:182:0: 'DecisionQuotient.StochasticSequential.sequential_anchor_inP_explicit' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:183:0: 'DecisionQuotient.sequential_minimum_inP_explicit' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:184:0: 'DecisionQuotient.explicit_state_inP_summary' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:185:0: 'DecisionQuotient.staticSufficiency_counted_search_witness' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:186:0: 'DecisionQuotient.static_query_search_matrix' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:187:0: 'DecisionQuotient.finite_search_summary' depends on axioms: [propext, Classical.choice, Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:188:0: 'DecisionQuotient.StochasticSequential.sequentialMinimalSufficient_iff_relevant' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:189:0: 'DecisionQuotient.StochasticSequential.sequentialRelevantSet_is_minimal' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:190:0: 'DecisionQuotient.StochasticSequential.reduceTQBF_correct_anchor' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-info: DecisionQuotient/CheckAxioms.lean:191:0: 'DecisionQuotient.StochasticSequential.sequential_anchor_check_pspace_hard' depends on axioms: [propext,
- Classical.choice,
- Quot.sound]
-Build completed successfully (3252 jobs).
+Build completed successfully (3246 jobs).
 
 
 ================================================================================
