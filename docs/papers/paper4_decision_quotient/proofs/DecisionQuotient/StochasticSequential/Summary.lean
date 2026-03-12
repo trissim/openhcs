@@ -33,10 +33,19 @@ open DecisionQuotient.DimensionalComplexity
 -- Preservation variants
 #check StochasticMinimumPreservation
 #check StochasticAnchorPreservation
+#check SupportRestrictedPreservation
+#check PositiveFiberSupport
+#check stochastic_preservation_contains_static_relevant
+#check not_stochastic_preservation_of_missing_static_relevant
+#check stochastic_minimum_preservation_static_relevant_card_le
 #check stochastic_minimum_preservation_iff_static_of_full_support
 #check stochastic_anchor_preservation_implies_static_anchor
 #check static_anchor_implies_stochastic_anchor_preservation_of_full_support
 #check stochastic_anchor_preservation_iff_static_anchor_of_full_support
+#check static_sufficiency_implies_support_restricted_preservation
+#check support_restricted_preservation_implies_static_sufficiency_on_support
+#check static_sufficiency_implies_stochastic_preservation_of_positive_fiber_support
+#check static_anchor_implies_stochastic_anchor_preservation_of_positive_anchor_fiber
 #check stochasticMinimumPreservation_counted_search_witness
 #check stochasticAnchorPreservation_counted_search_witness
 
@@ -47,7 +56,7 @@ Summary of complexity results and mechanization status:
 | Regime       | Problem                              | Complexity |
 |--------------|--------------------------------------|------------|
 | Static       | SUFFICIENCY / MINIMUM / ANCHOR       | coNP-c / coNP-c / Sigma2P-c |
-| Stochastic   | preservation base / decisiveness / decisiveness min / decisiveness anchor | P(explicit) / PP-hard / PP-hard / PP-hard |
+| Stochastic   | preservation base / preservation min / preservation anchor / decisiveness / decisiveness min / decisiveness anchor | P(explicit) / P(explicit) / P(explicit) / PP-hard / PP-hard / PP-hard |
 | Sequential   | SUFFICIENCY / MINIMUM / ANCHOR       | PSPACE-c / PSPACE-hard / PSPACE-hard |
 
 Transfer conditions:

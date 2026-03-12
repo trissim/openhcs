@@ -43,6 +43,28 @@ In the paper, we refer to this as \emph{stochastic decisiveness}. In the current
 \paragraph{Why this changes complexity.}
 Static sufficiency asks whether any counterexample pair exists. Stochastic sufficiency asks whether the conditional optimizer obtained from the retained coordinates still matches the fully conditioned optimizer, while stochastic decisiveness asks whether every admissible fiber has a uniquely determined conditional optimum. The first question is about ruling out disagreeing state pairs; the second and third are about conditional expected-utility comparisons on each fiber. That shift from witness exclusion to weighted counting comparison is exactly what brings stochastic hardness into the picture.
 
+\subsection{Stochastic Status at a Glance}
+
+\paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the natural positive-support base case.
+
+\begin{center}
+\begin{tabular}{p{0.21\textwidth}p{0.23\textwidth}p{0.2\textwidth}p{0.25\textwidth}}
+\toprule
+\textbf{Predicate/query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
+\midrule
+Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness classification claimed \\
+
+Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; explicit finite searches; support-sensitive obstruction/bridge lemmas & General-distribution classification remains open \\
+
+Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata for the upper-bound argument & No direct formalization of oracle Turing machines or oracle classes \\
+
+Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No end-to-end oracle-machine formalization of the stated oracle-class membership \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The rest of this section unpacks the four rows of this summary. The preservation side is complete in explicit state and under full-support inheritance, and now also has support-sensitive partial results beyond full support. The decisiveness side carries the strongest succinct-encoding classification currently established in the paper.
+
 \begin{problem}[STOCHASTIC-SUFFICIENCY-CHECK]\label{prob:stochastic-sufficiency}
 \textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
 \textbf{Question:} Is $I$ stochastically sufficient?
@@ -122,8 +144,30 @@ For finite instances, the artifact contains counted exhaustive-search procedures
 The minimum-preservation search scans the subset lattice and invokes the explicit-state preservation checker on each candidate set. The anchor-preservation search scans candidate anchor states and checks preservation on the induced fiber. Both procedures are packaged with correctness theorems and explicit step bounds in the artifact.
 \end{proof}
 
+\begin{theorem}[Explicit-State Tractability for Preservation Variants]\label{thm:stochastic-preservation-variants-explicit}
+Under the explicit-state encoding, \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation} are both decidable in polynomial time.
+\end{theorem}
+
+\begin{proof}
+For minimum preservation, the explicit-state search enumerates coordinate subsets and invokes the explicit preservation checker on each candidate set; the resulting counted procedure is polynomial in the explicit input size for fixed state and coordinate budgets. For anchor preservation, the explicit-state search enumerates anchor states and checks preservation on the induced fiber, yielding a polynomial-time verifier. Both wrappers are mechanized in the artifact.
+\end{proof}
+
+\begin{proposition}[General-Distribution Obstructions and Support-Sensitive Bridge]\label{prop:stochastic-preservation-partial-general}
+Let $I$ be a coordinate set.
+\begin{enumerate}
+\item If $I$ is stochastically sufficient, then $I$ contains every relevant coordinate of the underlying static decision problem.
+\item Consequently, in the Boolean-cube setting, if \textsc{Stochastic-Minimum-Preservation} has a yes-instance with budget $k$, then the static relevant-coordinate set has cardinality at most $k$.
+\item If the underlying static decision problem is sufficient on $I$ and every $I$-fiber contains at least one positive-probability state, then $I$ is stochastically sufficient.
+\item If the underlying static decision problem is anchor-sufficient on $I$ and the anchor fiber contains a positive-probability state, then $I$ is stochastically anchor-preserving.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+The first statement composes the unconditional bridge from stochastic preservation to static sufficiency with the static theorem that every sufficient set contains all relevant coordinates. The second is the resulting cardinality bound for any witness set in the minimum query. For the positive-support statements, the mechanized proof refines the full-support argument: it uses positivity only on one representative state per relevant fiber, together with fiberwise invariance of the conditional optimizer, to propagate static sufficiency or anchor sufficiency into stochastic preservation on the whole fiber.
+\end{proof}
+
 \paragraph{What this paper establishes for preservation.}
-For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability (Theorem~\ref{thm:stochastic-preservation-explicit}), static-to-stochastic bridge theorems (Propositions~\ref{prop:stochastic-to-static-sufficiency} and~\ref{prop:stochastic-full-support-equiv}), quotient equivalence under full support (Proposition~\ref{prop:stochastic-quotient-equiv}), and full-support inheritance for the minimum and anchor variants (Theorem~\ref{thm:stochastic-preservation-full-support-variants}). Outside the full-support setting, the paper leaves open the general-distribution classification of the minimum and anchor preservation variants and does not claim a succinct-encoding hardness classification for the preservation predicate itself. The PP-hardness results in the stochastic row concern decisiveness and its anchor/minimum variants, not preservation itself.
+For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability for the base, minimum, and anchor queries (Theorem~\ref{thm:stochastic-preservation-explicit}, Proposition~\ref{prop:stochastic-preservation-variant-search}, and Theorem~\ref{thm:stochastic-preservation-variants-explicit}), static-to-stochastic bridge theorems (Propositions~\ref{prop:stochastic-to-static-sufficiency} and~\ref{prop:stochastic-full-support-equiv}), quotient equivalence under full support (Proposition~\ref{prop:stochastic-quotient-equiv}), and full-support inheritance for the minimum and anchor variants (Theorem~\ref{thm:stochastic-preservation-full-support-variants}). Beyond full support, the paper now also isolates unconditional obstruction lemmas and positive-support bridge results (Proposition~\ref{prop:stochastic-preservation-partial-general}). This yields a complete classification for stochastic preservation under full support, the natural base case in which every state has nonzero probability, together with support-sensitive partial theory beyond that base case. The general-distribution case still introduces technical complications from zero-probability fibers, and the paper does not claim a full general-distribution classification for the minimum and anchor preservation variants or a succinct-encoding hardness classification for the preservation predicate itself. The PP-hardness results in the stochastic row concern decisiveness and its anchor/minimum variants, not preservation itself.
 
 \begin{problem}[STOCHASTIC-DECISIVENESS-CHECK]\label{prob:stochastic-singleton-sufficiency}
 \textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
@@ -156,7 +200,7 @@ Equivalently, some $I$-fiber has a unique conditional optimal action.
 The stochastic regime preserves the same underlying certification template, namely whether the retained coordinates determine the optimizer, but asks it after conditioning and expectation have been introduced. The current complexity package concerns stochastic decisiveness because it admits a clean mechanized reduction core and directly supports the existential anchor/minimum queries. For the empty-information case, one is already comparing aggregate mass of satisfying versus nonsatisfying states. More generally, stochastic decisiveness asks whether one action strictly dominates all competitors in conditional expected utility on each admissible fiber.
 
 \begin{theorem}[Stochastic Decisiveness is Encoding-Sensitive]\label{thm:stochastic-pp}
-For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard and has a mechanized oracle-style complement upper bound; equivalently, its complement fits the artifact's scoped NP-over-PP witness package.
+For the stochastic decisiveness predicate above, \textsc{Stochastic-Decisiveness-Check} is decidable in polynomial time under the explicit-state encoding. Under the succinct encoding it is PP-hard. The accompanying upper-bound argument is proved in the paper via an explicit bad-fiber witness characterization whose finite witness/checking core is mechanized in the artifact.
 \end{theorem}
 
 \leanmeta{\LH{DC45}, \LH{DC62}, \LH{DC72}, \LHrng{OU}{8}{11}.}
@@ -171,7 +215,7 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},
 \]
 with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization: stochastic decisiveness fits an oracle-style complement schema, its complement fits the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} The proof artifact does not formalize oracle Turing machines or oracle complexity classes directly; instead, it mechanizes the finite witness/checking schemata and reduction cores used in the paper-level oracle-class arguments. That yields a genuine mechanized succinct upper-bound core for the decisiveness predicate without claiming a full oracle-machine $\textsf{coNP}^{\textsf{PP}}$ formalization.
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning.
 \end{proof}
 
 \begin{proposition}[Stochastic Decisiveness Yields Stochastic Anchor Sufficiency]\label{prop:stochastic-anchor-refinement}
@@ -238,10 +282,13 @@ For anchor sufficiency, the mechanized collapse
 \]
 is already available in the artifact \LH{PA3}. A nondeterministic polynomial-time machine may therefore guess $(s_0,a)$ and use a PP oracle to verify that $a$ is the unique conditional optimum on the anchor fiber. Concretely, uniqueness can be checked by comparing the conditional expected utility of $a$ against every competing action on that fiber, which is exactly the same majority-style conditional comparison used in the decisiveness verification.
 
-For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically decisive. The same witness-over-verifier template used for the anchor case yields the required PP-style verifier for the guessed set, so the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
+For the minimum query, the machine guesses a coordinate set $I$ with $|I|\le k$ and then asks whether $I$ is stochastically decisive. The same witness/checking template used for the anchor case yields the required PP-style verifier for the guessed set, so the minimum query is also in $\textsf{NP}^{\textsf{PP}}$.
 \end{proof}
 
-Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model, PP-hard in the succinct model, and accompanied by a mechanized oracle-style complement upper bound, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. The artifact does not package a full oracle-Turing-machine formalization of these oracle classes. What it does mechanize is the finite core behind that classification: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
+Theorem~\ref{thm:stochastic-nppp-upper} completes the complexity picture for stochastic decisiveness: decisiveness is polynomial-time in the explicit-state model and PP-hard in the succinct model, while the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. Those oracle-class memberships are proved in the paper text. The artifact independently verifies the finite core behind those proofs: the bad-fiber counter-witness schema for decisiveness, the anchor-collapse equivalence, the generic existential-witness schema, bounded-witness recoveries for the explicit-state stochastic anchor and minimum searches, and existential-majority hardness/completeness packages for the anchor and decisiveness query families \leanmeta{\LHrng{OU}{8}{11}, \LHrng{EH}{2}{10}.}
+
+\paragraph{Scope note.}
+For stochastic preservation, this paper establishes explicit-state tractability for the preservation family, full-support inheritance, quotient equivalence, and support-sensitive obstruction/bridge lemmas beyond full support. The general-distribution minimum and anchor variants still remain open as full classification problems and are not claimed. For stochastic decisiveness, the paper establishes PP-hardness and $\textsf{NP}^{\textsf{PP}}$ membership under the stated encoding. The open entries in Table~2 are explicit scope boundaries rather than unresolved subcases.
 
 The remaining gap is not a bookkeeping omission but a real structural issue. Stochastic decisiveness is a pure verification problem: once $I$ is fixed, one must check a family of majority-style conditional comparisons, which yields the stated encoding-sensitive complexity. By contrast, stochastic anchor and minimum sufficiency add an outer existential choice, namely to guess an anchor witness or a candidate coordinate set, before performing the same conditional verification. The current collapse theorem \LH{PA3} shows that anchor sufficiency reduces to existence of a fiber with a singleton conditional optimum, and the new existential-majority reduction shows that this extra witness layer is not vacuous. So the open question is genuinely whether that existential layer can be absorbed into PP under the present encoding, not whether the paper has simply stopped one step short of an obvious closure argument.
 

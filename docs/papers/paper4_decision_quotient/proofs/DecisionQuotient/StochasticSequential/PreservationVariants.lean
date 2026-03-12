@@ -16,6 +16,7 @@
 import DecisionQuotient.StochasticSequential.Basic
 import DecisionQuotient.StochasticSequential.SetValued
 import DecisionQuotient.StochasticSequential.Computation
+import DecisionQuotient.Hardness.Sigma2PHardness
 import DecisionQuotient.Hardness.Sigma2PExhaustive.AnchorSufficiency
 import DecisionQuotient.ClaimClosure
 
@@ -66,6 +67,46 @@ def StochasticAnchorPreservationCheck
     [CoordinateSpace S n]
     (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Prop :=
   StochasticAnchorPreservation P I
+
+/-! ## Unconditional Obstruction Theorems -/
+
+/-- Any stochastically preserving coordinate set must contain every static
+    relevant coordinate of the underlying decision problem. This gives an
+    unconditional necessary condition for preservation, even without full
+    support. -/
+theorem stochastic_preservation_contains_static_relevant
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpres : StochasticPreservationSufficient P I) (i : Fin n)
+    (hrel : P.toDecisionProblem.isRelevant i) :
+    i ∈ I := by
+  exact P.toDecisionProblem.sufficient_contains_relevant I
+    (stochastic_preservation_implies_static_sufficiency P I hpres) i hrel
+
+/-- Contrapositive form of `stochastic_preservation_contains_static_relevant`. If
+    a static relevant coordinate is missing, preservation fails. -/
+theorem not_stochastic_preservation_of_missing_static_relevant
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) (i : Fin n)
+    (hrel : P.toDecisionProblem.isRelevant i) (hmiss : i ∉ I) :
+    ¬ StochasticPreservationSufficient P I := by
+  intro hpres
+  exact hmiss (stochastic_preservation_contains_static_relevant P I hpres i hrel)
+
+/-- On Boolean product spaces, any witness for minimum stochastic preservation
+    already forces the static relevant-coordinate lower bound. -/
+theorem stochastic_minimum_preservation_static_relevant_card_le
+    {A : Type*} {n : ℕ} [Fintype A] [DecidableEq A]
+    (P : StochasticDecisionProblem A (Fin n → Bool)) (k : ℕ)
+    (hmin : StochasticMinimumPreservation P k) :
+    (Sigma2PHardness.relevantFinset P.toDecisionProblem).card ≤ k := by
+  rcases hmin with ⟨I, hcard, hpres⟩
+  have hsub : Sigma2PHardness.relevantFinset P.toDecisionProblem ⊆ I := by
+    exact (Sigma2PHardness.sufficient_iff_relevantFinset_subset P.toDecisionProblem I).1
+      (stochastic_preservation_implies_static_sufficiency P I hpres)
+  exact le_trans (Finset.card_le_card hsub) hcard
 
 /-! ## Full-Support Bridges -/
 
@@ -217,6 +258,266 @@ theorem stochastic_anchor_preservation_iff_static_anchor_of_full_support
   constructor
   · exact stochastic_anchor_preservation_implies_static_anchor P I
   · exact static_anchor_implies_stochastic_anchor_preservation_of_full_support P I hpos
+
+/-! ## Support-Restricted Preservation -/
+
+/-- Support-restricted stochastic preservation: the conditional fiber optimizer
+    agrees with the pointwise optimizer on every positive-probability state. This
+    isolates the genuine obstruction to the unrestricted general-distribution
+    theory, namely zero-probability fibers. -/
+def SupportRestrictedPreservation
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Prop :=
+  ∀ s : S, 0 < P.distribution s → fiberOpt P I s = P.toDecisionProblem.Opt s
+
+/-- Every `I`-fiber contains a positive-probability representative. This is a
+    support-sensitive weakening of full support tailored to preservation. -/
+def PositiveFiberSupport
+    {S : Type*} {n : ℕ} [Fintype S] [CoordinateSpace S n]
+    (dist : S → ℝ) (I : Finset (Fin n)) : Prop :=
+  ∀ s : S, ∃ t : S, 0 < dist t ∧ agreeOn t s I
+
+/-- Static sufficiency implies support-restricted stochastic preservation under
+    global nonnegativity of the distribution. Unlike the full-support theorem,
+    positivity is only needed at the queried state. -/
+theorem static_sufficiency_implies_support_restricted_preservation
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hnonneg : ∀ s : S, 0 ≤ P.distribution s)
+    (hstat : P.toDecisionProblem.isSufficient I) :
+    SupportRestrictedPreservation P I := by
+  intro s hspos
+  ext a
+  constructor
+  · intro ha
+    classical
+    by_contra hnot
+    let vals : Finset ℝ := Finset.univ.image (fun x : A => P.utility x s)
+    have hvals_nonempty : vals.Nonempty := by
+      rcases ‹Nonempty A› with ⟨a0⟩
+      refine ⟨P.utility a0 s, ?_⟩
+      exact Finset.mem_image.mpr ⟨a0, by simp, rfl⟩
+    let cVal : ℝ := Finset.max' vals hvals_nonempty
+    have hcVal_mem : cVal ∈ vals := Finset.max'_mem vals hvals_nonempty
+    rcases Finset.mem_image.mp hcVal_mem with ⟨c, -, hcVal_eq⟩
+    have hc_opt_s : c ∈ P.toDecisionProblem.Opt s := by
+      intro a'
+      have ha'mem : P.utility a' s ∈ vals := by
+        exact Finset.mem_image.mpr ⟨a', by simp, rfl⟩
+      have hle : P.utility a' s ≤ cVal := Finset.le_max' vals (P.utility a' s) ha'mem
+      simpa [cVal, hcVal_eq] using hle
+    have hstrict_s : P.utility a s < P.utility c s := by
+      have hnot_le : ¬ P.utility c s ≤ P.utility a s := by
+        intro hca
+        apply hnot
+        intro b
+        calc
+          P.utility b s ≤ P.utility c s := hc_opt_s b
+          _ ≤ P.utility a s := hca
+      exact lt_of_not_ge hnot_le
+    have hfiber : ∀ t : S, agreeOn t s I → P.toDecisionProblem.Opt t = P.toDecisionProblem.Opt s := by
+      intro t ht
+      exact hstat t s ht
+    have hle_term :
+        ∀ t : S,
+          (if agreeOn t s I then P.distribution t * P.utility a t else 0)
+            ≤ (if agreeOn t s I then P.distribution t * P.utility c t else 0) := by
+      intro t
+      by_cases hts : agreeOn t s I
+      · have hc_opt_t : c ∈ P.toDecisionProblem.Opt t := by
+          rw [hfiber t hts]
+          exact hc_opt_s
+        have hopt := hc_opt_t a
+        have hmul : P.distribution t * P.utility a t ≤ P.distribution t * P.utility c t := by
+          exact mul_le_mul_of_nonneg_left hopt (hnonneg t)
+        simp [hts, hmul]
+      · simp [hts]
+    have hstrict_term_s :
+        (if agreeOn s s I then P.distribution s * P.utility a s else 0)
+          < (if agreeOn s s I then P.distribution s * P.utility c s else 0) := by
+      have hss : agreeOn s s I := agreeOn_refl s I
+      have hmul : P.distribution s * P.utility a s < P.distribution s * P.utility c s := by
+        exact mul_lt_mul_of_pos_left hstrict_s hspos
+      simp [hss, hmul]
+    have hsum_lt : fiberExpectedUtility P I s a < fiberExpectedUtility P I s c := by
+      unfold fiberExpectedUtility
+      refine Finset.sum_lt_sum ?_ ?_
+      · intro t _
+        exact hle_term t
+      · refine ⟨s, by simp, ?_⟩
+        exact hstrict_term_s
+    have hca : fiberExpectedUtility P I s c ≤ fiberExpectedUtility P I s a := ha c
+    exact (not_lt_of_ge hca) hsum_lt
+  · intro ha
+    intro a'
+    have hfiber : ∀ t : S, agreeOn t s I → P.toDecisionProblem.Opt t = P.toDecisionProblem.Opt s := by
+      intro t ht
+      exact hstat t s ht
+    have hle_term :
+        ∀ t : S,
+          (if agreeOn t s I then P.distribution t * P.utility a' t else 0)
+            ≤ (if agreeOn t s I then P.distribution t * P.utility a t else 0) := by
+      intro t
+      by_cases hts : agreeOn t s I
+      · have hat : a ∈ P.toDecisionProblem.Opt t := by
+          rw [hfiber t hts]
+          exact ha
+        have hopt := hat a'
+        have hmul : P.distribution t * P.utility a' t ≤ P.distribution t * P.utility a t := by
+          exact mul_le_mul_of_nonneg_left hopt (hnonneg t)
+        simp [hts, hmul]
+      · simp [hts]
+    unfold fiberExpectedUtility
+    exact Finset.sum_le_sum (by intro t _; exact hle_term t)
+
+/-- Support-restricted preservation implies static sufficiency on the positive
+    support slice. -/
+theorem support_restricted_preservation_implies_static_sufficiency_on_support
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpres : SupportRestrictedPreservation P I) :
+    ∀ s s' : S,
+      0 < P.distribution s → 0 < P.distribution s' → agreeOn s s' I →
+      P.toDecisionProblem.Opt s = P.toDecisionProblem.Opt s' := by
+  intro s s' hs hs' hagree
+  calc
+    P.toDecisionProblem.Opt s = fiberOpt P I s := by
+      symm
+      exact hpres s hs
+    _ = fiberOpt P I s' := fiberOpt_eq_of_agreeOn (P := P) (I := I) hagree
+    _ = P.toDecisionProblem.Opt s' := hpres s' hs'
+
+/-- If static sufficiency holds and every observed fiber contains a positive-mass
+    representative, then full stochastic preservation follows. This is a
+    support-sensitive weakening of the full-support bridge. -/
+theorem static_sufficiency_implies_stochastic_preservation_of_positive_fiber_support
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hnonneg : ∀ s : S, 0 ≤ P.distribution s)
+    (hcover : PositiveFiberSupport P.distribution I)
+    (hstat : P.toDecisionProblem.isSufficient I) :
+    StochasticPreservationSufficient P I := by
+  have hsupport : SupportRestrictedPreservation P I :=
+    static_sufficiency_implies_support_restricted_preservation P I hnonneg hstat
+  intro s
+  rcases hcover s with ⟨t, htpos, hts⟩
+  calc
+    fiberOpt P I s = fiberOpt P I t := by
+      exact fiberOpt_eq_of_agreeOn (P := P) (I := I) (fun i hi => (hts i hi).symm)
+    _ = P.toDecisionProblem.Opt t := hsupport t htpos
+    _ = P.toDecisionProblem.Opt s := hstat t s hts
+
+/-- Anchor-local version of the positive-fiber-support bridge. If a static anchor
+    witness has a positive-mass representative in its fiber, then anchor
+    preservation follows. -/
+theorem static_anchor_implies_stochastic_anchor_preservation_of_positive_anchor_fiber
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hnonneg : ∀ s : S, 0 ≤ P.distribution s)
+    {s₀ : S}
+    (hstat₀ : ∀ s : S, agreeOn s s₀ I → P.toDecisionProblem.Opt s = P.toDecisionProblem.Opt s₀)
+    (hsup : ∃ t : S, 0 < P.distribution t ∧ agreeOn t s₀ I) :
+    StochasticAnchorPreservation P I := by
+  rcases hsup with ⟨t, htpos, hts0⟩
+  have hconst_t : ∀ s : S, agreeOn s t I → P.toDecisionProblem.Opt s = P.toDecisionProblem.Opt t := by
+    intro s hs
+    calc
+      P.toDecisionProblem.Opt s = P.toDecisionProblem.Opt s₀ :=
+        hstat₀ s (fun i hi => (hs i hi).trans (hts0 i hi))
+      _ = P.toDecisionProblem.Opt t := by
+        symm
+        exact hstat₀ t hts0
+  have hpres_t : fiberOpt P I t = P.toDecisionProblem.Opt t := by
+    ext a
+    constructor
+    · intro ha
+      classical
+      by_contra hnot
+      let vals : Finset ℝ := Finset.univ.image (fun x : A => P.utility x t)
+      have hvals_nonempty : vals.Nonempty := by
+        rcases ‹Nonempty A› with ⟨a0⟩
+        refine ⟨P.utility a0 t, ?_⟩
+        exact Finset.mem_image.mpr ⟨a0, by simp, rfl⟩
+      let cVal : ℝ := Finset.max' vals hvals_nonempty
+      have hcVal_mem : cVal ∈ vals := Finset.max'_mem vals hvals_nonempty
+      rcases Finset.mem_image.mp hcVal_mem with ⟨c, -, hcVal_eq⟩
+      have hc_opt_t : c ∈ P.toDecisionProblem.Opt t := by
+        intro a'
+        have ha'mem : P.utility a' t ∈ vals := by
+          exact Finset.mem_image.mpr ⟨a', by simp, rfl⟩
+        have hle : P.utility a' t ≤ cVal := Finset.le_max' vals (P.utility a' t) ha'mem
+        simpa [cVal, hcVal_eq] using hle
+      have hstrict_t : P.utility a t < P.utility c t := by
+        have hnot_le : ¬ P.utility c t ≤ P.utility a t := by
+          intro hca
+          apply hnot
+          intro b
+          calc
+            P.utility b t ≤ P.utility c t := hc_opt_t b
+            _ ≤ P.utility a t := hca
+        exact lt_of_not_ge hnot_le
+      have hle_term :
+          ∀ u : S,
+            (if agreeOn u t I then P.distribution u * P.utility a u else 0)
+              ≤ (if agreeOn u t I then P.distribution u * P.utility c u else 0) := by
+        intro u
+        by_cases hut : agreeOn u t I
+        · have hc_opt_u : c ∈ P.toDecisionProblem.Opt u := by
+            rw [hconst_t u hut]
+            exact hc_opt_t
+          have hopt := hc_opt_u a
+          have hmul : P.distribution u * P.utility a u ≤ P.distribution u * P.utility c u := by
+            exact mul_le_mul_of_nonneg_left hopt (hnonneg u)
+          simp [hut, hmul]
+        · simp [hut]
+      have hstrict_term_t :
+          (if agreeOn t t I then P.distribution t * P.utility a t else 0)
+            < (if agreeOn t t I then P.distribution t * P.utility c t else 0) := by
+        have htt : agreeOn t t I := agreeOn_refl t I
+        have hmul : P.distribution t * P.utility a t < P.distribution t * P.utility c t := by
+          exact mul_lt_mul_of_pos_left hstrict_t htpos
+        simp [htt, hmul]
+      have hsum_lt : fiberExpectedUtility P I t a < fiberExpectedUtility P I t c := by
+        unfold fiberExpectedUtility
+        refine Finset.sum_lt_sum ?_ ?_
+        · intro u _
+          exact hle_term u
+        · refine ⟨t, by simp, ?_⟩
+          exact hstrict_term_t
+      have hca : fiberExpectedUtility P I t c ≤ fiberExpectedUtility P I t a := ha c
+      exact (not_lt_of_ge hca) hsum_lt
+    · intro ha
+      intro a'
+      have hle_term :
+          ∀ u : S,
+            (if agreeOn u t I then P.distribution u * P.utility a' u else 0)
+              ≤ (if agreeOn u t I then P.distribution u * P.utility a u else 0) := by
+        intro u
+        by_cases hut : agreeOn u t I
+        · have ha_u : a ∈ P.toDecisionProblem.Opt u := by
+            rw [hconst_t u hut]
+            exact ha
+          have hopt := ha_u a'
+          have hmul : P.distribution u * P.utility a' u ≤ P.distribution u * P.utility a u := by
+            exact mul_le_mul_of_nonneg_left hopt (hnonneg u)
+          simp [hut, hmul]
+        · simp [hut]
+      unfold fiberExpectedUtility
+      exact Finset.sum_le_sum (by intro u _; exact hle_term u)
+  use s₀
+  intro s hs
+  calc
+    fiberOpt P I s = fiberOpt P I t := by
+      exact fiberOpt_eq_of_agreeOn (P := P) (I := I) (fun i hi => (hs i hi).trans ((hts0 i hi).symm))
+    _ = P.toDecisionProblem.Opt t := hpres_t
+    _ = P.toDecisionProblem.Opt s := by
+      symm
+      exact hconst_t s (fun i hi => (hs i hi).trans ((hts0 i hi).symm))
 
 /-! ## Explicit Finite Search for Preservation Variants -/
 

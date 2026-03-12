@@ -10,6 +10,7 @@
 import DecisionQuotient.AlgorithmComplexity
 import DecisionQuotient.PolynomialReduction
 import DecisionQuotient.StochasticSequential.Computation
+import DecisionQuotient.StochasticSequential.PreservationVariants
 
 namespace DecisionQuotient
 
@@ -142,6 +143,40 @@ theorem stochastic_minimum_inP_explicit
   · intro q
     exact countedStochasticMinimumSearch_spec _ _
 
+theorem stochastic_minimum_preservation_inP_explicit
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : StochasticMinimumExplicitInput A S n =>
+      StochasticMinimumPreservation q.problem q.bound) := by
+  use (fun q => countedStochasticMinimumPreservationSearch q.problem q.bound), 1, 1
+  constructor
+  · intro q
+    calc
+      (countedStochasticMinimumPreservationSearch q.problem q.bound).steps ≤ 2 ^ n :=
+        countedStochasticMinimumPreservationSearch_steps _ _
+      _ ≤ q.subsetBudget := q.subset_bound
+      _ ≤ sizeOf q := stochasticMinimumExplicit_size_ge_subset q
+      _ ≤ 1 * (sizeOf q) ^ 1 + 1 := by simp
+  · intro q
+    exact countedStochasticMinimumPreservationSearch_spec _ _
+
+theorem stochastic_anchor_preservation_inP_explicit
+    {A S : Type*} {n : ℕ}
+    [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n] :
+    InP (fun q : StochasticExplicitInput A S n =>
+      StochasticAnchorPreservation q.problem q.infoSet) := by
+  use (fun q => countedStochasticAnchorPreservationSearch q.problem q.infoSet), 1, 1
+  constructor
+  · intro q
+    calc
+      (countedStochasticAnchorPreservationSearch q.problem q.infoSet).steps ≤ Fintype.card S :=
+        countedStochasticAnchorPreservationSearch_steps _ _
+      _ ≤ q.stateBudget := q.state_bound
+      _ ≤ sizeOf q := stochasticExplicit_size_ge_state q
+      _ ≤ 1 * (sizeOf q) ^ 1 + 1 := by simp
+  · intro q
+    exact countedStochasticAnchorPreservationSearch_spec _ _
+
 structure SequentialMinimumExplicitInput
     (A S O : Type*) (n : ℕ)
     [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n] where
@@ -191,11 +226,15 @@ theorem explicit_state_inP_summary :
       InP (fun q : StochasticExplicitInput A S n => StochasticSufficient q.problem q.infoSet) ∧
       InP (fun q : StochasticExplicitInput A S n => StochasticAnchorSufficiencyCheck q.problem q.infoSet) ∧
       InP (fun q : StochasticMinimumExplicitInput A S n => StochasticMinimumSufficiencyCheck q.problem q.bound)) ∧
+    (∀ {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A] [CoordinateSpace S n],
+      InP (fun q : StochasticExplicitInput A S n => StochasticPreservationSufficient q.problem q.infoSet) ∧
+      InP (fun q : StochasticExplicitInput A S n => StochasticAnchorPreservation q.problem q.infoSet) ∧
+      InP (fun q : StochasticMinimumExplicitInput A S n => StochasticMinimumPreservation q.problem q.bound)) ∧
     (∀ {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A] [CoordinateSpace S n],
       InP (fun q : SequentialExplicitInput A S O n => SequentialSufficient q.problem q.infoSet) ∧
       InP (fun q : SequentialExplicitInput A S O n => SequentialAnchorSufficiencyCheck q.problem q.infoSet) ∧
       InP (fun q : SequentialMinimumExplicitInput A S O n => SequentialMinimumSufficiencyCheck q.problem q.bound)) := by
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro A S n _ _ _
     exact ⟨static_sufficiency_inP_explicit (A := A) (S := S) (n := n),
       static_anchor_inP_explicit (A := A) (S := S) (n := n),
@@ -204,6 +243,10 @@ theorem explicit_state_inP_summary :
     exact ⟨stochastic_sufficiency_inP_explicit (A := A) (S := S) (n := n),
       stochastic_anchor_inP_explicit (A := A) (S := S) (n := n),
       stochastic_minimum_inP_explicit (A := A) (S := S) (n := n)⟩
+  · intro A S n _ _ _ _
+    exact ⟨stochastic_preservation_inP_explicit (A := A) (S := S) (n := n),
+      stochastic_anchor_preservation_inP_explicit (A := A) (S := S) (n := n),
+      stochastic_minimum_preservation_inP_explicit (A := A) (S := S) (n := n)⟩
   · intro A S O n _ _ _ _ _
     exact ⟨sequential_sufficiency_inP_explicit (A := A) (S := S) (O := O) (n := n),
       sequential_anchor_inP_explicit (A := A) (S := S) (O := O) (n := n),
