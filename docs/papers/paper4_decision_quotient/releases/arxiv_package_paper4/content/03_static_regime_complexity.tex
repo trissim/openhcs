@@ -1,6 +1,6 @@
 \section{Static Regime Complexity}\label{sec:hardness}
 
-This section studies the static regime, where the input is a finite coordinate-structured decision problem under the succinct encoding of Section~\ref{sec:encoding}. The core question is whether a candidate coordinate set preserves the optimizer map.
+This section studies the static regime, where the input is a finite coordinate-structured decision problem under the succinct encoding of Section~\ref{sec:encoding}. This is the baseline certification setting: no stochastic averaging, no temporal dynamics, only the exact question of whether a candidate coordinate set preserves the optimizer map. The main contribution here is structural: sufficiency is exactly relevance containment. Once that characterization is in place, the complexity classification for \textsc{Minimum-Sufficient-Set} follows immediately. The only genuinely higher-level static query is the anchor variant, where an existentially chosen fiber must satisfy a universal constancy condition.
 
 \subsection{Problem Definitions}
 
@@ -19,49 +19,101 @@ This section studies the static regime, where the input is a finite coordinate-s
 \textbf{Question:} Does there exist an assignment $\alpha$ to $I$ such that $\Opt(s)$ is constant on the fiber $\{s : s_I=\alpha\}$?
 \end{problem}
 
-\subsection{coNP-Completeness Results}
+\subsection{Why You Might Expect $\Sigma_2^P$}
+
+At first glance, \textsc{Minimum-Sufficient-Set} seems to have the form
+\[
+\exists I\; \forall s,s'\in S:
+\quad s_I=s'_I \implies \Opt(s)=\Opt(s').
+\]
+If that syntax reflected the true structure of the problem, one might expect a $\Sigma_2^P$ classification. The natural algorithm is: guess a coordinate set $I$, then universally verify that every agreeing state pair induces the same optimal-action set. On its face, static exact minimization therefore looks like a genuine existential--universal search problem.
+
+\subsection{Structural Characterization of Minimum Sufficiency}
+
+Proposition~\ref{prop:minimal-relevant-equiv} removes the outer search layer: a set is sufficient exactly when it contains every relevant coordinate, so the minimum sufficient set is simply the relevant-coordinate set. This is the key structural theorem of the static regime. Static exact minimization is therefore a relevance-counting problem, not a genuinely alternating search problem.
+
+That collapse is specific to minimum sufficiency. \textsc{Anchor-Sufficiency} still asks the algorithm to choose an assignment $\alpha$ and then certify a universal condition on the induced fiber, so its existential layer cannot be absorbed into a structural characterization of the instance.
+
+\subsection{Complexity Consequence: coNP-Completeness}
+
+The first two results show that exact certification is already harder than pointwise evaluation. A counterexample to sufficiency is short, but certifying that no such counterexample exists is a universal statement over state pairs. The collapse discussed above explains why the same coNP behavior governs both direct sufficiency checking and exact minimization.
+
+\paragraph{Proof idea.}
+Membership is immediate from short counterexamples: a ``no'' witness is just a pair of states that agree on $I$ but induce different optimal-action sets. Hardness comes from reducing TAUTOLOGY to an empty-information instance whose optimizer map is constant exactly in the tautology case.
 
 \begin{theorem}[SUFFICIENCY-CHECK is coNP-complete]\label{thm:sufficiency-conp}
 SUFFICIENCY-CHECK is coNP-complete.
 \end{theorem}
 
-\begin{proof}
-Membership: by Proposition~\ref{prop:insufficiency-counterexample}, insufficiency has a polynomial witness $(s,s')$ with $s_I=s'_I$ and $\Opt(s)\ne\Opt(s')$, so the complement is in NP.
+\leanmeta{\LHrng{DQ}{40}{41}.}
 
-Hardness: reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\Opt$ (Proposition~\ref{prop:empty-sufficient-constant}). The reduction is polynomial in formula size.
+\begin{proof}
+For membership, Proposition~\ref{prop:insufficiency-counterexample} gives a polynomial witness $(s,s')$ with $s_I=s'_I$ and $\Opt(s)\ne\Opt(s')$ whenever $I$ is not sufficient, so the complement is in NP.
+
+For hardness, reduce TAUTOLOGY to the empty-set instance. Given formula $\varphi(x_1,\ldots,x_n)$, build a two-action decision problem where one action tracks $\varphi$ and the other is a baseline action. Then $I=\emptyset$ is sufficient iff $\varphi$ is a tautology, because empty-set sufficiency is exactly constancy of $\Opt$ (Proposition~\ref{prop:empty-sufficient-constant}). The reduction is polynomial in formula size.
 \end{proof}
 
-\begin{theorem}[MINIMUM-SUFFICIENT-SET is coNP-complete]\label{thm:minsuff-conp}
-MINIMUM-SUFFICIENT-SET is coNP-complete.
+\begin{theorem}[Static Structural Theorem and Complexity Consequence]\label{thm:minsuff-conp}
+In the static regime, the apparent existential layer in \textsc{Minimum-Sufficient-Set} collapses to relevance containment. Consequently, \textsc{Minimum-Sufficient-Set} is coNP-complete.
 \end{theorem}
 
+\leanmeta{\LHrng{DQ}{35}{36}.}
+
+\paragraph{Proof idea.}
+Once sufficiency is equivalent to containing all relevant coordinates, the question ``is there a sufficient set of size at most $k$?'' becomes ``are there at most $k$ relevant coordinates?'' The search component disappears, and the problem inherits the same coNP character as direct sufficiency checking.
+
 \begin{proof}
-By Proposition~\ref{prop:minimal-relevant-equiv}, the minimum sufficient set is exactly the relevant-coordinate set. Hence the question ``$|I^*|\le k$?'' is equivalent to a coNP check over relevance witnesses. CoNP-hardness follows from the $k=0$ slice, which is exactly SUFFICIENCY-CHECK with $I=\emptyset$.
+Proposition~\ref{prop:minimal-relevant-equiv} identifies the minimum sufficient set with the relevant-coordinate set. The question ``$|I^*|\le k$?'' therefore becomes the question whether at most $k$ coordinates are relevant, which is a coNP check over relevance witnesses. CoNP-hardness follows from the $k=0$ slice, which is exactly SUFFICIENCY-CHECK with $I=\emptyset$.
 \end{proof}
 
-\subsection{$\Sigma_2^P$-Completeness}
+\subsection{Sigma-2-P Completeness}
 
-\begin{theorem}[ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete]\label{thm:anchor-sigma2p}
+Anchor sufficiency adds one more layer of choice that the previous collapse does not remove: the algorithm may select a fiber, but must then certify that the chosen fiber is uniformly decision-preserving. That existential-then-universal pattern is exactly what raises the complexity class.
+
+\paragraph{Proof idea.}
+Membership follows the visible quantifier pattern: guess an anchor assignment and then verify constancy on its fiber. Hardness is obtained by encoding the existential variables of an $\exists\forall$ formula into the anchor choice and the universal variables into the residual coordinates that must be checked.
+
+\begin{theorem}[ANCHOR-SUFFICIENCY is Sigma-2-P-complete]\label{thm:anchor-sigma2p}
 ANCHOR-SUFFICIENCY is $\Sigma_2^P$-complete.
 \end{theorem}
 
+\leanmeta{\LHrng{DQ}{21}{22}.}
+
 \begin{proof}
-Membership is immediate from the quantifier pattern:
+Membership follows directly from the quantifier pattern:
 \[
 \exists\alpha\;\forall s\in S:\ (s_I=\alpha)\Rightarrow \Opt(s)=\Opt(s_\alpha).
 \]
-Hardness follows by reduction from $\exists\forall$-SAT: existential variables encode the anchor assignment, and universal variables range over the residual coordinates. Utility values are set so that fiberwise constancy holds exactly when the source formula is true.
+For hardness, reduce from $\exists\forall$-SAT: existential variables encode the anchor assignment, and universal variables range over the residual coordinates. Utility values are set so that fiberwise constancy holds exactly when the source formula is true.
 \end{proof}
 
 \subsection{Certificate-Size Lower Bound}
 
+The next theorem sharpens the static picture. It is not only that exact certification is hard in the complexity-class sense; even a checker restricted to the empty-set core may be forced to inspect exponentially many witness locations in the worst case.
+
 \begin{theorem}[Witness-Checking Duality]\label{thm:witness-checking-duality}
 For Boolean state spaces $S=\{0,1\}^n$, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
 \end{theorem}
+
+\leanmeta{\LHrng{WD}{1}{3}.}
 
 \begin{proof}
 Empty-set sufficiency asks whether $\Opt$ is constant on all $2^n$ states. A sound refutation-complete checker must be able to separate constant maps from maps that differ on some hidden antipodal partition. An adversary can place the first disagreement in any of $2^{n-1}$ independent pair slots; if fewer than $2^{n-1}$ slots are inspected, two instances remain indistinguishable to the checker but have opposite truth values. Therefore at least $2^{n-1}$ pair checks are necessary.
 \end{proof}
 
 \paragraph{Mechanization note.}
-The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are formalized in Lean 4 and indexed in Appendix~\ref{app:lean}.
+The TAUTOLOGY reduction stack, the coNP and $\Sigma_2^P$ classifications, and the witness-budget lower-bound core are indexed by their inline Lean handles.
+
+\paragraph{Explicit-state search upper bounds.}
+Under the explicit-state step-counting model, static sufficiency
+and static anchor sufficiency are also wrapped as abstract \textsc{P}
+predicates on inputs carrying a certified state budget. The artifact proves
+these upper bounds via counted searches with quadratic and linear state-space
+dependence respectively, and it also packages the static sufficiency search as
+an explicit correctness-plus-step-bound witness and as part of the unified
+finite-search summary theorem. \leanmeta{\LHrng{DC}{70}{71}, \LH{DC76}, \LHrng{DC}{80}{82}.}
+
+This completes the baseline regime. The next section keeps the same exact
+certification question but replaces pairwise counterexample exclusion by
+conditional expected-utility comparison, which is why the complexity lifts from
+the static coNP/$\Sigma_2^P$ picture to PP.

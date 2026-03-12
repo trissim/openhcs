@@ -51,6 +51,7 @@ SEQUENTIAL-SUFFICIENCY-CHECK is \PSPACE-complete.
 \begin{claim}{Sequential anchor refinement}{prop:sequential-anchor-refinement}
 If $I$ is sequentially sufficient, then $I$ is sequentially anchor-sufficient.
 \claimstamp{P\ref{prop:sequential-anchor-refinement}}{PSPACE}
+\leanmeta{\LH{DC23}.}
 \end{claim}
 
 \leanmeta{\LH{DC23}.}
@@ -63,6 +64,7 @@ For each quantified Boolean formula $q$:
 \mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
 \]
 \claimstamp{P\ref{prop:sequential-anchor-tqbf-reduction}}{PSPACE}
+\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
 \end{claim}
 
 \leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
@@ -107,6 +109,7 @@ Then: full observation is sequentially sufficient $\iff$ there exists a policy g
 \begin{claim}{Sequential sufficiency implies static sufficiency}{prop:sequential-static-relation}
 When the horizon $T = 1$ and transitions are deterministic, sequential sufficiency reduces to static sufficiency.
 \claimstamp{P\ref{prop:sequential-static-relation}}{T=1,DET}
+\leanmeta{\LH{CC46}.}
 \end{claim}
 
 \leanmeta{\LH{CC46}}
@@ -126,6 +129,7 @@ When the horizon $T = 1$ and transitions are deterministic, sequential sufficien
 \begin{claim}{Tractability under full observability}{prop:mdp-tractable}
 If $O$ is the identity (fully observable), then SEQUENTIAL-SUFFICIENCY-CHECK reduces to checking stochastic sufficiency at each time step.
 \claimstamp{P\ref{prop:mdp-tractable}}{FO}
+\leanmeta{\LH{CC50}.}
 \end{claim}
 
 \leanmeta{\LH{CC50}}
@@ -133,6 +137,7 @@ If $O$ is the identity (fully observable), then SEQUENTIAL-SUFFICIENCY-CHECK red
 \begin{claim}{Tractability under bounded horizon}{prop:sequential-bounded-horizon}
 If $T \leq k$ (constant horizon), then SEQUENTIAL-SUFFICIENCY-CHECK is solvable in time polynomial in $|S|, |A|, k$.
 \claimstamp{P\ref{prop:sequential-bounded-horizon}}{BH}
+\leanmeta{\LH{CC49}.}
 \end{claim}
 
 \leanmeta{\LH{CC49}}
@@ -147,6 +152,7 @@ Similarly, stochastic sufficiency does NOT transfer to sequential in general:
 \begin{claim}{Stochastic to sequential bridge failure}{prop:stochastic-sequential-bridge-fail}
 There exists a stochastic sufficient coordinate set $I$ and a sequential problem where $I$ is NOT sequentially sufficient, even when transitions are memoryless.
 \claimstamp{P\ref{prop:stochastic-sequential-bridge-fail}}{CE}
+\leanmeta{\LH{CC56}.}
 \end{claim}
 
 \leanmeta{\LH{CC56}}

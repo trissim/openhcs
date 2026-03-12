@@ -135,6 +135,43 @@ Entries marked \textbf{Full (conditional)} are explicitly mechanized transfer th
 \item \texttt{Tractability/} -- Bounded actions, separable utilities, tree structure
 \end{itemize}
 
+\subsection{Entropy-Inflation Bridge (Implemented)}
+
+The inflation-to-entropy bridge is now implemented in Lean as a first-class module:
+
+\begin{itemize}
+\item \texttt{InflationEntropyBridge.lean} -- dynamic time-indexed decision families, optimizer-class monotonicity, entropy monotonicity, strict-growth witness criteria, and thermal-floor corollaries.
+\item \texttt{InflationEntropyMinimality.lean} -- irreducibility witnesses for key assumption groups (structural compatibility, strictness witness, positivity/floor premises).
+\item \texttt{StochasticSequential/SetValued.lean} -- set-valued stochastic sufficiency layer (ties allowed), bridging static set semantics and stochastic regime semantics.
+\end{itemize}
+
+\paragraph{Core bridge theorems.}
+The mechanization includes:
+\texttt{classes\_monotone}, \texttt{entropy\_monotone},
+\texttt{classes\_strict\_increase}, \texttt{entropy\_strict\_increase},
+\texttt{optCompat\_of\_utilityCompat},
+\texttt{thermal\_floor\_monotone\_of\_classes},
+\texttt{thermal\_floor\_strict\_of\_new\_class}, and
+\texttt{later\_energy\_floor\_implies\_earlier\_floor}.
+
+\paragraph{Temporal adapter.}
+The bridge now includes an explicit adapter from cosmological-cardinality growth to dynamic decision families via
+\texttt{TemporalUtilityFamily} and transfer lemmas
+\texttt{temporal\_classes\_monotone\_of\_utilityCompat} and
+\texttt{temporal\_entropy\_monotone\_of\_utilityCompat}.
+
+\paragraph{Assumption-minimality status.}
+Mechanized witnesses are present for representative drops of
+compatibility/strictness/positivity/floor assumptions.
+Some witnesses are established in intentionally weakened frameworks
+(to model removal of type-level side conditions such as embedding or nonemptiness)
+and are explicitly separated from the main bridge structure.
+
+\paragraph{Handle integration.}
+Compact handle aliases for the bridge and minimality witnesses are exported in
+\texttt{HandleAliases.lean} (IEB and SSV groups), and corresponding axiom-audit prints are included in
+\texttt{CheckAxioms.lean}.
+
 \subsection{Verification}
 
 The proofs compile with Lean 4 and contain no \texttt{sorry} placeholders. Run \texttt{lake build} in the proof directory to verify.

@@ -1,12 +1,24 @@
-\section{Witness-Checking and Approximation Consequences}\label{sec:witness-duality}
+\subsection{Witness and Approximation Limits}\label{sec:witness-duality}
 
-This section isolates the verification bottleneck behind exact sufficiency certification and states the approximation-hardness consequences. Two different theorems are needed. The first is a gap theorem on the shifted hard family: it shows that any uniform factor guarantee on that explicit family already has enough power to decide tautology by thresholding output size. The second is an exact equivalence theorem on a separate set-cover gadget family: it shows that minimum sufficiency and set cover coincide there, so approximation guarantees and impossibility results transfer without loss. Keeping these apart matters. The gap theorem gives an internal obstruction family. The set-cover theorem gives the exact transfer bridge.
+Hardness does not disappear when one weakens exact minimization to witness checking or approximation. The first theorem shows that even the empty-set core can force exponential witness inspection. The remaining results then show two complementary approximation obstructions: a direct gap obstruction on the shifted hard family and an exact optimization transfer on the set-cover gadget family.
 
-\subsection{Verification Lower Bound}
+\subsubsection{Witness-Checking Lower Bound}
+
+\begin{definition}[Slot-Inspection Checker]
+For the empty-set sufficiency core on Boolean state space $S=\{0,1\}^n$, a \emph{slot-inspection checker} is a deterministic algorithm that adaptively queries witness slots of the form
+\[
+\{(0,z),(1,z)\}\qquad z\in\{0,1\}^{n-1},
+\]
+and, for each queried slot, learns whether the optimizer agrees or disagrees on the two states in that slot. The checker is \emph{sound} if it never accepts a non-sufficient instance and never rejects a sufficient one.
+\end{definition}
+
+The lower bound below is for deterministic checkers in exactly this access model.
 
 \begin{theorem}[Witness-Checking Lower Bound]\label{thm:witness-lower-bound-4}
-For Boolean decision problems with $n$ coordinates, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
+For Boolean decision problems with $n$ coordinates, any sound slot-inspection checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
 \end{theorem}
+
+\leanmeta{\LHrng{WD}{1}{3}.}
 
 \begin{proof}
 Let $S=\{0,1\}^n$. Empty-set sufficiency is exactly the claim that $\Opt$ is constant on all states.
@@ -28,7 +40,7 @@ If a checker inspects fewer than $2^{n-1}$ slots, at least one slot $z^\star$ is
 But YES is an empty-set-sufficient instance, whereas NO$_{z^\star}$ is not. So a common answer cannot be sound on both inputs. Hence any sound worst-case checker must inspect every slot, i.e., at least $2^{n-1}$ witness pairs.
 \end{proof}
 
-\subsection{Approximation Gap on the Shifted Hard Family}
+\subsubsection{Approximation Gap on the Shifted Family}
 
 For the shifted reduction family used in the mechanization, the optimum support size exhibits a sharp gap:
 \[
@@ -47,6 +59,8 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any solver that, on every shifted-
 \]
 \end{theorem}
 
+\leanmeta{\LH{DQ20}, \LH{DQ39}, \LH{DQ43}.}
+
 \begin{proof}
 \textbf{Tautology $\Rightarrow$ threshold passes.}
 If $\varphi$ is a tautology, the optimum support size on the shifted family is $1$, realized by the singleton gate coordinate. A factor-$\rho$ solver therefore returns a sufficient set of size at most $\rho\cdot 1=\rho$, so $|\mathcal{A}(\varphi)|\le \rho$.
@@ -57,8 +71,6 @@ Assume $|\mathcal{A}(\varphi)|\le \rho$ with $\rho<n+1$. If $\varphi$ were not a
 Therefore $|\mathcal{A}(\varphi)|\le \rho$ holds exactly in the tautology case.
 \end{proof}
 
-\subsection{Counted-Runtime Threshold Decider}
-
 \begin{theorem}[Counted-runtime threshold decider]
 Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor-$\rho$ solver for the shifted minimum-sufficient-set family. Then the derived procedure
 \[
@@ -67,17 +79,21 @@ Fix $\rho\in\mathbb{N}$. Let $\mathcal{A}$ be any counted polynomial-time factor
 is a counted polynomial-time tautology decider on the gap regime $\rho<n+1$.
 \end{theorem}
 
+\leanmeta{\LHrng{DQ}{23}{24}.}
+
 \begin{proof}
 Correctness is exactly the gap-threshold theorem above: on the regime $\rho<n+1$, the predicate $|\mathcal{A}(\varphi)|\le \rho$ is equivalent to tautology.
 
 For runtime, the derived decider performs two operations: one call to the counted polynomial-time solver $\mathcal{A}$, followed by one cardinality comparison against the fixed threshold $\rho$. The second step contributes only constant additive overhead relative to the solver run. Hence the derived decision procedure remains counted polynomial-time.
 \end{proof}
 
-\subsection{Set-Cover Transfer Boundary}
+\subsubsection{Set-Cover Transfer Boundary}
 
 \begin{theorem}[Exact set-cover equivalence on the gadget family]
 On the mechanized gadget family, a coordinate set is sufficient if and only if the corresponding set family is a cover. In particular, feasible solutions are in bijection and optimum cardinalities coincide exactly.
 \end{theorem}
+
+\leanmeta{\LH{DQ11}, \LH{DQ34}.}
 
 \begin{proof}
 The gadget is constructed so that each universe element $u$ gives two states, $(\mathsf{false},u)$ and $(\mathsf{true},u)$, with different optimal-action sets. A coordinate $i$ distinguishes this pair exactly when the corresponding set covers $u$.
@@ -93,8 +109,10 @@ This yields an exact bijection between feasible sufficient sets and feasible cov
 Any factor guarantee or instance-dependent ratio guarantee for minimum sufficiency on the gadget family induces the same guarantee for set cover on that family. Consequently, any impossibility result proved for set cover on that family transfers immediately to minimum sufficiency.
 \end{corollary}
 
+\leanmeta{\LH{DQ25}, \LHrng{DQ}{32}{33}.}
+
 \begin{proof}
 Compose the candidate minimum-sufficiency solver with the gadget translation and then use the exact equivalence theorem above. Because feasible sets correspond bijectively and preserve cardinality, both approximation factors and instance-dependent ratios are unchanged.
 \end{proof}
 
-The point is therefore two exact reductions with different roles. The shifted family gives a direct gap obstruction: factor approximation already decides tautology there. The set-cover family gives an exact optimization equivalence: sufficiency is cover there. That is why future logarithmic inapproximability theorems for set cover can be imported cleanly once they are available. The current boundary is only that the external set-cover hardness theorem itself is not yet part of this library.
+The two reductions serve different purposes. The shifted family gives a direct gap obstruction: factor approximation already decides tautology there. The set-cover family gives an exact optimization equivalence: sufficiency is cover there. Together they show that weakening exact minimization to witness checking or approximation does not dissolve the core obstruction.

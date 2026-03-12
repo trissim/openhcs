@@ -1,166 +1,170 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-11T17:57:07.694528
+Generated: 2026-03-12T14:02:17.791775
 
 === HUMAN COPY/PASTE ===
 
-Title: Semantic Representation Compression: Exact Zero-Error Laws and Neurosymbolic Necessity
+Title: Semantic Identity Compression: Exact Zero-Error Laws, Rate-Distortion, and Neurosymbolic Necessity
 
 Abstract (Unicode, for Zenodo):
-We prove that learned semantic representations alone cannot achieve zero-error identity recovery. When distinct entities map to the same representation, no decoder, regardless of architecture, training, or compute, can distinguish them without additional bits. If A_π is the maximum representation-collision multiplicity, then the minimum worst-case auxiliary description is exactly log₂A_π bits, and this bound is tight.
+The question of whether semantic representations can capture identity without auxiliary identifiers is often framed as a design question. This paper shows that it is governed by exact coding constraints. When distinct entities map to the same representation, no decoder can recover their identities without additional distinguishing information. The minimum worst-case auxiliary description is exactly log₂A_π bits, where A_π is the maximum collision multiplicity. If this cost is left unpaid, the distortion floor on a worst collision block is D ≥ 1 − 1/A_π.
 
-The coding laws are exact. For repeated independent uses of the same representation map, the minimum block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime, the optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected length at least the expectation of that quantity and hence at least H(C ∣ U)/log 2, and standard fiberwise prefix coding achieves expected length at most H(C ∣ U)/log 2 + 1. Under a uniform source on a collision block of size a, subcritical fixed-length budgets satisfy the explicit error floor D ≥ 1 − 2ᴸ/a.
+The paper isolates the deterministic corner of this problem. On a uniform collision block of size a with auxiliary budget L bits, the optimal distortion is exactly D^⋆(L) = max (0, 1 − 2ᴸ/a). For repeated independent uses of the same representation map, the minimum zero-error block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime, the optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected length at least the expectation of that quantity and hence at least H(C ∣ U)/log 2, and standard fiberwise prefix coding achieves expected length at most H(C ∣ U)/log 2 + 1. The point is that a question often discussed at the level of architecture can be stated and answered as an exact coding problem.
 
-The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view, and factorized-representation consequences. We instantiate these generic theorems in a concrete formal identity domain, proving that symbolic handles are information-theoretically necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3). The instantiated domain is a witness, not a restriction: the necessity claim applies to any learned representation with collisions. The pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber (NSL1–NSL6). The identity bits must be paid somewhere, either in the encoder or in the symbolic handle. No free lunch.
+The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view, and factorized-representation consequences. We instantiate these generic laws in a concrete formal identity domain and show that a neural encoder paired with a symbolic handle achieves zero-error identity recovery if and only if the handle resolves ambiguity inside each semantic fiber (NSL1–NSL6). Auxiliary distinguishing information must be supplied somewhere; symbolic layers are a standard computational mechanism for supplying it.
 
 Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems, learned representations, side information
 
 Abstract (MathJax, for arXiv):
-We prove that learned semantic representations alone cannot achieve zero-error identity recovery. When distinct entities map to the same representation, no decoder, regardless of architecture, training, or compute, can distinguish them without additional bits. If $A_\pi$ is the maximum representation-collision multiplicity, then the minimum worst-case auxiliary description is exactly $\log_2 A_\pi$ bits, and this bound is tight.
+The question of whether semantic representations can capture identity without auxiliary identifiers is often framed as a design question. This paper shows that it is governed by exact coding constraints. When distinct entities map to the same representation, no decoder can recover their identities without additional distinguishing information. The minimum worst-case auxiliary description is exactly $\log_2 A_\pi$ bits, where $A_\pi$ is the maximum collision multiplicity. If this cost is left unpaid, the distortion floor on a worst collision block is $D \ge 1 - 1/A_\pi$.
 
-The coding laws are exact. For repeated independent uses of the same representation map, the minimum block budget is $L_t^\star=t\log_2 A_\pi$. In the adaptive regime, the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$, any feasible adaptive scheme has expected length at least the expectation of that quantity and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix coding achieves expected length at most $H(C\mid U)/\log 2 + 1$. Under a uniform source on a collision block of size $a$, subcritical fixed-length budgets satisfy the explicit error floor $D \ge 1-2^L/a$.
+The paper isolates the deterministic corner of this problem. On a uniform collision block of size $a$ with auxiliary budget $L$ bits, the optimal distortion is exactly $D^\star(L)=\max(0,1-2^L/a)$. For repeated independent uses of the same representation map, the minimum zero-error block budget is $L_t^\star=t\log_2 A_\pi$. In the adaptive regime, the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$, any feasible adaptive scheme has expected length at least the expectation of that quantity and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix coding achieves expected length at most $H(C\mid U)/\log 2 + 1$. The point is that a question often discussed at the level of architecture can be stated and answered as an exact coding problem.
 
-The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view, and factorized-representation consequences. We instantiate these generic theorems in a concrete formal identity domain, proving that symbolic handles are information-theoretically necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3). The instantiated domain is a witness, not a restriction: the necessity claim applies to any learned representation with collisions. The pair consisting of a neural encoder and an injective symbolic handle achieves zero-error identity recovery if and only if the handle distinguishes entities within each semantic fiber (NSL1--NSL6). The identity bits must be paid somewhere, either in the encoder or in the symbolic handle. No free lunch.
+The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view, and factorized-representation consequences. We instantiate these generic laws in a concrete formal identity domain and show that a neural encoder paired with a symbolic handle achieves zero-error identity recovery if and only if the handle resolves ambiguity inside each semantic fiber (NSL1--NSL6). Auxiliary distinguishing information must be supplied somewhere; symbolic layers are a standard computational mechanism for supplying it.
 
 Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems, learned representations, side information
 
 arXiv Comments:
-JSAIT submission. Lean 4 artifact: 9166 lines, 399 theorems/lemmas across 31 files (0 sorry placeholders).
+JSAIT submission. Lean 4 artifact: 13037 lines, 635 theorems/lemmas across 46 files (0 sorry placeholders).
 
 === MACHINE YAML ===
 paper_id: paper1_jsait
-title: 'Semantic Representation Compression: Exact Zero-Error Laws and Neurosymbolic
-  Necessity'
+title: 'Semantic Identity Compression: Exact Zero-Error Laws, Rate-Distortion, and
+  Neurosymbolic Necessity'
 zenodo:
-  title: 'Semantic Representation Compression: Exact Zero-Error Laws and Neurosymbolic
-    Necessity'
-  abstract: 'We prove that learned semantic representations alone cannot achieve zero-error
-    identity recovery. When distinct entities map to the same representation, no decoder,
-    regardless of architecture, training, or compute, can distinguish them without
-    additional bits. If A_π is the maximum representation-collision multiplicity,
-    then the minimum worst-case auxiliary description is exactly log₂A_π bits, and
-    this bound is tight.
+  title: 'Semantic Identity Compression: Exact Zero-Error Laws, Rate-Distortion, and
+    Neurosymbolic Necessity'
+  abstract: 'The question of whether semantic representations can capture identity
+    without auxiliary identifiers is often framed as a design question. This paper
+    shows that it is governed by exact coding constraints. When distinct entities
+    map to the same representation, no decoder can recover their identities without
+    additional distinguishing information. The minimum worst-case auxiliary description
+    is exactly log₂A_π bits, where A_π is the maximum collision multiplicity. If this
+    cost is left unpaid, the distortion floor on a worst collision block is D ≥ 1
+    − 1/A_π.
 
 
-    The coding laws are exact. For repeated independent uses of the same representation
-    map, the minimum block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime, the
-    optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected
+    The paper isolates the deterministic corner of this problem. On a uniform collision
+    block of size a with auxiliary budget L bits, the optimal distortion is exactly
+    D^⋆(L) = max (0, 1 − 2ᴸ/a). For repeated independent uses of the same representation
+    map, the minimum zero-error block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime,
+    the optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected
     length at least the expectation of that quantity and hence at least H(C ∣ U)/log
     2, and standard fiberwise prefix coding achieves expected length at most H(C ∣
-    U)/log 2 + 1. Under a uniform source on a collision block of size a, subcritical
-    fixed-length budgets satisfy the explicit error floor D ≥ 1 − 2ᴸ/a.
+    U)/log 2 + 1. The point is that a question often discussed at the level of architecture
+    can be stated and answered as an exact coding problem.
 
 
     The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view,
-    and factorized-representation consequences. We instantiate these generic theorems
-    in a concrete formal identity domain, proving that symbolic handles are information-theoretically
-    necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3).
-    The instantiated domain is a witness, not a restriction: the necessity claim applies
-    to any learned representation with collisions. The pair consisting of a neural
-    encoder and an injective symbolic handle achieves zero-error identity recovery
-    if and only if the handle distinguishes entities within each semantic fiber (NSL1–NSL6).
-    The identity bits must be paid somewhere, either in the encoder or in the symbolic
-    handle. No free lunch.
+    and factorized-representation consequences. We instantiate these generic laws
+    in a concrete formal identity domain and show that a neural encoder paired with
+    a symbolic handle achieves zero-error identity recovery if and only if the handle
+    resolves ambiguity inside each semantic fiber (NSL1–NSL6). Auxiliary distinguishing
+    information must be supplied somewhere; symbolic layers are a standard computational
+    mechanism for supplying it.
 
 
     Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems,
     learned representations, side information'
 arxiv:
-  title: 'Semantic Representation Compression: Exact Zero-Error Laws and Neurosymbolic
-    Necessity'
-  abstract: 'We prove that learned semantic representations alone cannot achieve zero-error
-    identity recovery. When distinct entities map to the same representation, no decoder,
-    regardless of architecture, training, or compute, can distinguish them without
-    additional bits. If $A_\pi$ is the maximum representation-collision multiplicity,
-    then the minimum worst-case auxiliary description is exactly $\log_2 A_\pi$ bits,
-    and this bound is tight.
+  title: 'Semantic Identity Compression: Exact Zero-Error Laws, Rate-Distortion, and
+    Neurosymbolic Necessity'
+  abstract: 'The question of whether semantic representations can capture identity
+    without auxiliary identifiers is often framed as a design question. This paper
+    shows that it is governed by exact coding constraints. When distinct entities
+    map to the same representation, no decoder can recover their identities without
+    additional distinguishing information. The minimum worst-case auxiliary description
+    is exactly $\log_2 A_\pi$ bits, where $A_\pi$ is the maximum collision multiplicity.
+    If this cost is left unpaid, the distortion floor on a worst collision block is
+    $D \ge 1 - 1/A_\pi$.
 
 
-    The coding laws are exact. For repeated independent uses of the same representation
-    map, the minimum block budget is $L_t^\star=t\log_2 A_\pi$. In the adaptive regime,
-    the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$, any feasible
-    adaptive scheme has expected length at least the expectation of that quantity
-    and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix coding achieves
-    expected length at most $H(C\mid U)/\log 2 + 1$. Under a uniform source on a collision
-    block of size $a$, subcritical fixed-length budgets satisfy the explicit error
-    floor $D \ge 1-2^L/a$.
+    The paper isolates the deterministic corner of this problem. On a uniform collision
+    block of size $a$ with auxiliary budget $L$ bits, the optimal distortion is exactly
+    $D^\star(L)=\max(0,1-2^L/a)$. For repeated independent uses of the same representation
+    map, the minimum zero-error block budget is $L_t^\star=t\log_2 A_\pi$. In the
+    adaptive regime, the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$,
+    any feasible adaptive scheme has expected length at least the expectation of that
+    quantity and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix
+    coding achieves expected length at most $H(C\mid U)/\log 2 + 1$. The point is
+    that a question often discussed at the level of architecture can be stated and
+    answered as an exact coding problem.
 
 
     The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view,
-    and factorized-representation consequences. We instantiate these generic theorems
-    in a concrete formal identity domain, proving that symbolic handles are information-theoretically
-    necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3).
-    The instantiated domain is a witness, not a restriction: the necessity claim applies
-    to any learned representation with collisions. The pair consisting of a neural
-    encoder and an injective symbolic handle achieves zero-error identity recovery
-    if and only if the handle distinguishes entities within each semantic fiber (NSL1--NSL6).
-    The identity bits must be paid somewhere, either in the encoder or in the symbolic
-    handle. No free lunch.
+    and factorized-representation consequences. We instantiate these generic laws
+    in a concrete formal identity domain and show that a neural encoder paired with
+    a symbolic handle achieves zero-error identity recovery if and only if the handle
+    resolves ambiguity inside each semantic fiber (NSL1--NSL6). Auxiliary distinguishing
+    information must be supplied somewhere; symbolic layers are a standard computational
+    mechanism for supplying it.
 
 
     Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems,
     learned representations, side information'
-  comments: 'JSAIT submission. Lean 4 artifact: 9166 lines, 399 theorems/lemmas across
-    31 files (0 sorry placeholders).'
+  comments: 'JSAIT submission. Lean 4 artifact: 13037 lines, 635 theorems/lemmas across
+    46 files (0 sorry placeholders).'
 abstract_variants:
-  unicode: 'We prove that learned semantic representations alone cannot achieve zero-error
-    identity recovery. When distinct entities map to the same representation, no decoder,
-    regardless of architecture, training, or compute, can distinguish them without
-    additional bits. If A_π is the maximum representation-collision multiplicity,
-    then the minimum worst-case auxiliary description is exactly log₂A_π bits, and
-    this bound is tight.
+  unicode: 'The question of whether semantic representations can capture identity
+    without auxiliary identifiers is often framed as a design question. This paper
+    shows that it is governed by exact coding constraints. When distinct entities
+    map to the same representation, no decoder can recover their identities without
+    additional distinguishing information. The minimum worst-case auxiliary description
+    is exactly log₂A_π bits, where A_π is the maximum collision multiplicity. If this
+    cost is left unpaid, the distortion floor on a worst collision block is D ≥ 1
+    − 1/A_π.
 
 
-    The coding laws are exact. For repeated independent uses of the same representation
-    map, the minimum block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime, the
-    optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected
+    The paper isolates the deterministic corner of this problem. On a uniform collision
+    block of size a with auxiliary budget L bits, the optimal distortion is exactly
+    D^⋆(L) = max (0, 1 − 2ᴸ/a). For repeated independent uses of the same representation
+    map, the minimum zero-error block budget is Lₜ^⋆ = tlog₂A_π. In the adaptive regime,
+    the optimal fiber budget is ⌈log₂|π⁻¹(u)|⌉, any feasible adaptive scheme has expected
     length at least the expectation of that quantity and hence at least H(C ∣ U)/log
     2, and standard fiberwise prefix coding achieves expected length at most H(C ∣
-    U)/log 2 + 1. Under a uniform source on a collision block of size a, subcritical
-    fixed-length budgets satisfy the explicit error floor D ≥ 1 − 2ᴸ/a.
+    U)/log 2 + 1. The point is that a question often discussed at the level of architecture
+    can be stated and answered as an exact coding problem.
 
 
     The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view,
-    and factorized-representation consequences. We instantiate these generic theorems
-    in a concrete formal identity domain, proving that symbolic handles are information-theoretically
-    necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3).
-    The instantiated domain is a witness, not a restriction: the necessity claim applies
-    to any learned representation with collisions. The pair consisting of a neural
-    encoder and an injective symbolic handle achieves zero-error identity recovery
-    if and only if the handle distinguishes entities within each semantic fiber (NSL1–NSL6).
-    The identity bits must be paid somewhere, either in the encoder or in the symbolic
-    handle. No free lunch.
+    and factorized-representation consequences. We instantiate these generic laws
+    in a concrete formal identity domain and show that a neural encoder paired with
+    a symbolic handle achieves zero-error identity recovery if and only if the handle
+    resolves ambiguity inside each semantic fiber (NSL1–NSL6). Auxiliary distinguishing
+    information must be supplied somewhere; symbolic layers are a standard computational
+    mechanism for supplying it.
 
 
     Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems,
     learned representations, side information'
-  mathjax: 'We prove that learned semantic representations alone cannot achieve zero-error
-    identity recovery. When distinct entities map to the same representation, no decoder,
-    regardless of architecture, training, or compute, can distinguish them without
-    additional bits. If $A_\pi$ is the maximum representation-collision multiplicity,
-    then the minimum worst-case auxiliary description is exactly $\log_2 A_\pi$ bits,
-    and this bound is tight.
+  mathjax: 'The question of whether semantic representations can capture identity
+    without auxiliary identifiers is often framed as a design question. This paper
+    shows that it is governed by exact coding constraints. When distinct entities
+    map to the same representation, no decoder can recover their identities without
+    additional distinguishing information. The minimum worst-case auxiliary description
+    is exactly $\log_2 A_\pi$ bits, where $A_\pi$ is the maximum collision multiplicity.
+    If this cost is left unpaid, the distortion floor on a worst collision block is
+    $D \ge 1 - 1/A_\pi$.
 
 
-    The coding laws are exact. For repeated independent uses of the same representation
-    map, the minimum block budget is $L_t^\star=t\log_2 A_\pi$. In the adaptive regime,
-    the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$, any feasible
-    adaptive scheme has expected length at least the expectation of that quantity
-    and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix coding achieves
-    expected length at most $H(C\mid U)/\log 2 + 1$. Under a uniform source on a collision
-    block of size $a$, subcritical fixed-length budgets satisfy the explicit error
-    floor $D \ge 1-2^L/a$.
+    The paper isolates the deterministic corner of this problem. On a uniform collision
+    block of size $a$ with auxiliary budget $L$ bits, the optimal distortion is exactly
+    $D^\star(L)=\max(0,1-2^L/a)$. For repeated independent uses of the same representation
+    map, the minimum zero-error block budget is $L_t^\star=t\log_2 A_\pi$. In the
+    adaptive regime, the optimal fiber budget is $\lceil \log_2 |\pi^{-1}(u)| \rceil$,
+    any feasible adaptive scheme has expected length at least the expectation of that
+    quantity and hence at least $H(C\mid U)/\log 2$, and standard fiberwise prefix
+    coding achieves expected length at most $H(C\mid U)/\log 2 + 1$. The point is
+    that a question often discussed at the level of architecture can be stated and
+    answered as an exact coding problem.
 
 
     The same ambiguity-fiber geometry yields exact task-sufficiency, helper-view,
-    and factorized-representation consequences. We instantiate these generic theorems
-    in a concrete formal identity domain, proving that symbolic handles are information-theoretically
-    necessary, not optional, for zero-error open-world identity recovery (NSL2, NSL3).
-    The instantiated domain is a witness, not a restriction: the necessity claim applies
-    to any learned representation with collisions. The pair consisting of a neural
-    encoder and an injective symbolic handle achieves zero-error identity recovery
-    if and only if the handle distinguishes entities within each semantic fiber (NSL1--NSL6).
-    The identity bits must be paid somewhere, either in the encoder or in the symbolic
-    handle. No free lunch.
+    and factorized-representation consequences. We instantiate these generic laws
+    in a concrete formal identity domain and show that a neural encoder paired with
+    a symbolic handle achieves zero-error identity recovery if and only if the handle
+    resolves ambiguity inside each semantic fiber (NSL1--NSL6). Auxiliary distinguishing
+    information must be supplied somewhere; symbolic layers are a standard computational
+    mechanism for supplying it.
 
 
     Keywords: semantics-aware compression, zero-error coding, neurosymbolic systems,

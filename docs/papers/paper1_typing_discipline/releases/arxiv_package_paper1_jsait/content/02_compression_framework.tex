@@ -1,139 +1,86 @@
-\subsection{Primitive Objects}
+\subsection{The Abstract Coding Framework}
 
-The introduction has already motivated the side-information viewpoint. For the main theorem arc, the primitive object is the pair $(C,U)$ with $U=\pi(C)$. This section fixes one concrete realization of that coding model: a declared attribute family that induces the representation map $\pi$. The attribute-family formalism is retained because it supports the paper's broader semantic-identification interpretations, but the coding statements depend only on the induced representation together with any charged auxiliary description.
+The paper studies a finite class space together with a fixed representation map. The decoder observes the representation value, and the encoder may additionally send auxiliary description to resolve whatever ambiguity the representation leaves behind. The coding laws depend only on this representation map and its fibers, not on the mechanism that produced it.
 
 \begin{definition}[Coding model induced by a representation]
 Let $C$ be a finite class variable, let $U=\pi(C)$ be the representation available to the decoder, and let $M$ be any auxiliary description transmitted by the encoder. The main theorem arc studies the minimum length of $M$ needed for exact recovery of $C$ from $(U,M)$, in both fixed-length and representation-adaptive regimes.
 \end{definition}
 
+\begin{definition}[Representation fiber]
+For a representation value $u$, define the corresponding fiber by
+\[
+\pi^{-1}(u) = \{c : \pi(c)=u\}.
+\]
+The paper's central object is the geometry of these fibers.
+\end{definition}
+
+\begin{remark}[Where the representation may come from]
+No further structure is assumed. The map $\pi$ may arise from a learned encoder, a database schema projection, a feature-extraction pipeline, or a hand-designed attribute family. The theoremic contribution is generic in the representation map once its fibers are fixed.
+\end{remark}
+
 \begin{remark}[Entity and random-variable notation]
 The coding statements are written in terms of a class variable $C$ and representation $U=\pi(C)$. When convenient, we also use an underlying entity variable $V$ together with a class assignment map $C(V)$. Thus $U=\pi(V)$ is the representation of the realized entity, and the induced class label is $C(V)$. The two viewpoints are interchangeable; the coding arc should be read through the pair $(C,U)$.
 \end{remark}
 
-The remaining definitions explain one concrete way of generating the representation map $\pi$ from an attribute family.
-
-\begin{definition}[Entity space and attribute family]
-Let $\mathcal{V}$ be a set of entities (program objects, database records, biological specimens, library items). Let $\mathcal{I}$ be a finite set of binary \emph{attributes}. Each $I \in \mathcal{I}$ induces a bipartition of $\mathcal{V}$ via $q_I$, and the full family induces the observational equivalence partition.
-\end{definition}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}}
-
-\begin{definition}[Attribute observation family]
-For each $I \in \mathcal{I}$, define the attribute-membership observation $q_I: \mathcal{V} \to \{0,1\}$:
-\[
-q_I(v) = \begin{cases} 1 & \text{if } v \text{ satisfies attribute } I \\ 0 & \text{otherwise} \end{cases}
-\]
-Let $\Phi_{\mathcal{I}} = \{q_I : I \in \mathcal{I}\}$ denote the attribute observation family.
-\end{definition}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}}
-
-\begin{remark}[Notation for size parameters]
-We write $n := |\mathcal{I}|$ for the ambient number of available attributes. We write $d$ for the minimum distinguishing number (Definition~\ref{def:distinguishing-dimension}), so $d \le n$ and there exist worst-case families with $d = n$. We write $m$ for the number of \emph{query sites} (call sites) that perform attribute checks in a program or protocol (used only in the secondary query-side discussion). When discussing a particular identification or verification task, we may write $s$ for the number of attributes actually queried or traversed by the procedure, with $s \le n$.
-\end{remark}
-
-\begin{definition}[Attribute profile]
-The attribute profile function $\pi: \mathcal{V} \to \{0,1\}^{|\mathcal{I}|}$ maps each value to its complete attribute signature:
-\[
-\pi(v) = (q_I(v))_{I \in \mathcal{I}}.
-\]
-\end{definition}
-\leanmeta{\LH{ACS8}, \LH{COMPL1}}
-
-\begin{definition}[Attribute indistinguishability]
-Values $v, w \in \mathcal{V}$ are \emph{attribute-indistinguishable}, written $v \sim w$, iff $\pi(v) = \pi(w)$.
-\end{definition}
-\leanmeta{\LHrng{ACS}{8}{9}}
-
-The relation $\sim$ is an equivalence relation. We write $[v]_\sim$ for the equivalence class of $v$.
-
-\begin{remark}[Why the admissibility contract is explicit]
-The model intentionally forbids hidden side channels. If an external registry, whole-universe preprocessing table, reflection oracle, or cached cross-instance state is allowed to distinguish values that the declared observation family cannot distinguish, then the effective observable family has changed. The point of Definition~\ref{def:admissibility-contract} is to keep the resource accounting honest: extra distinguishing information must either be represented as part of the observation model or charged to the auxiliary-description resource.
-\end{remark}
-
-\begin{definition}[Classification scheme]
-A \emph{classification scheme} is any procedure (deterministic or randomized), with arbitrary time and memory, whose only access to a value $v \in \mathcal{V}$ is via:
-\begin{enumerate}
-\item the observation family $\Phi = \{q_I : I \in \mathcal{I}\}$, where $q_I(v) = 1$ iff $v$ satisfies attribute $I$, and optionally
-\item an auxiliary description primitive returning charged side information about the class.
-\end{enumerate}
-All theorems in this paper quantify over all such schemes.
-\end{definition}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
-
-This definition is intentionally broad: schemes may be adaptive, randomized, or computationally unbounded. The constraint is \emph{observational}, not computational.
-
-\begin{definition}[Attribute-only observer]
-An \emph{attribute-only observer} is any procedure whose interaction with a value $v \in \mathcal{V}$ is limited to queries in $\Phi_{\mathcal{I}}$. Formally, the observer interacts with $v$ only via primitive attribute queries $q_I \in \Phi_{\mathcal{I}}$; hence any transcript (and output) factors through $\pi(v)$.
-\end{definition}
-\leanmeta{\LH{ACS8}, \LH{COMPL1}}
-
 \begin{definition}[Admissibility contract]\label{def:admissibility-contract}
-All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared observation family $\Phi$ together with any explicit auxiliary description charged to the side-information budget $L$. In particular, no external registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply hidden distinguishing information.
+All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared representation value together with any explicit auxiliary description charged to the side-information budget. In particular, no hidden registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply uncharged distinguishing information.
 \end{definition}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{FORC2}}
-
-The core results require only $(\mathcal V,C,\pi)$ and the observation family $\Phi$. The fixed-axis language below is a representative specialization rather than an added axiom for the general theory.
 
 \subsection{Representation-Induced Information Barrier}
 
-The basic coding obstruction is immediate: equal representations give the decoder the same side information. The next theorem records that invariant once, in the attribute-generated realization of the model.
+The basic obstruction is immediate: equal representations give the decoder the same side information. The next theorem records that invariant in generic form.
 
-\begin{definition}[Attribute-computable property]
-A property $P:\mathcal V \to Y$ is \emph{attribute-computable} if there exists a function $f:\{0,1\}^{|\mathcal I|}\to Y$ such that
+\begin{definition}[Representation-computable property]
+A property $P:\mathcal C \to Y$ is \emph{representation-computable} if there exists a function $f: \mathcal U \to Y$ such that
 \[
-P(v)=f(\pi(v))
-\qquad\text{for all } v\in\mathcal V.
+P(c) = f(\pi(c))
+\qquad\text{for all } c \in \mathcal C.
 \]
-Equivalently, $P$ depends only on the representation induced by the declared attribute family.
+Equivalently, $P$ depends only on the representation value.
 \end{definition}
 
 \begin{theorem}[Information barrier]\label{thm:information-barrier}\label{thm:info-barrier}
-Let $P: \mathcal{V} \to Y$ be any function. If $P$ is attribute-computable, then $P$ is constant on $\sim$-equivalence classes:
+Let $P: \mathcal C \to Y$ be any function. If $P$ is representation-computable, then $P$ is constant on every representation fiber:
 \[
-v \sim w \implies P(v) = P(w).
+\pi(c_1)=\pi(c_2) \implies P(c_1)=P(c_2).
 \]
-Equivalently: no attribute-only observer can compute any property that varies within an equivalence class.
+Equivalently, no observer restricted to the representation alone can compute a property that varies within one fiber.
 \end{theorem}
-\leanmeta{\LHrng{ACS}{8}{9}, \LH{COH1}}
 
 \begin{proof}
-Suppose $P$ is attribute-computable via $f$, i.e., $P(v) = f(\pi(v))$ for all $v$. Let $v \sim w$, so $\pi(v) = \pi(w)$. Then:
+Suppose $P$ is representation-computable via $f$, so $P(c)=f(\pi(c))$ for all $c$. If $\pi(c_1)=\pi(c_2)$, then
 \[
-P(v) = f(\pi(v)) = f(\pi(w)) = P(w).
+P(c_1)=f(\pi(c_1))=f(\pi(c_2))=P(c_2).
 \]
 \end{proof}
 
 \begin{remark}[Role of the barrier]
-The barrier is \emph{informational}, not computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
+The barrier is informational rather than computational: once the representation is identical, unlimited time or memory does not help. We state it explicitly because the later converse, adaptive coding, query, and robustness results all reuse the same invariance premise.
 \end{remark}
 
-\begin{corollary}[Class identity is not attribute-computable]\label{cor:provenance-barrier}
-Let $C: \mathcal{V} \to \{1,\ldots,k\}$ be the class assignment function. If there exist values $v, w$ with $\pi(v) = \pi(w)$ but $C(v) \neq C(w)$, then class identity is not attribute-computable.
+\begin{corollary}[Class identity is not representation-computable]\label{cor:provenance-barrier}
+If there exist classes $c_1,c_2$ with $\pi(c_1)=\pi(c_2)$ but $c_1 \neq c_2$, then class identity is not representation-computable.
 \end{corollary}
-\leanmeta{\LH{ACS9}}
 
 \begin{proof}
-Direct application of Theorem~\ref{thm:information-barrier} to $P = C$.
+Direct application of Theorem~\ref{thm:information-barrier} to the identity map on classes.
 \end{proof}
 
-The relation $\sim$ partitions $\mathcal{V}$ into representation fibers, so an attribute-only observer operates on the quotient $\mathcal{V}/{\sim}$ rather than on raw entities. The remaining statements are axis-specialized restatements of the same barrier and are used only by later secondary results. Read through the paper's second arc, an axis map $\alpha$ is simply a candidate helper view: if all admissible observables factor through $\alpha$, then $\alpha$ is sufficient for every in-scope semantic property; if a task varies inside one $\alpha$-fiber, then that helper view is not sufficient and must be refined.
-
-\begin{theorem}[Fixed-axis sufficiency]\label{thm:model-completeness}
-Let $\alpha:\mathcal V\to\mathcal A$ be an axis map such that every admissible primitive query factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
+\begin{theorem}[Observable-state sufficiency]\label{thm:model-completeness}
+Let $\alpha : \mathcal C \to \mathcal A$ be any declared observable state such that every admissible primitive observation factors through $\alpha$. Then every in-scope semantic property factors through $\alpha$: there exists $\tilde P$ with
 \[
-P(v)=\tilde P(\alpha(v)) \quad \text{for all } v\in\mathcal V.
+P(c)=\tilde P(\alpha(c)) \quad \text{for all } c\in\mathcal C.
 \]
 \end{theorem}
-\leanmeta{\LH{ACS5}, \LH{COMPL1}, \LH{DOM1}}
 
 \begin{proof}
-An admissible strategy observes $v$ only through responses to primitive queries in $\Phi$. If each primitive query factors through $\alpha$, then the entire transcript factors through $\alpha$, and so does any output computed from that transcript.
+If every admissible primitive observation factors through $\alpha$, then every admissible transcript factors through $\alpha$, and so does any output computed from that transcript.
 \end{proof}
 
-\begin{corollary}[Fixed-axis insufficiency]\label{cor:fixed-axis-incompleteness}
-If $\alpha(v)=\alpha(w)$ but $P(v)\neq P(w)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
+\begin{corollary}[Observable-state insufficiency]\label{cor:fixed-axis-incompleteness}
+If $\alpha(c_1)=\alpha(c_2)$ but $P(c_1)\neq P(c_2)$, then no admissible strategy can compute $P$ with zero error without adding new information beyond the declared observable state.
 \end{corollary}
-\leanmeta{\LH{L2}}
 
-\begin{remark}[Axis-specialized reading]
-The fixed-axis sufficiency and insufficiency statements are simply the helper-view version of the information barrier: if a semantic task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
+\begin{remark}[Interpretation]
+The sufficiency and insufficiency statements are the helper-view version of the information barrier: if a task varies inside one declared state fiber, that state is not sufficient and must be refined by additional information.
 \end{remark}

@@ -23,20 +23,16 @@
 
 \bibitem{shannon1956zero}
 C.~E. Shannon, ``Zero-error capacity of a noisy channel,'' \emph{IRE
-  Transactions on Information Theory}, vol.~2, no.~3, pp. 8--19, 1956,
-  introduces zero-error capacity; fundamental limit for error-free
-  communication over noisy channels.
+  Transactions on Information Theory}, vol.~2, no.~3, pp. 8--19, 1956.
 
 \bibitem{korner1973graphs}
 J.~K{\"o}rner, ``Coding of an information source having ambiguous alphabet and
   the entropy of graphs,'' \emph{Transactions of the 6th Prague Conference on
-  Information Theory}, pp. 411--425, 1973, zero-error source coding; graph
-  entropy characterizes zero-error capacity.
+  Information Theory}, pp. 411--425, 1973.
 
 \bibitem{lovasz1979shannon}
 L.~Lov{\'a}sz, ``On the shannon capacity of a graph,'' \emph{IEEE Transactions
-  on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979, theta function bounds
-  Shannon capacity; foundational for zero-error information theory.
+  on Information Theory}, vol.~25, no.~1, pp. 1--7, 1979.
 
 \bibitem{witsenhausen1976zero}
 H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
@@ -46,23 +42,11 @@ H.~S. Witsenhausen, ``The zero-error side information problem and chromatic
 \bibitem{slepian1973noiseless}
 D.~Slepian and J.~K. Wolf, ``Noiseless coding of correlated information
   sources,'' \emph{IEEE Transactions on Information Theory}, vol.~19, no.~4,
-  pp. 471--480, 1973, distributed source coding with side information; decoder
-  uses correlated information to reduce required rate.
+  pp. 471--480, 1973.
 
 \bibitem{cover2006elements}
 T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
-  2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006,
-  comprehensive textbook covering rate-distortion theory, source coding,
-  channel coding.
-
-\bibitem{orlitsky2001coding}
-A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
-  on Information Theory}, vol.~47, no.~3, pp. 903--917, 2001.
-
-\bibitem{doshi2010functional}
-V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
-  through graph coloring,'' \emph{IEEE Transactions on Information Theory},
-  vol.~56, no.~8, pp. 3901--3917, 2010.
+  2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006.
 
 \bibitem{fano1961transmission}
 R.~M. Fano, \emph{Transmission of Information: A Statistical Theory of
@@ -79,17 +63,24 @@ L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
   language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
   minus 0.4em\relax Springer, 2021, pp. 625--635.
 
+\bibitem{orlitsky2001coding}
+A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
+  on Information Theory}, vol.~47, no.~3, pp. 903--917, 2001.
+
+\bibitem{doshi2010functional}
+V.~Doshi, D.~Shah, M.~M{\'e}dard, and M.~Effros, ``Functional compression
+  through graph coloring,'' \emph{IEEE Transactions on Information Theory},
+  vol.~56, no.~8, pp. 3901--3917, 2010.
+
 \bibitem{rashmi2015multiversion}
 K.~V. Rashmi, N.~B. Shah, K.~Ramchandran, and D.~Gu, ``Multi-version
   coding---an information-theoretic perspective of consistent distributed
   storage,'' \emph{IEEE Transactions on Information Theory}, vol.~63, no.~6,
-  pp. 4111--4128, 2017, information-theoretic framework for consistent
-  distributed storage; proves inevitable storage cost for consistency
-  guarantees.
+  pp. 4111--4128, 2017.
 
 \bibitem{kiczales1991art}
 G.~Kiczales, J.~des Rivi{\`e}res, and D.~G. Bobrow, \emph{The Art of the
-  Metaobject Protocol}.\hskip 1em plus 0.5em minus 0.4em\relax MIT press, 1991.
+  Metaobject Protocol}.\hskip 1em plus 0.5em minus 0.4em\relax MIT Press, 1991.
 
 \bibitem{smith1984reflection}
 B.~C. Smith, ``Reflection and semantics in lisp,'' in \emph{Proceedings of the
@@ -99,5 +90,86 @@ B.~C. Smith, ``Reflection and semantics in lisp,'' in \emph{Proceedings of the
 \bibitem{leroy2009compcert}
 X.~Leroy, ``Formal verification of a realistic compiler,'' \emph{Communications
   of the ACM}, vol.~52, no.~7, pp. 107--115, 2009.
+
+\bibitem{pep487}
+M.~Teich, R.~Hettinger, and Y.~Selivanov, ``{PEP 487} -- simpler customisation
+  of class creation,'' Python Enhancement Proposals, 2016, online:
+  peps.python.org/pep-0487/.
+
+\bibitem{pythondatamodel2025}
+{Python Software Foundation}, ``{Python} data model,'' Python 3 Documentation,
+  2025, [Online]. Available: docs.python.org/3/reference/datamodel.html.
+
+\bibitem{postgresMaterializedViews2025}
+{The PostgreSQL Global Development Group}, ``Materialized views,'' PostgreSQL
+  documentation, 2025, [Online]. Available:
+  www.postgresql.org/docs/current/rules-materializedviews.html.
+
+\bibitem{postgresPgMatviews2025}
+------, ``pg\_matviews,'' PostgreSQL system catalog documentation, 2025,
+  [Online]. Available: www.postgresql.org/docs/current/view-pg-matviews.html.
+
+\bibitem{rustref2024}
+{The Rust Team}, ``The {Rust} reference,'' Language reference, 2024, online:
+  doc.rust-lang.org/reference/.
+
+\bibitem{typescriptDecorators2025}
+{Microsoft}, ``Decorators,'' {TypeScript} Handbook, 2025, [Online]. Available:
+  www.typescriptlang.org/docs/handbook/decorators.html.
+
+\bibitem{javascriptDecorators2025}
+{MDN Web Docs}, ``Classes,'' JavaScript reference, 2025, [Online]. Available:
+  developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes.
+
+\bibitem{gosling2021java}
+J.~Gosling, B.~Joy, G.~Steele, G.~Bracha, A.~Buckley, D.~Smith, and G.~Bierman,
+  \emph{The {Java} Language Specification, {Java SE} 17 Edition}.\hskip 1em
+  plus 0.5em minus 0.4em\relax Oracle America, Inc., 2021, online:
+  docs.oracle.com/javase/specs/.
+
+\bibitem{gospec2024}
+{The Go Authors}, ``The {Go} programming language specification,'' Language
+  specification, 2024, online: go.dev/ref/spec.
+
+\bibitem{npmLock2026}
+{npm, Inc.}, ``package-lock.json,'' npm CLI documentation, 2026, [Online].
+  Available: docs.npmjs.com/cli/v8/configuring-npm/package-lock-json/.
+
+\bibitem{npmExplain2026}
+------, ``npm explain,'' npm CLI documentation, 2026, [Online]. Available:
+  docs.npmjs.com/cli/v7/commands/npm-explain/.
+
+\bibitem{npmLs2026}
+------, ``npm ls,'' npm CLI documentation, 2026, [Online]. Available:
+  docs.npmjs.com/cli/v7/commands/npm-ls/.
+
+\bibitem{cargoLockGuide2026}
+{The Rust Project Developers}, ``Cargo.toml vs cargo.lock,'' The Cargo Book,
+  2026, [Online]. Available:
+  doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html.
+
+\bibitem{cargoTree2026}
+------, ``cargo-tree,'' The Cargo Book, 2026, [Online]. Available:
+  doc.rust-lang.org/cargo/commands/cargo-tree.html.
+
+\bibitem{cargoMetadata2026}
+------, ``cargo-metadata,'' The Cargo Book, 2026, [Online]. Available:
+  doc.rust-lang.org/cargo/commands/cargo-metadata.html.
+
+\bibitem{poetryCli2026}
+{Poetry Contributors}, ``{CLI},'' Poetry documentation, 2026, [Online].
+  Available: python-poetry.org/docs/cli/.
+
+\bibitem{pnpmInstall2026}
+{pnpm Contributors}, ``pnpm install,'' pnpm documentation, 2026, [Online].
+  Available: pnpm.io/cli/install.
+
+\bibitem{pnpmWhy2026}
+------, ``pnpm why,'' pnpm documentation, 2026, [Online]. Available:
+  pnpm.io/cli/why.
+
+\bibitem{pnpmList2026}
+------, ``pnpm list,'' pnpm documentation, 2026, [Online]. Available:
+  pnpm.io/cli/list.
 
 \end{thebibliography}

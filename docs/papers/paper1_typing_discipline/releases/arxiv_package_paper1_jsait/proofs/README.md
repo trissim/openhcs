@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Classification Theory (JSAIT).
 
-- **Lines:** 9166
-- **Theorems:** 399
+- **Lines:** 13037
+- **Theorems:** 635
 - **`sorry` placeholders:** 0
 
 
@@ -40,9 +40,24 @@ lake build
 | `GraphExport.lean` | GraphExport |
 | `HandleAliases.lean` | HandleAliases |
 | `Paper1.lean` | Paper1 |
+| `BudgetSplit.lean` | BudgetSplit |
 | `Entropy.lean` | Entropy |
+| `EntropyGeneral.lean` | EntropyGeneral |
+| `FanoFinite.lean` | FanoFinite |
+| `FiberAllocation.lean` | FiberAllocation |
+| `FiberRateDistortion.lean` | FiberRateDistortion |
+| `FiniteRateDistortionBounds.lean` | FiniteRateDistortionBounds |
+| `FiniteRateDistortionConverse.lean` | FiniteRateDistortionConverse |
+| `FiniteSource.lean` | FiniteSource |
 | `GraphEntropy.lean` | GraphEntropy |
 | `GraphEntropyAsymptotic.lean` | GraphEntropyAsymptotic |
+| `GrowthCollisions.lean` | GrowthCollisions |
+| `GrowthTagBudget.lean` | GrowthTagBudget |
+| `ObserverTagModel.lean` | ObserverTagModel |
+| `PMFEntropy.lean` | PMFEntropy |
+| `ProbabilisticFinite.lean` | ProbabilisticFinite |
+| `RateDistortion.lean` | RateDistortion |
+| `ZeroErrorConditionalEntropy.lean` | ZeroErrorConditionalEntropy |
 | `PrintAxioms.lean` | PrintAxioms |
 | `abstract_class_system.lean` | abstract_class_system |
 | `axis_framework.lean` | axis_framework |

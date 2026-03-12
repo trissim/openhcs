@@ -84,11 +84,11 @@ When the gap is nonempty (positive tax), monotone growth with $n$ is
 \begin{corollary}[Exact Minimization Criterion]\label{cor:gap-minimization-hard}
 \claimstamp{C\ref{cor:gap-minimization-hard}}{H=succinct-hard}
 For mechanized Boolean-coordinate instances, ``there exists a sufficient set of size at most $k$'' is equivalent to ``the relevant-coordinate set has cardinality at most $k$.''
-\leanmeta{\LH{S2P2}}
+\leanmeta{\LH{DP1},\LH{SK1}}
 \end{corollary}
 
 \begin{proof}
-This is \LH{S2P2}.
+This follows from \LH{DP1} and \LH{SK1}.
 \end{proof}
 
 Informally: when exact minimization is hard, unresolved relevance shifts between centralized structure and repeated local work.

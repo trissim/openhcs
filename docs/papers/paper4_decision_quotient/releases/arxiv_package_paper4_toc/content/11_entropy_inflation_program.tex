@@ -1,0 +1,77 @@
+\section{Entropy-Inflation Program Status}\label{sec:entropy-inflation-program}
+
+This section records the formal implementation program for the entropy-via-inflation bridge in LaTeX form (artifact-facing), including completed bridge theorems, minimality witness coverage, and remaining integration work.
+
+\subsection{Available Machinery}
+
+\begin{itemize}
+\item Static decision core: \texttt{DecisionProblem}, \texttt{Opt}, \texttt{numOptClasses}, \texttt{quotientEntropy}, and entropy-rank inequalities.
+\item Physical/cosmological layer: discrete-time and locality modules, plus temporal cardinality growth in \texttt{TemporalCountingGap.lean}.
+\item Thermodynamic bridge: \texttt{energy\_ge\_kbt\_nat\_entropy} and related floor theorems.
+\item Stochastic/sequential layer: PP/PSPACE hierarchy plus newly added set-valued stochastic bridge module.
+\end{itemize}
+
+\subsection{Implemented Bridge Stack}
+
+\paragraph{Dynamic family core.}
+The module \texttt{InflationEntropyBridge.lean} now contains:
+\begin{itemize}
+\item \texttt{classes\_monotone}, \texttt{entropy\_monotone}
+\item \texttt{classes\_strict\_increase}, \texttt{entropy\_strict\_increase}
+\item \texttt{optCompat\_of\_utilityCompat}
+\item \texttt{classes\_monotone\_of\_utilityCompat}, \texttt{entropy\_monotone\_of\_utilityCompat}
+\item \texttt{thermal\_floor\_monotone\_of\_classes}, \texttt{thermal\_floor\_strict\_of\_new\_class}
+\item \texttt{later\_energy\_floor\_implies\_earlier\_floor}
+\end{itemize}
+\leanmeta{\LH{IEB1},\LH{IEB2},\LH{IEB3},\LH{IEB4},\LH{IEB5},\LH{IEB6},\LH{IEB7},\LH{IEB8}.}
+
+\paragraph{Temporal adapter.}
+The same module includes \texttt{TemporalUtilityFamily} and transfer lemmas
+\texttt{temporal\_classes\_monotone\_of\_utilityCompat} and
+\texttt{temporal\_entropy\_monotone\_of\_utilityCompat}, lifting temporal state-cardinality indexing into dynamic decision families.
+
+\paragraph{Minimality witnesses.}
+The module \texttt{InflationEntropyMinimality.lean} now includes explicit witnesses for:
+\begin{itemize}
+\item structural compatibility/strictness: \texttt{not\_redundant\_A2\_for\_mono\_classes}, \texttt{not\_redundant\_A3\_for\_strict\_entropy}
+\item positivity/floor assumptions: \texttt{not\_redundant\_P1\_for\_positive\_floor}, \texttt{not\_redundant\_P2\_for\_positive\_floor}, \texttt{not\_redundant\_P3\_for\_energy\_from\_entropy\_bridge}
+\item weakened-framework requirement witnesses: \texttt{not\_redundant\_A1\_for\_mono\_classes\_weak},
+\texttt{not\_redundant\_F1\_for\_finite\_counting\_requirement},
+\texttt{not\_redundant\_F2\_for\_numOptClasses\_pos}
+\end{itemize}
+\leanmeta{\LH{IEB9},\LH{IEB10},\LH{IEB11},\LH{IEB12},\LH{IEB13},\LH{IEB14},\LH{IEB15},\LH{IEB16}.}
+
+\subsection{Stochastic Set-Valued Alignment}
+
+To reduce static/stochastic semantic friction, the module
+\texttt{StochasticSequential/SetValued.lean} adds:
+\begin{itemize}
+\item \texttt{StochasticSetSufficient} (ties allowed)
+\item \texttt{stochasticSetSufficient\_universal}
+\item \texttt{stochasticSufficient\_implies\_setSufficient}
+\end{itemize}
+\leanmeta{\LH{SSV1},\LH{SSV2},\LH{SSV3}.}
+This provides a set-valued baseline in the stochastic regime while preserving the existing singleton-oriented notion.
+
+\subsection{Assumption-Coverage Snapshot}
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Assumption group & Monotone bridge & Strict bridge / floor \\
+\midrule
+State embedding / compatibility & Implemented & Implemented \\
+New-class witness & -- & Implemented \\
+Finite/nonempty side conditions & Implemented (core usage) & Weakened-form witnesses present \\
+Physical positivity/floor premises & Monotone floor implemented & Strict floor + witnesses implemented \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Open Integration Tasks}
+
+\begin{enumerate}
+\item TOC claim-handle publication alignment: incorporate the new IEB/SSV handles into paper-level claim labels and regenerate auto claim mapping with no new unmapped deltas.
+\item Strengthen requirement-minimality from weakened-framework witnesses to strongest same-structure internal forms where appropriate.
+\item Extend beyond finite accessible slices (measure-theoretic/infinite-state treatment) as a separate theorem layer.
+\end{enumerate}

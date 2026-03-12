@@ -4,6 +4,7 @@
 \AtBeginDocument{%
   \providecommand{\LH}[1]{\nolinkurl{#1}}%
   \renewcommand{\LH}[1]{\hyperlink{lh:#1}{\nolinkurl{#1}}}%
+  \providecommand{\LHrng}[3]{\hyperlink{lh:#1#2}{\nolinkurl{#1#2-#3}}}%
 }
 \AtEndDocument{%
   \IfFileExists{content/lean_handle_ids_auto.tex}{%

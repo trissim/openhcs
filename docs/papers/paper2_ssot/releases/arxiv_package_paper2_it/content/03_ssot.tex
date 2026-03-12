@@ -1,64 +1,21 @@
-\section{Derivation as the Capacity-Achieving Structure}\label{sec:ssot}
+\section{Unit-Rate Structural Interpretation}\label{sec:ssot}
 %==============================================================================
 
-Section~\ref{sec:foundations} identifies the sharp threshold: exact consistency is guaranteed only at independent rate $1$. Here the corresponding structure is \emph{derivation}: one location carries the independent value, while all other representations are deterministic views of that source.
+The main graph-capacity arc studies what happens once ambiguity survives and acquires nontrivial topology. This section returns to the opposite boundary case identified in Section~\ref{sec:foundations}: the unit-rate corner in which that ambiguity never appears. It records two direct interpretations of that boundary case: derivation realizes the unit-rate regime, and leaving it produces the manual-update gap proved later in Section~\ref{sec:rate-corollaries}.
 
-\subsection{Rate 1 as the Exact-Consistency Regime}\label{sec:ssot-def}
+\subsection{Derivation as the Single-Source Structure}\label{sec:ssot-def}
 
-\begin{definition}[Optimal Encoding (Unit Independent Rate)]\label{def:ssot}
-An encoding system $C$ achieves the \emph{optimal encoding rate} for fact $F$ iff
-\[
-\text{DOF}(C,F)=1.
-\]
-\end{definition}
+An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Proposition~\ref{thm:dof-one-coherence}, this is exactly the regime in which every reachable state remains coherent, so the represented fact is determinate and coherence restoration requires only $O(1)$ manual updates. By Proposition~\ref{thm:dof-gt-one-incoherence}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique rate guaranteeing exact consistency.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
 
-Rate $1$ is the unique independent rate compatible with zero incoherence in the model. A single authoritative source with deterministic views is the corresponding structural form.
+\subsection{Reading the Converse at Unit Rate}\label{sec:info-sketches}
 
-\begin{corollary}[Unit Rate Guarantees Determinacy]\label{thm:ssot-determinate}
-If $\text{DOF}(C,F)=1$, then the value of $F$ is determinate in every reachable state.
-\end{corollary}
+When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required, which is what moves the system above unit rate and leads to the update-cost lower bound of Section~\ref{sec:rate-corollaries}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{DER2}}
 
-\begin{corollary}[Unit Rate Achieves $O(1)$ Update]\label{thm:ssot-optimal}
-If $\text{DOF}(C,F)=1$, then coherence restoration requires $O(1)$ manual updates.
-\end{corollary}
+\subsection{Rate and Manual Update Cost}\label{sec:ssot-vs-m}
 
-\begin{corollary}[Uniqueness of the Optimal Rate]\label{thm:ssot-unique}
-DOF $=1$ is the unique rate guaranteeing exact consistency.
-\end{corollary}
+An encoding may expose many visible copies of a fact, but only the independent copies govern manual synchronization cost. At unit rate, one manual update changes the authoritative source and derived views follow automatically; above unit rate, each independent location must be synchronized manually. This is the cost interpretation of the threshold.\leanmeta{\LHrng{BND}{1}{2}}
 
-\begin{corollary}[Incoherence Under Redundancy]\label{cor:no-redundancy}
-If $\text{DOF}(C,F)>1$, then incoherent states are reachable.
-\end{corollary}
-
-\begin{proof}
-Immediate from Theorem~\ref{thm:dof-gt-one-incoherence}.
-\end{proof}
-
-\subsection{Counting Converse Interpretation}\label{sec:info-sketches}
-
-The threshold and the converse fit together in a compact way.
-\begin{itemize}
-\tightlist
-\item When ambiguity classes are trivial, no auxiliary information is needed and rate $1$ suffices.
-\item When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet.
-\item If that side information is unavailable but exact correctness is still demanded, the architecture must rely on additional independently accessible support, which moves the system above the rate-$1$ regime and leads to the update-cost lower bound of Section~\ref{sec:bounds}.
-\end{itemize}
-
-Derivation is therefore the capacity-achieving dependence structure: it removes independent rate without removing observable views.
-
-\subsection{Rate--Complexity Tradeoff}\label{sec:ssot-vs-m}
-
-The benefit of derivation is operational. An encoding may expose many visible copies of a fact, but only the independent copies govern manual synchronization cost.
-
-\begin{itemize}
-\tightlist
-\item \textbf{Independent rate $1$:} one manual update changes the authoritative source; all derived views follow automatically.
-\item \textbf{Independent rate above $1$:} each independent location must be synchronized manually to restore coherence.
-\end{itemize}
-
-This is the architectural meaning of the threshold: independent rate above $1$ creates both ambiguity and manual synchronization burden.
-
-\subsection{Derivation: The Relevant Dependence Structure}\label{sec:derivation}
+\subsection{Derived Views}\label{sec:derivation}
 
 \begin{definition}[Derivation]\label{def:derivation}
 Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fact $F$ iff an update to $L_{\text{source}}$ determines the value of $L_{\text{derived}}$ without an additional manual edit.
@@ -66,23 +23,17 @@ Location $L_{\text{derived}}$ is \emph{derived from} $L_{\text{source}}$ for fac
 
 Derivation may occur at creation time, build time, commit time, or query time depending on the host system. The abstract point is unchanged: a derived location does not contribute an additional independently writable value for the same fact.
 
-\begin{theorem}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
+\begin{proposition}[Derivation Preserves Coherence]\label{thm:derivation-excludes}
 If $L_{\text{derived}}$ is derived from $L_{\text{source}}$, then $L_{\text{derived}}$ cannot diverge from $L_{\text{source}}$ and does not contribute to DOF.
-\end{theorem}
+\end{proposition}
 \leanmeta{\LH{DER2}}
 
 \begin{proof}
 By Definition~\ref{def:derivation}, the value at $L_{\text{derived}}$ is determined by the value at $L_{\text{source}}$ under admissible updates. There is therefore no reachable state in which the two locations carry incompatible values for the same fact. Since the derived location has no independently writable contribution, it does not increase DOF.
 \end{proof}
 
-\begin{corollary}[Derivation Achieves the Threshold]\label{cor:metaprogramming}
-If all encodings of $F$ except one are derived from that one, then $\text{DOF}(C,F)=1$ and exact consistency is guaranteed.
-\end{corollary}
+If all encodings of $F$ except one are derived from that one, then Proposition~\ref{thm:derivation-excludes} leaves exactly one independent source, hence $\text{DOF}(C,F)=1$ and exact consistency follows from Proposition~\ref{thm:dof-one-coherence}.\leanmeta{\LH{DER2}, \LH{COH1}}
 
-\begin{proof}
-Only one source remains independent; all other encodings are deterministic views. Apply Theorem~\ref{thm:dof-one-coherence}.
-\end{proof}
-
-The same dependence structure can be realized in many host systems, but the theorem is purely about deterministic dependence in the abstract encoding model.
+The same dependence structure can be realized in many host systems. Its role here is only to prepare the realizability criterion.
 
 %==============================================================================
