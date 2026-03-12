@@ -11,6 +11,7 @@ import Paper1IT.FiberRateDistortion
 import Paper1IT.GrowthCollisions
 import Paper1IT.GrowthTagBudget
 import Paper1IT.PMFEntropy
+import Paper1IT.QueryBitBridge
 import Paper1IT.RateDistortion
 import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
@@ -92,6 +93,17 @@ abbrev GPH50 := @Ssot.GraphEntropy.precision_requirement
 abbrev GPH51 := @Ssot.GraphEntropy.precision_requirement_fin
 abbrev GPH52 := @Ssot.GraphEntropy.fiber_is_clique
 abbrev GPH53 := @Ssot.GraphEntropy.fiber_finset_is_clique
+abbrev GPH54 := @Ssot.QueryBitBridge.card_distinguished_set_le_two_pow_card
+abbrev GPH55 := @Ssot.QueryBitBridge.clog_card_le_query_count
+abbrev GPH56 := @Ssot.QueryBitBridge.fiber_card_le_two_pow_query_count
+abbrev GPH57 := @Ssot.QueryBitBridge.maxFiberCard_clog_le_query_count
+abbrev GPH58 := @Ssot.QueryBitBridge.distinguishesOn_mono
+abbrev GPH59 := @Ssot.QueryBitBridge.clog_card_le_query_count_mono
+abbrev GPH60 := @Ssot.QueryBitBridge.distinguished_set_eq_full_transcript_capacity
+abbrev GPH61 := @Ssot.QueryBitBridge.clog_query_floor_is_tight_of_full_capacity
+abbrev GPH62 := @Ssot.QueryBitBridge.queryExpressivityGap_nonneg
+abbrev GPH63 := @Ssot.QueryBitBridge.queryExpressivityGap_eq_zero_iff
+abbrev GPH64 := @Ssot.QueryBitBridge.queryExpressivityGap_mono
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
