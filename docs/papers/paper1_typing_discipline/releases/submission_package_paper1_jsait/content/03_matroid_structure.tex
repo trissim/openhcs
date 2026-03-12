@@ -1,8 +1,6 @@
 \subsection{Query Families and Distinguishing Sets}
 
-We now record the query-side version of the same representation-sufficiency problem. The preceding sections quantify how many auxiliary bits are needed to resolve representation collisions directly. An alternative operational response to the same residual ambiguity is to spend query resources rather than transmission resources: instead of sending side information to separate a fiber, one can interrogate additional primitive attributes until the class is determined. Equivalently, a query family induces an additional deterministic helper view, and the question is how large that helper view must be before exact recovery becomes possible. A distinguishing set separates every pair of distinct classes. In full generality, inclusion-minimal distinguishing sets need not have the same size, so the first invariant we use is the minimum number of primitive queries needed for zero-error separation.
-
-This section is secondary to the main side-information results, but it belongs to the same second arc. Its role is to quantify how much adaptive interrogation is needed when one chooses not to send the required side information up front. In that sense, the minimum distinguishing number $d$ is the minimum size of a sufficiency-restoring helper view built from primitive observables. It is to queries what fiber size is to side-information bits: both measure how much unresolved ambiguity remains after the representation is fixed.
+The preceding sections quantify how many auxiliary bits resolve representation collisions. Residual ambiguity can be paid for in more than one currency. This section studies the query currency: instead of transmitting side information, the decoder interrogates primitive attributes until the class is determined. The same fiber geometry that governs bit cost also governs query cost. They are two ways of paying for the same ambiguity.
 
 \begin{definition}[Query family]
 Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
@@ -96,3 +94,7 @@ Attribute-only & Query a distinguishing family of minimum size & $\Omega(d)$ \\
 \caption{Witness cost for class identity by observer class.}
 \label{tab:witness-comparison}
 \end{table}
+
+\begin{remark}[Query cost as alternative currency]
+The minimum distinguishing number $d$ and the maximum fiber size $A_\pi$ measure the same structural object in different units. When transmission is cheap, the bit law governs. When interrogation is available but transmission is expensive, the query law governs. The underlying ambiguity is identical. Only the payment mechanism differs.
+\end{remark}

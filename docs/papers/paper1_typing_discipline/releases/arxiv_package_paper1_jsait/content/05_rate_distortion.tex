@@ -120,9 +120,66 @@ Theorem~\ref{thm:adaptive-expected-rate-lower-bound} is the average-case counter
 The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language: zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the exact zero-error rate is still controlled fiberwise by finite collision structure rather than by entropy alone.
 \end{remark}
 
-\subsection{The Deterministic Corner: Semantic Identity Rate-Distortion on a Collision Block}
+\subsection{Finite Fiberwise Decomposition}\label{sec:fiberwise-decomposition}
 
-The zero-error threshold does not exhaust the geometry. We now characterize the exact distortion-bits tradeoff in the cleanest deterministic setting: a uniform source on a single collision block. This isolates collision geometry alone, separate from source statistics and cross-fiber interactions. In that setting, the same collision structure determines a closed-form distortion curve as a function of the auxiliary budget.
+The adaptive and fixed-length theorems above quantify the residual ambiguity in each representation fiber separately. We now state the structural law that governs the global rate-distortion problem: for any source distribution and any finite set of fibers, the globally optimal recoverable mass decomposes exactly into fiberwise contributions, and this optimum is attained by independent per-fiber selection.
+
+This is the main structural theorem of the rate-distortion arc. It applies to arbitrary finite sources and arbitrary observation maps---not only to uniform sources on single collision blocks.
+
+\begin{definition}[Fiberwise feasible subset]
+Fix a uniform per-fiber tag alphabet of size $T$. A subset $S \subseteq \mathcal C$ is \emph{fiber-budget feasible} if every representation fiber contains at most $T$ elements of $S$:
+\[
+|S \cap \pi^{-1}(u)| \le T \quad \text{for all } u.
+\]
+\end{definition}
+
+\begin{definition}[Fiberwise optimum]
+For each representation value $u$, define the \emph{fiberwise top mass}
+\[
+M^\star(u, T) := \max\left\{\sum_{c \in S} \mu(c) : S \subseteq \pi^{-1}(u),\ |S| \le T\right\}.
+\]
+This is the maximum source mass recoverable inside fiber $u$ using at most $T$ tag values.
+\end{definition}
+
+\begin{theorem}[Fiberwise decomposition]\label{thm:fiberwise-decomposition}
+Let $\mu$ be any finite source distribution and let $T$ be a uniform per-fiber tag budget. Then the global optimum under the fiber-budget constraint is the sum of the fiberwise optima:
+\[
+M^\star_{\mathrm{global}}(T) = \sum_u M^\star(u, T).
+\]
+Moreover, any feasible subset $S$ satisfies
+\[
+\mu(S) \le \sum_u M^\star(u, T).
+\]
+\end{theorem}
+\leanmeta{\LH{FRD1}}
+
+\begin{proof}
+Any feasible subset decomposes into its fiber slices, each bounded by its fiberwise optimum. Summing over fibers gives the upper bound. Conversely, choosing a mass-maximizing subset of size at most $T$ independently in each fiber yields a globally feasible subset attaining equality.
+\end{proof}
+
+\begin{corollary}[Fiberwise attainment]\label{cor:fiberwise-attainment}
+There exists a globally feasible subset $S^\star$ that attains the decomposition bound:
+\[
+\mu(S^\star) = \sum_u M^\star(u, T).
+\]
+\end{corollary}
+\leanmeta{\LH{FRD2}}
+
+\begin{proof}
+Take $S^\star = \bigcup_u S^\star_u$ where $S^\star_u$ is a maximizing subset in fiber $u$. The union is feasible because each fiber contributes at most $T$ elements, and the mass is the sum of the fiberwise maxima.
+\end{proof}
+
+\begin{remark}[The decomposition is the general law]
+The decomposition theorem applies to any finite source distribution, including uniform, Zipf, power-law, and arbitrary. The uniform single-block formula derived below is the special case where (i) all source mass lies in one fiber and (ii) the mass is uniformly distributed. Neither assumption is required for the decomposition itself. In this sense, the decomposition is the general zero-error rate-distortion law for the fixed-representation setting; the closed-form curve is its cleanest instantiation.
+\end{remark}
+
+\begin{remark}[Relation to classical source coding]
+The decomposition is analogous to coding independent sub-sources separately: each fiber acts like an independent sub-problem, and the global optimum is the sum of the sub-problem optima. The sub-sources are induced by the representation partition rather than independent a priori.
+\end{remark}
+
+\subsection{The Uniform Single-Block Corner}
+
+The fiberwise decomposition theorem reduces the general problem to independent per-fiber optimization. When the source is uniform on a single collision block, this optimization collapses to a simple closed form. The following theorem is therefore a corollary of the structural law above, specialized to the uniform corner.
 
 \begin{theorem}[Semantic identity rate-distortion theorem]\label{thm:semantic-identity-rate-distortion}
 Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then the optimal distortion under a fixed-length auxiliary budget of $L$ bits is exactly
@@ -188,14 +245,55 @@ The steepness is easy to see numerically. On a collision block of size $100$, ze
 The exact formula above is stated for the uniform source on a single collision block. That restriction is intentional. It isolates a deterministic corner in which collision geometry alone determines the full tradeoff. For non-uniform sources on the same block, or for mixtures across multiple fibers, the optimal distortion curve depends on the source law as well as the fiber sizes; in those settings one expects a different shape, closer in spirit to entropy-weighted side-information bounds than to the uniform worst-block law treated here. The point of the present theorem is exact isolation of the geometry-only effect.
 \end{remark}
 
-\begin{proposition}[Finite fiberwise decomposition]\label{prop:fiberwise-decomposition}
-Fix a uniform per-fiber auxiliary alphabet of size $T$. Among all finite subsets $S$ of classes satisfying $|S \cap \pi^{-1}(u)| \le T$ for every representation value $u$, the maximum recoverable source mass equals the sum of the fiberwise maxima. Moreover, this optimum is attained by selecting, independently in each fiber, a subset of size at most $T$ with maximum source mass and then taking the union across fibers.
-\end{proposition}
-\leanmeta{\LHrng{FRD}{1}{2}}
+\subsection{Finite Entropy Converses}\label{sec:entropy-converses}
+
+The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities, placing the semantic identity problem inside classical Shannon theory.
+
+The following theorems are mechanized in the RDC series (\LH{RDC1}--\LH{RDC9}). They apply to any finite source, any observation map, and any tag/decoder pair.
+
+\begin{theorem}[Fano-style finite converse]\label{thm:fano-converse}
+Let $\mu$ be a finite source on $K$ classes, let $(O, T)$ be the observation and tag alphabet sizes, and let $D$ be the distortion (error probability) of any deterministic decoder. Then
+\[
+H_\mu(C) \le h_b(D) + (1-D) \log(O \cdot T) + D \log(K - 1),
+\]
+where $H_\mu(C)$ is the source entropy and $h_b$ is binary entropy.
+\end{theorem}
+\leanmeta{\LH{RDC1}}
 
 \begin{proof}
-Any feasible subset decomposes into its slices inside the representation fibers, and its total source mass is the sum of the masses of those slices. Each slice contributes at most the maximum source mass achievable in its own fiber under the cardinality bound $T$, so the global recoverable mass is bounded above by the sum of the fiberwise optima. Conversely, choosing a maximizing subset independently inside each fiber and taking their union preserves the per-fiber cardinality bound and attains equality.
+Partition the source into success and failure sets. The success set has cardinality at most $O \cdot T$ (injection into observation/tag pairs), and the failure set has cardinality at most $K-1$. Applying the entropy bound for each partition and combining via the chain rule yields the stated inequality. The mechanization follows the standard Fano argument adapted to the finite budgeted setting.
 \end{proof}
+
+\begin{corollary}[Budget lower bound from distortion]\label{cor:budget-from-error}
+Under the hypotheses of Theorem~\ref{thm:fano-converse}, if $D < 1$ then
+\[
+H_\mu(C) - h_b(D) - D \log(K-1) \le \log(O \cdot T).
+\]
+\end{corollary}
+\leanmeta{\LHrng{RDC}{6}{7}}
+
+\begin{proof}
+Rearrange Theorem~\ref{thm:fano-converse}. The left-hand side is the ``entropy gap'' that must be absorbed by the observation/tag budget.
+\end{proof}
+
+\begin{theorem}[Observation-only min-entropy bound]\label{thm:min-entropy-bound}
+For observation-only schemes (no tags, $T=1$), any decoder with error probability at most $\varepsilon < 1$ satisfies
+\[
+H_\infty(\mu) \le -\log(1 - \varepsilon),
+\]
+where $H_\infty(\mu)$ is the min-entropy of the source.
+\end{theorem}
+\leanmeta{\LH{RDC9}}
+
+\begin{proof}
+The success probability is bounded by the maximum atom mass times the budget (unity, for observation-only). Rearranging and taking logarithms gives the min-entropy bound.
+\end{proof}
+
+\begin{remark}[Counting versus entropy converses]
+The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap. Distortion is governed by how much entropy the observation/tag pair can carry. For high-entropy sources with large collision blocks, the entropy bound may be tighter than the counting bound; for low-entropy sources with concentrated mass, the counting bound dominates. Together, the two converse families provide complementary views of the same fiber geometry, one combinatorial and one information-theoretic.
+
+Theorem~\ref{thm:fano-converse} is a finite, deterministic, zero-error variant of the classical Fano inequality. The binary entropy term $h_b(D)$ captures uncertainty about decoder success; the $\log(O \cdot T)$ term is the rate of the observation/tag channel; the $\log(K-1)$ is the standard Fano confusion penalty.
+\end{remark}
 
 \subsection{Worked Example}
 
@@ -206,6 +304,8 @@ A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.
 The fixed-length theorem gives $A_\pi=2$, so one extra bit is necessary and sufficient for exact recovery. The adaptive theorem says more: the fiber over profile $000$ requires one bit, while the singleton fibers over $100$, $110$, and $111$ require zero bits. Thus the expected auxiliary rate is exactly the probability of landing in the collided fiber.
 
 This is the representation-level interpretation the paper emphasizes. The representation already resolves three of the four fibers completely; the only irreducible metadata cost is the one residual collision between $A$ and $B$.
+
+The fiberwise decomposition theorem gives the same result structurally: the global optimum is the sum of the fiberwise optima, with the collided fiber contributing its top-$T$ mass and the singleton fibers contributing their full mass. The uniform single-block formula is the special case where all source mass lies in one fiber.
 
 The next section turns this coding object into a representation-sufficiency theory: once the residual ambiguity of each fiber is explicit, one can ask exactly which downstream tasks, helper views, and modular factors eliminate it and which do not.
 

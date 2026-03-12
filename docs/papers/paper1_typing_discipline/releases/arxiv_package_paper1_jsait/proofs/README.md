@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Classification Theory (JSAIT).
 
-- **Lines:** 13037
-- **Theorems:** 635
+- **Lines:** 13121
+- **Theorems:** 642
 - **`sorry` placeholders:** 0
 
 

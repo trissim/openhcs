@@ -4,8 +4,8 @@
 
 This directory contains the Lean 4 slice backing the cited Decision Quotient content.
 
-- **Lines:** 20653
-- **Theorems:** 966
+- **Lines:** 21442
+- **Theorems:** 990
 - **`sorry` placeholders:** 0
 
 
@@ -71,7 +71,9 @@ lake build
 | `Finite.lean` | Finite |
 | `Hierarchy.lean` | Hierarchy |
 | `OracleUpperBounds.lean` | OracleUpperBounds |
+| `PreservationVariants.lean` | PreservationVariants |
 | `Quotient.lean` | Quotient |
+| `SetValued.lean` | SetValued |
 | `Tractability.lean` | Tractability |
 | `Sufficiency.lean` | Sufficiency |
 | `Summary.lean` | Summary |

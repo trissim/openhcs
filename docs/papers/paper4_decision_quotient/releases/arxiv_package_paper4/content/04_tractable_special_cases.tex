@@ -2,7 +2,7 @@
 
 We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
-Some of the results below are mechanized as direct certified procedures. Others are mechanized as certified reductions to standard polynomial-time algorithmic backbones. We keep that distinction explicit throughout.
+All six tractable subcases are supported by the artifact. The support appears at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit sufficiency procedures. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones. We keep that distinction explicit throughout. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
 \begingroup
 \centering
@@ -26,7 +26,7 @@ Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k
 \endgroup
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
-The following tractable subcases are supported at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit decision procedures for \textsc{Sufficiency-Check}. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity bounds that connect these subcases to standard polynomial-time algorithmic backbones.
+The following tractable subcases are all mechanized in the artifact, but at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit decision procedures for \textsc{Sufficiency-Check}. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones.
 \begin{enumerate}
 \item \textbf{Bounded actions (explicit-state encoding):} The input contains the full utility table over $A \times S$ with $|A| \leq k$ for constant $k$. Complexity: $O(|S|^2 \cdot k^2)$.
 \item \textbf{Separable utility (rank 1):} $U(a, s) = f(a) + g(s)$. Complexity: $O(1)$ (trivially sufficient).
@@ -112,7 +112,7 @@ If utility has tensor rank $R$, the artifact certifies a reduction of the releva
 \leanmeta{\LHrng{DQ}{75}{77}.}
 
 \begin{proof}
-The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. So the correct formal takeaway here is a certified reduction-to-standard-algorithm statement.
+The artifact certifies three ingredients. First, bounded-rank tensor contraction admits a polynomial bound \leanmeta{\LH{DQ75}.} Second, the low-rank utility representation reduces the relevant optimization step to factored computation in $O(|A| \cdot R \cdot n)$ steps \leanmeta{\LHrng{DQ}{76}{77}.} Third, these are exactly the paper-specific ingredients needed to invoke the standard tensor-network algorithms cited in the text. Thus the formal support here is a certified reduction-and-transfer statement rather than an end-to-end formalization of the tensor-network backbone itself.
 \end{proof}
 
 %% ============================================================
@@ -173,7 +173,7 @@ If the interaction graph has treewidth $\leq w$ and utility is pairwise with exp
 \leanmeta{\LHrng{DQ}{79}{81}.}
 
 \begin{proof}
-The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus the formal support here is a verified reduction plus a cited standard algorithmic theorem.
+The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus the formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard, while the paper-specific bridge to that algorithm is mechanized.
 \end{proof}
 
 %% ============================================================
@@ -238,7 +238,7 @@ and that sufficiency checking reduces to cross-orbit comparisons. Thus the effec
 \leanmeta{\LH{DQ56}, \LH{DQ85}.}
 
 \begin{proof}
-An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$.
+An orbit type is a multiset of $d$ values from $\{0, \ldots, k-1\}$, equivalently a $k$-tuple of non-negative integers summing to $d$. By stars-and-bars, the count is $\binom{d + k - 1}{k - 1}$. The mechanized content here is the orbit-type reduction and the resulting representative-count bound; the resulting polynomial-time conclusion then follows from this certified compression of the comparison space.
 
 For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$.
 \end{proof}
