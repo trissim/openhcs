@@ -110,7 +110,7 @@ The conditional-entropy lower and upper bounds place the adaptive theorem inside
 
 The zero-error threshold does not exhaust the geometry. On a nontrivial collision block carrying a fixed source, the same collision structure determines the full distortion curve as a function of the auxiliary budget. This is the paper's deterministic semantic identity rate-distortion law: once the identity budget falls below the exact recovery threshold, distortion rises in a quantitatively sharp way dictated by collision geometry.
 
-\begin{theorem}[Exact semantic identity rate-distortion law on a collision block]\label{thm:positive-distortion-floor}
+\begin{theorem}[Semantic identity rate-distortion theorem]\label{thm:semantic-identity-rate-distortion}
 Let $G \subseteq \mathcal{C}$ be a collision block of size $a$, so all classes in $G$ have the same representation profile. Assume the source class $C$ is uniform on $G$. Then the optimal distortion under a fixed-length auxiliary budget of $L$ bits is exactly
 \[
 D^\star(L)=\max\!\left(0, 1 - \frac{2^L}{a}\right).
@@ -132,14 +132,14 @@ If $2^L \ge a$, assign distinct auxiliary outcomes to the classes in $G$ and dec
 \end{proof}
 
 \begin{corollary}[Zero-error threshold]\label{cor:zero-error-threshold-distortion}
-Under the hypotheses of Theorem~\ref{thm:positive-distortion-floor}, zero distortion is achievable if and only if
+Under the hypotheses of Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable if and only if
 \[
 L \ge \log_2 a.
 \]
 \end{corollary}
 
 \begin{proof}
-By Theorem~\ref{thm:positive-distortion-floor}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
+By Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
 \end{proof}
 
 \begin{corollary}[Zero-budget error floor]\label{cor:zero-budget-error-floor}
@@ -155,7 +155,7 @@ D \ge 1 - \frac{1}{A_\pi}.
 \leanmeta{\LH{GPH30}}
 
 \begin{proof}
-Set $L=0$ in Theorem~\ref{thm:positive-distortion-floor}. Since $2^0=1$, the distortion lower bound becomes $1-1/a$. Choosing a worst collision block gives the second statement.
+Set $L=0$ in Theorem~\ref{thm:semantic-identity-rate-distortion}. Since $2^0=1$, the distortion lower bound becomes $1-1/a$. Choosing a worst collision block gives the second statement.
 \end{proof}
 
 \begin{remark}[The cost of omission]
@@ -164,6 +164,10 @@ This corollary quantifies the price of relying exclusively on semantic attribute
 
 \begin{remark}[Why this matters]
 The distortion theorem is not only a converse to the zero-error law. It identifies the operational cost of omission in semantics-aware compression systems. If a system declines to store the identity bits needed to separate collided fibers, then the penalty is not abstract suboptimality but a concrete minimum error rate. The important feature is the steepness of the curve: because distortion scales as $1-2^L/a$, small deficits in the coding budget can cause catastrophic losses in identity accuracy. This is the exact storage-versus-distortion tradeoff induced by semantic abstraction.
+\end{remark}
+
+\begin{remark}[Scope of the exact curve]
+The exact formula above is stated for the uniform source on a single collision block. That restriction is intentional. It isolates the clean deterministic corner in which collision geometry alone determines the full tradeoff. For non-uniform sources on the same block, or for mixtures across multiple fibers, the optimal distortion curve depends on the source law as well as the fiber sizes; in those settings one expects a different shape, closer in spirit to entropy-weighted side-information bounds than to the uniform worst-block law treated here.
 \end{remark}
 
 \subsection{Worked Example}
