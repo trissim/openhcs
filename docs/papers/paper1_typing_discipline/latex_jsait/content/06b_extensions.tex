@@ -16,6 +16,16 @@ Finally, the paper does not treat stochastic representations, noisy side channel
 
 With noisy representations or noisy side channels, repeated sampling can reduce error, so the natural problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems. Once the deterministic representation assumption is relaxed, the confusability structure is no longer a disjoint union of cliques, and the problem moves closer to the richer graph-entropy regime studied by K\"orner and Witsenhausen.
 
+\subsection{Growth and Budgeting}
+
+The deterministic theorems also suggest operational extensions for systems that evolve over time. In a Poissonized growth model for representation cells, the probability that one cell has already developed a collision takes the explicit form
+\[
+1 - e^{-\lambda}(1+\lambda),
+\]
+which isolates the onset of identity pressure as occupancy grows (\LH{GRC1}). On the budgeting side, the required exact tag budget becomes positive exactly when occupancy reaches two or more items in a cell (\LH{GTB1}). These formulas are still coarse, but they show how the static collision laws induce dynamic trigger conditions for when auxiliary identity information becomes necessary.
+
+At a more abstract level, one may ask how to divide a total budget between representation refinement and auxiliary identity information. The current mechanization already proves that an optimal split exists on any finite search space (\LH{BST1}, \LH{BST2}). What it does not yet provide is a learned-model-specific law for how representation refinement shrinks collision geometry. That remains a separate modeling problem.
+
 \subsection{Semantic Distortion Measures}
 
 The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.

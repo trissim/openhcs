@@ -63,7 +63,7 @@ H(C\mid U) \le \mathbb E[\log |\pi^{-1}(U)|].
 Since $\log |\pi^{-1}(u)| \le \lceil \log_2 |\pi^{-1}(u)| \rceil \log 2$ fiberwise, Theorem~\ref{thm:adaptive-expected-rate-lower-bound} yields the stated lower bound.
 \end{proof}
 
-\begin{theorem}[Fiberwise prefix-coding upper bound]
+\begin{theorem}[Fiberwise prefix-coding upper bound]\label{thm:fiberwise-prefix-coding-upper-bound}
 Assume standard prefix-coding achievability on each finite fiber. Then there exists an adaptive zero-error auxiliary code satisfying
 \[
 \mathbb E[\ell(U)] \le \frac{H(C\mid U)}{\log 2} + 1.
@@ -73,6 +73,20 @@ Assume standard prefix-coding achievability on each finite fiber. Then there exi
 
 \begin{proof}
 Because the decoder already knows $U=u$, prefix-freeness is required only within each fiber $\pi^{-1}(u)$. Applying a standard prefix-coding theorem separately to the conditional source on each nonempty fiber gives an expected conditional code length at most $H(C\mid U=u)/\log 2 + 1$. Averaging over $u$ yields the stated bound.
+\end{proof}
+
+\begin{corollary}[Zero-error conditional-entropy sandwich]\label{cor:zero-error-conditional-entropy-sandwich}
+The optimal expected zero-error auxiliary rate lies between
+\[
+\frac{H(C\mid U)}{\log 2}
+\qquad\text{and}\qquad
+\frac{H(C\mid U)}{\log 2}+1.
+\]
+\end{corollary}
+\leanmeta{\LH{ZEC1}}
+
+\begin{proof}
+The lower bound is Theorem~\ref{thm:adaptive-expected-rate-lower-bound}, and the upper bound is Theorem~\ref{thm:fiberwise-prefix-coding-upper-bound}. The two statements together give the claimed sandwich.
 \end{proof}
 
 \begin{corollary}[Active binary clarification]
@@ -173,6 +187,15 @@ The steepness is easy to see numerically. On a collision block of size $100$, ze
 \begin{remark}[Scope of the exact curve]
 The exact formula above is stated for the uniform source on a single collision block. That restriction is intentional. It isolates a deterministic corner in which collision geometry alone determines the full tradeoff. For non-uniform sources on the same block, or for mixtures across multiple fibers, the optimal distortion curve depends on the source law as well as the fiber sizes; in those settings one expects a different shape, closer in spirit to entropy-weighted side-information bounds than to the uniform worst-block law treated here. The point of the present theorem is exact isolation of the geometry-only effect.
 \end{remark}
+
+\begin{proposition}[Finite fiberwise decomposition]\label{prop:fiberwise-decomposition}
+Fix a uniform per-fiber auxiliary alphabet of size $T$. Among all finite subsets $S$ of classes satisfying $|S \cap \pi^{-1}(u)| \le T$ for every representation value $u$, the maximum recoverable source mass equals the sum of the fiberwise maxima. Moreover, this optimum is attained by selecting, independently in each fiber, a subset of size at most $T$ with maximum source mass and then taking the union across fibers.
+\end{proposition}
+\leanmeta{\LHrng{FRD}{1}{2}}
+
+\begin{proof}
+Any feasible subset decomposes into its slices inside the representation fibers, and its total source mass is the sum of the masses of those slices. Each slice contributes at most the maximum source mass achievable in its own fiber under the cardinality bound $T$, so the global recoverable mass is bounded above by the sum of the fiberwise optima. Conversely, choosing a maximizing subset independently inside each fiber and taking their union preserves the per-fiber cardinality bound and attains equality.
+\end{proof}
 
 \subsection{Worked Example}
 

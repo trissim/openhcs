@@ -3,6 +3,12 @@ import AbstractClassSystem.Bridge
 import AbstractClassSystem.Extended
 import AbstractClassSystem.Undecidability
 import AbstractClassSystem.Neurosymbolic
+import Paper1IT.BudgetSplit
+import Paper1IT.FiberAllocation
+import Paper1IT.FiberRateDistortion
+import Paper1IT.GrowthCollisions
+import Paper1IT.GrowthTagBudget
+import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
@@ -115,6 +121,26 @@ abbrev NSL3 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_necessary_for_ze
 abbrev NSL4 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_identity_recovery
 abbrev NSL5 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_injective_implies_recoverable
 abbrev NSL6 := @AbstractClassSystem.Neurosymbolic.neurosymbolic_is_canonical_helper_view
+
+/-- Deterministic finite fiberwise rate-distortion extensions (FRD*). -/
+abbrev FRD1 := @ObserverModel.feasible_subsetMass_le_optimalFeasibleMass
+abbrev FRD2 := @ObserverModel.optimalSubset_attains_optimalFeasibleMass
+
+/-- Zero-error conditional-entropy sandwich (ZEC*). -/
+abbrev ZEC1 := @Ssot.GraphEntropy.zeroErrorConditionalEntropySandwich
+
+/-- Fiber-allocation monotonicity (FAL*). -/
+abbrev FAL1 := @ObserverModel.allocatedRecoverableMass_mono
+abbrev FAL2 := @ObserverModel.allocatedDistortion_anti
+
+/-- Growth / collision and tag-budget handles. -/
+abbrev GRC1 := @Ssot.Paper1IT.poissonCellCollisionProb_eq_one_sub_exp_mul_one_add
+abbrev GRC2 := @Ssot.Paper1IT.poissonCollisionUnionBound_eq_sum_formula
+abbrev GTB1 := @Ssot.Paper1IT.requiredTagBits_positive_iff_two_le
+
+/-- Abstract representation-vs-tag budget split handles. -/
+abbrev BST1 := @Ssot.Paper1IT.exists_minimizing_split
+abbrev BST2 := @Ssot.Paper1IT.exists_optimal_budget_split
 
 -- Coherence theorems (COH*): Why hedging/preference is incoherent
 abbrev COH1 := preference_incoherent             -- Preference position incoherent
