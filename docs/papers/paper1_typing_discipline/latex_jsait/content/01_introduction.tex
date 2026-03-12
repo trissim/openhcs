@@ -2,7 +2,7 @@
 
 We prove a simple fact: no learned semantic representation can, by itself, guarantee zero-error identity recovery in an open world unless it is injective. When distinct identities share the same representation value, the representation leaves behind an irreducible identity debt. That debt must be paid in one of several currencies: auxiliary bits, interactive queries, or accepted distortion. There is no third free option.
 
-This paper isolates the structural object that makes that statement exact: the collision fiber geometry induced by a fixed representation map $\pi$. Once that object is explicit, a family of exact finite theorems follows. The same fiber geometry yields the fixed-length converse $L \ge \log_2 A_{\pi}$, the fiberwise adaptive budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$, an explicit deterministic distortion floor when the identity bits are withheld, and a query theorem showing that every complete derivability-aware query system reduces to an orthogonal minimal core on which matroid structure emerges.
+This paper isolates the structural object that makes that statement exact: the collision fiber geometry induced by a fixed representation map $\pi$. Once that object is explicit, a family of exact finite theorems follows. The same fiber geometry yields the fixed-length converse $L \ge \log_2 A_{\pi}$, the fiberwise adaptive budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$, an explicit deterministic distortion floor when the identity bits are withheld, and a query theorem showing that binary interrogation cannot beat the same counting barrier: any distinguishing query family of size $d$ must satisfy $\lceil \log_2 A_{\pi}\rceil \le d$ on the worst fiber.
 
 The systems consequence is immediate. Symbolic handles, identifiers, keys, pointers, registry entries, and retrieval indices are not merely convenient engineering artifacts. They are the standard mechanisms by which real systems pay the identity debt left by non-injective semantic abstraction.
 
@@ -19,7 +19,7 @@ the size of the largest collision fiber. The worst-case fixed-length law is then
 L \ge \log_2 A_{\pi}.
 \]
 
-This viewpoint also yields a finer adaptive law. If the auxiliary description length may depend on the realized representation value $u$, then the optimal pointwise budget is controlled by the size of the individual fiber $\pi^{-1}(u)$. The same geometry also determines what happens when the budget is subcritical: if one refuses to pay the necessary identity bits, the distortion floor is explicit. In this sense, worst-case bits, adaptive bits, query cost, and deterministic distortion are all different views of the same residual ambiguity object.
+This viewpoint also yields a finer adaptive law. If the auxiliary description length may depend on the realized representation value $u$, then the optimal pointwise budget is controlled by the size of the individual fiber $\pi^{-1}(u)$. The same geometry also determines what happens when the budget is subcritical: if one refuses to pay the necessary identity bits, the distortion floor is explicit. On the query side, binary interrogation faces the same combinatorial floor, because a family of $d$ binary observables induces at most $2^d$ transcripts on any collision fiber. In this sense, worst-case bits, adaptive bits, query cost, and deterministic distortion are all different views of the same residual ambiguity object.
 
 All results are stated relative to one admissibility contract: the decoder may use only the declared representation value and any auxiliary description whose length is charged to the budget. No hidden registry, preprocessing table, or external side channel may contribute uncharged distinguishing information.
 
@@ -36,7 +36,7 @@ Main contribution. The collision fiber geometry induced by a fixed representatio
 \begin{enumerate}
 \item Exact coding laws: a tight fixed-length converse $L \ge \log_2 A_{\pi}$, an exact finite-block scaling law, and a pointwise optimal adaptive bit budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber.
 \item Deterministic distortion currency: in the uniform single-block corner the optimal distortion is $D^\star(L)=\max(0,1-2^L/a)$, giving an explicit error floor when identity bits are withheld.
-\item Canonical query currency: every complete derivability-aware query family reduces to an orthogonal semantically minimal core, so non-orthogonal families are redundant overpresentations rather than a rival regime. On that canonical core, minimal distinguishing families form the bases of a matroid, and the query cost is an exact structural invariant.
+\item Canonical query currency: every complete derivability-aware query family reduces to an orthogonal semantically minimal core, so non-orthogonal families are redundant overpresentations rather than a rival regime. On that canonical core, minimal distinguishing families form the bases of a matroid, and the query cost obeys the same counting floor $\lceil \log_2 A_{\pi}\rceil \le d$.
 \item Systems payoff with mechanized certainty: symbolic handles are the canonical mechanism for paying the identity debt in real systems, and the main theorem chain is machine-checked in Lean 4.
 \end{enumerate}
 

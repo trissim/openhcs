@@ -44,6 +44,42 @@ For any attribute-only observer, $W(\text{class-identity}) \ge d$.
 
 This is the operational query law in full generality. It says how much interrogation is needed when the representation leaves ambiguity unresolved and no explicit identity bits are transmitted.
 
+\subsection{Counting Bridge to Bit Currency}
+
+There is also a direct quantitative bridge back to the compression side. A family of $d$ binary queries induces at most $2^d$ distinct answer transcripts on any fixed collision fiber. Therefore no binary query family can distinguish a fiber of size $m$ unless $m \le 2^d$. In particular, if a worst fiber has size $A_{\pi}$, then any binary distinguishing family satisfies
+\[
+\left\lceil \log_2 A_{\pi} \right\rceil \le d.
+\]
+This is the query-side analogue of the fixed-length converse: binary interrogation cannot beat the same counting barrier that governs auxiliary bits.
+
+\begin{proposition}[Binary query counting bound]\label{prop:binary-query-counting-bound}
+Let $S$ be a binary query family of size $d$ that distinguishes a finite set $T$ of classes. Then
+\[
+|T| \le 2^d.
+\]
+Equivalently,
+\[
+\left\lceil \log_2 |T| \right\rceil \le d.
+\]
+\end{proposition}
+\leanmeta{\LHrng{GPH}{54}{55}}
+
+\begin{proof}
+Each class in $T$ produces one binary transcript in $\{0,1\}^d$. Distinguishability means that the transcript map is injective on $T$. There are only $2^d$ binary transcripts, so injectivity forces $|T| \le 2^d$. The ceiling-log form is the exact converse of this counting bound.
+\end{proof}
+
+\begin{corollary}[Worst-fiber query lower bound]\label{cor:worst-fiber-query-lower-bound}
+If a binary query family distinguishes every class inside a worst collision fiber, then
+\[
+\left\lceil \log_2 A_{\pi} \right\rceil \le d.
+\]
+\end{corollary}
+\leanmeta{\LHrng{GPH}{56}{57}}
+
+\begin{proof}
+Apply Proposition~\ref{prop:binary-query-counting-bound} to a fiber attaining the maximal size $A_{\pi}$. The induced bound is exactly the stated ceiling-log inequality.
+\end{proof}
+
 \subsection{Canonical Reduction to the Orthogonal Core}
 
 The right structural invariant is not the size of an arbitrary raw query family, because raw families may contain semantically derivable redundancy. The source Lean formalization proves a stronger and cleaner fact: every semantically complete derivability-aware query family reduces to an orthogonal semantically minimal core. Non-orthogonal families are therefore redundant overpresentations, not a rival regime.
@@ -79,7 +115,7 @@ Every semantically complete derivability-aware query family contains an orthogon
 Choose a semantically minimal complete subfamily using Proposition~\ref{prop:query-minimal-core}. If that subfamily were still non-orthogonal, Proposition~\ref{prop:query-redundancy} would remove another observable while preserving completeness, contradicting minimality. Hence the minimal core is orthogonal.
 \end{proof}
 
-These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core.
+These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core. The remaining gap above the counting floor, if any, is then a genuine structural limitation of the available primitive observables rather than an artifact of redundant presentation.
 
 \begin{theorem}[Matroid of canonical distinguishing families]\label{thm:matroid-bases}
 For the canonical orthogonal core of a complete derivability-aware query system, the semantically minimal distinguishing families are the bases of a matroid. Consequently, all such families have equal cardinality.
@@ -92,6 +128,10 @@ By Proposition~\ref{prop:query-orthogonal-core}, every complete derivability-awa
 
 \begin{remark}[Why the unrestricted counterexample does not undercut the theorem]
 Arbitrary overcomplete binary query families need not themselves be matroidal; a finite counterexample exists (\LH{GPH31}). That does not refute the canonical query invariant. It shows only that redundant raw presentations can obscure the primitive structure. After derivable redundancy is stripped away, the orthogonal minimal core is matroidal.
+\end{remark}
+
+\begin{remark}[When the counting floor is tight]
+The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes the full binary transcript capacity on the relevant worst fibers. In that case the query side meets the same counting floor as the fixed-length bit side. Any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized in \LH{GPH60} through \LH{GPH64}.
 \end{remark}
 
 \subsection{Witness Cost Comparison}
@@ -114,5 +154,5 @@ Canonical axis core & Query any matroid basis of the core & exact basis cardinal
 \end{table}
 
 \begin{remark}[Query cost as alternative currency]
-The bit law measures the residual description cost of restoring identity. The query law measures the residual interrogation cost. In the raw attribute model, that cost is lower-bounded by $d$. In the canonical derivability-aware presentation, the same cost is certified by matroid basis cardinality. In both readings, the ambiguity being paid for is the same.
+The bit law measures the residual description cost of restoring identity. The query law measures the residual interrogation cost. In the raw attribute model, that cost is lower-bounded by both the operational quantity $d$ and the counting floor $\lceil \log_2 A_{\pi} \rceil$. In the canonical derivability-aware presentation, the same cost is certified by matroid basis cardinality on the orthogonal core. In both readings, the ambiguity being paid for is the same.
 \end{remark}

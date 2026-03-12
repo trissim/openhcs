@@ -1,4 +1,4 @@
-The formal and coding results lead to a practical systems corollary: if a representation $\pi$ is non-injective, then no purely semantic pipeline can guarantee zero-error identity recovery. The identity debt must be paid. In deployed systems the canonical payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
+The formal and coding results lead to a practical corollary: if a representation $\pi$ is non-injective, then no purely semantic pipeline can guarantee zero-error identity recovery. The identity debt must be paid. In deployed systems the usual payment mechanisms are symbolic handles, such as unique identifiers, pointers, retrieval keys, primary keys, and registry entries.
 
 This is not an engineering preference but a coding consequence. If exact identity is required in an open world, the system must either use an injective encoder, store or transmit explicit identity metadata of length at least $\log_2 A_\pi$ in the worst case, or accept a nonzero distortion floor. The same logic applies on the query side: one cannot escape the cost by redescribing the same observables redundantly, because the query theorem reduces any complete derivability-aware observable family to its orthogonal minimal core.
 
@@ -6,9 +6,7 @@ Example. In a retrieval system with $100$ documents sharing the same embedding, 
 
 \subsection{Learned Representations and Formal Instantiations}
 
-The abstract coding framework applies to any representation map. In the learned-representation setting, semantic information is what the encoder exposes, while identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the semantic representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that must be restored by explicit metadata.
-
-This transfers directly to neurosymbolic systems. A neural encoder supplies the semantic side by producing a learned representation; a symbolic layer attempts to recover or reason about exact class-level distinctions. The fiber geometry says precisely when this is possible without extra scaffolding and when it is not. Symbolic reasoning cannot recover distinctions already collapsed by the encoder except by receiving additional identifiers, additional observables, or additional disclosures.
+The abstract coding framework applies to any representation map. In the learned-representation setting, semantic information is what the encoder exposes, while identity information is the exact class label or entity name that may still need to be carried explicitly. Zero-error recovery from semantic information alone is possible exactly when the representation is injective on identity classes. When it is not, the collision fibers quantify the irreducible identity residue that must be restored by explicit metadata. This transfers directly to neurosymbolic systems: a neural encoder supplies the semantic side, and any symbolic layer that needs exact identity must be given the missing distinguishing information explicitly.
 
 \paragraph{What this means for ML systems.}
 The coding laws have immediate consequences for learned-representation systems.
@@ -29,9 +27,7 @@ Whenever $A_\pi>1$, the coding laws imply a sharp design dichotomy. In an attrib
 This is why symbolic identifiers are ubiquitous in high-reliability systems. Primary keys, memory addresses, retrieval identifiers, and similar handles are the mechanisms by which systems avoid the distortion floor mandated by the coding laws. If the application requires exact retrieval, verification, provenance tracking, or entity-level consistency, the attribute-only strategy is infeasible and the tag-augmented strategy is mandatory.
 
 \paragraph{Formal instantiation.}
-The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. In this setting, representation-computable properties reduce to attribute-computable ones, and the generic coding laws specialize to a machine-checked formal instance.
-
-The formal theorems establish that equal observable profiles cannot distinguish identity (\LH{ACS8}), that provenance is not recoverable from the profile alone when collisions exist (\LH{ACS9}), and that nominal identity cannot be embedded back into the semantic layer (\LH{EMB1}). Readers interested only in the information-theoretic content may treat this development as a rigorous formal instantiation rather than as a prerequisite for the main theorem arc.
+The paper also develops a concrete formal identity domain in Lean. In that model, entities carry an explicit attribute family $\mathcal I$, primitive observables are the associated binary maps $q_I$, and the representation is the induced profile map $\pi(v)=(q_I(v))_{I\in\mathcal I}$. The generic coding laws then specialize to a machine-checked formal instance. In particular, equal observable profiles cannot distinguish identity (\LH{ACS8}), provenance is not recoverable from the profile alone when collisions exist (\LH{ACS9}), and nominal identity cannot be embedded back into the semantic layer (\LH{EMB1}).
 
 \paragraph{Instantiated neurosymbolic linking theorems.}
 Within that formal identity domain, the generic helper-view theorems specialize by setting the task to identity $Y = C$. The mechanization (\LH{NSL1} through \LH{NSL6}) proves the following instantiated claims.
@@ -46,7 +42,7 @@ Within that formal identity domain, the generic helper-view theorems specialize 
 \item The pair $(\pi, \sigma)$ is the canonical helper view for open-world identity systems (\LH{NSL6}).
 \end{itemize}
 
-These instantiated theorems connect the generic information-theoretic helper-view framework to a concrete formal identity domain. Together with \LH{ACS8}, \LH{ACS9}, and \LH{EMB1}, they show how the auxiliary identity channel pays for the ambiguity that the semantic layer leaves unresolved.
+These instantiated theorems connect the generic helper-view framework to a concrete formal identity domain. Together with \LH{ACS8}, \LH{ACS9}, and \LH{EMB1}, they show how the auxiliary identity channel pays for the ambiguity that the semantic layer leaves unresolved.
 
 \subsection{Task Sufficiency, Helper Views, and Factorization}
 
@@ -109,9 +105,9 @@ In a genuinely factorized product setting, where the class space decomposes as a
 For coordinatewise product representations, each joint fiber is exactly the product of the corresponding component fibers, so their cardinalities multiply. Taking the largest such product yields multiplicativity of the worst-case residual ambiguity.
 \end{proof}
 
-For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to Y}$, or the adaptive fiber profile is itself a representation-analysis problem rather than part of the theorem. In a finite explicit registry or index this is just fiber counting; for a large learned embedding one would need either exact collision enumeration after discretization or provable upper and lower bounds on the induced fibers. The point of the present results is to identify what those quantities mean once they are known.
+For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to Y}$, or the adaptive fiber profile is a representation-analysis problem rather than part of the theorem. In a finite explicit registry or index this is just fiber counting; in a large learned embedding one instead needs explicit collision enumeration after discretization or provable upper and lower bounds. The point of the present results is to identify what those quantities mean once they are known.
 
-Read concretely, the task-sufficiency theorem is the exact-recovery analogue of a sufficient-statistic condition for the downstream task $Y$: the representation is sufficient precisely when every fiber carries one task label. The helper-view and factorized laws then say when concept bottlenecks, retrieval-augmented pipelines, multimodal encoders, or modular neural architectures contribute genuinely new exact information rather than repackaging ambiguity already present in the base representation.
+Read concretely, the task-sufficiency theorem is the exact-recovery analogue of a sufficient-statistic condition for the downstream task $Y$: the representation is sufficient precisely when every fiber carries one task label. The helper-view and factorized laws then say when added views or modules contribute genuinely new exact information rather than repackaging ambiguity already present in the base representation.
 
 In the finite explicit setting, one-symbol zero-error feasibility is equivalent to injectivity and refinement cannot increase collision multiplicity (\LH{GPH27}, \LH{GPH28}). The same setting also yields a disclosure separation between nominal access and tag-free identity resolution (\LH{PRIV3}).
 
