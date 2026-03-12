@@ -51,7 +51,7 @@ A class-injective auxiliary description assigns a unique identifier to each clas
 
 The next theorem is the paper's main zero-error compression statement. It converts representation collision multiplicity directly into a necessary fixed-length side-information budget.
 
-In graph terms, the present fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. The point of the section is therefore not a new general graph-entropy theorem, but the identification of the exact primitive governing this deterministic side-information regime and the theoremic consequences that follow from it.
+In graph terms, the fixed-representation setting is a structured zero-error special case: confusable classes are exactly those lying in the same representation fiber, so the confusability graph is a disjoint union of cliques. This special structure yields exact finite laws for the residual coding burden left by a representation.
 
 \begin{definition}[Collision multiplicity]\label{def:collision-multiplicity}
 Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathcal U$ be a representation map. Define
@@ -62,9 +62,10 @@ Thus $A_\pi$ is the size of the largest class-collision block under the represen
 \end{definition}
 \leanmeta{\LH{LWDC1}, \LH{LWDC3}}
 
-\begin{remark}[Computing the collision multiplicity]
-The converse is parameterized by $A_\pi$. When the class-profile map is given explicitly as a finite table, $A_\pi$ is obtained by grouping classes by profile and taking the largest fiber size. When $\pi$ is given implicitly by a large program, circuit, or learned model, computing or approximating $A_\pi$ becomes a separate representation-dependent problem. The theorem identifies the exact zero-error auxiliary description budget once $A_\pi$ is known; it does not assume that estimating $A_\pi$ is always tractable from an implicit description.
+\begin{remark}[Computability under finite precision]
+Every implementable representation operates on finite-precision values. The representation alphabet is therefore finite, and $A_\pi$ is computable by fiber enumeration. If the deployed representation uses $M$ output values, then the pigeonhole principle yields the lower bound $\lceil |\mathcal C|/M \rceil \le A_\pi$. Conversely, to guarantee $A_\pi \le k$ on an entity set of size $n$, at least $\lceil n/k \rceil$ distinct representation values are necessary. The coding theorems identify the operational meaning of $A_\pi$ once the representation is fixed at its deployed precision.
 \end{remark}
+\leanmeta{\LHrng{GPH}{44}{45}, \LH{GPH48}, \LH{GPH50}}
 
 If one observation channel factors through a richer one, collision multiplicity cannot increase (\LH{GPH28}). Thus adding observable structure can only lower the corresponding zero-error tag bound. Under the same representation reading, enriching the embedding cannot worsen zero-error separability.
 
@@ -162,5 +163,34 @@ So per-entity tag rate is exactly stable across block length.
 \begin{remark}[Why this block model]
 The block construction repeats the same semantic identification task across $t$ entities while keeping the representation map fixed and applying it coordinatewise. It is therefore the direct block analogue of repeated one-shot classification in this model: the collision structure multiplies across coordinates, and the required zero-error side-information budget scales accordingly.
 \end{remark}
+
+\subsection{Why the General Zero-Error Theory Simplifies Here}
+
+The confusability graph induced by a fixed deterministic representation has special structure: two classes are adjacent exactly when they share the same representation value. The next observations explain why several general zero-error graph quantities collapse in this setting.
+
+\begin{proposition}[Transitivity of representation confusability]
+Let $\pi : \mathcal C \to \mathcal U$. Define $c_1 \sim_\pi c_2$ iff $\pi(c_1)=\pi(c_2)$ and $c_1 \ne c_2$. Then $\sim_\pi$ is transitive on distinct classes inside a fiber.
+\end{proposition}
+
+\begin{proof}
+If $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. Thus any two distinct classes linked through one fiber are directly confusable as well.
+\end{proof}
+
+\begin{proposition}[Cluster-graph structure]
+The confusability graph $G_\pi$, with edges between distinct classes sharing the same representation, is a disjoint union of cliques. Each connected component is exactly one representation fiber.
+\end{proposition}
+\leanmeta{\LHrng{GPH}{52}{53}}
+
+\begin{proof}
+Each fiber is a clique because all of its classes share the same representation value. No edge connects distinct fibers by construction. Hence each connected component is exactly one fiber, and the graph is a disjoint union of cliques.
+\end{proof}
+
+\begin{corollary}[Capacity collapse for representation-induced graphs]
+For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
+\end{corollary}
+
+\begin{proof}
+In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. In this setting, the general graph inequalities collapse to the same fiber-counting law.
+\end{proof}
 
 In the running example, $A_\pi = 2$, so the exact block law gives $L_t^\star = t$ bits.

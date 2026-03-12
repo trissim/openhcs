@@ -90,6 +90,8 @@ abbrev GPH48 := @Ssot.GraphEntropy.quantization_lower_bound_fin
 abbrev GPH49 := @Ssot.GraphEntropy.card_le_card_mul_of_maxFiberCard_le
 abbrev GPH50 := @Ssot.GraphEntropy.precision_requirement
 abbrev GPH51 := @Ssot.GraphEntropy.precision_requirement_fin
+abbrev GPH52 := @Ssot.GraphEntropy.fiber_is_clique
+abbrev GPH53 := @Ssot.GraphEntropy.fiber_finset_is_clique
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
@@ -217,8 +219,9 @@ theorem l5_exchange_wrapper {A : _root_.AxisSet}
 
 abbrev L4 := @l4_exchange_wrapper
 abbrev L5 := @l5_exchange_wrapper
-abbrev L6 := fixed_axis_incompleteness
-abbrev L7 := adversary_forces_n_minus_1_queries
+abbrev L6 := @nonorthogonal_complete_has_redundant_axis
+abbrev L7 := @exists_semanticallyMinimal_subset
+abbrev L8 := @exists_orthogonal_semanticallyMinimal_subset
 
 abbrev LWDC1 := @LWDConverse.collision_block_requires_bits
 abbrev LWDC2 := @LWDConverse.impossible_when_bits_too_small

@@ -14,6 +14,7 @@ import Paper1IT.PMFEntropy
 import Paper1IT.RateDistortion
 import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
+import Paper1IT.ComputabilityQuantization
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
 import lwd_converse
@@ -81,6 +82,16 @@ abbrev GPH40 := @Ssot.GraphEntropy.taskRecoverable_pair_iff
 abbrev GPH41 := @Ssot.GraphEntropy.maxTaskFiberCard_pair_le_left
 abbrev GPH42 := @Ssot.GraphEntropy.observeFiber_prod_card
 abbrev GPH43 := @Ssot.GraphEntropy.maxFiberCard_prod
+abbrev GPH44 := @Ssot.GraphEntropy.maxFiberCard_eq_finiteSup
+abbrev GPH45 := @Ssot.GraphEntropy.maxFiberCard_computable_by_fiber_enumeration
+abbrev GPH46 := @Ssot.GraphEntropy.card_le_card_mul_maxFiberCard
+abbrev GPH47 := @Ssot.GraphEntropy.ceilDiv_card_le_maxFiberCard
+abbrev GPH48 := @Ssot.GraphEntropy.quantization_lower_bound_fin
+abbrev GPH49 := @Ssot.GraphEntropy.card_le_card_mul_of_maxFiberCard_le
+abbrev GPH50 := @Ssot.GraphEntropy.precision_requirement
+abbrev GPH51 := @Ssot.GraphEntropy.precision_requirement_fin
+abbrev GPH52 := @Ssot.GraphEntropy.fiber_is_clique
+abbrev GPH53 := @Ssot.GraphEntropy.fiber_finset_is_clique
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
