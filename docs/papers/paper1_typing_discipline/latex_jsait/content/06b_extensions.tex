@@ -1,16 +1,10 @@
-The main theorem chain is complete for the deterministic finite side-information model studied here. This section records only brief forward-looking directions and is not part of the core theorem arc.
+The main theorem chain identifies the structural laws governing zero-error identity recovery from fixed representations. This section records forward-looking directions that change one model assumption while preserving the central insight: residual ambiguity must be paid for in some currency.
 
-Each extension changes one part of the model while preserving the paper's central question: once the representation is noninjective, how much additional information is needed for exact or approximate recovery? The common theme is that residual ambiguity left by the representation must still be paid for in some currency---side-information bits, repeated evidence, allowable distortion, or additional disclosure.
+\subsection{Scope and Completeness}
 
-\subsection{Scope and Limits}
+The paper provides complete zero-error theory for the fixed-representation setting. The fiberwise decomposition theorem applies to any finite source distribution. The entropy converses apply to any observation map and tag budget. The query and stability laws apply to any attribute family. The uniform single-block closed form is the special case that collapses to an explicit formula.
 
-The paper does not provide a full general rate-distortion theory for non-uniform sources or general distortion measures. The exact closed-form tradeoff derived here belongs to the deterministic corner of a uniform source on a single collision block. Extensions beyond that setting are natural, but they require different techniques and source-sensitive expressions.
-
-The paper also does not prove that symbolic handles are the only possible resolution of identity ambiguity. An injective encoder is an alternative, and allowing nonzero error is another alternative. The theoremic claim is narrower and cleaner: if exact identity is required from a non-injective representation, some auxiliary distinguishing information must pay the missing bits.
-
-Nor does the paper solve the computational problem of estimating $A_\pi$ or fiber geometry from an arbitrary learned model. The coding laws identify the exact meaning of those quantities once they are known. Extracting them from a neural representation is a separate representation-analysis problem.
-
-Finally, the paper does not treat stochastic representations, noisy side channels, or repeated probabilistic observations. Those settings raise different questions and belong to a broader stochastic theory beyond the deterministic corner solved here.
+Several natural extensions remain open. Stochastic representations, noisy channels, and asymptotic block analysis would each modify the model while preserving the core insight that fiber geometry governs residual cost.
 
 \subsection{Noisy and Lossy Observation}
 
@@ -28,9 +22,7 @@ At a more abstract level, one may ask how to divide a total budget between repre
 
 \subsection{Entropy-Sensitive Converses}
 
-Beyond the exact deterministic accounting, the current proof development now also supports a finite entropy-sensitive converse layer. In the finite observation/tag setting, low distortion forces the source entropy and conditional entropy below explicit Fano-style bounds (\LH{RDC1}, \LH{RDC2}, \LH{RDC5}). A coarser but often more usable version absorbs the success-probability term into the joint observation/tag budget and yields a logarithmic lower bound on the required budget (\LH{RDC6}, \LH{RDC7}). In the observation-only case, the same machinery recovers entropy and min-entropy lower bounds on the unavoidable error floor (\LH{RDC8}, \LH{RDC9}).
-
-These theorems do not yet amount to a full Shannon rate-distortion theory, but they do provide a genuinely information-theoretic converse layer above the exact finite counting laws. They also connect cleanly to the PMF bridge now available in the proof stack, which identifies the finite-source entropy quantities with explicit PMF entropies and mutual-information surrogates (\LH{PMF1}, \LH{PMF2}, \LH{PMF3}).
+The entropy-sensitive converses (RDC series) are now presented in the main text as Section~\ref{sec:entropy-converses}. The mechanization supports Fano-style inequalities connecting distortion to source entropy (\LH{RDC1}, \LH{RDC2}, \LH{RDC5}), budget lower bounds from error targets (\LH{RDC6}, \LH{RDC7}), and min-entropy bounds for observation-only schemes (\LH{RDC8}, \LH{RDC9}). These connect cleanly to the PMF bridge in the proof stack (\LH{PMF1}, \LH{PMF2}, \LH{PMF3}), which identifies finite-source entropy quantities with explicit PMF entropies.
 
 \subsection{Semantic Distortion Measures}
 
