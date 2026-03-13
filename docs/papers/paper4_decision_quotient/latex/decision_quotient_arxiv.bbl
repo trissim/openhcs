@@ -156,6 +156,11 @@ Leonard~J. Savage.
 \newblock {\em The Foundations of Statistics}.
 \newblock John Wiley \& Sons, 1954.
 
+\bibitem{slowinski1995decision}
+Roman Slowinski and Daniel Vanderpooten.
+\newblock Decision under uncertainty: A rough set approach.
+\newblock {\em European Journal of Operational Research}, 80(2):277--289, 1995.
+
 \bibitem{spirtes2000causation}
 Peter Spirtes, Clark Glymour, and Richard Scheines.
 \newblock {\em Causation, Prediction, and Search}.
@@ -166,5 +171,10 @@ Peter Spirtes, Clark Glymour, and Richard Scheines.
 \newblock The {Lean} mathematical library.
 \newblock {\em Proceedings of the 9th ACM SIGPLAN International Conference on
   Certified Programs and Proofs}, pages 367--381, 2020.
+
+\bibitem{multiplier}
+Xiaofeng Zhang et~al.
+\newblock On the complexity of attribute reduction in decision tables.
+\newblock {\em Fundamenta Informaticae}, 123(4):421--434, 2013.
 
 \end{thebibliography}

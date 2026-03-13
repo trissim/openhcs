@@ -180,6 +180,12 @@ The optimizer quotient is therefore the coarsest abstraction of the state space 
 
 \leanmeta{\LH{QT7}, \LH{AB2}.}
 
+\begin{remark}[Decision Noise]\label{rem:decision-noise}
+The quotient viewpoint gives a precise meaning to decision noise. At the state level, two states differ only by decision noise exactly when they determine the same class in $Q_{\mathcal{D}}$. At the coordinate level, a coordinate is pure decision noise exactly when varying it alone never changes the decision, equivalently when it is irrelevant. In the finite probabilistic reading used later, this is also equivalent to conditional independence of the decision from that coordinate given the remaining coordinates.
+\end{remark}
+
+\leanmeta{\LHrng{DN}{1}{2}, \LH{DN5}.}
+
 \begin{proposition}[Sufficiency Characterization]\label{prop:sufficiency-char}
 Coordinate set $I$ is sufficient if and only if the optimizer map factors through the projection $\pi_I : S \to S_I$. Equivalently, there exists a function $\overline{\Opt}_I : S_I \to \mathcal{P}(A)$ such that
 \[
