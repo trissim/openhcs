@@ -12,6 +12,8 @@ L \ge \log_2 A_{\pi},
 \]
 the adaptive per-fiber budget is $\lceil \log_2 |\pi^{-1}(u)|\rceil$, and the rate‑distortion tradeoff admits an explicit deterministic error floor when the required identity bits are not provided. On the query side, any binary distinguishing family of size $d$ induces at most $2^d$ transcripts on a fiber, giving the same counting bound $\lceil\log_2 A_{\pi}\rceil \le d$ on worst fibers.
 
+The fiber geometry that governs these costs also determines the canonical structure of derivability-aware query families, as we show in Section 3.
+
 Viewed this way, fixed-length bits, adaptive bits, query cost, and deterministic distortion are different currencies for the same residual ambiguity object.
 
 Regime clarification. We study the finite, fixed-representation, zero-error regime formalized by our admissibility contract (Def.~\ref{def:admissibility-contract}). This is the base case: any higher-level regime (stochastic, continuous, or learning-aware models) must, at deployment time, reduce to a fixed representation and finite realized classes in order to execute. Consequently, those higher-level analyses cannot escape the operational implications derived here; they only change the input quantities (for example, collision statistics) that our exact downstream laws take as given.
@@ -48,7 +50,7 @@ Main contribution. The collision fiber geometry induced by a fixed representatio
 \begin{enumerate}
 \item Exact coding laws: a tight fixed-length converse $L \ge \log_2 A_{\pi}$, an exact finite-block scaling law, and a pointwise optimal adaptive bit budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$ per fiber.
 \item Deterministic distortion currency: in the uniform single-block corner the optimal distortion is $D^\star(L)=\max(0,1-2^L/a)$, giving an explicit error floor when identity bits are withheld.
-\item Canonical query currency: every complete derivability-aware query family reduces to an orthogonal semantically minimal core, so non-orthogonal families are redundant overpresentations rather than a rival regime. On that canonical core, minimal distinguishing families form the bases of a matroid, and the query cost obeys the same counting floor $\lceil \log_2 A_{\pi}\rceil \le d$.
+\item Canonical query structure: the fiber-geometry framework extends naturally to the query side, where complete derivability-aware families have a canonical form. Every such family reduces to an orthogonal semantically minimal core, meaning non-orthogonal families are redundant overpresentations rather than rival regimes. On the canonical core, minimal distinguishing families form the bases of a matroid, and the query cost obeys the same counting floor $\lceil \log_2 A_{\pi}\rceil \le d$. This result establishes a single structural backbone that connects the three operational currencies.
 \item Systems payoff with mechanized certainty: symbolic handles are the canonical mechanism for paying the identity debt in real systems, and the main theorem chain is machine-checked in Lean 4.
 \end{enumerate}
 

@@ -1,5 +1,7 @@
 \subsection{The Query Currency}
 
+The fiber geometry that governs fixed-length and adaptive coding costs extends naturally to the query side. Once the collision structure is understood, the canonical form of complete derivability-aware query families follows directly. This section establishes that structural result: every such family reduces to an orthogonal semantically minimal core, and the set of such cores forms a matroid.
+
 Bits are one way to pay the identity debt left by a non-injective representation. Another is to interrogate primitive observables until the class is determined. This section studies that query currency. The same residual ambiguity that forces auxiliary bits can also be paid for through interactive disambiguation.
 
 \begin{definition}[Query family]
@@ -115,7 +117,7 @@ Every semantically complete derivability-aware query family contains an orthogon
 Choose a semantically minimal complete subfamily using Proposition~\ref{prop:query-minimal-core}. If that subfamily were still non-orthogonal, Proposition~\ref{prop:query-redundancy} would remove another observable while preserving completeness, contradicting minimality. Hence the minimal core is orthogonal.
 \end{proof}
 
-These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core. The remaining gap above the counting floor, if any, is then a genuine structural limitation of the available primitive observables rather than an artifact of redundant presentation.
+These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core \cite{Welsh1976}. The remaining gap above the counting floor, if any, is then a genuine structural limitation of the available primitive observables rather than an artifact of redundant presentation.
 
 \begin{theorem}[Matroid of canonical distinguishing families]\label{thm:matroid-bases}
 For the canonical orthogonal core of a complete derivability-aware query system, the semantically minimal distinguishing families are the bases of a matroid. Consequently, all such families have equal cardinality.
