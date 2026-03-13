@@ -38,6 +38,8 @@ More broadly, the present side-information viewpoint invites comparison with rat
 
 In explicit finite registries, auditing residual ambiguity means computing fiber statistics exactly. In learned or implicit models, the same quantities become representation-analysis targets: one may estimate collision profiles through discretization bounds, quantized or empirical collision statistics, class-conditional entropy surrogates, or task-conditioned quantities such as $A_{\pi \to Y}$. The theoremic contribution of the present paper is to identify what these quantities mean once they are available, not to solve the computational problem of extracting them from arbitrary models.
 
+The empirical audit path can also be connected back to the mechanization. Once a deployed representation and quantization rule are fixed, the resulting fiber histogram and finite budget curve can be exported as a Lean certificate whose checks reduce to the same finite formulas used in the paper: the reported $A_\pi$, the threshold budget $\lceil \log_2 A_\pi \rceil$, the worst-fiber floor, and the finite exact recoverable mass under each tag budget. This does not mechanize the neural encoder itself, but it does make the post-quantization collision audit machine-checkable.
+
 The present distortion floor should therefore be read as a deterministic exact-recovery analogue of rate-distortion-perception constraints, not as a full solution of that stochastic theory.
 
 \subsection{Learned Representations and Embedding Collapse}

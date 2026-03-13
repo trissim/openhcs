@@ -1,0 +1,6 @@
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8
+sentence-transformers>=3.0
+transformers>=4.40
+torch>=2.2

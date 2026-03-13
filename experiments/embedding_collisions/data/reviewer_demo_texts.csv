@@ -1,0 +1,21 @@
+id,text,label,weight
+doc01,Neural retrieval systems often use dense embeddings for semantic search,retrieval,3
+doc02,Dense vector retrieval supports semantic search over document collections,retrieval,2
+doc03,Exact document identity still needs stable identifiers in retrieval pipelines,retrieval,3
+doc04,Primary keys and retrieval handles prevent identity collisions in vector search,retrieval,2
+doc05,Concept bottleneck models compress observations into learned concept vectors,concept,2
+doc06,Learned concept representations can collapse distinct instances into one code,concept,3
+doc07,Downstream classifiers cannot recover lost instance identity without extra signals,concept,3
+doc08,Semantic caches may return the right topic but the wrong artifact identity,cache,2
+doc09,Cache keys based only on meaning can collide on exact object identity,cache,2
+doc10,Registry systems separate semantic metadata from stable symbolic handles,registry,2
+doc11,Auditing collision fibers requires fixing deployed precision and quantization,audit,1
+doc12,Finite precision makes collision multiplicity empirically measurable,audit,2
+doc13,Quantized embeddings expose finite collision blocks that can be counted,audit,2
+doc14,Auxiliary tag bits trade directly against worst fiber distortion,rate_distortion,3
+doc15,Zero error is feasible exactly when the tag alphabet resolves every fiber,rate_distortion,3
+doc16,Fano style converses give looser entropy sensitive lower bounds,rate_distortion,1
+doc17,Perception constrained compression compares fidelity to perceptual realism,perception,1
+doc18,Identity loss is a discrete perceptual metric in the zero error corner,perception,2
+doc19,Continuous perceptual metrics require a richer formalization than binary identity,perception,1
+doc20,Machine checked certificates can verify exported collision summaries,verification,2
