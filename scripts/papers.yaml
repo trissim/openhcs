@@ -19,6 +19,8 @@
 #   scaffold_from: "paper4_toc"               # derive scaffold content from another paper id
 #   experiment_paths:                         # repo-relative or paper-relative experiment roots for packaging
 #     - "experiments/embedding_collisions"
+#   experiment_commands:                      # shell commands run before LaTeX/arXiv packaging
+#     - "{python} path/to/generate_assets.py --paper-id {paper_id}"
 # arXiv Packaging Configuration
 arxiv:
   include_build_log: true          # BUILD_LOG.txt with actual lake output
@@ -37,6 +39,7 @@ build:
     - "claim_mapping_auto.tex"
     - "lean_handle_ids_auto.tex"
     - "proof_hardness_index_auto.tex"
+    - "experiment_results_auto.tex"
   shared_preamble_files:
     - "paper-preamble.sty"
     - "pentalogy-preamble.sty"
@@ -71,6 +74,8 @@ papers:
     claim_mapping_file: "content/claim_mapping_auto.tex"
     experiment_paths:
       - "experiments/embedding_collisions"
+    experiment_commands:
+      - "{python} experiments/embedding_collisions/generate_paper1_jsait_assets.py --paper-id {paper_id}"
     forcing_prefixes: ["COMPL", "IMP", "AXI", "EMB", "EXT", "ALT", "UNIQ", "FORC"]
     submission_format:
       latex_flag: "\\JSAITREVIEW"

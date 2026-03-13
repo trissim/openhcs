@@ -278,6 +278,7 @@ class PaperMeta:
     arxiv_comments: str = ""
     scaffold_from: str = ""
     experiment_paths: Tuple[str, ...] = ()
+    experiment_commands: Tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, paper_id: str, d: dict) -> "PaperMeta":
@@ -299,6 +300,7 @@ class PaperMeta:
             arxiv_comments=d.get("arxiv_comments", ""),
             scaffold_from=d.get("scaffold_from", ""),
             experiment_paths=tuple(d.get("experiment_paths", [])),
+            experiment_commands=tuple(d.get("experiment_commands", [])),
         )
 
 
@@ -482,6 +484,7 @@ class PaperBuilder:
         # same build-generated definitions.
         self._write_shared_lean_handle_macros_auto()
         self._sync_shared_preambles(paper_id)
+        self._run_experiment_commands(paper_id)
         self._write_latex_lean_stats(paper_id)
         self._write_assumption_ledger_auto(paper_id)
         self._write_lean_handle_ids_auto(paper_id)
@@ -5876,7 +5879,7 @@ end {module_root}
 
         configured_sources = list(meta.experiment_paths)
         legacy_source = paper_dir / "experiments"
-        if legacy_source.exists():
+        if not configured_sources and legacy_source.exists():
             configured_sources.append("experiments")
 
         if not configured_sources:
@@ -5969,6 +5972,53 @@ end {module_root}
             shutil.copy2(src, dst)
             copied_count += 1
         return copied_count
+
+    def _run_experiment_commands(self, paper_id: str) -> None:
+        """Run configured experiment commands before derived-content generation.
+
+        Commands are intentionally generic and configured in `papers.yaml` so any
+        paper can opt into reproducible experiment-derived assets (tables, plots,
+        certificates, CSV summaries, etc.).
+        """
+        meta = self._get_paper_meta(paper_id)
+        if not meta.experiment_commands:
+            return
+
+        paper_dir = self._get_paper_dir(paper_id)
+        latex_dir = self._get_latex_dir(paper_id)
+        content_dir = self._get_content_dir(paper_id)
+        releases_dir = self._get_releases_dir(paper_id)
+        python_bin = self.repo_root / ".venv" / "bin" / "python"
+        python_exec = str(python_bin if python_bin.exists() else Path(sys.executable))
+
+        for command_template in meta.experiment_commands:
+            command = command_template.format(
+                paper_id=paper_id,
+                repo_root=str(self.repo_root),
+                paper_dir=str(paper_dir),
+                latex_dir=str(latex_dir),
+                content_dir=str(content_dir),
+                releases_dir=str(releases_dir),
+                python=python_exec,
+            )
+            print(f"[experiments] {paper_id}: {command}")
+            result = subprocess.run(
+                command,
+                cwd=self.repo_root,
+                shell=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"Experiment command failed for {paper_id}: {command}\n"
+                    f"stdout:\n{result.stdout}\n"
+                    f"stderr:\n{result.stderr}"
+                )
+            if result.stdout.strip():
+                print(result.stdout.strip())
 
     def _sync_graph_viewer_assets(self, dest_dir: Path) -> None:
         """Copy portable graph viewer assets into a graph bundle directory."""

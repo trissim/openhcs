@@ -180,6 +180,7 @@ docs/papers/*/proofs_*/dep_*
 
 # Generated paper release bundles
 docs/papers/*/releases/
+docs/papers/*/experiments/generated/
 
 # Local experiment outputs
 experiments/embedding_collisions/out/
