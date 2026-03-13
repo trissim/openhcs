@@ -1,15 +1,15 @@
 \section{Unit-Rate Structural Interpretation}\label{sec:ssot}
 %==============================================================================
 
-The main graph-capacity arc studies what happens once ambiguity survives and acquires nontrivial topology. This section returns to the opposite boundary case identified in Section~\ref{sec:foundations}: the unit-rate corner in which that ambiguity never appears. It records two direct interpretations of that boundary case: derivation realizes the unit-rate regime, and leaving it produces the manual-update gap proved later in Section~\ref{sec:rate-corollaries}.
+The main graph-capacity arc studies what happens once ambiguity survives and acquires nontrivial topology. This section returns to the opposite boundary case of the same model: the unit-rate corner in which that ambiguity never appears. It records two direct interpretations of that boundary case: derivation realizes the unit-rate regime, and leaving it produces the manual-update gap proved later in Section~\ref{sec:rate-corollaries}.
 
 \subsection{Derivation as the Single-Source Structure}\label{sec:ssot-def}
 
-An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Proposition~\ref{thm:dof-one-coherence}, this is exactly the regime in which every reachable state remains coherent, so the represented fact is determinate and coherence restoration requires only $O(1)$ manual updates. By Proposition~\ref{thm:dof-gt-one-incoherence}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique rate guaranteeing exact consistency.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
+An encoding system has \emph{unit independent rate} when $\text{DOF}(C,F)=1$. By Proposition~\ref{thm:dof-one-coherence}, this is exactly the regime in which every reachable state remains coherent. By Proposition~\ref{thm:dof-gt-one-incoherence}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.\leanmeta{\LHrng{COH}{1}{2}, \LH{BND1}, \LH{RAT1}, \LH{RED1}}
 
 \subsection{Reading the Converse at Unit Rate}\label{sec:info-sketches}
 
-When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required, which is what moves the system above unit rate and leads to the update-cost lower bound of Section~\ref{sec:rate-corollaries}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{DER2}}
+When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem~\ref{thm:fano-converse} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required. That is exactly what moves the system above unit rate and leads to the update-cost lower bound of Section~\ref{sec:rate-corollaries}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.\leanmeta{\LH{CIA3}, \LH{BND2}, \LH{DER2}}
 
 \subsection{Rate and Manual Update Cost}\label{sec:ssot-vs-m}
 

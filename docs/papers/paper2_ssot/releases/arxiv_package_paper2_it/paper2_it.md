@@ -1,17 +1,19 @@
 # Paper: Exact Consistency Under Partial Views: Graph Colorability, Capacity, and Equality in Multi-Location Encodings
 
-**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 25608 lines, 1227 theorems
+**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 25743 lines, 1231 theorems
 
 ---
 
 ## Abstract
 
-We construct a structural theory of failure for multi-location encodings. Admissible partial views induce a confusability graph on latent tuples; in the exact coordinate-view model, this graph class is exactly characterized by upward-closed families of coordinate-agreement sets, and exact recovery with a $T$-ary tag is equivalent to $T$-colorability. Repeated composition yields strong powers, and the normalized block-rate sequence converges to asymptotic Shannon capacity bounded above by Lovász-$\vartheta$. The upper theory is sharp whenever confusability is transitive, with meet-witnessing and fiber coherence providing checkable sufficient conditions for that collapse. Under an affine restriction, the coordinate structure yields a representable matroid whose rank bounds confusability. The theory applies uniformly to programming-language runtimes, databases, and dependency managers: causal propagation together with provenance observability are necessary and sufficient for verifiable structural integrity.
+We construct a structural theory of failure for multi-location encodings. Admissible partial views induce a confusability graph on latent tuples; in the exact coordinate-view model, this graph class is exactly characterized by upward-closed families of coordinate-agreement sets, and exact recovery with a $T$-ary tag is equivalent to $T$-colorability. Repeated composition yields strong powers, so the normalized block-rate sequence converges to asymptotic Shannon capacity bounded above by Lovász-$\vartheta$. The upper theory is sharp whenever confusability is transitive; meet-witnessing and fiber coherence provide checkable sufficient conditions for that collapse. Under an affine restriction, the coordinate structure yields a representable matroid whose rank bounds confusability. The theory applies uniformly to programming-language runtimes, databases, and dependency managers: causal propagation together with provenance observability are necessary and sufficient for verifiable structural integrity.
 
 
 # Introduction
 
 The mathematically trivial part of multi-location consistency is that once more than one location is independently writable, disagreement can occur. The substantive question is what exact ambiguity structure survives once a system exposes only partial views of its latent state, and what formal integrity guarantees are possible in that regime. This paper answers that question with a zero-error graph-capacity theory for deterministic partial views on latent tuples.
+
+The theory is predictive: given only the view-family specification, the full failure topology, exact recovery law, asymptotic capacity, and standard upper bounds are deductive consequences of the architecture, with the realizable graph class fully characterized.
 
 When one latent fact or tuple of facts is represented at several modifiable locations, the available observation need not identify a unique latent state. Under partial views, this surviving ambiguity is not merely a yes/no defect: the admissible view family induces a confusability graph on latent tuples. Its edges record the exact state pairs that the architecture cannot separate, proper colorings quantify the side-information budget needed for exact recovery, and repeated composition pushes the same structure to strong powers and asymptotic Shannon capacity. The paper therefore studies not just whether a multi-location system can fail, but the topology of those failures, the integrity guarantees excluded or permitted by that topology, and the recovery laws forced by it. The resulting theory lies at the intersection of zero-error information theory, side-information source coding, finite converses, and structural integrity analysis [@shannon1956zero; @korner1973graphs; @lovasz1979shannon; @witsenhausen1976zero; @slepian1973noiseless; @cover2006elements].
 
@@ -31,13 +33,13 @@ The model yields an exact-consistency analogue of zero-error resolvability for m
 
 **Finite converse foundation.** Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible exactly when the pair map $x \mapsto (Y(x),T(x))$ is injective on the surviving ambiguity class. The same obstruction appears as confusability, counting, conditional-entropy, decoder-output, and finite-gap formulations, and it admits a budgeted finite-error extension. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.
 
-**Boundary corollary.** For deterministic multi-location encodings, the zero-incoherence threshold equals $1$: exact zero-error recovery is possible exactly in the single-source regime. This identifies the unique trivial no-failure corner and, equivalently, the exact structural-integrity regime. The more detailed mathematics begins once the finite obstruction survives and acquires nontrivial confusability structure.
+**Boundary corollary.** For deterministic multi-location encodings, the zero-incoherence threshold equals $1$: the single-source regime is the unique no-failure corner, and it is exactly the structural-integrity regime. The richer mathematics begins once the finite obstruction survives and acquires nontrivial confusability structure.
 
 **Secondary fact-side question.** The same framework also supports a second structural question: which fact coordinates are determined by others across the realized state family? Under an affine restriction, that coordinate-dependence question becomes the standard span-membership condition on coordinate functionals, so the induced fact-closure is a representable matroid on fact indices. The value of this specialization here is operational rather than linear-algebraic novelty: the same realized-state model then carries two complementary invariants, a graph on latent states and, in the affine regime, a matroid on coordinates whose rank gives upper bounds on confusability and capacity. Those bounds are algorithmically tractable once the affine family is presented explicitly by a basis or generator matrix for its direction space; under that representation, the relevant rank quantity is exactly the rank of the restricted coordinate projection and satisfies formal size bounds such as $t(S)\le |S|$, so Gaussian elimination is the natural computation model.
 
 ## Realizability and Verification {#sec:realizability}
 
-The same deterministic model also raises a realizability question, but it is downstream of the main graph arc: when can a concrete host system realize the rate-$1$ boundary case and thereby certify structural integrity? We show that two structural properties are required:
+The same deterministic model also raises a realizability question at its opposite boundary: when can a concrete host system realize the rate-$1$ corner and thereby certify structural integrity? We show that two structural properties are required:
 
 1.  **Causal update propagation:** derived locations must update automatically when the source changes.
 
@@ -45,9 +47,9 @@ The same deterministic model also raises a realizability question, but it is dow
 
 ## Paper Organization {#overview}
 
-The main theorem arc is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lovász-$\vartheta$ upper theory bounds that value; and a structural transitivity condition yields the model-side route to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that arc. The affine and realizability results are consequence arcs built on the same model rather than separate primary claims.
+The main theorem arc is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lovász-$\vartheta$ upper theory bounds that value; and transitivity of confusability gives the model-side export to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that arc. The affine and realizability sections are later specializations and boundary consequences of the same model rather than separate primary claims.
 
-Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} gives the minimum model and threshold setup. Section [\[sec:converse\]](#sec:converse){reference-type="ref" reference="sec:converse"} develops the finite converse foundation. Sections [\[sec:graph-characterization\]](#sec:graph-characterization){reference-type="ref" reference="sec:graph-characterization"}--[\[sec:equality\]](#sec:equality){reference-type="ref" reference="sec:equality"} contain the main graph-capacity arc: graph characterization, block and asymptotic capacity, upper theory, and equality characterization. Section [\[sec:affine\]](#sec:affine){reference-type="ref" reference="sec:affine"} gives the affine fact-side specialization. Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"} records threshold and rate-complexity corollaries, Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} gives the operational realizability criterion, and Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} record representative host-level readings and supplementary case-study material. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid specialization, threshold chain, operational realizability criterion, and rate-complexity arguments [@demoura2021lean4].
+Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"} gives the minimum model and threshold setup. Section [\[sec:converse\]](#sec:converse){reference-type="ref" reference="sec:converse"} develops the finite converse foundation. Sections [\[sec:graph-characterization\]](#sec:graph-characterization){reference-type="ref" reference="sec:graph-characterization"}--[\[sec:equality\]](#sec:equality){reference-type="ref" reference="sec:equality"} contain the main graph-capacity arc: graph characterization, block and asymptotic capacity, upper theory, and equality characterization. Section [\[sec:affine\]](#sec:affine){reference-type="ref" reference="sec:affine"} then records the affine fact-side specialization as a second lens on the same confusability structure. Section [\[sec:ssot\]](#sec:ssot){reference-type="ref" reference="sec:ssot"}, Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}, and Section [\[sec:requirements\]](#sec:requirements){reference-type="ref" reference="sec:requirements"} return to the unit-rate boundary of the same model and develop its structural, operational, and rate-complexity consequences. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} records representative host-level readings, and Supplement A contains case-study details and traces. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid specialization, threshold chain, operational realizability criterion, and rate-complexity arguments [@demoura2021lean4].
 
 ## Scope {#sec:scope}
 
@@ -65,7 +67,7 @@ The main contributions are grouped into the core graph-capacity arc and the cons
 
 -   **A fixed Lovász-$\vartheta$ upper theory and standard equivalent forms** in which the same asymptotic capacity is bounded above by complement-chromatic and fixed Lovász-$\vartheta$ upper objects, with standard orthonormal, primal-PSD, and dual-theta forms.
 
--   **A model-side equality characterization** in which the classical cluster-graph equality case is exported back to the original view-family model under transitivity of confusability, with a meet-witness criterion as a weaker sufficient condition and fiber coherence as a stronger one.
+-   **A model-side equality characterization** in which the classical cluster-graph equality case is exported back to the original view-family model under transitivity of confusability, with meet-witnessing as a checkable sufficient condition and fiber coherence as a stronger one.
 
 -   **A deterministic finite converse toolkit** for exact consistency, presented through pair injectivity together with confusability, counting, conditional-entropy, decoder-output, and entropy-gap formulations of the same finite obstruction, deterministic data processing, and a budgeted finite-error extension.
 
@@ -418,57 +420,6 @@ The four-state witness above is only the smallest member of a larger model-gener
 
 Once exact one-shot recovery is governed by graph colorability, repeated composition naturally lifts the theory to strong graph powers and asymptotic zero-error rates. The next subsection makes that lift explicit.
 
-The preceding sections studied distinguishability of latent states. A dual question: which fact coordinates determine others across the realized state family? Under an affine restriction, that determination problem becomes span membership of coordinate functionals, yielding a representable matroid on fact indices that provides tractable upper bounds for the main confusability problem. This matroid is not merely a parallel construction; it is the coordinate-side dual of the same structure that generates the confusability graph.
-
-
-# Affine Dual: Coordinate Matroid {#sec:affine}
-
-The preceding sections studied distinguishability of latent states from partial observations. This section addresses the dual question: which fact coordinates determine others across the realized state family? Under an affine restriction on the realized state family, that determination problem reduces to standard linear algebra and yields a representable matroid on fact indices. This matroid is not merely a parallel construction: it is the coordinate-side dual of the same structure that generates the confusability graph, and it provides computationally tractable upper bounds on confusability and capacity.
-
-::: proposition
-[]{#thm:affine-fact-matroid label="thm:affine-fact-matroid"} Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.
-:::
-
-::: proof
-*Proof.* Let the affine realized-state family be $A=a_0+V$, where $a_0$ is a fixed origin and $V$ is a linear subspace of the ambient fact space. Fix a fact set $S$ and a fact index $i$.
-
-By definition, fact $i$ is semantically determined by $S$ exactly when for all $x,x'\in A$, agreement on every coordinate in $S$ forces agreement on coordinate $i$. Writing $d=x-x'$, this is equivalent to the statement that every direction vector $d\in V$ whose coordinates in $S$ vanish also satisfies $d_i=0$.
-
-Let $e_j$ denote the coordinate functional for fact $j$. The condition above says precisely that $$V\cap \bigcap_{j\in S}\ker(e_j)\subseteq \ker(e_i).$$ In finite-dimensional linear algebra, this is equivalent to $e_i$ lying in the span of the coordinate functionals $\{e_j:j\in S\}$. Thus semantic determination by $S$ is exactly span membership of the corresponding coordinate functional.
-
-The coordinate functionals therefore realize a representable matroid on fact indices. In that matroid, independence is linear independence of the coordinate functionals, bases are the maximal independent spanning sets, and every basis has the common rank cardinality. Since span corresponds exactly to semantic determination, the minimal determining fact sets are precisely those bases. ◻
-:::
-
-The matroid and the confusability graph are natural companions induced by the same realized-state model. The affine representable matroid is not merely an aside: under the common and transparent specialization to finite affine families with coordinate-projection views, the matroid rank provides *computationally tractable* upper bounds on confusability and capacity. The tractability claim is representation-sensitive and should be read that way. We assume the affine family $A=a_0+V$ is given by an explicit linear presentation of $V$, for example a basis or generator matrix over $\mathbb F_q$, together with the explicit coordinate-subset view family. Under that input model, for each coordinate set $S$ the quantity $t(S)$ is exactly the finite-dimensional rank of the restricted coordinate map $\pi_S|_V$: the formalization identifies the span-based rank quantity with the finrank of the image of that explicit projection map. It also proves the basic size bounds $t(S)\le |S|$ and $t(S)\le \dim V$, equivalently $\dim(\operatorname{im}(\pi_S|_V))\le \min\{|S|,\dim V\}$, and shows that $t(S)=|S|$ on linearly independent coordinate families while $t(S)$ reaches the full ambient determining rank exactly on determining sets. Hence each $t(S)$ is a standard linear-algebraic rank quantity that can be computed by Gaussian elimination on an explicit presentation of $V$, and the bounds of Corollary [\[cor:matroid-capacity-bounds\]](#cor:matroid-capacity-bounds){reference-type="ref" reference="cor:matroid-capacity-bounds"} are then computable in polynomial time in the ambient dimension, the dimension of $V$, and the number of admissible views. Without an explicit linear presentation of $V$, no algorithmic tractability claim is intended. The utility of this matroid structure is immediate: $t(S)$ provides an explicit upper bound on the Shannon capacity of the induced confusability graph, bypassing the hardness of the general capacity computation. Computing Shannon capacity for general graphs is hard (the independence number is NP-hard, and even the Lovász-$\vartheta$ bound requires semidefinite programming). In contrast, once the affine family is explicitly presented, the relevant rank quantities reduce to standard linear algebra.
-
-## View-fiber dimensions and capacity {#sec:affine-to-graph}
-
-Let $A=a_0+V$ with $V$ an $r$-dimensional linear subspace over a finite field $\mathbb{F}_q$, and let admissible views be coordinate-subset projections. For a coordinate set $S$ write $t(S)$ for the rank of the corresponding coordinate functionals on $V$.
-
-::: proposition
-Let $A$ and $t(S)$ be as above. Each projection-fiber for view $S$ is an affine subspace of dimension $r-t(S)$ and size $q^{r-t(S)}$. The single-view confusability graph $G_S$ is therefore a disjoint union of $q^{t(S)}$ cliques each of size $q^{r-t(S)}$. In particular $$\alpha(G_S)=q^{t(S)},\qquad \Theta(G_S)=t(S)\log q,$$ where $\alpha$ is the independence number and $\Theta$ is Shannon capacity (logarithms in the same base used elsewhere).
-:::
-
-::: proof
-*Proof.* The projection onto coordinates $S$ is an affine-linear map whose linear part restricted to $V$ has rank $t(S)$. Its kernel is therefore a linear subspace of $V$ of dimension $r-t(S)$, so every fiber is an affine translate of that kernel and has cardinality $q^{r-t(S)}$. The fibers partition $A$, and within each fiber every pair of states is confusable under $S$, so $G_S$ is a disjoint union of equal-size cliques. The number of fibers equals $|A|/q^{r-t(S)}=q^{t(S)}$, so one can select one representative per fiber to obtain an independent set of size $q^{t(S)}$, whence $\alpha(G_S)=q^{t(S)}$. The block-power identity for such clustered graphs gives $\alpha(G_S^{\boxtimes n})=q^{nt(S)}$, and normalization yields $\Theta(G_S)=t(S)\log q$. ◻
-:::
-
-::: corollary
-[]{#cor:matroid-capacity-bounds label="cor:matroid-capacity-bounds"} Let $G$ be the full confusability graph generated by a family of coordinate-subset views $\mathcal S$. Then $$\alpha(G)\le \min_{S\in\mathcal S} q^{t(S)}
-\qquad\text{and}\qquad
-\Theta(G) \le \min_{S\in\mathcal S} t(S)\log q.$$ Thus the matroid rank function $t(\cdot)$ on coordinate sets supplies explicit upper bounds on one-shot and asymptotic exact-recovery rates for the induced confusability graph.
-:::
-
-::: proof
-*Proof.* An independent set for $G$ must be independent in each single-view graph $G_S$, hence its size is at most $\alpha(G_S)=q^{t(S)}$ for every $S\in\mathcal S$. The inequalities follow from taking the minimum over $\mathcal S$ and applying the block-power argument from the proposition. ◻
-:::
-
-**Remark.** The matroid rank $t(S)$ is the "informational dimension" captured by coordinates in $S$: $t(S)=r$ iff $S$ determines the entire state, and any admissible view containing a basis removes confusability entirely (the induced graph is edgeless). These finite-affine, coordinate-view statements show the matroid is directly applicable to the graph/capacity arc; extensions beyond this specialization are natural directions for future work.
-
-#### Running example: Binary square.
-
-The binary square $\{0,1\}^2$ from Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"} is an affine space over $\mathbb{F}_2$ with $r=2$. Each single-coordinate view has matroid rank $t(\{1\}) = t(\{2\}) = 1$, giving fiber size $2^{2-1} = 2$ and single-view capacity bound $\Theta(G_{\{i\}}) \le 1 \cdot \log 2 = \log 2$. The full confusability graph (the 4-cycle) achieves this bound, so the matroid rank bound is tight in this case. The matroid viewpoint shows that the 4-cycle structure arises precisely because each view captures only half the informational dimension.
-
 
 # Block Composition, Strong Powers, and Asymptotic Capacity {#sec:capacity-theory}
 
@@ -540,7 +491,7 @@ The mechanized development packages the same argument with explicit sequence obj
 
 #### Running example: Binary square.
 
-For the 4-cycle $C_4$ from Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"}, the independence number is $\alpha(C_4) = 2$ (choose either diagonal). The strong power $C_4^{\boxtimes n}$ has $\alpha(C_4^{\boxtimes n}) = 2^n$, giving normalized rate $(\log 2^n)/n = \log 2$. The asymptotic Shannon capacity is therefore $\Theta(C_4) = \log 2$, which matches the one-shot chromatic bound: the 4-cycle is 2-colorable, so exact recovery requires 2 tags at every blocklength.
+For the 4-cycle $C_4$ from Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"}, the independence number is $\alpha(C_4) = 2$ (choose either diagonal). The strong power $C_4^{\boxtimes n}$ has $\alpha(C_4^{\boxtimes n}) = 2^n$, giving normalized rate $(\log 2^n)/n = \log 2$. The asymptotic Shannon capacity is therefore $\Theta(C_4) = \log 2$. This matches the exact tag-budget growth from the iterated binary-square family discussed earlier: the one-shot budget is $2$, and the $m$-block exact budget grows as $2^m$.
 
 #### Relation to graph capacity theory.
 
@@ -557,20 +508,24 @@ The complement-chromatic bound is the first upper bound. The complement of the s
 
 At the one-shot level, the same upper invariant is matched with standard witness, orthonormal-representation, primal-PSD, and dual-theta formulations by explicit feasible-object equivalences. Applying these one-shot bounds to strong powers yields subadditive upper-rate sequences, so Fekete's lemma gives asymptotic primal and dual upper values, each equal to the infimum of its finite power-rate bounds. The finite block rates are bounded above by either sequence, hence $$\Theta(G)\le \vartheta_{\infty}(G).$$ The same induced topology that governs exact recovery therefore also carries a classical asymptotic upper theory. The formal development proves these one-shot equivalences and the resulting asymptotic primal/dual upper laws.
 
+Interpretationally, the complement-chromatic bound is the first combinatorial ceiling, while the Lovász-$\vartheta$ package supplies the sharper geometric and semidefinite upper theory attached to the same confusability graph. The point is not to introduce a new upper invariant. Rather, once a deterministic partial-view architecture generates a failure graph, the standard zero-error upper hierarchy attaches to that graph without further model-specific modification.
+
 What remains open is the sharpness of this upper theory for the graph classes generated by the extended model, not the existence of standard primal--dual theta packaging.
 
 
 # Equality Characterization {#sec:equality}
 
-This section asks when the upper theory of the induced failure graph is exactly sharp. The graph-theoretic equality facts used here are classical for cluster graphs; the model-specific question is when the partial-view architecture generates that collapse regime. In the mechanized route used here, transitivity of confusability is the key sufficient condition exporting the view-family model back to the cluster-graph equality case.
+This section asks when the upper theory of the induced failure graph is exactly sharp. The graph-theoretic equality facts used here are classical for cluster graphs; the model-specific question is when the partial-view architecture generates that collapse regime. Transitivity of confusability is the key structural condition exporting the view-family model to the cluster-graph equality case.
 
-The original clique-fiber regime is now isolated as an equality subclass rather than only a threshold corollary. If a graph is generated by a surjective label map $x \mapsto b(x)$ with adjacency exactly between distinct vertices in the same fiber, then one representative from each fiber forms an independent set of size $|\mathcal B|$, while the complement graph is colorable by the same label map using $|\mathcal B|$ colors. This equality for cluster-graph structure is classical; the mechanized development packages the model-specific export needed here into a restricted-class theorem: $$C(G)=\vartheta_{\infty}(G)=\log |\mathcal B|.$$ Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lovász-$\vartheta$ framework. That equality is no longer confined to the abstract cluster-graph subclass. The paper uses the following mechanized implication: $$\text{confusability is transitive}
+**Open question.** A precise open problem is to characterize which upward‑closed agreement‑set families produce transitive confusability, and therefore trigger the cluster‑graph equality collapse. We have identified boundary facts: the binary square is a small witness where transitivity fails, while trivial single‑view families and the fiber‑coherent/meet‑witnessed families provably produce transitive confusability and hence the equality collapse. A complete classification of upward‑closed families that yield transitivity remains open and is an attractive direction for further work.
+
+The original clique-fiber regime is now isolated as an equality subclass rather than only a threshold corollary. If a graph is generated by a surjective label map $x \mapsto b(x)$ with adjacency exactly between distinct vertices in the same fiber, then one representative from each fiber forms an independent set of size $|\mathcal B|$, while the complement graph is colorable by the same label map using $|\mathcal B|$ colors. This equality for cluster-graph structure is classical; the mechanized development packages the model-specific export needed here into a restricted-class theorem: $$C(G)=\vartheta_{\infty}(G)=\log |\mathcal B|.$$ Thus the extended theory now contains both a genuine non-clique graph regime with strict upper/lower separation and a clean equality regime recovering the original fiber picture inside the same asymptotic Lovász-$\vartheta$ framework. In particular, transitivity of confusability exports the model-generated graph directly to the classical cluster-graph setting through the following mechanized implication: $$\text{confusability is transitive}
 \Longrightarrow
 G_{\mathrm{conf}}=\mathrm{Cluster}(\Pi_{\mathrm{cc}}).$$ Hence, if confusability is transitive, the base confusability graph is exactly the cluster graph on connected components, and the model-specific equality theorem yields $$\Theta(G_{\mathcal V})=\vartheta_\infty(G_{\mathcal V})=\log |\Pi_{\mathrm{cc}}|,$$ where $\Pi_{\mathrm{cc}}$ is the connected-component partition of the base confusability graph. Between arbitrary base models and full fiber coherence, a checkable sufficient condition is that the view family be *meet-witnessed*: every pair of allowed views contains another allowed view inside their intersection. Under that condition, any two confusability witnesses can be pulled back to a common subview, so confusability is transitive and the same equality follows. Fiber coherence is then a stronger sufficient structural condition: if equality at one allowed location already fixes the full observation transcript, transitivity follows, the connected components are exactly the realized transcript fibers, and the equality sharpens further to $$\Theta(G_{\mathcal V})=\vartheta_\infty(G_{\mathcal V})=\log |\mathcal T_{\mathrm{real}}|.$$ At the witness level, this same collapse admits a local composition form: base confusability is the edge union of the single-view cluster graphs, and transitivity is equivalent to closure of those fixed-view witnesses under two-step composition through an intermediate state. This is the exact local criterion for the current equality mechanism: the collapse to a cluster graph is determined by how single-view witnesses compose, not by an opaque global coincidence of the full confusability graph. Thus the equality question is structural: it identifies when genuinely non-clique failure geometry collapses to exact cluster behavior.
 
 #### Running example: Binary square.
 
-The binary square of Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"} does *not* have transitive confusability: $(0,0) \sim (0,1)$ and $(0,1) \sim (1,1)$, but $(0,0) \not\sim (1,1)$. The 4-cycle is not a cluster graph, so the equality collapse does not apply. Indeed, the asymptotic Shannon capacity $\Theta(C_4) = \log 2$ is strictly less than the Lovász-$\vartheta$ upper bound $\vartheta(C_4) = \log(1+\sqrt{2})$, demonstrating the gap between lower and upper asymptotic theories in the non-transitive regime. This gap is invisible to the one-shot threshold analysis but becomes explicit in the asymptotic theory.
+The binary square of Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"} does *not* have transitive confusability: $(0,0) \sim (0,1)$ and $(0,1) \sim (1,1)$, but $(0,0) \not\sim (1,1)$. The 4-cycle is not a cluster graph, so the transitivity-based equality collapse does not apply. In this special case the classical graph invariants still satisfy $\Theta(C_4)=\vartheta_\infty(C_4)=\log 2$, but that coincidence no longer comes from the cluster-collapse mechanism isolated in this section. The binary square therefore marks the boundary of the paper's equality route: it is the first non-clique witness, yet not a transitive one.
 
 **Hierarchy summary.** This equality route has one transitivity-based sufficient condition and two stronger sufficient conditions. The table below records only the logical structure and the resulting capacity value.
 
@@ -587,17 +542,66 @@ The binary square of Section [\[sec:binary-square\]](#sec:binary-square){refere
 :::
 
 
+# Affine Dual: Coordinate Matroid {#sec:affine}
+
+The preceding sections developed the main graph-capacity and equality arc for partial views. This section turns to a second lens on the same model: which fact coordinates determine others across the realized state family? Under an affine restriction on the realized state family, that determination problem reduces to standard linear algebra and yields a representable matroid on fact indices. This matroid is not merely a parallel construction: it is the coordinate-side dual of the same structure that generates the confusability graph, and it provides computationally tractable upper bounds on confusability and capacity.
+
+::: proposition
+[]{#thm:affine-fact-matroid label="thm:affine-fact-matroid"} Assume the realized state family is affine over a field, so that the valid latent tuples form an affine translate of a linear subspace of the ambient fact space. For any fact set $S$ and fact index $i$, semantic determination of $i$ by $S$ is equivalent to membership of the coordinate functional for $i$ in the linear span of the coordinate functionals indexed by $S$. Consequently the fact indices carry a representable matroid: a fact set is independent exactly when its coordinate functionals are linearly independent, and the minimal determining fact sets are exactly the bases, all of common cardinality equal to the rank.
+:::
+
+::: proof
+*Proof.* Let the affine realized-state family be $A=a_0+V$, where $a_0$ is a fixed origin and $V$ is a linear subspace of the ambient fact space. Fix a fact set $S$ and a fact index $i$.
+
+By definition, fact $i$ is semantically determined by $S$ exactly when for all $x,x'\in A$, agreement on every coordinate in $S$ forces agreement on coordinate $i$. Writing $d=x-x'$, this is equivalent to the statement that every direction vector $d\in V$ whose coordinates in $S$ vanish also satisfies $d_i=0$.
+
+Let $e_j$ denote the coordinate functional for fact $j$. The condition above says precisely that $$V\cap \bigcap_{j\in S}\ker(e_j)\subseteq \ker(e_i).$$ In finite-dimensional linear algebra, this is equivalent to $e_i$ lying in the span of the coordinate functionals $\{e_j:j\in S\}$. Thus semantic determination by $S$ is exactly span membership of the corresponding coordinate functional.
+
+The coordinate functionals therefore realize a representable matroid on fact indices. In that matroid, independence is linear independence of the coordinate functionals, bases are the maximal independent spanning sets, and every basis has the common rank cardinality. Since span corresponds exactly to semantic determination, the minimal determining fact sets are precisely those bases. ◻
+:::
+
+The matroid and the confusability graph are natural companions induced by the same realized-state model. The affine representable matroid is not merely an aside: under the common and transparent specialization to finite affine families with coordinate-projection views, the matroid rank provides *computationally tractable* upper bounds on confusability and capacity. The tractability claim is representation-sensitive and should be read that way. We assume the affine family $A=a_0+V$ is given by an explicit linear presentation of $V$, for example a basis or generator matrix over $\mathbb F_q$, together with the explicit coordinate-subset view family. Under that input model, for each coordinate set $S$ the quantity $t(S)$ is exactly the finite-dimensional rank of the restricted coordinate map $\pi_S|_V$: the formalization identifies the span-based rank quantity with the finrank of the image of that explicit projection map. It also proves the basic size bounds $t(S)\le |S|$ and $t(S)\le \dim V$, equivalently $\dim(\operatorname{im}(\pi_S|_V))\le \min\{|S|,\dim V\}$, and shows that $t(S)=|S|$ on linearly independent coordinate families while $t(S)$ reaches the full ambient determining rank exactly on determining sets. Hence each $t(S)$ is a standard linear-algebraic rank quantity that can be computed by Gaussian elimination on an explicit presentation of $V$, and the bounds of Corollary [\[cor:matroid-capacity-bounds\]](#cor:matroid-capacity-bounds){reference-type="ref" reference="cor:matroid-capacity-bounds"} are then computable in polynomial time in the ambient dimension, the dimension of $V$, and the number of admissible views. Without an explicit linear presentation of $V$, no algorithmic tractability claim is intended. The utility of this matroid structure is immediate: $t(S)$ provides an explicit upper bound on the Shannon capacity of the induced confusability graph, bypassing the hardness of the general capacity computation. Computing Shannon capacity for general graphs is hard (the independence number is NP-hard, and even the Lovász-$\vartheta$ bound requires semidefinite programming). In contrast, once the affine family is explicitly presented, the relevant rank quantities reduce to standard linear algebra.
+
+## View-fiber dimensions and capacity {#sec:affine-to-graph}
+
+Let $A=a_0+V$ with $V$ an $r$-dimensional linear subspace over a finite field $\mathbb{F}_q$, and let admissible views be coordinate-subset projections. For a coordinate set $S$ write $t(S)$ for the rank of the corresponding coordinate functionals on $V$.
+
+::: proposition
+Let $A$ and $t(S)$ be as above. Each projection-fiber for view $S$ is an affine subspace of dimension $r-t(S)$ and size $q^{r-t(S)}$. The single-view confusability graph $G_S$ is therefore a disjoint union of $q^{t(S)}$ cliques each of size $q^{r-t(S)}$. In particular $$\alpha(G_S)=q^{t(S)},\qquad \Theta(G_S)=t(S)\log q,$$ where $\alpha$ is the independence number and $\Theta$ is Shannon capacity (logarithms in the same base used elsewhere).
+:::
+
+::: proof
+*Proof.* The projection onto coordinates $S$ is an affine-linear map whose linear part restricted to $V$ has rank $t(S)$. Its kernel is therefore a linear subspace of $V$ of dimension $r-t(S)$, so every fiber is an affine translate of that kernel and has cardinality $q^{r-t(S)}$. The fibers partition $A$, and within each fiber every pair of states is confusable under $S$, so $G_S$ is a disjoint union of equal-size cliques. The number of fibers equals $|A|/q^{r-t(S)}=q^{t(S)}$, so one can select one representative per fiber to obtain an independent set of size $q^{t(S)}$, whence $\alpha(G_S)=q^{t(S)}$. The block-power identity for such clustered graphs gives $\alpha(G_S^{\boxtimes n})=q^{nt(S)}$, and normalization yields $\Theta(G_S)=t(S)\log q$. ◻
+:::
+
+::: corollary
+[]{#cor:matroid-capacity-bounds label="cor:matroid-capacity-bounds"} Let $G$ be the full confusability graph generated by a family of coordinate-subset views $\mathcal S$. Then $$\alpha(G)\le \min_{S\in\mathcal S} q^{t(S)}
+\qquad\text{and}\qquad
+\Theta(G) \le \min_{S\in\mathcal S} t(S)\log q.$$ Thus the matroid rank function $t(\cdot)$ on coordinate sets supplies explicit upper bounds on one-shot and asymptotic exact-recovery rates for the induced confusability graph.
+:::
+
+::: proof
+*Proof.* An independent set for $G$ must be independent in each single-view graph $G_S$, hence its size is at most $\alpha(G_S)=q^{t(S)}$ for every $S\in\mathcal S$. The inequalities follow from taking the minimum over $\mathcal S$ and applying the block-power argument from the proposition. ◻
+:::
+
+**Remark.** The matroid rank $t(S)$ is the "informational dimension" captured by coordinates in $S$: $t(S)=r$ iff $S$ determines the entire state, and any admissible view containing a basis removes confusability entirely (the induced graph is edgeless). These finite-affine, coordinate-view statements show the matroid is directly applicable to the graph/capacity arc; extensions beyond this specialization are natural directions for future work.
+
+#### Running example: Binary square.
+
+The binary square $\{0,1\}^2$ from Section [\[sec:binary-square\]](#sec:binary-square){reference-type="ref" reference="sec:binary-square"} is an affine space over $\mathbb{F}_2$ with $r=2$. Each single-coordinate view has matroid rank $t(\{1\}) = t(\{2\}) = 1$, giving fiber size $2^{2-1} = 2$ and single-view capacity bound $\Theta(G_{\{i\}}) \le 1 \cdot \log 2 = \log 2$. The full confusability graph (the 4-cycle) achieves this bound, so the matroid rank bound is tight in this case. The matroid viewpoint shows that the 4-cycle structure arises precisely because each view captures only half the informational dimension.
+
+
 # Unit-Rate Structural Interpretation {#sec:ssot}
 
-The main graph-capacity arc studies what happens once ambiguity survives and acquires nontrivial topology. This section returns to the opposite boundary case identified in Section [\[sec:foundations\]](#sec:foundations){reference-type="ref" reference="sec:foundations"}: the unit-rate corner in which that ambiguity never appears. It records two direct interpretations of that boundary case: derivation realizes the unit-rate regime, and leaving it produces the manual-update gap proved later in Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}.
+The main graph-capacity arc studies what happens once ambiguity survives and acquires nontrivial topology. This section returns to the opposite boundary case of the same model: the unit-rate corner in which that ambiguity never appears. It records two direct interpretations of that boundary case: derivation realizes the unit-rate regime, and leaving it produces the manual-update gap proved later in Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}.
 
 ## Derivation as the Single-Source Structure {#sec:ssot-def}
 
-An encoding system has *unit independent rate* when $\text{DOF}(C,F)=1$. By Proposition [\[thm:dof-one-coherence\]](#thm:dof-one-coherence){reference-type="ref" reference="thm:dof-one-coherence"}, this is exactly the regime in which every reachable state remains coherent, so the represented fact is determinate and coherence restoration requires only $O(1)$ manual updates. By Proposition [\[thm:dof-gt-one-incoherence\]](#thm:dof-gt-one-incoherence){reference-type="ref" reference="thm:dof-gt-one-incoherence"}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique rate guaranteeing exact consistency.
+An encoding system has *unit independent rate* when $\text{DOF}(C,F)=1$. By Proposition [\[thm:dof-one-coherence\]](#thm:dof-one-coherence){reference-type="ref" reference="thm:dof-one-coherence"}, this is exactly the regime in which every reachable state remains coherent. By Proposition [\[thm:dof-gt-one-incoherence\]](#thm:dof-gt-one-incoherence){reference-type="ref" reference="thm:dof-gt-one-incoherence"}, any rate above $1$ admits reachable disagreement states. Thus unit rate is the unique exact-consistency boundary, and the later rate-complexity statements are its operational cost interpretation.
 
 ## Reading the Converse at Unit Rate {#sec:info-sketches}
 
-When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem [\[thm:fano-converse\]](#thm:fano-converse){reference-type="ref" reference="thm:fano-converse"} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required, which is what moves the system above unit rate and leads to the update-cost lower bound of Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.
+When ambiguity classes are trivial, no auxiliary information is needed and unit rate suffices. When a nontrivial ambiguity class survives the observation transcript, Theorem [\[thm:fano-converse\]](#thm:fano-converse){reference-type="ref" reference="thm:fano-converse"} shows that exact recovery requires a sufficiently large side-information alphabet. If that side information is unavailable but exact correctness is still demanded, additional independently accessible support is required. That is exactly what moves the system above unit rate and leads to the update-cost lower bound of Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}. Derivation is therefore the dependence structure that preserves visible views while removing independent rate.
 
 ## Rate and Manual Update Cost {#sec:ssot-vs-m}
 
@@ -679,7 +683,7 @@ Once a fact is duplicated across many independently writable locations, the cost
 
 # Operational Realizability Criterion {#sec:requirements}
 
-The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section asks a downstream operational question about the opposite boundary case: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
+The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section turns to the opposite boundary case of the same model: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
 
 A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Two capabilities are required:
 
@@ -779,19 +783,7 @@ The two requirements are logically separate.
 *Proof.* Necessity follows from Theorems [\[thm:causal-necessary\]](#thm:causal-necessary){reference-type="ref" reference="thm:causal-necessary"} and [\[thm:provenance-necessary\]](#thm:provenance-necessary){reference-type="ref" reference="thm:provenance-necessary"}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$, which is exactly verifiable structural integrity in the sense of Definition [\[def:verifiable-integrity\]](#def:verifiable-integrity){reference-type="ref" reference="def:verifiable-integrity"}. ◻
 :::
 
-The next section records representative readings of the theorem on familiar host systems.
-
-
-# System Classification {#sec:evaluation}
-
-Corollary [\[ssot-iff\]](#ssot-iff){reference-type="ref" reference="ssot-iff"} states that verifiable structural integrity holds iff both causal propagation and provenance observability hold. We apply this criterion uniformly to representative systems. Complete classification with full justifications appears in Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"}.
-
-The key finding is that the majority of common infrastructure falls into patterns that cannot verify integrity. This is not merely a maintenance inconvenience but an architectural exposure: the host cannot distinguish valid derived states from undetected stale states through its own structural interface.
-
-
-# Supplementary Case-Study Pointer {#sec:empirical}
-
-Supplement A contains case-study details, measurement methodology, and before/after traces. The examples realize independent rate $1$ by combining one authoritative representation with automatically maintained derived views, and they exhibit the $O(1)$ versus $\Omega(n)$ rate-complexity gap of Section [\[sec:rate-corollaries\]](#sec:rate-corollaries){reference-type="ref" reference="sec:rate-corollaries"}.
+Applied to representative hosts, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} collects those representative readings in one table, and Supplement A contains the companion case-study traces and measurement notes.
 
 
 # Related Work {#sec:related}
@@ -804,7 +796,11 @@ Shannon's zero-error framework and its graph-theoretic refinements by Körner an
 
 Both settings can be viewed as starting from an observation law and passing to the induced confusability graph, so there is no sharp "induced" versus "given" divide. The difference is architectural and structural. Witsenhausen's setting starts from a side-information law and studies the coding problem for the graph it induces. Our setting starts from a deterministic partial-view architecture on latent tuples, with observations obtained by admissible coordinate-subset projections, and asks what graph structure that architecture can generate and what recovery laws follow from it. This makes two model-side issues central: how the admissible view family constrains the induced graph class, and how changing the view topology changes the resulting failure graph and recovery budget. In the exact full-tuple-space coordinate-view model analyzed here, that graph class can now be characterized exactly: the realizable confusability relations are precisely those determined by upward-closed families of coordinate-agreement sets. The contribution is therefore not a new coloring theorem for arbitrary graphs, but an architectural realization theory connecting multi-fact tuple-space views, a fully characterized model-generated graph class, and exact zero-error recovery.
 
-Slepian--Wolf coding and classical entropy converses supply the second line of influence [@slepian1973noiseless; @fano1961transmission; @witsenhausen1975conditional; @cover2006elements]. Coding-for-computing, functional compression, and graph-entropy/characteristic-graph viewpoints are also close neighbors because they study deterministic decoder targets and coding questions once an underlying graph or function structure has been specified [@orlitsky2001coding; @doshi2010functional; @korner1973graphs]. In our setting the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery becomes impossible when the available observation/tag alphabet is too small to separate the remaining alternatives.
+Slepian--Wolf coding and classical entropy converses supply the second line of influence [@slepian1973noiseless; @fano1961transmission; @witsenhausen1975conditional; @cover2006elements]. Coding-for-computing, functional compression, and graph-entropy/characteristic-graph viewpoints are also close neighbors because they study deterministic decoder targets and coding questions once an underlying graph or function structure has been specified [@orlitsky2001coding; @doshi2010functional; @korner1973graphs].
+
+**Characteristic‑graph vs. coordinate‑projection models.** Characteristic‑graph and functional‑compression formalisms handle arbitrary deterministic functions of the source and therefore subsume a broader class of recovery tasks than the present model. Our model intentionally restricts attention to coordinate‑projection observations on labeled tuple spaces rather than arbitrary functions. That restriction is the source of our structural leverage: it allows a reduction of confusability to agreement‑set membership and thereby enables proofs that (a) realizable confusability relations are exactly those determined by upward‑closed agreement families, (b) coordinatewise alphabet permutations act by graph automorphisms, and (c) the induced graph class is monotone and closed under the block‑composition (strong‑product) operation. These specific structural consequences do not follow from the general characteristic‑graph viewpoint and are the reasons the paper can give deductive, architecture‑first results rather than only applying general functional‑compression theorems.
+
+In our setting the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery becomes impossible when the available observation/tag alphabet is too small to separate the remaining alternatives.
 
 After a confusability graph is fixed, the colorability, strong-power, Shannon-capacity, and Lovász-$\vartheta$ machinery used later is classical. In particular, capacity--$\vartheta$ equality for cluster graphs is classical; the novelty here is identifying transitivity of view-generated confusability as the model-side condition that produces this equality subclass, together with meet-witnessing and fiber coherence as structural sufficient conditions. The paper therefore does not claim a new theorem about arbitrary graphs, but a deterministic partial-view model that generates a fully characterized monotone agreement-set graph class on the full labeled tuple space, an exact recovery/success-set/weighted-success theory for that model-generated class, and a structural equality route inside it. What it does not attempt is the broader unlabeled-isomorphism classification, or the corresponding classifications for restricted realized-state families and stochastic support-overlap models.
 
@@ -827,13 +823,13 @@ The paper's main contribution is a structural theory of exact failure under dete
 
 Repeated composition preserves that failure structure rather than erasing it: the block-rate sequence is supermultiplicative, its normalized rates converge by Fekete's lemma to a real asymptotic Shannon capacity equal to the supremum of the finite block rates, and the same capacity is bounded above by complement-chromatic and fixed Lovász-$\vartheta$ upper objects. The one-shot upper invariant is matched with standard orthonormal-representation, primal-PSD, and dual-theta forms.
 
-The upper theory is sharp on a structurally characterized subclass. For the original clique-fiber subclass, asymptotic Shannon capacity, the fixed Lovász-$\vartheta$ upper, and the logarithm of the number of fibers coincide. The same equality exports back to the original view-family model through a broader structural route: transitivity of confusability yields the component-cluster collapse used here, a meet-witness condition is sufficient for that transitivity, and fiber coherence is a stronger sufficient condition under which the connected components are exactly the realized transcript fibers.
+The upper theory is sharp on a structurally characterized subclass. For the original clique-fiber subclass, asymptotic Shannon capacity, the fixed Lovász-$\vartheta$ upper, and the logarithm of the number of fibers coincide. The same equality exports back to the original view-family model through a broader structural route: transitivity of confusability yields the component-cluster collapse, meet-witnessing is a sufficient condition for that transitivity, and fiber coherence is a stronger sufficient condition under which the connected components are exactly the realized transcript fibers.
 
-The same latent-state framework also yields a fact-side affine specialization. The observation-side question asks which latent states are distinguishable from partial views; the fact-side question asks which coordinates determine others across the realized-state family. When the valid states form an affine family, the latter question becomes span membership of coordinate functionals, so the fact indices carry a representable matroid and the minimal determining fact sets are exactly the bases. In this affine regime, the same model therefore carries a graph invariant on states and a matroid invariant on coordinates, and the latter supplies tractable upper bounds for the former. More sharply, the relevant affine rank quantity is exactly the finrank of the image of the restricted coordinate projection, which closes the representation-level link between the matroid language and explicit linear algebra.
+The same latent-state framework also yields a fact-side affine specialization. The observation-side question asks which latent states are distinguishable from partial views; the fact-side question asks which coordinates determine others across the realized-state family. When the valid states form an affine family, the latter question becomes span membership of coordinate functionals, so the fact indices carry a representable matroid and the minimal determining fact sets are exactly the bases. In this affine regime, the same model carries a graph invariant on states and a matroid invariant on coordinates, and the latter supplies tractable upper bounds for the former. More sharply, the relevant affine rank quantity is exactly the finrank of the image of the restricted coordinate projection, which closes the representation-level link between the matroid language and explicit linear algebra.
 
-The deterministic finite converse remains the foundation of this theory. Once the observation transcript leaves a nontrivial ambiguity class, the same obstruction can be stated as confusability, counting, conditional-entropy, decoder-output, and finite-gap constraints, together with deterministic data processing and a budgeted finite-error extension. The paper does not claim a new general theorem about arbitrary confusability graphs; rather, it shows that a partial-view encoding model can induce genuinely non-clique failure geometry and reach the classical graph-capacity machinery there. Within that model, these theorems also yield a formal integrity guarantee family: rate $1$ is exactly the structural-integrity regime, higher rate makes integrity violations reachable, and realizability plus provenance characterize when that integrity can be certified by the host.
+The deterministic finite converse remains the foundation of this theory. Once the observation transcript leaves a nontrivial ambiguity class, the same obstruction can be stated as confusability, counting, conditional-entropy, decoder-output, and finite-gap constraints, together with deterministic data processing and a budgeted finite-error extension. The paper does not claim a new general theorem about arbitrary confusability graphs; rather, it shows that a partial-view encoding model can induce genuinely non-clique failure geometry and reach the classical graph-capacity machinery there. The same model also has a clean boundary theory: rate $1$ is exactly the structural-integrity regime, higher rate makes integrity violations reachable, and realizability plus provenance characterize when that integrity can be certified by the host.
 
-As downstream consequences of that foundation, unit rate is the unique zero-incoherence regime, any higher independent rate makes ambiguity reachable, and the same obstruction yields an $O(1)$ versus $\Omega(n)$ manual-update gap together with a realizability criterion based on causal propagation and provenance observability. The host-level classification table is included only as a representative reading of that boundary-case criterion.
+As downstream consequences of that foundation, unit rate is the unique zero-incoherence regime, any higher independent rate makes ambiguity reachable, and the same obstruction yields an $O(1)$ versus $\Omega(n)$ manual-update gap together with a realizability criterion based on causal propagation and provenance observability. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} records representative host-level readings of that boundary-case criterion, and Supplement A adds before/after traces and case-study details showing how the same structural split appears in concrete systems.
 
 This boundary-case classification also has an integrity reading. In Pattern A and Pattern B architectures, the host cannot reliably distinguish a valid derived state from an undetected stale state by its own structural interface. The resulting incoherence is therefore not merely a maintenance inconvenience; it is an integrity exposure that leaves stale but plausible states reachable and, in adversarial settings, creates latent attack surface inside the architecture itself.
 
@@ -843,13 +839,112 @@ This boundary-case classification also has an integrity reading. In Pattern A an
 
 ## Artifacts {#sec:data-availability}
 
-The Lean 4 formalization is included as supplementary material. Sections [\[sec:evaluation\]](#sec:evaluation){reference-type="ref" reference="sec:evaluation"} and [\[sec:empirical\]](#sec:empirical){reference-type="ref" reference="sec:empirical"} record representative realizability readings and supplementary case-study material.
+The Lean 4 formalization is included as supplementary material. Appendix [\[sec:appendix-classification\]](#sec:appendix-classification){reference-type="ref" reference="sec:appendix-classification"} records representative realizability readings, and Supplement A contains the companion case-study material.
 
 ## Acknowledgment: AI-use Disclosure {#acknowledgment-ai-use-disclosure .unnumbered}
 
 Generative AI tools (including Codex, Claude Code, Augment, Kilo, and OpenCode) were used throughout this manuscript, across all sections (Abstract, Introduction, theoretical development, proof sketches, applications, conclusion, and appendix) and across all stages from initial drafting to final revision. The tools were used for boilerplate generation, prose and notation refinement, LaTeX/structure cleanup, translation of informal proof ideas into candidate formal artifacts (Lean/LaTeX), and repeated adversarial reviewer-style critique passes to identify blind spots and clarity gaps.
 
 The author retained full intellectual and editorial control, including problem selection, theorem statements, assumptions, novelty framing, acceptance criteria, and final inclusion/exclusion decisions. No technical claim was accepted solely from AI output. Formal claims reported as machine-verified were admitted only after Lean verification (no `sorry` in cited modules) and direct author review; Lean was used as an integrity gate for responsible AI-assisted research. The author is solely responsible for all statements, citations, and conclusions.
+
+
+# System Classification {#sec:appendix-classification}
+
+This appendix provides a consolidated classification of representative systems according to the architectural patterns identified by Corollary [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
+
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  **Host family**   **Host / Pattern**                                                                              **Class**   **Prop.**   **Prov.**   **Rate 1**   **Mechanism**
+  ----------------- ----------------------------------------------------------------------------------------------- ----------- ----------- ----------- ------------ ----------------------------------------------------------------------------------------------------------------------------------------
+  Prog. languages   Python [@pep487; @pythondatamodel2025]                                                          C           yes         yes         yes          For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native.
+
+  Databases         Engine-maintained materialized view [@postgresMaterializedViews2025; @postgresPgMatviews2025]   C           yes         yes         yes          The engine maintains the derived relation and exposes catalog metadata for it.
+
+  Prog. languages   Rust [@rustref2024]                                                                             B           partial     no          no           Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.
+
+  Prog. languages   TypeScript / JavaScript [@typescriptDecorators2025; @javascriptDecorators2025]                  B           partial     no          no           Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime.
+
+  Prog. languages   Java [@gosling2021java]                                                                         A/B         no          no          no           Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime.
+
+  Prog. languages   Go [@gospec2024]                                                                                A/B         no          no          no           Reflection exists, but there are no definition-time hooks or host-native implementer registries.
+
+  Databases         External ETL copy / duplicate summary table                                                     A/B         no          no          no           Synchronization is externalized, and provenance is no longer intrinsic to the host database.
+
+  Deps.             npm [@npmLock2026; @npmExplain2026; @npmLs2026]                                                 A           no          yes         no           Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated.
+
+  Deps.             Cargo [@cargoLockGuide2026; @cargoTree2026; @cargoMetadata2026]                                 A           no          yes         no           Resolved-dependency provenance is exposed, but `Cargo.lock` remains a distinct derived artifact synchronized through Cargo commands.
+
+  Deps.             Poetry [@poetryCli2026]                                                                         A           no          yes         no           The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.
+
+  Deps.             pnpm [@pnpmInstall2026; @pnpmWhy2026; @pnpmList2026]                                            A           no          yes         no           Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits.
+  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+**Table A.1.** Classification of representative systems. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey. []{#tab:host-checks-a-appendix label="tab:host-checks-a-appendix"}
+
+# Claim Mapping to Lean Handles {#sec:appendix-claims .unnumbered}
+
+  --------------------------------------------------------------------------------------------
+  **Paper handle**                **Status**   **Lean support**
+  ------------------------------- ------------ -----------------------------------------------
+  `cor:integrity-threshold`       Full         COH2, COH1
+
+  `cor:matroid-capacity-bounds`   Full         FM3, FM6, FM7, FM8, FM9, FM10, FM11
+
+  `lem:confusability-clique`      Full         OM2
+
+  `lem:info-dof`                  Full         CC3
+
+  `thm:affine-fact-matroid`       Full         FM1, FM2, FM4, FM5, FM12
+
+  `thm:asymptotic-capacity`       Full         MF7, MF13, MF14, MF15, MF16, MF17, MF22, MF23
+
+  `thm:causal-necessary`          Full         REQ2
+
+  `thm:coherence-capacity`        Full         CC4, CAP3, CAP2
+
+  `lem:confusability-converse`    Full         OM2
+
+  `lem:derivation-excludes`       Full         CC1
+
+  `lem:dof-gt-one-incoherence`    Full         COH2
+
+  `lem:dof-one-coherence`         Full         COH1
+
+  `lem:equivalence-viewpoint`     Full         CC2, OM1, OM2, OM5, OM6, OM7, OM8, OM10, OM11
+
+  `lem:fano-converse`             Full         CC2
+
+  `lem:finite-error-budgeted`     Full         OM3, OM4
+
+  `lem:independence`              Full         IND1, IND2
+
+  `lem:lower-bound`               Full         BND2
+
+  `lem:multifact-colorability`    Full         MF8, MF9, MF12
+
+  `lem:multifact-max-success`     Full         MF2, MF10
+
+  `lem:multifact-nonclique`       Full         MF1, MF3, MF4, MF5, MF6
+
+  `lem:multifact-product`         Full         MF18, MF19, MF20, MF21
+
+  `lem:multifact-success-set`     Full         MF11
+
+  `lem:pair-injective`            Full         OM8, OM9
+
+  `lem:provenance-necessary`      Full         REQ3
+
+  `lem:side-info`                 Full         CC5
+
+  `lem:ssot-iff`                  Full         L1
+
+  `lem:timing-forces`             Full         REQ1, TRI1
+
+  `lem:unbounded-gap`             Full         BND3
+
+  `lem:upper-bound`               Full         BND1
+  --------------------------------------------------------------------------------------------
+
+*Auto summary: mapped 29/29 (full=29, derived=0, unmapped=0).*
 
 
 # Mechanized Verification (Lean 4) {#sec:lean .unnumbered}
@@ -873,39 +968,6 @@ The artifact covers the theorem packages used in the paper:
 The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.
 
 
-# System Classification {#sec:appendix-classification}
-
-This appendix provides a consolidated classification of representative systems according to the architectural patterns identified by Corollary [\[thm:ssot-iff\]](#thm:ssot-iff){reference-type="ref" reference="thm:ssot-iff"}. The pattern labels used in the table are: Pattern A (Blind Update), meaning missing causal propagation; Pattern B (Amnesiac Derivation), meaning missing provenance observability; and Pattern C (Coherent Kernel), meaning both conditions are present and verifiable rate $1$ is realizable.
-
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-  **Host family**         **Host / Pattern**                                                                              **Class**   **Prop.**   **Prov.**   **Rate 1**   **Mechanism**
-  ----------------------- ----------------------------------------------------------------------------------------------- ----------- ----------- ----------- ------------ ----------------------------------------------------------------------------------------------------------------------------------------
-  Programming languages   Python [@pep487; @pythondatamodel2025]                                                          C           yes         yes         yes          For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native.
-
-  Databases               Engine-maintained materialized view [@postgresMaterializedViews2025; @postgresPgMatviews2025]   C           yes         yes         yes          The engine maintains the derived relation and exposes catalog metadata for it.
-
-  Programming languages   Rust [@rustref2024]                                                                             B           partial     no          no           Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance.
-
-  Programming languages   TypeScript / JavaScript [@typescriptDecorators2025; @javascriptDecorators2025]                  B           partial     no          no           Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime.
-
-  Programming languages   Java [@gosling2021java]                                                                         A/B         no          no          no           Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime.
-
-  Programming languages   Go [@gospec2024]                                                                                A/B         no          no          no           Reflection exists, but there are no definition-time hooks or host-native implementer registries.
-
-  Databases               External ETL copy / duplicate summary table                                                     A/B         no          no          no           Synchronization is externalized, and provenance is no longer intrinsic to the host database.
-
-  Dependencies            npm [@npmLock2026; @npmExplain2026; @npmLs2026]                                                 A           no          yes         no           Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated.
-
-  Dependencies            Cargo [@cargoLockGuide2026; @cargoTree2026; @cargoMetadata2026]                                 A           no          yes         no           Resolved-dependency provenance is exposed, but `Cargo.lock` remains a distinct derived artifact synchronized through Cargo commands.
-
-  Dependencies            Poetry [@poetryCli2026]                                                                         A           no          yes         no           The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself.
-
-  Dependencies            pnpm [@pnpmInstall2026; @pnpmWhy2026; @pnpmList2026]                                            A           no          yes         no           Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits.
-  -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-**Table A.1.** Classification of representative systems. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey. []{#tab:host-checks-a-appendix label="tab:host-checks-a-appendix"}
-
-
 
 
 ---
@@ -914,6 +976,6 @@ This appendix provides a consolidated classification of representative systems a
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper2_ssot/proofs/`
-- Lines: 25608
-- Theorems: 1227
+- Lines: 25743
+- Theorems: 1231
 - `sorry` placeholders: 0

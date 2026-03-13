@@ -2,14 +2,14 @@ OpenHCS Paper Build Log
 ========================
 
 Paper: paper4 - Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
-Package Date: 2026-03-12T16:27:13.670584
+Package Date: 2026-03-13T18:26:08.595620
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
 -----------------
-Lean Files: 63
-Lines of Code: 21442
-Theorems: 990
+Lean Files: 67
+Lines of Code: 22068
+Theorems: 1015
 Sorry Placeholders: 0
 
 
@@ -69,9 +69,13 @@ Proof Files:
   - Summary.lean
   - ThermodynamicLift.lean
   - BoundedActions.lean
+  - BoundedStateSpace.lean
   - Dimensional.lean
+  - Dominance.lean
   - FPT.lean
+  - MultiplicativeSeparable.lean
   - SeparableUtility.lean
+  - SingleAction.lean
   - StructuralRank.lean
   - Tightness.lean
   - TreeStructure.lean
@@ -83,7 +87,7 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-⚠ [3077/3134] Replayed DecisionQuotient.DimensionalComplexity
+⚠ [3078/3259] Replayed DecisionQuotient.DimensionalComplexity
 warning: DecisionQuotient/DimensionalComplexity.lean:48:68: unused variable `h`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -108,7 +112,11 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/DimensionalComplexity.lean:93:66: unused variable `regime`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3104/3134] Replayed DecisionQuotient.IntegrityCompetence
+⚠ [3106/3259] Replayed DecisionQuotient.BayesFromDQ
+warning: DecisionQuotient/BayesFromDQ.lean:208:8: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3110/3259] Replayed DecisionQuotient.IntegrityCompetence
 warning: DecisionQuotient/IntegrityCompetence.lean:326:4: Try `simp at hPos` instead of `simpa using hPos`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
@@ -127,9 +135,9 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/IntegrityCompetence.lean:844:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3105/3134] Replayed DecisionQuotient.PhysicalBudgetCrossover
+⚠ [3111/3259] Replayed DecisionQuotient.PhysicalBudgetCrossover
 warning: DecisionQuotient/PhysicalBudgetCrossover.lean:97:2: Try this: intro m hm hCrossM
-⚠ [3108/3134] Replayed DecisionQuotient.Hardness.CountingComplexity
+⚠ [3114/3259] Replayed DecisionQuotient.Hardness.CountingComplexity
 warning: DecisionQuotient/Hardness/CountingComplexity.lean:96:67: This simp argument is unused:
   Fintype.card_fun
 
@@ -211,12 +219,12 @@ Hint: Omit it from the simp argument list.
   simp [Nat.add_comm, Nat.add_left_comm,̵ ̵N̵a̵t̵.̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3109/3134] Replayed DecisionQuotient.Reduction
+⚠ [3115/3259] Replayed DecisionQuotient.Reduction
 warning: DecisionQuotient/Reduction.lean:140:4: Try this: intro _ a'
 warning: DecisionQuotient/Reduction.lean:184:14: Try `simp at hi` instead of `simpa using hi`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3111/3134] Replayed DecisionQuotient.Hardness.QBF
+⚠ [3117/3259] Replayed DecisionQuotient.Hardness.QBF
 warning: DecisionQuotient/Hardness/QBF.lean:132:39: This simp argument is unused:
   Fin.ext_iff
 
@@ -224,7 +232,7 @@ Hint: Omit it from the simp argument list.
   simp [restrictY, y', Fin.castLT,̵ ̵F̵i̵n̵.̵e̵x̵t̵_̵i̵f̵f̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3112/3134] Replayed DecisionQuotient.HardnessDistribution
+⚠ [3118/3259] Replayed DecisionQuotient.HardnessDistribution
 warning: DecisionQuotient/HardnessDistribution.lean:237:12: This simp argument is unused:
   Nat.succ_sub_one
 
@@ -246,7 +254,7 @@ Hint: Omit it from the simp argument list.
   simp [hl̵e̵,̵ ̵h̵Eq]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3113/3134] Replayed DecisionQuotient.Hardness.Sigma2PHardness
+⚠ [3119/3259] Replayed DecisionQuotient.Hardness.Sigma2PHardness
 warning: DecisionQuotient/Hardness/Sigma2PHardness.lean:118:56: This simp argument is unused:
   hbit
 
@@ -261,7 +269,7 @@ Hint: Omit it from the simp argument list.
   simp ̵[̵h̵x̵]̵
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3114/3134] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.AnchorSufficiency
+⚠ [3120/3259] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.AnchorSufficiency
 warning: DecisionQuotient/Hardness/Sigma2PExhaustive/AnchorSufficiency.lean:176:43: This simp argument is unused:
   hφ
 
@@ -277,7 +285,7 @@ Hint: Omit it from the simp argument list.
   simp [yA̵l̵l̵F̵a̵l̵s̵e̵,̵ ̵y̵Part, s0', y0]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3115/3134] Replayed DecisionQuotient.AlgorithmComplexity
+⚠ [3121/3259] Replayed DecisionQuotient.AlgorithmComplexity
 warning: DecisionQuotient/AlgorithmComplexity.lean:119:18: This simp argument is unused:
   countedAnyList
 
@@ -329,11 +337,7 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/AlgorithmComplexity.lean:376:6: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3127/3252] Replayed DecisionQuotient.BayesFromDQ
-warning: DecisionQuotient/BayesFromDQ.lean:208:8: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3128/3252] Replayed DecisionQuotient.Hardness.MinSufficientApproximation
+⚠ [3122/3259] Replayed DecisionQuotient.Hardness.MinSufficientApproximation
 warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:92:4: Try this: intro _ a'
 warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:104:4: Try `simp at hi` instead of `simpa using hi`
 
@@ -356,12 +360,12 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/Hardness/MinSufficientApproximation.lean:281:7: unused variable `n`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3129/3252] Replayed DecisionQuotient.Hardness.SetCoverReduction
+⚠ [3123/3259] Replayed DecisionQuotient.Hardness.SetCoverReduction
 warning: DecisionQuotient/Hardness/SetCoverReduction.lean:68:4: Try this: intro _ a'
 warning: DecisionQuotient/Hardness/SetCoverReduction.lean:84:19: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3130/3252] Replayed DecisionQuotient.Hardness.ApproximationHardness
+⚠ [3124/3259] Replayed DecisionQuotient.Hardness.ApproximationHardness
 warning: DecisionQuotient/Hardness/ApproximationHardness.lean:104:46: This simp argument is unused:
   add_comm
 
@@ -383,7 +387,7 @@ Hint: Omit it from the simp argument list.
   simp [Nat.cast_add, Nat.cast_one, add_comm, add_left_comm,̵ ̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3137/3252] Replayed DecisionQuotient.Tractability.StructuralRank
+⚠ [3137/3259] Replayed DecisionQuotient.Tractability.StructuralRank
 warning: DecisionQuotient/Tractability/StructuralRank.lean:161:40: unused variable `hn`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -397,7 +401,7 @@ Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
 warning: DecisionQuotient/Tractability/StructuralRank.lean:223:49: unused variable `hn`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3139/3252] Replayed DecisionQuotient.QueryComplexity
+⚠ [3139/3259] Replayed DecisionQuotient.QueryComplexity
 warning: DecisionQuotient/QueryComplexity.lean:119:33: This simp argument is unused:
   Bool.true_eq_false
 
@@ -454,7 +458,7 @@ Hint: Omit it from the simp argument list.
   simp [hq,̵ ̵h̵a̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3145/3252] Replayed DecisionQuotient.PolynomialReduction
+⚠ [3145/3259] Replayed DecisionQuotient.PolynomialReduction
 warning: DecisionQuotient/PolynomialReduction.lean:226:36: This simp argument is unused:
   Nat.mul_comm
 
@@ -490,7 +494,7 @@ Hint: Omit it from the simp argument list.
   simp only [g̵e̵_̵i̵f̵f̵_̵l̵e̵,̵ ̵pow_one]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3146/3252] Replayed DecisionQuotient.StochasticSequential.Basic
+⚠ [3146/3259] Replayed DecisionQuotient.StochasticSequential.Basic
 warning: DecisionQuotient/StochasticSequential/Basic.lean:45:25: This simp argument is unused:
   Finset.sum_ite_eq
 
@@ -542,7 +546,7 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/StochasticSequential/Basic.lean:1071:34: unused variable `r`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3147/3252] Replayed DecisionQuotient.StochasticSequential.Computation
+⚠ [3147/3259] Replayed DecisionQuotient.StochasticSequential.Computation
 warning: DecisionQuotient/StochasticSequential/Computation.lean:60:18: This simp argument is unused:
   countedAnyList
 
@@ -613,7 +617,7 @@ Hint: Omit it from the simp argument list.
   simp [SizeOf.sizeOf,̵ ̵i̵n̵s̵t̵S̵i̵z̵e̵O̵f̵S̵e̵q̵u̵e̵n̵t̵i̵a̵l̵E̵x̵p̵l̵i̵c̵i̵t̵I̵n̵p̵u̵t̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3149/3252] Replayed DecisionQuotient.ThermodynamicLift
+⚠ [3149/3259] Replayed DecisionQuotient.ThermodynamicLift
 warning: DecisionQuotient/ThermodynamicLift.lean:79:5: unused variable `hkB`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -626,7 +630,7 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/ThermodynamicLift.lean:135:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3152/3252] Replayed DecisionQuotient.Physics.BoundedAcquisition
+⚠ [3152/3259] Replayed DecisionQuotient.Physics.BoundedAcquisition
 warning: DecisionQuotient/Physics/BoundedAcquisition.lean:250:20: unused variable `R`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -648,7 +652,7 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/Physics/BoundedAcquisition.lean:491:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3153/3252] Replayed DecisionQuotient.CrossPaperDependencies
+⚠ [3153/3259] Replayed DecisionQuotient.CrossPaperDependencies
 warning: DecisionQuotient/CrossPaperDependencies.lean:43:26: This simp argument is unused:
   Fintype.card_unit
 
@@ -656,7 +660,7 @@ Hint: Omit it from the simp argument list.
   simp [Fintype.card_sum,̵ ̵F̵i̵n̵t̵y̵p̵e̵.̵c̵a̵r̵d̵_̵u̵n̵i̵t̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3154/3252] Replayed DecisionQuotient.Statistics.ProbabilisticBridge
+⚠ [3154/3259] Replayed DecisionQuotient.Statistics.ProbabilisticBridge
 warning: DecisionQuotient/Statistics/ProbabilisticBridge.lean:114:5: unused variable `d`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -707,7 +711,7 @@ Note: This linter can be disabled with `set_option linter.unusedSectionVars fals
 warning: DecisionQuotient/Statistics/ProbabilisticBridge.lean:304:13: unused variable `hw`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3167/3252] Replayed DecisionQuotient.Statistics.FisherInformation
+⚠ [3167/3259] Replayed DecisionQuotient.Statistics.FisherInformation
 warning: DecisionQuotient/Statistics/FisherInformation.lean:221:35: This simp argument is unused:
   one_ne_zero
 
@@ -729,7 +733,7 @@ Hint: Omit it from the simp argument list.
   simp only [fisherScore, ne_eq, one_ne_zero, not_false_eq_true,̵ ̵i̵f̵f̵_̵s̵e̵l̵f̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3168/3252] Replayed DecisionQuotient.Hardness.CoveringLowerBound
+⚠ [3168/3259] Replayed DecisionQuotient.Hardness.CoveringLowerBound
 warning: DecisionQuotient/Hardness/CoveringLowerBound.lean:50:28: This simp argument is unused:
   hi
 
@@ -779,29 +783,29 @@ Hint: Omit it from the simp argument list.
   simp [Nat.pow_succ, Nat.mul_comm, Nat.mul_left_comm,̵ ̵N̵a̵t̵.̵m̵u̵l̵_̵a̵s̵s̵o̵c̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3170/3252] Replayed DecisionQuotient.UniverseObjective
+⚠ [3170/3259] Replayed DecisionQuotient.UniverseObjective
 warning: DecisionQuotient/UniverseObjective.lean:145:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3171/3252] Replayed DecisionQuotient.Hardness.ConfigReduction
+⚠ [3171/3259] Replayed DecisionQuotient.Hardness.ConfigReduction
 warning: DecisionQuotient/Hardness/ConfigReduction.lean:120:8: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
 warning: DecisionQuotient/Hardness/ConfigReduction.lean:100:4: Try this: intro hnone hAny
 warning: DecisionQuotient/Hardness/ConfigReduction.lean:142:4: Try this: intro hsuff s s' hagree b
 warning: DecisionQuotient/Hardness/ConfigReduction.lean:159:4: Try this: intro hpres s s' hagree
-⚠ [3173/3252] Replayed DecisionQuotient.Physics.DecisionTime
+⚠ [3173/3259] Replayed DecisionQuotient.Physics.DecisionTime
 warning: DecisionQuotient/Physics/DecisionTime.lean:95:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3175/3252] Replayed DecisionQuotient.Physics.MeasureNecessity
+⚠ [3175/3259] Replayed DecisionQuotient.Physics.MeasureNecessity
 warning: DecisionQuotient/Physics/MeasureNecessity.lean:99:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
 warning: DecisionQuotient/Physics/MeasureNecessity.lean:109:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3176/3252] Replayed DecisionQuotient.Physics.IntegrityEquilibrium
+⚠ [3176/3259] Replayed DecisionQuotient.Physics.IntegrityEquilibrium
 warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1067:52: unused variable `hReceived`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -835,7 +839,7 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/Physics/IntegrityEquilibrium.lean:1436:66: unused variable `regime`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3181/3252] Replayed DecisionQuotient.Physics.TemporalCountingGap
+⚠ [3181/3259] Replayed DecisionQuotient.Physics.TemporalCountingGap
 warning: DecisionQuotient/Physics/TemporalCountingGap.lean:177:37: unused variable `h_lt`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -854,10 +858,10 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/Physics/TemporalCountingGap.lean:503:7: unused variable `gst`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3183/3252] Replayed DecisionQuotient.StochasticSequential.SetValued
+⚠ [3183/3259] Replayed DecisionQuotient.StochasticSequential.SetValued
 warning: DecisionQuotient/StochasticSequential/SetValued.lean:46:4: Try this: intro ha a'
 warning: DecisionQuotient/StochasticSequential/SetValued.lean:56:4: Try this: intro ha a'
-⚠ [3185/3252] Replayed DecisionQuotient.ClaimClosure
+⚠ [3185/3259] Replayed DecisionQuotient.ClaimClosure
 warning: DecisionQuotient/ClaimClosure.lean:386:23: This simp argument is unused:
   TwoStepObjective.Opt
 
@@ -902,7 +906,7 @@ Hint: Omit it from the simp argument list.
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
 warning: DecisionQuotient/ClaimClosure.lean:1844:4: Try this: intro hI s s' hs
 warning: DecisionQuotient/ClaimClosure.lean:1848:4: Try this: intro hI s s' hs
-⚠ [3186/3252] Replayed DecisionQuotient.StochasticSequential.PreservationVariants
+⚠ [3186/3259] Replayed DecisionQuotient.StochasticSequential.PreservationVariants
 warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:226:6: Try this: intro ha a'
 warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:353:4: Try this: intro ha a'
 warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:494:6: Try this: intro ha a'
@@ -912,10 +916,10 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/StochasticSequential/PreservationVariants.lean:593:6: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3190/3252] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.Summary
+ℹ [3190/3259] Replayed DecisionQuotient.Hardness.Sigma2PExhaustive.Summary
 info: DecisionQuotient/Hardness/Sigma2PExhaustive/Summary.lean:75:0: @DecisionProblem.sufficient_contains_relevant : ∀ {A : Type u_1} {S : Type u_2} {n : ℕ} [inst : CoordinateSpace S n]
   (dp : DecisionProblem A S) (I : Finset (Fin n)), dp.isSufficient I → ∀ (i : Fin n), dp.isRelevant i → i ∈ I
-⚠ [3191/3252] Replayed DecisionQuotient.InflationEntropyMinimality
+⚠ [3191/3259] Replayed DecisionQuotient.InflationEntropyMinimality
 warning: DecisionQuotient/InflationEntropyMinimality.lean:59:6: Try `simp at hInTrue` instead of `simpa using hInTrue`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
@@ -925,7 +929,7 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: DecisionQuotient/InflationEntropyMinimality.lean:121:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3193/3252] Replayed DecisionQuotient.InteriorVerification
+⚠ [3193/3259] Replayed DecisionQuotient.InteriorVerification
 warning: DecisionQuotient/InteriorVerification.lean:104:0: automatically included section variable(s) unused in theorem `DecisionQuotient.InteriorVerification.interior_dominance_implies_universal_non_rejection`:
   [CoordinateSpace S n]
 consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
@@ -938,15 +942,15 @@ consider restructuring your `variable` declarations so that the variables are no
   omit [CoordinateSpace S n] in theorem ...
 
 Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3194/3252] Replayed DecisionQuotient.DecisionGeometry
+⚠ [3194/3259] Replayed DecisionQuotient.DecisionGeometry
 warning: DecisionQuotient/DecisionGeometry.lean:70:2: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3208/3252] Replayed DecisionQuotient.Physics.TUR
+⚠ [3208/3259] Replayed DecisionQuotient.Physics.TUR
 warning: DecisionQuotient/Physics/TUR.lean:195:5: unused variable `hAsym`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3210/3252] Replayed DecisionQuotient.Physics.WolpertDecomposition
+⚠ [3210/3259] Replayed DecisionQuotient.Physics.WolpertDecomposition
 warning: DecisionQuotient/Physics/WolpertDecomposition.lean:386:45: This simp argument is unused:
   Nat.add_assoc
 
@@ -954,7 +958,7 @@ Hint: Omit it from the simp argument list.
   simp [energyLowerBound, Nat.add_mul,̵ ̵N̵a̵t̵.̵a̵d̵d̵_̵a̵s̵s̵o̵c̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3211/3252] Replayed DecisionQuotient.Physics.WassersteinIntegrity
+⚠ [3211/3259] Replayed DecisionQuotient.Physics.WassersteinIntegrity
 warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:105:41: unused variable `hn`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -970,7 +974,7 @@ Note: This linter can be disabled with `set_option linter.unusedTactic false`
 warning: DecisionQuotient/Physics/WassersteinIntegrity.lean:149:6: 'all_goals omega' tactic does nothing
 
 Note: This linter can be disabled with `set_option linter.unusedTactic false`
-⚠ [3212/3252] Replayed DecisionQuotient.Physics.TransportCost
+⚠ [3212/3259] Replayed DecisionQuotient.Physics.TransportCost
 warning: DecisionQuotient/Physics/TransportCost.lean:51:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Physics.srank_determines_states`:
   [Fintype A]
   [Fintype S]
@@ -1002,7 +1006,48 @@ consider restructuring your `variable` declarations so that the variables are no
   omit [Fintype A] [Fintype S] in theorem ...
 
 Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3219/3252] Replayed DecisionQuotient.Information.RateDistortion
+⚠ [3216/3259] Replayed DecisionQuotient.Tractability.BoundedStateSpace
+warning: DecisionQuotient/Tractability/BoundedStateSpace.lean:31:13: unused variable `hk`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Tractability/BoundedStateSpace.lean:35:18: unused variable `hs₁`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Tractability/BoundedStateSpace.lean:35:50: unused variable `hs₂`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3218/3259] Replayed DecisionQuotient.Tractability.MultiplicativeSeparable
+warning: DecisionQuotient/Tractability/MultiplicativeSeparable.lean:169:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3219/3259] Replayed DecisionQuotient.Tractability.Dominance
+warning: DecisionQuotient/Tractability/Dominance.lean:38:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/Tractability/Dominance.lean:50:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/Tractability/Dominance.lean:73:0: automatically included section variable(s) unused in theorem `DecisionQuotient.ConstantOptimalSet.empty_sufficient`:
+  [DecidableEq A]
+  [DecidableEq S]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq A] [DecidableEq S] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: DecisionQuotient/Tractability/Dominance.lean:114:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/Tractability/Dominance.lean:154:10: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3222/3259] Replayed DecisionQuotient.Summary
+warning: DecisionQuotient/Summary.lean:109:18: unused variable `hs₁`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Summary.lean:109:50: unused variable `hs₂`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3223/3259] Replayed DecisionQuotient.Information.RateDistortion
 warning: DecisionQuotient/Information/RateDistortion.lean:72:8: This simp argument is unused:
   neg_nonneg
 
@@ -1025,7 +1070,7 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/Information/RateDistortion.lean:165:17: unused variable `h`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3220/3252] Replayed DecisionQuotient.Information.RDSrank
+⚠ [3224/3259] Replayed DecisionQuotient.Information.RDSrank
 warning: DecisionQuotient/Information/RDSrank.lean:88:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Information.rate_equals_srank`:
   [DecidableEq (Fin n)]
 consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
@@ -1058,14 +1103,14 @@ consider restructuring your `variable` declarations so that the variables are no
   omit [Fintype A] [Fintype S] [DecidableEq (Fin n)] in theorem ...
 
 Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
-⚠ [3221/3252] Replayed DecisionQuotient.StochasticSequential.OracleUpperBounds
+⚠ [3227/3259] Replayed DecisionQuotient.StochasticSequential.OracleUpperBounds
 warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:171:4: Try this: intro h hw
 warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:175:4: Try this: intro h s
 warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:201:4: Try this: intro h hsuff
 warning: DecisionQuotient/StochasticSequential/OracleUpperBounds.lean:336:12: unused variable `q`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-ℹ [3228/3252] Replayed DecisionQuotient.StochasticSequential.ClaimClosure
+ℹ [3234/3259] Replayed DecisionQuotient.StochasticSequential.ClaimClosure
 info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:55:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_verdict_substrate_independent (c : MatrixCell)
   (τ₁ τ₂ : SubstrateType) : evaluateCell τ₁ c = evaluateCell τ₂ c
 info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:56:0: DecisionQuotient.StochasticSequential.ClaimClosure.claim_hierarchy :
@@ -1077,7 +1122,7 @@ info: DecisionQuotient/StochasticSequential/ClaimClosure.lean:58:0: DecisionQuot
   [TractableSubcase.boundedActions, TractableSubcase.separableUtility, TractableSubcase.lowTensorRank,
         TractableSubcase.treeStructure, TractableSubcase.boundedTreewidth, TractableSubcase.coordinateSymmetry].length =
     6
-⚠ [3229/3252] Replayed DecisionQuotient.StochasticSequential.PolynomialReduction
+⚠ [3235/3259] Replayed DecisionQuotient.StochasticSequential.PolynomialReduction
 warning: DecisionQuotient/StochasticSequential/PolynomialReduction.lean:78:23: unused variable `s`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -1144,7 +1189,7 @@ Hint: Omit it from the simp argument list.
   simp [reduceTQBF,̵ ̵r̵e̵d̵u̵c̵e̵T̵Q̵B̵F̵U̵t̵i̵l̵i̵t̵y̵]
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-⚠ [3230/3252] Replayed DecisionQuotient.StochasticSequential.NPPPHardness
+⚠ [3236/3259] Replayed DecisionQuotient.StochasticSequential.NPPPHardness
 warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:106:4: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
@@ -1153,20 +1198,20 @@ warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:134:2: try 'sim
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
 warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:327:4: Try this: intro ha a'
 warning: DecisionQuotient/StochasticSequential/NPPPHardness.lean:332:4: Try this: intro ha a'
-⚠ [3235/3252] Replayed DecisionQuotient.StochasticSequential.ThermodynamicLift
+⚠ [3241/3259] Replayed DecisionQuotient.StochasticSequential.ThermodynamicLift
 warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:79:10: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
 warning: DecisionQuotient/StochasticSequential/ThermodynamicLift.lean:81:10: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3236/3252] Replayed DecisionQuotient.StochasticSequential.TemporalLearning
+⚠ [3242/3259] Replayed DecisionQuotient.StochasticSequential.TemporalLearning
 warning: DecisionQuotient/StochasticSequential/TemporalLearning.lean:56:5: unused variable `hLike_other`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3240/3252] Replayed DecisionQuotient.AbstractionCollapse
+⚠ [3245/3259] Replayed DecisionQuotient.AbstractionCollapse
 warning: DecisionQuotient/AbstractionCollapse.lean:43:4: Try this: intro hErase hPres
-⚠ [3241/3252] Replayed DecisionQuotient.Bridges
+⚠ [3246/3259] Replayed DecisionQuotient.Bridges
 warning: DecisionQuotient/Bridges.lean:1278:35: unused variable `hdp`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
@@ -1179,11 +1224,11 @@ Note: This linter can be disabled with `set_option linter.unusedVariables false`
 warning: DecisionQuotient/Bridges.lean:1441:8: unused variable `regime`
 
 Note: This linter can be disabled with `set_option linter.unusedVariables false`
-⚠ [3244/3252] Replayed DecisionQuotient.StochasticSequential.TemporalIntegrity
+⚠ [3249/3259] Replayed DecisionQuotient.StochasticSequential.TemporalIntegrity
 warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:45:2: `List.Chain'` has been deprecated: Use `List.IsChain` instead
 warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:57:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
 warning: DecisionQuotient/StochasticSequential/TemporalIntegrity.lean:63:8: `List.Chain'` has been deprecated: Use `List.IsChain` instead
-ℹ [3248/3252] Replayed DecisionQuotient.StochasticSequential.Summary
+ℹ [3253/3259] Replayed DecisionQuotient.StochasticSequential.Summary
 info: DecisionQuotient/StochasticSequential/Summary.lean:23:0: DecisionQuotient.StochasticSequential.static_simpler_than_stochastic :
   baseComplexity 0 = ComplexityClass.coNP ∧ baseComplexity 1 = ComplexityClass.PP
 info: DecisionQuotient/StochasticSequential/Summary.lean:24:0: DecisionQuotient.StochasticSequential.stochastic_simpler_than_sequential :
@@ -1261,7 +1306,7 @@ info: DecisionQuotient/StochasticSequential/Summary.lean:50:0: DecisionQuotient.
   (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
   HasCountedSearchWitness (StochasticAnchorPreservation P I) (countedStochasticAnchorPreservationSearch P I)
     (Fintype.card S)
-ℹ [3250/3252] Replayed DecisionQuotient.CheckAxioms
+ℹ [3255/3259] Replayed DecisionQuotient.CheckAxioms
 info: DecisionQuotient/CheckAxioms.lean:32:0: 'DecisionQuotient.sufficiency_check_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
 info: DecisionQuotient/CheckAxioms.lean:33:0: 'DecisionQuotient.min_sufficient_set_coNP_hard' depends on axioms: [propext, Classical.choice, Quot.sound]
 info: DecisionQuotient/CheckAxioms.lean:34:0: 'DecisionQuotient.anchor_sufficiency_sigma2p' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -1550,7 +1595,28 @@ info: DecisionQuotient/CheckAxioms.lean:190:0: 'DecisionQuotient.StochasticSeque
 info: DecisionQuotient/CheckAxioms.lean:191:0: 'DecisionQuotient.StochasticSequential.sequential_anchor_check_pspace_hard' depends on axioms: [propext,
  Classical.choice,
  Quot.sound]
-Build completed successfully (3252 jobs).
+⚠ [3256/3259] Replayed DecisionQuotient.Examples.PreservationExamples
+warning: DecisionQuotient/Examples/PreservationExamples.lean:58:9: unused variable `O`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: DecisionQuotient/Examples/PreservationExamples.lean:113:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: DecisionQuotient/Examples/PreservationExamples.lean:103:0: automatically included section variable(s) unused in theorem `DecisionQuotient.Examples.hyperparam_reduction_to_static`:
+  [Fintype Xα]
+  [Fintype Xγ]
+  [Fintype Xε]
+  [Fintype E]
+  [Nonempty Xγ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype Xα] [Fintype Xγ] [Fintype Xε] [Fintype E] [Nonempty Xγ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3257/3259] Replayed DecisionQuotient.Examples.ConcreteExamples
+warning: DecisionQuotient/Examples/ConcreteExamples.lean:35:19: Local variable 'a' resembles constructor 'DecisionQuotient.Examples.A.a' - write '.a' (with a dot) or 'DecisionQuotient.Examples.A.a' to use the constructor.
+
+Note: This linter can be disabled with `set_option linter.constructorNameAsVariable false`
+Build completed successfully (3259 jobs).
 
 
 ================================================================================

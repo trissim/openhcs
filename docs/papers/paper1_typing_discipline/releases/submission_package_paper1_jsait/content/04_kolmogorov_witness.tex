@@ -114,7 +114,7 @@ Fix a collision block $G \subseteq \mathcal{C}$ with $|G|=A_\pi$ and identical r
 \end{proof}
 
 \begin{remark}[Coding interpretation]
-The converse is a lossless coding law for semantic identity. The relevant confusable alphabet is the largest representation-collision block, and zero-error separation of that block requires exactly enough auxiliary outcomes to name its members. The theorem therefore has the same fixed-length form as a classical zero-error side-information budget, but the governing alphabet size is induced by the representation rather than by the ambient class set alone.
+The converse is a lossless coding law for semantic identity \cite{csiszar2011information}. The relevant confusable alphabet is the largest representation-collision block, and zero-error separation of that block requires exactly enough auxiliary outcomes to name its members. The theorem therefore has the same fixed-length form as a classical zero-error side-information budget, but the governing alphabet size is induced by the representation rather than by the ambient class set alone.
 \end{remark}
 
 \begin{corollary}[Maximal-Barrier Converse]\label{cor:max-barrier-converse}
@@ -171,6 +171,7 @@ The confusability graph induced by a fixed deterministic representation has spec
 \begin{proposition}[Transitivity of representation confusability]
 Let $\pi : \mathcal C \to \mathcal U$. Define $c_1 \sim_\pi c_2$ iff $\pi(c_1)=\pi(c_2)$ and $c_1 \ne c_2$. Then $\sim_\pi$ is transitive on distinct classes inside a fiber.
 \end{proposition}
+\leanmeta{\LH{GPH52}}
 
 \begin{proof}
 If $\pi(c_1)=\pi(c_2)$ and $\pi(c_2)=\pi(c_3)$, then $\pi(c_1)=\pi(c_3)$ by equality. Thus any two distinct classes linked through one fiber are directly confusable as well.
@@ -188,6 +189,7 @@ Each fiber is a clique because all of its classes share the same representation 
 \begin{corollary}[Capacity collapse for representation-induced graphs]
 For a representation-induced cluster graph, the standard one-shot zero-error parameters collapse to fiber counts, so the fixed-length auxiliary-description law is governed exactly by the largest fiber.
 \end{corollary}
+\leanmeta{\LHrng{GPH}{52}{53}}
 
 \begin{proof}
 In a disjoint union of cliques, proper coloring, clique size, and independence counting reduce to choosing or naming one element per component. In this setting, the general graph inequalities collapse to the same fiber-counting law.

@@ -31,8 +31,7 @@ For any architectural decision with alternatives $A_1, \ldots, A_n$ meeting capa
 A^* = \arg\max_{A_i} L(A_i) = \arg\max_{A_i} \frac{|\text{Capabilities}(A_i)|}{\text{DOF}(A_i)}
 \]
 \end{theorem}
-\leanmeta{\LH{L31},
-\LH{L28}}
+\leanmeta{\LH{L28}, \LH{L31}}
 
 \textbf{Note:} This is \emph{not} the central theorem; it is a consequence of the DOF-Reliability Isomorphism. The isomorphism is the deep result; ``maximize leverage'' is the actionable heuristic derived from it.
 
@@ -77,8 +76,7 @@ E_{\min}(A;\mathcal{M}) = j_{\mathcal{M}}\cdot \mathrm{DOF}(A).
 Hence $\mathrm{DOF}(A_1) < \mathrm{DOF}(A_2)$ implies
 $E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M})$.
 \end{theorem}
-\leanmeta{\LH{L1},
-\LH{L5}}
+\leanmeta{\LH{L1}, \LH{L5}}
 
 \begin{proof}
 In the mechanized model, modification complexity is definitionally $\mathrm{DOF}$. Multiplying by a positive per-edit conversion constant gives the lower bound and strict monotonicity in DOF.
@@ -91,8 +89,7 @@ E_{\min}(A_1;\mathcal{M}) < E_{\min}(A_2;\mathcal{M}),
 \]
 and the induced energy gap is strictly positive.
 \end{corollary}
-\leanmeta{\LH{L3},
-\LH{L6}}
+\leanmeta{\LH{L3}, \LH{L6}}
 
 \begin{theorem}[Budget Feasibility Boundary]\label{thm:physical-budget-boundary}
 For physical model $\mathcal{M}$ and budget $B$, implementation feasibility is equivalent to clearing the floor:
@@ -101,22 +98,19 @@ E_{\min}(A;\mathcal{M}) \le B \iff \text{feasible}(A,B,\mathcal{M}).
 \]
 Hence $B < E_{\min}(A;\mathcal{M})$ implies infeasibility. Also, for fixed $B$ and equal capabilities, if $L(A_1)>L(A_2)$ and $A_2$ is feasible under $B$, then $A_1$ is feasible under $B$.
 \end{theorem}
-\leanmeta{\LH{L2},
-\LH{L4}}
+\leanmeta{\LH{L2}, \LH{L4}}
 
 \begin{corollary}[Physical Assumption Necessity Witnesses]\label{cor:physical-assumption-necessity}
 The physical layer uses two explicit premises for no-go style infeasibility claims: positive per-edit conversion and an external budget bound. Dropping positivity admits a zero-floor countermodel. Dropping the external budget-bound premise blocks infeasibility conclusions because a feasible budget witness always exists.
 \end{corollary}
-\leanmeta{\LH{L8},
-\LH{L7}}
+\leanmeta{\LHrng{L}{7}{8}}
 
 \subsection{Metaprogramming Dominance}
 
 \begin{theorem}[Metaprogramming Dominance]\label{thm:metaprog}
 For any $N \in \mathbb{N}$, there exists a metaprogramming architecture $M$ with $\text{DOF}(M) = 1$ and $L(M) \geq N$.
 \end{theorem}
-\leanmeta{\LH{L36},
-\LH{L35}}
+\leanmeta{\LHrng{L}{35}{36}}
 
 \begin{proof}
 Let $M$ be a metaprogramming architecture with a single source definition ($\text{DOF}(M) = 1$) and at least $N$ derived capabilities. Then $L(M) = |\text{Cap}(M)|/1 \geq N$.
@@ -133,8 +127,7 @@ Given requirements $R$, architecture $A^*$ is optimal in its capability class if
 \item $\forall A'$ with $\text{Cap}(A') = \text{Cap}(A^*)$ and $\text{Cap}(A') \supseteq R$: $L(A^*) \geq L(A')$ (maximality in fixed capability class)
 \end{enumerate}
 \end{theorem}
-\leanmeta{\LH{L38},
-\LH{L34}}
+\leanmeta{\LH{L34}, \LH{L38}}
 
 \begin{proof}
 ($\Leftarrow$) Suppose $A^*$ satisfies (1) and (2). Then $A^*$ is feasible and has maximum leverage among feasible architectures in the same capability class. By Theorem \ref{thm:leverage-error}, this minimizes error probability in that class.
@@ -158,8 +151,7 @@ For modular architecture $A = A_1 \oplus A_2$ with disjoint components:
 \item if $L(A_1)\ge 1$ and $L(A_2)\ge 1$, then $L(A)\ge 1$
 \end{enumerate}
 \end{theorem}
-\leanmeta{\LH{L19},
-\LH{L18}}
+\leanmeta{\LHrng{L}{18}{19}}
 
 \begin{proof}
 (1) By Proposition \ref{prop:dof-additive}.
@@ -204,8 +196,7 @@ Nominal typing dominance from \texttt{AbstractClassSystem}~\cite{paper1_typing_d
 \item Therefore nominal typing has strictly higher leverage
 \end{itemize}
 \end{theorem}
-\leanmeta{\LH{L14},
-\LH{L13}}
+\leanmeta{\LHrng{L}{13}{14}}
 
 \begin{theorem}[\texttt{Ssot} as Leverage Instance]\label{thm:paper2-integration}
 SSOT dominance from \texttt{Ssot}~\cite{paper2_ssot} is an instance of leverage maximization:
@@ -215,8 +206,7 @@ SSOT dominance from \texttt{Ssot}~\cite{paper2_ssot} is an instance of leverage 
 \item Therefore leverage improves by factor $n$
 \end{itemize}
 \end{theorem}
-\leanmeta{\LH{L10},
-\LH{L11}}
+\leanmeta{\LHrng{L}{10}{11}}
 
 These integration theorems are formalized in:
 \begin{itemize}

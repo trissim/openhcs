@@ -1,24 +1,31 @@
 # Paper: Decision Quotient Structure and Convergence: Optimizer Quotients, Structural Rank, and Bayesian Optimality
 
-**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 45827 lines, 1946 theorems
+**Status**: IEEE Transactions on Information Theory-ready | **Lean**: 66349 lines, 2940 theorems
 
 ---
 
 ## Abstract
 
-_Abstract not available._
+This paper studies convergence in decision-relevant information. For a decision problem $\mathcal{D}=(A,S,U)$ with $S=X_1 \times \cdots \times X_n$, a coordinate set is sufficient when agreement on those coordinates determines the optimal-action set. The associated optimizer quotient is the canonical decision-preserving abstraction.
+
+The main result is that several standard mathematical viewpoints can be compared against the same structural invariant once that quotient is fixed. The invariant is structural rank, the cardinality of the relevant-coordinate support. We show that the optimizer quotient has the coimage/image universal property in **Set**, that quotient entropy is bounded by structural rank, that Fisher-style support counting recovers the same support size, and that zero-distortion decision-preserving compression is constrained by the same support-size core.
+
+A parallel Bayesian thread starts from finite counting and the inequality $\log x \le x - 1$ and derives probability normalization, Bayes' rule, cross-entropy decomposition, Bayes optimality under log loss, and the normalized decision-quotient score.
+
+The Lean 4 development records the quotient, Bayesian, and information-theoretic lemmas used in the paper.
+
 
 # Introduction {#sec:introduction}
 
-The decision-relevance problem asks which parts of a state description actually matter for optimal action. This raises two natural questions: how hard relevance is to certify, and what mathematical structure emerges once the relevant-coordinate support has been identified. This paper addresses the second question.
+The decision-relevance problem asks which parts of a state description matter for optimal action. This raises two questions: how hard relevance is to certify, and what structure emerges once the relevant-coordinate support has been identified. This paper addresses the second.
 
-The unifying object is the optimizer quotient. States are identified when they induce the same optimal-action set, and the resulting quotient is the coarsest abstraction that preserves the decision boundary. In **Set**, this is the familiar coimage/image factorization of the optimizer map. That quotient viewpoint immediately suggests a second question: if the quotient is the canonical lossless abstraction, what quantitative summaries of it recover the same structural content?
+The unifying object is the optimizer quotient. States are identified when they induce the same optimal-action set, and the resulting quotient is the coarsest abstraction that preserves the decision boundary. In **Set**, this is the coimage/image factorization of the optimizer map. The question is then which quantitative summaries of that quotient recover the same structural content.
 
-Our answer is that several mathematical frameworks converge on the same invariant. The support size of the relevant coordinates, which we write as $\mathrm{srank}$, reappears in quotient entropy, Fisher-style support counting, zero-distortion summaries, and the finite Bayesian chain obtained by normalizing counting measure. Convergence here means agreement across distinct mathematical lenses on the same notion of decision-relevant dimension.
+Several mathematical frameworks can be compared against the same invariant. The support size of the relevant coordinates, written $\mathrm{srank}$, appears directly in Fisher-style support counting, bounds quotient entropy, and constrains zero-distortion summaries through the optimizer quotient. The Bayesian chain is parallel rather than another recovery theorem: it shows that the same finite counting setup also supports the standard Bayes-optimality identities. Convergence therefore means that these frameworks are organized around the same notion of decision-relevant structure, not that they all yield the same formula.
 
-The novelty does not lie in any individual ingredient. Entropy, Bayes, quotient objects, and Fisher information are all classical. The contribution is the theorem-level synthesis: once the optimizer quotient is fixed as the canonical decision-preserving abstraction, these frameworks can be compared within a single formal setting and shown to recover the same structural notion of decision-relevant dimension.
+The novelty is not in any individual ingredient. Entropy, Bayes, quotient objects, and Fisher information are classical. The contribution is the theorem-level synthesis: once the optimizer quotient is fixed as the canonical decision-preserving abstraction, these frameworks can be compared in a single formal setting and related to the same structural notion of decision-relevant dimension.
 
-The argument is built from shared definitions, quotient structure, and information-theoretic reasoning.
+The argument is built from shared definitions, quotient structure, and information-theoretic inequalities.
 
 ## Contributions
 
@@ -26,31 +33,29 @@ The argument is built from shared definitions, quotient structure, and informati
 
 2.  **Optimizer quotient as canonical structure.** We restate the shared setup needed for independent readability, including an explicit structural-rank support proposition, and identify the optimizer quotient as the canonical decision-preserving abstraction.
 
-3.  **Structural-rank recovery across frameworks.** We show that quotient entropy, Fisher-style support counting, lossless zero-distortion summaries, and a transport bridge recover the same support-size invariant $\mathrm{srank}$.
+3.  **Structural-rank comparison across frameworks.** We show that Fisher-style support counting recovers $\mathrm{srank}$ exactly, quotient entropy is bounded by $\mathrm{srank}$, lossless zero-distortion summaries are constrained by the same optimizer-quotient structure, and the transport bridge tracks the same quotient branching regimes.
 
 4.  **Bayesian optimality from minimal assumptions.** We derive probability normalization, Bayes' rule, cross-entropy decomposition, and Bayes optimality under log loss from finite counting and the inequality $\log x \le x - 1$.
 
-5.  **Witness-checking duality.** We prove an exponential verification lower bound for the Boolean empty-set sufficiency core.
-
-6.  **Machine-checked support.** The Lean development records the quotient, Bayesian, information-theoretic, and witness-checking lemmas used in the paper.
+5.  **Machine-checked support.** The Lean development records the quotient, Bayesian, and information-theoretic lemmas used in the paper.
 
 ## Paper Structure
 
-Section [\[sec:counting-preliminaries\]](#sec:counting-preliminaries){reference-type="ref" reference="sec:counting-preliminaries"} states the counting and measure preliminaries. Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} restates the shared quotient setup needed for independence. Section [\[sec:convergence-frameworks\]](#sec:convergence-frameworks){reference-type="ref" reference="sec:convergence-frameworks"} develops the structural-rank convergence story, Section [\[sec:witness-duality\]](#sec:witness-duality){reference-type="ref" reference="sec:witness-duality"} gives the witness-checking lower bound, and Section [\[sec:bayesian-optimality\]](#sec:bayesian-optimality){reference-type="ref" reference="sec:bayesian-optimality"} gives the Bayesian optimality chain. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the paper relative to information theory, sufficient statistics, and formalized mathematics. Appendix [\[app:lean\]](#app:lean){reference-type="ref" reference="app:lean"} summarizes the corresponding Lean support.
+Section [\[sec:counting-preliminaries\]](#sec:counting-preliminaries){reference-type="ref" reference="sec:counting-preliminaries"} states the counting and measure preliminaries. Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} restates the shared quotient setup needed for independence. Section [\[sec:convergence-frameworks\]](#sec:convergence-frameworks){reference-type="ref" reference="sec:convergence-frameworks"} develops the structural-rank convergence story. Section [\[sec:bayesian-optimality\]](#sec:bayesian-optimality){reference-type="ref" reference="sec:bayesian-optimality"} gives the Bayesian optimality chain. Section [\[sec:related\]](#sec:related){reference-type="ref" reference="sec:related"} situates the paper relative to information theory, sufficient statistics, and formalized mathematics. Appendix [\[app:lean\]](#app:lean){reference-type="ref" reference="app:lean"} summarizes the corresponding Lean support.
 
 ## Proof Strategy at a Glance
 
-To keep the argument auditable, each theorem in the body is proved by a short explicit chain:
+Each theorem in the body is proved by a short explicit chain:
 
 1.  **Counting layer (Section [\[sec:counting-preliminaries\]](#sec:counting-preliminaries){reference-type="ref" reference="sec:counting-preliminaries"}):** finite counting bounds and normalization identities.
 
 2.  **Quotient layer (Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}):** sufficiency/relevance definitions and universal property of the optimizer quotient.
 
-3.  **Bridge layer (Section [\[sec:convergence-frameworks\]](#sec:convergence-frameworks){reference-type="ref" reference="sec:convergence-frameworks"}):** entropy, support counting, and zero-distortion summaries all tied back to the same support-size invariant.
+3.  **Bridge layer (Section [\[sec:convergence-frameworks\]](#sec:convergence-frameworks){reference-type="ref" reference="sec:convergence-frameworks"}):** entropy bounds, support counting, zero-distortion summaries, and transport regimes all tied back to the same optimizer-quotient core.
 
-4.  **Verification/statistical consequences (Sections [\[sec:witness-duality\]](#sec:witness-duality){reference-type="ref" reference="sec:witness-duality"} and [\[sec:bayesian-optimality\]](#sec:bayesian-optimality){reference-type="ref" reference="sec:bayesian-optimality"}):** exponential witness-checking budget on the verification side and Bayes optimality on the normalized finite-probability side.
+4.  **Statistical consequences (Section [\[sec:bayesian-optimality\]](#sec:bayesian-optimality){reference-type="ref" reference="sec:bayesian-optimality"}):** Bayes optimality on the normalized finite-probability side.
 
-The intent is to remove ambiguity about where each claim comes from: no hidden assumptions, no skipped quantifier steps, and no dependence on informal analogies.
+This removes ambiguity about where each claim comes from: no hidden assumptions, no skipped quantifier steps, and no dependence on informal analogies.
 
 
 # Counting Preliminaries {#sec:counting-preliminaries}
@@ -140,9 +145,13 @@ This section restates the definitions needed for the paper to stand on its own. 
 :::
 
 ::: proof
-*Proof.* **($\Rightarrow$)** Let $I$ be minimal sufficient and suppose $i\in I$. If $i$ were not relevant, then varying coordinate $i$ while fixing all others would never change $\operatorname{Opt}$. Therefore $\operatorname{Opt}$ would still factor through $I\setminus\{i\}$, so $I\setminus\{i\}$ would remain sufficient, contradicting minimality.
+*Proof.* **Minimal sufficient sets contain only relevant coordinates.** Let $I$ be minimal sufficient and let $i\in I$. Suppose toward contradiction that $i$ is not relevant. Then whenever two states agree on all coordinates except possibly $i$, they still have the same optimizer value. In particular, once the coordinates in $I\setminus\{i\}$ are fixed, changing coordinate $i$ cannot change $\operatorname{Opt}$.
 
-**($\Leftarrow$)** Let $i$ be relevant. By definition, there exist $s,s'$ differing only at coordinate $i$ with $\operatorname{Opt}(s)\neq\operatorname{Opt}(s')$. Any sufficient set must separate this witness pair, so it must include $i$. Therefore every relevant coordinate belongs to every sufficient set, in particular to every minimal sufficient set. ◻
+Now take any two states $s,s'$ with $s_{I\setminus\{i\}}=s'_{I\setminus\{i\}}$. Keeping the other coordinates fixed, we can vary coordinate $i$ without affecting $\operatorname{Opt}$, so the value of $\operatorname{Opt}$ is already determined by the coordinates in $I\setminus\{i\}$. Thus $I\setminus\{i\}$ is still sufficient, contradicting minimality of $I$. Therefore every coordinate in a minimal sufficient set is relevant.
+
+**Every relevant coordinate belongs to every sufficient set.** Let $i$ be relevant. By definition, there exist states $s,s'$ differing only at coordinate $i$ such that $\operatorname{Opt}(s)\neq\operatorname{Opt}(s')$. If a coordinate set $I$ omitted $i$, then these two states would agree on all coordinates of $I$, since they differ nowhere else. Sufficiency of $I$ would then force $\operatorname{Opt}(s)=\operatorname{Opt}(s')$, contradiction. So every sufficient set must contain $i$.
+
+Combining the two parts, every minimal sufficient set is contained in the relevant-coordinate set, and the relevant-coordinate set is contained in every sufficient set, hence in every minimal sufficient set. Therefore every minimal sufficient set is exactly the relevant-coordinate set. ◻
 :::
 
 ::: definition
@@ -224,7 +233,7 @@ The point of Theorem [\[thm:quotient-universal\]](#thm:quotient-universal){refe
 
 # Convergence Frameworks {#sec:convergence-frameworks}
 
-This section shows that several mathematical frameworks recover the same structural invariant once the optimizer quotient has been fixed. That invariant is structural rank. The individual bridge theorems do not identify the surrounding theories with one another; they show that these theories agree on the same support-size core when exact decision preservation is the comparison criterion.
+This section shows how several mathematical frameworks relate to the same structural invariant once the optimizer quotient has been fixed. That invariant is structural rank. The bridge theorems below do not claim that all frameworks recover $\mathrm{srank}$ in the same formal sense: some give exact recovery, some give bounds, and some identify the same quotient branching regimes under exact decision preservation.
 
 ## Entropy and the Quotient
 
@@ -235,7 +244,7 @@ The finite counting-to-probability bridge is established in Section [\[sec:coun
 :::
 
 ::: proof
-*Proof.* Let $r=\mathrm{srank}(\mathcal{D})$. By definition, exactly $r$ coordinates are relevant, and this relevant set is sufficient (Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}). Therefore $\operatorname{Opt}$ factors through the projection onto those $r$ coordinates: $$S \xrightarrow{\pi_R} \{0,1\}^r \xrightarrow{\bar{\operatorname{Opt}}} \mathcal{P}(A).$$ Hence the optimizer quotient has at most $|\{0,1\}^r|=2^r$ classes. Under counting-normalized quotient entropy, $$H(\mathcal{D}) \le \log_2(2^r)=r=\mathrm{srank}(\mathcal{D}).$$ ◻
+*Proof.* Let $r=\mathrm{srank}(\mathcal{D})$. By definition, exactly $r$ coordinates are relevant, and this relevant set is sufficient (Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}). Therefore $\operatorname{Opt}$ factors through the projection onto those $r$ coordinates: $$S \xrightarrow{\pi_R} \{0,1\}^r \xrightarrow{\bar{\operatorname{Opt}}} \mathcal{P}(A).$$ Every optimizer class is therefore determined by one of the $2^r$ possible assignments to the relevant coordinates. Hence the optimizer quotient has at most $|\{0,1\}^r|=2^r$ classes. Under counting-normalized quotient entropy, $$H(\mathcal{D}) \le \log_2(2^r)=r=\mathrm{srank}(\mathcal{D}).$$ ◻
 :::
 
 ## Structural Rank Recovery
@@ -249,21 +258,23 @@ The finite counting-to-probability bridge is established in Section [\[sec:coun
 :::
 
 ::: theorem
-[]{#thm:rate-distortion-bridge label="thm:rate-distortion-bridge"} At zero distortion, the minimum lossless rate needed to preserve optimal actions is governed by the same support-size quantity that defines $\mathrm{srank}(\mathcal{D})$, and any attempted compression below that support size must merge states that are not decision-equivalent.
+[]{#thm:rate-distortion-bridge label="thm:rate-distortion-bridge"} At zero distortion, any lossless summary that preserves optimal actions must assign distinct codewords to distinct optimizer-quotient classes. Thus the admissible summary size is constrained by the same quotient structure determined by the relevant-coordinate support.
 :::
 
 ::: proof
 *Proof.* At zero distortion, any two states mapped to the same summary must induce the same optimal-action set; otherwise optimal actions are not preserved exactly. So admissible summaries are precisely coarsenings that refine decision equivalence, i.e., they cannot identify states across distinct optimizer-quotient classes.
 
-Therefore any lossless summary alphabet must have size at least the number of decision classes, and conversely any summary below that size necessarily merges at least two different classes. By Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}, that class structure is controlled by the relevant-coordinate support, hence by $\mathrm{srank}(\mathcal{D})$. ◻
+Therefore any lossless summary alphabet must contain at least one distinct codeword for each optimizer-quotient class. If the alphabet were smaller than the number of decision classes, two different classes would share a codeword, violating zero distortion. Conversely, assigning distinct codewords to the classes yields an exact lossless summary.
+
+By Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}, the quotient class structure is determined by the relevant-coordinate support, hence by $\mathrm{srank}(\mathcal{D})$. So the zero-distortion summary size is constrained by the same support-size core. ◻
 :::
 
 ::: theorem
-[]{#thm:wasserstein-bridge label="thm:wasserstein-bridge"} When transport is computed on the optimizer-quotient classes, transport cost is zero in the singleton-class regime and strictly positive once multiple optimizer classes must be distinguished. Thus transport complexity tracks the same decision-relevant branching structure measured by $\mathrm{srank}(\mathcal{D})$.
+[]{#thm:wasserstein-bridge label="thm:wasserstein-bridge"} When transport is computed on the optimizer-quotient classes, transport cost is zero in the singleton-class regime and strictly positive once multiple optimizer classes must be distinguished. Thus transport complexity tracks the same quotient branching regimes determined by decision relevance.
 :::
 
 ::: proof
-*Proof.* If the quotient has one class, the identity coupling is diagonal and incurs zero transport cost. If the quotient has at least two classes with nontrivial mass split, any coupling that matches the distinct targets carries off-diagonal mass and therefore positive transport cost. By Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}, the same class multiplicity is controlled by relevant-coordinate support, so the transport burden is governed by the same structural core as $\mathrm{srank}(\mathcal{D})$. ◻
+*Proof.* If the quotient has one class, the identity coupling is diagonal and incurs zero transport cost. If the quotient has at least two classes with nontrivial mass split, any coupling that matches the distinct targets carries off-diagonal mass and therefore positive transport cost. By Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"}, the same class multiplicity is controlled by relevant-coordinate support, so the transport regimes are determined by the same structural core. ◻
 :::
 
 ::: theorem
@@ -277,7 +288,7 @@ Therefore any lossless summary alphabet must have size at least the number of de
 ## Framework Convergence
 
 ::: theorem
-[]{#thm:six-framework-recovery label="thm:six-framework-recovery"} Within the finite setting of this paper, the following objects recover the same structural core up to the identifications proved above:
+[]{#thm:six-framework-recovery label="thm:six-framework-recovery"} Within the finite setting of this paper, the following objects are linked by the optimizer quotient and the relevant-coordinate support:
 
 1.  relevant-coordinate support,
 
@@ -297,49 +308,20 @@ Therefore any lossless summary alphabet must have size at least the number of de
 
 1.  Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" reference="sec:formal-setup"} identifies the support core: relevant coordinates and structural rank (Definition [\[def:srank\]](#def:srank){reference-type="ref" reference="def:srank"}; Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"}).
 
-2.  Proposition [\[prop:optimizer-coimage\]](#prop:optimizer-coimage){reference-type="ref" reference="prop:optimizer-coimage"} and Theorem [\[thm:quotient-universal\]](#thm:quotient-universal){reference-type="ref" reference="thm:quotient-universal"} identify optimizer-quotient classes as the canonical decision abstraction.
+2.  Proposition [\[prop:optimizer-coimage\]](#prop:optimizer-coimage){reference-type="ref" reference="prop:optimizer-coimage"} and Theorem [\[thm:quotient-universal\]](#thm:quotient-universal){reference-type="ref" reference="thm:quotient-universal"} identify optimizer-quotient classes as the canonical decision abstraction and relate them to the image of $\operatorname{Opt}$.
 
-3.  Theorem [\[thm:entropy-rank\]](#thm:entropy-rank){reference-type="ref" reference="thm:entropy-rank"} ties quotient entropy to this support size.
+3.  Theorem [\[thm:entropy-rank\]](#thm:entropy-rank){reference-type="ref" reference="thm:entropy-rank"} bounds quotient entropy in terms of this support size.
 
-4.  Theorem [\[thm:fisher-rank-srank\]](#thm:fisher-rank-srank){reference-type="ref" reference="thm:fisher-rank-srank"} shows Fisher-style support counting yields the same cardinality.
+4.  Theorem [\[thm:fisher-rank-srank\]](#thm:fisher-rank-srank){reference-type="ref" reference="thm:fisher-rank-srank"} shows Fisher-style support counting recovers exactly the same cardinality.
 
-5.  Theorem [\[thm:rate-distortion-bridge\]](#thm:rate-distortion-bridge){reference-type="ref" reference="thm:rate-distortion-bridge"} shows zero-distortion summary size is governed by the same class structure.
+5.  Theorem [\[thm:rate-distortion-bridge\]](#thm:rate-distortion-bridge){reference-type="ref" reference="thm:rate-distortion-bridge"} shows zero-distortion summary size is constrained by the same quotient class structure.
 
 6.  Theorem [\[thm:nontriviality-counting\]](#thm:nontriviality-counting){reference-type="ref" reference="thm:nontriviality-counting"} excludes degenerate singleton quotients when decision-relevant information is positive.
 
-Thus all six listed frameworks recover the same support-size core up to the proved identifications. ◻
+Thus the six listed objects are organized around the same support/quotient core, with exact recovery in some cases and structural bounds in others. ◻
 :::
 
-The point is not that these frameworks become identical in every technical sense. Rather, once the optimizer quotient is fixed, they converge on the same support-size invariant for decision relevance. The paper's backbone is therefore simple: shared definitions, the quotient universal property, and a family of bridge theorems centered on $\mathrm{srank}$.
-
-
-# Witness-Checking Duality {#sec:witness-duality}
-
-This section isolates the verification bottleneck behind exact sufficiency certification.
-
-## Verification Lower Bound
-
-::: theorem
-[]{#thm:witness-lower-bound-4b label="thm:witness-lower-bound-4b"} For Boolean decision problems with $n$ coordinates, any sound checker for the empty-set sufficiency core must inspect at least $2^{n-1}$ witness pairs in the worst case.
-:::
-
-::: proof
-*Proof.* Let $S=\{0,1\}^n$. Empty-set sufficiency is exactly the claim that $\operatorname{Opt}$ is constant on all states.
-
-Partition $S$ into $2^{n-1}$ disjoint witness slots $$\{(0,z),(1,z)\}\quad\text{for }z\in\{0,1\}^{n-1}.$$ Each slot can independently carry a disagreement witness (different optimizer values on its two states).
-
-Consider two instance families:
-
--   *YES instance*: $\operatorname{Opt}$ constant on all of $S$.
-
--   *NO$_z$ instance*: identical to YES except slot $z$ has a disagreement.
-
-If a checker inspects fewer than $2^{n-1}$ slots, at least one slot $z^\star$ is uninspected. Then the checker receives identical inspected outcomes on YES and NO$_{z^\star}$, so it cannot be sound on both. Therefore soundness in the worst case requires inspecting all slots, i.e., at least $2^{n-1}$ witness pairs. ◻
-:::
-
-## Information-Theoretic Interpretation
-
-The lower bound is an information barrier, not merely an algorithm-design artifact. To certify absence of witnesses, a checker must gather enough information to rule out all disagreement slots. In the Boolean empty-set core, that witness budget is exponential.
+The point is not that these frameworks become identical in every technical sense. Rather, once the optimizer quotient is fixed, they can all be compared against the same support/quotient core for decision relevance. The paper's backbone is therefore simple: shared definitions, the quotient universal property, and a family of bridge theorems centered on $\mathrm{srank}$.
 
 
 # Bayesian Optimality {#sec:bayesian-optimality}
@@ -428,27 +410,27 @@ Formal verification has made major progress in algebra, analysis, and basic comp
 
 # Conclusion
 
-This paper studies the convergence structure of decision-relevant information. Starting from shared definitions of sufficiency and relevance (including structural rank as relevant-support size), it identifies the optimizer quotient as the canonical decision-preserving abstraction and shows that multiple mathematical frameworks recover the same structural core.
+This paper studies convergence in decision-relevant information. Starting from shared definitions of sufficiency and relevance, it identifies the optimizer quotient as the canonical decision-preserving abstraction and shows that multiple mathematical frameworks can be related to the same structural core.
 
 ## What Converges {#what-converges .unnumbered}
 
-The common invariant is structural rank: the size of the relevant-coordinate support. Quotient entropy, Fisher-style support counting, lossless zero-distortion summaries, and transport positivity/zero-cost regimes recover that same support-size quantity once the optimizer quotient is fixed. The significance is not that these frameworks become identical, but that they agree on what counts as the dimension of decision relevance.
+The common invariant is structural rank: the size of the relevant-coordinate support. Fisher-style support counting recovers that quantity exactly; quotient entropy is bounded by it; lossless zero-distortion summaries are constrained by the same quotient structure; and transport positivity/zero-cost regimes follow the same quotient branching. The point is not that these frameworks become identical, but that they can be compared against the same decision-relevant core.
 
-## Counting and Verification {#counting-and-verification .unnumbered}
+## Counting Foundation {#counting-foundation .unnumbered}
 
-The counting gap and measure-before-probability results provide a clean finite foundation for the Bayesian thread. On the complexity side, witness-checking duality shows that exact empty-set sufficiency certification has an exponential verification budget in the Boolean core.
+The counting gap and measure-before-probability results provide the finite foundation for the Bayesian thread.
 
 ## Bayesian Consequence {#bayesian-consequence .unnumbered}
 
-The Bayesian argument is equally direct. Counting on finite sets yields probability after normalization; $\log x \le x - 1$ yields Gibbs' inequality; Gibbs' inequality yields cross-entropy minimization; and Bayes emerges as the unique optimizer under log loss. This places the Bayesian conclusions on the same foundational footing as the quotient and entropy results.
+The Bayesian argument is direct. Counting on finite sets yields probability after normalization; $\log x \le x - 1$ yields Gibbs' inequality; Gibbs' inequality yields cross-entropy minimization; and Bayes emerges as the unique optimizer under log loss. This places the Bayesian conclusions on the same footing as the quotient and entropy results.
 
 ## Contribution {#contribution .unnumbered}
 
-The contribution is to place quotient structure, structural-rank recovery, and Bayesian optimality in a single mathematical framework.
+The contribution is to place quotient structure, structural-rank comparisons, and Bayesian optimality in one framework.
 
 ## Outlook {#outlook .unnumbered}
 
-Natural next questions are refinement questions rather than boundary questions: which additional frameworks recover the same invariant, how much of the quotient story can be internalized categorically, and which convergence statements admit the cleanest mechanized forms in Lean.
+Natural next questions are refinement questions rather than boundary questions: which additional frameworks can be related to the same invariant and how much of the quotient story can be internalized categorically.
 
 
 # Lean 4 Proof Listings {#app:lean}
@@ -465,9 +447,7 @@ The Lean development records:
 
 -   finite probability and Bayesian optimality lemmas,
 
--   structural-rank support lemmas and related information-theoretic bridge statements,
-
--   witness-checking lower-bound lemmas for the Boolean empty-set core.
+-   structural-rank support lemmas and related information-theoretic bridge statements.
 
 ## Lean Handle ID Map {#sec:lean-handle-id-map}
 
@@ -487,9 +467,7 @@ This appendix lists the handle families most relevant to the results of the pape
 
 -   `RS1`, `RS2`, `RS3`, `RS4`, `RD1`, `RD2`, `RD3` for rate-distortion and lossless-summary statements;
 
--   `BC1`--`BC5`, `FN7`, `FN8`, `FN12`, `FN14` for the finite Bayesian chain;
-
--   `WD3`, `WD4`, `WD5` for witness-budget lower bounds.
+-   `BC1`--`BC5`, `FN7`, `FN8`, `FN12`, `FN14` for the finite Bayesian chain.
 
 These are the handles most relevant to the claims developed in the manuscript. They provide a focused map from the text to the corresponding mechanized support.
 
@@ -505,8 +483,6 @@ These are the handles most relevant to the claims developed in the manuscript. T
 
 -   `DecisionQuotient/Statistics/FisherInformation.lean` -- support-count style structural-rank lemmas
 
--   `DecisionQuotient/QueryComplexity.lean` -- witness-checking and query-lower-bound lemmas
-
 ## Scope
 
 For readability, this appendix provides a focused manual summary rather than repository-level omnibus tables. A paper-specific handle table should include only the statements proved or cited here, together with the Lean handles that support them.
@@ -520,6 +496,6 @@ For readability, this appendix provides a focused manual summary rather than rep
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 45827
-- Theorems: 1946
+- Lines: 66349
+- Theorems: 2940
 - `sorry` placeholders: 0

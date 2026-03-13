@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Classification Theory (JSAIT).
 
-- **Lines:** 13121
-- **Theorems:** 642
+- **Lines:** 13838
+- **Theorems:** 677
 - **`sorry` placeholders:** 0
 
 
@@ -41,6 +41,8 @@ lake build
 | `HandleAliases.lean` | HandleAliases |
 | `Paper1.lean` | Paper1 |
 | `BudgetSplit.lean` | BudgetSplit |
+| `ComputabilityQuantization.lean` | ComputabilityQuantization |
+| `EmpiricalAuditBridge.lean` | EmpiricalAuditBridge |
 | `Entropy.lean` | Entropy |
 | `EntropyGeneral.lean` | EntropyGeneral |
 | `FanoFinite.lean` | FanoFinite |
@@ -49,6 +51,10 @@ lake build
 | `FiniteRateDistortionBounds.lean` | FiniteRateDistortionBounds |
 | `FiniteRateDistortionConverse.lean` | FiniteRateDistortionConverse |
 | `FiniteSource.lean` | FiniteSource |
+| `HashDemoCertificate.lean` | HashDemoCertificate |
+| `ReviewerDemoCertificate.lean` | ReviewerDemoCertificate |
+| `SemanticGridInt8Scale3Certificate.lean` | SemanticGridInt8Scale3Certificate |
+| `SemanticGridTotalCollapseCertificate.lean` | SemanticGridTotalCollapseCertificate |
 | `GraphEntropy.lean` | GraphEntropy |
 | `GraphEntropyAsymptotic.lean` | GraphEntropyAsymptotic |
 | `GrowthCollisions.lean` | GrowthCollisions |
@@ -56,6 +62,7 @@ lake build
 | `ObserverTagModel.lean` | ObserverTagModel |
 | `PMFEntropy.lean` | PMFEntropy |
 | `ProbabilisticFinite.lean` | ProbabilisticFinite |
+| `QueryBitBridge.lean` | QueryBitBridge |
 | `RateDistortion.lean` | RateDistortion |
 | `ZeroErrorConditionalEntropy.lean` | ZeroErrorConditionalEntropy |
 | `PrintAxioms.lean` | PrintAxioms |

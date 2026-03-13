@@ -2,7 +2,7 @@
 
 We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
-Our theory provides \emph{comprehensive coverage} of tractable subcases, ranging from trivial edge cases to structural restrictions that enable polynomial-time algorithms. This ensures the artifact can serve as a practical decision procedure for real-world problems, regardless of whether they exhibit the complex interactions that drive hardness. The support appears at two proof levels. For single action, bounded state space, dominance, additive separability, and tree-structured dependencies, the artifact certifies explicit sufficiency procedures. For multiplicative separability, low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones. We keep that distinction explicit throughout. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
+Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
 \begingroup
 \centering
@@ -13,33 +13,23 @@ Our theory provides \emph{comprehensive coverage} of tractable subcases, ranging
 \toprule
 \textbf{Restriction} & \textbf{Why it helps} & \textbf{Complexity} \\
 \midrule
-Bounded actions & brute-force action comparison stays polynomial once $|A|$ is fixed & $O(|S|^2 \cdot k^2)$ \\
-Separable utility & optimizer is independent of the state coordinates & $O(1)$ \\
 Low tensor rank & factored evaluation avoids full state enumeration & $O(|A| \cdot R \cdot n)$ \\
-Tree structure & dynamic programming over the dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
+Tree structure & dynamic programming over dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
 Bounded treewidth & interaction checking reduces to low-width CSP & $O(n \cdot k^{w+1})$ \\
 Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$ \\
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Tractability map.} Each island works by collapsing the universal state-pair search to a smaller structured representation.
+\textbf{Tractability map.} Each nontrivial restriction above removes a structural hardness source. Additional simple cases include bounded actions ($O(|S|^2 \cdot k^2)$ when $|A|$ is fixed, separable utility ($O(1)$), and constant or dominated optimal sets ($O(1)$). Formal definitions for all cases are retained in the subsections below.
 \endgroup
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
-The following tractable subcases are all mechanized in the artifact, but at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit decision procedures for \textsc{Sufficiency-Check}. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones.
+The following structurally interesting tractable subcases are all mechanized in artifact. The artifact certifies paper-specific reductions and complexity transfers connecting each to standard polynomial-time algorithmic backbones. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
 \begin{enumerate}
-\item \textbf{Single action:} $|A| = 1$. Any coordinate set is sufficient. Complexity: $O(1)$. \leanmeta{\LH{DQ86}.}
-\item \textbf{Bounded state space:} $|S| \leq k$ for constant $k$. Brute-force pair enumeration. Complexity: $O(k^2)$. \leanmeta{\LH{DQ87}.}
-\item \textbf{Strict global dominance:} One action strictly dominates all others at every state. Complexity: $O(1)$. \leanmeta{\LH{DQ88}.}
-\item \textbf{Constant optimal set:} The optimal action set is the same at every state. Complexity: $O(1)$. \leanmeta{\LH{DQ88}.}
-\item \textbf{Multiplicative separability:} $U(a,s) = f(a) \cdot g(s)$ with constant-sign $g$. Complexity: $O(1)$. \leanmeta{\LH{DQ89}.}
-\item \textbf{Bounded actions (explicit-state encoding):} The input contains the full utility table over $A \times S$ with $|A| \leq k$ for constant $k$. Complexity: $O(|S|^2 \cdot k^2)$. \leanmeta{\LH{DQ51}.}
-\item \textbf{Separable utility (rank 1):} $U(a, s) = f(a) + g(s)$. Complexity: $O(1)$ (trivially sufficient). \leanmeta{\LH{DQ57}.}
 \item \textbf{Low tensor rank:} The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$. \leanmeta{\LH{DQ77}.}
-\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1, \ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class. \leanmeta{\LH{DQ63}.}
-\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\leq w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with the bound $O(n \cdot k^{w+1})$ inherited from the standard CSP algorithm. \leanmeta{\LH{DQ81}.}
-\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with the resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$. \leanmeta{\LH{DQ85}.}
-\item \textbf{Fixed-parameter tractability:} SUFFICIENCY-CHECK is FPT in $(|A|, |I|)$ with kernel $2^{|I|}$. When both parameters are bounded, the problem admits a polynomial-time algorithm. \leanmeta{\LH{DQ90}.}
+\item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class. \leanmeta{\LH{DQ63}.}
+\item \textbf{Bounded treewidth:} The interaction graph has treewidth $\le w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with bound $O(n \cdot k^{w+1})$ inherited from standard CSP algorithm. \leanmeta{\LH{DQ81}.}
+\item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$. \leanmeta{\LH{DQ85}.}
 \end{enumerate}
 \end{theorem}
 

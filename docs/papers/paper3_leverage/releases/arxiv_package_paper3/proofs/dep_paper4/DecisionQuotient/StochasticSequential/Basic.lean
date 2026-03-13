@@ -10,17 +10,17 @@
 -/
 
 import DecisionQuotient.Basic
+import DecisionQuotient.DimensionalComplexity
 import DecisionQuotient.Sufficiency
 import DecisionQuotient.Reduction
 import DecisionQuotient.IntegrityCompetence
-import DecisionQuotient.Physics.IntegrityEquilibrium
 import Mathlib.Data.Finset.Card
 import Mathlib.Tactic
 
 namespace DecisionQuotient.StochasticSequential
 
 open DecisionQuotient
-open DecisionQuotient.Physics.DimensionalComplexity
+open DecisionQuotient.DimensionalComplexity
 open Classical
 
 /-! ## Probability Distributions -/
@@ -121,11 +121,249 @@ def StochasticAnchorSufficiencyCheck
     (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Prop :=
   StochasticAnchorSufficient P I
 
+/-- Decision form of the stochastic minimum-sufficiency query: is there some
+    coordinate set of size at most `k` that is stochastically sufficient? -/
+def StochasticMinimumSufficiencyCheck
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (k : ℕ) : Prop :=
+  ∃ I : Finset (Fin n), I.card ≤ k ∧ StochasticSufficient P I
+
+/-- Stochastic preservation: the conditional fiber optimizer induced by `I`
+agrees with the original full-information optimizer at every state. This is the
+preservation-style stochastic analogue of static sufficiency. -/
+def StochasticPreservationSufficient
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Prop :=
+  ∀ s : S, fiberOpt P I s = P.toDecisionProblem.Opt s
+
+/-- Decision form of the preservation-style stochastic sufficiency query. -/
+def StochasticPreservationCheck
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : Prop :=
+  StochasticPreservationSufficient P I
+
+/-- Derived static decision problem obtained by fixing a candidate stochastic
+    information set `I` and taking conditional-fiber expected utility as the
+    utility function. This is the natural object whose optimizer is `fiberOpt`. -/
+noncomputable def fiberDecisionProblem
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) : DecisionProblem A S :=
+  { utility := fun a s => fiberExpectedUtility P I s a }
+
+@[simp] theorem fiberDecisionProblem_Opt_eq_fiberOpt
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) (s : S) :
+    (fiberDecisionProblem P I).Opt s = fiberOpt P I s := by
+  rfl
+
+/-- The derived fiber decision problem is always sufficient on the very same
+    coordinate set used to define its fibers. This shows that stochastic
+    relevance is naturally `I`-indexed, not globally attached to a single map. -/
+theorem fiberDecisionProblem_sufficient
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
+    (fiberDecisionProblem P I).isSufficient I := by
+  intro s s' hagree
+  have hFiberEq : ∀ t : S, agreeOn t s I ↔ agreeOn t s' I := by
+    intro t
+    constructor
+    · intro ht j hj
+      calc
+        CoordinateSpace.proj t j = CoordinateSpace.proj s j := ht j hj
+        _ = CoordinateSpace.proj s' j := hagree j hj
+    · intro ht j hj
+      calc
+        CoordinateSpace.proj t j = CoordinateSpace.proj s' j := ht j hj
+        _ = CoordinateSpace.proj s j := (hagree j hj).symm
+  have hEU : ∀ a : A, fiberExpectedUtility P I s a = fiberExpectedUtility P I s' a := by
+    intro a
+    unfold fiberExpectedUtility
+    refine Finset.sum_congr rfl ?_
+    intro t _
+    by_cases hts : agreeOn t s I
+    · have hts' : agreeOn t s' I := (hFiberEq t).mp hts
+      simp [hts, hts']
+    · have hts' : ¬ agreeOn t s' I := by
+        exact fun hs' => hts ((hFiberEq t).mpr hs')
+      simp [hts, hts']
+  ext a
+  constructor
+  · intro ha a'
+    change fiberExpectedUtility P I s' a' ≤ fiberExpectedUtility P I s' a
+    rw [← hEU a', ← hEU a]
+    exact ha a'
+  · intro ha a'
+    change fiberExpectedUtility P I s a' ≤ fiberExpectedUtility P I s a
+    rw [hEU a', hEU a]
+    exact ha a'
+
+/-- Stochastic preservation implies static sufficiency for the underlying
+decision problem. If the coarse conditional optimizer induced by `I` agrees with
+the fully conditioned optimizer at every state, then observed-coordinate
+agreement already forces equality of the original optimal-action sets. -/
+theorem stochastic_preservation_implies_static_sufficiency
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpres : StochasticPreservationSufficient P I) :
+    P.toDecisionProblem.isSufficient I := by
+  intro s s' hagree
+  calc
+    P.toDecisionProblem.Opt s = (fiberDecisionProblem P I).Opt s := by
+      rw [fiberDecisionProblem_Opt_eq_fiberOpt]
+      symm
+      exact hpres s
+    _ = (fiberDecisionProblem P I).Opt s' :=
+      (fiberDecisionProblem_sufficient P I) s s' hagree
+    _ = P.toDecisionProblem.Opt s' := by
+      rw [fiberDecisionProblem_Opt_eq_fiberOpt]
+      exact hpres s'
+
+/-- Under full support and a nonempty action set, static sufficiency lifts to
+stochastic preservation. Pointwise optimizer equality on each `I`-fiber implies
+that the conditional fiber optimizer agrees with the fully conditioned one. -/
+theorem static_sufficiency_implies_stochastic_preservation_of_full_support
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpos : ∀ s : S, 0 < P.distribution s)
+    (hstat : P.toDecisionProblem.isSufficient I) :
+    StochasticPreservationSufficient P I := by
+  intro s
+  ext a
+  constructor
+  · intro ha
+    classical
+    by_contra hnot
+    let vals : Finset ℝ := Finset.univ.image (fun x : A => P.utility x s)
+    have hvals_nonempty : vals.Nonempty := by
+      rcases ‹Nonempty A› with ⟨a0⟩
+      refine ⟨P.utility a0 s, ?_⟩
+      exact Finset.mem_image.mpr ⟨a0, by simp, rfl⟩
+    let cVal : ℝ := Finset.max' vals hvals_nonempty
+    have hcVal_mem : cVal ∈ vals := Finset.max'_mem vals hvals_nonempty
+    rcases Finset.mem_image.mp hcVal_mem with ⟨c, -, hcVal_eq⟩
+    have hc_opt_s : c ∈ P.toDecisionProblem.Opt s := by
+      intro a'
+      have ha'mem : P.utility a' s ∈ vals := by
+        exact Finset.mem_image.mpr ⟨a', by simp, rfl⟩
+      have hle : P.utility a' s ≤ cVal := Finset.le_max' vals (P.utility a' s) ha'mem
+      simpa [cVal, hcVal_eq] using hle
+    have hstrict_s : P.utility a s < P.utility c s := by
+      have hnot_le : ¬ P.utility c s ≤ P.utility a s := by
+        intro hca
+        apply hnot
+        intro b
+        calc
+          P.utility b s ≤ P.utility c s := hc_opt_s b
+          _ ≤ P.utility a s := hca
+      exact lt_of_not_ge hnot_le
+    have hfiber : ∀ t : S, agreeOn t s I → P.toDecisionProblem.Opt t = P.toDecisionProblem.Opt s := by
+      intro t ht
+      exact hstat t s ht
+    have hle_term :
+        ∀ t : S,
+          (if agreeOn t s I then P.distribution t * P.utility a t else 0)
+            ≤ (if agreeOn t s I then P.distribution t * P.utility c t else 0) := by
+      intro t
+      by_cases hts : agreeOn t s I
+      · have hc_opt_t : c ∈ P.toDecisionProblem.Opt t := by
+          rw [hfiber t hts]
+          exact hc_opt_s
+        have hopt := hc_opt_t a
+        have hmul : P.distribution t * P.utility a t ≤ P.distribution t * P.utility c t := by
+          exact mul_le_mul_of_nonneg_left hopt (le_of_lt (hpos t))
+        simp [hts, hmul]
+      · simp [hts]
+    have hstrict_term_s :
+        (if agreeOn s s I then P.distribution s * P.utility a s else 0)
+          < (if agreeOn s s I then P.distribution s * P.utility c s else 0) := by
+      have hss : agreeOn s s I := by
+        intro i hi
+        rfl
+      have hmul : P.distribution s * P.utility a s < P.distribution s * P.utility c s := by
+        exact mul_lt_mul_of_pos_left hstrict_s (hpos s)
+      simp [hss, hmul]
+    have hsum_lt : fiberExpectedUtility P I s a < fiberExpectedUtility P I s c := by
+      unfold fiberExpectedUtility
+      refine Finset.sum_lt_sum ?_ ?_
+      · intro t _
+        exact hle_term t
+      · refine ⟨s, by simp, ?_⟩
+        exact hstrict_term_s
+    have hca : fiberExpectedUtility P I s c ≤ fiberExpectedUtility P I s a := ha c
+    exact (not_lt_of_ge hca) hsum_lt
+  · intro ha
+    intro a'
+    have hfiber : ∀ t : S, agreeOn t s I → P.toDecisionProblem.Opt t = P.toDecisionProblem.Opt s := by
+      intro t ht
+      exact hstat t s ht
+    have hle_term :
+        ∀ t : S,
+          (if agreeOn t s I then P.distribution t * P.utility a' t else 0)
+            ≤ (if agreeOn t s I then P.distribution t * P.utility a t else 0) := by
+      intro t
+      by_cases hts : agreeOn t s I
+      · have hat : a ∈ P.toDecisionProblem.Opt t := by
+          rw [hfiber t hts]
+          exact ha
+        have hopt := hat a'
+        have hmul : P.distribution t * P.utility a' t ≤ P.distribution t * P.utility a t := by
+          exact mul_le_mul_of_nonneg_left hopt (le_of_lt (hpos t))
+        simp [hts, hmul]
+      · simp [hts]
+    unfold fiberExpectedUtility
+    exact Finset.sum_le_sum (by intro t _; exact hle_term t)
+
+/-- Full-support equivalence between static sufficiency and stochastic
+preservation. -/
+theorem static_sufficiency_iff_stochastic_preservation_of_full_support
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpos : ∀ s : S, 0 < P.distribution s) :
+    P.toDecisionProblem.isSufficient I ↔ StochasticPreservationSufficient P I := by
+  constructor
+  · intro hstat
+    exact static_sufficiency_implies_stochastic_preservation_of_full_support P I hpos hstat
+  · intro hpres
+    exact stochastic_preservation_implies_static_sufficiency P I hpres
+
+/-- Relevance in the stochastic regime naturally lives on the derived
+    `fiberDecisionProblem P I`, so it is indexed by the candidate information
+    set `I`. -/
+def StochasticFiberRelevant
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) (i : Fin n) : Prop :=
+  (fiberDecisionProblem P I).isRelevant i
+
 theorem stochastic_anchor_check_iff
     {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
     [CoordinateSpace S n]
     (P : StochasticDecisionProblem A S) (I : Finset (Fin n)) :
     StochasticAnchorSufficiencyCheck P I ↔ StochasticAnchorSufficient P I := Iff.rfl
+
+theorem stochasticMinimumSufficiencyCheck_zero_iff
+    {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : StochasticDecisionProblem A S) :
+    StochasticMinimumSufficiencyCheck P 0 ↔ StochasticSufficient P (∅ : Finset (Fin n)) := by
+  constructor
+  · intro h
+    rcases h with ⟨I, hCard, hSuff⟩
+    have hEq : I = ∅ := by
+      apply Finset.card_eq_zero.mp
+      omega
+    simpa [hEq] using hSuff
+  · intro h
+    exact ⟨∅, by simp, h⟩
 
 /-! ## Boolean Formulas (reused from paper 4) -/
 
@@ -645,11 +883,63 @@ def SequentialAnchorSufficiencyCheck
     (P : SequentialDecisionProblem A S O) (I : Finset (Fin n)) : Prop :=
   SequentialAnchorSufficient P I
 
+/-- Decision form of the sequential minimum-sufficiency query: is there some
+    coordinate set of size at most `k` that is sequentially sufficient? -/
+def SequentialMinimumSufficiencyCheck
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (k : ℕ) : Prop :=
+  ∃ I : Finset (Fin n), I.card ≤ k ∧ SequentialSufficient P I
+
+/-- A sequentially sufficient set is minimal if no proper subset remains
+    sequentially sufficient. -/
+def SequentialMinimalSufficient
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (I : Finset (Fin n)) : Prop :=
+  SequentialSufficient P I ∧ ∀ J : Finset (Fin n), J ⊂ I → ¬ SequentialSufficient P J
+
+/-- Sequential relevance is relevance of the underlying one-step decision map. -/
+def SequentialRelevant
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (i : Fin n) : Prop :=
+  P.toDecisionProblem.isRelevant i
+
+theorem sequentialSufficient_iff_staticSufficient
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (I : Finset (Fin n)) :
+    SequentialSufficient P I ↔ P.toDecisionProblem.isSufficient I := by
+  rfl
+
+theorem sequentialMinimalSufficient_iff_staticMinimal
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) (I : Finset (Fin n)) :
+    SequentialMinimalSufficient P I ↔ P.toDecisionProblem.isMinimalSufficient I := by
+  rfl
+
 theorem sequential_anchor_check_iff
     {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
     [CoordinateSpace S n]
     (P : SequentialDecisionProblem A S O) (I : Finset (Fin n)) :
     SequentialAnchorSufficiencyCheck P I ↔ SequentialAnchorSufficient P I := Iff.rfl
+
+theorem sequentialMinimumSufficiencyCheck_zero_iff
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [CoordinateSpace S n]
+    (P : SequentialDecisionProblem A S O) :
+    SequentialMinimumSufficiencyCheck P 0 ↔ SequentialSufficient P (∅ : Finset (Fin n)) := by
+  constructor
+  · intro h
+    rcases h with ⟨I, hCard, hSuff⟩
+    have hEq : I = ∅ := by
+      apply Finset.card_eq_zero.mp
+      omega
+    simpa [hEq] using hSuff
+  · intro h
+    exact ⟨∅, by simp, h⟩
 
 theorem sequential_anchor_sufficient_of_sequential_sufficient
     {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
@@ -680,6 +970,27 @@ theorem sequentialAnchorSufficient_empty_iff {A S O : Type*} {n : ℕ}
     refine ⟨Classical.arbitrary S, ?_⟩
     intro s hs
     exact hSuff s (Classical.arbitrary S) hs
+
+theorem sequentialMinimalSufficient_iff_relevant
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [ProductSpace S n]
+    (P : SequentialDecisionProblem A S O) (I : Finset (Fin n))
+    (hmin : SequentialMinimalSufficient P I) :
+    ∀ i : Fin n, i ∈ I ↔ SequentialRelevant P i := by
+  have hmin' : P.toDecisionProblem.isMinimalSufficient I := hmin
+  intro i
+  simpa [SequentialRelevant] using P.toDecisionProblem.minimalSufficient_iff_relevant I hmin' i
+
+theorem sequentialRelevantSet_is_minimal
+    {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+    [ProductSpace S n]
+    (P : SequentialDecisionProblem A S O) (I J : Finset (Fin n))
+    (hminI : SequentialMinimalSufficient P I)
+    (hminJ : SequentialMinimalSufficient P J) :
+    I = J := by
+  have hminI' : P.toDecisionProblem.isMinimalSufficient I := hminI
+  have hminJ' : P.toDecisionProblem.isMinimalSufficient J := hminJ
+  exact P.toDecisionProblem.relevantSet_is_minimal I hminI' J hminJ'
 
 /-! ## TQBF (for PSPACE-completeness) -/
 

@@ -4,7 +4,7 @@
   Dichotomy.lean - Complexity dichotomy for stochastic/sequential
 
   The dichotomy: bounded vs unbounded effective dimension.
-  Maps to the 6 tractable subcases machinery from IntegrityEquilibrium.
+  Maps to the 6 tractable subcases machinery from Paper 4.
 
   The main theorem is `complexity_dichotomy`: isTractable and the base complexity
   class partition all problems. Both directions use the hypothesis.
@@ -16,7 +16,7 @@ import Mathlib.Data.Real.Basic
 
 namespace DecisionQuotient.StochasticSequential
 
-open DecisionQuotient.Physics.DimensionalComplexity
+open DecisionQuotient.DimensionalComplexity
 
 /-! ## Dichotomy via Effective Dimension
 

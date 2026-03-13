@@ -46,7 +46,7 @@ where $\Opt_P = \arg\max_{a \in A} \mathbb{E}_{s \sim P}[U(a,s)]$.
 \textbf{STOCHASTIC-ANCHOR-SUFFICIENCY-CHECK}: Given stochastic decision problem $\mathcal{D}_S$ and coordinate set $I$, does there exist an anchor fiber whose conditional-optimal action is singleton and fiber-stable under agreement on $I$?
 \end{decision}
 
-\leanmeta{\LH{DC16},\LH{DC17},\LH{DC18}.}
+\leanmeta{\LHrng{DC}{16}{18}.}
 
 \subsection{Complexity: \PP-Completeness}
 
@@ -77,10 +77,10 @@ For each formula $\varphi$ on $n \ge 1$ variables:
 \end{aligned}
 \]
 \claimstamp{P\ref{prop:stochastic-anchor-strict-reduction}}{PP}
-\leanmeta{\LH{DC24},\LH{DC25},\LH{DC26}.}
+\leanmeta{\LHrng{DC}{24}{26}.}
 \end{claim}
 
-\leanmeta{\LH{DC24},\LH{DC25},\LH{DC26}.}
+\leanmeta{\LHrng{DC}{24}{26}.}
 
 \begin{claim}{Direct MAJSAT reduction to stochastic anchor check}{prop:stochastic-anchor-direct-reduction}
 For each formula $\varphi$ on $n \ge 1$ variables,
@@ -90,41 +90,41 @@ For each formula $\varphi$ on $n \ge 1$ variables,
 \mathrm{STOCHASTIC\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceMAJSATPureAnchor}(\varphi),\emptyset).
 \]
 \claimstamp{P\ref{prop:stochastic-anchor-direct-reduction}}{PP}
-\leanmeta{\LH{DC40},\LH{DC41},\LH{DC42}.}
+\leanmeta{\LHrng{DC}{40}{42}.}
 \end{claim}
 
-\leanmeta{\LH{DC40},\LH{DC41},\LH{DC42}.}
+\leanmeta{\LHrng{DC}{40}{42}.}
 
 \begin{claim}{Stochastic minimum hardness package}{prop:stochastic-minimum-hardness-package}
 For each arity $n \ge 1$, there is a polynomially size-bounded reduction from
 MAJSAT to the $k=0$ slice of the stochastic minimum-sufficiency query.
 \claimstamp{P\ref{prop:stochastic-minimum-hardness-package}}{PP}
-\leanmeta{\LH{DC45},\LH{DC47}.}
+\leanmeta{\LH{DC45}, \LH{DC47}.}
 \end{claim}
 
-\leanmeta{\LH{DC45},\LH{DC47}.}
+\leanmeta{\LH{DC45}, \LH{DC47}.}
 
 \begin{claim}{Exact finite deciders for stochastic queries}{prop:stochastic-finite-deciders}
 The development internalizes exact boolean deciders for stochastic sufficiency,
 stochastic anchor sufficiency, and stochastic minimum sufficiency.
 \claimstamp{P\ref{prop:stochastic-finite-deciders}}{finite exact deciders}
-\leanmeta{\LH{DC51},\LH{DC52},\LH{DC53}.}
+\leanmeta{\LHrng{DC}{51}{53}.}
 \end{claim}
 
-\leanmeta{\LH{DC51},\LH{DC52},\LH{DC53}.}
+\leanmeta{\LHrng{DC}{51}{53}.}
 
 \begin{claim}{Explicit counted search bounds for stochastic queries}{prop:stochastic-counted-search}
 The development contains counted exhaustive-search procedures for stochastic
 sufficiency, stochastic anchor sufficiency, and stochastic minimum sufficiency,
 with certified bounds $O(|S|)$, $O(|S||A|)$, and $O(2^n)$ respectively.
 \claimstamp{P\ref{prop:stochastic-counted-search}}{finite explicit search}
-\leanmeta{\LH{DC58},\LH{DC59},\LH{DC62},\LH{DC63},\LH{DC64},\LH{DC65}.}
+\leanmeta{\LHrng{DC}{58}{59}, \LHrng{DC}{62}{65}.}
 \end{claim}
 
-\leanmeta{\LH{DC58},\LH{DC59},\LH{DC62},\LH{DC63},\LH{DC64},\LH{DC65}.}
+\leanmeta{\LHrng{DC}{58}{59}, \LHrng{DC}{62}{65}.}
 
 Observer-collapse closure for the stochastic anchor query is also mechanized: singleton effective-state structure yields global observational equivalence and, with seeded support, yields stochastic sufficiency and anchor-check truth under the declared hypotheses.
-\leanmeta{\LH{PA1},\LH{PA2},\LH{PA3},\LH{PA4},\LH{PA5},\LH{PA8},\LH{PA9}.}
+\leanmeta{\LHrng{PA}{1}{5}, \LHrng{PA}{8}{9}.}
 
 \paragraph{Relevance boundary.}
 For each fixed candidate information set $I$, the stochastic query induces a
@@ -156,8 +156,7 @@ Then $\emptyset$ is stochastically sufficient iff the optimal action is determin
 This is exactly MAJSAT, which is \PP-complete.
 \end{enumerate}
 
-\leanmeta{\LH{CC58},
-\LH{CC55}}
+\leanmeta{\LH{CC55}, \LH{CC58}}
 
 \begin{proof}
 For membership: We reduce to a \PP predicate. For each $a \in A$, compute $\mathbb{E}_P[U(a,s)]$ and compare. The comparison involves summing over $s \in S$ weighted by $P(s)$, which is polynomial in $|S|$ and the representation of $P$. The decision is whether the argmax is unique or whether knowing $s_I$ changes it; this is a majority-vote comparison, hence in \PP.
@@ -190,7 +189,7 @@ Define expected action-potential
 \]
 \end{definition}
 
-\leanmeta{\LH{DC30},\LH{DC32}.}
+\leanmeta{\LH{DC30}, \LH{DC32}.}
 
 \begin{claim}{Expected-Utility/Potential Duality}{prop:stochastic-potential-duality}
 Under the grounding equation, for every action $a$:
@@ -204,10 +203,10 @@ and for all $a,a'$:
 \mathbb{E}[\Phi\mid a']\le \mathbb{E}[\Phi\mid a].
 \]
 \claimstamp{P\ref{prop:stochastic-potential-duality}}{PP}
-\leanmeta{\LH{DC31},\LH{DC33},\LH{DC34}.}
+\leanmeta{\LH{DC31}, \LHrng{DC}{33}{34}.}
 \end{claim}
 
-\leanmeta{\LH{DC31},\LH{DC33},\LH{DC34}.}
+\leanmeta{\LH{DC31}, \LHrng{DC}{33}{34}.}
 
 \begin{claim}{Landauer Floor and State-Cardinality Specialization}{prop:stochastic-landauer-floor}
 For $T\ge 0$, the Landauer floor is nonnegative and monotone in erased bits:
@@ -220,10 +219,10 @@ At the room-temperature specialization used here:
 \mathrm{thermodynamicCost}(\mathcal{D}_S)=\mathrm{landauerConstant}\cdot |S|.
 \]
 \claimstamp{P\ref{prop:stochastic-landauer-floor}}{AR,H=cost-growth}
-\leanmeta{\LH{DC35},\LH{DC36},\LH{DC37}.}
+\leanmeta{\LHrng{DC}{35}{37}.}
 \end{claim}
 
-\leanmeta{\LH{DC35},\LH{DC36},\LH{DC37}.}
+\leanmeta{\LHrng{DC}{35}{37}.}
 
 \subsection{Tractable Subcases}
 

@@ -1,36 +1,33 @@
-\subsection{Query Families and Distinguishing Sets}
+\subsection{The Query Currency}
 
-The preceding sections quantify how many auxiliary bits resolve representation collisions. Residual ambiguity can be paid for in more than one currency. This section studies the query currency: instead of transmitting side information, the decoder interrogates primitive attributes until the class is determined. The same fiber geometry that governs bit cost also governs query cost. They are two ways of paying for the same ambiguity.
+The fiber geometry that governs fixed-length and adaptive coding costs extends naturally to the query side. Once the collision structure is understood, the canonical form of complete derivability-aware query families follows directly. This section establishes that structural result: every such family reduces to an orthogonal semantically minimal core, and the set of such cores forms a matroid.
+
+Bits are one way to pay the identity debt left by a non-injective representation. Another is to interrogate primitive observables until the class is determined. This section studies that query currency. The same residual ambiguity that forces auxiliary bits can also be paid for through interactive disambiguation.
 
 \begin{definition}[Query family]
-Let $\mathcal{Q}$ be the set of all primitive queries available to an observer. For a classification system with attribute set $\mathcal{I}$, we have $\mathcal{Q} = \{q_I : I \in \mathcal{I}\}$ where $q_I(v) = 1$ iff $v$ satisfies attribute $I$.
+Let $\mathcal Q$ be the family of primitive queries available to an observer. For a classification system with attribute set $\mathcal I$, we write $\mathcal Q = \{q_I : I \in \mathcal I\}$ where $q_I(v)=1$ iff $v$ satisfies attribute $I$.
 \end{definition}
-\leanmeta{\LH{ACS1}}
 
-\noindent In this section, ``queries'' means primitive attribute predicates from $\Phi=\mathcal Q$.
-
-\begin{definition}[Distinguishing set]
-A subset $S \subseteq \mathcal{Q}$ is \emph{distinguishing} if, for all values $v, w$ with $\mathrm{class}(v) \neq \mathrm{class}(w)$, there exists $q \in S$ such that $q(v) \neq q(w)$.
+\begin{definition}[Distinguishing family]
+A subset $S \subseteq \mathcal Q$ is \emph{distinguishing} if, for all values $v,w$ with $\mathrm{class}(v) \ne \mathrm{class}(w)$, there exists $q \in S$ such that $q(v) \ne q(w)$.
 \end{definition}
 
 \begin{definition}[Minimum distinguishing number]\label{def:distinguishing-dimension}
-The \emph{minimum distinguishing number} of a classification system is
+The \emph{minimum distinguishing number} is
 \[
 d := \min\{|S| : S \subseteq \mathcal Q \text{ is distinguishing}\}.
 \]
-Equivalently, $d$ is the smallest number of primitive queries that suffices to separate all classes with zero error.
+Equivalently, $d$ is the smallest number of primitive queries that suffices for zero-error separation.
 \end{definition}
 
 \begin{remark}[Inclusion-minimal versus minimum-cardinality]
-These notions differ: an inclusion-minimal distinguishing set may still be larger than a minimum-cardinality one. The lower bound below depends only on the operational quantity $d$.
+These notions differ: an inclusion-minimal distinguishing family may be larger than a minimum-cardinality one. The operational lower bound below depends only on the quantity $d$.
 \end{remark}
 
-In the running example from Section~\ref{sec:zero-error}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$.
-
-\subsection{Implications for Witness Cost}
+In the running example from Section~\ref{sec:bits}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$.
 
 \begin{theorem}[Attribute-only lower bound]\label{thm:interface-lower-bound}
-For attribute-only observers, class identity checking requires
+For attribute-only observers, zero-error class identity checking requires
 \[
 W(\text{class-identity}) = \Omega(d)
 \]
@@ -39,55 +36,118 @@ in the worst case, where $d$ is the minimum distinguishing number.
 \leanmeta{\LH{ACS1}}
 
 \begin{proof}
-Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix any execution path and let $Q \subseteq \mathcal{I}$ be the set of queried attributes on that path, so $|Q|<d$. By definition of $d$, no set of size $<d$ is distinguishing; hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$.
-
-An adversary can answer the procedure's queries consistently with both $v$ and $w$ along this path. Therefore the resulting transcript (and output) is identical on $v$ and $w$, contradicting zero-error class identification. So some execution path must use at least $d$ queries, giving worst-case cost $\Omega(d)$.
+Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix one execution path and let $Q \subseteq \mathcal I$ be the set of queried attributes on that path, so $|Q|<d$. By definition of $d$, no set of size less than $d$ is distinguishing. Hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$. An adversary can answer the procedure's queries consistently with both $v$ and $w$, so the transcript and output coincide on two different classes, contradicting zero-error identification.
 \end{proof}
 
 \begin{corollary}[Lower bound on attribute-only witness cost]\label{cor:attribute-only-witness-lb}
-For any attribute-only observer, $W(\text{class-identity}) \ge d$ where $d$ is the minimum distinguishing number.
+For any attribute-only observer, $W(\text{class-identity}) \ge d$.
 \end{corollary}
 \leanmeta{\LH{ACS1}}
 
-In the running example, this yields $W \ge 3$ for any attribute-only zero-error scheme, even though the ambiguity converse will later show that one explicit tag bit already suffices to resolve the only collision block.
+This is the operational query law in full generality. It says how much interrogation is needed when the representation leaves ambiguity unresolved and no explicit identity bits are transmitted.
 
-This is the complementary resource law. The ambiguity converse says how many bits are needed to eliminate collision multiplicity; the query lower bound says how much additional structure must still be traversed when those bits are absent. Read through the second arc, the bit law measures the residual description cost of restoring sufficiency, while the query law measures the minimal observable augmentation needed to restore it operationally. When side information is cheap but interrogation is costly, the fiber-size bound governs; when transmission is expensive but queries are available, the distinguishing-number bound governs.
+\subsection{Counting Bridge to Bit Currency}
 
-\subsection{Structured Query Families and Matroid Behavior}
+There is also a direct quantitative bridge back to the compression side. A family of $d$ binary queries induces at most $2^d$ distinct answer transcripts on any fixed collision fiber. Therefore no binary query family can distinguish a fiber of size $m$ unless $m \le 2^d$. In particular, if a worst fiber has size $A_{\pi}$, then any binary distinguishing family satisfies
+\[
+\left\lceil \log_2 A_{\pi} \right\rceil \le d.
+\]
+This is the query-side analogue of the fixed-length converse: binary interrogation cannot beat the same counting barrier that governs auxiliary bits.
 
-The general attribute-query model above does not force inclusion-minimal distinguishing sets to be equicardinal. A finite explicit counterexample is available even for four classes and four primitive binary queries (\LH{GPH31}). A stronger structural theorem becomes valid only after one restricts the query family. In that restricted setting, the question becomes: when primitive observables are treated as irreducible helper-view coordinates, what is the structure of the minimal coordinate families that restore exact recoverability?
-
-\begin{definition}[Structured axis model]
-A \emph{structured axis model} is a query family presented together with an explicit derivability relation between primitive observables, so that one query may semantically subsume another. A query family is \emph{orthogonal} if no primitive observable is derivable from a distinct primitive observable in the family.
-\end{definition}
-
-\begin{remark}[Why this restriction is coherent]
-If the observable family contains redundant or semantically derivable coordinates, then inclusion-minimality depends on representational accidents. The structured axis model removes that artifact by quotienting out derivable observables and restricting attention to orthogonal primitive axes.
-\end{remark}
-
-\begin{theorem}[Restricted matroid theorem for structured axes]\label{thm:matroid-bases}
-In the structured axis model, semantically minimal complete axis families form the bases of a matroid. Consequently, all such families have equal cardinality.
-\end{theorem}
-\leanmeta{\LH{L1}, \LH{L5}}
+\begin{proposition}[Binary query counting bound]\label{prop:binary-query-counting-bound}
+Let $S$ be a binary query family of size $d$ that distinguishes a finite set $T$ of classes. Then
+\[
+|T| \le 2^d.
+\]
+Equivalently,
+\[
+\left\lceil \log_2 |T| \right\rceil \le d.
+\]
+\end{proposition}
+\leanmeta{\LHrng{GPH}{54}{55}}
 
 \begin{proof}
-The formal theorem is proved for the axis-based representation in which semantic minimality implies orthogonality, orthogonality implies exchange, and standard matroid theory then gives equicardinality of maximal independent sets. The key point is that the theorem is about structured primitive axes modulo derivability, not about arbitrary subsets of binary class-indicator queries.
+Each class in $T$ produces one binary transcript in $\{0,1\}^d$. Distinguishability means that the transcript map is injective on $T$. There are only $2^d$ binary transcripts, so injectivity forces $|T| \le 2^d$. The ceiling-log form is the exact converse of this counting bound.
 \end{proof}
 
-\begin{remark}[Relation to the general query invariant]
-The restricted matroid theorem strengthens the general lower-bound story when the primitive queries come from a derivability-aware axis presentation. In the unrestricted attribute-query model, the invariant used in the paper is the minimum distinguishing number $d$; in the structured axis model, the same quantity is certified by matroid basis cardinality.
+\begin{corollary}[Worst-fiber query lower bound]\label{cor:worst-fiber-query-lower-bound}
+If a binary query family distinguishes every class inside a worst collision fiber, then
+\[
+\left\lceil \log_2 A_{\pi} \right\rceil \le d.
+\]
+\end{corollary}
+\leanmeta{\LHrng{GPH}{56}{57}}
+
+\begin{proof}
+Apply Proposition~\ref{prop:binary-query-counting-bound} to a fiber attaining the maximal size $A_{\pi}$. The induced bound is exactly the stated ceiling-log inequality.
+\end{proof}
+
+\subsection{Canonical Reduction to the Orthogonal Core}
+
+The right structural invariant is not the size of an arbitrary raw query family, because raw families may contain semantically derivable redundancy. The source Lean formalization proves a stronger and cleaner fact: every semantically complete derivability-aware query family reduces to an orthogonal semantically minimal core. Non-orthogonal families are therefore redundant overpresentations, not a rival regime.
+
+\begin{definition}[Derivability-aware axis presentation]
+A \emph{derivability-aware axis presentation} specifies primitive observables together with a derivability relation recording when one observable can be recovered from another. A family is \emph{orthogonal} if no primitive observable is derivable from a distinct primitive observable in the family.
+\end{definition}
+
+\begin{proposition}[Non-orthogonal complete families have removable redundancy]\label{prop:query-redundancy}
+If a semantically complete derivability-aware query family is non-orthogonal, then some primitive observable can be removed without destroying semantic completeness.
+\end{proposition}
+\leanmeta{\LH{L6}}
+
+\begin{proof}
+If the family is non-orthogonal, some observable $a$ is derivable from a distinct observable $b$ already in the family. Any query requirement satisfied via $a$ can therefore be satisfied via $b$ instead. Erasing $a$ preserves semantic completeness, so $a$ was redundant.
+\end{proof}
+
+\begin{proposition}[Existence of a minimal complete core]\label{prop:query-minimal-core}
+Every semantically complete derivability-aware query family contains a semantically minimal complete subfamily.
+\end{proposition}
+\leanmeta{\LH{L7}}
+
+\begin{proof}
+The family is finite. If it is not already semantically minimal, Proposition~\ref{prop:query-redundancy} removes a redundant observable while preserving completeness. Repeating this elimination process must terminate, producing a semantically minimal complete subfamily.
+\end{proof}
+
+\begin{proposition}[Canonical orthogonal core]\label{prop:query-orthogonal-core}
+Every semantically complete derivability-aware query family contains an orthogonal semantically minimal complete subfamily.
+\end{proposition}
+\leanmeta{\LH{L8}}
+
+\begin{proof}
+Choose a semantically minimal complete subfamily using Proposition~\ref{prop:query-minimal-core}. If that subfamily were still non-orthogonal, Proposition~\ref{prop:query-redundancy} would remove another observable while preserving completeness, contradicting minimality. Hence the minimal core is orthogonal.
+\end{proof}
+
+These three propositions identify the canonical regime of the query problem. One starts from an arbitrary complete family, removes derivable redundancy until no further reduction is possible, and arrives at an orthogonal minimal core. The clean query invariant lives on that core \cite{Welsh1976}. The remaining gap above the counting floor, if any, is then a genuine structural limitation of the available primitive observables rather than an artifact of redundant presentation.
+
+\begin{theorem}[Matroid of canonical distinguishing families]\label{thm:matroid-bases}
+For the canonical orthogonal core of a complete derivability-aware query system, the semantically minimal distinguishing families are the bases of a matroid. Consequently, all such families have equal cardinality.
+\end{theorem}
+\leanmeta{\LH{L1}, \LHrng{L}{4}{5}, \LH{L8}}
+
+\begin{proof}
+By Proposition~\ref{prop:query-orthogonal-core}, every complete derivability-aware query system contains an orthogonal semantically minimal core. On an orthogonal core, exchange holds (\LH{L4}, \LH{L5}). Standard matroid theory then implies that the minimal complete families are exactly the bases of a matroid and therefore all have the same cardinality (\LH{L1}).
+\end{proof}
+
+\begin{remark}[Why the unrestricted counterexample does not undercut the theorem]
+Arbitrary overcomplete binary query families need not themselves be matroidal; a finite counterexample exists (\LH{GPH31}). That does not refute the canonical query invariant. It shows only that redundant raw presentations can obscure the primitive structure. After derivable redundancy is stripped away, the orthogonal minimal core is matroidal.
+\end{remark}
+
+\begin{remark}[When the counting floor is tight]
+The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canonical query family realizes the full binary transcript capacity on the relevant worst fibers. In that case the query side meets the same counting floor as the fixed-length bit side. Any strict gap above the floor is an expressivity gap of the observable family, not a redundancy artifact. The corresponding equality and gap statements are mechanized in \LH{GPH60} through \LH{GPH64}.
 \end{remark}
 
 \subsection{Witness Cost Comparison}
 
 \begin{table}[h]
 \centering
-\begin{tabular}{|l|c|c|}
+\small
+\begin{tabular}{|>{\raggedright\arraybackslash}p{0.18\linewidth}|>{\raggedright\arraybackslash}p{0.28\linewidth}|>{\raggedright\arraybackslash}p{0.20\linewidth}|}
 \hline
 \textbf{Observer Class} & \textbf{Witness Procedure} & \textbf{Witness Cost $W$} \\
 \hline
 Nominal-tag & Single tag read & $O(1)$ \\
 Attribute-only & Query a distinguishing family of minimum size & $\Omega(d)$ \\
+Canonical axis core & Query any matroid basis of the core & exact basis cardinality \\
 \hline
 \end{tabular}
 \vspace{3pt}
@@ -96,5 +156,5 @@ Attribute-only & Query a distinguishing family of minimum size & $\Omega(d)$ \\
 \end{table}
 
 \begin{remark}[Query cost as alternative currency]
-The minimum distinguishing number $d$ and the maximum fiber size $A_\pi$ measure the same structural object in different units. When transmission is cheap, the bit law governs. When interrogation is available but transmission is expensive, the query law governs. The underlying ambiguity is identical. Only the payment mechanism differs.
+The bit law measures the residual description cost of restoring identity. The query law measures the residual interrogation cost. In the raw attribute model, that cost is lower-bounded by both the operational quantity $d$ and the counting floor $\lceil \log_2 A_{\pi} \rceil$. In the canonical derivability-aware presentation, the same cost is certified by matroid basis cardinality on the orthogonal core. In both readings, the ambiguity being paid for is the same.
 \end{remark}

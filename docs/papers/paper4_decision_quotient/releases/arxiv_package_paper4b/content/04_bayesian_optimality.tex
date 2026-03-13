@@ -13,15 +13,17 @@ and therefore $q=p$ uniquely minimizes expected log loss.
 \end{theorem}
 
 \begin{proof}
-Gibbs' inequality gives $D_{\mathrm{KL}}(p\|q)\ge 0$, with equality exactly when $p=q$.
-\end{proof}
-
-\begin{theorem}[Measure Before Probability]\label{thm:measure-prerequisite}
-Quantitative claims require a specified measure, while probabilistic claims require a normalized measure. Counting measure on a finite set is therefore a precursor to probability, not probability itself, until normalization is performed.
-\end{theorem}
-
-\begin{proof}
-Expectations are integrals relative to measures. Probability is the special case in which the total mass is $1$.
+Write
+\[
+\mathrm{CE}(p,q):=-\sum_h p(h)\log q(h).
+\]
+Add and subtract $-\sum_h p(h)\log p(h)$:
+\[
+\mathrm{CE}(p,q)
+=-\sum_h p(h)\log p(h)+\sum_h p(h)\log\frac{p(h)}{q(h)}
+=H(p)+D_{\mathrm{KL}}(p\|q).
+\]
+Gibbs' inequality gives $D_{\mathrm{KL}}(p\|q)\ge 0$, with equality iff $p=q$ (on the support of $p$). Hence $\mathrm{CE}(p,q)$ is minimized uniquely at $q=p$.
 \end{proof}
 
 \subsection{Decision-Quotient Ratio}
@@ -32,10 +34,22 @@ The normalized decision-quotient score
 \DQ = \frac{I(H;E)}{H(H)}
 \]
 lies in $[0,1]$ whenever $H(H)>0$.
+\leanmeta{\LH{DQ1}, \LH{GN7}.}
 \end{proposition}
 
 \begin{proof}
-Mutual information satisfies $0 \le I(H;E) \le H(H)$.
+Nonnegativity is standard:
+\[
+I(H;E)\ge 0.
+\]
+Upper bound follows from
+\[
+I(H;E)=H(H)-H(H\mid E)\le H(H),
+\]
+since conditional entropy is nonnegative. Dividing by $H(H)>0$ gives
+\[
+0\le \frac{I(H;E)}{H(H)}\le 1.
+\]
 \end{proof}
 
 \begin{theorem}[Bayesian Optimality Chain]\label{thm:bayesian-optimality-chain}
@@ -49,9 +63,33 @@ Within the finite setting of this paper, the following derivation chain holds:
 \item Bayes is therefore the unique minimizer of expected log loss.
 \end{enumerate}
 \end{theorem}
+\leanmeta{\LHrng{BC}{1}{5}, \LH{FN7}, \LH{FN12}, \LH{FN14}.}
 
 \begin{proof}
-The counting-to-probability part is Theorem~\ref{thm:bayes-from-counting}. Bayes' rule is an algebraic rearrangement of the conditional-probability identity. Gibbs' inequality follows from $\log x \le x-1$, and the cross-entropy decomposition rewrites expected log loss as $H(p)+D_{\mathrm{KL}}(p\|q)$. Since KL divergence is nonnegative and vanishes only at $q=p$, Bayes uniquely minimizes expected log loss.
+\textbf{Step 1--2: counting to probability.}
+Theorem~\ref{thm:bayes-from-counting} gives a finite measure from counting and then a normalized probability law.
+
+\textbf{Step 3: Bayes rule.}
+From conditional probability,
+\[
+P(H\cap E)=P(H\mid E)P(E)=P(E\mid H)P(H),
+\]
+so Bayes follows by rearrangement.
+
+\textbf{Step 4: Gibbs from $\log x\le x-1$.}
+Apply $\log x\le x-1$ pointwise to $x=q(h)/p(h)$ and average under $p$ to obtain
+\[
+D_{\mathrm{KL}}(p\|q)\ge 0.
+\]
+
+\textbf{Step 5: cross-entropy decomposition.}
+As in Theorem~\ref{thm:bayes-optimal},
+\[
+\mathrm{CE}(p,q)=H(p)+D_{\mathrm{KL}}(p\|q).
+\]
+
+\textbf{Step 6: optimality.}
+Because $H(p)$ is fixed in $q$ and KL is nonnegative with equality only at $q=p$, expected log loss is uniquely minimized at $q=p$.
 \end{proof}
 
 \subsection{Interpretation}

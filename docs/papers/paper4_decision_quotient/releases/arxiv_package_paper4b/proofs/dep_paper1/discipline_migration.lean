@@ -7,6 +7,15 @@
 
   This distinction clarifies that capability dominance (Section 3) is separate
   from migration cost analysis (practical decision depends on codebase context).
+ -/
+
+import Mathlib.Data.Finset.Basic
+import Mathlib.Data.List.Basic
+
+open Classical
+
+/-
+  PART A: Capability enumeration and migration context
 -/
 
 -- Capabilities that a typing discipline can provide
@@ -102,7 +111,7 @@ def capabilityBenefit (from_d to_d : Discipline) : Nat :=
 
 -- Migration is beneficial when benefit exceeds cost
 def migrationBeneficial (from_d to_d : Discipline) (ctx : MigrationContext) : Bool :=
-  capabilityBenefit from_d to_d > migrationCost ctx
+  decide (capabilityBenefit from_d to_d > migrationCost ctx)
 
 -- ═══════════════════════════════════════════════════════════════════
 -- KEY INSIGHT: These are INDEPENDENT questions
@@ -140,3 +149,103 @@ theorem migration_decision_contextual :
       migrationBeneficial .Shape .Nominal ctx₂ = false :=
   ⟨smallContext, largeContext, small_context_beneficial, large_context_not_beneficial⟩
 
+/-========================================================================
+   NO HIDDEN REGISTRIES THEOREM (Revised)
+
+   Semantic closure: every effect in a valid execution trace references a
+   declared registry. Undeclared state is semantically inert (admissible model).
+=========================================================================-/
+
+-- Declared registry
+structure RegDecl where
+  name : String
+deriving DecidableEq, Repr
+
+-- Computation effects
+inductive ComputationEffect where
+  | read_reg  (r : String) : ComputationEffect
+  | write_reg (r : String) : ComputationEffect
+deriving DecidableEq, Repr
+
+open ComputationEffect
+
+-- System specification: declared registers + primitive type + effect map
+structure SystemSpec where
+  declared  : Finset RegDecl
+  Primitive : Type
+  effectsOf : Primitive → List ComputationEffect
+
+def effectName : ComputationEffect → String
+  | .read_reg r  => r
+  | .write_reg r => r
+
+noncomputable def declaredNames (SS : SystemSpec) : List String :=
+  SS.declared.toList.map (fun rd => rd.name)
+
+def PrimitiveWellFormed (SS : SystemSpec) : Prop :=
+  ∀ p e, e ∈ SS.effectsOf p → effectName e ∈ declaredNames SS
+
+abbrev ExecutionTrace := List ComputationEffect
+
+inductive Executes (SS : SystemSpec) : List SS.Primitive → ExecutionTrace → Prop
+  | nil :
+      Executes SS [] []
+  | cons (p : SS.Primitive) (ps : List SS.Primitive) (t : ExecutionTrace)
+      (h : Executes SS ps t) :
+      Executes SS (p :: ps) (SS.effectsOf p ++ t)
+
+theorem effects_in_valid_trace_are_declared
+    (SS : SystemSpec)
+    (hWF : PrimitiveWellFormed SS)
+    {ps : List SS.Primitive} {t : ExecutionTrace}
+    (hex : Executes SS ps t) :
+    ∀ e ∈ t, effectName e ∈ declaredNames SS := by
+  induction hex with
+  | nil => 
+    intro e he
+    contradiction 
+  | cons p ps' t' h_exec ih => 
+    intro e he
+    rw [List.mem_append] at he
+    cases he with
+    | inl h_p => 
+      exact hWF p e h_p
+    | inr h_t => 
+      exact ih e h_t
+
+theorem undeclared_reg_not_in_valid_trace
+    (SS : SystemSpec)
+    (hWF : PrimitiveWellFormed SS)
+    {r : String}
+    (hnd : r ∉ declaredNames SS)
+    {ps : List SS.Primitive} {t : ExecutionTrace}
+    (hex : Executes SS ps t) :
+    ComputationEffect.read_reg r ∉ t ∧ ComputationEffect.write_reg r ∉ t := by
+  constructor <;> intro h
+  · have hr :
+      effectName (ComputationEffect.read_reg r) ∈ declaredNames SS :=
+      effects_in_valid_trace_are_declared SS hWF hex _ h
+    dsimp [effectName] at hr
+    apply hnd
+    exact hr
+  · have hr :
+      effectName (ComputationEffect.write_reg r) ∈ declaredNames SS :=
+      effects_in_valid_trace_are_declared SS hWF hex _ h
+    dsimp [effectName] at hr
+    apply hnd
+    exact hr
+
+/-  Admissibility corollary
+
+   The admissibility contract forbids undeclared semantic effects; the
+   lemma above is the formal witness.
+-/
+
+theorem admissibility_no_hidden_state
+    (SS : SystemSpec) (hWF : PrimitiveWellFormed SS) :
+  ∀ r : String, r ∉ declaredNames SS →
+    ∀ ps t, Executes SS ps t →
+      ComputationEffect.read_reg r ∉ t ∧ ComputationEffect.write_reg r ∉ t := by
+  intro r hnd ps t hex
+  exact undeclared_reg_not_in_valid_trace
+    (SS := SS) (hWF := hWF) (r := r) hnd (ps := ps) (t := t) hex

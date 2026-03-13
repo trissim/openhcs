@@ -2,7 +2,7 @@ OpenHCS Paper Build Log
 ========================
 
 Paper: paper2_it - Exact Consistency Under Partial Views: Graph Colorability, Capacity, and Equality in Multi-Location Encodings
-Package Date: 2026-03-12T22:48:59.343176
+Package Date: 2026-03-13T18:22:51.106060
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
@@ -436,7 +436,7 @@ Hint: Omit it from the simp argument list.
   simp ̵[̵T̵]̵
 
 Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
-ℹ [3278/3288] Replayed Ssot.LangEvaluation
+ℹ [3285/3288] Replayed Ssot.LangEvaluation
 info: Ssot/LangEvaluation.lean:83:0: init_subclass_in_class_definition : ∀ (rt : PyRuntime) (name : PyId) (bases : List PyId)
   (attrs methods : List (String × String)) (parent : PyId),
   parent ∈ bases →

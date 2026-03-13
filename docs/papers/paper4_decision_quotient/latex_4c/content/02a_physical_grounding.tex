@@ -60,7 +60,7 @@ Theorem~\ref{thm:counting-gap} proves that a finite bound exists. It does not su
   Landauer established the universal floor: $\varepsilon \geq k_B T \ln 2$ joules per irreversible bit. The Wolpert-style interface used in this artifact adds explicit nonnegative mismatch and residual dissipation terms above that floor; the mismatch term can now be justified inside the artifact from finite-distribution KL divergence when the actual and designed distributions differ, and the finite discrete residual branch can also be justified inside the artifact by an exhaustive reverse-edge split. If the reverse edge flow is positive, asymmetric forward/reverse flows yield a positive two-point KL witness; if the reverse edge flow is zero, the process performs an irreversible one-way state transition, and the existing Landauer-scaled transition-cost theorem yields a positive lower-bound witness. The broader stopping-time / absolute-irreversibility residual regime remains a separate imported premise. When any one of these contributions is positive, the per-bit lower bound is strictly larger than $k_B T \ln 2$.
   \cite{landauer1961irreversibility,bennett1982thermodynamics,berut2012experimental,wolpert2024stochastic,manzano2024absolute,yadav2026minimal}
 \end{enumerate}
-\leanmeta{\LH{WC1},\LH{WC2},\LH{WC3},\LH{WM1},\LH{WM3},\LH{WM4},\LH{WR1},\LH{WR2},\LH{WR3},\LH{WR6}.}
+\leanmeta{\LHrng{WC}{1}{3}, \LH{WM1}, \LHrng{WM}{3}{4}, \LHrng{WR}{1}{3}, \LH{WR6}.}
 
 \noindent The Counting Gap Theorem proves the structure. SR, QM, TD supply the numbers.
 
@@ -69,7 +69,7 @@ Theorem~\ref{thm:counting-gap} proves that a finite bound exists. It does not su
 The premise $\varepsilon > 0$ is not arbitrary. A check is a physical state transition. Physical transitions require force. Force over distance requires energy. At $T > 0$, any irreversible transition carries at least the Landauer floor $k_B T \ln 2$. In the explicit constrained-process interface, any extra dissipation above that floor is represented by separate nonnegative mismatch and residual terms rather than folded into the floor itself. The mismatch branch is now pinned to the existing KL layer: explicit finite-distribution mismatch yields a strictly positive real KL term, which is then conservatively rounded upward into the nat-valued lower-bound units used by the thermodynamic accounting. The finite discrete residual branch is now also theorem-level by an exhaustive local split on the reverse edge of a computational-state process: either the reverse edge is positive and asymmetry yields strictly positive two-point KL divergence, or the reverse edge is zero and the process pays strictly positive Landauer-scaled cost for the resulting irreversible one-way state transition.
 
 If $\varepsilon = 0$, a bounded system could perform infinitely many checks, resolving any decision in zero time and zero energy. This contradicts energy conservation. Therefore $\varepsilon > 0$ is derived from thermodynamics.
-\leanmeta{\LH{BA10},\LH{WC2},\LH{WC3},\LH{WM1},\LH{WM3},\LH{WM4},\LH{WR2},\LH{WR3},\LH{WR6}}
+\leanmeta{\LH{BA10}, \LHrng{WC}{2}{3}, \LH{WM1}, \LHrng{WM}{3}{4}, \LHrng{WR}{2}{3}, \LH{WR6}}
 
 \begin{remark}[Scope]
 No claim is made about whether the universe is continuous or discrete at scales
@@ -143,7 +143,7 @@ Uncountable state spaces are not accessible to any bounded region
 in finite time.
 \LH{BA2}\LH{BA4}
 \end{corollary}
-\leanmeta{\LH{BA4}, \LH{BA2}}
+\leanmeta{\LH{BA2}, \LH{BA4}}
 
 \subsection{Structural Rank = Minimum Physical Bit Operations}\label{sec:srank-physical}
 
@@ -185,7 +185,7 @@ and an energy cost. These are not three separate quantities; they are the
 same count $k$ expressed in three physical units.
 \LH{BA6}\LH{BA7}
 \end{theorem}
-\leanmeta{\LH{BA6}, \LH{BA7}, \LH{SR1}}
+\leanmeta{\LHrng{BA}{6}{7}, \LH{SR1}}
 \claimstamp{T\ref{thm:physical-bridge-bundle}}{AR}
 
 \subsection{Thermodynamic Lower Bound as Physical Consequence}\label{sec:thermo-derived}
@@ -333,7 +333,7 @@ measurement precision.
 ``same universe'' has no operational content.
 \LH{IA15}
 \end{theorem}
-\leanmeta{\LH{IA15}, \LH{IA16}}
+\leanmeta{\LHrng{IA}{15}{16}}
 
 This theorem is not about humans. It is grounded at the quantum level where
 no ego exists, then lifted to observers as a corollary:
@@ -354,7 +354,7 @@ no ego exists, then lifted to observers as a corollary:
   molecules. They inherit invariant agreement from their constituents.
   By the time ego enters, agreement is already forced.
 \end{enumerate}
-\leanmeta{\LH{IA2}, \LH{IA5}, \LH{IA9}, \LH{IA13}, \LH{IA17}, \LH{IA18}}
+\leanmeta{\LH{IA2}, \LH{IA5}, \LH{IA9}, \LH{IA13}, \LHrng{IA}{17}{18}}
 
 \begin{corollary}[The Ego Trap]\label{cor:ego-trap}
 Objecting to observer-level invariant agreement requires rejecting atomic-level

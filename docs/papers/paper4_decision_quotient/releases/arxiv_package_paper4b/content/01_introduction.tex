@@ -1,21 +1,23 @@
 \section{Introduction}\label{sec:introduction}
 
-The decision-relevance problem asks which parts of a state description actually matter for optimal action. This raises two natural questions: how hard relevance is to certify, and what mathematical structure emerges once the relevant-coordinate support has been identified. This paper addresses the second question.
+The decision-relevance problem asks which parts of a state description matter for optimal action. This raises two questions: how hard relevance is to certify, and what structure emerges once the relevant-coordinate support has been identified. This paper addresses the second.
 
-The unifying object is the optimizer quotient. States are identified when they induce the same optimal-action set, and the resulting quotient is the coarsest abstraction that preserves the decision boundary. In \textbf{Set}, this is the familiar coimage/image factorization of the optimizer map. That quotient viewpoint immediately suggests a second question: if the quotient is the canonical lossless abstraction, what quantitative summaries of it recover the same structural content?
+The unifying object is the optimizer quotient. States are identified when they induce the same optimal-action set, and the resulting quotient is the coarsest abstraction that preserves the decision boundary. In \textbf{Set}, this is the coimage/image factorization of the optimizer map. The question is then which quantitative summaries of that quotient recover the same structural content.
 
-Our answer is that several mathematical frameworks converge on the same invariant. The support size of the relevant coordinates, which we write as $\mathrm{srank}$, reappears in quotient entropy, Fisher-style support counting, zero-distortion summaries, and the finite Bayesian chain obtained by normalizing counting measure. Convergence here means agreement across distinct mathematical lenses on the same notion of decision-relevant dimension.
+Several mathematical frameworks can be compared against the same invariant. The support size of the relevant coordinates, written $\mathrm{srank}$, appears directly in Fisher-style support counting, bounds quotient entropy, and constrains zero-distortion summaries through the optimizer quotient. The Bayesian chain is parallel rather than another recovery theorem: it shows that the same finite counting setup also supports the standard Bayes-optimality identities. Convergence therefore means that these frameworks are organized around the same notion of decision-relevant structure, not that they all yield the same formula.
 
-The novelty does not lie in any individual ingredient. Entropy, Bayes, quotient objects, and Fisher information are all classical. The contribution is the theorem-level synthesis: once the optimizer quotient is fixed as the canonical decision-preserving abstraction, these frameworks can be compared within a single formal setting and shown to recover the same structural notion of decision-relevant dimension.
+The novelty is not in any individual ingredient. Entropy, Bayes, quotient objects, and Fisher information are classical. The contribution is the theorem-level synthesis: once the optimizer quotient is fixed as the canonical decision-preserving abstraction, these frameworks can be compared in a single formal setting and related to the same structural notion of decision-relevant dimension.
 
-The argument is built from shared definitions, quotient structure, and information-theoretic reasoning.
+The argument is built from shared definitions, quotient structure, and information-theoretic inequalities.
 
 \subsection{Contributions}
 
 \begin{enumerate}
-\item \textbf{Optimizer quotient as canonical structure.} We restate the shared foundations needed for independent readability and identify the optimizer quotient as the canonical decision-preserving abstraction.
+\item \textbf{Counting-gap preliminaries.} We isolate a discrete counting bound and a measure-before-probability theorem that place normalization and Bayesian identities on explicit finite setup.
 
-\item \textbf{Structural-rank recovery across frameworks.} We show that quotient entropy, Fisher-style support counting, and lossless zero-distortion summaries recover the same support-size invariant $\mathrm{srank}$.
+\item \textbf{Optimizer quotient as canonical structure.} We restate the shared setup needed for independent readability, including an explicit structural-rank support proposition, and identify the optimizer quotient as the canonical decision-preserving abstraction.
+
+\item \textbf{Structural-rank comparison across frameworks.} We show that Fisher-style support counting recovers $\mathrm{srank}$ exactly, quotient entropy is bounded by $\mathrm{srank}$, lossless zero-distortion summaries are constrained by the same optimizer-quotient structure, and the transport bridge tracks the same quotient branching regimes.
 
 \item \textbf{Bayesian optimality from minimal assumptions.} We derive probability normalization, Bayes' rule, cross-entropy decomposition, and Bayes optimality under log loss from finite counting and the inequality $\log x \le x - 1$.
 
@@ -24,4 +26,16 @@ The argument is built from shared definitions, quotient structure, and informati
 
 \subsection{Paper Structure}
 
-Section~\ref{sec:foundations} restates the shared foundations needed for independence. Section~\ref{sec:convergence-frameworks} develops the quotient and structural-rank convergence story. Section~\ref{sec:bayesian-optimality} gives the Bayesian optimality chain. Section~\ref{sec:related} situates the paper relative to information theory, sufficient statistics, and formalized mathematics. Appendix~\ref{app:lean} summarizes the corresponding Lean support.
+Section~\ref{sec:counting-preliminaries} states the counting and measure preliminaries. Section~\ref{sec:formal-setup} restates the shared quotient setup needed for independence. Section~\ref{sec:convergence-frameworks} develops the structural-rank convergence story. Section~\ref{sec:bayesian-optimality} gives the Bayesian optimality chain. Section~\ref{sec:related} situates the paper relative to information theory, sufficient statistics, and formalized mathematics. Appendix~\ref{app:lean} summarizes the corresponding Lean support.
+
+\subsection{Proof Strategy at a Glance}
+
+Each theorem in the body is proved by a short explicit chain:
+\begin{enumerate}
+\item \textbf{Counting layer (Section~\ref{sec:counting-preliminaries}):} finite counting bounds and normalization identities.
+\item \textbf{Quotient layer (Section~\ref{sec:formal-setup}):} sufficiency/relevance definitions and universal property of the optimizer quotient.
+\item \textbf{Bridge layer (Section~\ref{sec:convergence-frameworks}):} entropy bounds, support counting, zero-distortion summaries, and transport regimes all tied back to the same optimizer-quotient core.
+\item \textbf{Statistical consequences (Section~\ref{sec:bayesian-optimality}):} Bayes optimality on the normalized finite-probability side.
+\end{enumerate}
+
+This removes ambiguity about where each claim comes from: no hidden assumptions, no skipped quantifier steps, and no dependence on informal analogies.

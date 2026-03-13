@@ -20,6 +20,7 @@
 import DecisionQuotient.QueryComplexity
 import DecisionQuotient.AlgorithmComplexity
 import DecisionQuotient.PolynomialReduction
+import DecisionQuotient.StochasticSequential.Computation
 
 namespace DecisionQuotient
 
@@ -93,6 +94,59 @@ theorem sufficiency_in_P {A S : Type*} [DecidableEq S] [DecidableEq (Set A)] [Fi
   · intro pairs
     rfl
 
+/-- Finite explicit search summary for the richer query families. This packages
+    the exact counted-search witnesses now available for static minimum/anchor
+    and stochastic/sequential sufficiency-family queries. -/
+theorem finite_search_summary :
+    (∀ {A S : Type*} {n : ℕ} [CoordinateSpace S n] [Fintype S]
+        [DecidableEq (Set A)]
+        (dp : DecisionProblem A S) (I : Finset (Fin n)) (k : ℕ),
+      ((countedStaticSufficiencySearch (n := n) dp I).result = true ↔
+        dp.isSufficient I) ∧
+      (countedStaticSufficiencySearch (n := n) dp I).steps ≤ Fintype.card S * Fintype.card S ∧
+      ((countedAnchorSufficientSearch (n := n) dp I).result = true ↔ dp.anchorSufficient I) ∧
+      (countedAnchorSufficientSearch (n := n) dp I).steps ≤ Fintype.card S ∧
+      ((countedMinimumSufficientSearch (n := n) dp k).result = true ↔
+        ∃ J : Finset (Fin n), J.card ≤ k ∧ dp.isSufficient J) ∧
+      (countedMinimumSufficientSearch (n := n) dp k).steps ≤ 2 ^ n) ∧
+    (∀ {A S : Type*} {n : ℕ} [Fintype A] [Fintype S] [DecidableEq A]
+        [CoordinateSpace S n]
+        (P : StochasticSequential.StochasticDecisionProblem A S) (I : Finset (Fin n)) (k : ℕ),
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.StochasticSufficient P I)
+        (StochasticSequential.countedStochasticSufficiencySearch P I)
+        (Fintype.card S) ∧
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.StochasticAnchorSufficiencyCheck P I)
+        (StochasticSequential.countedStochasticAnchorSearch P I)
+        (Fintype.card S * Fintype.card A) ∧
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.StochasticMinimumSufficiencyCheck P k)
+        (StochasticSequential.countedStochasticMinimumSearch P k)
+        (2 ^ n)) ∧
+    (∀ {A S O : Type*} {n : ℕ} [Fintype A] [Fintype S] [Fintype O] [DecidableEq A]
+        [CoordinateSpace S n]
+        (P : StochasticSequential.SequentialDecisionProblem A S O) (I : Finset (Fin n)) (k : ℕ),
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.SequentialSufficient P I)
+        (StochasticSequential.countedSequentialSufficiencySearch P I)
+        (Fintype.card S * Fintype.card S) ∧
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.SequentialAnchorSufficiencyCheck P I)
+        (StochasticSequential.countedSequentialAnchorSearch P I)
+        (Fintype.card S) ∧
+      StochasticSequential.HasCountedSearchWitness
+        (StochasticSequential.SequentialMinimumSufficiencyCheck P k)
+        (StochasticSequential.countedSequentialMinimumSearch P k)
+        (2 ^ n)) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro A S n _ _ _ dp I k
+    exact static_query_search_matrix (n := n) dp I k
+  · intro A S n _ _ _ _ P I k
+    exact StochasticSequential.stochastic_query_search_matrix P I k
+  · intro A S O n _ _ _ _ _ P I k
+    exact StochasticSequential.sequential_query_search_matrix P I k
+
 /-! ## Summary
 
 This formalization establishes:
@@ -112,4 +166,3 @@ of a given set is tractable.
 -/
 
 end DecisionQuotient
-

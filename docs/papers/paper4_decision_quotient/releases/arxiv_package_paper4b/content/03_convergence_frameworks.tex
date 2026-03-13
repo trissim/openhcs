@@ -1,22 +1,10 @@
 \section{Convergence Frameworks}\label{sec:convergence-frameworks}
 
-This section shows that several mathematical frameworks recover the same structural invariant once the optimizer quotient has been fixed. That invariant is structural rank. The individual bridge theorems do not identify the surrounding theories with one another; they show that these theories agree on the same support-size core when exact decision preservation is the comparison criterion.
+This section shows how several mathematical frameworks relate to the same structural invariant once the optimizer quotient has been fixed. That invariant is structural rank. The bridge theorems below do not claim that all frameworks recover $\mathrm{srank}$ in the same formal sense: some give exact recovery, some give bounds, and some identify the same quotient branching regimes under exact decision preservation.
 
-\subsection{Counting, Entropy, and the Quotient}
+\subsection{Entropy and the Quotient}
 
-\begin{theorem}[Counting Induces Finite Probability]\label{thm:bayes-from-counting}
-Let $\Omega$ be a finite nonempty set and define $P(E)=|E|/|\Omega|$. Then:
-\begin{enumerate}
-\item $P$ satisfies the finite Kolmogorov axioms;
-\item conditional probability and Bayes' rule follow algebraically wherever denominators are nonzero;
-\item mutual information is well-defined after normalization;
-\item the normalized decision-quotient score $\DQ=I(H;E)/H(H)$ lies in $[0,1]$ whenever $H(H)>0$.
-\end{enumerate}
-\end{theorem}
-
-\begin{proof}
-Nonnegativity, normalization, and finite additivity are immediate from counting. Conditional probability is then defined by quotienting joint counts by marginal counts, and Bayes' rule is obtained by rearranging the identity $P(H\cap E)=P(H\mid E)P(E)=P(E\mid H)P(H)$. Mutual information and the normalized score are standard consequences once probability and entropy are defined. The bound $\DQ\in[0,1]$ follows from $0\le I(H;E)\le H(H)$.
-\end{proof}
+The finite counting-to-probability bridge is established in Section~\ref{sec:counting-preliminaries} (Theorem~\ref{thm:bayes-from-counting}). Here we use that normalized layer to relate quotient entropy to structural rank.
 
 \begin{theorem}[Entropy Bounded by Structural Rank]\label{thm:entropy-rank}
 For Boolean coordinate spaces,
@@ -27,7 +15,14 @@ where $H(\mathcal{D})$ is the base-$2$ entropy of the optimizer quotient.
 \end{theorem}
 
 \begin{proof}
-The relevant-coordinate set is sufficient, so the optimizer map factors through a Boolean cube of dimension $\mathrm{srank}(\mathcal{D})$. Hence the optimizer quotient has at most $2^{\mathrm{srank}(\mathcal{D})}$ classes.
+Let $r=\mathrm{srank}(\mathcal{D})$. By definition, exactly $r$ coordinates are relevant, and this relevant set is sufficient (Section~\ref{sec:formal-setup}). Therefore $\Opt$ factors through the projection onto those $r$ coordinates:
+\[
+S \xrightarrow{\pi_R} \{0,1\}^r \xrightarrow{\bar{\Opt}} \mathcal{P}(A).
+\]
+Every optimizer class is therefore determined by one of the $2^r$ possible assignments to the relevant coordinates. Hence the optimizer quotient has at most $|\{0,1\}^r|=2^r$ classes. Under counting-normalized quotient entropy,
+\[
+H(\mathcal{D}) \le \log_2(2^r)=r=\mathrm{srank}(\mathcal{D}).
+\]
 \end{proof}
 
 \subsection{Structural Rank Recovery}
@@ -37,15 +32,31 @@ If one assigns score $1$ to relevant coordinates and $0$ to irrelevant ones, the
 \end{theorem}
 
 \begin{proof}
-The rank of a diagonal matrix is the number of nonzero diagonal entries, which is exactly the number of relevant coordinates.
+In the stated encoding, the diagonal entry for coordinate $i$ is nonzero exactly when $i$ is relevant. For any diagonal matrix, rank equals the number of nonzero diagonal entries. Therefore the rank is exactly
+\[
+\big|\{i:\ i \text{ relevant}\}\big|=\mathrm{srank}(\mathcal{D}).
+\]
 \end{proof}
 
-\begin{theorem}[Zero-Distortion Rate Is Governed by Structural Rank]\label{thm:rate-distortion-bridge}
-At zero distortion, the minimum lossless rate needed to preserve optimal actions is governed by the same support-size quantity that defines $\mathrm{srank}(\mathcal{D})$, and any attempted compression below that support size must merge states that are not decision-equivalent.
+\begin{theorem}[Zero-Distortion Summaries Are Constrained by Quotient Structure]\label{thm:rate-distortion-bridge}
+At zero distortion, any lossless summary that preserves optimal actions must assign distinct codewords to distinct optimizer-quotient classes. Thus the admissible summary size is constrained by the same quotient structure determined by the relevant-coordinate support.
 \end{theorem}
 
 \begin{proof}
-Zero distortion allows only mergers of states that are already decision-equivalent. Hence the number of distinguishable summaries is controlled by the size of the optimizer quotient, which is in turn controlled by the relevant-coordinate support.
+At zero distortion, any two states mapped to the same summary must induce the same optimal-action set; otherwise optimal actions are not preserved exactly. So admissible summaries are precisely coarsenings that refine decision equivalence, i.e., they cannot identify states across distinct optimizer-quotient classes.
+
+Therefore any lossless summary alphabet must contain at least one distinct codeword for each optimizer-quotient class. If the alphabet were smaller than the number of decision classes, two different classes would share a codeword, violating zero distortion. Conversely, assigning distinct codewords to the classes yields an exact lossless summary.
+
+By Section~\ref{sec:formal-setup}, the quotient class structure is determined by the relevant-coordinate support, hence by $\mathrm{srank}(\mathcal{D})$. So the zero-distortion summary size is constrained by the same support-size core.
+\end{proof}
+
+\begin{theorem}[Wasserstein Regimes Follow Quotient Branching]\label{thm:wasserstein-bridge}
+When transport is computed on the optimizer-quotient classes, transport cost is zero in the singleton-class regime and strictly positive once multiple optimizer classes must be distinguished. Thus transport complexity tracks the same quotient branching regimes determined by decision relevance.
+\leanmeta{\LHrng{W}{1}{4}.}
+\end{theorem}
+
+\begin{proof}
+If the quotient has one class, the identity coupling is diagonal and incurs zero transport cost. If the quotient has at least two classes with nontrivial mass split, any coupling that matches the distinct targets carries off-diagonal mass and therefore positive transport cost. By Section~\ref{sec:formal-setup}, the same class multiplicity is controlled by relevant-coordinate support, so the transport regimes are determined by the same structural core.
 \end{proof}
 
 \begin{theorem}[Decision-Relevant Information Requires Nontriviality]\label{thm:nontriviality-counting}
@@ -53,13 +64,17 @@ If a decision problem carries nonzero decision-relevant information, then its op
 \end{theorem}
 
 \begin{proof}
-If the optimizer quotient has one class, then $\Opt$ is constant on all states. A constant optimizer map yields a single attained optimal-action set, so the quotient entropy is zero and there is no decision-relevant distinction to preserve. The contrapositive gives the result.
+If the optimizer quotient is singleton, then all states are decision-equivalent and $\Opt$ is constant on $S$. Hence there is only one attained optimizer value and the quotient entropy is
+\[
+H(\mathcal{D})=\log_2(1)=0.
+\]
+So positive decision-relevant information is impossible in the singleton case. Taking contrapositive yields the theorem.
 \end{proof}
 
 \subsection{Framework Convergence}
 
-\begin{theorem}[Six-Framework Structural-Rank Recovery]\label{thm:six-framework-recovery}
-Within the finite setting of this paper, the following objects recover the same structural core up to the identifications proved above:
+\begin{theorem}[Six-Framework Comparison Around Structural Rank]\label{thm:six-framework-recovery}
+Within the finite setting of this paper, the following objects are linked by the optimizer quotient and the relevant-coordinate support:
 \begin{enumerate}
 \item relevant-coordinate support,
 \item structural rank,
@@ -68,10 +83,20 @@ Within the finite setting of this paper, the following objects recover the same 
 \item Fisher-style support count,
 \item zero-distortion lossless decision summary size.
 \end{enumerate}
+\leanmeta{\LH{SK1}, \LH{QT5}, \LH{IT3}, \LH{FS2}, \LH{RS5}.}
 \end{theorem}
 
 \begin{proof}
-The equivalences are obtained by combining the foundational results of Section~\ref{sec:foundations}---especially Proposition~\ref{prop:minimal-relevant-equiv}, Proposition~\ref{prop:optimizer-coimage}, and Theorem~\ref{thm:quotient-universal}---with Theorems~\ref{thm:entropy-rank}, \ref{thm:fisher-rank-srank}, \ref{thm:rate-distortion-bridge}, and \ref{thm:nontriviality-counting}.
+The chain is explicit:
+\begin{enumerate}
+\item Section~\ref{sec:formal-setup} identifies the support core: relevant coordinates and structural rank (Definition~\ref{def:srank}; Proposition~\ref{prop:minimal-relevant-equiv}).
+\item Proposition~\ref{prop:optimizer-coimage} and Theorem~\ref{thm:quotient-universal} identify optimizer-quotient classes as the canonical decision abstraction and relate them to the image of $\Opt$.
+\item Theorem~\ref{thm:entropy-rank} bounds quotient entropy in terms of this support size.
+\item Theorem~\ref{thm:fisher-rank-srank} shows Fisher-style support counting recovers exactly the same cardinality.
+\item Theorem~\ref{thm:rate-distortion-bridge} shows zero-distortion summary size is constrained by the same quotient class structure.
+\item Theorem~\ref{thm:nontriviality-counting} excludes degenerate singleton quotients when decision-relevant information is positive.
+\end{enumerate}
+Thus the six listed objects are organized around the same support/quotient core, with exact recovery in some cases and structural bounds in others.
 \end{proof}
 
-The point is not that these frameworks become identical in every technical sense. Rather, once the optimizer quotient is fixed, they converge on the same support-size invariant for decision relevance. The paper's backbone is therefore simple: shared definitions, the quotient universal property, and a family of bridge theorems centered on $\mathrm{srank}$.
+The point is not that these frameworks become identical in every technical sense. Rather, once the optimizer quotient is fixed, they can all be compared against the same support/quotient core for decision relevance. The paper's backbone is therefore simple: shared definitions, the quotient universal property, and a family of bridge theorems centered on $\mathrm{srank}$.

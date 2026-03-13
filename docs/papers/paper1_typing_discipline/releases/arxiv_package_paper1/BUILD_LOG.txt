@@ -2,14 +2,14 @@ OpenHCS Paper Build Log
 ========================
 
 Paper: paper1 - Impossibility Theorems for Fixed-Axis Classification Systems: With Application to Type Theory
-Package Date: 2026-03-02T13:51:07.723203
+Package Date: 2026-03-13T05:03:18.013421
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
 -----------------
-Lean Files: 26
-Lines of Code: 7215
-Theorems: 306
+Lean Files: 53
+Lines of Code: 13838
+Theorems: 677
 Sorry Placeholders: 0
 
 
@@ -20,7 +20,9 @@ Proof Files:
   - Core.lean
   - Extended.lean
   - GraphBridges.lean
+  - Neurosymbolic.lean
   - Typing.lean
+  - Undecidability.lean
   - AbstractClassSystem.lean
   - CrossPaperDependencies.lean
   - DeclInfoExport.lean
@@ -28,6 +30,31 @@ Proof Files:
   - GraphExport.lean
   - HandleAliases.lean
   - Paper1.lean
+  - BudgetSplit.lean
+  - ComputabilityQuantization.lean
+  - EmpiricalAuditBridge.lean
+  - Entropy.lean
+  - EntropyGeneral.lean
+  - FanoFinite.lean
+  - FiberAllocation.lean
+  - FiberRateDistortion.lean
+  - FiniteRateDistortionBounds.lean
+  - FiniteRateDistortionConverse.lean
+  - FiniteSource.lean
+  - HashDemoCertificate.lean
+  - ReviewerDemoCertificate.lean
+  - SemanticGridInt8Scale3Certificate.lean
+  - SemanticGridTotalCollapseCertificate.lean
+  - GraphEntropy.lean
+  - GraphEntropyAsymptotic.lean
+  - GrowthCollisions.lean
+  - GrowthTagBudget.lean
+  - ObserverTagModel.lean
+  - PMFEntropy.lean
+  - ProbabilisticFinite.lean
+  - QueryBitBridge.lean
+  - RateDistortion.lean
+  - ZeroErrorConditionalEntropy.lean
   - PrintAxioms.lean
   - abstract_class_system.lean
   - axis_framework.lean
@@ -46,7 +73,7 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-ℹ [3065/3097] Replayed AbstractClassSystem.Typing
+ℹ [3064/3102] Replayed AbstractClassSystem.Typing
 info: AbstractClassSystem/Typing.lean:110:0: []
 info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
 info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
@@ -54,11 +81,11 @@ info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapabil
  AbstractClassSystem.UnifiedCapability.enumeration,
  AbstractClassSystem.UnifiedCapability.conflictResolution,
  AbstractClassSystem.UnifiedCapability.interfaceCheck]
-⚠ [3089/3097] Replayed lwd_converse
+⚠ [3095/3102] Replayed lwd_converse
 warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3091/3097] Replayed PrintAxioms
+ℹ [3101/3220] Replayed PrintAxioms
 info: PrintAxioms.lean:15:0: 'fixed_axis_incompleteness' depends on axioms: [propext, Classical.choice, Quot.sound]
 info: PrintAxioms.lean:16:0: 'parameterized_axis_immunity' depends on axioms: [propext, Quot.sound]
 info: PrintAxioms.lean:17:0: 'fixed_vs_parameterized_asymmetry' depends on axioms: [propext, Classical.choice, Quot.sound]
@@ -81,7 +108,269 @@ info: PrintAxioms.lean:35:0: 'PythonInstantiation.pyIsinstance_bases_sensitive' 
 info: PrintAxioms.lean:36:0: 'TypeScriptInstantiation.observables_factor_through_axes' depends on axioms: [propext, Quot.sound]
 info: PrintAxioms.lean:37:0: 'JavaInstantiation.observables_factor_through_axes' depends on axioms: [propext, Quot.sound]
 info: PrintAxioms.lean:38:0: 'RustInstantiation.observables_factor_through_axes' depends on axioms: [propext, Quot.sound]
-Build completed successfully (3097 jobs).
+⚠ [3123/3220] Replayed Paper1IT.Entropy
+warning: Paper1IT/Entropy.lean:129:0: automatically included section variable(s) unused in theorem `Entropy.entropyTerm_zero_iff`:
+  [ClassicalEntropyAssumptions]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [ClassicalEntropyAssumptions] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3124/3220] Replayed Paper1IT.GraphEntropy
+warning: Paper1IT/GraphEntropy.lean:52:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.VertexDist.entropy_toFiniteDist`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:61:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.VertexDist.expectedLength_toFiniteDist`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:79:34: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:141:35: unused variable `G`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: Paper1IT/GraphEntropy.lean:151:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.properColoring_injOn_clique`:
+  [Fintype α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:204:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.fiber_is_clique`:
+  [Fintype α]
+  [Fintype β]
+  [DecidableEq α]
+  [DecidableEq β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype α] [Fintype β] [DecidableEq α] [DecidableEq β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:226:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.fiber_card_le_maxFiberCard`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:235:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.maxFiberCard_le_one_of_injective`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:339:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.lift_zeroErrorTagging`:
+  [Fintype α]
+  [Fintype β]
+  [DecidableEq α]
+  [DecidableEq β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype α] [Fintype β] [DecidableEq α] [DecidableEq β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:383:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.fiberCard_mono_of_factors_through`:
+  [Fintype β]
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:474:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.taskFiberCard_le_fiberCard`:
+  [Fintype β]
+  [DecidableEq α]
+  [Fintype δ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] [Fintype δ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:494:35: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:487:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.taskRecoverable_iff_constant_on_fibers`:
+  [Fintype β]
+  [DecidableEq α]
+  [Fintype δ]
+  [DecidableEq δ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] [Fintype δ] [DecidableEq δ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:515:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:524:51: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:562:38: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:549:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.maxTaskFiberCard_mono_of_factors_through`:
+  [DecidableEq α]
+  [Fintype δ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] [Fintype δ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:573:65: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:598:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.observeFiber_prod_eq_product`:
+  [Fintype β]
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:684:33: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropy.lean:671:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.correctlyDecodedOnFiber_card_le_tag_alphabet`:
+  [Fintype β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:732:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.optimalFiberBitLength_feasible`:
+  [Fintype β]
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:739:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.optimalFiberBitLength_le_of_feasible`:
+  [Fintype β]
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropy.lean:966:20: This simp argument is unused:
+  hbpos
+
+Hint: Omit it from the simp argument list.
+  simp [hb̵p̵o̵s̵,̵ ̵h̵zero]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: Paper1IT/GraphEntropy.lean:991:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.confusabilityGraph_eq_top_of_constant`:
+  [Fintype α]
+  [Fintype β]
+  [DecidableEq α]
+  [DecidableEq β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype α] [Fintype β] [DecidableEq α] [DecidableEq β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3126/3220] Replayed Paper1IT.BudgetSplit
+warning: Paper1IT/BudgetSplit.lean:15:0: automatically included section variable(s) unused in theorem `Ssot.Paper1IT.exists_minimizing_split`:
+  [DecidableEq ρ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq ρ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/BudgetSplit.lean:33:0: automatically included section variable(s) unused in theorem `Ssot.Paper1IT.totalBudget_mono`:
+  [Fintype ρ]
+  [DecidableEq ρ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype ρ] [DecidableEq ρ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/BudgetSplit.lean:42:0: automatically included section variable(s) unused in theorem `Ssot.Paper1IT.exists_optimal_budget_split`:
+  [DecidableEq ρ]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq ρ] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/BudgetSplit.lean:58:18: This simp argument is unused:
+  hne
+
+Hint: Omit it from the simp argument list.
+  simp [costs, m, hn̵e̵,̵ ̵h̵rOpt]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+⚠ [3201/3220] Replayed Paper1IT.GrowthCollisions
+warning: Paper1IT/GrowthCollisions.lean:67:4: Try `simp at h` instead of `simpa using h`
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3204/3220] Replayed Paper1IT.QueryBitBridge
+warning: Paper1IT/QueryBitBridge.lean:27:0: automatically included section variable(s) unused in theorem `Ssot.QueryBitBridge.distinguishesOn_mono`:
+  [Fintype C]
+  [Fintype Q]
+  [DecidableEq C]
+  [DecidableEq Q]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype C] [Fintype Q] [DecidableEq C] [DecidableEq Q] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/QueryBitBridge.lean:40:0: automatically included section variable(s) unused in theorem `Ssot.QueryBitBridge.card_distinguished_set_le_two_pow_card`:
+  [Fintype C]
+  [Fintype Q]
+  [DecidableEq C]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype C] [Fintype Q] [DecidableEq C] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/QueryBitBridge.lean:67:0: automatically included section variable(s) unused in theorem `Ssot.QueryBitBridge.fiber_card_le_two_pow_query_count`:
+  [Fintype β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/QueryBitBridge.lean:98:0: automatically included section variable(s) unused in theorem `Ssot.QueryBitBridge.distinguished_set_eq_full_transcript_capacity`:
+  [Fintype C]
+  [Fintype Q]
+  [DecidableEq C]
+  [DecidableEq Q]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype C] [Fintype Q] [DecidableEq C] [DecidableEq Q] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/QueryBitBridge.lean:100:5: unused variable `hdist`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+warning: Paper1IT/QueryBitBridge.lean:120:0: automatically included section variable(s) unused in theorem `Ssot.QueryBitBridge.queryExpressivityGap_nonneg`:
+  [Fintype C]
+  [Fintype Q]
+  [DecidableEq C]
+  [DecidableEq Q]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype C] [Fintype Q] [DecidableEq C] [DecidableEq Q] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/QueryBitBridge.lean:122:5: unused variable `hdist`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3208/3220] Replayed Paper1IT.ComputabilityQuantization
+warning: Paper1IT/ComputabilityQuantization.lean:12:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.maxFiberCard_eq_finiteSup`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/ComputabilityQuantization.lean:19:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.maxFiberCard_computable_by_fiber_enumeration`:
+  [DecidableEq α]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [DecidableEq α] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+⚠ [3211/3220] Replayed Paper1IT.GraphEntropyAsymptotic
+warning: Paper1IT/GraphEntropyAsymptotic.lean:33:0: automatically included section variable(s) unused in theorem `Ssot.GraphEntropy.block_zeroErrorTagging_of_zeroErrorTagging`:
+  [Fintype α]
+  [Fintype β]
+  [DecidableEq β]
+consider restructuring your `variable` declarations so that the variables are not in scope or explicitly omit them:
+  omit [Fintype α] [Fintype β] [DecidableEq β] in theorem ...
+
+Note: This linter can be disabled with `set_option linter.unusedSectionVars false`
+warning: Paper1IT/GraphEntropyAsymptotic.lean:98:22: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropyAsymptotic.lean:237:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Paper1IT/GraphEntropyAsymptotic.lean:268:4: Try this: intro hm k
+Build completed successfully (3220 jobs).
 
 
 ================================================================================

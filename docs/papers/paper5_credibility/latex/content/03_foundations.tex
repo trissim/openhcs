@@ -52,6 +52,32 @@ if:
 Producing the signal when false costs strictly more than when true. The quantity $\Delta$
 (in joules) is the \emph{cost differential}.
 
+\textbf{Definition 2.3a (Credibility as Perceived Integrity via Heuristic).}
+A \emph{credibility heuristic} is a polynomial-time computable function 
+$h : \mathcal{C} \times \mathcal{S}^* \to [0,1]$ that maps a claim and observed 
+signals to a perceived integrity score. The \emph{credibility} of a claim $c$ given 
+signals $s$ is defined as:
+\[C(c, s) := h(c, s)\]
+where $h$ is the receiver's heuristic for assessing claim integrity.
+
+\textbf{Rationale.} This definition makes credibility operational: it is not an 
+abstract notion but a \emph{perceived} assessment computed by a specific \emph{heuristic}. 
+The receiver's cognitive system uses shortcuts to evaluate whether a claim's 
+proponent is trustworthy, competent, or sincere. This grounds the subsequent 
+analysis in algorithmic information processing rather than undefined intuition.
+
+\textbf{Heuristic Properties.} We assume $h$ satisfies: (i) $h(c, \emptyset)$ returns 
+the receiver's prior (baseline integrity belief), (ii) $h$ is efficient (bounded 
+computation), and (iii) $h$ may exhibit systematic bias (deviation from Bayesian optimality).
+
+\textbf{Mathematical vs Social Domain.} The heuristic differs by domain:
+\begin{itemize}
+\item $h_M$: mathematical credibility heuristic (type-checker, proof verifier) 
+      - converges to 0/1 as verification runs (bounded verification $\to$ bounded error)
+\item $h_S$: social credibility heuristic (reputation, credentials, rhetorical style)
+      - bounded away from extremes due to cognitive limitations (bounded memory $\to$ bounded precision)
+\end{itemize}
+
 \textbf{Remark (Lean proofs as physical signals).}
 A machine-checked Lean proof is a costly signal with $\Delta \to \infty$. To produce a
 compiling proof of a false theorem, the type-checker's false-positive rate satisfies

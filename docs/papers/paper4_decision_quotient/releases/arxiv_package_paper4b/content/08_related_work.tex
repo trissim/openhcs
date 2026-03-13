@@ -2,20 +2,20 @@
 
 \subsection{Sufficient Statistics and Information Reduction}
 
-The closest classical analogue to coordinate sufficiency is the theory of sufficient statistics. In both settings the goal is to replace a large object by a smaller one without losing decision-relevant structure. The difference here is one of object and emphasis: the retained information is indexed by optimal-action preservation rather than parameter inference, and the central summary is the optimizer quotient rather than a statistic defined relative to a parametric family.
+The closest classical analogue to coordinate sufficiency is the theory of sufficient statistics \cite{cover2006elements,csiszar2011information,savage1954foundations}. In both settings the goal is to replace a large object by a smaller one without losing decision-relevant structure. The difference here is one of object and emphasis: the retained information is indexed by optimal-action preservation rather than parameter inference, and the central summary is the optimizer quotient rather than a statistic defined relative to a parametric family.
 
 \subsection{Information Geometry and Bayesian Decision Theory}
 
-The Bayesian chain used here is standard: cross-entropy decomposes into entropy plus KL divergence, and Gibbs' inequality yields Bayes optimality under log loss. What is distinctive here is the way those classical identities are attached to the optimizer quotient and to structural rank, so that Bayesian optimality appears as one part of a larger convergence story rather than as an isolated fact.
+The Bayesian chain used here is standard: cross-entropy decomposes into entropy plus KL divergence, and Gibbs' inequality yields Bayes optimality under log loss \cite{cover2006elements,csiszar2011information,raiffa1961applied}. What is distinctive here is the way those classical identities are attached to the optimizer quotient and to structural rank, so that Bayesian optimality appears as one part of a larger convergence story rather than as an isolated fact.
 
 \subsection{Rate-Distortion and Lossless Compression}
 
-The link between lossless compression and decision structure is conceptually close to the minimum-description-length viewpoint. We focus on the zero-distortion boundary relevant to exact decision preservation: once only decision-equivalent states may be merged, the quotient structure fixes the admissible compression target. This places rate-distortion language in direct contact with the relevant-coordinate support.
+The link between lossless compression and decision structure is conceptually close to the minimum-description-length viewpoint \cite{shannon1959coding,blahut1972computation,rissanen1978modeling,grunwald2007minimum}. We focus on the zero-distortion boundary relevant to exact decision preservation: once only decision-equivalent states may be merged, the quotient structure fixes the admissible compression target. This places rate-distortion language in direct contact with the relevant-coordinate support.
 
 \subsection{Categorical and Quotient Viewpoints}
 
-The optimizer quotient is a familiar object in \textbf{Set}: it is the coimage/image factorization of the optimizer map. The contribution here is not novelty of construction but novelty of use. The quotient is the organizing object through which the Bayesian, entropy, and structural-rank viewpoints can be compared within a single framework.
+The optimizer quotient is a familiar object in \textbf{Set}: it is the coimage/image factorization of the optimizer map \cite{maclane1998categories}. The contribution here is not novelty of construction but novelty of use. The quotient is the organizing object through which the Bayesian, entropy, and structural-rank viewpoints can be compared within a single framework.
 
 \subsection{Formalized Mathematics and Verified Complexity}
 
-Formal verification has made major progress in algebra, analysis, and basic computability. The present work belongs to the growing body of research that uses mechanization to stabilize arguments spanning more than one mathematical viewpoint. Here the mechanized layer supports quotient-theoretic, information-theoretic, and Bayesian statements within a single development.
+Formal verification has made major progress in algebra, analysis, and basic computability \cite{forster2019verified,kunze2019formal,nipkow2002isabelle,mathlib2020,demoura2021lean4}. The present work belongs to the growing body of research that uses mechanization to stabilize arguments spanning more than one mathematical viewpoint. Here the mechanized layer supports quotient-theoretic, information-theoretic, and Bayesian statements within a single development.

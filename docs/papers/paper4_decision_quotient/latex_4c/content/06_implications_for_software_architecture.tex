@@ -3,15 +3,15 @@
 Regime for this section: the mechanized Boolean-coordinate model [S\_bool] plus the architecture cost model defined below. The centralization-vs-distribution framing follows established software-architecture criteria about modular decomposition and long-run maintenance tradeoffs \cite{parnas1972criteria, brooks1987no, bass2012software, shaw1996software}.
 Although phrased in software terms, the formal objects are substrate-agnostic: the same hardness-placement and amortization equations apply to physical architectures (for example, centralized vs distributed sensing/actuation computation) once mapped into the same coordinate/cost model.
 \claimstamp{P\ref{prop:physical-claim-transport};T\ref{thm:physical-bridge-bundle},\ref{thm:centralization-dominance},\ref{thm:tax-conservation},\ref{thm:amortization}}{AR,LC}
-\leanmeta{\LH{CT6},\LH{CT4},\LH{HD1},\LH{HD5},\LH{HD4}.}
+\leanmeta{\LH{CT4}, \LH{CT6}, \LH{HD1}, \LHrng{HD}{4}{5}.}
 
 In electrical implementations, the same architecture equations are energy equations: each distributed update path induces switching events and Joule expenditure, while centralized one-time structure pays setup cost and reduces repeated per-site electrical work. Under the declared thermodynamic lift, this is tracked as a typed transfer from bit-operation load to physical energy load.
 \claimstamp{P\ref{prop:thermo-lift};C\ref{cor:neukart-vinokur}}{AR,H=cost-growth}
-\leanmeta{\LH{CC76},\LH{CC77}.}
+\leanmeta{\LHrng{CC}{76}{77}.}
 
 Equivalently, repeated distributed cycles create a thermal duty: more update cycles imply more bit operations, which imply more unavoidable dissipated heat and therefore larger heat-transfer/removal requirements in the same substrate class.
 \claimstamp{P\ref{prop:decision-unit-time},\ref{prop:run-time-accounting},\ref{prop:thermo-lift}}{AR,H=cost-growth}
-\leanmeta{\LH{DT13},\LH{DT16},\LH{CV17},\LH{CV18},\LH{CC76}.}
+\leanmeta{\LH{DT13}, \LH{DT16}, \LHrng{CV}{17}{18}, \LH{CC76}.}
 
 \subsection{Over-Specification as Diagnostic Signal}
 
@@ -131,7 +131,7 @@ This is the low-tensor-rank branch of Theorem~\ref{thm:tractable}, mechanized as
 \begin{corollary}[Bounded-Treewidth Tractability]\label{cor:practice-treewidth}
 \claimstamp{C\ref{cor:practice-treewidth}}{H=tractable-structured}
 When utility decomposes as pairwise interactions on a graph of treewidth $w$, sufficiency checking is polynomial in $n \cdot k^{w+1}$.
-\leanmeta{\LH{CC73},\LH{CC75}}
+\leanmeta{\LH{CC73}, \LH{CC75}}
 \end{corollary}
 
 \begin{proof}
@@ -176,7 +176,7 @@ For any problem family $P$ measured by $H(P;n)$ above, any solution architecture
 H_{\text{total}}(S) = H_{\text{central}}(S) + n \cdot H_{\text{distributed}}(S) \geq H(P;n).
 \]
 For SUFFICIENCY-CHECK, Theorem~\ref{thm:dichotomy} provides the baseline on the hard succinct family: $H(\text{SUFFICIENCY-CHECK};n)=2^{\Omega(n)}$ under ETH.
-\leanmeta{\LH{HD23},\LH{HD25}}
+\leanmeta{\LH{HD23}, \LH{HD25}}
 \end{proposition}
 
 \begin{proof}
@@ -205,8 +205,7 @@ For a solution architecture $S$ in this linear model:
 \text{right hardness} \iff H_{\mathrm{distributed}}(S)=0,\qquad
 \text{wrong hardness} \iff H_{\mathrm{distributed}}(S)>0.
 \]
-\leanmeta{\LH{HD12},
-\LH{HD13}}
+\leanmeta{\LHrng{HD}{12}{13}}
 \end{definition}
 
 \begin{theorem}[Centralization Dominance]\label{thm:centralization-dominance}
@@ -225,8 +224,7 @@ H_{\text{total}}(S_{\mathrm{right}}) < H_{\text{total}}(S_{\mathrm{wrong}})
 \item Fewer error sites: errors in centralized components affect 1 location; errors in distributed components affect $n$ locations
 \item Quantified leverage: moving one unit of work from distributed to central saves exactly $n-1$ units of total realized hardness
 \end{enumerate}
-\leanmeta{\LH{HD1},
-\LH{HD2}}
+\leanmeta{\LHrng{HD}{1}{2}}
 \end{theorem}
 
 \begin{proof}
@@ -359,8 +357,7 @@ In the generalized model, strict right-vs-wrong dominance is not unconditional. 
 \item If wrong-side growth lower bounds are dropped, right-side strict dominance can fail for all $n$.
 \item If right-side boundedness is dropped, strict dominance can fail for all $n$ even when wrong-side growth is linear.
 \end{enumerate}
-\leanmeta{\LH{HD8},
-\LH{HD7}}
+\leanmeta{\LHrng{HD}{7}{8}}
 \end{proposition}
 
 \begin{proof}
@@ -391,8 +388,7 @@ K, & n>K,
 \end{cases}
 \]
 both $C_K$ and $n\mapsto H_{\text{central}}+C_K(n)$ are eventually saturating.
-\leanmeta{\LH{HD20},
-\LH{HD6}}
+\leanmeta{\LH{HD6}, \LH{HD20}}
 \end{theorem}
 
 \begin{proof}

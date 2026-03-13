@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Decision Quotient (ToC).
 
-- **Lines:** 34846
-- **Theorems:** 1449
+- **Lines:** 40606
+- **Theorems:** 1709
 - **`sorry` placeholders:** 0
 
 
@@ -41,10 +41,15 @@ lake build
 | `ComputationalDecisionProblem.lean` | ComputationalDecisionProblem |
 | `CrossPaperDependencies.lean` | CrossPaperDependencies |
 | `DecisionGeometry.lean` | DecisionGeometry |
+| `DecisionNoise.lean` | DecisionNoise |
 | `Dichotomy.lean` | Dichotomy |
+| `DimensionalComplexity.lean` | DimensionalComplexity |
 | `Approximation.lean` | Approximation |
 | `Elicitation.lean` | Elicitation |
 | `ValueOfInformation.lean` | ValueOfInformation |
+| `ConcreteExamples.lean` | ConcreteExamples |
+| `PreservationExamples.lean` | PreservationExamples |
+| `ExplicitStateMembership.lean` | ExplicitStateMembership |
 | `Finite.lean` | Finite |
 | `FunctionalInformation.lean` | FunctionalInformation |
 | `GraphNontriviality.lean` | GraphNontriviality |
@@ -117,13 +122,17 @@ lake build
 | `CrossRegime.lean` | CrossRegime |
 | `Dichotomy.lean` | Dichotomy |
 | `Economics.lean` | Economics |
+| `ExistentialHardness.lean` | ExistentialHardness |
 | `Finite.lean` | Finite |
 | `Hardness.lean` | Hardness |
 | `HardnessDistribution.lean` | HardnessDistribution |
 | `Hierarchy.lean` | Hierarchy |
 | `Information.lean` | Information |
 | `Instances.lean` | Instances |
+| `NPPPHardness.lean` | NPPPHardness |
+| `OracleUpperBounds.lean` | OracleUpperBounds |
 | `PolynomialReduction.lean` | PolynomialReduction |
+| `PreservationVariants.lean` | PreservationVariants |
 | `QueryComplexity.lean` | QueryComplexity |
 | `Quotient.lean` | Quotient |
 | `SetValued.lean` | SetValued |
@@ -139,9 +148,13 @@ lake build
 | `ThermodynamicLift.lean` | ThermodynamicLift |
 | `ToolCollapse.lean` | ToolCollapse |
 | `BoundedActions.lean` | BoundedActions |
+| `BoundedStateSpace.lean` | BoundedStateSpace |
 | `Dimensional.lean` | Dimensional |
+| `Dominance.lean` | Dominance |
 | `FPT.lean` | FPT |
+| `MultiplicativeSeparable.lean` | MultiplicativeSeparable |
 | `SeparableUtility.lean` | SeparableUtility |
+| `SingleAction.lean` | SingleAction |
 | `StructuralRank.lean` | StructuralRank |
 | `Tightness.lean` | Tightness |
 | `TreeStructure.lean` | TreeStructure |

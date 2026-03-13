@@ -91,19 +91,33 @@ theorem count_univ_bool :
     (Measure.count : Measure Bool) Set.univ = (2 : ENNReal) := by
   simpa using (Measure.count_univ (α := Bool))
 
+/-- On any finite type, counting measure assigns total mass equal to the
+    cardinality of the whole space. -/
+theorem count_univ_fintype
+    (α : Type u) [Fintype α] [MeasurableSpace α] :
+    (Measure.count : Measure α) Set.univ = (Fintype.card α : ENNReal) := by
+  simpa using (Measure.count_univ (α := α))
+
+/-- Raw counting measure on a finite space with more than one point is not a
+    probability measure; stochastic claims therefore require normalization. -/
+theorem counting_measure_not_probability_of_card_gt_one
+    {α : Type u} [Fintype α] [MeasurableSpace α]
+    (hCard : 1 < Fintype.card α) :
+    ¬ IsProbabilityMeasure (Measure.count : Measure α) := by
+  intro hprob
+  have h1 : (Measure.count : Measure α) Set.univ = (1 : ENNReal) := by
+    simpa using hprob.measure_univ
+  have h2 : (Measure.count : Measure α) Set.univ = (Fintype.card α : ENNReal) := by
+    simpa using (Measure.count_univ (α := α))
+  have hEq : (Fintype.card α : ENNReal) = 1 := h2.symm.trans h1
+  have hEqNat : Fintype.card α = 1 := by
+    exact_mod_cast hEq
+  exact (Nat.ne_of_gt hCard) hEqNat
+
 /-- Counting measure on `Bool` is not a probability measure. -/
 theorem counting_measure_not_probability_on_bool :
     ¬ IsProbabilityMeasure (Measure.count : Measure Bool) := by
-  intro hprob
-  have h1 : (Measure.count : Measure Bool) Set.univ = (1 : ENNReal) := by
-    simpa using hprob.measure_univ
-  have h2 : (Measure.count : Measure Bool) Set.univ = (2 : ENNReal) := by
-    simpa using (Measure.count_univ (α := Bool))
-  have : (1 : ENNReal) = (2 : ENNReal) := by
-    calc
-      (1 : ENNReal) = (Measure.count : Measure Bool) Set.univ := h1.symm
-      _ = (2 : ENNReal) := h2
-  norm_num at this
+  exact counting_measure_not_probability_of_card_gt_one (α := Bool) (by decide)
 
 /-- Deterministic Dirac models remain measure-based and probability-normalized. -/
 theorem deterministic_dirac_is_probability

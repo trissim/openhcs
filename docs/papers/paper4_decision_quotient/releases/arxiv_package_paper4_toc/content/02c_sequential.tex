@@ -39,7 +39,7 @@ Formally: let $\pi^*$ be the optimal policy with full observations, and let $\pi
 \textbf{SEQUENTIAL-ANCHOR-SUFFICIENCY-CHECK}: Given sequential decision problem $\mathcal{D}_{SEQ}$ and coordinate set $I$, does there exist an anchor state whose $I$-agreement class preserves the optimal action set?
 \end{decision}
 
-\leanmeta{\LH{DC20},\LH{DC21},\LH{DC22}.}
+\leanmeta{\LHrng{DC}{20}{22}.}
 
 \subsection{Complexity: \PSPACE-Completeness}
 
@@ -64,13 +64,59 @@ For each quantified Boolean formula $q$:
 \mathrm{SEQUENTIAL\mbox{-}ANCHOR\mbox{-}SUFFICIENCY\mbox{-}CHECK}(\mathrm{reduceTQBF}(q),\emptyset).
 \]
 \claimstamp{P\ref{prop:sequential-anchor-tqbf-reduction}}{PSPACE}
-\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
+\leanmeta{\LHrng{DC}{27}{29}, \LH{DC44}.}
 \end{claim}
 
-\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
+\leanmeta{\LHrng{DC}{27}{29}, \LH{DC44}.}
+
+\begin{claim}{Sequential anchor hardness package}{prop:sequential-anchor-hardness-package}
+For each arity $n$, there is a polynomially size-bounded reduction from TQBF to the sequential anchor query.
+\claimstamp{P\ref{prop:sequential-anchor-hardness-package}}{PSPACE}
+\leanmeta{\LHrng{DC}{43}{44}.}
+\end{claim}
+
+\leanmeta{\LHrng{DC}{43}{44}.}
+
+\begin{claim}{Sequential minimum hardness package}{prop:sequential-minimum-hardness-package}
+For each arity $n$, there is a polynomially size-bounded reduction from TQBF to
+the $k=0$ slice of the sequential minimum-sufficiency query.
+\claimstamp{P\ref{prop:sequential-minimum-hardness-package}}{PSPACE}
+\leanmeta{\LH{DC46}, \LH{DC48}.}
+\end{claim}
+
+\leanmeta{\LH{DC46}, \LH{DC48}.}
+
+\begin{claim}{Sequential minimality equals relevance}{prop:sequential-minimal-relevant}
+For any minimal sequentially sufficient coordinate set $I$, a coordinate lies in
+$I$ if and only if it is relevant for the underlying sequential decision map,
+and any two minimal sequentially sufficient sets coincide.
+\claimstamp{P\ref{prop:sequential-minimal-relevant}}{structural}
+\leanmeta{\LHrng{DC}{49}{50}.}
+\end{claim}
+
+\leanmeta{\LHrng{DC}{49}{50}.}
+
+\begin{claim}{Exact finite deciders for sequential queries}{prop:sequential-finite-deciders}
+The development internalizes exact boolean deciders for sequential sufficiency,
+sequential anchor sufficiency, and sequential minimum sufficiency.
+\claimstamp{P\ref{prop:sequential-finite-deciders}}{finite exact deciders}
+\leanmeta{\LHrng{DC}{54}{56}.}
+\end{claim}
+
+\leanmeta{\LHrng{DC}{54}{56}.}
+
+\begin{claim}{Explicit counted search bounds for sequential queries}{prop:sequential-counted-search}
+The development contains counted exhaustive-search procedures for sequential
+sufficiency, sequential anchor sufficiency, and sequential minimum sufficiency,
+with certified bounds $O(|S|^2)$, $O(|S|)$, and $O(2^n)$ respectively.
+\claimstamp{P\ref{prop:sequential-counted-search}}{finite explicit search}
+\leanmeta{\LHrng{DC}{60}{61}, \LHrng{DC}{66}{69}.}
+\end{claim}
+
+\leanmeta{\LHrng{DC}{60}{61}, \LHrng{DC}{66}{69}.}
 
 Observer-collapse closure for the sequential anchor query is mechanized: under the declared collapse hypothesis, sequential sufficiency and sequential anchor-check truth follow directly.
-\leanmeta{\LH{PA6},\LH{PA7}.}
+\leanmeta{\LHrng{PA}{6}{7}.}
 
 \begin{enumerate}
 \item \textbf{Membership in \PSPACE}: Optimal POMDP policy computation is in \PSPACE (Papadimitriou \& Tsitsiklis, 1987). Checking whether a coordinate set $I$ yields the same policy involves comparing value functions, which can be done in polynomial space via alternating polynomial time.
@@ -87,8 +133,7 @@ Observer-collapse closure for the sequential anchor query is mechanized: under t
 Then full observation is sequentially sufficient iff the controller can guarantee $\varphi = \text{true}$ regardless of exogenous choices, which holds iff the QBF is true.
 \end{enumerate}
 
-\leanmeta{\LH{CC48},
-\LH{CC47}}
+\leanmeta{\LHrng{CC}{47}{48}}
 
 \begin{construction}[TQBF Reduction]\label{constr:tqbf-to-sequential}
 Given QBF $\Phi = Q_1 x_1 Q_2 x_2 \ldots Q_n x_n\ \varphi(x_1, \ldots, x_n)$ with alternating quantifiers, construct sequential problem:

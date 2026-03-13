@@ -61,7 +61,7 @@ This is the EPISTEMIC foundation of SSOT.
 -- Helper: a singleton list has all elements equal
 theorem singleton_all_equal {α : Type} (a : α) (x y : α) 
     (hx : x ∈ [a]) (hy : y ∈ [a]) : x = y := by
-  simp [List.mem_singleton] at hx hy
+  simp at hx hy
   rw [hx, hy]
 
 -- THEOREM: DOF = 1 → Coherence is guaranteed
@@ -143,7 +143,7 @@ This proves: MODIFICATION COMPLEXITY = COHERENCE RESTORATION COMPLEXITY
 -- Edits required to restore coherence = number of encodings that need updating
 
 -- If fact changes from old to new, how many edits to make all encodings = new?
-def edits_to_restore_coherence (s : EncodingSystem) (new_val : FactValue) : Nat :=
+def edits_to_restore_coherence (s : EncodingSystem) (_new_val : FactValue) : Nat :=
   s.values.length  -- Must update all encodings to the new value
 
 -- THEOREM: Coherence restoration complexity = DOF

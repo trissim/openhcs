@@ -61,11 +61,18 @@ import DecisionQuotient.ThermodynamicLift
 import DecisionQuotient.InflationEntropyBridge
 import DecisionQuotient.InflationEntropyMinimality
 import DecisionQuotient.Statistics.FisherInformation
+import DecisionQuotient.DecisionNoise
 import DecisionQuotient.StochasticSequential.ClaimClosure
 import DecisionQuotient.StochasticSequential.Basic
 import DecisionQuotient.StochasticSequential.Quotient
 import DecisionQuotient.StochasticSequential.SetValued
+import DecisionQuotient.StochasticSequential.Computation
+import DecisionQuotient.StochasticSequential.OracleUpperBounds
+import DecisionQuotient.StochasticSequential.ExistentialHardness
 import DecisionQuotient.StochasticSequential.Hardness
+import DecisionQuotient.AlgorithmComplexity
+import DecisionQuotient.ComplexityMain
+import DecisionQuotient.ExplicitStateMembership
 import DecisionQuotient.StochasticSequential.Hierarchy
 import DecisionQuotient.StochasticSequential.PolynomialReduction
 import DecisionQuotient.StochasticSequential.ThermodynamicLift
@@ -638,6 +645,62 @@ abbrev DC26 := @StochasticSequential.reduceMAJSAT_to_stochastic_anchor_reduction
 abbrev DC27 := @StochasticSequential.SequentialAnchorCheckInstance
 abbrev DC28 := @StochasticSequential.reduceTQBF_correct_anchor
 abbrev DC29 := @StochasticSequential.reduceTQBF_to_sequential_anchor_reduction
+abbrev DC40 := @StochasticSequential.reduceMAJSATPureAnchor_correct
+abbrev DC41 := @StochasticSequential.reduceMAJSAT_to_pure_stochastic_anchor_reduction
+abbrev DC42 := @StochasticSequential.stochastic_anchor_check_pp_hard
+abbrev DC43 := @StochasticSequential.SequentialAnchorPSPACEHard
+abbrev DC44 := @StochasticSequential.sequential_anchor_check_pspace_hard
+abbrev DC45 := @StochasticSequential.stochastic_sufficiency_pp_hard
+abbrev DC46 := @StochasticSequential.sequential_sufficiency_pspace_hard
+abbrev DC47 := @StochasticSequential.stochastic_minimum_sufficiency_pp_hard
+abbrev DC48 := @StochasticSequential.sequential_minimum_sufficiency_pspace_hard
+abbrev DC49 := @StochasticSequential.sequentialMinimalSufficient_iff_relevant
+abbrev DC50 := @StochasticSequential.sequentialRelevantSet_is_minimal
+abbrev DC51 := @StochasticSequential.stochasticSufficientBool_spec
+abbrev DC52 := @StochasticSequential.stochasticAnchorSufficientBool_spec
+abbrev DC53 := @StochasticSequential.stochasticMinimumSufficiencyBool_spec
+abbrev DC54 := @StochasticSequential.sequentialSufficientBool_spec
+abbrev DC55 := @StochasticSequential.sequentialAnchorSufficientBool_spec
+abbrev DC56 := @StochasticSequential.sequentialMinimumSufficiencyBool_spec
+abbrev DC57 := @StochasticSequential.fiberDecisionProblem_sufficient
+abbrev DC58 := @StochasticSequential.countedStochasticMinimumSearch_spec
+abbrev DC59 := @StochasticSequential.countedStochasticMinimumSearch_steps
+abbrev DC60 := @StochasticSequential.countedSequentialMinimumSearch_spec
+abbrev DC61 := @StochasticSequential.countedSequentialMinimumSearch_steps
+abbrev DC62 := @StochasticSequential.countedStochasticSufficiencySearch_spec
+abbrev DC63 := @StochasticSequential.countedStochasticSufficiencySearch_steps
+abbrev DC64 := @StochasticSequential.countedStochasticAnchorSearch_spec
+abbrev DC65 := @StochasticSequential.countedStochasticAnchorSearch_steps
+abbrev DC66 := @StochasticSequential.countedSequentialSufficiencySearch_spec
+abbrev DC67 := @StochasticSequential.countedSequentialSufficiencySearch_steps
+abbrev DC68 := @StochasticSequential.countedSequentialAnchorSearch_spec
+abbrev DC91 := @StochasticSequential.countedStochasticPreservationSearch_spec
+abbrev DC92 := @StochasticSequential.countedStochasticPreservationSearch_steps
+abbrev DC93 := @StochasticSequential.stochastic_preservation_inP_explicit
+abbrev DC94 := @StochasticSequential.stochastic_preservation_implies_static_sufficiency
+abbrev DC95 := @StochasticSequential.static_sufficiency_implies_stochastic_preservation_of_full_support
+abbrev DC96 := @StochasticSequential.static_sufficiency_iff_stochastic_preservation_of_full_support
+abbrev DC97 := @StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_preservation
+abbrev DC98 := @StochasticSequential.stochasticDecisionEquiv_iff_decisionEquiv_of_full_support
+abbrev DC99 := @StochasticSequential.stochasticEquivSetoid_eq_decisionSetoid_of_full_support
+abbrev DC100 := @StochasticSequential.benchmark_escalation_summary
+abbrev DC101 := @StochasticSequential.sequential_sufficiency_upper_bound_summary
+abbrev DC102 := @StochasticSequential.sequential_anchor_upper_bound_summary
+abbrev DC103 := @StochasticSequential.sequential_minimum_upper_bound_summary
+abbrev DC69 := @StochasticSequential.countedSequentialAnchorSearch_steps
+abbrev DC70 := @static_sufficiency_inP_explicit
+abbrev DC71 := @static_anchor_inP_explicit
+abbrev DC72 := @StochasticSequential.stochastic_sufficiency_inP_explicit
+abbrev DC73 := @StochasticSequential.stochastic_anchor_inP_explicit
+abbrev DC74 := @StochasticSequential.sequential_sufficiency_inP_explicit
+abbrev DC75 := @StochasticSequential.sequential_anchor_inP_explicit
+abbrev DC76 := @explicit_state_inP_summary
+abbrev DC77 := @static_minimum_inP_explicit
+abbrev DC78 := @stochastic_minimum_inP_explicit
+abbrev DC79 := @sequential_minimum_inP_explicit
+abbrev DC80 := @staticSufficiency_counted_search_witness
+abbrev DC81 := @static_query_search_matrix
+abbrev DC82 := @finite_search_summary
 abbrev DC30 := @StochasticSequential.StatePotential
 abbrev DC31 := @StochasticSequential.utilityFromPotentialDrop_le_iff_nextPotential_ge
 abbrev DC32 := @StochasticSequential.utility_from_action_state_potential
@@ -708,7 +771,7 @@ abbrev IA13 := ClaimClosure.IA13
 abbrev IA14 := @Physics.InvariantAgreement.IA14_observer_disagreement_impossible
 abbrev IA15 := @Physics.InvariantAgreement.sameUniverse
 abbrev IA16 := @Physics.InvariantAgreement.IA16_no_invariant_undefined_membership
-abbrev IA17 := @Physics.InvariantAgreement.IA17_ego_trap
+abbrev IA17 := @Physics.InvariantAgreement.IA17_observer_level_rejection_cascade
 abbrev IA18 := @Physics.InvariantAgreement.IA18_escalation_complete
 
 -- Gap Energy (GE) handles
@@ -783,6 +846,28 @@ abbrev DQ5 := ClaimClosure.DQ5  -- Max gap = DQ 0
 abbrev DQ6 := ClaimClosure.DQ6  -- DQ + Gap = Total
 abbrev DQ7 := ClaimClosure.DQ7  -- DQ monotonic
 abbrev DQ8 := ClaimClosure.DQ8  -- DQ thermodynamic interpretation
+abbrev DQ64 := @SeparableUtility
+abbrev DQ65 := @TensorRankDecomposition
+abbrev DQ66 := @TreeStructured
+abbrev DQ67 := @InteractionGraph
+abbrev DQ68 := @PairwiseUtility
+abbrev DQ69 := @DimensionalStateSpace
+abbrev DQ70 := @SymmetricUtility
+abbrev DQ71 := @DimensionalStateSpace.orbitType
+abbrev DQ72 := @bounded_actions_complexity
+abbrev DQ73 := @bounded_actions_polynomial_time
+abbrev DQ74 := @sufficiency_poly_separable
+abbrev DQ75 := @tensor_contraction_tractable
+abbrev DQ76 := @low_rank_utility_admits_factored_computation
+abbrev DQ77 := @low_rank_tractability
+abbrev DQ78 := @sufficiency_poly_tree_structured
+abbrev DQ79 := @csp_treewidth_tractable
+abbrev DQ80 := @sufficiency_reduces_to_interaction_csp
+abbrev DQ81 := @bounded_treewidth_tractability
+abbrev DQ82 := @orbitType_eq_iff
+abbrev DQ83 := @symmetric_optimalActions_orbit_invariant
+abbrev DQ84 := @sufficiency_reduces_to_cross_orbit_check
+abbrev DQ85 := @symmetric_sufficiency_complexity_bound
 
 -- Decision Problem (DP) additional handles
 abbrev DP6 := ClaimClosure.DP6  -- Empty-set sufficiency iff constant
@@ -891,6 +976,32 @@ abbrev PA6 := @Physics.AnchorChecks.sequential_sufficient_of_observer_collapse
 abbrev PA7 := @Physics.AnchorChecks.sequential_anchor_check_of_observer_collapse
 abbrev PA8 := @Physics.AnchorChecks.physical_observer_collapse_implies_obsEquiv_all
 abbrev PA9 := @Physics.AnchorChecks.physical_stochastic_anchor_check_of_observer_collapse_and_seed
+
+-- Oracle upper-bound (OU) handles - scoped witness-over-verifier machinery
+abbrev OU1 := @StochasticSequential.stochastic_anchor_query_fits_np_over_ppstyle
+abbrev OU2 := @StochasticSequential.stochastic_minimum_query_fits_np_over_ppstyle
+abbrev OU3 := @StochasticSequential.stochastic_existential_queries_fit_np_over_ppstyle
+abbrev OU4 := @StochasticSequential.fitsNPOverPPStyle_of_exists_witness
+abbrev OU5 := @StochasticSequential.inP_of_poly_witness_list
+abbrev OU6 := @StochasticSequential.stochastic_anchor_inP_explicit_via_witness_schema
+abbrev OU7 := @StochasticSequential.stochastic_minimum_inP_explicit_via_witness_schema
+abbrev OU8 := @StochasticSequential.fitsCoNPOverPPStyle_of_no_witness
+abbrev OU9 := @StochasticSequential.stochastic_decisiveness_query_fits_conp_over_ppstyle
+abbrev OU10 := @StochasticSequential.stochastic_decisiveness_complement_fits_np_over_ppstyle
+abbrev OU11 := @StochasticSequential.stochastic_decisiveness_scoped_oracle_bounds
+abbrev OU12 := @StochasticSequential.stochastic_preservation_explicit_summary
+
+-- Existential-hardness (EH) handles - honest existential-majority packaging
+abbrev EH1 := @StochasticSequential.existential_anchor_source_fits_np_over_ppstyle_honest
+abbrev EH2 := @StochasticSequential.existential_anchor_hard_honest
+abbrev EH3 := @StochasticSequential.existential_anchor_query_family_hard_honest
+abbrev EH4 := @StochasticSequential.existential_anchor_np_over_ppstyle_hard_honest
+abbrev EH5 := @StochasticSequential.existential_anchor_query_family_np_over_ppstyle_hard_honest
+abbrev EH6 := @StochasticSequential.existential_anchor_query_family_np_over_ppstyle_complete_honest
+abbrev EH7 := @StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_hard_honest
+abbrev EH8 := @StochasticSequential.existential_decisiveness_complement_np_over_ppstyle_complete_honest
+abbrev EH9 := @StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_hard_honest
+abbrev EH10 := @StochasticSequential.existential_decisiveness_query_family_np_over_ppstyle_complete_honest
 
 -- Graph nontriviality (GN) handles - cycles, observer surprisal, Bayes/DQ/physics bridge
 abbrev GN1 := @LogicGraph.isCycle
@@ -1017,6 +1128,13 @@ abbrev FS2 := @Statistics.fisherMatrix_rank_eq_srank
 abbrev FS3 := @Statistics.fisherMatrix_trace_eq_srank
 abbrev FS4 := @Statistics.fisherScore_relevant
 abbrev FS5 := @Statistics.fisherScore_irrelevant
+
+-- DN: Decision Noise (DecisionNoise.lean)
+abbrev DN1 := @DecisionProblem.stateDecisionNoise_iff_same_quotient
+abbrev DN2 := @DecisionProblem.decisionNoise_iff_not_relevant
+abbrev DN3 := @DecisionProblem.decisionNoise_iff_quotient_invariant
+abbrev DN4 := @DecisionProblem.decisionNoise_implies_condIndep
+abbrev DN5 := @DecisionProblem.decisionNoise_iff_condIndep
 
 /-! ## First-Principles Introduction Additions
 
@@ -1455,6 +1573,22 @@ abbrev IEB16 := @InflationEntropyMinimality.not_redundant_F1_for_finite_counting
 abbrev IEB14 := @InflationEntropyMinimality.not_redundant_F2_for_numOptClasses_pos
 -- IEB15: P3 irreducibility witness (energy floor premise needed)
 abbrev IEB15 := @InflationEntropyMinimality.not_redundant_P3_for_energy_from_entropy_bridge
+-- IEB17: Positive time implies more than one valid successor state
+abbrev IEB17 := @InflationEntropyBridge.Temporal.state_cardinality_gt_one_of_positive_time
+-- IEB18: Positive time forces uncertainty for the normalized temporal prior
+abbrev IEB18 := @InflationEntropyBridge.Temporal.uniformPrior_uncertainty_of_positive_time
+-- IEB19: Positive time forces nondegenerate belief for the normalized temporal prior
+abbrev IEB19 := @InflationEntropyBridge.Temporal.uniformPrior_nondegenerate_of_positive_time
+-- IEB20: Raw counting on expanded successor space is not probability-normalized
+abbrev IEB20 := @InflationEntropyBridge.Temporal.counting_measure_not_probability_on_stateAt_of_positive_time
+-- IEB21: Expansion forces probabilistic reasoning on the expanded successor slice
+abbrev IEB21 := @InflationEntropyBridge.Temporal.cosmological_expansion_forces_probabilistic_reasoning
+-- IEB22: Expansion admits a named support-complete valid-answer semantics
+abbrev IEB22 := @InflationEntropyBridge.Temporal.cosmological_expansion_forces_support_complete_probabilistic_reasoning
+-- IEB23: Canonical valid-answer semantics identifies the entire temporal slice
+abbrev IEB23 := @InflationEntropyBridge.Temporal.canonicalValidAnswerSemantics_identifies_StateAt
+-- IEB24: Chosen state-indexed physical encoding identifies valid answers with StateAt
+abbrev IEB24 := @InflationEntropyBridge.Temporal.stateIndexedPhysicalEncoding_identifies_StateAt
 
 /-! ## Stochastic set-valued bridge handles (SSV)
     StochasticSequential/SetValued.lean

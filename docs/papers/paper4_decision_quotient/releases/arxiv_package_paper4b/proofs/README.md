@@ -1,11 +1,11 @@
-# Decision Quotient Foundations and Convergence - Lean 4 Formalization
+# Decision Quotient Structure and Convergence - Lean 4 Formalization
 
 ## Overview
 
-This directory contains the complete Lean 4 formalization for Decision Quotient Foundations and Convergence.
+This directory contains the complete Lean 4 formalization for Decision Quotient Structure and Convergence.
 
-- **Lines:** 33311
-- **Theorems:** 1378
+- **Lines:** 40606
+- **Theorems:** 1709
 - **`sorry` placeholders:** 0
 
 
@@ -41,10 +41,15 @@ lake build
 | `ComputationalDecisionProblem.lean` | ComputationalDecisionProblem |
 | `CrossPaperDependencies.lean` | CrossPaperDependencies |
 | `DecisionGeometry.lean` | DecisionGeometry |
+| `DecisionNoise.lean` | DecisionNoise |
 | `Dichotomy.lean` | Dichotomy |
+| `DimensionalComplexity.lean` | DimensionalComplexity |
 | `Approximation.lean` | Approximation |
 | `Elicitation.lean` | Elicitation |
 | `ValueOfInformation.lean` | ValueOfInformation |
+| `ConcreteExamples.lean` | ConcreteExamples |
+| `PreservationExamples.lean` | PreservationExamples |
+| `ExplicitStateMembership.lean` | ExplicitStateMembership |
 | `Finite.lean` | Finite |
 | `FunctionalInformation.lean` | FunctionalInformation |
 | `GraphNontriviality.lean` | GraphNontriviality |
@@ -54,14 +59,18 @@ lake build
 | `CountingComplexity.lean` | CountingComplexity |
 | `CoveringLowerBound.lean` | CoveringLowerBound |
 | `ETH.lean` | ETH |
+| `MinSufficientApproximation.lean` | MinSufficientApproximation |
 | `QBF.lean` | QBF |
 | `SAT.lean` | SAT |
+| `SetCoverReduction.lean` | SetCoverReduction |
 | `AnchorSufficiency.lean` | AnchorSufficiency |
 | `Summary.lean` | Summary |
 | `VectorE_CoNP.lean` | VectorE_CoNP |
 | `Sigma2PHardness.lean` | Sigma2PHardness |
 | `Hardness.lean` | Hardness |
 | `HardnessDistribution.lean` | HardnessDistribution |
+| `InflationEntropyBridge.lean` | InflationEntropyBridge |
+| `InflationEntropyMinimality.lean` | InflationEntropyMinimality |
 | `RDSrank.lean` | RDSrank |
 | `RateDistortion.lean` | RateDistortion |
 | `Information.lean` | Information |
@@ -113,15 +122,20 @@ lake build
 | `CrossRegime.lean` | CrossRegime |
 | `Dichotomy.lean` | Dichotomy |
 | `Economics.lean` | Economics |
+| `ExistentialHardness.lean` | ExistentialHardness |
 | `Finite.lean` | Finite |
 | `Hardness.lean` | Hardness |
 | `HardnessDistribution.lean` | HardnessDistribution |
 | `Hierarchy.lean` | Hierarchy |
 | `Information.lean` | Information |
 | `Instances.lean` | Instances |
+| `NPPPHardness.lean` | NPPPHardness |
+| `OracleUpperBounds.lean` | OracleUpperBounds |
 | `PolynomialReduction.lean` | PolynomialReduction |
+| `PreservationVariants.lean` | PreservationVariants |
 | `QueryComplexity.lean` | QueryComplexity |
 | `Quotient.lean` | Quotient |
+| `SetValued.lean` | SetValued |
 | `SubstrateCost.lean` | SubstrateCost |
 | `Summary.lean` | Summary |
 | `TemporalIntegrity.lean` | TemporalIntegrity |
@@ -134,9 +148,13 @@ lake build
 | `ThermodynamicLift.lean` | ThermodynamicLift |
 | `ToolCollapse.lean` | ToolCollapse |
 | `BoundedActions.lean` | BoundedActions |
+| `BoundedStateSpace.lean` | BoundedStateSpace |
 | `Dimensional.lean` | Dimensional |
+| `Dominance.lean` | Dominance |
 | `FPT.lean` | FPT |
+| `MultiplicativeSeparable.lean` | MultiplicativeSeparable |
 | `SeparableUtility.lean` | SeparableUtility |
+| `SingleAction.lean` | SingleAction |
 | `StructuralRank.lean` | StructuralRank |
 | `Tightness.lean` | Tightness |
 | `TreeStructure.lean` | TreeStructure |
@@ -147,6 +165,7 @@ lake build
 | `DeclInfoExport.lean` | DeclInfoExport |
 | `DependencyGraph.lean` | DependencyGraph |
 | `GraphExport.lean` | GraphExport |
+| `InflationEntropyDryRun.lean` | InflationEntropyDryRun |
 | `lakefile.lean` | lakefile |
 
 ## Verification

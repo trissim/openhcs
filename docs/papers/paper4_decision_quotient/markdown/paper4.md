@@ -1,18 +1,12 @@
 # Paper: Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
 
-**Status**: Computational Complexity-ready | **Lean**: 21442 lines, 990 theorems
+**Status**: Computational Complexity-ready | **Lean**: 22068 lines, 1015 theorems
 
 ---
 
 ## Abstract
 
-Which coordinates of a decision problem can you hide without changing the decision, and what is the canonical exact abstraction that records all and only the distinctions that matter for that choice? We study this as an exact relevance-certification problem. For a decision problem $\mathcal{D}=(A,S,U)$, the optimizer quotient identifies states exactly when they induce the same optimal-action set, yielding the coarsest abstraction that preserves optimal-action distinctions. The paper then asks how hard it is to certify that exact structure across three natural settings: static (ruling out counterexamples), stochastic (certification under conditioning and expectation), and sequential (certifying an induced optimizer in a temporally structured model). This yields the decision problems [Sufficiency-Check]{.smallcaps}, [Minimum-Sufficient-Set]{.smallcaps}, and [Anchor-Sufficiency]{.smallcaps} together with a canonical mathematical object organizing the comparison.
-
-Once that canonical object is fixed, the central result is a regime-sensitive complexity matrix across the three settings. In the static regime, sufficiency is characterized by relevance containment, so exact minimization reduces to counting relevant coordinates and is coNP-complete rather than the expected $\Sigma_2^P$. In the stochastic regime, the exact question separates into stochastic sufficiency, which asks whether coarse conditioning preserves the full-information optimizer, and stochastic decisiveness, which asks whether each observed fiber admits a unique conditional optimum. For stochastic preservation, we prove explicit-state tractability for the preservation family together with bridge theorems and support-sensitive partial results. Under full support, the natural base case, we give complete classification. The obstruction to general-distribution classification is structural: preservation quantifies over all states, while stochastic analysis is driven by probability-weighted fibers. Zero-probability states can witness violations that the distribution itself never observes, so full-support results do not transfer directly. The support-sensitive obstruction lemmas in the artifact isolate that mechanism. For stochastic decisiveness, the base query is polynomial-time under explicit-state encoding and PP-hard under succinct encoding; the anchor and minimum variants are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
-
-We prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive a corresponding integrity-competence trilemma for exact certifiers in the hard regime, and isolate six structural conditions under which exact certification remains polynomial. This establishes both tractability islands and fundamental limits for exact simplification.
-
-A Lean 4 proof artifact mechanically checks the optimizer-quotient universal-property core, the main reduction-correctness lemmas, hardness packages, finite deciders, and witness/checking infrastructures. The oracle-class placements are proved in the paper text, while the artifact independently verifies the finite combinatorial core underlying those arguments, positioning this work in the emerging category of problem-specific certified reduction infrastructure.
+Which coordinates of a decision problem can be hidden without changing the decision, and what is the coarsest exact abstraction that preserves all decision-relevant distinctions? We study this as an exact relevance-certification problem organized around the optimizer quotient. We classify how hard it is to certify this structure across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, sufficiency collapses to relevance containment, so minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding with bridge theorems to static sufficiency and the optimizer quotient, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in NP\^PP. In the sequential regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive an integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
 
 
 # Introduction {#sec:introduction}
@@ -45,9 +39,9 @@ The paper is best read as a theory of exact decision-relevant information organi
 
 1.  **Optimizer quotient as canonical structure.** For a finite decision problem, the optimizer quotient identifies states exactly when they induce the same optimal-action set. In **Set**, it is the coarsest exact decision-preserving abstraction, equivalently the coimage/image factorization of the optimizer map. This gives the paper a common structural object through which the later static, stochastic, and sequential results can be compared.
 
-2.  **Regime-sensitive certification landscape.** The paper studies how hard it is to certify exact preservation of decision-relevant structure across three regimes. In the static regime, sufficiency collapses to relevance containment, so [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete rather than the expected $\Sigma_2^P$ search problem, while [Anchor-Sufficiency]{.smallcaps} remains $\Sigma_2^P$-complete. In the stochastic regime, exact analysis splits into preservation and decisiveness. Preservation is polynomial-time under explicit-state encoding, bridges back to static sufficiency and the optimizer quotient, and under full support yields inherited coNP and $\Sigma_2^P$ classifications for the minimum and anchor variants. Decisiveness is polynomial-time in explicit state and PP-hard under succinct encoding, with the anchor and minimum variants PP-hard and in $\textsf{NP}^{\textsf{PP}}$ at paper level. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
+2.  **Regime-sensitive certification landscape.** The paper studies how hard it is to certify exact preservation of decision-relevant structure across three regimes. In the static regime, sufficiency collapses to relevance containment, so [Minimum-Sufficient-Set]{.smallcaps} is coNP-complete rather than the expected $\Sigma_2^P$ search problem, while [Anchor-Sufficiency]{.smallcaps} remains $\Sigma_2^P$-complete. This collapse is structurally nontrivial. In classical rough-set theory, general decision tables can admit multiple incomparable minimal reducts, which drives the minimum-reduct problem into combinatorial search territory. Under the exact optimal-action preservation predicate studied here, Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"} proves there is exactly one minimal sufficient set, the relevant-coordinate set itself. This uniqueness is the structural reason for the collapse to coNP relevance containment. To our knowledge, this specific structural collapse, from $\Sigma_2^P$ search to coNP driven by optimizer-quotient uniqueness, is a novel classification not captured by general rough-set bounds. In the stochastic regime, exact analysis splits into preservation and decisiveness. Preservation is polynomial-time under explicit-state encoding, bridges back to static sufficiency and the optimizer quotient, and under full support yields inherited coNP and $\Sigma_2^P$ classifications for the minimum and anchor variants. Decisiveness is polynomial-time in explicit state and PP-hard under succinct encoding, with the anchor and minimum variants PP-hard and in $\textsf{NP}^{\textsf{PP}}$ at paper level. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
 
-3.  **Tractability islands and encoding-sensitive contrast.** The paper proves an explicit-state versus succinct-encoding contrast and isolates six structural subcases in which exact certification remains polynomial-time: bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry. These are not ad hoc exceptions. They are regimes in which the decision boundary admits enough structural alignment to make exact certification feasible.
+3.  **Tractability islands and encoding-sensitive contrast.** The paper proves an explicit-state versus succinct-encoding contrast and isolates twelve tractable subcases ranging from trivial edge cases (single action, bounded state space) through dominance conditions (strict dominance, constant optimal set) to structural restrictions (bounded actions, separable utility, multiplicative separability, low tensor rank, tree structure, bounded treewidth, coordinate symmetry) and fixed-parameter tractability. These are not ad hoc exceptions. They are regimes in which the decision boundary admits enough structural alignment to make exact certification feasible.
 
 4.  **Consequences for exact certifiers.** In the hard exact regime, certifiers cannot in general be simultaneously sound, complete, and polynomial-budgeted. The same theory yields witness-checking lower bounds, approximation obstructions, and the practical consequence called the simplicity tax: when exact relevance is not certified, the unresolved burden is not removed but shifted elsewhere in the system.
 
@@ -65,7 +59,7 @@ Section [\[sec:formal-setup\]](#sec:formal-setup){reference-type="ref" referenc
 
 ## Artifact Availability
 
-The proof artifact is archived at <https://doi.org/10.5281/zenodo.18140966>. The cited-content snapshot contains 21442 lines across 63 files with 0 occurrences of `sorry`.
+The proof artifact is archived at <https://doi.org/10.5281/zenodo.18998870>. The cited-content snapshot contains 22068 lines across 67 files with 0 occurrences of `sorry`.
 
 
 # Formal Setup {#sec:formal-setup}
@@ -359,7 +353,9 @@ In static decision problems, the natural exact question is whether hiding coordi
 \arg\max_{a\in A}\,\mathbb{E}[U(a,S)\mid S_I = \alpha].$$ A coordinate set $I$ is *stochastically sufficient* if conditioning on $I$ preserves the fully conditioned optimizer: $$\forall s \in S:\quad \operatorname{Opt}^{\mathrm{stoch}}_I(s_I)=\operatorname{Opt}(s).$$ Here $S \sim P$ is the random state drawn from the instance distribution.
 :::
 
-The map $\operatorname{Opt}^{\mathrm{stoch}}_I$ is the optimizer seen through the coarse information retained by $I$. The comparison target $\operatorname{Opt}(s)$ is the fully conditioned optimizer obtained when the whole state is known.
+#### Intuition.
+
+The conditional optimizer $\operatorname{Opt}^{\mathrm{stoch}}_I(\alpha)$ aggregates expected utilities over the entire fiber $\{s : s_I = \alpha\}$ using the distribution $P$. By contrast, the full-information optimizer $\operatorname{Opt}(s)$ conditions on the exact state $s$ itself. Preservation asks whether this averaging over a fiber ever changes which action is optimal; decisiveness asks whether, after averaging, the optimal action on each fiber is uniquely determined.
 
 ::: definition
 []{#def:stochastic-singleton-sufficient label="def:stochastic-singleton-sufficient"} Using the same conditional optimizer map $\operatorname{Opt}^{\mathrm{stoch}}_I$, a coordinate set $I$ is *stochastically decisive* if every admissible fiber has a uniquely determined conditional optimal action: $$\forall \alpha \in \mathrm{supp}(S_I)\; \exists a \in A:\quad \operatorname{Opt}^{\mathrm{stoch}}_I(\alpha)=\{a\}.$$ In the paper, we refer to this as *stochastic decisiveness*. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
@@ -368,6 +364,10 @@ The map $\operatorname{Opt}^{\mathrm{stoch}}_I$ is the optimizer seen through th
 #### Why this changes complexity.
 
 Static sufficiency asks whether any counterexample pair exists. Stochastic sufficiency asks whether the conditional optimizer obtained from the retained coordinates still matches the fully conditioned optimizer, while stochastic decisiveness asks whether every admissible fiber has a uniquely determined conditional optimum. The first question is about ruling out disagreeing state pairs; the second and third are about conditional expected-utility comparisons on each fiber. That shift from witness exclusion to weighted counting comparison is exactly what brings stochastic hardness into the picture.
+
+#### Example.
+
+Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, uniform distribution $P(s_1)=P(s_2)=1/2$, and utilities $U(a,s_1)=2$, $U(b,s_1)=1$, $U(a,s_2)=0$, $U(b,s_2)=3$. For $I=\emptyset$: (i) Preservation: $\mathbb{E}[U(a,S)]=1$, $\mathbb{E}[U(b,S)]=2$, so $\operatorname{Opt}^{\mathrm{stoch}}_\emptyset=\{b\}$; but $\operatorname{Opt}(s_1)=\{a\}$, so preservation fails. (ii) Decisiveness: The empty fiber itself has a unique conditional optimum $\{b\}$, so $I=\emptyset$ is decisive. This shows decisiveness is strictly stronger than preservation.
 
 ## Stochastic Status at a Glance
 
@@ -379,7 +379,7 @@ Regime classification summary for the stochastic row. Open entries mark explicit
   **Predicate/query**                     **What is proved here**                                                                                                               **Mechanized core**                                                                                        **Open / not formalized**
   --------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------- ---------------------------------------------------------------------------------------------------------- ----------------------------------------------------------------------------------
   Stochastic sufficiency (preservation)   Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient                               Explicit-state decider; full-support bridge package                                                        No succinct-encoding hardness classification claimed
-  Minimum / anchor preservation           Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime   Full-support inheritance theorems; explicit finite searches; support-sensitive obstruction/bridge lemmas   General-distribution classification remains open
+  Minimum / anchor preservation           Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime   Full-support inheritance theorems; explicit finite searches; support-sensitive obstruction/bridge lemmas   Open; see text; conjecture (coNP hard?)
   Stochastic decisiveness                 Polynomial-time under explicit-state encoding; PP-hard under succinct encoding                                                        Reduction core; finite witness/checking schemata for the upper-bound argument                              No direct formalization of oracle Turing machines or oracle classes
   Minimum / anchor decisiveness           PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level                                                                                Existential witness/checking schemata; bounded explicit-state searches                                     No end-to-end oracle-machine formalization of the stated oracle-class membership
 :::
@@ -400,6 +400,22 @@ The rest of this section unpacks the four rows of this summary. The preservation
 ::: proof
 *Proof.* For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\operatorname{Opt}^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\operatorname{Opt}(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model. ◻
 :::
+
+#### Conjecture 11.1 (Support-Sensitive Preservation Complexity).
+
+Under the succinct encoding of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, [Stochastic-Preservation-Check]{.smallcaps} for general distributions (without the full-support assumption) is coNP-hard.
+
+The structured justification is anchored to existing theorems and mechanized lemmas. First, what is known: under full support, preservation inherits the static coNP classification via Proposition [\[prop:stochastic-full-support-equiv\]](#prop:stochastic-full-support-equiv){reference-type="ref" reference="prop:stochastic-full-support-equiv"} and Theorem [\[thm:stochastic-preservation-full-support-variants\]](#thm:stochastic-preservation-full-support-variants){reference-type="ref" reference="thm:stochastic-preservation-full-support-variants"}; the explicit-state base query is polynomial for all distributions by Theorem [\[thm:stochastic-preservation-explicit\]](#thm:stochastic-preservation-explicit){reference-type="ref" reference="thm:stochastic-preservation-explicit"}; and decisiveness under the same encoding is PP-hard by Theorem [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}.
+
+Second, the structural obstacle: the support-sensitive obstruction lemmas in the artifact (Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}) isolate the exact mechanism. Preservation quantifies over all states while stochastic conditioning weights by probability. Zero-probability states can therefore witness static violations that the distribution never observes; full-support transfer fails exactly when such states are permitted. This is a structural obstruction, and the mechanized artifact isolates the finite combinatorial core any reduction must respect .
+
+Third, why coNP rather than PP: preservation is syntactically universal, because it asks whether the coarse optimizer matches the full optimizer at every state, so its quantifier shape matches the static coNP classification. Decisiveness is PP-hard because it requires majority-style conditional expected-utility comparisons. Preservation compares optimizer sets rather than aggregating utilities, so the natural hardness source is counterexample exclusion (coNP) rather than majority counting (PP); support-sensitivity complicates reduction engineering but not the high-level quantifier structure.
+
+#### Reduction intuition.
+
+A natural hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
+
+Open Problem 11.2. Determine the exact succinct-encoding complexity of [Stochastic-Minimum-Preservation]{.smallcaps} and [Stochastic-Anchor-Preservation]{.smallcaps} for general distributions. Under Conjecture 11.1, these inherit coNP-completeness and $\Sigma_2^P$-completeness respectively, matching the static regime; resolving the conjecture would complete the final open cell in the regime matrix (Table 2).
 
 ::: proposition
 []{#prop:stochastic-to-static-sufficiency label="prop:stochastic-to-static-sufficiency"} If $I$ is stochastically sufficient, then $I$ is sufficient for the underlying static decision problem.
@@ -522,7 +538,7 @@ The stochastic regime preserves the same underlying certification template, name
 For succinct-encoding hardness, reduce MAJSAT by the three-action gadget used in the mechanized reduction. Given Boolean formula $\varphi$, take $S=\{0,1\}^n$, uniform $P$, actions $\{\mathrm{accept},\mathrm{hold}_L,\mathrm{hold}_R\}$, and utilities $$U(\mathrm{accept},s)=\mathbf{1}[\varphi(s)],\qquad
 U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},$$ with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning. ◻
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. Concretely, the artifact verifies the existential-universal quantifier structure of the predicate, the witness-checking schema that guesses an anchor and verifies conditional-uniqueness using PP comparisons, and the finite-step-counted search wrappers (handles OU1 to OU2, OU6 to OU7) that bound the nondeterministic guessing phase. The standard oracle-machine reduction proving NP\^PP membership is argued in the paper text and not mechanized. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning. ◻
 :::
 
 ::: proposition
@@ -759,69 +775,7 @@ The bridge from the stochastic regime is strict. A one-shot distribution can hid
 With the static, stochastic, and sequential classifications in place, the regime hierarchy is now complete. The next section consolidates that hierarchy into a single matrix, and the following section refines it with the encoding-sensitive ETH lower bounds that explain when exact certification remains feasible despite the worst-case class barriers.
 
 
-# Regime Matrix {#sec:regime-hierarchy}
-
-The static, stochastic, and sequential formulations are the paper's central organizing object. They ask the same underlying question about which coordinates matter for the decision, but they answer it in increasingly expressive models. In the stochastic regime, preservation and decisiveness become parallel exact predicates. Adding time then introduces temporal contingency. Read as a complexity matrix, adding probability introduces conditional-comparison hardness, and adding time lifts the core queries further to PSPACE.
-
-## Complexity Matrix
-
-::: center
-  Regime / predicate                    Base query                                        Minimum                                                           Anchor
-  ------------------------- ---------------------------------- ------------------------------------------------------------- ---------------------------------------------------------------------
-  Static                              coNP-complete                                    coNP-complete                                                 $\Sigma_2^P$-complete
-  Stochastic preservation     P (explicit), bridge theorems     P (explicit); coNP-complete (full support) / open (general)   P (explicit); $\Sigma_2^P$-complete (full support) / open (general)
-  Stochastic decisiveness    P (explicit), PP-hard (succinct)             PP-hard, in $\textsf{NP}^{\textsf{PP}}$                           PP-hard, in $\textsf{NP}^{\textsf{PP}}$
-  Sequential                         PSPACE-complete                                  PSPACE-complete                                                   PSPACE-complete
-:::
-
-This table is the paper's compact summary. The stochastic regime contains two parallel predicates with distinct complexity profiles: preservation and decisiveness. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has explicit-state tractability and bridge theorems back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time in explicit state, inherit coNP-completeness and $\Sigma_2^P$-completeness under full support, and admit support-sensitive obstruction and bridge lemmas beyond full support, while the full general-distribution classification remains open. Decisiveness (stochastic decisiveness) has the sharper succinct-encoding classification: polynomial-time in the explicit-state model, PP-hardness in the succinct model, and paper-level $\textsf{NP}^{\textsf{PP}}$ membership for the anchor and minimum variants. The artifact mechanizes the finite witness/checking schemas and reduction cores underlying those upper bounds. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
-
-#### Preservation Boundary.
-
-For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability for the preservation family (Theorem [\[thm:stochastic-preservation-explicit\]](#thm:stochastic-preservation-explicit){reference-type="ref" reference="thm:stochastic-preservation-explicit"} and Theorem [\[thm:stochastic-preservation-variants-explicit\]](#thm:stochastic-preservation-variants-explicit){reference-type="ref" reference="thm:stochastic-preservation-variants-explicit"}), static-to-stochastic bridge theorems (Propositions [\[prop:stochastic-to-static-sufficiency\]](#prop:stochastic-to-static-sufficiency){reference-type="ref" reference="prop:stochastic-to-static-sufficiency"} and [\[prop:stochastic-full-support-equiv\]](#prop:stochastic-full-support-equiv){reference-type="ref" reference="prop:stochastic-full-support-equiv"}), quotient equivalence under full support (Proposition [\[prop:stochastic-quotient-equiv\]](#prop:stochastic-quotient-equiv){reference-type="ref" reference="prop:stochastic-quotient-equiv"}), full-support inheritance for the minimum and anchor variants (Theorem [\[thm:stochastic-preservation-full-support-variants\]](#thm:stochastic-preservation-full-support-variants){reference-type="ref" reference="thm:stochastic-preservation-full-support-variants"}), and support-sensitive obstruction/bridge lemmas beyond full support (Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}). Outside the full-support setting, this paper does *not* claim a succinct-encoding hardness classification for the preservation predicate or a full general-distribution classification for its minimum and anchor variants. The PP-hardness results in the stochastic row concern decisiveness and its variants, not preservation itself.
-
-The decisiveness results combine standard hardness claims with mechanized upper-bound packages. The artifact verifies the finite witness/checking schemata and reduction cores used by the stochastic oracle-class arguments, while the corresponding oracle-class memberships are proved in the paper text by standard complexity-theoretic reasoning.
-
-The stochastic anchor and minimum decisiveness queries are not presently collapsed to PP-completeness: Theorem [\[thm:stochastic-nppp-upper\]](#thm:stochastic-nppp-upper){reference-type="ref" reference="thm:stochastic-nppp-upper"} places them in $\textsf{NP}^{\textsf{PP}}$, while Theorems [\[thm:stochastic-anchor-hard\]](#thm:stochastic-anchor-hard){reference-type="ref" reference="thm:stochastic-anchor-hard"} and [\[thm:stochastic-minimum-hard\]](#thm:stochastic-minimum-hard){reference-type="ref" reference="thm:stochastic-minimum-hard"} give PP-hardness. The artifact verifies the finite witness/checking structure and explicit-state bounded-witness recoveries behind that upper-bound story, and it also packages existential-majority hardness/completeness surrogates for the anchor and decisiveness query families The oracle-class memberships themselves remain paper-level proofs under the succinct encoding. By contrast, the sequential anchor and minimum variants admit paper-level PSPACE membership via guess-and-verify over anchors or coordinate subsets together with the sequential sufficiency verifier.
-
-::: theorem
-[]{#thm:regime-main label="thm:regime-main"} Under the encoding conventions of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}, the classification is as follows. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has a polynomial-time base query under explicit-state encoding with proved bridges back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time under explicit-state encoding, are coNP-complete and $\Sigma_2^P$-complete under full support, and satisfy the support-sensitive partial results of Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}. Decisiveness (stochastic decisiveness) has a polynomial-time base query under explicit-state encoding and is PP-hard under the succinct encoding; the anchor and minimum decisiveness queries are PP-hard and lie in $\textsf{NP}^{\textsf{PP}}$, with those oracle-class memberships proved in the paper text and their finite witness/checking cores mechanized. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.
-:::
-
-::: proof
-*Proof.* The matrix entries are exactly Theorems [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"}, [\[thm:minsuff-conp\]](#thm:minsuff-conp){reference-type="ref" reference="thm:minsuff-conp"}, [\[thm:anchor-sigma2p\]](#thm:anchor-sigma2p){reference-type="ref" reference="thm:anchor-sigma2p"}, [\[thm:stochastic-preservation-explicit\]](#thm:stochastic-preservation-explicit){reference-type="ref" reference="thm:stochastic-preservation-explicit"}, [\[thm:stochastic-preservation-full-support-variants\]](#thm:stochastic-preservation-full-support-variants){reference-type="ref" reference="thm:stochastic-preservation-full-support-variants"}, [\[thm:stochastic-preservation-variants-explicit\]](#thm:stochastic-preservation-variants-explicit){reference-type="ref" reference="thm:stochastic-preservation-variants-explicit"}, Proposition [\[prop:stochastic-preservation-partial-general\]](#prop:stochastic-preservation-partial-general){reference-type="ref" reference="prop:stochastic-preservation-partial-general"}, [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}, [\[thm:stochastic-anchor-hard\]](#thm:stochastic-anchor-hard){reference-type="ref" reference="thm:stochastic-anchor-hard"}, [\[thm:stochastic-minimum-hard\]](#thm:stochastic-minimum-hard){reference-type="ref" reference="thm:stochastic-minimum-hard"}, [\[thm:stochastic-nppp-upper\]](#thm:stochastic-nppp-upper){reference-type="ref" reference="thm:stochastic-nppp-upper"}, [\[thm:sequential-pspace\]](#thm:sequential-pspace){reference-type="ref" reference="thm:sequential-pspace"}, [\[thm:sequential-anchor-hard\]](#thm:sequential-anchor-hard){reference-type="ref" reference="thm:sequential-anchor-hard"}, and [\[thm:sequential-minimum-hard\]](#thm:sequential-minimum-hard){reference-type="ref" reference="thm:sequential-minimum-hard"}, together with the stochastic sufficiency bridge package. The strict regime comparisons are isolated separately in Theorems [\[thm:static-stochastic-strict\]](#thm:static-stochastic-strict){reference-type="ref" reference="thm:static-stochastic-strict"} and [\[thm:stochastic-sequential-strict\]](#thm:stochastic-sequential-strict){reference-type="ref" reference="thm:stochastic-sequential-strict"}. ◻
-:::
-
-## Strict Regime Gaps
-
-::: theorem
-[]{#thm:static-stochastic-strict label="thm:static-stochastic-strict"} Assuming $coNP\ne PP$, the succinct stochastic decisiveness classification is strictly harder in worst-case complexity than the static sufficiency classification.
-:::
-
-::: proof
-*Proof.* Static sufficiency checking is coNP-complete (Theorem [\[thm:sufficiency-conp\]](#thm:sufficiency-conp){reference-type="ref" reference="thm:sufficiency-conp"}), while stochastic decisiveness is PP-hard under the succinct encoding (Theorem [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}). Under the assumption $coNP\ne PP$, this yields a strict complexity gap between the two classifications. ◻
-:::
-
-::: theorem
-[]{#thm:stochastic-sequential-strict label="thm:stochastic-sequential-strict"} Assuming $PP\ne PSPACE$, the sequential sufficiency classification is strictly harder in worst-case complexity than the stochastic decisiveness classification.
-:::
-
-::: proof
-*Proof.* Stochastic decisiveness is PP-hard under the succinct encoding (Theorem [\[thm:stochastic-pp\]](#thm:stochastic-pp){reference-type="ref" reference="thm:stochastic-pp"}), while sequential sufficiency is PSPACE-complete (Theorem [\[thm:sequential-pspace\]](#thm:sequential-pspace){reference-type="ref" reference="thm:sequential-pspace"}). The class gap yields a strict complexity separation between the two classifications under the assumption $PP\ne PSPACE$. ◻
-:::
-
-## Integrity-Resource Bounds
-
-The regime matrix has a methodological consequence as well: as one moves upward in the hierarchy, exact certification becomes less compatible with fixed polynomial resource budgets.
-
-::: proposition
-[]{#prop:abstention-frontier label="prop:abstention-frontier"} For polynomial-time exact certifiers that abstain whenever they cannot certify correctness within budget, the set of instances requiring abstention expands along $$\text{static} \to \text{stochastic} \to \text{sequential}.$$
-:::
-
-::: proof
-*Proof.* As the decision predicate moves from coNP to PP to PSPACE hardness, exact worst-case certification requires strictly stronger resources. Fixed polynomial resources therefore force abstention on a larger instance family in higher regimes. ◻
-:::
-
+_Failed to convert 06_regime_hierarchy.tex_
 
 # Encoding Dichotomy and ETH Lower Bounds {#sec:dichotomy}
 
@@ -924,40 +878,32 @@ This linear size preservation is essential for ETH transfer. In the explicit enu
 
 We distinguish the encodings of Section [\[sec:encoding\]](#sec:encoding){reference-type="ref" reference="sec:encoding"}. The tractability results below state the model assumption explicitly.
 
-All six tractable subcases are supported by the artifact. The support appears at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit sufficiency procedures. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones. We keep that distinction explicit throughout. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
+Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
-  ----------------------------------------------------------------------------------------------------------------------------------
-  **Restriction**       **Why it helps**                                                     **Complexity**
-  --------------------- -------------------------------------------------------------------- ---------------------------------------
-  Bounded actions       brute-force action comparison stays polynomial once $|A|$ is fixed   $O(|S|^2 \cdot k^2)$
+  -----------------------------------------------------------------------------------------------------------------
+  **Restriction**       **Why it helps**                                    **Complexity**
+  --------------------- --------------------------------------------------- ---------------------------------------
+  Low tensor rank       factored evaluation avoids full state enumeration   $O(|A| \cdot R \cdot n)$
 
-  Separable utility     optimizer is independent of the state coordinates                    $O(1)$
+  Tree structure        dynamic programming over dependency tree suffices   $O(n \cdot |A| \cdot k_{\max})$
 
-  Low tensor rank       factored evaluation avoids full state enumeration                    $O(|A| \cdot R \cdot n)$
+  Bounded treewidth     interaction checking reduces to low-width CSP       $O(n \cdot k^{w+1})$
 
-  Tree structure        dynamic programming over the dependency tree suffices                $O(n \cdot |A| \cdot k_{\max})$
+  Coordinate symmetry   orbit types replace raw state pairs                 $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$
+  -----------------------------------------------------------------------------------------------------------------
 
-  Bounded treewidth     interaction checking reduces to low-width CSP                        $O(n \cdot k^{w+1})$
-
-  Coordinate symmetry   orbit types replace raw state pairs                                  $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$
-  ----------------------------------------------------------------------------------------------------------------------------------
-
-**Tractability map.** Each island works by collapsing the universal state-pair search to a smaller structured representation.
+**Tractability map.** Each nontrivial restriction above removes a structural hardness source. Additional simple cases include bounded actions ($O(|S|^2 \cdot k^2)$ when $|A|$ is fixed, separable utility ($O(1)$), and constant or dominated optimal sets ($O(1)$). Formal definitions for all cases are retained in the subsections below.
 
 ::: theorem
-[]{#thm:tractable label="thm:tractable"} The following tractable subcases are all mechanized in the artifact, but at two proof levels. For bounded actions, separable utility, and tree-structured dependencies, the artifact certifies explicit decision procedures for [Sufficiency-Check]{.smallcaps}. For low tensor rank, bounded treewidth, and coordinate symmetry, the artifact certifies the paper-specific reductions and complexity transfers that connect these subcases to standard polynomial-time algorithmic backbones.
+[]{#thm:tractable label="thm:tractable"} The following structurally interesting tractable subcases are all mechanized in artifact. The artifact certifies paper-specific reductions and complexity transfers connecting each to standard polynomial-time algorithmic backbones. Formal definitions and trivial cases (single action, bounded state space, separable utility, dominance) are retained in the subsections below.
 
-1.  **Bounded actions (explicit-state encoding):** The input contains the full utility table over $A \times S$ with $|A| \leq k$ for constant $k$. Complexity: $O(|S|^2 \cdot k^2)$.
+1.  **Low tensor rank:** The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$.
 
-2.  **Separable utility (rank 1):** $U(a, s) = f(a) + g(s)$. Complexity: $O(1)$ (trivially sufficient).
+2.  **Tree-structured dependencies:** Coordinates are ordered such that $s_i$ depends only on $(s_1,\ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class.
 
-3.  **Low tensor rank:** The utility admits a rank-$R$ decomposition $U(a,s) = \sum_{r=1}^R w_r \cdot f_r(a) \cdot \prod_i g_{ri}(s_i)$. The artifact certifies reduction to factored computation with bound $O(|A| \cdot R \cdot n)$.
+3.  **Bounded treewidth:** The interaction graph has treewidth $\le w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with bound $O(n \cdot k^{w+1})$ inherited from standard CSP algorithm.
 
-4.  **Tree-structured dependencies:** Coordinates are ordered such that $s_i$ depends only on $(s_1, \ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class.
-
-5.  **Bounded treewidth:** The interaction graph has treewidth $\leq w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with the bound $O(n \cdot k^{w+1})$ inherited from the standard CSP algorithm.
-
-6.  **Coordinate symmetry:** Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with the resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
+4.  **Coordinate symmetry:** Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
 :::
 
 The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
@@ -1457,6 +1403,8 @@ The closest classical neighbor is rough-set theory and its large literature on r
 
 The complexity of computing minimal reducts has been studied in the rough-set literature. Finding a minimal attribute set that preserves decision-distinctions is known to be NP-hard in general [@slowinski1995decision], and more refined analysis places certain reduct variants in $\Sigma_2^P$ [@multiplier]. These results establish that the static regime questions studied here, whether a coordinate set preserves decision distinctions, and whether a minimal such set exists, fall within a known complexity landscape for attribute reduction.
 
+The key structural difference is this: general decision tables can admit multiple incomparable minimal reducts, necessitating a combinatorial search through the reduct lattice. Under the exact optimal-action preservation predicate studied here, Proposition [\[prop:minimal-relevant-equiv\]](#prop:minimal-relevant-equiv){reference-type="ref" reference="prop:minimal-relevant-equiv"} proves there is exactly one minimal sufficient set: the relevant-coordinate set itself. This uniqueness is the structural reason for the complexity collapse. The search layer vanishes, reducing exact minimization to parallel coNP relevance checks. To our knowledge, this specific structural collapse, from $\Sigma_2^P$ search to coNP relevance containment driven by optimizer-quotient uniqueness, is a novel classification not captured by general rough-set bounds.
+
 There is an obvious family resemblance to the static regime of the present paper: both settings ask which coordinates can be removed without losing decision distinctions.
 
 ::: proposition
@@ -1493,15 +1441,11 @@ There is an even closer logical neighbor in recent work on reasons behind decisi
 
 ## Abduction, Diagnosis, and Exact Explanatory Cores
 
-The minimum and anchor queries should also be read against the classical literature on abduction and diagnosis [@reiter1987diagnosis; @eiter1995abduction]. Reiter-style diagnosis studies which hidden fault sets explain an observation, while logic-based abduction studies the complexity of finding explanatory hypotheses sufficient for a target consequence. Those frameworks share an important structural feature with the present work: a move from verification to explanatory search typically raises complexity because one is no longer merely checking a candidate structure but searching for one.
-
-That kinship is especially relevant for the paper's anchor query. The existential anchor choice is one reason the static anchor problem remains $\Sigma_2^P$-complete even when minimum sufficiency collapses in the static regime. In that sense the anchor problem behaves more like explanatory discovery than like plain verification. The exact predicate is different, because we certify preservation of optimal-action sets under coordinate hiding rather than explanatory entailment of a formula, but the logical-complexity intuition is nearby enough that this literature deserves explicit acknowledgment.
+The minimum and anchor queries share structural kinship with abduction and diagnosis frameworks, which study explanatory hypotheses sufficient for a target consequence. The anchor query retains an outer existential choice analogous to explanatory discovery, while the inner verification condition preserves optimizer structure. This logical-complexity intuition motivates the $\Sigma_2^P$-completeness of static anchor sufficiency, which remains hard even when minimum sufficiency collapses to coNP.
 
 ## Causality, Responsibility, and Structural Explanation
 
-The paper also belongs in conversation with structural accounts of causality, explanation, and responsibility [@pearl2009causality; @spirtes2000causation; @halpern2001explanations; @chockler2004responsibility]. Those works ask which variables or interventions matter for an outcome, how explanatory structure should be represented, and how responsibility can be assigned to particular factors. This is not the same problem studied here, but it is nearby in spirit: a relevant coordinate is precisely a coordinate whose perturbation can change the decision, and the optimizer quotient isolates exactly the distinctions that matter for optimal-action structure.
-
-The difference, again, is that the present paper focuses on exact decision preservation under coordinate projection and on the computational cost of certifying that preservation. Causality and responsibility frameworks typically emphasize semantic characterization, counterfactual dependence, or intervention-level explanation. The present work instead asks when hidden coordinates can be ignored *without changing the optimizer map*, and how hard it is to certify that claim exactly across static, stochastic, and sequential regimes.
+The paper also belongs in conversation with structural accounts of causality, explanation, and responsibility [@pearl2009causality; @spirtes2000causation; @halpern2001explanations; @chockler2004responsibility]. A relevant coordinate is precisely a coordinate whose perturbation can change the decision, and the optimizer quotient isolates exactly the distinctions that matter for optimal-action structure. The paper focuses on exact decision preservation under coordinate projection and on the computational cost of certifying that preservation, whereas causality and responsibility frameworks typically emphasize semantic characterization or intervention-level explanation.
 
 ## Oracle, Query, and Access-Based Lower Bounds
 
@@ -1528,7 +1472,7 @@ Within the encoding model of Section [\[sec:encoding\]](#sec:encoding){referenc
 
 -   **Structural and downstream consequences:** the paper derives witness and approximation obstructions, exact-simplification hardness transfers, and a direct reliability corollary for exact certifiers in the hard regime: no exact certifier can simultaneously be sound, complete, and polynomial-budgeted on that regime. A simplicity-tax framing shows that omitted exact relevance is externalized rather than eliminated.
 
--   **Structured tractability:** bounded actions, separable utility, low tensor rank, tree structure, bounded treewidth, and coordinate symmetry yield polynomial-time certification procedures.
+-   **Structured tractability:** twelve tractable subcases ranging from trivial edge cases (single action, bounded state space) through dominance conditions (strict dominance, constant optimal set) to structural restrictions (bounded actions, separable utility, multiplicative separability, low tensor rank, tree structure, bounded treewidth, coordinate symmetry) and fixed-parameter tractability.
 
 Taken together, these results show that exact relevance certification is a distinct complexity-theoretic object in its own right: computing $\operatorname{Opt}(s)$ on one state can be easy even when proving coordinate irrelevance is hard, and the difficulty of that certification problem depends sharply on whether one is ruling out counterexamples, preserving optimizers under coarser conditioning, checking decisiveness of conditional fibers, or reasoning about temporally structured optimizer behavior.
 
@@ -1544,7 +1488,7 @@ The proof artifact mechanically checks the main reduction constructions, hardnes
 
 ## Outlook {#outlook .unnumbered}
 
-Two immediate directions remain. First, the reduction infrastructure can be integrated more tightly with general-purpose formalized complexity libraries. Second, the artifact boundary can be made even cleaner by continuing to package the existing finite-decision results into more uniform summary interfaces without changing the paper's complexity claims. On the complexity side, the remaining gap is now sharply localized: stochastic decisiveness already has succinct hardness and a verified witness/checking core for the oracle-class memberships proved in the paper text, but a fully standard oracle-machine formalization of the resulting oracle-class placement and of the $\textsf{NP}^{\textsf{PP}}$ boundary for the anchor and minimum decisiveness queries remains outside the current repository; on the preservation side, the new support-sensitive bridge theory shows that the true obstruction lies in zero-probability fibers, sharpening the remaining open terrain to the full general-distribution and succinct-encoding complexity of the minimum and anchor preservation variants.
+Two immediate directions remain. First, the reduction infrastructure can be integrated more tightly with general-purpose formalized complexity libraries. Second, the artifact boundary can be made even cleaner by continuing to package the existing finite-decision results into more uniform summary interfaces without changing the paper's complexity claims. On the complexity side, the remaining gap is now sharply localized: stochastic decisiveness already has succinct hardness and a verified witness/checking core for the oracle-class memberships proved in the paper text, but a fully standard oracle-machine formalization of the resulting oracle-class placement and of the $\textsf{NP}^{\textsf{PP}}$ boundary for the anchor and minimum decisiveness queries remains outside the current repository; on the preservation side, Conjecture 11.1 and Open Problem 11.2 sharpen the remaining open terrain to the full general-distribution and succinct-encoding complexity of the minimum and anchor preservation variants. The mechanized artifact already exposes the finite combinatorial core and support-sensitive lemmas that isolate this obstruction; see `lean_handle_ids_auto.tex` and `claim_mapping_auto.tex` for handles such as OU12, DC96, and DC98, which are appropriate citations when framing the open problem.
 
 ## Acknowledgments {#acknowledgments .unnumbered}
 
@@ -2419,6 +2363,6 @@ Concretely, the mechanized layer certifies ingredients of the following form: a 
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 21442
-- Theorems: 990
+- Lines: 22068
+- Theorems: 1015
 - `sorry` placeholders: 0

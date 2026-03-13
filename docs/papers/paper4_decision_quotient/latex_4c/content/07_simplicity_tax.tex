@@ -4,7 +4,7 @@ Formally: this section defines expressive-gap tax and proves redistribution, gro
 
 The load-bearing fact in this section is not the set identity itself; it is the difficulty of shrinking the required set $R(P)$ in the first place. By Theorem~\ref{thm:sufficiency-conp} (and Theorem~\ref{thm:minsuff-conp} for minimization), exact relevance identification is intractable in the worst case under succinct encoding. The identities below therefore quantify how unresolved relevance is redistributed between central and per-site work.\claimstamp{T\ref{thm:sufficiency-conp},\ref{thm:minsuff-conp}}{S}
 For encoded physical systems, the same redistribution laws apply under physical-to-core transport: unresolved coordinates remain per-site external work, while resolved coordinates are paid once in centralized structure.\claimstamp{P\ref{prop:physical-claim-transport};T\ref{thm:tax-conservation},\ref{thm:tax-grows},\ref{thm:amortization}}{AR,LC}
-\leanmeta{\LH{CT6},\LH{HD5},\LH{HD26},\LH{HD21},\LH{HD4}.}
+\leanmeta{\LH{CT6}, \LHrng{HD}{4}{5}, \LH{HD21}, \LH{HD26}.}
 
 \begin{definition}
 Let $R(P)$ be the required dimensions (those affecting $\Opt$) and $A(M)$ the dimensions model $M$ handles natively. The \emph{expressive gap} is $\text{Gap}(M,P) = R(P) \setminus A(M)$.
@@ -70,8 +70,7 @@ is mechanized as
 \begin{corollary}[Gap Externalization]\label{cor:gap-externalization}
 \claimstamp{C\ref{cor:gap-externalization}}{H=cost-growth}
 If $\text{Gap}(M,P)\neq\emptyset$, then external handling cost scales linearly with the number of decision sites.
-\leanmeta{\LH{HD26},
-\LH{HD21}}
+\leanmeta{\LH{HD21}, \LH{HD26}}
 \end{corollary}
 
 \begin{proof}

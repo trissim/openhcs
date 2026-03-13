@@ -26,6 +26,8 @@ The coding statements are written in terms of a class variable $C$ and represent
 All impossibility and optimality statements in this paper quantify over schemes whose evidence consists only of the declared representation value together with any explicit auxiliary description charged to the side-information budget. In particular, no hidden registry, reflection oracle, whole-universe preprocessing table, or amortized cross-instance cache may supply uncharged distinguishing information.
 \end{definition}
 
+This admissibility contract is the formal regime anchor for all impossibility and optimality claims in the paper. The contract that the decoder only has the declared representation and any explicitly charged auxiliary description (no hidden registries or undeclared side channels) is encoded in the mechanized development and thus mechanically enforced in the formal proofs.
+
 \subsection{Representation-Induced Information Barrier}
 
 The basic obstruction is immediate: equal representations give the decoder the same side information. The next theorem records that invariant in generic form.

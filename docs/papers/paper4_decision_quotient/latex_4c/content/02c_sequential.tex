@@ -39,7 +39,7 @@ Formally: let $\pi^*$ be the optimal policy with full observations, and let $\pi
 \textbf{SEQUENTIAL-ANCHOR-SUFFICIENCY-CHECK}: Given sequential decision problem $\mathcal{D}_{SEQ}$ and coordinate set $I$, does there exist an anchor state whose $I$-agreement class preserves the optimal action set?
 \end{decision}
 
-\leanmeta{\LH{DC20},\LH{DC21},\LH{DC22}.}
+\leanmeta{\LHrng{DC}{20}{22}.}
 
 \subsection{Complexity: \PSPACE-Completeness}
 
@@ -65,10 +65,10 @@ For each quantified Boolean formula $q$:
 \claimstamp{P\ref{prop:sequential-anchor-tqbf-reduction}}{PSPACE}
 \end{claim}
 
-\leanmeta{\LH{DC27},\LH{DC28},\LH{DC29}.}
+\leanmeta{\LHrng{DC}{27}{29}.}
 
 Observer-collapse closure for the sequential anchor query is mechanized: under the declared collapse hypothesis, sequential sufficiency and sequential anchor-check truth follow directly.
-\leanmeta{\LH{PA6},\LH{PA7}.}
+\leanmeta{\LHrng{PA}{6}{7}.}
 
 \begin{enumerate}
 \item \textbf{Membership in \PSPACE}: Optimal POMDP policy computation is in \PSPACE (Papadimitriou \& Tsitsiklis, 1987). Checking whether a coordinate set $I$ yields the same policy involves comparing value functions, which can be done in polynomial space via alternating polynomial time.
@@ -85,8 +85,7 @@ Observer-collapse closure for the sequential anchor query is mechanized: under t
 Then full observation is sequentially sufficient iff the controller can guarantee $\varphi = \text{true}$ regardless of exogenous choices, which holds iff the QBF is true.
 \end{enumerate}
 
-\leanmeta{\LH{CC48},
-\LH{CC47}}
+\leanmeta{\LHrng{CC}{47}{48}}
 
 \begin{construction}[TQBF Reduction]\label{constr:tqbf-to-sequential}
 Given QBF $\Phi = Q_1 x_1 Q_2 x_2 \ldots Q_n x_n\ \varphi(x_1, \ldots, x_n)$ with alternating quantifiers, construct sequential problem:

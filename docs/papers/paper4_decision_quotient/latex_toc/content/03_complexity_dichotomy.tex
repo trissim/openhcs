@@ -6,7 +6,7 @@ The hardness results of Section~\ref{sec:hardness} apply to worst-case instances
 Within the paper's full regime map, this section is the static access-layer decomposition; theorem-level stochastic and sequential core placements are given in Sections~\ref{sec:stochastic} and~\ref{sec:sequential}, with strict inter-regime separation in Section~\ref{sec:regime-hierarchy}.
 
 Physical reading: the separation is an access-and-budget separation for the same decision semantics. Explicit access assumes full boundary observability; succinct access assumes compressed structure that may require exponential expansion to certify universally; query access assumes bounded measurement interfaces, and the obstruction persists across value-entry/state-batch interfaces with oracle-lattice transfer/strictness closures.\claimstamp{T\ref{thm:dichotomy};P\ref{prop:query-regime-obstruction},\ref{prop:query-value-entry-lb},\ref{prop:query-state-batch-lb},\ref{prop:oracle-lattice-transfer},\ref{prop:oracle-lattice-strict},\ref{prop:physical-claim-transport}}{E,S+ETH,Qf,Qb,AR}
-\leanmeta{\LH{CC16},\LH{CC50},\LH{L9},\LH{L8},\LH{L21},\LH{L20},\LH{CT6}.}
+\leanmeta{\LH{CC16}, \LH{CC50}, \LHrng{L}{8}{9}, \LHrng{L}{20}{21}, \LH{CT6}.}
 
 \paragraph{Model note.} Theorem~\ref{thm:dichotomy} has Part~1 in [E] (time polynomial in $|S|$) and Part~2 in [S+ETH] (time exponential in $n$). Proposition~\ref{prop:query-regime-obstruction} is [Q\_fin] (finite-state Opt-oracle core), while Propositions~\ref{prop:query-value-entry-lb} and~\ref{prop:query-state-batch-lb} are [Q\_bool] interface refinements (value-entry and state-batch). Relative to Definition~\ref{def:regime-simulation}, Propositions~\ref{prop:query-subproblem-transfer} and~\ref{prop:oracle-lattice-transfer} are explicit simulation-transfer instances. The [E] vs [S+ETH] split in Theorem~\ref{thm:dichotomy} is a same-question encoding/cost-model separation, not a bidirectional simulation claim between those regimes. These regimes are defined in Section~\ref{sec:encoding} and are not directly comparable as functions of one numeric input-length parameter.
 
@@ -18,9 +18,7 @@ Let $\mathcal{D} = (A, X_1, \ldots, X_n, U)$ be a decision problem with $|S| = N
 
 \item \textbf{[S+ETH] Succinct lower bound (worst case):} Assuming ETH, there exists a family of succinctly encoded instances with $n$ coordinates and minimal sufficient set size $k^* = n$ such that SUFFICIENCY-CHECK requires time $2^{\Omega(n)}$.
 \end{enumerate}
-\leanmeta{\LH{CC16},
-\LH{CC23},
-\LH{CC24}.}
+\leanmeta{\LH{CC16}, \LHrng{CC}{23}{24}.}
 \end{theorem}
 
 \begin{proof}
@@ -71,7 +69,7 @@ Then
 \]
 Equivalently, any sound checker must inspect at least the witness budget
 \(W(n)=2^{n-1}\), so checking budget \(T(n)\) satisfies \(T(n)\ge W(n)\).
-\leanmeta{\LH{WD3}, \LH{WD4}, \LH{WD5}.}
+\leanmeta{\LHrng{WD}{3}{5}.}
 \end{proposition}
 
 \begin{corollary}[Information Barrier in Query Regimes]\label{cor:information-barrier-query}
@@ -82,15 +80,13 @@ For the fixed sufficiency question, finite query interfaces induce an informatio
 \item [Q\_bool] value-entry and state-batch interfaces preserve the same obstruction at cardinality $<2^n$.
 \end{itemize}
 Hence the barrier is representational-access based: without querying enough of the hidden state support, exact certification is blocked by indistinguishability rather than by search-strategy choice.
-\leanmeta{\LH{CC27},
-\LH{CC29},
-\LH{CC28}.}
+\leanmeta{\LHrng{CC}{27}{29}.}
 \end{corollary}
 
 \begin{corollary}[Boolean-Coordinate Instantiation]\label{cor:query-obstruction-bool}
 \claimstamp{C\ref{cor:query-obstruction-bool}}{H=query-lb}
 In the Boolean-coordinate state space $S=\{0,1\}^n$, Proposition~\ref{prop:query-regime-obstruction} yields the familiar $\Omega(2^n)$ worst-case query lower bound for Opt-oracle access.
-\leanmeta{\LH{CC49}, \LH{CC50}.}
+\leanmeta{\LHrng{CC}{49}{50}.}
 \end{corollary}
 
 \begin{proposition}[Value-Entry Query Lower Bound]\label{prop:query-value-entry-lb}
@@ -104,9 +100,7 @@ The theorem \LH{CC50} constructs, for any query set of cardinality $<2^n$, an un
 
 \begin{proposition}[Subproblem-to-Full Transfer Rule]\label{prop:query-subproblem-transfer}
 If every full-problem solver induces a solver for a fixed subproblem, then any lower bound for that subproblem lifts to the full problem.
-\leanmeta{\LH{CC58},
-\LH{CC59},
-\LH{CC52}.}
+\leanmeta{\LH{CC52}, \LHrng{CC}{58}{59}.}
 \end{proposition}
 
 This is the restriction-map instance of Definition~\ref{def:regime-simulation}: a solver for the full regime induces one for the restricted subproblem regime, so lower bounds transfer.
@@ -179,13 +173,12 @@ Formally: this subsection states budget-indexed representational feasibility spl
 
 The [E] vs [S] split can be typed against an explicit physical budget. Let $E(n)$ and $S(n)$ denote explicit and succinct representation sizes for the same decision question at scale parameter $n$, and let $B$ be a hard representation budget.
 These crossover claims are interpreted through the physical-to-core encoding discipline of Section~\ref{sec:physical-transport}: physical assumptions are transferred explicitly into core assumptions, and encoded physical counterexamples map to core failures on the encoded slice.\claimstamp{P\ref{prop:physical-claim-transport};C\ref{cor:physical-counterexample-core-failure}}{AR}
-\leanmeta{\LH{CT6},\LH{CT8},\LH{CT4}.}
+\leanmeta{\LH{CT4}, \LH{CT6}, \LH{CT8}.}
 
 \begin{proposition}[Budgeted Crossover Witness]\label{prop:budgeted-crossover}
 \claimstamp{P\ref{prop:budgeted-crossover}}{H=exp-lb-conditional}
 If $E(n) > B$ and $S(n) \le B$ for some $n$, then explicit representation is infeasible at $(B,n)$ while succinct representation remains feasible at $(B,n)$.
-\leanmeta{\LH{CC45},
-\LH{PBC1}.}
+\leanmeta{\LH{CC45}, \LH{PBC1}.}
 \end{proposition}
 
 \begin{proof}
@@ -200,8 +193,7 @@ Assume there is a global succinct-size cap $C$ and explicit size is unbounded:
 \forall B,\ \exists n,\ B < E(n).
 \]
 Then for every budget $B\ge C$, there exists a crossover witness at budget $B$.
-\leanmeta{\LH{CC44},
-\LH{PBC2}.}
+\leanmeta{\LH{CC44}, \LH{PBC2}.}
 \end{proposition}
 
 \begin{proof}
@@ -238,7 +230,7 @@ Equivalently, in uncertified hardness-blocked regions, integrity is compatible w
 Fix a physical computer model with finite total budget and strictly positive per-bit physical cost.
 If required operation count for exact certification has an exponential lower bound, then there exists a threshold \(n_0\) such that for all \(n \ge n_0\), required physical work exceeds budget.
 For the canonical requirement model used in this paper, the same eventual-budget-failure conclusion holds.
-\leanmeta{\LH{PBC7}, \LH{PBC8}.}
+\leanmeta{\LHrng{PBC}{7}{8}.}
 \end{corollary}
 
 \begin{proposition}[Least Divergence Point at Fixed Budget]\label{prop:least-divergence-point}
@@ -256,7 +248,7 @@ If explicit size is monotone in \(n\) and already exceeds budget \(B\) at some \
 \begin{proposition}[Payoff Threshold as Eventual Split]\label{prop:payoff-threshold}
 \claimstamp{P\ref{prop:payoff-threshold}}{H=exp-lb-conditional}
 If, beyond \(n_0\), explicit encoding is infeasible while succinct encoding remains feasible, then every \(n\ge n_0\) is a crossover point.
-\leanmeta{\LH{PBC9}, \LH{PBC8}.}
+\leanmeta{\LHrng{PBC}{8}{9}.}
 \end{proposition}
 
 \begin{corollary}[No Universal Survivor Without Succinct Bound]\label{cor:no-universal-survivor-no-succinct-bound}
@@ -268,7 +260,7 @@ If both explicit and succinct encodings are unbounded, then for every fixed budg
 \begin{proposition}[Policy Closure at and Beyond Divergence]\label{prop:policy-closure-beyond-divergence}
 \claimstamp{P\ref{prop:policy-closure-beyond-divergence}}{H=exp-lb-conditional}
 Under the same integrity-resource collapse assumption as Proposition~\ref{prop:crossover-policy}, policy closure holds at any fixed divergence point and uniformly beyond any threshold where crossover holds.
-\leanmeta{\LH{PBC11}, \LH{PBC12}.}
+\leanmeta{\LHrng{PBC}{11}{12}.}
 \end{proposition}
 
 Informally: representational crossover can happen even when exact certification is blocked; under integrity this means abstention or reduced coverage.
@@ -287,8 +279,7 @@ Fix a thermodynamic conversion model with constants $(\lambda,\rho)$ where $\lam
 E_{\mathrm{LB}}=\lambda b_{\mathrm{LB}} \le \lambda b_{\mathrm{used}},\qquad
 C_{\mathrm{LB}}=\rho E_{\mathrm{LB}} \le \rho(\lambda b_{\mathrm{used}}).
 \]
-\leanmeta{\LH{CC65},
-\LH{CC66}.}
+\leanmeta{\LHrng{CC}{65}{66}.}
 \end{proposition}
 
 \begin{proposition}[Hardness--Thermodynamics Bundle]\label{prop:thermo-hardness-bundle}
@@ -328,7 +319,7 @@ Let $C$ denote a complexity coordinate with $C = b_{\mathrm{LB}}$ from Propositi
 dU \ge \lambda\,dC
 \]
 holds as a direct specialization of Proposition~\ref{prop:thermo-lift}.
-\leanmeta{\LH{CC65},\LH{CC50}.}
+\leanmeta{\LH{CC50}, \LH{CC65}.}
 \end{corollary}
 
 \begin{proof}
@@ -342,7 +333,7 @@ The thermodynamic lift (Proposition~\ref{prop:thermo-lift}) rests on a derivatio
 \begin{proposition}[Discrete State Implies Discrete Effective Time]\label{prop:discrete-state-time}
 \claimstamp{P\ref{prop:discrete-state-time}}{AR}
 Let $\mathcal{S}$ be a finite state space with deterministic dynamics $\tau : \mathcal{S} \to \mathcal{S}$. If $\tau$ is non-trivial (i.e., $\exists s.\, \tau(s) \neq s$), then for any trajectory $\{s_t\}_{t \in \mathbb{N}}$, the set of transition points $T = \{t : s_{t+1} \neq s_t\}$ is countable.
-\leanmeta{\LH{DS1},\LH{DS2}.}
+\leanmeta{\LHrng{DS}{1}{2}.}
 \end{proposition}
 
 \begin{proof}
@@ -352,7 +343,7 @@ Immediate: $T \subseteq \mathbb{N}$ and $\mathbb{N}$ is countable. The real dyna
 \begin{proposition}[Lorentz Invariance Forces Compatible Discreteness]\label{prop:lorentz-discrete}
 \claimstamp{P\ref{prop:lorentz-discrete}}{AR}
 Under Lorentz invariance~\cite{einstein1905electrodynamics,minkowski1908space}, if temporal intervals are quantized with minimal unit $\Delta t > 0$, then spatial intervals must be quantized with compatible unit $\Delta x = c\Delta t$. Conversely, discrete space implies discrete time.
-\leanmeta{\LH{DS3},\LH{DS4}.}
+\leanmeta{\LHrng{DS}{3}{4}.}
 \end{proposition}
 
 \begin{proof}
@@ -370,7 +361,7 @@ Let $\mathcal{S}$ be a finite state space with non-trivial dynamics. Then:
   \item Each state transition (bit operation) incurs energy cost $\ge kT\ln 2$ by the Landauer bound~\cite{landauer1961irreversibility,bennett2003notes}, experimentally verified~\cite{berut2012experimental}.\claimstamp{}{AR,H=cost-growth}
 \end{enumerate}
 Hence non-trivial computation on discrete states implies positive energy lower bounds.
-\leanmeta{\LH{DS5},\LH{DS6}.}
+\leanmeta{\LHrng{DS}{5}{6}.}
 \end{proposition}
 
 Each premise in this chain is standard: Lorentz invariance\claimstamp{}{AR} is experimentally well-established; the Landauer bound\claimstamp{}{AR,H=cost-growth} was verified in 2012~\cite{berut2012experimental}; Planck-scale uniqueness\claimstamp{}{AR} follows from dimensional analysis. The composition yields quantitative thermodynamic bounds for any discrete computational system.
@@ -419,8 +410,8 @@ Measure-typing necessity (quantitative $\Rightarrow$ measure; stochastic $\Right
 
 The derivation chain: quantum mechanics (orbital quantization) $\to$ discrete states $\to$ Landauer bound $\to$ thermodynamic costs. Each link is regime-tagged; the encoding channel is explicit throughout.
 Within the declared formal system and assumptions, this row has the same proof status as the other machine-checked rows in the table.
-Formally, quantitative claims are represented exactly as measure-indexed measurable observables, and stochastic claims are represented exactly as probability-normalized measure-indexed measurable observables (\leanmeta{\LH{MN10},\LH{MN11}}).
-Informally, in this formal system, dropping measure structure from a quantitative claim is not a weaker variant; it falls outside the typed claim language (\leanmeta{\LH{MN5},\LH{MN7},\LH{MN8},\LH{MN9}}).
+Formally, quantitative claims are represented exactly as measure-indexed measurable observables, and stochastic claims are represented exactly as probability-normalized measure-indexed measurable observables (\leanmeta{\LHrng{MN}{10}{11}}).
+Informally, in this formal system, dropping measure structure from a quantitative claim is not a weaker variant; it falls outside the typed claim language (\leanmeta{\LH{MN5}, \LHrng{MN}{7}{9}}).
 
 \begin{definition}[Decision Event]\label{def:decision-event}
 A \emph{decision event} at time $t$ is a state transition: $s_{t+1} \neq s_t$.
@@ -435,7 +426,7 @@ Let $\mathcal{S}$ be a finite state space with dynamics $\tau$. The following ar
   \item A bit operation is performed at time $t$.
 \end{enumerate}
 Consequently, the decision count over $n$ steps equals the bit-operation count, and under the declared thermodynamic model with $\lambda > 0$, positive decision counts imply positive energy lower bounds.
-\leanmeta{\LH{DE1},\LH{DE2},\LH{DE3},\LH{DE4}.}
+\leanmeta{\LHrng{DE}{1}{4}.}
 \end{proposition}
 
 \begin{proof}
@@ -448,7 +439,7 @@ The above equivalence applies to any physical system implementing state transiti
 \begin{theorem}[Cycle Cost Lower Bound]\label{thm:cycle-cost}
 \claimstamp{T\ref{thm:cycle-cost}}{AR,H=cost-growth}
 Every state transition in a decision circuit costs at least $kT\ln 2$ joules of energy.
-\leanmeta{\LH{CC1},\LH{CC2},\LH{CC3}.}
+\leanmeta{\LHrng{CC}{1}{3}.}
 \end{theorem}
 
 \begin{proof}
@@ -463,12 +454,12 @@ The proof proceeds by axiom composition:
 \begin{corollary}[No Free Computation]\label{cor:no-free-computation}
 \claimstamp{C\ref{cor:no-free-computation}}{AR,H=cost-growth}
 If a computation performs $k$ state transitions, the total energy cost is at least $k \cdot kT\ln 2$ joules. A computation with zero energy cost performs zero state transitions.
-\leanmeta{\LH{CC5},\LH{CC7},\LH{CC8}.}
+\leanmeta{\LH{CC5}, \LHrng{CC}{7}{8}.}
 \end{corollary}
 
 \begin{remark}
 This constraint is not computational but thermodynamic. Every cycle of a pipeline, every inference step of a neural network, every gate operation in a processor pays the Landauer cost. There is no free computation.
-\leanmeta{\LH{CC11},\LH{CC12}.}
+\leanmeta{\LHrng{CC}{11}{12}.}
 \end{remark}
 
 \begin{definition}[Integrity and Competence]\label{def:integrity-competence}
@@ -482,7 +473,7 @@ Let $\mathcal{C}$ be a decision circuit. Define:
 \begin{proposition}[Structural Asymmetry]\label{prop:structural-asymmetry}
 \claimstamp{P\ref{prop:structural-asymmetry}}{AR,H=cost-growth}
 Competence is self-identical: $c = c$. Integrity is self-referential: $P(\text{integrity}_{t+1} \mid \text{integrity}_t)$. The prediction is not the thing predicted.
-\leanmeta{\LH{SR1},\LH{SR2},\LH{SR3}.}
+\leanmeta{\LHrng{SR}{1}{3}.}
 \end{proposition}
 
 \begin{proof}
@@ -494,7 +485,7 @@ Integrity at time $t$ predicts integrity at time $t+1$. It says something about 
 \begin{corollary}[Competence Is Importable; Integrity Is Not]\label{cor:import-asymmetry}
 \claimstamp{C\ref{cor:import-asymmetry}}{AR}
 Competence can be imported from external sources. Integrity cannot be imported; it must be self-generated through the gap.
-\leanmeta{\LH{SR4},\LH{SR5}.}
+\leanmeta{\LHrng{SR}{4}{5}.}
 \end{corollary}
 
 \begin{remark}
@@ -504,13 +495,13 @@ The worry is integrity, not competence. Competence failure is resource shortage 
 \begin{definition}[Gap Energy]\label{def:gap-energy}
 \claimstamp{D\ref{def:gap-energy}}{AR,H=cost-growth}
 The \emph{gap entropy} is the conditional entropy $H(I_{t+1} \mid I_t)$: the uncertainty about future integrity given current integrity. The \emph{gap energy} is $H(I_{t+1} \mid I_t) \times kT\ln 2$ joules.
-\leanmeta{\LH{GE1},\LH{GE2}.}
+\leanmeta{\LHrng{GE}{1}{2}.}
 \end{definition}
 
 \begin{theorem}[Every Choice Pays Gap Energy]\label{thm:choice-pays}
 \claimstamp{T\ref{thm:choice-pays}}{AR,H=cost-growth}
 Making a choice collapses the probability distribution $P(I_{t+1} \mid I_t)$ to a single outcome, erasing the alternatives. By Landauer, this costs gap energy.
-\leanmeta{\LH{GE3},\LH{GE7}.}
+\leanmeta{\LH{GE3}, \LH{GE7}.}
 \end{theorem}
 
 \begin{proof}
@@ -520,7 +511,7 @@ Before choice, the circuit faces $k$ possible futures with distribution $P(I_{t+
 \begin{corollary}[Zero Gap Implies Determinism]\label{cor:zero-gap}
 \claimstamp{C\ref{cor:zero-gap}}{AR}
 If $H(I_{t+1} \mid I_t) = 0$, the future is determined by the present. No choice occurs. No gap energy is paid.
-\leanmeta{\LH{GE4},\LH{GE5}.}
+\leanmeta{\LHrng{GE}{4}{5}.}
 \end{corollary}
 
 \begin{definition}[Decision-Quotient Ratio from Gap]\label{def:dq-from-gap}
@@ -531,7 +522,7 @@ The \emph{decision-quotient ratio} measures how much current state predicts futu
 \]
 where $I(I_t; I_{t+1}) = H(I_{t+1}) - H(I_{t+1} \mid I_t)$ is the mutual information between current and future integrity.
 This normalized ratio is distinct from the optimizer quotient object $S/{\sim}$ used earlier for the optimizer map.
-\leanmeta{\LH{DQ1},\LH{DQ2},\LH{DQ3}.}
+\leanmeta{\LHrng{DQ}{1}{3}.}
 \end{definition}
 
 \begin{theorem}[Decision-Quotient Ratio as Physical Primitive]\label{thm:dq-physical}
@@ -543,7 +534,7 @@ The decision-quotient ratio $\mathrm{DQ} = 1 - \text{GapEnergy}/\text{TotalEnerg
   \item $\mathrm{DQ} = 1 \Leftrightarrow$ zero gap (deterministic) \quad \leanmeta{\LH{DQ6}}
   \item $\mathrm{DQ} + \text{Gap}/\text{Total} = 1$ (complementarity) \quad \leanmeta{\LH{DQ3}}
 \end{enumerate}
-\leanmeta{\LH{DQ1}, \LH{DQ2}.}
+\leanmeta{\LHrng{DQ}{1}{2}.}
 \end{theorem}
 
 \begin{theorem}[Bayes Uniquely Forced by DQ Axioms]\label{thm:bayes-from-dq}
@@ -578,13 +569,13 @@ The uniqueness corollary \LH{FN14} shows any two admissible rules must agree.
 \begin{corollary}[Thermodynamic Decision-Quotient Ratio]\label{cor:thermo-dq}
 \claimstamp{C\ref{cor:thermo-dq}}{AR,H=cost-growth}
 In energy terms: $\mathrm{DQ} = 1 - \text{GapEnergy}/\text{TotalEnergy}$. The decision-quotient ratio has a thermodynamic interpretation: it is the fraction of total uncertainty energy that is decision-relevant.
-\leanmeta{\LH{DQ7},\LH{DQ8}.}
+\leanmeta{\LHrng{DQ}{7}{8}.}
 \end{corollary}
 
 \begin{proposition}[Landauer Constraint on Strategy]\label{prop:landauer-constraint}
 \claimstamp{P\ref{prop:landauer-constraint}}{AR}
 A decision circuit chooses the strategy maximizing predicted integrity. When the erasure cost of dismissing verified claims exceeds the circuit's competence, dismissal fails thermodynamically.
-\leanmeta{\LH{IE1},\LH{IE6}.}
+\leanmeta{\LH{IE1}, \LH{IE6}.}
 \end{proposition}
 
 \begin{proof}
@@ -594,7 +585,7 @@ Let $i$ be the integrity state (bits encoding verified theorems) and $c$ the com
 \begin{corollary}[Theorem Count Shifts Equilibrium]\label{cor:theorem-equilibrium}
 \claimstamp{C\ref{cor:theorem-equilibrium}}{AR}
 At low theorem counts, dismissal is affordable and may dominate. At high theorem counts, erasure cost exceeds competence, forcing acknowledgment.
-\leanmeta{\LH{IE3},\LH{IE4},\LH{IE5}.}
+\leanmeta{\LHrng{IE}{3}{5}.}
 \end{corollary}
 
 Informally: once operation lower bounds are fixed, energy and accounting lower bounds follow from the conversion constants.
@@ -628,7 +619,7 @@ Informally: both derivation paths end at the same Bayes update rule.
 
 \paragraph{Integrity Self-Preservation.}
 A decision circuit maintains its integrity when no external process can afford the erasure cost. If the work required to corrupt the circuit's state exceeds the available competence of any potential attacker, the circuit persists by thermodynamic necessity.
-\leanmeta{\LH{IE7},\LH{IE8},\LH{IE9}.}
+\leanmeta{\LHrng{IE}{7}{9}.}
 
 \begin{proposition}[Temporal Integrity Equilibrium]\label{prop:temporal-equilibrium}
 \claimstamp{P\ref{prop:temporal-equilibrium}}{AR}
@@ -637,7 +628,7 @@ Let $P(\text{integrity}_{t+1} \mid \sigma_t)$ denote the probability of maintain
 P(\text{integrity}_{t+1} \mid \text{integrity}_t) \ge P(\text{integrity}_{t+1} \mid \text{defection}_t).
 \]
 That is, maintaining integrity now predicts maintaining integrity later.
-\leanmeta{\LH{IE10},\LH{IE11}.}
+\leanmeta{\LHrng{IE}{10}{11}.}
 \end{proposition}
 
 \begin{proof}
@@ -647,12 +638,12 @@ At equilibrium, the transition probabilities satisfy $P(\text{integrity} \mid \t
 \begin{corollary}[Publication Phase Transition]\label{cor:phase-transition}
 \claimstamp{C\ref{cor:phase-transition}}{AR}
 Prior to publication, equilibrium may be neutral: both strategies yield comparable future integrity. After publication of mechanized theorems, equilibrium shifts: integrity strictly dominates because dismissal requires erasing verified bits at cost exceeding declared competence.
-\leanmeta{\LH{IE12},\LH{IE13}.}
+\leanmeta{\LHrng{IE}{12}{13}.}
 \end{corollary}
 
 \paragraph{Zero-Integrity Circuits.}
 A decision circuit with zero integrity has no coherence constraint. When no verified bits exist, erasure cost is zero, and any competence level suffices for corruption. Such circuits have no thermodynamic constraint forcing consistent outputs.
-\leanmeta{\LH{IE14},\LH{IE15},\LH{IE16}.}
+\leanmeta{\LHrng{IE}{14}{16}.}
 
 \begin{proposition}[Integrity Prerequisite for Coherence]\label{prop:integrity-prerequisite}
 \claimstamp{P\ref{prop:integrity-prerequisite}}{AR}
@@ -676,13 +667,13 @@ A configuration $c$ is \emph{environmentally stable} if its erasure cost exceeds
 \text{erasureCost}(c) > \text{competence}_{\text{env}}.
 \]
 This is the integrity trap at molecular scale.
-\leanmeta{\LH{MI1},\LH{MI2}.}
+\leanmeta{\LHrng{MI}{1}{2}.}
 \end{definition}
 
 \begin{proposition}[Reaction Competence Requirement]\label{prop:reaction-competence}
 \claimstamp{P\ref{prop:reaction-competence}}{Q\_fin,H=cost-growth}
 A chemical reaction from configuration $c$ to $c'$ requires environmental competence at least equal to the barrier height between them. If the barrier exceeds competence, the reaction cannot occur.
-\leanmeta{\LH{MI3},\LH{MI4}.}
+\leanmeta{\LHrng{MI}{3}{4}.}
 \end{proposition}
 
 \begin{example}[DNA Persistence]\label{ex:dna-persistence}
@@ -707,7 +698,7 @@ An \emph{atomic configuration} is a discrete electronic state: a specification o
 \begin{theorem}[Orbital Transition Is State Transition]\label{thm:orbital-transition}
 \claimstamp{T\ref{thm:orbital-transition}}{Q\_fin,AR}
 Changing an atom's electronic configuration is a decision event (Definition~\ref{def:decision-event}). Orbital transitions are state transitions~\cite{sakurai2017modern}. Atoms with orbital transitions are nonstationary decision circuits (active physical systems).
-\leanmeta{\LH{AC1},\LH{AC5}.}
+\leanmeta{\LH{AC1}, \LH{AC5}.}
 \end{theorem}
 
 \begin{corollary}[Ground-State Atoms Are Passive]\label{cor:ground-state-passive}
@@ -719,7 +710,7 @@ An atom in its ground state with no transitions is passive: it is not an active 
 \begin{theorem}[Orbital Transition Cost]\label{thm:orbital-cost}
 \claimstamp{T\ref{thm:orbital-cost}}{Q\_fin,H=cost-growth}
 Upward orbital transitions (excitation) require energy input. Downward transitions (de-excitation) release energy. The transition cost is $|\Delta E|$. No free orbital transitions.
-\leanmeta{\LH{AC3},\LH{AC4}.}
+\leanmeta{\LHrng{AC}{3}{4}.}
 \end{theorem}
 
 \begin{proposition}[Symmetry Tractability]\label{prop:orbital-symmetry}
@@ -731,7 +722,7 @@ Angular momentum quantization~\cite{sakurai2017modern} creates orbit types. Dege
 \begin{definition}[Active Matter as State-Transition System]\label{def:active-matter-system}
 \claimstamp{D\ref{def:active-matter-system}}{Q\_fin,AR}
 An \emph{active physical system} is matter that pays energy to change other matter's state. A decision circuit is a physical system that implements state transitions. A nonstationary decision circuit is active.
-\leanmeta{\LH{AC9},\LH{AC11}.}
+\leanmeta{\LH{AC9}, \LH{AC11}.}
 \end{definition}
 
 \begin{remark}
@@ -745,7 +736,7 @@ Every computational cycle generates heat (Theorem~\ref{thm:cycle-cost}). Heat ac
 \begin{theorem}[Substrate Degradation]\label{thm:substrate-degradation}
 \claimstamp{T\ref{thm:substrate-degradation}}{Q\_fin,H=cost-growth}
 Let a substrate have integrity $n$ bits and heat capacity $h$ per cycle. After $k$ cycles generating cumulative heat $k \times kT\ln 2$, if $k > h$, the substrate loses at least $k - h$ bits of integrity.
-\leanmeta{\LH{SE1},\LH{SE2},\LH{SE3},\LH{SE4}.}
+\leanmeta{\LHrng{SE}{1}{4}.}
 \end{theorem}
 
 \begin{corollary}[Finite Computational Lifetime]\label{cor:finite-lifetime}
@@ -777,13 +768,13 @@ A \emph{regime} (Section~\ref{sec:encoding}) corresponds to a \emph{channel} in 
 \begin{theorem}[Competence Is Channel Capacity]\label{thm:competence-capacity}
 \claimstamp{T\ref{thm:competence-capacity}}{Q\_fin,AR}
 For a decision circuit operating in regime $R$, competence equals channel capacity: the maximum bits per cycle the circuit can process. Passive circuits (stationary, no state transitions) have no competence requirement.
-\leanmeta{\LH{CH1},\LH{CH5}.}
+\leanmeta{\LH{CH1}, \LH{CH5}.}
 \end{theorem}
 
 \begin{corollary}[Channel Capacity Degradation]\label{cor:channel-degradation}
 \claimstamp{C\ref{cor:channel-degradation}}{Q\_fin,H=cost-growth}
 As substrate integrity erodes (Theorem~\ref{thm:substrate-degradation}), channel capacity decreases. The rate of capacity loss equals the rate of substrate degradation.
-\leanmeta{\LH{CH2},\LH{CH6}.}
+\leanmeta{\LH{CH2}, \LH{CH6}.}
 \end{corollary}
 
 \begin{corollary}[Zero Capacity Halts Decisions]\label{cor:zero-capacity}
@@ -803,7 +794,7 @@ State transitions require energy. Energy expenditure over time yields compounded
 \begin{theorem}[Growth Requires Time]\label{thm:growth-time}
 \claimstamp{T\ref{thm:growth-time}}{Q\_fin,H=cost-growth}
 Let an investment have cost $c$ (gap energy in units of $kT\ln 2$), duration $k$ cycles, and return rate $r$ per cycle. The mature value is $c + kr$. If $k = 0$, mature value equals cost: no time, no growth.
-\leanmeta{\LH{IV1},\LH{IV2},\LH{IV3}.}
+\leanmeta{\LHrng{IV}{1}{3}.}
 \end{theorem}
 
 \begin{theorem}[Conservation]\label{thm:conservation}
@@ -821,7 +812,7 @@ A \emph{deficit transfer} occurs when a circuit receives resources without payin
 \begin{theorem}[Deficit Transfer Requires Source]\label{thm:deficit-source}
 \claimstamp{T\ref{thm:deficit-source}}{Q\_fin,H=cost-growth}
 A deficit transfer requires an external source. If circuit $A$ receives without paying, some circuit $B$ must pay without receiving. The deficit at $B$ equals the receipt at $A$.
-\leanmeta{\LH{IV5},\LH{IV6}.}
+\leanmeta{\LHrng{IV}{5}{6}.}
 \end{theorem}
 
 \subsubsection{Information Access: Logic Is Complete, Access Is Not}\label{sec:information-access}
@@ -857,7 +848,7 @@ The information gap is a physical constraint on access, not a logical incomplete
 \begin{theorem}[Competence Bounded by Access]\label{thm:competence-access}
 \claimstamp{T\ref{thm:competence-access}}{E,Q,S,AR}
 Competence is bounded by what you can access, not by logical consistency. For any system with more information than your channel capacity, there exist truths you cannot verify, not because logic fails, but because you lack the bits.
-\leanmeta{\LH{IA5},\LH{IA6}.}
+\leanmeta{\LHrng{IA}{5}{6}.}
 \end{theorem}
 
 \subsubsection{Dimensional Complexity: Each Subcase Is a Complexity Class}\label{sec:dimensional-complexity}
@@ -867,7 +858,7 @@ Each tractable subcase is a complexity class that collapses to P. Unbounded dime
 \begin{definition}[Complexity Classes]\label{def:complexity-classes}
 \claimstamp{D\ref{def:complexity-classes}}{E,Q,S,AR}
 The regime hierarchy induces complexity classes: Static $\to$ coNP, Stochastic $\to$ PP, Sequential $\to$ PSPACE. Each tractable subcase defines a sub-regime that reduces to P.
-\leanmeta{\LH{DC1},\LH{DC15}.}
+\leanmeta{\LH{DC1}, \LH{DC15}.}
 \end{definition}
 
 \begin{theorem}[Six Tractable Subcases Are Complexity Classes]\label{thm:six-subcases}
@@ -887,7 +878,7 @@ Each tractable subcase is a complexity class that collapses to P:
 \begin{theorem}[Topology and Motion]\label{thm:topology-motion}
 \claimstamp{T\ref{thm:topology-motion}}{E,Q,S,AR}
 Scalars live on the circuit's topology. Fixed topology (stationary) preserves tractability. Changing topology (motion) adds dimensions, may break tractability.
-\leanmeta{\LH{CC16},\LH{CC24}.}
+\leanmeta{\LH{CC16}, \LH{CC24}.}
 \end{theorem}
 
 \begin{theorem}[Complexity Dichotomy]\label{thm:complexity-dichotomy}

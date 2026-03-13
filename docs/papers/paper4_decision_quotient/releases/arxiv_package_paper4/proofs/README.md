@@ -4,8 +4,8 @@
 
 This directory contains the Lean 4 slice backing the cited Decision Quotient content.
 
-- **Lines:** 21442
-- **Theorems:** 990
+- **Lines:** 22068
+- **Theorems:** 1015
 - **`sorry` placeholders:** 0
 
 
@@ -79,9 +79,13 @@ lake build
 | `Summary.lean` | Summary |
 | `ThermodynamicLift.lean` | ThermodynamicLift |
 | `BoundedActions.lean` | BoundedActions |
+| `BoundedStateSpace.lean` | BoundedStateSpace |
 | `Dimensional.lean` | Dimensional |
+| `Dominance.lean` | Dominance |
 | `FPT.lean` | FPT |
+| `MultiplicativeSeparable.lean` | MultiplicativeSeparable |
 | `SeparableUtility.lean` | SeparableUtility |
+| `SingleAction.lean` | SingleAction |
 | `StructuralRank.lean` | StructuralRank |
 | `Tightness.lean` | Tightness |
 | `TreeStructure.lean` | TreeStructure |

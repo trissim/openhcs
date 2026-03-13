@@ -6,15 +6,15 @@ This section derives regime-typed engineering corollaries from the full map: sta
 Theorem~\ref{thm:config-reduction} maps configuration simplification to SUFFICIENCY-CHECK; Theorems~\ref{thm:sufficiency-conp}, \ref{thm:minsuff-conp}, and \ref{thm:dichotomy} then yield exact minimization consequences under [S] and [S+ETH].
 The same derivation applies to physical configuration/control systems once they are encoded into the C1--C4 decision interface: ``configuration parameter'' becomes any declared physical control or observation coordinate, and the same sufficiency predicate governs behavior preservation.
 \claimstamp{T\ref{thm:config-reduction},\ref{thm:sufficiency-conp},\ref{th:stochastic-sufficiency-pp},\ref{th:sequential-sufficiency-pspace},\ref{thm:physical-bridge-bundle};P\ref{prop:physical-claim-transport},\ref{prop:static-stochastic-strict},\ref{prop:stochastic-sequential-strict}}{AR,RG}
-\leanmeta{\LH{CR1},\LH{CT6},\LH{CT4}.}
+\leanmeta{\LH{CR1}, \LH{CT4}, \LH{CT6}.}
 
 For deployed software, this remains physical at execution time: each configuration read/write and verification step is realized by electrical state transitions in hardware, so coordinate minimization and over-specification map directly to measured switching-energy load under the declared bit-to-energy lift.
 \claimstamp{P\ref{prop:thermo-lift},\ref{prop:run-time-accounting}}{AR,H=cost-growth}
-\leanmeta{\LH{CC76},\LH{DT16}.}
+\leanmeta{\LH{CC76}, \LH{DT16}.}
 
 Under the same discrete-time event law, more verification cycles mean more decision-event ticks and more bit operations; with positive per-bit conversion, this induces additional thermodynamically necessary heat-transfer load.
 \claimstamp{P\ref{prop:decision-unit-time},\ref{prop:run-time-accounting},\ref{prop:thermo-lift};C\ref{cor:neukart-vinokur}}{AR,H=cost-growth}
-\leanmeta{\LH{DT13},\LH{DT16},\LH{CV17},\LH{CV18},\LH{CC76},\LH{CC77}.}
+\leanmeta{\LH{DT13}, \LH{DT16}, \LHrng{CV}{17}{18}, \LHrng{CC}{76}{77}.}
 
 Regime tags used below follow Section~\ref{sec:model-contract}: [S], [S+ETH], [E], [S\_bool].
 Any prescription that requires exact minimization is constrained by these theorem-level bounds.\claimstamp{T\ref{thm:sufficiency-conp},\ref{thm:minsuff-conp},\ref{thm:dichotomy}}{S,S+ETH}
@@ -96,8 +96,7 @@ These are exactly the model-contract premises C1--C3 instantiated for configurat
 \begin{theorem}[S: Over-Modeling as Boundary-Signal Corollary]
 \label{thm:overmodel-diagnostic}
 By contraposition of Theorem~\ref{thm:config-reduction}, if no coordinate set can be certified as exactly relevance-identifying (Definition~\ref{def:exact-identifiability}) for the modeled system, then the decision boundary is not completely characterized by the current parameterization.
-\leanmeta{\LH{CC40},
-\LH{CC6}}
+\leanmeta{\LH{CC6}, \LH{CC40}}
 \end{theorem}
 
 \begin{proof}
@@ -134,8 +133,7 @@ C_{\text{over}}(k) < C_{\text{find}}(n) + C_{\text{under}}
 \]
 
 Within [S+ETH], persistent over-specification is unresolved boundary characterization, not proof that all included parameters are intrinsically necessary. Conversely, when exact competence is available in the active regime, certifiably irrelevant coordinates are removable; persistence is irrational for the same cost-minimization objective.\claimstamp{T\ref{thm:cost-asymmetry-eth};P\ref{prop:attempted-competence-matrix}}{S+ETH,TA}
-\leanmeta{\LH{CC12},
-\LH{HD14}.}
+\leanmeta{\LH{CC12}, \LH{HD14}.}
 \end{theorem}
 
 \begin{proof}

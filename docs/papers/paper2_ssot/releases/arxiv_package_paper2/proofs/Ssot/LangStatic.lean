@@ -141,7 +141,7 @@ theorem go_no_inheritance_hooks :
     GoCompileEvent.interface_satisfaction_checked type_name interface_name ≠ 
     GoCompileEvent.type_defined type_name := by
   intro _ _
-  simp [GoCompileEvent.interface_satisfaction_checked]
+  simp
 
 /-!
 ## Conclusion: Static languages lack definition-time hooks

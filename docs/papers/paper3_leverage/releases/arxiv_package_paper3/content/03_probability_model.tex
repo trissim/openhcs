@@ -24,8 +24,7 @@ This is the standard characterization of independence for product probability sp
 \begin{corollary}[DOF = Independent Error Sources]\label{cor:dof-errors}
 DOF$(A) = n$ implies $n$ independent sources of error, each with probability $p$.
 \end{corollary}
-\leanmeta{\LH{L15},
-\LH{L23}}
+\leanmeta{\LH{L15}, \LH{L23}}
 
 \begin{proof}
 DOF counts independent axes (Section~\ref{foundations}, Definition~\ref{def:dof}). By Theorem~\ref{thm:error-independence}, independent axes have independent errors.
@@ -34,8 +33,7 @@ DOF counts independent axes (Section~\ref{foundations}, Definition~\ref{def:dof}
 \begin{theorem}[Error Compounding]\label{thm:error-compound}
 For a system to be correct, all $n$ independent axes must be error-free. Errors compound multiplicatively.
 \end{theorem}
-\leanmeta{\LH{L41},
-\LH{L20}}
+\leanmeta{\LH{L20}, \LH{L41}}
 
 \begin{proof}
 By \texttt{Ssot}'s coherence theorem (\texttt{oracle\_arbitrary}), incoherence in any axis violates system correctness. An error in axis $A_i$ introduces incoherence along $A_i$. Therefore, correctness requires $\bigwedge_{i=1}^{n} \neg\text{error}(A_i)$. By Theorem~\ref{thm:error-independence}, this probability is $(1-p)^n$.
@@ -49,8 +47,7 @@ For architecture with $n$ DOF and per-component error rate $p$:
 P_{\text{error}}(n) = 1 - (1-p)^n
 \]
 \end{theorem}
-\leanmeta{\LH{L40},
-\LH{L24}}
+\leanmeta{\LH{L24}, \LH{L40}}
 
 \begin{proof}
 By Theorem~\ref{thm:error-independence} (derived from \texttt{AbstractClassSystem}'s orthogonality), each DOF has independent error probability $p$, so each is correct with probability $(1-p)$. By Theorem~\ref{thm:error-compound}, all $n$ DOF must be correct:
@@ -66,8 +63,7 @@ P_{\text{error}}(n) = 1 - P_{\text{correct}}(n) = 1 - (1-p)^n
 \begin{corollary}[Linear Approximation]\label{cor:linear-approx}
 For fixed $p>0$, the linear expected-error model and the exact series model induce the same ordering on architectures by DOF.
 \end{corollary}
-\leanmeta{\LH{L39},
-\LH{L16}}
+\leanmeta{\LH{L16}, \LH{L39}}
 
 \begin{proof}
 By Theorem~\ref{thm:approx-bound}, ordering equivalence is exact under the discrete model used in the mechanization.
@@ -93,8 +89,7 @@ Expected number of errors in architecture $A$:
 \mathbb{E}[\text{\# errors}] = p \cdot \text{DOF}(A)
 \]
 \end{theorem}
-\leanmeta{\LH{L25},
-\LH{L26}}
+\leanmeta{\LHrng{L}{25}{26}}
 
 \begin{proof}
 By linearity of expectation:
@@ -124,8 +119,7 @@ An architecture with DOF $= n$ is \emph{isomorphic} to a series reliability syst
 \item \textbf{Connects domains:} $P_{\text{error}}(n) = 1 - R_{\text{series}}(n)$ where $R_{\text{series}}(n) = (1-p)^n$
 \end{enumerate}
 \end{theorem}
-\leanmeta{\LH{L22},
-\LH{L27}}
+\leanmeta{\LH{L22}, \LH{L27}}
 
 \textbf{Interpretation:} Each DOF is a ``component'' that must work correctly. This is the reliability analog of Theorem~\ref{thm:error-independence}, which derives error independence from axis orthogonality.
 
@@ -138,8 +132,7 @@ For architectures $A_1,A_2$ with equal capabilities and error rate $p>0$, the li
 \]
 where $d$ is the denominator of the discrete error-rate representation.
 \end{theorem}
-\leanmeta{\LH{L39},
-\LH{L32}}
+\leanmeta{\LH{L32}, \LH{L39}}
 
 \begin{proof}
 This is theorem \texttt{ordering\_equivalence\_exact} in \texttt{Leverage/Probability.lean}.

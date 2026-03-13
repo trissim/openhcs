@@ -699,6 +699,77 @@ theorem orthogonality_is_necessary {D : Domain α} {A : AxisSet}
     (hmin : semanticallyMinimal A D) : OrthogonalAxes A :=
   semantically_minimal_implies_orthogonal hmin
 
+/-- Any semantically complete but non-orthogonal axis family contains a removable axis.
+
+    This is the explicit redundancy theorem behind the paper's claim that
+    non-orthogonal presentations are overpresentations rather than primitive
+    counterexamples. If a complete family has a derivable dependency between two
+    distinct axes, erasing the derived axis preserves semantic completeness. -/
+theorem nonorthogonal_complete_has_redundant_axis {D : Domain α} {A : AxisSet}
+    (hcomp : semanticallyComplete A D) (hnorth : ¬ OrthogonalAxes A) :
+    ∃ a ∈ A,
+      semanticallyComplete (A.erase a) D ∧ (A.erase a).length < A.length := by
+  unfold OrthogonalAxes at hnorth
+  push_neg at hnorth
+  rcases hnorth with ⟨a, haA, b, hbA, hab, hderiv⟩
+  refine ⟨a, haA, ?_, ?_⟩
+  · intro q hqD
+    have hqA := hcomp q hqD
+    intro x hxreq
+    rcases hqA x hxreq with hxA | ⟨c, hcA, hderivxc⟩
+    · by_cases hxa : x = a
+      · subst hxa
+        right
+        refine ⟨b, ?_, hderiv⟩
+        exact (List.mem_erase_of_ne (Ne.symm hab)).mpr hbA
+      · left
+        exact (List.mem_erase_of_ne hxa).mpr hxA
+    · by_cases hca : c = a
+      · subst hca
+        right
+        refine ⟨b, ?_, derivable_trans hderivxc hderiv⟩
+        exact (List.mem_erase_of_ne (Ne.symm hab)).mpr hbA
+      · right
+        refine ⟨c, ?_, hderivxc⟩
+        exact (List.mem_erase_of_ne hca).mpr hcA
+  · have hlen : (A.erase a).length + 1 = A.length := List.length_erase_add_one haA
+    omega
+
+/-- Every semantically complete axis family contains a semantically minimal
+    complete subfamily. Since axis families are finite lists, one can repeatedly
+    erase redundant axes until no further reduction is possible. -/
+theorem exists_semanticallyMinimal_subset {D : Domain α} :
+    ∀ A : AxisSet, semanticallyComplete A D →
+      ∃ B, B ⊆ A ∧ semanticallyMinimal B D
+  | A, hcomp => by
+      by_cases hmin : semanticallyMinimal A D
+      · exact ⟨A, fun _ hx => hx, hmin⟩
+      · have hnotall : ¬ ∀ a ∈ A, ¬ semanticallyComplete (A.erase a) D := by
+          intro hall
+          exact hmin ⟨hcomp, hall⟩
+        push_neg at hnotall
+        rcases hnotall with ⟨a, haA, hEraseComp⟩
+        rcases exists_semanticallyMinimal_subset (A.erase a) hEraseComp with ⟨B, hBsub, hBmin⟩
+        refine ⟨B, ?_, hBmin⟩
+        intro x hxB
+        exact List.mem_of_mem_erase (hBsub hxB)
+termination_by A _ => A.length
+decreasing_by
+  have hlen : ((A.erase a).length) + 1 = A.length := List.length_erase_add_one haA
+  omega
+
+/-- Canonical orthogonal reduction theorem.
+
+    Every semantically complete axis family admits a complete semantically minimal
+    subfamily, and every such minimal subfamily is orthogonal. Thus the canonical
+    presentation of a complete query system lives in the orthogonal regime; any
+    non-orthogonal presentation is a redundant overpresentation of that core. -/
+theorem exists_orthogonal_semanticallyMinimal_subset {D : Domain α} {A : AxisSet}
+    (hcomp : semanticallyComplete A D) :
+    ∃ B, B ⊆ A ∧ semanticallyMinimal B D ∧ OrthogonalAxes B := by
+  rcases exists_semanticallyMinimal_subset (D := D) A hcomp with ⟨B, hBsub, hBmin⟩
+  exact ⟨B, hBsub, hBmin, semantically_minimal_implies_orthogonal hBmin⟩
+
 /-- **Lemma: When axes form an orthogonal set, minimal sets contained in it are also orthogonal.**
 
 This is a key structural result: minimality preserves orthogonality when working

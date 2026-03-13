@@ -92,6 +92,52 @@ theorem flatQuotient_iff {A S : Type*} [Fintype A] [Fintype S] {n : ℕ}
   unfold flatQuotient StochasticSufficient
   rfl
 
+/-- Under stochastic preservation, the stochastic fiber-equivalence relation for
+`I` coincides with the original decision-equivalence relation on states. -/
+theorem stochasticDecisionEquiv_iff_decisionEquiv_of_preservation
+    {A S : Type*} [Fintype A] [Fintype S] {n : ℕ}
+    [CoordinateSpace S n] [DecidableEq A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpres : StochasticPreservationSufficient P I) (s s' : S) :
+    stochasticDecisionEquiv P I s s' ↔ P.toDecisionProblem.DecisionEquiv s s' := by
+  unfold stochasticDecisionEquiv DecisionProblem.DecisionEquiv
+  constructor
+  · intro h
+    calc
+      P.toDecisionProblem.Opt s = fiberOpt P I s := by simpa using (hpres s).symm
+      _ = fiberOpt P I s' := h
+      _ = P.toDecisionProblem.Opt s' := by simpa using hpres s'
+  · intro h
+    calc
+      fiberOpt P I s = P.toDecisionProblem.Opt s := by simpa using hpres s
+      _ = P.toDecisionProblem.Opt s' := h
+      _ = fiberOpt P I s' := by simpa using (hpres s').symm
+
+/-- Under full support, static sufficiency identifies the stochastic
+fiber-equivalence relation with the original decision-equivalence relation. -/
+theorem stochasticDecisionEquiv_iff_decisionEquiv_of_full_support
+    {A S : Type*} [Fintype A] [Fintype S] {n : ℕ}
+    [CoordinateSpace S n] [DecidableEq A] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpos : ∀ s : S, 0 < P.distribution s)
+    (hstat : P.toDecisionProblem.isSufficient I) (s s' : S) :
+    stochasticDecisionEquiv P I s s' ↔ P.toDecisionProblem.DecisionEquiv s s' := by
+  apply stochasticDecisionEquiv_iff_decisionEquiv_of_preservation
+  exact static_sufficiency_implies_stochastic_preservation_of_full_support P I hpos hstat
+
+/-- Quotient-level corollary: under full support and static sufficiency, the
+stochastic equivalence setoid induced by `I` is exactly the original decision
+setoid. -/
+theorem stochasticEquivSetoid_eq_decisionSetoid_of_full_support
+    {A S : Type*} [Fintype A] [Fintype S] {n : ℕ}
+    [CoordinateSpace S n] [DecidableEq A] [Nonempty A]
+    (P : StochasticDecisionProblem A S) (I : Finset (Fin n))
+    (hpos : ∀ s : S, 0 < P.distribution s)
+    (hstat : P.toDecisionProblem.isSufficient I) :
+    stochasticEquivSetoid P I = P.toDecisionProblem.decisionSetoid := by
+  ext s s'
+  exact stochasticDecisionEquiv_iff_decisionEquiv_of_full_support P I hpos hstat s s'
+
 /-! ## Quotient Refinement
 
 A finer observation set (I ⊆ J) yields a finer equivalence relation:

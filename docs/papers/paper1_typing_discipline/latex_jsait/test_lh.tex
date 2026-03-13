@@ -1,0 +1,15 @@
+% Minimal test to reproduce LH rendering with shared SSOT and build hook
+\documentclass{article}
+\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}
+\input{build_submission_hook.tex}
+\begin{document}
+Normal: \LH{GPH35}
+
+In tt: \texttt{\LH{GPH35}}
+
+In tiny table:\\
+\begin{tabular}{l}
+  \LH{GPH35} \\
+\end{tabular}
+
+\end{document}

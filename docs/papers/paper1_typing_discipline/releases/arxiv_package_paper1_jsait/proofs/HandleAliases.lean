@@ -11,6 +11,7 @@ import Paper1IT.FiberRateDistortion
 import Paper1IT.GrowthCollisions
 import Paper1IT.GrowthTagBudget
 import Paper1IT.PMFEntropy
+import Paper1IT.QueryBitBridge
 import Paper1IT.RateDistortion
 import Paper1IT.ZeroErrorConditionalEntropy
 import Paper1IT.GraphEntropy
@@ -18,6 +19,7 @@ import Paper1IT.ComputabilityQuantization
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
 import lwd_converse
+import discipline_migration
 
 open AbstractClassSystem
 
@@ -34,10 +36,16 @@ abbrev NOM1 := nominal_centralized               -- Nominal typing centralizes
 abbrev NOM2 := nominal_localization_constant_semantic  -- Nominal localization O(1)
 abbrev DUC1 := duck_localization_linear          -- Duck localization O(n)
 abbrev ENC1 := encoding_location_gap             -- Encoding location gap
+abbrev INF1 := @AbstractClassSystem.Scope.observer_factors -- Observer factors through observable quotient
 -- SHP1/SHP2/OBS1 require type parameters - use @shape_cannot_distinguish directly
+abbrev PRV1 := @AbstractClassSystem.provenance_impossibility_universal -- Provenance not representation-computable
 abbrev SHP2 := @shape_provenance_impossible       -- Shape provenance impossible
 abbrev ADV1 := adversary_forces_n_minus_1_queries -- Adversary forces n-1 queries
 abbrev MDL1 := model_completeness                -- Model completeness
+abbrev FXI1 := fixed_axis_incompleteness         -- Fixed observable basis is incomplete
+abbrev ZDT1 := @Ssot.Paper1IT.requiredTagBits_le_iff_le_pow -- Zero-error threshold by bit budget
+abbrev PD1 := nominal_pareto_dominates_shape -- Nominal Pareto dominates structural
+abbrev NOH1 := admissibility_no_hidden_state -- No hidden registries in valid traces
 
 /-- Canonical graph-entropy handle IDs (shared downstream). -/
 abbrev GPH2 := @Ssot.GraphEntropy.clique_card_le_colors
@@ -92,6 +100,17 @@ abbrev GPH50 := @Ssot.GraphEntropy.precision_requirement
 abbrev GPH51 := @Ssot.GraphEntropy.precision_requirement_fin
 abbrev GPH52 := @Ssot.GraphEntropy.fiber_is_clique
 abbrev GPH53 := @Ssot.GraphEntropy.fiber_finset_is_clique
+abbrev GPH54 := @Ssot.QueryBitBridge.card_distinguished_set_le_two_pow_card
+abbrev GPH55 := @Ssot.QueryBitBridge.clog_card_le_query_count
+abbrev GPH56 := @Ssot.QueryBitBridge.fiber_card_le_two_pow_query_count
+abbrev GPH57 := @Ssot.QueryBitBridge.maxFiberCard_clog_le_query_count
+abbrev GPH58 := @Ssot.QueryBitBridge.distinguishesOn_mono
+abbrev GPH59 := @Ssot.QueryBitBridge.clog_card_le_query_count_mono
+abbrev GPH60 := @Ssot.QueryBitBridge.distinguished_set_eq_full_transcript_capacity
+abbrev GPH61 := @Ssot.QueryBitBridge.clog_query_floor_is_tight_of_full_capacity
+abbrev GPH62 := @Ssot.QueryBitBridge.queryExpressivityGap_nonneg
+abbrev GPH63 := @Ssot.QueryBitBridge.queryExpressivityGap_eq_zero_iff
+abbrev GPH64 := @Ssot.QueryBitBridge.queryExpressivityGap_mono
 
 /-- ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that typing discipline choice is FORCED by first principles.
@@ -219,8 +238,9 @@ theorem l5_exchange_wrapper {A : _root_.AxisSet}
 
 abbrev L4 := @l4_exchange_wrapper
 abbrev L5 := @l5_exchange_wrapper
-abbrev L6 := fixed_axis_incompleteness
-abbrev L7 := adversary_forces_n_minus_1_queries
+abbrev L6 := @nonorthogonal_complete_has_redundant_axis
+abbrev L7 := @exists_semanticallyMinimal_subset
+abbrev L8 := @exists_orthogonal_semanticallyMinimal_subset
 
 abbrev LWDC1 := @LWDConverse.collision_block_requires_bits
 abbrev LWDC2 := @LWDConverse.impossible_when_bits_too_small

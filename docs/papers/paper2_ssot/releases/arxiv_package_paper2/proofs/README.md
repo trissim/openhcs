@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for SSOT Foundations.
 
-- **Lines:** 3863
-- **Theorems:** 185
+- **Lines:** 11905
+- **Theorems:** 554
 - **`sorry` placeholders:** 0
 
 
@@ -39,7 +39,7 @@ lake build
 | `Derivation.lean` | Derivation |
 | `Dof.lean` | Dof |
 | `EditDynamics.lean` | EditDynamics |
-| `Entropy.lean` | Entropy |
+| `FactMatroid.lean` | FactMatroid |
 | `Foundations.lean` | Foundations |
 | `GraphBridges.lean` | GraphBridges |
 | `HandleAliases.lean` | HandleAliases |
@@ -49,7 +49,9 @@ lake build
 | `LangRust.lean` | LangRust |
 | `LangStatic.lean` | LangStatic |
 | `Languages.lean` | Languages |
+| `MultiFact.lean` | MultiFact |
 | `ObserverModel.lean` | ObserverModel |
+| `Probabilistic.lean` | Probabilistic |
 | `Requirements.lean` | Requirements |
 | `SSOT.lean` | SSOT |
 | `SSOTGrounded.lean` | SSOTGrounded |

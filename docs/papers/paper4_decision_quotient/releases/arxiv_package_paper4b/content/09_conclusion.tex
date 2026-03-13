@@ -1,19 +1,23 @@
 \section{Conclusion}
 
-This paper studies the convergence structure of decision-relevant information. Starting from shared definitions of sufficiency and relevance, it identifies the optimizer quotient as the canonical decision-preserving abstraction and shows that multiple mathematical frameworks recover the same structural core.
+This paper studies convergence in decision-relevant information. Starting from shared definitions of sufficiency and relevance, it identifies the optimizer quotient as the canonical decision-preserving abstraction and shows that multiple mathematical frameworks can be related to the same structural core.
 
 \subsection*{What Converges}
 
-The common invariant is structural rank: the size of the relevant-coordinate support. Quotient entropy, Fisher-style support counting, and lossless zero-distortion summaries recover that same support-size quantity once the optimizer quotient is fixed. The significance is not that these frameworks become identical, but that they agree on what counts as the dimension of decision relevance.
+The common invariant is structural rank: the size of the relevant-coordinate support. Fisher-style support counting recovers that quantity exactly; quotient entropy is bounded by it; lossless zero-distortion summaries are constrained by the same quotient structure; and transport positivity/zero-cost regimes follow the same quotient branching. The point is not that these frameworks become identical, but that they can be compared against the same decision-relevant core.
+
+\subsection*{Counting Foundation}
+
+The counting gap and measure-before-probability results provide the finite foundation for the Bayesian thread.
 
 \subsection*{Bayesian Consequence}
 
-The Bayesian argument is equally direct. Counting on finite sets yields probability after normalization; $\log x \le x - 1$ yields Gibbs' inequality; Gibbs' inequality yields cross-entropy minimization; and Bayes emerges as the unique optimizer under log loss. This places the Bayesian conclusions on the same foundational footing as the quotient and entropy results.
+The Bayesian argument is direct. Counting on finite sets yields probability after normalization; $\log x \le x - 1$ yields Gibbs' inequality; Gibbs' inequality yields cross-entropy minimization; and Bayes emerges as the unique optimizer under log loss. This places the Bayesian conclusions on the same footing as the quotient and entropy results.
 
 \subsection*{Contribution}
 
-The contribution is to place quotient structure, structural-rank recovery, and Bayesian optimality in a single mathematical framework.
+The contribution is to place quotient structure, structural-rank comparisons, and Bayesian optimality in one framework.
 
 \subsection*{Outlook}
 
-Natural next questions are refinement questions rather than boundary questions: which additional frameworks recover the same invariant, how much of the quotient story can be internalized categorically, and which convergence statements admit the cleanest mechanized forms in Lean.
+Natural next questions are refinement questions rather than boundary questions: which additional frameworks can be related to the same invariant and how much of the quotient story can be internalized categorically.

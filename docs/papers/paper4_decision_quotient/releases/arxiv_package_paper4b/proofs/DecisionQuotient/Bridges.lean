@@ -401,16 +401,19 @@ theorem stochastic_sequential_connects_main
     -- Substrate independence
     StochasticSequential.evaluateCell τ₁ c = StochasticSequential.evaluateCell τ₂ c ∧
     -- Hierarchy structure (using DimensionalComplexity names)
-    (baseComplexity 0 = ComplexityClass.coNP ∧
-     baseComplexity 1 = ComplexityClass.PP ∧
-     baseComplexity 2 = ComplexityClass.PSPACE) ∧
+    (DecisionQuotient.DimensionalComplexity.baseComplexity 0 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 1 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 2 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) ∧
     -- Six tractable subcases exist
-    ([TractableSubcase.boundedActions,
-      TractableSubcase.separableUtility,
-      TractableSubcase.lowTensorRank,
-      TractableSubcase.treeStructure,
-      TractableSubcase.boundedTreewidth,
-      TractableSubcase.coordinateSymmetry].length = 6) := by
+    ([DecisionQuotient.DimensionalComplexity.TractableSubcase.boundedActions,
+      DecisionQuotient.DimensionalComplexity.TractableSubcase.separableUtility,
+      DecisionQuotient.DimensionalComplexity.TractableSubcase.lowTensorRank,
+      DecisionQuotient.DimensionalComplexity.TractableSubcase.treeStructure,
+      DecisionQuotient.DimensionalComplexity.TractableSubcase.boundedTreewidth,
+      DecisionQuotient.DimensionalComplexity.TractableSubcase.coordinateSymmetry].length = 6) := by
   refine ⟨StochasticSequential.substrate_independence_verdict c τ₁ τ₂, ?_, rfl⟩
   exact ⟨rfl, rfl, rfl⟩
 
@@ -1297,33 +1300,38 @@ This is a GENUINE cross-cluster composition:
     1. FROM Hierarchy.lean: Complexity class ordering (coNP ⊆ PP ⊆ PSPACE)
     2. FROM Hierarchy.lean: Regime-to-complexity mapping
     3. FROM Hardness.lean: PP-completeness of stochastic sufficiency
-    4. FROM Hardness.lean: PSPACE-completeness of sequential sufficiency
+    4. FROM Hardness.lean: honest size-bounded hardness packages for stochastic/sequential sufficiency
 
     COMPOSITION: The full complexity picture:
     - Static (Paper 4): coNP-complete (TAUTOLOGY reduction)
-    - Stochastic: PP-complete (MAJSAT reduction)
-    - Sequential: PSPACE-complete (TQBF reduction)
+    - Stochastic: fully mechanized PP-hardness package (MAJSAT reduction)
+    - Sequential: fully mechanized PSPACE-hardness package (TQBF reduction)
 
     THE KEY INSIGHT: Each regime step (static → stochastic → sequential)
     bumps the complexity class by one level. -/
 theorem complete_regime_complexity_picture {A S : Type*} [Fintype A] [Fintype S]
     (P : StochasticSequential.StochasticDecisionProblem A S) :
     -- Part 1: Complexity hierarchy (from Hierarchy.lean)
-    (Physics.DimensionalComplexity.ComplexityClass.coNP ≤ Physics.DimensionalComplexity.ComplexityClass.PP ∧
-     Physics.DimensionalComplexity.ComplexityClass.PP ≤ Physics.DimensionalComplexity.ComplexityClass.PSPACE) ∧
+    (DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ≤
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ∧
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ≤
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) ∧
     -- Part 2: Regime mapping (from Hierarchy.lean)
-    (Physics.DimensionalComplexity.baseComplexity 0 = Physics.DimensionalComplexity.ComplexityClass.coNP ∧
-     Physics.DimensionalComplexity.baseComplexity 1 = Physics.DimensionalComplexity.ComplexityClass.PP ∧
-     Physics.DimensionalComplexity.baseComplexity 2 = Physics.DimensionalComplexity.ComplexityClass.PSPACE) ∧
-    -- Part 3: PP-completeness (from Hardness.lean)
-    StochasticSequential.PPComplete P := by
+    (DecisionQuotient.DimensionalComplexity.baseComplexity 0 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 1 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 2 =
+       DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) ∧
+    -- Part 3: honest stochastic PP-hardness package (from Hardness.lean)
+    StochasticSequential.HonestStochasticSufficiencyPPHard 1 := by
   refine ⟨?_, ?_, ?_⟩
   -- Part 1: From Hierarchy.lean
   · exact ⟨StochasticSequential.coNP_subset_PP, StochasticSequential.PP_subset_PSPACE⟩
   -- Part 2: From Hierarchy.lean
   · exact StochasticSequential.regime_hierarchy
   -- Part 3: From Hardness.lean
-  · exact StochasticSequential.stochastic_sufficiency_pp_complete P
+  · exact StochasticSequential.stochastic_sufficiency_pp_hard_honest (n := 1) (by omega)
 
 /-! ### ClaimTransport + ConfigReduction → Physical Encoding Preserves Hardness (NON-TRIVIAL)
 
@@ -1413,26 +1421,26 @@ This is a GENUINE cross-cluster composition:
 
     KEY INSIGHT: Tractability is regime-independent, but hardness is regime-specific. -/
 theorem dichotomy_cross_regime_tractability
-    (profile : Physics.DimensionalComplexity.DimensionalProfile) (bound : ℕ) :
+    (profile : DecisionQuotient.DimensionalComplexity.DimensionalProfile) (bound : ℕ) :
     -- Part 1: Dichotomy exists (from Dichotomy.lean)
     (∀ regime : ℕ,
-      (Physics.DimensionalComplexity.isTractable profile bound ∧
-       ∃ subcase : Physics.DimensionalComplexity.TractableSubcase,
-         Physics.DimensionalComplexity.subcaseComplexity subcase =
-         Physics.DimensionalComplexity.ComplexityClass.P) ∨
-      (¬Physics.DimensionalComplexity.isTractable profile bound ∧
-       Physics.DimensionalComplexity.baseComplexity regime ∈
-         ({Physics.DimensionalComplexity.ComplexityClass.coNP,
-           Physics.DimensionalComplexity.ComplexityClass.PP,
-           Physics.DimensionalComplexity.ComplexityClass.PSPACE} :
-          Set Physics.DimensionalComplexity.ComplexityClass))) ∧
+      (DecisionQuotient.DimensionalComplexity.isTractable profile bound ∧
+       ∃ subcase : DecisionQuotient.DimensionalComplexity.TractableSubcase,
+         DecisionQuotient.DimensionalComplexity.subcaseComplexity subcase =
+         DecisionQuotient.DimensionalComplexity.ComplexityClass.P) ∨
+      (¬DecisionQuotient.DimensionalComplexity.isTractable profile bound ∧
+       DecisionQuotient.DimensionalComplexity.baseComplexity regime ∈
+         ({DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP,
+           DecisionQuotient.DimensionalComplexity.ComplexityClass.PP,
+           DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE} :
+          Set DecisionQuotient.DimensionalComplexity.ComplexityClass))) ∧
     -- Part 2: Tractability transfers (from CrossRegime.lean)
-    (∀ subcase : Physics.DimensionalComplexity.TractableSubcase,
-      Physics.DimensionalComplexity.subcaseComplexity subcase =
-      Physics.DimensionalComplexity.ComplexityClass.P →
+    (∀ subcase : DecisionQuotient.DimensionalComplexity.TractableSubcase,
+      DecisionQuotient.DimensionalComplexity.subcaseComplexity subcase =
+      DecisionQuotient.DimensionalComplexity.ComplexityClass.P →
       ∀ regime : ℕ,
-        Physics.DimensionalComplexity.subcaseComplexity subcase =
-        Physics.DimensionalComplexity.ComplexityClass.P) := by
+        DecisionQuotient.DimensionalComplexity.subcaseComplexity subcase =
+        DecisionQuotient.DimensionalComplexity.ComplexityClass.P) := by
   constructor
   -- Part 1: Dichotomy for all regimes
   · intro regime
@@ -1542,22 +1550,22 @@ This is a GENUINE cross-cluster composition:
     lack of structure forces upward complexity. -/
 theorem cross_regime_hierarchy_landscape :
     -- Part 1: Static < Stochastic (from CrossRegime.lean)
-    (Physics.DimensionalComplexity.baseComplexity 0 =
-     Physics.DimensionalComplexity.ComplexityClass.coNP ∧
-     Physics.DimensionalComplexity.baseComplexity 1 =
-     Physics.DimensionalComplexity.ComplexityClass.PP) ∧
+    (DecisionQuotient.DimensionalComplexity.baseComplexity 0 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 1 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PP) ∧
     -- Part 2: Stochastic < Sequential (from CrossRegime.lean)
-    (Physics.DimensionalComplexity.baseComplexity 1 =
-     Physics.DimensionalComplexity.ComplexityClass.PP ∧
-     Physics.DimensionalComplexity.baseComplexity 2 =
-     Physics.DimensionalComplexity.ComplexityClass.PSPACE) ∧
+    (DecisionQuotient.DimensionalComplexity.baseComplexity 1 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 2 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) ∧
     -- Part 3: Full hierarchy (from Hierarchy.lean)
-    (Physics.DimensionalComplexity.baseComplexity 0 =
-     Physics.DimensionalComplexity.ComplexityClass.coNP ∧
-     Physics.DimensionalComplexity.baseComplexity 1 =
-     Physics.DimensionalComplexity.ComplexityClass.PP ∧
-     Physics.DimensionalComplexity.baseComplexity 2 =
-     Physics.DimensionalComplexity.ComplexityClass.PSPACE) := by
+    (DecisionQuotient.DimensionalComplexity.baseComplexity 0 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 1 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ∧
+     DecisionQuotient.DimensionalComplexity.baseComplexity 2 =
+     DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) := by
   refine ⟨?_, ?_, ?_⟩
   -- Part 1: From CrossRegime.lean
   · exact StochasticSequential.static_simpler_than_stochastic
@@ -1588,16 +1596,16 @@ This is a GENUINE cross-cluster composition:
 
     NO MIDDLE GROUND: You cannot have "slightly hard" problems. -/
 theorem sharp_dichotomy_eth_phase_transition
-    (profile : Physics.DimensionalComplexity.DimensionalProfile) (bound regime : ℕ) :
+    (profile : DecisionQuotient.DimensionalComplexity.DimensionalProfile) (bound regime : ℕ) :
     -- Part 1: Dichotomy is exclusive (from Dichotomy.lean)
-    (¬(Physics.DimensionalComplexity.isTractable profile bound ∧
-       ¬Physics.DimensionalComplexity.isTractable profile bound)) ∧
+    (¬(DecisionQuotient.DimensionalComplexity.isTractable profile bound ∧
+       ¬DecisionQuotient.DimensionalComplexity.isTractable profile bound)) ∧
     -- Part 2: Hard cases in base class (from Dichotomy.lean)
-    (Physics.DimensionalComplexity.baseComplexity regime ∈
-      ({Physics.DimensionalComplexity.ComplexityClass.coNP,
-        Physics.DimensionalComplexity.ComplexityClass.PP,
-        Physics.DimensionalComplexity.ComplexityClass.PSPACE} :
-       Set Physics.DimensionalComplexity.ComplexityClass)) ∧
+    (DecisionQuotient.DimensionalComplexity.baseComplexity regime ∈
+      ({DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP,
+        DecisionQuotient.DimensionalComplexity.ComplexityClass.PP,
+        DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE} :
+       Set DecisionQuotient.DimensionalComplexity.ComplexityClass)) ∧
     -- Part 3: ETH exponential bound (from ETH.lean)
     (ETHAssumption → ∀ (algorithm : SAT3Algorithm) (c : ℕ), c > 0 →
       ∃ (φ : SAT3Instance), ExponentialRuntimeWitness algorithm c φ) := by

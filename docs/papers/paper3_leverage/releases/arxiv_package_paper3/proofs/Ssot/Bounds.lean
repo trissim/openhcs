@@ -17,7 +17,7 @@ theorem ssot_upper_bound (dof : Nat) (h : satisfies_SSOT dof) :
 -- Theorem 6.2: Non-SSOT Lower Bound
 -- Without SSOT, modification complexity can grow linearly with use sites
 -- M(C, δ_F) = Ω(n) where n is number of independent encodings
-theorem non_ssot_lower_bound (dof n : Nat) (h : dof = n) (hn : n > 1) :
+theorem non_ssot_lower_bound (dof n : Nat) (h : dof = n) (_hn : n > 1) :
     -- Each independent encoding must be updated separately
     -- Therefore modification complexity ≥ n
     dof ≥ n := by

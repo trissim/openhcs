@@ -59,7 +59,7 @@ The Core Theorems (machine-checked, 0 sorries):
 
 • Fixed Axis Incompleteness: For any axis set A and any axis a ∉ A, there exists a domain D that A cannot serve. The information required to answer D’s queries does not exist in A.
 
-• Parameterized Immunity: For any domain D, there exists an axis set A_(D) that is complete for D. This set is computable: A_(D) = ⋃_(q ∈ D)requires(q).
+• Parameterized Immunity: For any domain D, there exists an axis set A_D that is complete for D. This set is computable: A_D = ⋃_(q ∈ D)requires(q).
 
 • The Asymmetry: Fixed systems guarantee failure for some domain. Parameterized systems guarantee success for all domains. One dominates the other absolutely.
 

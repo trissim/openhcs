@@ -1,10 +1,8 @@
 \begin{abstract}
-We prove that no fixed semantic representation, however sophisticated, can achieve zero-error identity recovery without explicit auxiliary information. Any non-injective representation creates an irreducible identity debt: the worst-case auxiliary description requires at least $\log_2 A_{\pi}$ bits, where $A_{\pi}$ is the maximum collision-fiber size. If those bits are withheld, the distortion floor on the worst fiber is at least $1-1/A_{\pi}$.
+What happens when classical compression theory meets learned representations? We answer this question exactly for zero-error identity recovery when the decoder observes a fixed embedding: the central object is the collision-fiber geometry of the map $\pi$, and it alone controls all operational costs.
 
-This paper shows that a single structural object, the collision fiber geometry, governs all operational costs for exact identity: the bit cost (fixed-length and adaptive), the distortion floor, and the query complexity for operational disambiguation. On the query side, the paper proves that complete derivability-aware query systems reduce to orthogonal minimal cores, so the query cost is structural rather than presentation-dependent. These are alternate currencies for the same residual ambiguity; none yields a free way to restore identity.
+Concretely, let $A_{\pi}=\max_u |\pi^{-1}(u)|$ be the largest collision fiber. We prove a tight fixed-length converse $L \ge \log_2 A_{\pi}$, give the exact finite-block scaling law and a pointwise adaptive budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$, and derive the rate‑distortion tradeoff including an explicit deterministic distortion floor when identity bits are withheld. These statements characterize precisely the residual ambiguity left by any non‑injective learned embedding.
 
-All main results are machine-checked in Lean 4. The formalization both verifies correctness and demonstrates that the fiber-geometry framework is conceptually clean enough for full mechanization.
-\input{machine_checked_claim}
-
+The applied payoff follows: because the residual ambiguity is structural (fiber‑based) rather than an artifact of representation format, symbolic identity mechanisms (handles, keys, pointers, nominal tags) are the canonical system-level way to pay that identity debt. All main results are machine‑checked in Lean 4; the formalization verifies correctness and demonstrates that the fiber‑geometry framework is sufficiently clean for full mechanization.
 \textbf{Keywords:} semantics-aware compression, zero-error coding, neurosymbolic systems, learned representations, side information
 \end{abstract}

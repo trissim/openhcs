@@ -123,9 +123,13 @@ import DecisionQuotient.Summary
 import DecisionQuotient.ThermodynamicLift
 import DecisionQuotient.ToolCollapse
 import DecisionQuotient.Tractability.BoundedActions
+import DecisionQuotient.Tractability.BoundedStateSpace
 import DecisionQuotient.Tractability.Dimensional
+import DecisionQuotient.Tractability.Dominance
 import DecisionQuotient.Tractability.FPT
+import DecisionQuotient.Tractability.MultiplicativeSeparable
 import DecisionQuotient.Tractability.SeparableUtility
+import DecisionQuotient.Tractability.SingleAction
 import DecisionQuotient.Tractability.StructuralRank
 import DecisionQuotient.Tractability.Tightness
 import DecisionQuotient.Tractability.TreeStructure

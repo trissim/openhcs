@@ -254,12 +254,12 @@ theorem IA16_no_invariant_undefined_membership
   obtain ⟨_, hAgree⟩ := hAll 0 h0
   exact hNoShared (m1[0]'h0) (m2[0]'hLen2) hAgree
 
-/-! ## Part 6: The Ego Trap -/
+/-! ## Part 6: Observer-Level Rejection Cascade -/
 
-/-- IA17 (Theorem): Objecting to observer case requires rejecting atomic case.
+/-- IA17 (Theorem): Objecting to observer-level agreement requires rejecting atomic agreement.
     Human observers are atoms. Rejecting human invariant agreement
     requires rejecting atomic invariant agreement — i.e., rejecting QM. -/
-theorem IA17_ego_trap
+theorem IA17_observer_level_rejection_cascade
     (obs : Observer) (hAtoms : obs.atomCount > 0)
     (atom : AtomicConfig) :
     -- The observer IS atoms
@@ -270,7 +270,7 @@ theorem IA17_ego_trap
 /-- IA18 (Corollary): The escalation chain is complete.
     Quantum → Atomic → Molecular → Observer.
     Each level inherits invariant agreement from below.
-    By the time ego enters (observer level), agreement is already forced. -/
+    By the observer level, agreement is already forced. -/
 theorem IA18_escalation_complete
     (q : QuantumSystem) (a : AtomicConfig) (m : Configuration) (o : Observer)
     (hQ : q.numStates > 0)
@@ -284,4 +284,3 @@ theorem IA18_escalation_complete
 end InvariantAgreement
 end Physics
 end DecisionQuotient
-

@@ -6,7 +6,7 @@ We distinguish the encodings of Section~\ref{sec:encoding}. The tractability res
 Structural insight: hardness dissolves exactly when the full decision boundary $s \mapsto \Opt(s)$ is recoverable in polynomial time from the input representation; the six cases below instantiate this single principle.
 Concretely, each tractable regime corresponds to a specific structural insight (explicit boundary exposure, additive separability, tensor factorization, tree structure, bounded treewidth, or coordinate symmetry) that removes the hardness witness; this supports reading the general-case hardness as missing structural access in the current representation rather than as an intrinsic semantic barrier.
 In physical terms, these are the regimes where required structure is directly observable or factorized so that verification work scales with exposed local structure rather than hidden global combinations on encoded physical instances.\claimstamp{T\ref{thm:tractable},\ref{thm:physical-bridge-bundle};P\ref{prop:physical-claim-transport}}{E,TA,AR}
-\leanmeta{\LH{CC69},\LH{CC70},\LH{CC71},\LH{CC72},\LH{CC73},\LH{CT6},\LH{CT4}.}
+\leanmeta{\LHrng{CC}{69}{73}, \LH{CT4}, \LH{CT6}.}
 
 Informally: these cases are tractable because useful structure is visible.
 
@@ -24,7 +24,7 @@ with the root term depending only on $(a, s_{\mathrm{root}})$ and all $u_i$ give
 \item \textbf{Bounded treewidth:} Utility decomposes as pairwise interactions on an interaction graph of treewidth $w$. Complexity: $O(n \cdot k^{w+1})$ via CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity}.
 \item \textbf{Coordinate symmetry:} State space is $S = [k]^d$ with utility invariant under coordinate permutations. The effective state space reduces from $k^d$ to $\binom{d+k-1}{k-1}$ orbit types. Complexity: $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$, polynomial in $d$ for fixed $k$.
 \end{enumerate}
-\leanmeta{\LH{CC70},\LH{CC71},\LH{CC72},\LH{CC73}.}
+\leanmeta{\LHrng{CC}{70}{73}.}
 \end{theorem}
 
 \subsection{Bounded Actions (Explicit-State)}
@@ -56,7 +56,7 @@ Assume the tree decomposition and explicit local tables as stated. For each node
 \end{proof}
 
 \subsection{Bounded Treewidth}
-\leanmeta{\LH{CC73},\LH{CC75}.}
+\leanmeta{\LH{CC73}, \LH{CC75}.}
 
 \begin{proof}[Proof of Part 5]
 When utility decomposes as pairwise interactions $U(a,s) = \sum_{(i,j)} u_{ij}(a, s_i, s_j)$, the interaction graph has an edge between coordinates $i,j$ iff $u_{ij}$ is nontrivial. If this graph has treewidth $w$, SUFFICIENCY-CHECK reduces to a constraint satisfaction problem on a bounded-treewidth graph. By standard CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity}, this is solvable in $O(n \cdot k^{w+1})$ time.
@@ -92,10 +92,7 @@ Coordinate symmetry & Exchangeable particles, counting problems \\
 \claimstamp{P\ref{prop:heuristic-reusability}}{H=tractable-structured}
 Let $\mathcal{C}$ be a structure class for which SUFFICIENCY-CHECK is polynomial (Theorem~\ref{thm:tractable}). If membership in $\mathcal{C}$ is decidable in polynomial time, then the combined detect-then-check procedure is a sound, polynomial-time heuristic applicable to all future instances in $\mathcal{C}$.
 For each subcase of Theorem~\ref{thm:tractable}, structure detection is polynomial (under the declared representation assumptions).
-\leanmeta{\LH{CC53},
-\LH{CC7},
-\LH{CC55},
-\LH{CC74}.}
+\leanmeta{\LH{CC7}, \LH{CC53}, \LH{CC55}, \LH{CC74}.}
 \end{proposition}
 
 \begin{remark}[Heuristics and Integrity]

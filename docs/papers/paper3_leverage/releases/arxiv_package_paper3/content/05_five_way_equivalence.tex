@@ -20,7 +20,7 @@ An architecture has the highest possible capability-to-DOF ratio exactly when it
 \item (Backward) If $A$ has maximum leverage but $\text{DOF}(A) > 1$, construct $A'$ with $\text{DOF}(A') = 1$ and same capabilities. Then $L(A') = |\text{Cap}(A)| > |\text{Cap}(A)|/\text{DOF}(A) = L(A)$, contradiction.
 \end{itemize}
 
-\leanmeta{\LH{L31}, \LH{L28}, \LH{L48}}
+\leanmeta{\LH{L28}, \LH{L31}, \LH{L48}}
 
 \subsection{Framework 2: Architectural Epistemic Coherence (Ssot)}
 
@@ -58,7 +58,7 @@ The canonical encoding is:
 \item Utility: $u(\text{inl } i, s) = 2$ if $s(i) = \text{true}$, else $0$; $u(\text{inr}\ (), s) = 1$
 \end{itemize}
 
-\leanmeta{\LH{L43}, \LH{L51}, \LH{L46}}
+\leanmeta{\LH{L43}, \LH{L46}, \LH{L51}}
 
 \begin{formal}
 \textbf{Corollary 5.4.} DOF $= 1$ if and only if srank $= 1$.
@@ -122,7 +122,7 @@ Physical assumptions (point~3 only):
 \item Landauer calibration ($k_B T \ln 2$ joules per bit)
 \end{itemize}
 
-\leanmeta{\LH{L54}, \LH{L55}, \LH{L49}}
+\leanmeta{\LH{L49}, \LHrng{L}{54}{55}}
 
 Physical edit-energy floor from Section 4.3 is a special case: DOF controls minimum edit-energy, and higher leverage implies lower energy in a fixed capability class (Theorem \ref{thm:physical-energy-floor}, \LH{L1}, \LH{L5}).
 
@@ -164,7 +164,7 @@ Statistical Physics & Minimum thermodynamic cost per cycle \\
 
 The transitivity of logical equivalence gives the five-way equivalence.
 
-\leanmeta{\LH{L44}, \LH{ORA1}, \LH{L43}, \LH{L47}, \LH{L55}}
+\leanmeta{\LHrng{L}{43}{44}, \LH{L47}, \LH{L55}, \LH{ORA1}}
 
 \begin{formal}
 \textbf{Corollary 5.9 (Convergence).} Within the \nolinkurl{DecisionQuotient} canonical decision problem framework, the boolean-coordinate encoding (states as $n$ boolean coordinates, actions as coordinate queries or fallback, utilities rewarding correct identification) is the unique decision structure with $n = 1$ that simultaneously satisfies all five characterizations.

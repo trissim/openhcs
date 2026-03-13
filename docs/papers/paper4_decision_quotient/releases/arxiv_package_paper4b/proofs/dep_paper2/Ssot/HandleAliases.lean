@@ -4,10 +4,14 @@ import Ssot.ClaimClosure
 import Ssot.Coherence
 import Ssot.Completeness
 import Ssot.CrossPaperDependencies  -- Bridge theorems linking Paper 2 → Paper 1
-import Ssot.Entropy
 import Ssot.Foundations
 import Ssot.Inconsistency
 import Ssot.LangPython
+import Ssot.MultiFact
+import Ssot.ObserverModel
+import Paper1IT.EntropyGeneral
+import Ssot.FactMatroid
+import Ssot.Probabilistic
 import Ssot.Requirements
 import axis_framework
 
@@ -18,15 +22,22 @@ open Ssot
     The build system parses `abbrev CODE := target` and uses these IDs in
     `lean_handle_ids_auto.tex`, which then powers `\LH{CODE}` links in the PDF. -/
 
-abbrev ENT1 := Entropy.ClassicalEntropyAssumptions
-abbrev CIA1 := ClaimClosure.ClassicalInfoAssumptions
--- CIA2-CIA4 require ClassicalInfoAssumptions instance; define as functions taking instance explicitly
-abbrev CIA2 := fun (inst : ClaimClosure.ClassicalInfoAssumptions) =>
-  @ClaimClosure.side_information_requirement_conditional inst
-abbrev CIA3 := fun (inst : ClaimClosure.ClassicalInfoAssumptions) =>
-  @ClaimClosure.fano_converse_conditional inst
-abbrev CIA4 := fun (inst : ClaimClosure.ClassicalInfoAssumptions) =>
-  @ClaimClosure.info_dof_conditional inst
+noncomputable abbrev ENT1 := ClaimClosure.sideInfoBits
+abbrev ENT2 := ObserverModel.binEntropy_half
+abbrev ENT3 := @ObserverModel.klDiv_self_eq_zero
+abbrev ENT4 := @ObserverModel.pmfEntropy_bernoulli
+abbrev ENT5 := @ObserverModel.pmfEntropy_bernoulli_le_log_two
+abbrev ENT6 := @ObserverModel.pmfEntropy_uniform_fin
+abbrev ENT7 := @ObserverModel.pmf_eq_uniform_fin_of_klDiv_zero
+abbrev ENT8 := @ObserverModel.pmfEntropy_eq_log_card_of_klDiv_zero_uniform_fin
+abbrev ENT9 := @ObserverModel.pmfEntropy_bernoulli_ofReal
+abbrev ENT10 := @ObserverModel.pmfEntropy_inducedPairPMF_eq_observationTagEntropy
+abbrev ENT11 := @ObserverModel.pmfEntropy_inducedPairPMFFin_eq_observationTagEntropy
+abbrev ENT12 := @ObserverModel.pmfEntropy_eq_log_card_of_klDiv_zero_uniform_fin_nonempty
+abbrev CIA1 := ClaimClosure.side_information_requirement
+abbrev CIA2 := ClaimClosure.side_information_requirement
+abbrev CIA3 := @ClaimClosure.finite_counting_converse
+abbrev CIA4 := @ClaimClosure.info_dof_counting_contradiction
 
 abbrev ORA1 := oracle_arbitrary
 abbrev COH1 := dof_one_implies_coherent
@@ -42,7 +53,7 @@ abbrev INS2 := Inconsistency.ssot_required
 abbrev INS3 := Inconsistency.ssot_unique_satisfier
 abbrev INS4 := Inconsistency.resolution_requires_external_choice
 
-abbrev CAP1 := ClaimClosure.cap_encoding_conditional
+abbrev CAP1 := ClaimClosure.cap_encoding_zero_error
 abbrev CAP2 := ssot_guarantees_coherence
 abbrev CAP3 := non_ssot_permits_incoherence
 abbrev FLP1 := ClaimClosure.static_flp_core
@@ -51,6 +62,115 @@ abbrev RAT1 := ClaimClosure.rate_incoherence_step
 abbrev DES1 := ClaimClosure.design_necessity
 abbrev SID1 := ClaimClosure.dof1_zero_side_information
 abbrev SID2 := ClaimClosure.side_information_scales_with_redundancy
+abbrev OBS1 := @ObserverModel.exact_recovery_implies_pair_injective
+abbrev OBS2 := @ObserverModel.pair_injective_implies_exact_recovery
+abbrev OBS3 := @ObserverModel.fiber_card_le_tag_alphabet
+abbrev OBS4 := @ObserverModel.exact_recovery_global_count
+abbrev OBS5 := @ObserverModel.clique_card_le_tag_alphabet
+abbrev OBS6 := @ObserverModel.no_observation_only_exact_recovery_of_nontrivial_clique
+abbrev OBS7 := @ObserverModel.architecture_support_global_bound
+abbrev OBS8 := @ObserverModel.architecture_support_bound_from_clique
+abbrev OBS9 := @ObserverModel.architecture_support_gt_one_of_nontrivial_clique
+abbrev OBS10 := @ObserverModel.observation_only_architecture_impossible_on_nontrivial_clique
+abbrev OBS11 := @ObserverModel.supportCount_eq_dof
+abbrev OBS12 := @ObserverModel.nontrivial_clique_forces_dof_gt_one
+abbrev OBS13 := @ObserverModel.exactOn_clique_card_le_tag_alphabet
+abbrev PRB1 := @ObserverModel.successSet_card_le_budget
+abbrev PRB2 := @ObserverModel.successProb_le_budget_mul_massBound
+abbrev PRB3 := @ObserverModel.errorProb_ge_one_sub_budget_mul_massBound
+abbrev PRB4 := ObserverModel.vanishingError
+abbrev PRB5 := @ObserverModel.not_vanishingError_of_lower_bound
+abbrev PRB6 := @ObserverModel.family_not_vanishing_of_budget_mass_gap
+abbrev PRB7 := @ObserverModel.errorProb_uniform_ge_one_sub_budget_div_card
+abbrev PRB8 := @ObserverModel.successProb_uniform_le_budget_div_card
+abbrev PRB9 := @ObserverModel.weak_fano_uniform_budget_lower_bound
+abbrev PRB10 := @ObserverModel.uniform_family_not_vanishing_of_budget_ratio_gap
+abbrev PRB11 := @ObserverModel.successProb_uniform_eq_card_div_card
+abbrev PRB12 := @ObserverModel.errorProb_uniform_eq_one_sub_card_div_card
+abbrev PRB13 := @ObserverModel.weak_fano_uniform_successSet_lower_bound
+abbrev PRB14 := @ObserverModel.weak_fano_uniform_via_successSet
+abbrev PRB15 := @ObserverModel.uniform_success_failure_partition_entropy
+abbrev PRB16 := @ObserverModel.fano_uniform_budgeted
+abbrev PRB17 := @ObserverModel.fano_uniform_observation_only
+abbrev PRB18 := @ObserverModel.observation_only_successProb_uniform_le_one_div_card
+abbrev PRB19 := @ObserverModel.observation_only_errorProb_uniform_ge_one_sub_one_div_card
+abbrev PRB20 := @ObserverModel.successProb_le_budget_mul_maxMass
+abbrev PRB21 := @ObserverModel.errorProb_ge_one_sub_budget_mul_maxMass
+abbrev PRB22 := @ObserverModel.weak_fano_maxMass_lower_bound
+abbrev PRB23 := @ObserverModel.family_not_vanishing_of_budget_maxMass_gap
+abbrev PRB24 := @ObserverModel.successSetCard_ge_successProb_div_maxMass
+abbrev PRB25 := @ObserverModel.successSetCard_ge_one_sub_error_over_maxMass
+abbrev PRB26 := @ObserverModel.observation_only_successProb_le_maxMass
+abbrev PRB27 := @ObserverModel.observation_only_errorProb_ge_one_sub_maxMass
+abbrev PRB28 := @ObserverModel.successProb_le_budget_times_exp_neg_minEntropy
+abbrev PRB29 := @ObserverModel.errorProb_ge_one_sub_budget_times_exp_neg_minEntropy
+abbrev PRB30 := @ObserverModel.sourceEntropy_uniformFiniteSource
+abbrev PRB31 := @ObserverModel.minEntropy_le_sourceEntropy
+abbrev PRB32 := @ObserverModel.successSetCard_ge_one_sub_error_times_exp_minEntropy
+abbrev PRB33 := @ObserverModel.budget_ge_one_sub_error_times_exp_minEntropy
+abbrev PRB34 := @ObserverModel.inv_card_le_maxMass
+abbrev PRB35 := @ObserverModel.minEntropy_le_log_card
+abbrev PRB36 := @ObserverModel.observation_only_successProb_le_exp_neg_minEntropy
+abbrev PRB37 := @ObserverModel.observation_only_errorProb_ge_one_sub_exp_neg_minEntropy
+abbrev PRB38 := @ObserverModel.sourceEntropy_nonneg
+abbrev PRB39 := @ObserverModel.sourceEntropy_le_log_card
+abbrev PRB40 := @ObserverModel.minEntropy_le_log_budget_sub_log_one_sub_error
+abbrev PRB41 := @ObserverModel.observation_only_minEntropy_le_neg_log_one_sub_error
+abbrev PRB42 := @ObserverModel.sourceEntropy_le_success_failure_partition
+abbrev PRB43 := @ObserverModel.fano_arbitrary_budgeted
+abbrev PRB44 := @ObserverModel.fano_arbitrary_observation_only
+abbrev PRB45 := @ObserverModel.fano_arbitrary_conditional_style
+abbrev PRB46 := @ObserverModel.fano_arbitrary_conditional_observation_only
+abbrev PRB47 := @ObserverModel.sourceEntropy_eq_observationTagEntropy_add_conditionalEntropyGivenPair
+abbrev PRB48 := @ObserverModel.conditionalEntropyGivenPair_le_sourceEntropy
+abbrev PRB49 := @ObserverModel.mutualInfoSurrogate_eq_observationTagEntropy
+abbrev PRB50 := @ObserverModel.conditionalEntropyGivenPair_le_fano_arbitrary
+abbrev PRB51 := @ObserverModel.conditionalEntropyGivenPair_le_fano_observation_only
+abbrev PRB52 := @ObserverModel.observationTagEntropy_le_log_budget
+abbrev PRB53 := @ObserverModel.mutualInfoSurrogate_le_log_budget
+abbrev PRB54 := @ObserverModel.exactOn_clique_subsetEntropy_le_log_tags
+abbrev PRB55 := @ObserverModel.successSet_clique_entropy_le_log_tags
+abbrev PRB56 := @ObserverModel.pmfEntropy_successFailurePMF
+abbrev PRB57 := @ObserverModel.mutualInfoDeterministic_eq_observationTagEntropy
+abbrev PRB58 := @ObserverModel.mutualInfoDeterministic_eq_source_minus_conditional
+abbrev PRB59 := @ObserverModel.mutualInfoDeterministic_nonneg
+abbrev PRB60 := @ObserverModel.mutualInfoDeterministic_le_log_budget
+abbrev PRB61 := @ObserverModel.conditionalEntropyGivenPair_nonneg
+abbrev PRB62 := @ObserverModel.observationTagEntropy_le_sourceEntropy
+abbrev PRB63 := @ObserverModel.mutualInfoDeterministic_le_sourceEntropy
+abbrev PRB64 := @ObserverModel.coarsenedObservationEntropy_le_observationTagEntropy
+abbrev PRB65 := @ObserverModel.coarsenedMutualInfoDeterministic_eq_coarsenedObservationEntropy
+abbrev PRB66 := @ObserverModel.coarsenedMutualInfoDeterministic_le_original
+abbrev PRB67 := @ObserverModel.deterministicKernel_data_processing
+abbrev PRB68 := @ObserverModel.deterministicKernel_entropy_data_processing
+abbrev PRB69 := @ObserverModel.inducedPairPMFFin_eq_uniform_of_klDiv_zero
+abbrev PRB70 := @ObserverModel.observationTagEntropy_eq_log_budget_of_klDiv_zero_uniform
+abbrev PRB71 := @ObserverModel.mutualInfoDeterministic_eq_log_budget_of_klDiv_zero_uniform
+abbrev PRB72 := @ObserverModel.nonuniform_inducedPairPMFFin_implies_klDiv_ne_zero
+abbrev PRB73 := @ObserverModel.observationTagEntropy_gap_nonneg
+abbrev PRB74 := @ObserverModel.observationTagEntropy_gap_eq_zero_of_klDiv_zero_uniform
+abbrev PRB75 := @ObserverModel.observationTagEntropy_gap_pos_implies_klDiv_ne_zero
+abbrev PRB76 := @ObserverModel.mutualInfoDeterministic_gap_pos_implies_klDiv_ne_zero
+abbrev PRB77 := @ObserverModel.successFailureFiniteSource_entropy_eq_binEntropy
+abbrev PRB78 := @ObserverModel.successFailureEntropy_le_sourceEntropy
+abbrev PRB79 := @ObserverModel.rvEntropy_failureRVFin_eq_binEntropy
+abbrev PRB80 := @ObserverModel.rvEntropy_failureRVFin_le_sourceEntropy
+abbrev PRB81 := @ObserverModel.decodedOutputEntropy_le_mutualInfoDeterministic
+abbrev PRB82 := @ObserverModel.decodedOutputEntropy_source_gap_nonneg
+abbrev PRB83 := @ObserverModel.decodedOutputEntropy_log_gap_nonneg
+abbrev PRB84 := @ObserverModel.decodedOutputEntropy_le_success_failure_partition
+abbrev PRB85 := @ObserverModel.decodedOutputEntropy_fano_budgeted
+abbrev PRB86 := @ObserverModel.observableEntropy_failureObservable_eq_binEntropy
+abbrev PRB87 := @ObserverModel.decodedOutputEntropy_fano_observation_only
+abbrev PRB88 := @ObserverModel.observableEntropy_failureObservable_le_sourceEntropy
+abbrev PRB89 := @ObserverModel.decodedOutputObservable_eq_coarsenedObservationObservable
+abbrev PRB90 := @ObserverModel.DeterministicObservable.entropy_coarsen_le_sourceEntropy
+abbrev PRB91 := @ObserverModel.inducedDecodedOutputPMFFin_eq_uniform_of_klDiv_zero
+abbrev PRB92 := @ObserverModel.decodedOutputEntropy_eq_log_outputAlphabet_of_klDiv_zero_uniform
+abbrev PRB93 := @ObserverModel.decodedOutputEntropy_gap_eq_zero_of_klDiv_zero_uniform
+abbrev PRB94 := @ObserverModel.decodedOutputEntropy_gap_pos_implies_klDiv_ne_zero
+abbrev PRB95 := @ObserverModel.decodedOutputObservable_entropy_le_sourceEntropy
+abbrev ENT13 := @ObserverModel.pmfEntropy_inducedDecodedOutputPMFFin_eq_decodedOutputEntropy
 
 -- DER1: all_derived_from_source requires Location, DerivationSystem, source, and all_locations parameters
 -- Use: `all_derived_from_source D source locations` where D : DerivationSystem Location
@@ -70,6 +190,146 @@ abbrev SOT1 := ssot_iff
 abbrev GEN1 := generated_file_is_second_encoding
 abbrev LNG1 := ClaimClosure.language_realizability_criterion
 
+/-! ## MULTI-FACT / NON-CLIQUE EXTENSION -/
+abbrev MFT1 := @MultiFact.exactRecovery_implies_properColoring
+abbrev MFT2 := @MultiFact.properColoring_implies_exactRecovery
+abbrev MFT3 := @MultiFact.exactRecovery_iff_properColoring
+abbrev MFT4 := @MultiFact.exists_exactRecovery_iff_colorable
+abbrev MFT5 := MultiFact.binaryViews_nonclique_witness
+abbrev MFT6 := MultiFact.binaryViews_colorable_two
+abbrev MFT7 := MultiFact.binaryViews_not_colorable_one
+abbrev MFT8 := MultiFact.binaryViews_oneTag_uniform_successProb_le_half
+abbrev MFT9 := @MultiFact.exists_exactOn_iff_colorableOn
+abbrev MFT10 := @MultiFact.binaryViews_oneTag_exactOn_card_le_two
+abbrev MFT11 := @MultiFact.pairProperColoring_of_componentColorings
+abbrev MFT12 := @MultiFact.pairColorable_of_colorable
+abbrev MFT13 := @MultiFact.pair_product_clique_budget_lower_bound
+abbrev MFT14 := @MultiFact.exists_exactOn_card_eq_maxColorableCard
+abbrev MFT15 := MultiFact.binaryViews_maxColorableCard_one_eq_two
+abbrev MFT16 := @MultiFact.pair_product_success_card_lower_bound
+abbrev MFT17 := @MultiFact.pair_product_independent_lower_bound
+abbrev MFT18 := @MultiFact.exactOn_mass_le_maxColorableMass
+abbrev MFT19 := @MultiFact.exists_exactOn_mass_eq_maxColorableMass
+abbrev MFT20 := @MultiFact.colorable_iff_graphColorable
+abbrev MFT21 := @MultiFact.block_power_independent_lower_bound
+abbrev MFT22 := @MultiFact.block_add_independent_lower_bound
+abbrev MFT23 := @MultiFact.exactRateDistortionValue_upper
+abbrev MFT24 := @MultiFact.exists_exactRateDistortionValue
+abbrev MFT25 := @MultiFact.pairConfusable_iff_strongProdAdj
+abbrev MFT26 := @MultiFact.pairConfusabilityGraph_eq_strongProd
+abbrev MFT27 := @MultiFact.blockRate_le_shannonLowerCapacity
+abbrev MFT28 := @MultiFact.oneShotLogRate_le_shannonLowerCapacity
+abbrev MFT29 := @MultiFact.concatBlockConfusable_iff_strongProdAdj
+abbrev MFT30 := @MultiFact.blockConfusabilityGraph_addIsoStrongProd
+abbrev MFT31 := @MultiFact.blockMaxIndependentCard_eq_graphMaxIndependentCard
+abbrev MFT32 := @MultiFact.shannonLowerCapacity_eq_iSup_graphRates
+abbrev MFT33 := @MultiFact.blockRate_le_blockRate_mul
+abbrev MFT34 := @MultiFact.blockConfusable_iff_strongPowAdj
+abbrev MFT35 := @MultiFact.blockConfusabilityGraph_eq_strongPow
+abbrev MFT36 := @MultiFact.shannonLowerCapacity_eq_graphShannonLowerCapacity
+abbrev MFT37 := @MultiFact.strongPowAdj_add_iff_strongProd
+abbrev MFT38 := @MultiFact.strongPow_addIsoStrongProd
+abbrev MFT39 := @MultiFact.graphMaxIndependentCard_strongPow_add_eq_strongProd
+abbrev MFT40 := @MultiFact.graphMaxIndependentCard_strongProd_lower_bound
+abbrev MFT41 := @MultiFact.graphMaxIndependentCard_strongPow_mul_lower_bound
+abbrev MFT42 := @MultiFact.graphPowerRate_le_graphPowerRate_mul
+abbrev MFT43 := @MultiFact.graphNegLogSeq_subadditive
+abbrev MFT44 := @MultiFact.tendsto_graphPowerRateNat_graphShannonCapacityReal
+abbrev MFT45 := @MultiFact.graphPowerRate_le_graphShannonCapacityReal
+abbrev MFT46 := @MultiFact.graphShannonCapacityReal_nonneg
+abbrev MFT47 := @MultiFact.iSup_graphPowerRate_eq_graphShannonCapacityReal
+abbrev MFT48 := @MultiFact.shannonCapacityReal_eq_iSup_blockRate
+abbrev MFT49 := @MultiFact.blockRate_le_shannonCapacityReal
+abbrev MFT50 := @MultiFact.compl_strongPow_adj_iff_exists
+abbrev MFT51 := @MultiFact.complStrongPow_colorable
+abbrev MFT52 := @MultiFact.graphMaxIndependentCard_strongPow_le_complChromaticPow
+abbrev MFT53 := @MultiFact.graphPowerRate_le_log_complChromatic
+abbrev MFT54 := @MultiFact.graphShannonCapacityReal_le_log_complChromatic
+abbrev MFT55 := @MultiFact.graphShannonCapacityReal_le_log_complChromaticNumber
+abbrev MFT56 := @MultiFact.graphShannonLowerCapacity_eq_ofReal_graphShannonCapacityReal
+abbrev MFT57 := @MultiFact.graphThetaPSDLogUpper_eq_graphThetaLogUpper
+abbrev MFT58 := @MultiFact.graphShannonCapacityReal_le_graphThetaPSDLogUpper
+abbrev MFT59 := @MultiFact.graphThetaPSDLogUpper_strongProd_le
+abbrev MFT60 := @MultiFact.graphThetaPSDLogSeq_subadditive
+abbrev MFT61 := @MultiFact.tendsto_graphThetaPSDPowerRateNat_graphThetaPSDAsymptoticUpper
+abbrev MFT62 := @MultiFact.graphThetaPSDAsymptoticUpper_le_graphThetaPSDLogUpper
+abbrev MFT63 := @MultiFact.iInf_graphThetaPSDPowerRate_eq_graphThetaPSDAsymptoticUpper
+abbrev MFT64 := @MultiFact.lovaszOrthoLogUpper_eq_graphThetaLogUpper
+abbrev MFT65 := @MultiFact.lovaszThetaPrimalLogUpper_eq_graphThetaPSDLogUpper
+abbrev MFT66 := @MultiFact.graphThetaLiftedDualLogUpper_eq_graphThetaSchurDualLogUpper
+abbrev MFT67 := @MultiFact.graphOneShotLogMaxIndependentCard_le_graphThetaLogUpper
+abbrev MFT68 := @MultiFact.graphPowerRate_le_graphThetaPSDPowerRate
+abbrev MFT69 := @MultiFact.graphShannonCapacityReal_le_graphThetaPSDAsymptoticUpper
+abbrev MFT70 := @MultiFact.lovaszThetaPrimalAsymptoticUpper_eq_graphThetaPSDAsymptoticUpper
+abbrev MFT71 := @MultiFact.graphShannonCapacityReal_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT72 := @MultiFact.graphThetaSchurDualLogUpper_strongProd_le
+abbrev MFT73 := @MultiFact.graphThetaSchurDualLogUpper_iso_eq
+abbrev MFT74 := @MultiFact.graphThetaSchurDualLogSeq_subadditive
+abbrev MFT75 := @MultiFact.tendsto_graphThetaSchurDualPowerRateNat_graphThetaSchurDualAsymptoticUpper
+abbrev MFT76 := @MultiFact.iInf_graphThetaSchurDualPowerRate_eq_graphThetaSchurDualAsymptoticUpper
+abbrev MFT77 := @MultiFact.graphThetaSchurDualAsymptoticUpper_le_graphThetaPSDAsymptoticUpper
+abbrev MFT78 := @MultiFact.graphThetaSchurDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT79 := @MultiFact.lovaszThetaDualLogUpper_eq_graphThetaSchurDualLogUpper
+abbrev MFT80 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_graphThetaSchurDualAsymptoticUpper
+abbrev MFT81 := @MultiFact.lovaszThetaDualAsymptoticUpper_le_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT82 := @MultiFact.lovaszThetaDualLogUpper_eq_lovaszThetaPrimalLogUpper
+abbrev MFT83 := @MultiFact.lovaszThetaDualAsymptoticUpper_eq_lovaszThetaPrimalAsymptoticUpper
+abbrev MFT84 := @MultiFact.graphShannonCapacityReal_le_lovaszThetaAsymptoticUpper
+abbrev MFT85 := @MultiFact.graphShannonCapacityReal_eq_lovaszThetaAsymptoticUpper_clusterGraph
+abbrev MFT86 := @MultiFact.graphShannonCapacityReal_eq_log_card_clusterGraph
+abbrev MFT87 := @MultiFact.lovaszThetaAsymptoticUpper_eq_log_card_clusterGraph
+abbrev MFT88 := @MultiFact.confusabilityGraph_eq_clusterGraph_transcriptLabel
+abbrev MFT89 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_fiberCoherent
+abbrev MFT90 := @MultiFact.shannonCapacityReal_eq_log_transcriptFiberCard_of_fiberCoherent
+abbrev MFT91 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_transcriptFiberCard_of_fiberCoherent
+abbrev MFT92 := @MultiFact.fiberCoherent_confusableTransitive
+abbrev MFT93 := @MultiFact.confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
+abbrev MFT94 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_confusableTransitive
+abbrev MFT95 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_confusableTransitive
+abbrev MFT96 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_confusableTransitive
+abbrev MFT97 := @MultiFact.MeetWitnessed
+abbrev MFT98 := @MultiFact.meetWitnessed_confusableTransitive
+abbrev MFT99 := @MultiFact.confusableTransitive_iff_clusterCollapse
+abbrev MFT100 := @MultiFact.shannonCapacityReal_eq_shannonLovaszThetaAsymptoticUpper_of_meetWitnessed
+abbrev MFT101 := @MultiFact.shannonCapacityReal_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT102 := @MultiFact.shannonLovaszThetaAsymptoticUpper_eq_log_connectedComponents_of_meetWitnessed
+abbrev MFT103 := @MultiFact.fiberCoherent_meetWitnessed
+abbrev MFT104 := @MultiFact.binaryViews_not_meetWitnessed
+abbrev MFT105 := @MultiFact.meetWitnessViews_meetWitnessed
+abbrev MFT106 := @MultiFact.meetWitnessViews_not_fiberCoherent
+abbrev MFT107 := @MultiFact.ViewCompositionClosed
+abbrev MFT108 := @MultiFact.confusableTransitive_iff_viewCompositionClosed
+abbrev MFT109 := @MultiFact.confusable_iff_exists_viewClusterAdj
+abbrev MFT110 := @MultiFact.SupportConfusable
+abbrev MFT111 := @MultiFact.deterministicSupportConfusable_iff_confusable
+abbrev MFT112 := @MultiFact.deterministicSupportConfusabilityGraph_eq_confusabilityGraph
+abbrev MFT113 := @MultiFact.card_state_eq
+abbrev MFT114 := @MultiFact.confusableOracle_eq_true_iff
+abbrev MFT115 := @MultiFact.confusableOrderedPairs
+abbrev MFT116 := @MultiFact.card_state_prod_eq
+abbrev MFT117 := @MultiFact.card_confusableOrderedPairs_le_naive_bound
+abbrev MFT118 := @MultiFact.observe_eq_iff_subset_agreeSet
+abbrev MFT119 := @MultiFact.confusable_iff_exists_view_subset_agreeSet
+abbrev MFT120 := @MultiFact.agreeSet_statePerm_eq
+abbrev MFT121 := @MultiFact.confusable_statePerm_iff
+abbrev MFT122 := @MultiFact.confusable_congr_agreeSet
+abbrev MFT123 := @MultiFact.confusabilityGraph_statePermIso
+abbrev MFT124 := @MultiFact.exists_confusabilityGraph_iso_send
+abbrev MFT125 := @MultiFact.agreementUpwardFamily_upwardClosed
+abbrev MFT126 := @MultiFact.confusable_iff_agreeSet_mem_agreementUpwardFamily
+abbrev MFT127 := @MultiFact.confusable_viewFamilyOfAgreementUpwardFamily_iff
+abbrev MFT128 := @MultiFact.exists_viewFamily_iff_agreementClassified
+abbrev MFT129 := @MultiFact.agreeSet_eq_univ_iff
+abbrev MFT130 := @MultiFact.exists_distinct_states_with_agreeSet_eq_iff
+abbrev MFT131 := @MultiFact.upwardClosed_family_eq_on_proper_subsets_of_same_relation
+abbrev MFT132 := @MultiFact.agreementOracle_eq_true_iff
+abbrev MFT133 := @MultiFact.agreementOracle_eq_confusableOracle
+abbrev MFT134 := @MultiFact.agreementOracleViewWork_le
+abbrev MFT135 := @MultiFact.agreementOracleTotalWork_le
+abbrev MFT136 := @MultiFact.meetWitnessed_implies_transitive_confusability
+abbrev MFT137 := @MultiFact.transitive_confusability_implies_cluster_graph
+abbrev MFT138 := @MultiFact.cluster_graph_4cycle_counterexample
+
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
 abbrev BND3 := ssot_advantage_unbounded
@@ -81,6 +341,22 @@ abbrev REG4 := ClaimClosure.amortized_complexity_core
 
 abbrev PYH1 := Python.python_has_hooks
 abbrev PYI1 := Python.python_has_introspection
+
+-- Affine fact-matroid layer (AFM*): fact closure becomes a representable matroid
+abbrev AFM1 := @FactMatroid.determinesFact_iff_mem_factSpan
+abbrev AFM2 := @FactMatroid.factMatroid_indep_iff
+abbrev AFM3 := @FactMatroid.basisFacts_card_eq_finrank
+abbrev AFM4 := @FactMatroid.basisFacts_minimal
+abbrev AFM5 := @FactMatroid.minimalDetermining_basis
+abbrev AFM6 := @FactMatroid.factRankFinset_le_card
+abbrev AFM7 := @FactMatroid.coordProjection_range_le_card
+abbrev AFM8 := @FactMatroid.factRankFinset_eq_card_of_indepFacts
+abbrev AFM9 := @FactMatroid.factRankFinset_eq_total_of_determinesAllFinset
+abbrev AFM10 := @FactMatroid.factSpanFinset_eq_range_coordProjection_dualMap
+abbrev AFM11 := @FactMatroid.factRankFinset_eq_finrank_range_coordProjection
+abbrev AFM12 := @FactMatroid.factRankFinset_le_finrank_directionSpace
+abbrev AFM13 := @FactMatroid.coordProjection_range_eq_card_of_indepFacts
+abbrev AFM14 := @FactMatroid.coordProjection_range_eq_total_of_determinesAllFinset
 
 /-! ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that SSOT is FORCED by first principles.

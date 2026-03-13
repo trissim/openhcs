@@ -67,8 +67,7 @@ In particular,
 \iff
 \exists s,s'\in S:\ \Opt(s)\neq\Opt(s').
 \]
-\leanmeta{\LH{DP7},
-\LH{DP8}.}
+\leanmeta{\LHrng{DP}{7}{8}.}
 \end{proposition}
 \claimstamp{D\ref{def:sufficient};P\ref{prop:empty-sufficient-constant},\ref{prop:insufficiency-counterexample}}{DM}
 
@@ -110,8 +109,7 @@ Set-valued sufficiency is exactly the $\varepsilon=0$ case:
 \[
 I\text{ sufficient } \iff I\text{ is }0\text{-sufficient}.
 \]
-\leanmeta{\LH{DP1},
-\LH{DP4}}
+\leanmeta{\LH{DP1}, \LH{DP4}}
 \end{proposition}
 
 \begin{proposition}[Selector-Level Separation Witness]\label{prop:selector-separation}
@@ -138,8 +136,7 @@ For any minimal sufficient set $I$ and any coordinate $i$:
 i \in I \iff i \text{ is relevant}.
 \]
 Hence every minimal sufficient set is exactly the relevant-coordinate set.
-\leanmeta{\LH{DP2},
-\LH{DP3}.}
+\leanmeta{\LHrng{DP}{2}{3}.}
 \end{proposition}
 
 \begin{proof}
@@ -154,7 +151,7 @@ The structural rank $\mathrm{srank}(\mathcal{D})$ is the cardinality of the rele
 \left|\{i \in \{1,\ldots,n\} : i \text{ is relevant}\}\right|.
 \]
 Hence $\mathrm{srank}(\mathcal{D})$ is bounded by the ambient coordinate dimension $n$, and $\mathrm{srank}(\mathcal{D}) = 0$ exactly when the decision boundary is constant across coordinates.
-\leanmeta{\LH{SK1},\LH{SK2},\LH{SK3}.}
+\leanmeta{\LHrng{SK}{1}{3}.}
 \end{proposition}
 
 \begin{proof}
@@ -201,8 +198,7 @@ This is a normalized ambiguity score: equivalently, it is the normalized support
 \begin{proposition}[Sufficiency Characterization]\label{prop:sufficiency-char}
 \claimstamp{P\ref{prop:sufficiency-char}}{H=succinct-hard}
 Coordinate set $I$ is sufficient if and only if $\text{DQ}_I(s) = |\Opt(s)|/|A|$ for all $s \in S$.
-\leanmeta{\LH{CC62},
-\LH{CC63}}
+\leanmeta{\LHrng{CC}{62}{63}}
 \end{proposition}
 
 \begin{proof}
@@ -220,7 +216,7 @@ For the optimizer map $\Opt : S \to \mathcal{P}(A)$:
 \item any surjective abstraction $\phi : S \to T$ that preserves $\Opt$ factors uniquely through this quotient.
 \end{enumerate}
 Thus, in \textbf{Set}, the optimizer quotient object is the familiar coimage of $\Opt$, canonically identified with its image/range.\cite{maclane1998categories}
-\leanmeta{\LH{QT5},\LH{QT7}.}
+\leanmeta{\LH{QT5}, \LH{QT7}.}
 \end{proposition}
 
 \begin{proof}
@@ -242,7 +238,7 @@ H(\mathcal{D}) = \log_2\bigl(\mathrm{numOptClasses}(\mathcal{D})\bigr)
 =
 \log_2\bigl(|\mathrm{range}(\Opt)|\bigr).
 \]
-Thus the entropy of the optimizer quotient object is just the base-2 logarithm of the size of the image of $\Opt$.\leanmeta{\LH{IT1},\LH{IT2},\LH{QT5}.}
+Thus the entropy of the optimizer quotient object is just the base-2 logarithm of the size of the image of $\Opt$.\leanmeta{\LHrng{IT}{1}{2}, \LH{QT5}.}
 \end{proposition}
 
 \begin{proof}
@@ -253,7 +249,7 @@ Informally: this is the familiar reading of the entropy term used later in the b
 
 The next theorem concerns the quotient object rather than the scalar score above. Abstraction is a many-to-one quotient operation: it identifies states and thereby removes distinctions. The optimizer quotient object is the coarsest such collapse that still preserves the optimal-action boundary.
 
-Informally: start with any surjective summary map $\phi : S \to T$. There are only two possibilities. Either $\phi$ keeps every optimal-action distinction intact, in which case the universal property forces it to factor through the optimizer quotient object, or $\phi$ merges two states that require different optimal actions, in which case it has erased a decision-relevant distinction. In \textbf{Set}, the quotient object here is the coimage of $\Opt$, canonically equivalent to its image/range \cite{maclane1998categories}. The physical no-collapse layer then says that if one tries to treat that extra erasure as computationally affordable, the collapse assumption itself is what fails.\leanmeta{\LH{QT5},\LH{AB1},\LH{AB2},\LH{AB3},\LH{AB4}.}
+Informally: start with any surjective summary map $\phi : S \to T$. There are only two possibilities. Either $\phi$ keeps every optimal-action distinction intact, in which case the universal property forces it to factor through the optimizer quotient object, or $\phi$ merges two states that require different optimal actions, in which case it has erased a decision-relevant distinction. In \textbf{Set}, the quotient object here is the coimage of $\Opt$, canonically equivalent to its image/range \cite{maclane1998categories}. The physical no-collapse layer then says that if one tries to treat that extra erasure as computationally affordable, the collapse assumption itself is what fails.\leanmeta{\LH{QT5}, \LHrng{AB}{1}{4}.}
 
 \begin{theorem}[Decision-Preserving Collapse Boundary]\label{thm:abstraction-boundary}
 Let $\phi : S \to T$ be a surjective abstraction of the state space.
@@ -262,7 +258,7 @@ Let $\phi : S \to T$ be a surjective abstraction of the state space.
 \item Either $\phi$ factors through the optimizer quotient object, or it collapses a decision-relevant distinction, i.e., there exist states $s,s' \in S$ such that $\phi(s)=\phi(s')$ but $\Opt(s)\neq\Opt(s')$.
 \item If every such extra collapse is mapped to a physically feasible collapse at the canonical requirement profile, then no such extra collapse can occur. Therefore $\phi$ must factor through the optimizer quotient object.
 \end{enumerate}
-\leanmeta{\LH{AB1},\LH{AB2},\LH{AB3},\LH{AB4}.}
+\leanmeta{\LHrng{AB}{1}{4}.}
 \end{theorem}
 
 \begin{proof}
@@ -278,13 +274,13 @@ Informally: this is the explicit bridge between state-space abstraction and comp
 \subsection{Mechanized Physical-Lift and Claim Metadata}\label{sec:foundations-mechanized-metadata}
 
 The formal system also records the physical-lift and claim-transport scaffolding used later in the paper. Physical interpretation is introduced through explicit encoding and assumption-transfer maps rather than built into the core tuple itself.\claimstamp{D\ref{def:physical-core-encoding};P\ref{prop:physical-claim-transport};T\ref{thm:physical-bridge-bundle}}{AR}
-\leanmeta{\LH{CT6},\LH{CT4}.}
+\leanmeta{\LH{CT4}, \LH{CT6}.}
 
 Within that scaffolding, physical-state semantics are typed by realizable-state witnesses, observer classes induce quotient state spaces on a shared physical domain, coupled recurrent circuits support typed YES/NO/ABSTAIN report projection, and timing constraints yield forced-action and lower-bound statements under declared physical parameterizations.
-\leanmeta{\LH{PS1},\LH{PS2},\LH{PS3},\LH{PS4},\LH{OR3},\LH{OR4},\LH{OR5},\LH{OR9},\LH{CV4},\LH{CV5},\LH{CV7},\LH{CV17},\LH{CV18},\LH{CV11},\LH{CV12},\LH{CV13},\LH{CV15},\LH{CV16},\LH{CF2},\LH{CF4},\LH{CF6},\LH{CF8},\LH{CF9},\LH{CF7}.}
+\leanmeta{\LHrng{PS}{1}{4}, \LHrng{OR}{3}{5}, \LH{OR9}, \LHrng{CV}{4}{5}, \LH{CV7}, \LHrng{CV}{11}{13}, \LHrng{CV}{15}{18}, \LH{CF2}, \LH{CF4}, \LHrng{CF}{6}{9}.}
 
 The same metadata layer also packages the assumption-indexed physical-collapse transfer chain, the layered graph witnesses, and the exact-claim admissibility boundary used later in the physics and claim-discipline sections. This material remains explicit, but it is secondary to the mathematical core definitions established above.\claimstamp{T\ref{thm:exact-certified-gap-iff-admissible};P\ref{prop:integrity-resource-bound};C\ref{cor:hardness-raw-only-exact}}{AR}
-\leanmeta{\LH{PH11},\LH{PH12},\LH{PH13},\LH{PH14},\LH{PH15},\LH{PH16},\LH{PH17},\LH{PH18},\LH{PH19},\LH{PH20},\LH{PH21},\LH{PH22},\LH{PH23},\LH{PH24},\LH{PH25},\LH{PH26},\LH{PH27},\LH{PH28},\LH{PH29},\LH{PH30},\LH{PH31},\LH{PH32},\LH{PH33},\LH{GN2},\LH{GN4},\LH{GN5},\LH{GN6},\LH{GN7},\LH{GN8},\LH{GN9},\LH{GN10},\LH{GN11},\LH{GN12},\LH{GN13},\LH{CC18},\LH{CC30},\LH{CC21}.}
+\leanmeta{\LHrng{PH}{11}{33}, \LH{GN2}, \LHrng{GN}{4}{13}, \LH{CC18}, \LH{CC21}, \LH{CC30}.}
 
 \subsection{Computational Model and Input Encoding}\label{sec:encoding}
 
@@ -292,7 +288,7 @@ Formally: this subsection defines encoding/access regimes, cost measures, and re
 
 We fix the computational model used by the complexity claims.
 In physical deployments, these encodings correspond to different access conditions on the same underlying system: explicit tables correspond to fully exposed state/utility structure, succinct encodings correspond to compressed generative descriptions, and query regimes correspond to constrained measurement interfaces.\claimstamp{T\ref{thm:dichotomy};P\ref{prop:query-regime-obstruction},\ref{prop:physical-claim-transport}}{E,S+ETH,Qf,AR}
-\leanmeta{\LH{CC16},\LH{CC50},\LH{CT6}.}
+\leanmeta{\LH{CC16}, \LH{CC50}, \LH{CT6}.}
 
 \paragraph{Succinct encoding (primary for hardness).}
 This succinct circuit encoding is the standard representation for decision problems in complexity theory; hardness is stated with respect to the input length of the circuit description \cite{arora2009computational,papadimitriou1994complexity}.
@@ -339,9 +335,7 @@ Posing is an operation; $q$ is the formal object.
 \begin{proposition}[Posing Produces a Formal Query Object]\label{prop:pose-anchor-object}
 For every $(\mathcal{D},I)$, $\mathrm{poseAnchor}(\mathcal{D},I)$ is a well-typed anchor query object with preserved components, and its truth predicate is exactly the anchored $\exists\forall$ condition in Definition~\ref{def:anchor-query-object}.
 \claimstamp{D\ref{def:anchor-query-object},\ref{def:pose-anchor-query};T\ref{thm:anchor-sigma2p}}{S}
-\leanmeta{\LH{AQ1},
-\LH{AQ2},
-\LH{AQ3}.}
+\leanmeta{\LHrng{AQ}{1}{3}.}
 \end{proposition}
 
 \begin{proposition}[Typed Exact Claims on Posed Anchor Queries]\label{prop:posed-anchor-typed-exact}
@@ -352,10 +346,7 @@ For posed anchor queries under the typed claim discipline:
 \]
 Under solver integrity, checker-accepted exact-\texttt{true} verdicts are semantically sound on the posed anchor query object.
 \claimstamp{P\ref{prop:typed-claim-admissibility},\ref{prop:integrity-competence-separation};C\ref{cor:no-uncertified-exact-claim}}{AR}
-\leanmeta{\LH{AQ4},
-\LH{AQ5},
-\LH{AQ6},
-\LH{AQ7}.}
+\leanmeta{\LHrng{AQ}{4}{7}.}
 \end{proposition}
 
 \begin{corollary}[Certified-Confidence Gate for Posed Anchor Queries]\label{cor:posed-anchor-certified-gate}
@@ -371,7 +362,7 @@ Let \(\mathrm{repr} : \mathcal{L} \to \mathcal{C}\) be any representation map fr
 \exists s,s' \in \mathcal{L},\ s \neq s' \wedge \mathrm{repr}(s)=\mathrm{repr}(s').
 \]
 This is the finite-cardinality collision statement underlying under-resolved exact-decision claims.
-\leanmeta{\LH{PI6}, \LH{PI7}.}
+\leanmeta{\LHrng{PI}{6}{7}.}
 \end{proposition}
 
 \begin{theorem}[Physical Incompleteness of Instantiation]\label{thm:physical-incompleteness}
@@ -382,14 +373,13 @@ Let $\mathcal{P}$ be a finite set of physical states and $\mathcal{L}$ a finite 
 \item there exists a logical possibility $\ell \in \mathcal{L}$ that is not physically instantiated: $\ell \notin \mathrm{range}(\iota)$.
 \end{enumerate}
 Under explicit bounds: if $|\mathcal{P}| \le M$ and $|\mathcal{L}| \ge L$ with $M < L$, the same conclusion holds.
-\leanmeta{\LH{PI3}, \LH{PI4}, \LH{PI5}.}
+\leanmeta{\LHrng{PI}{3}{5}.}
 \end{theorem}
 
 \begin{definition}[Regime Simulation]\label{def:regime-simulation}
 Fix a decision question $Q$ and two regimes $R_1,R_2$ for that question.
 We say $R_1$ \emph{simulates} $R_2$ if there exists a polynomial-time transformer that maps any $R_2$ instance to an $R_1$ instance while preserving the answer to $Q$; in oracle settings, this includes a polynomial-time transcript transducer that preserves yes/no outcomes for induced solvers.
-\leanmeta{\LH{CC1},
-\LH{CC52}.}
+\leanmeta{\LH{CC1}, \LH{CC52}.}
 \end{definition}
 
 This paper uses that simulation spine in two explicit forms: restriction-map simulation (subproblem-to-full transfer; Proposition~\ref{prop:query-subproblem-transfer}) and oracle-transducer simulation (batch-to-entry transfer; Proposition~\ref{prop:oracle-lattice-transfer}).
@@ -460,7 +450,7 @@ Pointwise time equality is decidable for every $k\in\mathbb{N}$:
 \[
 x_t=k\ \vee\ x_t\neq k.
 \]
-\leanmeta{\LH{DT6},\LH{DT7}.}
+\leanmeta{\LHrng{DT}{6}{7}.}
 \end{proposition}
 
 \begin{proposition}[Decision Event Is One Unit of Time]\label{prop:decision-unit-time}
@@ -472,7 +462,7 @@ and therefore
 \[
 \mathrm{DecisionEvent}(x,y)\ \Longrightarrow\ y_t=x_t+1.
 \]
-\leanmeta{\LH{DT13},\LH{DT11},\LH{DT10},\LH{DT12}.}
+\leanmeta{\LHrng{DT}{10}{13}.}
 \end{proposition}
 
 \begin{proposition}[Run Accounting Identity]\label{prop:run-time-accounting}
@@ -486,12 +476,12 @@ Hence decision count equals elapsed time:
 \[
 |\mathrm{trace}(n,x)|=\mathrm{run}(n,x)_t-x_t.
 \]
-\leanmeta{\LH{DT15},\LH{DT16},\LH{DT18},\LH{DT19}.}
+\leanmeta{\LHrng{DT}{15}{16}, \LHrng{DT}{18}{19}.}
 \end{proposition}
 
 \begin{proposition}[Substrate Realization Preserves Unit-Time Events]\label{prop:substrate-unit-time}
 For any substrate model that is consistent with the declared interface transition rule, each one-step substrate evolution realizes one interface decision event and advances interface time by one unit. The time update law is invariant under substrate kind.
-\leanmeta{\LH{DT22},\LH{DT23},\LH{DT24}.}
+\leanmeta{\LHrng{DT}{22}{24}.}
 \end{proposition}
 
 \subsection{Physical-System Encoding and Theorem Transport}\label{sec:physical-transport}
@@ -534,7 +524,7 @@ This scope gate is a typing rule, not a rhetorical caveat: the paper's transport
 Fix a declared noisy physical encoding interface and assume a \emph{Heisenberg-strong binding witness}: one physical instance is compatible with two distinct interface states whose encoded optimal-action sets differ.
 Then there exists a core decision problem with non-constant optimizer map.
 Equivalently, under this declared physical ambiguity assumption, decision nontriviality is derivable at the core level.
-\leanmeta{\LH{HS3}, \LH{HS5}, \LH{HS6}.}
+\leanmeta{\LH{HS3}, \LHrng{HS}{5}{6}.}
 \end{proposition}
 
 \begin{proposition}[Physical Claim Transport]\label{prop:physical-claim-transport}
@@ -550,7 +540,7 @@ then
 \[
 \forall p\in\mathcal{P},\ \mathrm{PhysAssm}(p)\Rightarrow \mathrm{CoreClaim}(E(p)).
 \]
-\leanmeta{\LH{CT6}, \LH{CT5}, \LH{CT3}.}
+\leanmeta{\LH{CT3}, \LHrng{CT}{5}{6}.}
 \end{proposition}
 
 \begin{corollary}[Physical Counterexample Implies Core Failure on Encoded Slice]\label{cor:physical-counterexample-core-failure}
@@ -560,7 +550,7 @@ Under the same encoding and assumption-transfer map:
 \item if a physical counterexample exists, then the purported core rule is invalid;
 \item if the lifted claim holds on all physically admissible encoded instances, no such physical counterexample exists.
 \end{enumerate}
-\leanmeta{\LH{CT4}, \LH{CT5}, \LH{CT6}.}
+\leanmeta{\LHrng{CT}{4}{6}.}
 \end{corollary}
 
 \begin{proposition}[Law-Instance Objective Bridge]\label{prop:law-instance-objective-bridge}
@@ -570,7 +560,7 @@ For the mechanized law-gap physical instance class, the encoded optimizer claim 
 \qquad
 \neg\exists x\in\mathcal{P}_{\mathrm{law}},\ \neg\,\mathrm{lawGapPhysicalClaim}(x).
 \]
-\leanmeta{\LH{CT1}, \LH{CT2}.}
+\leanmeta{\LHrng{CT}{1}{2}.}
 \end{proposition}
 
 \begin{theorem}[Physical Bridge Bundle]\label{thm:physical-bridge-bundle}
@@ -591,8 +581,7 @@ Let
 \{\text{[E]},\ \text{[S+ETH]},\ \text{[Q\_fin:Opt]},\ \text{[Q\_bool:value-entry]},\ \text{[Q\_bool:state-batch]}\}.
 \]
 For each declared regime in $\mathcal{R}_{\mathrm{static}}$, the paper has a theorem-level mechanized core claim. Equivalently, regime typing is complete over the declared static family.
-\leanmeta{\LH{CC14},
-\LH{CC51}.}
+\leanmeta{\LH{CC14}, \LH{CC51}.}
 \end{theorem}
 
 \paragraph{Scope Lattice (typed classes and transfer boundary).}
@@ -657,8 +646,7 @@ Beyond Proposition~\ref{prop:one-step-bridge} (multi-step horizon, stochastic tr
 
 \begin{proposition}[Horizon-$>1$ Bridge-Failure Witness]\label{prop:bridge-failure-horizon}
 Dropping the one-step condition can break sufficiency transfer: there exists a two-step objective where sufficiency in the immediate-utility static projection does not match sufficiency in the two-step objective.
-\leanmeta{\LH{CC26},
-\LH{CC25}.}
+\leanmeta{\LHrng{CC}{25}{26}.}
 \end{proposition}
 
 \begin{proposition}[Stochastic-Criterion Bridge-Failure Witness]\label{prop:bridge-failure-stochastic}
@@ -677,9 +665,7 @@ Within the represented adjacent family
 \{\text{one-step deterministic},\ \text{horizon-extended},\ \text{stochastic-criterion},\ \text{transition-coupled}\},
 \]
 direct transfer of static sufficiency claims is licensed if and only if the class is one-step deterministic. Each represented non-one-step class has an explicit mechanized bridge-failure witness.
-\leanmeta{\LH{CC10},
-\LH{CC9},
-\LH{CC8}.}
+\leanmeta{\LHrng{CC}{8}{10}.}
 \end{theorem}
 
 \begin{definition}[System Snapshot vs System Process Typing]\label{def:system-snapshot-process}
@@ -692,9 +678,7 @@ Within the represented adjacent family, we type:
 
 \begin{proposition}[Snapshot/Process Transfer Typing]\label{prop:snapshot-process-typing}
 In the represented adjacent family, direct transfer of static sufficiency claims is licensed if and only if the system is typed as a \emph{system snapshot}. Every process-typed represented class has an explicit mechanized bridge-failure witness.
-\leanmeta{\LH{CC3},
-\LH{CC48},
-\LH{CC56}.}
+\leanmeta{\LH{CC3}, \LH{CC48}, \LH{CC56}.}
 \end{proposition}
 
 Operationally: a fixed-parameter physical controller at runtime is a system snapshot for this typing; once parameters or transition-relevant internals are updated online, the object is process-typed and transfer from static sufficiency theorems is blocked unless the one-step bridge conditions are re-established.\claimstamp{P\ref{prop:snapshot-process-typing}}{RA}
@@ -715,7 +699,7 @@ For a fixed decision question (e.g., ``is $I$ sufficient for $\mathcal{D}$?''; s
 For a fixed decision question and an encoding regime $E$ (Section~\ref{sec:encoding}), \emph{representational hardness} is the worst-case computational cost incurred by solvers whose input access is restricted to $E$.
 \end{definition}
 
-In the mechanized architecture model, this is made explicit as a required-work observable and intrinsic lower bound: `requiredWork` is total realized work, `hardnessLowerBound` is the intrinsic floor, and `hardness\_is\_irreducible\_required\_work` proves the lower-bound relation for all nonzero use-site counts; `requiredWork\_eq\_affine\_in\_sites` and `workGrowthDegree` make the site-count growth law explicit.\leanmeta{\LH{HD17}, \LH{HD22}, \LH{HD23}, \LH{HD18}, \LH{HD27}, \LH{HD28}.}
+In the mechanized architecture model, this is made explicit as a required-work observable and intrinsic lower bound: `requiredWork` is total realized work, `hardnessLowerBound` is the intrinsic floor, and `hardness\_is\_irreducible\_required\_work` proves the lower-bound relation for all nonzero use-site counts; `requiredWork\_eq\_affine\_in\_sites` and `workGrowthDegree` make the site-count growth law explicit.\leanmeta{\LHrng{HD}{17}{18}, \LHrng{HD}{22}{23}, \LHrng{HD}{27}{28}.}
 
 \begin{remark}[Interpretation Contract]
 This paper keeps the decision question fixed and varies the encoding regime explicitly. Thus, later separations are read as changes in representational hardness under fixed structural complexity, not as changes to the underlying sufficiency semantics.
@@ -828,8 +812,7 @@ If $\mathcal{R}_0=\mathcal{R}$, then
 \text{competent for exact relation }\mathcal{R}.
 \]
 Moreover, $\varepsilon$-competence implies integrity for the corresponding $\mathcal{R}_\varepsilon$.
-\leanmeta{\LH{IC33},
-\LH{IC19}.}
+\leanmeta{\LH{IC19}, \LH{IC33}.}
 \end{proposition}
 
 \begin{definition}[Typed Claim Report]\label{def:typed-claim-report}
@@ -870,10 +853,7 @@ For any declared contract and report type $r$:
 \iff
 \text{Claim }r\ \text{is admissible}.
 \]
-\leanmeta{
-\LH{IC17},
-\LH{IC21},
-\LH{IC20}.}
+\leanmeta{\LH{IC17}, \LHrng{IC}{20}{21}.}
 \end{proposition}
 \claimstamp{D\ref{def:evidence-object};P\ref{prop:typed-claim-admissibility},\ref{prop:evidence-admissibility-equivalence}}{AR}
 
@@ -916,8 +896,7 @@ In the typed claim discipline,
 \exists\ \text{exact evidence object}.
 \]
 Equivalently, admissible exact claims are exactly those with an evidence witness.
-\leanmeta{\LH{IC35},
-\LH{IC36}.}
+\leanmeta{\LHrng{IC}{35}{36}.}
 \end{proposition}
 
 \begin{definition}[Bound-Dependent Completion Fraction]\label{def:completion-fraction}
@@ -936,8 +915,7 @@ Under Definition~\ref{def:signal-consistency}, positive certified confidence imp
 p_{\mathrm{cert}} > 0 \Rightarrow \text{ClaimAdmissible}(r).
 \]
 Thus certified confidence is not a free scalar; it is evidence-gated by the same typed discipline as the report itself.
-\leanmeta{\LH{IC38},
-\LH{IC39}.}
+\leanmeta{\LHrng{IC}{38}{39}.}
 \end{proposition}
 
 \begin{proposition}[No Evidence Forces Zero Certified Confidence]\label{prop:no-evidence-zero-certified}
@@ -965,8 +943,7 @@ For every signaled report, the execution witness is an exact natural number and 
 \qquad
 \forall k\in\mathbb{N},\ (t_{\mathrm{run}}=k)\ \vee\ (t_{\mathrm{run}}\neq k).
 \]
-\leanmeta{\LH{IC42},
-\LH{IC43}.}
+\leanmeta{\LHrng{IC}{42}{43}.}
 \end{proposition}
 
 \begin{proposition}[No Completion Fraction Without Declared Bound]\label{prop:no-fraction-without-bound}
@@ -1022,8 +999,7 @@ If optimizer sets are invariant to $i_\infty$ on that slice, i.e.,
 \Opt(s)=\Opt(s'),
 \]
 then $i_\infty$ is irrelevant on $\mathcal{S}_{\Gamma,H}$, and hence not relevant for the declared task slice.
-\leanmeta{\LH{CC32},
-\LH{CC33}.}
+\leanmeta{\LHrng{CC}{32}{33}.}
 \end{proposition}
 \claimstamp{D\ref{def:declared-budget-slice};P\ref{prop:bounded-slice-meta-irrelevance}}{AR}
 
@@ -1045,8 +1021,7 @@ State $s$ \emph{interior-Pareto-dominates} $s'$ on $J_{\mathcal{G}}$ when:
 \quad\text{and}\quad
 \exists j\in J_{\mathcal{G}},\ \sigma(s',j)<\sigma(s,j).
 \]
-\leanmeta{\LH{IV2},
-\LH{IV3}.}
+\leanmeta{\LHrng{IV}{2}{3}.}
 \end{definition}
 
 \begin{proposition}[Interior Dominance Implies Universal Non-Rejection]\label{prop:interior-universal-non-rejection}
@@ -1064,15 +1039,13 @@ If membership in the checked coordinate set is decidable and interior dominance 
 \exists\ \mathrm{verify}:S\times S\to\{0,1\},\quad
 \mathrm{verify}(s,s')=1\iff \text{interior-dominance}(s,s').
 \]
-\leanmeta{\LH{IV7},
-\LH{IV4}.}
+\leanmeta{\LH{IV4}, \LH{IV7}.}
 \end{proposition}
 
 \begin{proposition}[Interior Dominance Is One-Sided]\label{prop:interior-one-sidedness}
 Interior dominance is one-sided and does not imply full coordinate sufficiency:
 a counterexample pair outside the checked slice can still violate global optimizer equivalence.
-\leanmeta{\LH{IV6},
-\LH{IV8}.}
+\leanmeta{\LH{IV6}, \LH{IV8}.}
 \end{proposition}
 
 \begin{corollary}[Singleton Interior Certificate]\label{cor:interior-singleton-certificate}
@@ -1092,15 +1065,12 @@ RLFF assigns base reward by report type when evidence exists and applies an expl
 -\mathrm{Penalty}, & \text{otherwise}.
 \end{cases}
 \]
-\leanmeta{\LH{IC4},
-\LH{IC28},
-\LH{IC29}.}
+\leanmeta{\LH{IC4}, \LHrng{IC}{28}{29}.}
 \end{definition}
 
 \begin{proposition}[RLFF Maximizer Is Admissible]\label{prop:rlff-maximizer-admissible}
 If $\mathsf{ABSTAIN}$ reward strictly exceeds the inadmissibility branch, then any global RLFF maximizer must be evidence-backed and therefore admissible under the typed-claim discipline.
-\leanmeta{\LH{IC31},
-\LH{IC32}.}
+\leanmeta{\LHrng{IC}{31}{32}.}
 \end{proposition}
 
 \begin{corollary}[RLFF Abstain Preference Without Certificates]\label{cor:rlff-abstain-no-certs}
@@ -1111,8 +1081,7 @@ If $\mathsf{EXACT}$ and $\mathsf{EPSILON}(\varepsilon)$ have no evidence objects
 
 \begin{definition}[Certainty Inflation]\label{def:certainty-inflation}
 For a typed report $r$, certainty inflation is the state of emitting $r$ without a matching evidence object.
-\leanmeta{\LH{IC1},
-\LH{IC3}.}
+\leanmeta{\LH{IC1}, \LH{IC3}.}
 \end{definition}
 
 \begin{proposition}[Certainty Inflation Equals Report Inadmissibility]\label{prop:certainty-inflation-iff-inadmissible}
@@ -1123,8 +1092,7 @@ For every typed report $r$:
 \neg\ \text{ClaimAdmissible}(r).
 \]
 For $r=\mathsf{EXACT}$ this is equivalently failure of exact competence.
-\leanmeta{\LH{IC8},
-\LH{IC22}.}
+\leanmeta{\LH{IC8}, \LH{IC22}.}
 \end{proposition}
 
 \begin{corollary}[Hardness-Blocked Regimes Induce Exact Certainty Inflation]\label{cor:hardness-exact-certainty-inflation}
@@ -1150,9 +1118,7 @@ B_{\mathrm{cert}}(r), & \text{if evidence for }r\text{ exists},\\
 \qquad
 B_{\mathrm{total}}(r)=B_{\mathrm{raw}}(r)+B_{\mathrm{over}}(r).
 \]
-\leanmeta{\LH{IC5},
-\LH{IC9},
-\LH{IC12}.}
+\leanmeta{\LH{IC5}, \LH{IC9}, \LH{IC12}.}
 \end{definition}
 
 \begin{proposition}[Raw/Certified Bit Split]\label{prop:raw-certified-bit-split}
@@ -1166,7 +1132,7 @@ with
 \exists\ \text{evidence for }r \Rightarrow B_{\mathrm{over}}(r)=B_{\mathrm{cert}}(r).
 \]
 Hence $B_{\mathrm{raw}}(r)\le B_{\mathrm{total}}(r)$ always, and strict inequality holds when evidence exists with positive certificate-bit allocation.
-\leanmeta{\LH{CC11}, \LH{IC11}, \LH{IC10}, \LH{IC16}, \LH{IC15}, \LH{IC13}, \LH{IC14}, \LH{IC18}, \LH{IC19}.}
+\leanmeta{\LH{CC11}, \LHrng{IC}{10}{11}, \LHrng{IC}{13}{16}, \LHrng{IC}{18}{19}.}
 \end{proposition}
 
 \begin{theorem}[Exact Report: Certified-Bit Gap iff Admissibility]\label{thm:exact-certified-gap-iff-admissible}
@@ -1182,7 +1148,7 @@ B_{\mathrm{total}}(\mathsf{EXACT})=B_{\mathrm{raw}}(\mathsf{EXACT})
 \iff
 \text{ExactCertaintyInflation}.
 \]
-\leanmeta{\LH{CC18}, \LH{CC20}, \LH{CC17}, \LH{IC31}.}
+\leanmeta{\LHrng{CC}{17}{18}, \LH{CC20}, \LH{IC31}.}
 \end{theorem}
 
 \begin{corollary}[Finite Budget Eventually Blocks Exact Admissibility]\label{cor:finite-budget-no-exact-admissibility}
@@ -1195,7 +1161,7 @@ If:
 \end{enumerate}
 then there exists \(n_0\) such that for all \(n \ge n_0\), exact admissibility fails.
 The same conclusion holds in the canonical exponential-requirement specialization.
-\leanmeta{\LH{PBC7}, \LH{PBC8}.}
+\leanmeta{\LHrng{PBC}{7}{8}.}
 \end{corollary}
 
 \begin{corollary}[Hardness-Blocked Exact Reports Are Raw-Only]\label{cor:hardness-raw-only-exact}
@@ -1203,8 +1169,7 @@ If exact reporting is inadmissible on the declared contract, then exact accounti
 \[
 B_{\mathrm{total}}(\mathsf{EXACT})=B_{\mathrm{raw}}(\mathsf{EXACT}).
 \]
-\leanmeta{\LH{CC21},
-\LH{IC23}.}
+\leanmeta{\LH{CC21}, \LH{IC23}.}
 \end{corollary}
 \claimstamp{D\ref{def:raw-certified-bits};T\ref{thm:exact-certified-gap-iff-admissible};P\ref{prop:raw-certified-bit-split};C\ref{cor:hardness-raw-only-exact}}{AR}
 
@@ -1221,9 +1186,7 @@ For solver-side reporting, there are two formally distinct layers:
 \item \textbf{Validity layer:} once declared, admissibility of $\mathsf{EXACT}/\mathsf{EPSILON}(\varepsilon)/\mathsf{ABSTAIN}$ reports is fixed by certificate-typed rules.
 \end{itemize}
 Thus the framework treats contract selection as an external declaration choice, and then enforces mechanically checked admissibility within that declared contract.
-\leanmeta{\LH{CC75},
-\LH{CC22},
-\LH{CC39}.}
+\leanmeta{\LH{CC22}, \LH{CC39}, \LH{CC75}.}
 \end{proposition}
 
 \begin{proof}
@@ -1290,8 +1253,7 @@ If no carve-out applies and the declared hardness-assumption profile holds, then
 
 \begin{proposition}[Integrity--Competence Separation]\label{prop:integrity-competence-separation}
 Integrity and competence are distinct predicates: integrity constrains asserted outputs, while competence adds non-abstaining coverage under resource bounds.
-\leanmeta{\LH{IC18},
-\LH{IC25}.}
+\leanmeta{\LH{IC18}, \LH{IC25}.}
 \end{proposition}
 
 \begin{proof}
@@ -1315,9 +1277,7 @@ Let $I,A,C\in\{0,1\}$ denote integrity, attempted exact competence, and competen
 \item if $I=1$ and $(A,C)\in\{(0,0),(0,1),(1,1)\}$: irrational for the same verified-cost objective.
 \end{itemize}
 Hence, in the integrity-preserving plane ($I=1$), exactly one cell is rational and three are irrational.
-\leanmeta{\LH{IC27},
-\LH{IC7},
-\LH{IC6}}
+\leanmeta{\LHrng{IC}{6}{7}, \LH{IC27}}
 \end{proposition}
 
 This separation plus Proposition~\ref{prop:attempted-competence-matrix} is load-bearing for the regime-conditional trilemma used later: if exact competence is blocked by hardness in a declared regime after an attempted exact procedure, integrity forces one of three responses: abstain, weaken guarantees, or change regime assumptions.\claimstamp{P\ref{prop:attempted-competence-matrix}}{AR}
@@ -1330,9 +1290,7 @@ This separation is machine-checked in \texttt{DecisionQuotient/IntegrityCompeten
 \begin{proposition}[Integrity-Resource Bound]\label{prop:integrity-resource-bound}
 Let $\Gamma$ be a declared regime whose in-scope family includes all instances of SUFFICIENCY-CHECK and whose declared resource bound is polynomial in the encoding length. If $\Pclass \neq \coNP$, then no certifying solver is simultaneously integrity-preserving and competent on $\Gamma$ for exact sufficiency.
 Equivalently, for every integrity-preserving solver, at least one of the competence conjuncts must fail on $\Gamma$: either full non-abstaining coverage fails or the declared budget bound fails.
-\leanmeta{\LH{IC26},
-\LH{IC24},
-\LH{CC30}.}
+\leanmeta{\LH{IC24}, \LH{IC26}, \LH{CC30}.}
 \end{proposition}
 
 \begin{proof}

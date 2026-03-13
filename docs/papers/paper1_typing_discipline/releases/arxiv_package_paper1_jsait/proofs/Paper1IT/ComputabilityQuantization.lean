@@ -1,4 +1,5 @@
 import Mathlib.Algebra.Order.Floor.Div
+import Mathlib.Data.Nat.Log
 import Paper1IT.GraphEntropy
 
 namespace Ssot

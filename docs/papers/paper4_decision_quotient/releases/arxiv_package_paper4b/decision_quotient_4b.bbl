@@ -1,3 +1,85 @@
-\begin{thebibliography}{}
+\begin{thebibliography}{10}
+
+\bibitem{blahut1972computation}
+Richard~E. Blahut.
+\newblock Computation of channel capacity and rate-distortion functions.
+\newblock {\em IEEE Transactions on Information Theory}, 18(4):460--473, 1972.
+
+\bibitem{cover2006elements}
+Thomas~M. Cover and Joy~A. Thomas.
+\newblock {\em Elements of Information Theory}.
+\newblock Wiley-Interscience, 2nd edition, 2006.
+
+\bibitem{csiszar2011information}
+Imre Csisz{\'a}r and J{\'a}nos K{\"o}rner.
+\newblock {\em Information Theory: Coding Theorems for Discrete Memoryless
+  Systems}.
+\newblock Cambridge University Press, 2nd edition, 2011.
+
+\bibitem{demoura2021lean4}
+Leonardo de~Moura and Sebastian Ullrich.
+\newblock The {Lean} 4 theorem prover and programming language.
+\newblock In {\em Automated Deduction -- CADE 28}, pages 625--635. Springer,
+  2021.
+
+\bibitem{forster2019verified}
+Yannick Forster, Fabian Kunze, and Maxi Wuttke.
+\newblock Verified programming of {Turing} machines in {Coq}.
+\newblock In {\em Proceedings of the 9th ACM SIGPLAN International Conference
+  on Certified Programs and Proofs (CPP 2020)}, pages 114--128. ACM, 2020.
+
+\bibitem{grunwald2007minimum}
+Peter~D. Gr{\"u}nwald.
+\newblock {\em The Minimum Description Length Principle}.
+\newblock MIT Press, 2007.
+
+\bibitem{kunze2019formal}
+Fabian Kunze, Gert Smolka, and Yannick Forster.
+\newblock Formal small-step verification of a call-by-value lambda calculus
+  machine.
+\newblock In {\em Asian Symposium on Programming Languages and Systems}, pages
+  264--283. Springer, 2018.
+
+\bibitem{maclane1998categories}
+Saunders Mac~Lane.
+\newblock {\em Categories for the Working Mathematician}, volume~5 of {\em
+  Graduate Texts in Mathematics}.
+\newblock Springer, 2 edition, 1998.
+
+\bibitem{nipkow2002isabelle}
+Tobias Nipkow, Lawrence~C. Paulson, and Markus Wenzel.
+\newblock {\em {Isabelle/HOL}: A Proof Assistant for Higher-Order Logic}.
+\newblock Springer, 2002.
+
+\bibitem{raiffa1961applied}
+Howard Raiffa and Robert Schlaifer.
+\newblock {\em Applied Statistical Decision Theory}.
+\newblock Division of Research, Graduate School of Business Administration,
+  Harvard University, Boston, MA, 1961.
+\newblock Library records list this imprint; avoid using JSTOR DOI
+  10.2307/2282452 which refers to a journal item, not the book.
+
+\bibitem{rissanen1978modeling}
+Jorma Rissanen.
+\newblock Modeling by shortest data description.
+\newblock {\em Automatica}, 14(5):465--471, 1978.
+
+\bibitem{savage1954foundations}
+Leonard~J. Savage.
+\newblock {\em The Foundations of Statistics}.
+\newblock John Wiley \& Sons, 1954.
+
+\bibitem{shannon1959coding}
+Claude~E. Shannon.
+\newblock Coding theorems for a discrete source with a fidelity criterion.
+\newblock {\em IRE National Convention Record}, 7:142--163, 1959.
+\newblock Part 4.
+
+\bibitem{mathlib2020}
+{The mathlib Community}.
+\newblock The {Lean} mathematical library.
+\newblock In {\em Proceedings of the 9th ACM SIGPLAN International Conference
+  on Certified Programs and Proofs (CPP 2020)}, pages 367--381. Association for
+  Computing Machinery, 2020.
 
 \end{thebibliography}

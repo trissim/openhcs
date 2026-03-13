@@ -19,6 +19,7 @@ import Paper1IT.ComputabilityQuantization
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
 import lwd_converse
+import discipline_migration
 
 open AbstractClassSystem
 
@@ -35,10 +36,16 @@ abbrev NOM1 := nominal_centralized               -- Nominal typing centralizes
 abbrev NOM2 := nominal_localization_constant_semantic  -- Nominal localization O(1)
 abbrev DUC1 := duck_localization_linear          -- Duck localization O(n)
 abbrev ENC1 := encoding_location_gap             -- Encoding location gap
+abbrev INF1 := @AbstractClassSystem.Scope.observer_factors -- Observer factors through observable quotient
 -- SHP1/SHP2/OBS1 require type parameters - use @shape_cannot_distinguish directly
+abbrev PRV1 := @AbstractClassSystem.provenance_impossibility_universal -- Provenance not representation-computable
 abbrev SHP2 := @shape_provenance_impossible       -- Shape provenance impossible
 abbrev ADV1 := adversary_forces_n_minus_1_queries -- Adversary forces n-1 queries
 abbrev MDL1 := model_completeness                -- Model completeness
+abbrev FXI1 := fixed_axis_incompleteness         -- Fixed observable basis is incomplete
+abbrev ZDT1 := @Ssot.Paper1IT.requiredTagBits_le_iff_le_pow -- Zero-error threshold by bit budget
+abbrev PD1 := nominal_pareto_dominates_shape -- Nominal Pareto dominates structural
+abbrev NOH1 := admissibility_no_hidden_state -- No hidden registries in valid traces
 
 /-- Canonical graph-entropy handle IDs (shared downstream). -/
 abbrev GPH2 := @Ssot.GraphEntropy.clique_card_le_colors

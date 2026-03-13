@@ -33,6 +33,15 @@ theorem requiredTagBits_le_of_le_pow {n L : Nat} (hn : n ≤ 2 ^ L) :
   unfold requiredTagBits
   exact Nat.clog_le_of_le_pow hn
 
+theorem requiredTagBits_le_iff_le_pow {n L : Nat} :
+    requiredTagBits n ≤ L ↔ n ≤ 2 ^ L := by
+  constructor
+  · intro h
+    unfold requiredTagBits at h
+    exact (Nat.clog_le_iff_le_pow (by decide : 1 < 2)).1 h
+  · intro h
+    exact requiredTagBits_le_of_le_pow h
+
 theorem lt_requiredTagBits_of_pow_lt {n L : Nat} (hL : 2 ^ L < n) :
     L < requiredTagBits n := by
   unfold requiredTagBits

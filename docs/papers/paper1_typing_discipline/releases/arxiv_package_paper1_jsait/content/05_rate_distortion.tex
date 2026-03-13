@@ -1,130 +1,15 @@
-\subsection{Representation-Adaptive Side Information}
+\subsection{Distortion as a Currency}
 
-The fixed-length theorem treats all representation fibers through the worst case $A_\pi$. A finer coding problem allows the auxiliary description length to depend on the observed representation value $u$. Then the relevant budget is not the maximum fiber size but the size of the individual fiber $\pi^{-1}(u)$. This section therefore resolves the same residual ambiguity object at a finer scale: first fiberwise, then in source-weighted expectation, and finally through active binary clarification protocols.
+\paragraph{Currency comparison.}
+The counting and entropy converses above show that auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section makes one exchange explicit: how many bits must be paid to drive distortion to zero on a collision fiber, and what floor remains when those bits are withheld.
 
-\begin{definition}[Representation-adaptive auxiliary description]
-An \emph{adaptive auxiliary scheme} assigns to each representation value $u$ a binary description budget $\ell(u)$ and a decoder that, given $u$ together with a binary string of length at most $\ell(u)$, recovers the class exactly whenever $\pi(C)=u$.
-\end{definition}
-
-\begin{theorem}[Pointwise optimal adaptive bit budget]\label{thm:adaptive-fiber-budget}
-For a representation fiber of size $|\pi^{-1}(u)|$, zero-error recovery under a binary auxiliary alphabet is feasible if and only if
-\[
-|\pi^{-1}(u)| \le 2^{\ell(u)}.
-\]
-Consequently, the pointwise optimal number of auxiliary bits on fiber $u$ is
-\[
-\ell^\star(u) = \left\lceil \log_2 |\pi^{-1}(u)| \right\rceil.
-\]
-\end{theorem}
-\leanmeta{\LH{GPH32}}
-
-\begin{proof}
-Once $u$ is fixed, the decoder only needs to distinguish classes inside the fiber $\pi^{-1}(u)$. With $\ell(u)$ binary bits there are at most $2^{\ell(u)}$ auxiliary outcomes, so exact recovery is possible exactly when that many outcomes suffice to name the fiber elements injectively. The minimal feasible budget is therefore the least integer whose power of two dominates the fiber size, namely $\lceil \log_2 |\pi^{-1}(u)| \rceil$.
-\end{proof}
-
-\begin{definition}[Expected adaptive description length]
-Let $U=\pi(C)$ be the induced representation random variable under a source law on classes. For an adaptive budget $\ell$, define its expected auxiliary length by
-\[
-\mathbb E[\ell(U)] = \sum_u P_U(u)\,\ell(u).
-\]
-\end{definition}
-
-\begin{theorem}[Adaptive expected-rate lower bound]\label{thm:adaptive-expected-rate-lower-bound}
-Any feasible adaptive auxiliary scheme satisfies
-\[
-\mathbb E[\ell(U)] \ge \mathbb E\!\left[\left\lceil \log_2 |\pi^{-1}(U)| \right\rceil\right].
-\]
-Moreover, the pointwise optimal budget from Theorem~\ref{thm:adaptive-fiber-budget} attains equality.
-\end{theorem}
-\leanmeta{\LHrng{GPH}{32}{33}}
-
-\begin{proof}
-By Theorem~\ref{thm:adaptive-fiber-budget}, feasibility on fiber $u$ requires
-\[
-\ell(u) \ge \left\lceil \log_2 |\pi^{-1}(u)| \right\rceil
-\]
-for every representation value $u$. Multiplying pointwise by $P_U(u)$ and summing over $u$ gives the lower bound on expected length. Equality is achieved by choosing the pointwise optimal budget on every fiber.
-\end{proof}
-
-\begin{corollary}[Conditional-entropy lower bound]
-Let $C$ be drawn from any source distribution and let $U=\pi(C)$. Then any feasible adaptive auxiliary scheme satisfies
-\[
-\mathbb E[\ell(U)] \ge \frac{H(C\mid U)}{\log 2},
-\]
-where $H(C\mid U)$ is conditional Shannon entropy in natural-log units.
-\end{corollary}
-\leanmeta{\LH{GPH34}}
-
-\begin{proof}
-For each representation value $u$, the conditional law of $C$ given $U=u$ is supported on the fiber $\pi^{-1}(u)$, so its entropy is at most $\log |\pi^{-1}(u)|$. Averaging over $u$ gives
-\[
-H(C\mid U) \le \mathbb E[\log |\pi^{-1}(U)|].
-\]
-Since $\log |\pi^{-1}(u)| \le \lceil \log_2 |\pi^{-1}(u)| \rceil \log 2$ fiberwise, Theorem~\ref{thm:adaptive-expected-rate-lower-bound} yields the stated lower bound.
-\end{proof}
-
-\begin{theorem}[Fiberwise prefix-coding upper bound]\label{thm:fiberwise-prefix-coding-upper-bound}
-Assume standard prefix-coding achievability on each finite fiber. Then there exists an adaptive zero-error auxiliary code satisfying
-\[
-\mathbb E[\ell(U)] \le \frac{H(C\mid U)}{\log 2} + 1.
-\]
-\end{theorem}
-\leanmeta{\LH{GPH35}}
-
-\begin{proof}
-Because the decoder already knows $U=u$, prefix-freeness is required only within each fiber $\pi^{-1}(u)$. Applying a standard prefix-coding theorem separately to the conditional source on each nonempty fiber gives an expected conditional code length at most $H(C\mid U=u)/\log 2 + 1$. Averaging over $u$ yields the stated bound.
-\end{proof}
-
-\begin{corollary}[Zero-error conditional-entropy sandwich]\label{cor:zero-error-conditional-entropy-sandwich}
-The optimal expected zero-error auxiliary rate lies between
-\[
-\frac{H(C\mid U)}{\log 2}
-\qquad\text{and}\qquad
-\frac{H(C\mid U)}{\log 2}+1.
-\]
-\end{corollary}
-\leanmeta{\LH{ZEC1}}
-
-\begin{proof}
-The lower bound is Theorem~\ref{thm:adaptive-expected-rate-lower-bound}, and the upper bound is Theorem~\ref{thm:fiberwise-prefix-coding-upper-bound}. The two statements together give the claimed sandwich.
-\end{proof}
-
-\begin{corollary}[Active binary clarification]
-If, after observing $U$, the decoder is allowed to ask adaptive binary clarification questions whose leaves identify the class exactly, then the minimum expected number of clarification questions is bounded between
-\[
-\frac{H(C\mid U)}{\log 2}
-\qquad\text{and}\qquad
-\frac{H(C\mid U)}{\log 2}+1.
-\]
-\end{corollary}
-\leanmeta{\LHrng{GPH}{34}{35}}
-
-\begin{proof}
-Each binary clarification protocol induces a binary code over the conditional source on each fiber, and conversely any fiberwise binary prefix code can be implemented as an adaptive yes/no decision tree. The lower and upper bounds therefore follow from the preceding conditional-entropy comparison and fiberwise prefix-coding theorem.
-\end{proof}
-
-\begin{corollary}[Representation-respecting noisy transcripts cannot beat the fiber law]
-Let $T$ be any repeated or noisy observation transcript whose realized value factors through the fixed representation, i.e., $T = h(U)$ for some map $h$. Then recovering $C$ from $T$ cannot require less worst-case or pointwise adaptive side information than recovering $C$ from $U$ itself.
-\end{corollary}
-\leanmeta{\LH{GPH28}, \LH{GPH37}}
-
-\begin{proof}
-If the entire transcript factors through $U$, then it is a coarsening of the original representation. Corollary~\ref{cor:concept-bottleneck-mono} applies directly: coarsening cannot reduce the largest collision fiber and cannot reduce the pointwise adaptive fiber budget. Thus repeated or noisy observations that never break the original fibers cannot remove the residual zero-error coding burden.
-\end{proof}
-
-\begin{remark}[Coding interpretation]
-Theorem~\ref{thm:adaptive-expected-rate-lower-bound} is the average-case counterpart of the max-fiber law. The fixed-length theorem pays for the worst collision fiber; the adaptive theorem pays for each fiber separately and averages under the source-induced law of $U$. Thus the fixed-length law, the pointwise fiber law, and the entropy sandwich are three resolutions of the same object: the cost of naming the classes that remain collapsed inside each representation fiber.
-\end{remark}
-
-\begin{remark}[Entropy comparison]
-The conditional-entropy lower and upper bounds place the adaptive theorem inside classical source-coding language: zero-error adaptive side information is sandwiched around $H(C\mid U)$ up to the standard one-bit prefix-coding overhead, but the exact zero-error rate is still controlled fiberwise by finite collision structure rather than by entropy alone.
-\end{remark}
+The general law is fiberwise. For arbitrary finite sources \cite{CoverThomas2006,berger1971rate}, the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
 
 \subsection{Finite Fiberwise Decomposition}\label{sec:fiberwise-decomposition}
 
 The adaptive and fixed-length theorems above quantify the residual ambiguity in each representation fiber separately. We now state the structural law that governs the global rate-distortion problem: for any source distribution and any finite set of fibers, the globally optimal recoverable mass decomposes exactly into fiberwise contributions, and this optimum is attained by independent per-fiber selection.
 
-This is the main structural theorem of the rate-distortion arc. It applies to arbitrary finite sources and arbitrary observation maps---not only to uniform sources on single collision blocks.
+This is the main structural theorem of the rate-distortion arc. It applies to arbitrary finite sources and arbitrary observation maps, not only to uniform sources on single collision blocks.
 
 \begin{definition}[Fiberwise feasible subset]
 Fix a uniform per-fiber tag alphabet of size $T$. A subset $S \subseteq \mathcal C$ is \emph{fiber-budget feasible} if every representation fiber contains at most $T$ elements of $S$:
@@ -208,6 +93,7 @@ Under the hypotheses of Theorem~\ref{thm:semantic-identity-rate-distortion}, zer
 L \ge \log_2 a.
 \]
 \end{corollary}
+\leanmeta{\LH{ZDT1}}
 
 \begin{proof}
 By Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
@@ -233,12 +119,9 @@ Set $L=0$ in Theorem~\ref{thm:semantic-identity-rate-distortion}. Since $2^0=1$,
 This corollary quantifies the price of relying exclusively on semantic attributes. If one chooses not to store the auxiliary identifier required by the fixed-length coding law, the saved $\lceil \log_2 A_\pi \rceil$ bits are exchanged for a nonzero error floor. On a collision fiber of size $2$, omitting the one-bit tag forces an error rate of at least $50\%$. On a collision fiber of size $100$, omitting the seven-bit tag forces an error rate of at least $99\%$. One pays for identity either in stored bits or in distortion. There is no third option in which identity is both free and exact.
 \end{remark}
 
-\begin{remark}[Why this matters]
-The distortion theorem is not only a converse to the zero-error law. It identifies the operational cost of omission in semantics-aware compression systems. If a system declines to store the identity bits needed to separate collided fibers, then the penalty is not abstract suboptimality but a concrete minimum error rate. The important feature is the steepness of the curve: because distortion scales as $1-2^L/a$, small deficits in the coding budget can produce large losses in identity accuracy. This is the exact storage-versus-distortion tradeoff induced by semantic abstraction.
-\end{remark}
 
 \begin{remark}[Steepness]
-The steepness is easy to see numerically. On a collision block of size $100$, zero distortion requires at least $\lceil \log_2 100 \rceil = 7$ bits. With only $6$ bits the distortion is at least $36\%$, and with only $5$ bits it is at least $68\%$. Small shortfalls below the exact-recovery threshold can therefore make identity accuracy unusable in practice.
+The steepness is easy to see numerically. On a collision block of size $100$, zero distortion requires at least $\lceil \log_2 100 \rceil = 7$ bits. With only $6$ bits the distortion is at least $36\%$, and with only $5$ bits it is at least $68\%$. Small shortfalls below the exact-recovery threshold can therefore make identity accuracy unusable in practice. If a system declines to store the identity bits needed to separate collided fibers, the penalty is a concrete minimum error rate, not abstract suboptimality.
 \end{remark}
 
 \begin{remark}[Scope of the exact curve]
@@ -247,9 +130,9 @@ The exact formula above is stated for the uniform source on a single collision b
 
 \subsection{Finite Entropy Converses}\label{sec:entropy-converses}
 
-The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities, placing the semantic identity problem inside classical Shannon theory.
+The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities \cite{CoverThomas2006,csiszar2011information}, placing the semantic identity problem inside classical Shannon theory.
 
-The following theorems are mechanized in the RDC series (\LH{RDC1}--\LH{RDC9}). They apply to any finite source, any observation map, and any tag/decoder pair.
+The following theorems are mechanized in the RDC series, from \LH{RDC1} through \LH{RDC9}. They apply to any finite source, any observation map, and any tag/decoder pair.
 
 \begin{theorem}[Fano-style finite converse]\label{thm:fano-converse}
 Let $\mu$ be a finite source on $K$ classes, let $(O, T)$ be the observation and tag alphabet sizes, and let $D$ be the distortion (error probability) of any deterministic decoder. Then
@@ -290,25 +173,5 @@ The success probability is bounded by the maximum atom mass times the budget (un
 \end{proof}
 
 \begin{remark}[Counting versus entropy converses]
-The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap. Distortion is governed by how much entropy the observation/tag pair can carry. For high-entropy sources with large collision blocks, the entropy bound may be tighter than the counting bound; for low-entropy sources with concentrated mass, the counting bound dominates. Together, the two converse families provide complementary views of the same fiber geometry, one combinatorial and one information-theoretic.
-
-Theorem~\ref{thm:fano-converse} is a finite, deterministic, zero-error variant of the classical Fano inequality. The binary entropy term $h_b(D)$ captures uncertainty about decoder success; the $\log(O \cdot T)$ term is the rate of the observation/tag channel; the $\log(K-1)$ is the standard Fano confusion penalty.
+The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap: for high-entropy sources the entropy bound may be tighter, while for low-entropy sources the counting bound dominates. Together they provide complementary views of the same fiber geometry.
 \end{remark}
-
-\subsection{Worked Example}
-
-Return to the running example with profiles
-\[
-A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.
-\]
-The fixed-length theorem gives $A_\pi=2$, so one extra bit is necessary and sufficient for exact recovery. The adaptive theorem says more: the fiber over profile $000$ requires one bit, while the singleton fibers over $100$, $110$, and $111$ require zero bits. Thus the expected auxiliary rate is exactly the probability of landing in the collided fiber.
-
-This is the representation-level interpretation the paper emphasizes. The representation already resolves three of the four fibers completely; the only irreducible metadata cost is the one residual collision between $A$ and $B$.
-
-The fiberwise decomposition theorem gives the same result structurally: the global optimum is the sum of the fiberwise optima, with the collided fiber contributing its top-$T$ mass and the singleton fibers contributing their full mass. The uniform single-block formula is the special case where all source mass lies in one fiber.
-
-The next section turns this coding object into a representation-sufficiency theory: once the residual ambiguity of each fiber is explicit, one can ask exactly which downstream tasks, helper views, and modular factors eliminate it and which do not.
-
-\subsection{Secondary Query and Frontier View}
-
-The paper also studies a query resource $W$ for settings where the decoder is allowed to interrogate primitive attributes rather than receive all auxiliary information up front. That query-side viewpoint is secondary here: the main compression object is the side-information rate needed to resolve representation collisions. We retain the query-side results later because they show one alternative way to pay for the same unresolved ambiguity.

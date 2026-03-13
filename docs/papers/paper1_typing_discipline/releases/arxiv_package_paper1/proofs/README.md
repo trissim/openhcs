@@ -4,8 +4,8 @@
 
 This directory contains the complete Lean 4 formalization for Typing Discipline.
 
-- **Lines:** 7215
-- **Theorems:** 306
+- **Lines:** 13838
+- **Theorems:** 677
 - **`sorry` placeholders:** 0
 
 
@@ -30,7 +30,9 @@ lake build
 | `Core.lean` | Core |
 | `Extended.lean` | Extended |
 | `GraphBridges.lean` | GraphBridges |
+| `Neurosymbolic.lean` | Neurosymbolic |
 | `Typing.lean` | Typing |
+| `Undecidability.lean` | Undecidability |
 | `AbstractClassSystem.lean` | AbstractClassSystem |
 | `CrossPaperDependencies.lean` | CrossPaperDependencies |
 | `DeclInfoExport.lean` | DeclInfoExport |
@@ -38,6 +40,31 @@ lake build
 | `GraphExport.lean` | GraphExport |
 | `HandleAliases.lean` | HandleAliases |
 | `Paper1.lean` | Paper1 |
+| `BudgetSplit.lean` | BudgetSplit |
+| `ComputabilityQuantization.lean` | ComputabilityQuantization |
+| `EmpiricalAuditBridge.lean` | EmpiricalAuditBridge |
+| `Entropy.lean` | Entropy |
+| `EntropyGeneral.lean` | EntropyGeneral |
+| `FanoFinite.lean` | FanoFinite |
+| `FiberAllocation.lean` | FiberAllocation |
+| `FiberRateDistortion.lean` | FiberRateDistortion |
+| `FiniteRateDistortionBounds.lean` | FiniteRateDistortionBounds |
+| `FiniteRateDistortionConverse.lean` | FiniteRateDistortionConverse |
+| `FiniteSource.lean` | FiniteSource |
+| `HashDemoCertificate.lean` | HashDemoCertificate |
+| `ReviewerDemoCertificate.lean` | ReviewerDemoCertificate |
+| `SemanticGridInt8Scale3Certificate.lean` | SemanticGridInt8Scale3Certificate |
+| `SemanticGridTotalCollapseCertificate.lean` | SemanticGridTotalCollapseCertificate |
+| `GraphEntropy.lean` | GraphEntropy |
+| `GraphEntropyAsymptotic.lean` | GraphEntropyAsymptotic |
+| `GrowthCollisions.lean` | GrowthCollisions |
+| `GrowthTagBudget.lean` | GrowthTagBudget |
+| `ObserverTagModel.lean` | ObserverTagModel |
+| `PMFEntropy.lean` | PMFEntropy |
+| `ProbabilisticFinite.lean` | ProbabilisticFinite |
+| `QueryBitBridge.lean` | QueryBitBridge |
+| `RateDistortion.lean` | RateDistortion |
+| `ZeroErrorConditionalEntropy.lean` | ZeroErrorConditionalEntropy |
 | `PrintAxioms.lean` | PrintAxioms |
 | `abstract_class_system.lean` | abstract_class_system |
 | `axis_framework.lean` | axis_framework |

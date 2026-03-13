@@ -2,6 +2,7 @@
 import DependencyGraph
 import Paper1IT.BudgetSplit
 import Paper1IT.ComputabilityQuantization
+import Paper1IT.EmpiricalAuditBridge
 import Paper1IT.Entropy
 import Paper1IT.EntropyGeneral
 import Paper1IT.FanoFinite
@@ -10,6 +11,10 @@ import Paper1IT.FiberRateDistortion
 import Paper1IT.FiniteRateDistortionBounds
 import Paper1IT.FiniteRateDistortionConverse
 import Paper1IT.FiniteSource
+import Paper1IT.Generated.HashDemoCertificate
+import Paper1IT.Generated.ReviewerDemoCertificate
+import Paper1IT.Generated.SemanticGridInt8Scale3Certificate
+import Paper1IT.Generated.SemanticGridTotalCollapseCertificate
 import Paper1IT.GraphEntropy
 import Paper1IT.GraphEntropyAsymptotic
 import Paper1IT.GrowthCollisions

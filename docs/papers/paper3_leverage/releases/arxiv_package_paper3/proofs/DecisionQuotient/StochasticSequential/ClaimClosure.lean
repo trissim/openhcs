@@ -4,7 +4,7 @@
   ClaimClosure.lean - Closure of paper-level claim steps
 
   Mechanizes paper-specific claims for paper4b.
-  Uses 6 tractable subcases machinery from IntegrityEquilibrium.
+  Uses the 6 tractable subcases machinery from Paper 4.
 -/
 
 import DecisionQuotient.StochasticSequential.Basic
@@ -16,7 +16,7 @@ import DecisionQuotient.StochasticSequential.Dichotomy
 
 namespace DecisionQuotient.StochasticSequential.ClaimClosure
 
-open DecisionQuotient.Physics.DimensionalComplexity
+open DecisionQuotient.DimensionalComplexity
 
 /-! ## Substrate Independence Claims -/
 

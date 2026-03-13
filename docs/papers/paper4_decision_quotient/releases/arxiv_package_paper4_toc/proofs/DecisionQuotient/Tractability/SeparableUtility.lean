@@ -206,4 +206,81 @@ theorem low_rank_tractability {A : Type*} {n : ℕ} {Coord : Fin n → Type*}
     ∃ (bound : ℕ), bound ≤ Fintype.card A * R * n := by
   exact low_rank_utility_admits_factored_computation u R hR decomp
 
+/-! ## Additive-Linear Utility as Corollary -/
+
+/-- Additive-linear utility: U(a, s) = w·s + f(a)
+    
+    This is a special case of separable utility because the w·s term
+    is the same for all actions, so it cancels in argmax.
+    
+    Therefore all coordinates are irrelevant — empty set is sufficient. -/
+structure AdditiveLinearUtility (dp : FiniteDecisionProblem (A := A) (S := S))
+    (n : ℕ) [CoordinateSpace S n] where
+  actionOffset : A → ℤ
+  stateWeight : S → ℤ
+  utility_eq : ∀ a s, dp.utility a s = stateWeight s + actionOffset a
+
+/-- For additive-linear utility, the optimal action set is independent of state.
+    
+    Proof: argmax_a (w·s + f(a)) = argmax_a f(a) because w·s is constant 
+    with respect to a. -/
+theorem AdditiveLinearUtility.opt_independent
+    {n : ℕ} [CoordinateSpace S n]
+    (dp : FiniteDecisionProblem (A := A) (S := S))
+    (hlin : AdditiveLinearUtility dp n)
+    (s s' : S) :
+    dp.optimalActions s = dp.optimalActions s' := by
+  ext a
+  constructor
+  · intro ha
+    -- a is optimal at s, so for every a' in actions we have
+    -- stateWeight s + actionOffset a' ≤ stateWeight s + actionOffset a
+    rcases (FiniteDecisionProblem.mem_optimalActions_iff (dp := dp) (s := s) (a := a)).1 ha with
+      ⟨haA, hmax⟩
+    -- from this deduce actionOffset a' ≤ actionOffset a, then add stateWeight s' to both sides
+    refine (FiniteDecisionProblem.mem_optimalActions_iff (dp := dp) (s := s') (a := a)).2 ?_
+    refine ⟨haA, ?_⟩
+    intro a' ha'
+    have hsum : hlin.stateWeight s + hlin.actionOffset a' ≤
+        hlin.stateWeight s + hlin.actionOffset a := by
+      simpa [hlin.utility_eq] using hmax a' ha'
+    have haction' : hlin.actionOffset a' ≤ hlin.actionOffset a := by
+      exact (add_le_add_iff_left (hlin.stateWeight s)).1 hsum
+    show dp.utility a' s' ≤ dp.utility a s'
+    calc
+      dp.utility a' s' = hlin.stateWeight s' + hlin.actionOffset a' := by simp [hlin.utility_eq]
+      _ ≤ hlin.stateWeight s' + hlin.actionOffset a := by
+        simpa [add_comm] using add_le_add_left haction' (hlin.stateWeight s')
+      _ = dp.utility a s' := by simp [hlin.utility_eq]
+  · intro ha
+    rcases (FiniteDecisionProblem.mem_optimalActions_iff (dp := dp) (s := s') (a := a)).1 ha with
+      ⟨haA, hmax⟩
+    refine (FiniteDecisionProblem.mem_optimalActions_iff (dp := dp) (s := s) (a := a)).2 ?_
+    refine ⟨haA, ?_⟩
+    intro a' ha'
+    have hsum : hlin.stateWeight s' + hlin.actionOffset a' ≤
+        hlin.stateWeight s' + hlin.actionOffset a := by
+      simpa [hlin.utility_eq] using hmax a' ha'
+    have haction' : hlin.actionOffset a' ≤ hlin.actionOffset a := by
+      exact (add_le_add_iff_left (hlin.stateWeight s')).1 hsum
+    calc
+      dp.utility a' s = hlin.stateWeight s + hlin.actionOffset a' := by simp [hlin.utility_eq]
+      _ ≤ hlin.stateWeight s + hlin.actionOffset a := by
+        simpa [add_comm] using add_le_add_left haction' (hlin.stateWeight s)
+      _ = dp.utility a s := by simp [hlin.utility_eq]
+
+/-- Empty set is sufficient for additive-linear utility.
+    
+    This is a corollary of separable utility: U(a,s) = f(a) + g(s) where 
+    g(s) = w·s is the state term and f(a) = actionOffset a. -/
+theorem AdditiveLinearUtility.empty_sufficient
+    {n : ℕ} [CoordinateSpace S n]
+    (dp : FiniteDecisionProblem (A := A) (S := S))
+    (hlin : AdditiveLinearUtility dp n)
+    (I : Finset (Fin n)) :
+    dp.isSufficient I := by
+  intro s hs s' hs' _
+  -- call the theorem (not a field of the structure)
+  exact AdditiveLinearUtility.opt_independent (dp := dp) (hlin := hlin) s s'
+
 end DecisionQuotient
