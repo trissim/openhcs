@@ -326,6 +326,9 @@ abbrev MFT132 := @MultiFact.agreementOracle_eq_true_iff
 abbrev MFT133 := @MultiFact.agreementOracle_eq_confusableOracle
 abbrev MFT134 := @MultiFact.agreementOracleViewWork_le
 abbrev MFT135 := @MultiFact.agreementOracleTotalWork_le
+abbrev MFT136 := @MultiFact.meetWitnessed_implies_transitive_confusability
+abbrev MFT137 := @MultiFact.transitive_confusability_implies_cluster_graph
+abbrev MFT138 := @MultiFact.cluster_graph_4cycle_counterexample
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound

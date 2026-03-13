@@ -1,7 +1,7 @@
 \section{Operational Realizability Criterion}\label{sec:requirements}
 %==============================================================================
 
-The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section asks a downstream operational question about the opposite boundary case: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
+The main graph-capacity arc characterizes what happens once ambiguity survives and must be resolved structurally. This section turns to the opposite boundary case of the same model: when can a concrete host system realize the unit-rate corner isolated earlier, and what two structural properties are needed for that purpose? In integrity language, the question is when structural integrity can be both enforced and certified by the host itself. The resulting criterion is architectural rather than a new graph-capacity theorem.
 
 A host system realizes the rate-$1$ regime when one location is authoritative and every secondary representation is maintained as a deterministic view. Two capabilities are required:
 \begin{enumerate}
@@ -107,6 +107,6 @@ An encoding system can achieve verifiable independent rate $1$, equivalently ver
 Necessity follows from Theorems~\ref{thm:causal-necessary} and~\ref{thm:provenance-necessary}. For sufficiency, assume both properties hold. Causal propagation ensures that every derived location is updated as part of the same structural event as the source; provenance observability then certifies that all secondary encodings are in fact derived from that source. The architecture therefore realizes a verifiable single-source encoding, i.e., independent rate $1$, which is exactly verifiable structural integrity in the sense of Definition~\ref{def:verifiable-integrity}.
 \end{proof}
 
-The next section records representative readings of the theorem on familiar host systems.
+Applied to representative hosts, this criterion separates systems in which propagation and provenance are both host-native from systems missing one or both capabilities. Appendix~\ref{sec:appendix-classification} collects those representative readings in one table, and Supplement~A contains the companion case-study traces and measurement notes.
 
 %==============================================================================

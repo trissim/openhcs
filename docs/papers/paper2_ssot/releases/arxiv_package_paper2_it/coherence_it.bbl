@@ -48,6 +48,11 @@ D.~Slepian and J.~K. Wolf, ``Noiseless coding of correlated information
 T.~M. Cover and J.~A. Thomas, \emph{Elements of Information Theory},
   2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax Wiley-Interscience, 2006.
 
+\bibitem{demoura2021lean4}
+L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
+  language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
+  minus 0.4em\relax Springer, 2021, pp. 625--635.
+
 \bibitem{fano1961transmission}
 R.~M. Fano, \emph{Transmission of Information: A Statistical Theory of
   Communications}.\hskip 1em plus 0.5em minus 0.4em\relax Cambridge, MA: MIT
@@ -57,11 +62,6 @@ R.~M. Fano, \emph{Transmission of Information: A Statistical Theory of
 H.~S. Witsenhausen and A.~D. Wyner, ``A conditional entropy bound for a pair of
   discrete random variables,'' \emph{IEEE Transactions on Information Theory},
   vol.~21, no.~5, pp. 493--501, 1975.
-
-\bibitem{demoura2021lean4}
-L.~de~Moura and S.~Ullrich, ``The {Lean} 4 theorem prover and programming
-  language,'' in \emph{Automated Deduction -- CADE 28}.\hskip 1em plus 0.5em
-  minus 0.4em\relax Springer, 2021, pp. 625--635.
 
 \bibitem{orlitsky2001coding}
 A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions

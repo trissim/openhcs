@@ -483,6 +483,12 @@ theorem meetWitnessed_confusableTransitive
       exact (Finset.mem_inter.mp (hsub hi)).2) h₂
   exact h13.trans h23
 
+theorem meetWitnessed_implies_transitive_confusability
+    {F A L : Nat} (views : ViewFamily F L)
+    (hmeet : MeetWitnessed views) :
+    ConfusableTransitive (A := A) views :=
+  meetWitnessed_confusableTransitive (A := A) views hmeet
+
 theorem fiberCoherent_view_subset
     {F A L : Nat} (views : ViewFamily F L)
     (hA : 1 < A)
@@ -1030,6 +1036,14 @@ theorem confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
       clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk) := by
   ext x y
   exact confusable_iff_sameComponent_of_confusableTransitive (A := A) views htrans
+
+theorem transitive_confusability_implies_cluster_graph
+    {F A L : Nat} (views : ViewFamily F L)
+    (htrans : ConfusableTransitive (A := A) views) :
+    confusabilityGraph (A := A) views =
+      clusterGraph ((confusabilityGraph (A := A) views).connectedComponentMk) :=
+  confusabilityGraph_eq_clusterGraph_component_of_confusableTransitive
+    (A := A) views htrans
 
 theorem confusableTransitive_of_confusabilityGraph_eq_clusterGraph_component
     {F A L : Nat} (views : ViewFamily F L)
@@ -7117,6 +7131,12 @@ theorem binaryViews_nonclique_witness :
     Confusable binaryViews s01 s11 ∧
     ¬ Confusable binaryViews s00 s11 := by
   exact ⟨s00_confusable_s01, s01_confusable_s11, s00_not_confusable_s11⟩
+
+theorem cluster_graph_4cycle_counterexample :
+    ¬ ConfusableTransitive (A := 2) binaryViews := by
+  intro htrans
+  exact s00_not_confusable_s11
+    (htrans s00_confusable_s01 s01_confusable_s11 s00_ne_s11)
 
 theorem same_firstCoord_confusable
     {x y : State 2 2}

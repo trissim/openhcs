@@ -31,8 +31,7 @@ theorem distinguishesOn_mono {S S' : Finset Q} (hsub : S ⊆ S')
   intro c hc c' hc' heq
   apply hdist hc hc'
   funext q
-  have hq' : q.1 ∈ S' := q.2
-  have hq : q.1 ∈ S := hsub hq'
+  have hq' : q.1 ∈ S' := hsub q.2
   have hproj := congrArg (fun g => g ⟨q.1, hq'⟩) heq
   simpa using hproj
 
@@ -92,6 +91,61 @@ theorem clog_card_le_query_count_mono {S S' : Finset Q} (hsub : S ⊆ S')
   have hdist' : distinguishesOn S' qs T := distinguishesOn_mono hsub qs T hdist
   have hclog : Nat.clog 2 T.card ≤ S.card := clog_card_le_query_count S qs T hdist
   exact hclog.trans (Finset.card_le_card hsub)
+
+/-- Exact equality criterion at the counting floor. If a distinguished set has exactly as many
+elements as available Boolean transcripts, then the query family meets the counting lower bound
+with equality in the cardinal sense. -/
+theorem distinguished_set_eq_full_transcript_capacity
+    (S : Finset Q) (qs : QuerySystem C Q) (T : Finset C)
+    (hdist : distinguishesOn S qs T)
+    (hcard : T.card = 2 ^ S.card) :
+    Nat.clog 2 T.card = S.card := by
+  rw [hcard]
+  exact Nat.clog_pow 2 S.card (by decide : 1 < 2)
+
+/-- Minimal-cardinality distinguishing families achieve the ceiling-log floor exactly whenever
+the distinguished set saturates the Boolean transcript bound. -/
+theorem clog_query_floor_is_tight_of_full_capacity
+    (S : Finset Q) (qs : QuerySystem C Q) (T : Finset C)
+    (hdist : distinguishesOn S qs T)
+    (hcard : T.card = 2 ^ S.card) :
+    Nat.clog 2 T.card = S.card :=
+  distinguished_set_eq_full_transcript_capacity S qs T hdist hcard
+
+/-- Expressivity gap above the counting floor. -/
+def queryExpressivityGap (S : Finset Q) (T : Finset C) : ℕ :=
+  S.card - Nat.clog 2 T.card
+
+/-- The expressivity gap is always nonnegative for any distinguished set. -/
+theorem queryExpressivityGap_nonneg
+    (S : Finset Q) (qs : QuerySystem C Q) (T : Finset C)
+    (hdist : distinguishesOn S qs T) :
+    0 ≤ queryExpressivityGap S T := by
+  unfold queryExpressivityGap
+  exact Nat.zero_le _
+
+/-- Zero expressivity gap characterizes saturation of the ceiling-log lower bound. -/
+theorem queryExpressivityGap_eq_zero_iff
+    (S : Finset Q) (qs : QuerySystem C Q) (T : Finset C)
+    (hdist : distinguishesOn S qs T) :
+    queryExpressivityGap S T = 0 ↔ S.card = Nat.clog 2 T.card := by
+  unfold queryExpressivityGap
+  constructor
+  · intro hgap
+    have hle1 : S.card ≤ Nat.clog 2 T.card := Nat.sub_eq_zero_iff_le.mp hgap
+    have hle2 : Nat.clog 2 T.card ≤ S.card := clog_card_le_query_count S qs T hdist
+    exact le_antisymm hle1 hle2
+  · intro hEq
+    rw [hEq]
+    exact Nat.sub_self _
+
+/-- Enlarging the query family cannot increase the expressivity gap relative to the enlarged
+cardinality floor statement. -/
+theorem queryExpressivityGap_mono {S S' : Finset Q} (hsub : S ⊆ S')
+    (qs : QuerySystem C Q) (T : Finset C)
+    (hdist : distinguishesOn S qs T) :
+    Nat.clog 2 T.card ≤ S'.card :=
+  clog_card_le_query_count_mono hsub qs T hdist
 
 end QueryBitBridge
 end Ssot

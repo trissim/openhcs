@@ -5,31 +5,9 @@ The mathematically trivial part of multi-location consistency is that once more 
 When one latent fact or tuple of facts is represented at several modifiable locations, the available observation need not identify a unique latent state. Under partial views, this surviving ambiguity is not merely a yes/no defect: the admissible view family induces a confusability graph on latent tuples. Its edges record the exact state pairs that the architecture cannot separate, proper colorings quantify the side-information budget needed for exact recovery, and repeated composition pushes the same structure to strong powers and asymptotic Shannon capacity. The paper therefore studies not just whether a multi-location system can fail, but the topology of those failures, the integrity guarantees excluded or permitted by that topology, and the recovery laws forced by it. The resulting theory lies at the intersection of zero-error information theory, side-information source coding, finite converses, and structural integrity analysis~\cite{shannon1956zero,korner1973graphs,lovasz1979shannon,witsenhausen1976zero,slepian1973noiseless,cover2006elements}.
 
 \medskip
-\noindent\textbf{Reading roadmap.} The paper has one main theorem arc and two consequence arcs. The main arc studies the failure geometry induced by partial views: graph characterization, block and asymptotic capacity, upper theory, and equality. The first consequence arc isolates the one-shot deterministic converse that this graph theory lifts from clique-shaped ambiguity, and the second uses the same model for a separate fact-side question and for boundary-case realizability consequences. The main invariants and their roles are summarized below.
+\noindent\textbf{Novelty.} Unlike Witsenhausen's setting where the observation law is given, here a deterministic multi-location partial-view architecture generates that law and thereby constrains the realizable graph class.\leanmeta{\LHrng{MFT}{125}{131}}
 
-\begingroup
-\small
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.1}
-\begin{center}
-\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}p{0.28\linewidth}>{\RaggedRight\arraybackslash}p{0.31\linewidth}>{\RaggedRight\arraybackslash}p{0.13\linewidth}@{}}
-\toprule
-\textbf{Layer} & \textbf{Question} & \textbf{Key invariant / result} & \textbf{Section} \\
-\midrule
-Graph/capacity arc & What exact failure topology do partial views induce? & Colorability, strong powers, asymptotic capacity, $\vartheta$ upper & \S\ref{sec:graph-characterization}--\S\ref{sec:equality} \\
-Finite converse & What obstruction survives before graph structure appears? & Injectivity, confusability, counting, entropy, finite error & \S\ref{sec:converse} \\
-Fact-side structure & When is one fact semantically determined by others? & Affine representable matroid on fact indices & \S\ref{sec:affine} \\
-Threshold/cost corollaries & What follows at unit rate and above it? & Unit-rate threshold and manual-update gap & \S\ref{sec:rate-corollaries} \\
-Realizability / readings & When can a host attain and certify unit rate? & Causal propagation + provenance observability & \S\ref{sec:requirements}--\S\ref{sec:evaluation} \\
-\bottomrule
-\end{tabularx}
-\end{center}
-\endgroup
-
-\medskip
-\noindent\textbf{Novelty boundary.} Witsenhausen's zero-error side-information problem and related graph-based source-coding work also pass from an observation law to an induced confusability graph. The new step here is model-side and structural: a deterministic multi-location partial-view architecture on latent tuples, with admissible coordinate-subset views, generates that observation law and thereby constrains the graph class that can arise. The paper then identifies the exact recovery, success-set, weighted-success, block-composition, and equality consequences of those model-generated graphs. Once the graph is fixed, the coloring, strong-power, Shannon-capacity, and Lov\'asz-$\vartheta$ machinery is classical. The unit-rate threshold by itself is only a boundary corollary; the substantive contribution begins once the obstruction survives and acquires non-clique topology. The finite converse layer is the deterministic toolkit beneath that arc, while the affine and realizability sections are consequence arcs built on the same model rather than separate primary claims.
-
-The graph-generation mechanism is now more sharply characterized. On the full labeled tuple space, the exact coordinate-view model realizes exactly the confusability relations determined by upward-closed families of coordinate-agreement sets: two distinct tuples are adjacent if and only if their agreement set lies in such a family, and conversely every upward-closed family is realizable by some view architecture.\leanmeta{\LHrng{MFT}{125}{128}} When the alphabet has at least two symbols, every proper agreement set occurs for some distinct tuple pair, so this is a complete characterization up to the vacuous full-agreement case of identical tuples.\leanmeta{\LHrng{MFT}{129}{131}} Coordinatewise alphabet permutations still act by graph automorphisms, and in fact any latent tuple can be carried to any other by such an automorphism.\leanmeta{\LHrng{MFT}{120}{124}} Hence the induced graphs form a specific monotone agreement-set subclass rather than an arbitrary finite graph family. The model already generates non-clique graphs, includes the cluster-collapse subclass on which equality is explicit, and is closed under the block-composition operation that becomes strong product on confusability graphs. The binary square already yields a $4$-cycle rather than a clique, and its iterates give a concrete infinite non-clique strong-product family inside the class.
+The graph-generation mechanism is now more sharply characterized. On the full labeled tuple space, the exact coordinate-view model realizes exactly the confusability relations determined by upward-closed families of coordinate-agreement sets: two distinct tuples are adjacent if and only if their agreement set lies in such a family, and conversely every upward-closed family is realizable by some view architecture.\leanmeta{\LHrng{MFT}{125}{128}} When the alphabet has at least two symbols, every proper agreement set occurs for some distinct tuple pair, so this is a complete characterization up to the vacuous full-agreement case of identical tuples.\leanmeta{\LHrng{MFT}{129}{131}} Coordinatewise alphabet permutations still act by graph automorphisms, and in fact any latent tuple can be carried to any other by such an automorphism.\leanmeta{\LHrng{MFT}{120}{124}} Hence the induced graphs form a specific monotone agreement-set class rather than an arbitrary finite graph family. The model already generates non-clique graphs, includes the cluster-collapse subclass on which equality is explicit, and is closed under the block-composition operation that becomes strong product on confusability graphs. The binary square already yields a $4$-cycle rather than a clique, and its iterates give a concrete infinite non-clique strong-product family inside the class.
 
 \subsection{Problem Formulation}\label{sec:encoding-problem}
 
@@ -39,53 +17,13 @@ The model yields an exact-consistency analogue of zero-error resolvability for m
 
 \noindent\textbf{Asymptotic rate and upper theory.} This graph characterization then lifts to strong powers and asymptotic zero-error rates. The full $n$-block confusability graph is the $n$-fold strong power of the one-shot graph; the normalized block-rate sequence converges to a real asymptotic Shannon-capacity value equal to the supremum of the finite block rates; and that value is bounded above by both the logarithm of the complement chromatic number and a fixed Lov\'asz-$\vartheta$ upper convention. The one-shot upper object matches standard orthonormal-representation, primal-PSD, and dual-theta forms. \leanmeta{\LH{MFT35}, \LH{MFT48}, \LH{MFT55}, \LH{MFT64}, \LH{MFT69}, \LH{MFT84}}
 
-\noindent\textbf{Equality characterization.} The paper also proves an equality characterization. For the original clique-fiber subclass coming from a surjective label map, asymptotic Shannon capacity and the fixed Lov\'asz-$\vartheta$ upper both collapse to $\log |\mathcal B|$, where $\mathcal B$ is the fiber-label alphabet. This equality for cluster-graph structure is classical; the new point here is that transitivity of base confusability is the exact sharpness criterion for the current collapse mechanism in the view-family model, while meet-witnessing and fiber coherence are stronger sufficient conditions. Under these conditions, the asymptotic Shannon capacity and the fixed Lov\'asz-$\vartheta$ upper collapse to the logarithm of the number of connected components or realized transcript fibers, depending on the structure available. \leanmeta{\LH{MFT85}, \LH{MFT91}, \LH{MFT96}, \LH{MFT102}, \LH{MFT109}}
+\noindent\textbf{Equality characterization.} The paper also proves an equality characterization. For the original clique-fiber subclass coming from a surjective label map, asymptotic Shannon capacity and the fixed Lov\'asz-$\vartheta$ upper both collapse to $\log |\mathcal B|$, where $\mathcal B$ is the fiber-label alphabet. This equality for cluster-graph structure is classical; the new point here is that transitivity of base confusability gives a model-side route from the view-family architecture to the cluster-graph equality case, while meet-witnessing and fiber coherence are stronger sufficient conditions. Under these conditions, the asymptotic Shannon capacity and the fixed Lov\'asz-$\vartheta$ upper collapse to the logarithm of the number of connected components or realized transcript fibers, depending on the structure available. \leanmeta{\LH{MFT85}, \LH{MFT91}, \LH{MFT96}, \LH{MFT102}, \LH{MFT109}}
 
 \noindent\textbf{Finite converse foundation.} Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible exactly when the pair map $x \mapsto (Y(x),T(x))$ is injective on the surviving ambiguity class. The same obstruction appears as confusability, counting, conditional-entropy, decoder-output, and finite-gap formulations, and it admits a budgeted finite-error extension. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.\leanmeta{\LHrng{OBS}{1}{2}, \LH{OBS5}, \LH{CIA3}, \LH{PRB47}, \LH{PRB55}, \LH{PRB68}, \LH{PRB81}, \LH{PRB83}, \LH{PRB85}, \LH{PRB87}, \LH{PRB90}}
 
 \noindent\textbf{Boundary corollary.} For deterministic multi-location encodings, the zero-incoherence threshold equals $1$: exact zero-error recovery is possible exactly in the single-source regime. This identifies the unique trivial no-failure corner and, equivalently, the exact structural-integrity regime. The more detailed mathematics begins once the finite obstruction survives and acquires nontrivial confusability structure.\leanmeta{\LHrng{COH}{1}{2}, \LH{RAT1}, \LHrng{CAP}{2}{3}}
 
-\noindent\textbf{Secondary fact-side question.} The same framework also supports a second structural question: which fact coordinates are determined by others across the realized state family? Under an affine restriction, that coordinate-dependence question becomes the standard span-membership condition on coordinate functionals, so the induced fact-closure is a representable matroid on fact indices. The value of this specialization here is operational rather than linear-algebraic novelty: the same realized-state model then carries two complementary invariants, a graph on latent states and, in the affine regime, a matroid on coordinates whose rank gives upper bounds on confusability and capacity. Those bounds are algorithmically tractable once the affine family is presented explicitly by a basis or generator matrix for its direction space; under that representation, the relevant rank quantities are standard restricted-coordinate ranks with formal size bounds such as $t(S)\le |S|$, so Gaussian elimination is the natural computation model.\leanmeta{\LHrng{AFM}{1}{7}}
-
-\subsection{Terminology and Analogies}\label{sec:terminology}
-
-The paper introduces terms that have natural analogs in related fields. Table~\ref{tab:terminology} maps the main concepts to help readers anchor the new terminology in familiar frameworks.
-
-\begingroup
-\small
-\setlength{\tabcolsep}{3pt}
-\renewcommand{\arraystretch}{1.15}
-\begin{center}
-\begin{tabularx}{0.98\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.24\linewidth}>{\RaggedRight\arraybackslash}p{0.30\linewidth}>{\RaggedRight\arraybackslash}p{0.36\linewidth}@{}}
-\toprule
-\textbf{This paper} & \textbf{Information theory analog} & \textbf{Distributed systems analog} \\
-\midrule
-Independent rate $k$ (DOF) & Degrees of freedom / source dimension & Number of ``masters'' / write quorum size \\
-Confusability graph $G$ & Channel confusion graph / characteristic graph & Consistency violation topology \\
-Auxiliary tag $T$ & Side information / decoder context & Version vector / logical clock \\
-Unit rate ($k=1$) & Zero-error capacity of 1 & Single source of truth (SSOT) \\
-Fiber / connected component & Confusion class / equivalence class & Replica group / consistency partition \\
-Strong power $G^{\boxtimes n}$ & $n$-fold channel product & Multi-round consistency protocol \\
-\bottomrule
-\end{tabularx}
-\end{center}
-\par\smallskip
-\textbf{Table I.} Terminology mapping across fields. The same mathematical structure appears under different names in zero-error information theory and distributed consistency.
-\label{tab:terminology}
-\par\medskip
-\endgroup
-
-Readers familiar with any one column can use it as an anchor for the corresponding concepts in this paper.
-
-\subsection{Relation to Classical Information Theory}\label{sec:connection-it}
-
-Three classical lines are particularly relevant.
-
-\textbf{Zero-error information theory.} Shannon's zero-error framework and its graph-theoretic refinements describe exact communication under confusability constraints~\cite{shannon1956zero,korner1973graphs,lovasz1979shannon}. Our model translates that perspective from one-shot channels to persistent encodings under edits.
-
-\textbf{Source coding with side information.} In Slepian--Wolf theory and Witsenhausen's zero-error side-information problem, decoder side information lowers the rate or label budget needed for correct recovery~\cite{slepian1973noiseless,witsenhausen1976zero}. Here the side information is deterministic rather than stochastic, but it plays the same operational role: exact recovery is impossible unless the available tags or observations separate all remaining alternatives.
-
-\textbf{Finite entropy converses.} Classical Fano inequalities and related entropy bounds convert decoding difficulty into information bounds~\cite{fano1961transmission,witsenhausen1975conditional,cover2006elements}. Our setting yields a deterministic finite-source analogue in which counting, conditional entropy, decoder-output entropy, and output-gap formulations become different normal forms of the same obstruction.
+\noindent\textbf{Secondary fact-side question.} The same framework also supports a second structural question: which fact coordinates are determined by others across the realized state family? Under an affine restriction, that coordinate-dependence question becomes the standard span-membership condition on coordinate functionals, so the induced fact-closure is a representable matroid on fact indices. The value of this specialization here is operational rather than linear-algebraic novelty: the same realized-state model then carries two complementary invariants, a graph on latent states and, in the affine regime, a matroid on coordinates whose rank gives upper bounds on confusability and capacity. Those bounds are algorithmically tractable once the affine family is presented explicitly by a basis or generator matrix for its direction space; under that representation, the relevant rank quantity is exactly the rank of the restricted coordinate projection and satisfies formal size bounds such as $t(S)\le |S|$, so Gaussian elimination is the natural computation model.\leanmeta{\LHrng{AFM}{1}{11}}
 
 \subsection{Realizability and Verification}\label{sec:realizability}
 
@@ -97,7 +35,7 @@ The same deterministic model also raises a realizability question, but it is dow
 
 \subsection{Paper Organization}\label{overview}
 
-The main theorem arc is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lov\'asz-$\vartheta$ upper theory bounds that value; and a structural transitivity criterion identifies when the model-generated graph collapses to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that arc. The affine and realizability results are consequence arcs built on the same model rather than separate primary claims.
+The main theorem arc is: partial views induce a confusability graph; exact recovery becomes graph colorability; block composition turns that graph into strong powers; the resulting normalized rates converge to the classical Shannon-capacity value of the induced graph; a fixed Lov\'asz-$\vartheta$ upper theory bounds that value; and a structural transitivity condition yields the model-side route to the classical cluster-graph equality case. The deterministic converse is the finite foundation of that arc. The affine and realizability results are consequence arcs built on the same model rather than separate primary claims.
 
 Section~\ref{sec:foundations} gives the minimum model and threshold setup. Section~\ref{sec:converse} develops the finite converse foundation. Sections~\ref{sec:graph-characterization}--\ref{sec:equality} contain the main graph-capacity arc: graph characterization, block and asymptotic capacity, upper theory, and equality characterization. Section~\ref{sec:affine} gives the affine fact-side specialization. Section~\ref{sec:rate-corollaries} records threshold and rate-complexity corollaries, Section~\ref{sec:requirements} gives the operational realizability criterion, and Sections~\ref{sec:evaluation} and~\ref{sec:empirical} record representative host-level readings and supplementary case-study material. A supplementary Lean 4 artifact machine-checks the converse family, graph extension, theta upper theory, affine fact-matroid specialization, threshold chain, operational realizability criterion, and rate-complexity arguments~\cite{demoura2021lean4}.
 

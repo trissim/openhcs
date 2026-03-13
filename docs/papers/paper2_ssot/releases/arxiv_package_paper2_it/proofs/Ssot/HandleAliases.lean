@@ -326,6 +326,9 @@ abbrev MFT132 := @MultiFact.agreementOracle_eq_true_iff
 abbrev MFT133 := @MultiFact.agreementOracle_eq_confusableOracle
 abbrev MFT134 := @MultiFact.agreementOracleViewWork_le
 abbrev MFT135 := @MultiFact.agreementOracleTotalWork_le
+abbrev MFT136 := @MultiFact.meetWitnessed_implies_transitive_confusability
+abbrev MFT137 := @MultiFact.transitive_confusability_implies_cluster_graph
+abbrev MFT138 := @MultiFact.cluster_graph_4cycle_counterexample
 
 abbrev BND1 := ssot_upper_bound
 abbrev BND2 := non_ssot_lower_bound
@@ -347,6 +350,13 @@ abbrev AFM4 := @FactMatroid.basisFacts_minimal
 abbrev AFM5 := @FactMatroid.minimalDetermining_basis
 abbrev AFM6 := @FactMatroid.factRankFinset_le_card
 abbrev AFM7 := @FactMatroid.coordProjection_range_le_card
+abbrev AFM8 := @FactMatroid.factRankFinset_eq_card_of_indepFacts
+abbrev AFM9 := @FactMatroid.factRankFinset_eq_total_of_determinesAllFinset
+abbrev AFM10 := @FactMatroid.factSpanFinset_eq_range_coordProjection_dualMap
+abbrev AFM11 := @FactMatroid.factRankFinset_eq_finrank_range_coordProjection
+abbrev AFM12 := @FactMatroid.factRankFinset_le_finrank_directionSpace
+abbrev AFM13 := @FactMatroid.coordProjection_range_eq_card_of_indepFacts
+abbrev AFM14 := @FactMatroid.coordProjection_range_eq_total_of_determinesAllFinset
 
 /-! ## FIRST PRINCIPLES FORCING CHAIN
     These theorems establish that SSOT is FORCED by first principles.
