@@ -17,6 +17,8 @@
 #   claim_mapping_file: "content/11_lean_proofs.tex"   # coverage appendix file
 #   arxiv_comments: "Submitted to ... (X pages)."       # overrides auto-generated arXiv comments line
 #   scaffold_from: "paper4_toc"               # derive scaffold content from another paper id
+#   experiment_paths:                         # repo-relative or paper-relative experiment roots for packaging
+#     - "experiments/embedding_collisions"
 # arXiv Packaging Configuration
 arxiv:
   include_build_log: true          # BUILD_LOG.txt with actual lake output
@@ -67,6 +69,8 @@ papers:
     latex_file: "type_compression_jsait.tex"
     venue: "JSAIT"
     claim_mapping_file: "content/claim_mapping_auto.tex"
+    experiment_paths:
+      - "experiments/embedding_collisions"
     forcing_prefixes: ["COMPL", "IMP", "AXI", "EMB", "EXT", "ALT", "UNIQ", "FORC"]
     submission_format:
       latex_flag: "\\JSAITREVIEW"
