@@ -1,10 +1,22 @@
 \subsection{Problem Statement}
 
-We prove a simple fact: no learned semantic representation can, by itself, guarantee zero-error identity recovery in an open world unless it is injective. When distinct identities share the same representation value, the representation leaves behind an irreducible identity debt. That debt must be paid in one of several currencies: auxiliary bits, interactive queries, or accepted distortion. There is no third free option.
+What happens when classical compression theory meets learned representations? In practice, deployed embeddings compress perceptual or conceptual structure, but they often identify multiple underlying identities with the same embedding value. This paper answers that question exactly. The collision-fiber geometry induced by the representation map $\pi$ is the single structural invariant that controls every operational cost for exact identity recovery.
 
-This paper isolates the structural object that makes that statement exact: the collision fiber geometry induced by a fixed representation map $\pi$. Once that object is explicit, a family of exact finite theorems follows. The same fiber geometry yields the fixed-length converse $L \ge \log_2 A_{\pi}$, the fiberwise adaptive budget $\lceil \log_2 |\pi^{-1}(u)|\rceil$, an explicit deterministic distortion floor when the identity bits are withheld, and a query theorem showing that binary interrogation cannot beat the same counting barrier: any distinguishing query family of size $d$ must satisfy $\lceil \log_2 A_{\pi}\rceil \le d$ on the worst fiber.
+Concretely, let
+\[
+A_{\pi} := \max_u |\pi^{-1}(u)|,
+\]
+the size of the largest collision fiber. Our main technical answers are exact and immediate. The worst-case fixed-length side-information budget satisfies
+\[
+L \ge \log_2 A_{\pi},
+\]
+the adaptive per-fiber budget is $\lceil \log_2 |\pi^{-1}(u)|\rceil$, and the rate‑distortion tradeoff admits an explicit deterministic error floor when the required identity bits are not provided. On the query side, any binary distinguishing family of size $d$ induces at most $2^d$ transcripts on a fiber, giving the same counting bound $\lceil\log_2 A_{\pi}\rceil \le d$ on worst fibers.
 
-The systems consequence is immediate. Symbolic handles, identifiers, keys, pointers, registry entries, and retrieval indices are not merely convenient engineering artifacts. They are the standard mechanisms by which real systems pay the identity debt left by non-injective semantic abstraction.
+Viewed this way, fixed-length bits, adaptive bits, query cost, and deterministic distortion are different currencies for the same residual ambiguity object.
+
+Regime clarification. We study the finite, fixed-representation, zero-error regime formalized by our admissibility contract (Def.~\ref{def:admissibility-contract}). This is the base case: any higher-level regime (stochastic, continuous, or learning-aware models) must, at deployment time, reduce to a fixed representation and finite realized classes in order to execute. Consequently, those higher-level analyses cannot escape the operational implications derived here; they only change the input quantities (for example, collision statistics) that our exact downstream laws take as given.
+
+The systems consequence is the applied payoff. Symbolic handles, identifiers, keys, pointers, nominal tags, registry entries, and retrieval indices are the canonical mechanisms by which real systems pay the identity debt left by non-injective semantic abstraction.
 
 \subsection{Why This Is a Compression Problem}
 
@@ -27,6 +39,8 @@ The closest classical objects are zero-error coding with confusability constrain
 
 The confusability graph in our setting is highly special: classes sharing one representation value form a clique, so the graph is a disjoint union of representation-fiber cliques. This structural collapse explains why the paper obtains exact closed forms that the general graph-entropy problem does not. The modern interpretation is neurosymbolic necessity: if $\pi$ is a learned embedding, then collision fibers measure the irreducible identity ambiguity left by semantic compression. Injective representations need no auxiliary metadata; non-injective representations impose an exact-recovery cost that no downstream reasoning layer can remove on its own \cite{koh2020concept, garcez2020neurosymbolic}.
 
+This work directly addresses the foundational question posed by the semantics-aware communication framework in this special issue: what does compression look like when meaning matters? The answer provided here is that the fiber geometry of the meaning map $\pi$ is the exact governing object in the finite fixed-representation regime \cite{gunduz2023beyond}. All of our coding laws, query results, and distortion bounds follow from this single combinatorial invariant, making them precise building blocks for any semantics-aware analysis that operates under the exact identity-recovery assumptions used in this paper.
+
 \subsection{Contributions}
 
 Main contribution. The collision fiber geometry induced by a fixed representation $\pi$ is the single structural object that governs exact identity-recovery costs. From this object flow several direct facets:
@@ -42,7 +56,7 @@ Main contribution. The collision fiber geometry induced by a fixed representatio
 All principal theorems in this paper have been formalized and verified in Lean 4. The mechanization functions as an integrity gate: informal arguments were admitted into the paper only after the corresponding formal proofs compiled without \texttt{sorry}.
 \input{machine_checked_claim}
 
-\subsection{Worked Example}
+\paragraph{Worked example.}
 
 We use one small example throughout the paper. Five classes have profiles
 \[
