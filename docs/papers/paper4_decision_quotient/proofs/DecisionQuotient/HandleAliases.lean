@@ -61,6 +61,7 @@ import DecisionQuotient.ThermodynamicLift
 import DecisionQuotient.InflationEntropyBridge
 import DecisionQuotient.InflationEntropyMinimality
 import DecisionQuotient.Statistics.FisherInformation
+import DecisionQuotient.DecisionNoise
 import DecisionQuotient.StochasticSequential.ClaimClosure
 import DecisionQuotient.StochasticSequential.Basic
 import DecisionQuotient.StochasticSequential.Quotient
@@ -1127,6 +1128,13 @@ abbrev FS2 := @Statistics.fisherMatrix_rank_eq_srank
 abbrev FS3 := @Statistics.fisherMatrix_trace_eq_srank
 abbrev FS4 := @Statistics.fisherScore_relevant
 abbrev FS5 := @Statistics.fisherScore_irrelevant
+
+-- DN: Decision Noise (DecisionNoise.lean)
+abbrev DN1 := @DecisionProblem.stateDecisionNoise_iff_same_quotient
+abbrev DN2 := @DecisionProblem.decisionNoise_iff_not_relevant
+abbrev DN3 := @DecisionProblem.decisionNoise_iff_quotient_invariant
+abbrev DN4 := @DecisionProblem.decisionNoise_implies_condIndep
+abbrev DN5 := @DecisionProblem.decisionNoise_iff_condIndep
 
 /-! ## First-Principles Introduction Additions
 
