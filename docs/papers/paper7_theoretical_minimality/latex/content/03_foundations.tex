@@ -21,7 +21,24 @@ theorem info_iff_truth (φ : Prop) :
 
 \subsubsection{Ontology}
 
-\textbf{Axiom 1.1 (Universe).} There exists a unique mathematical Universe $\mathcal{U}$ serving as the single source of truth (SSOT). Formalized as:
+\textbf{Definition 1.0 (The Universe as Growing Succinct Circuit).} 
+The Universe $\mathcal{U}$ is a finite computational system represented as a succinct circuit 
+that grows in complexity as the system expands. Formally:
+\[
+\mathcal{U} = \text{SuccinctCircuit}(n) \quad \text{where } n \text{ scales with system size}
+\]
+The circuit's capacity $C(n)$ grows with $n$, and all computations within $\mathcal{U}$ 
+are bounded by this capacity. This is not a metaphor---it is the operational definition 
+underlying all theorems in this pentalogy. Paper 4's Counting Gap ($\varepsilon \cdot N \leq C \Rightarrow N \leq C/\varepsilon$) 
+is the exact law governing this circuit's growth.
+
+\textbf{Implication.} Since $\mathcal{U}$ is a finite computational system, all invariants proved 
+in Papers 1--6 are not asymptotic approximations but exact bounds on this circuit. 
+The collision fiber laws, SSOT conditions, and leverage criteria are invariants of this 
+specific computational universe, not statements about hypothetical infinite structures.
+
+\textbf{Axiom 1.1 (Universe).} There exists a unique computational Universe $\mathcal{U}$ 
+serving as the single source of truth (SSOT). Formalized as:
 $$\texttt{axiom Universe : Type}$$
 
 \textbf{Definition 1.2 (Truth).} Truth is what holds in Universe. For any proposition $\varphi$:
@@ -40,6 +57,8 @@ By reflexivity. Since both are defined identically as $\varphi$, the bicondition
 \end{proof}
 
 \textbf{Consequence.} In OUF, reliable information about Universe is exactly the set of truths. There is no gap between what is true and what constitutes information.
+
+\textbf{Concrete Instantiation.} Paper 1 demonstrates that this framework is not abstract. The collision fiber geometry (A\_π) is the exact invariant of $\mathcal{U}$ for identity recovery. The theorem ``shape cannot distinguish'' (\texttt{shape\_cannot\_distinguish}) is not a definitional choice—it is a derived law of this specific computational universe. Papers 2 and 3 provide further instantiations: SSOT conditions and leverage criteria are additional invariants of $\mathcal{U}$. The uniqueness theorems in this paper explain why each pentalogy paper discovers exactly one minimal theory: because $\mathcal{U}$ admits exactly one.
 
 \subsubsection{Gödel's Incompleteness and the Truth Hierarchy}
 
