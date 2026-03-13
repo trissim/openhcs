@@ -85,9 +85,6 @@ The optimal expected zero-error auxiliary rate lies between
 \end{corollary}
 \leanmeta{\LH{ZEC1}}
 
-\begin{proof}
-The lower bound is Theorem~\ref{thm:adaptive-expected-rate-lower-bound}, and the upper bound is Theorem~\ref{thm:fiberwise-prefix-coding-upper-bound}. The two statements together give the claimed sandwich.
-\end{proof}
 
 \begin{corollary}[Active binary clarification]
 If, after observing $U$, the decoder is allowed to ask adaptive binary clarification questions whose leaves identify the class exactly, then the minimum expected number of clarification questions is bounded between
@@ -99,18 +96,11 @@ If, after observing $U$, the decoder is allowed to ask adaptive binary clarifica
 \end{corollary}
 \leanmeta{\LHrng{GPH}{34}{35}}
 
-\begin{proof}
-Each binary clarification protocol induces a binary code over the conditional source on each fiber, and conversely any fiberwise binary prefix code can be implemented as an adaptive yes/no decision tree. The lower and upper bounds therefore follow from the preceding conditional-entropy comparison and fiberwise prefix-coding theorem.
-\end{proof}
 
 \begin{corollary}[Representation-respecting noisy transcripts cannot beat the fiber law]
 Let $T$ be any repeated or noisy observation transcript whose realized value factors through the fixed representation, that is, $T = h(U)$ for some map $h$. Then recovering $C$ from $T$ cannot require less worst-case or pointwise adaptive side information than recovering $C$ from $U$ itself.
 \end{corollary}
 \leanmeta{\LH{GPH28}, \LH{GPH37}}
-
-\begin{proof}
-If the entire transcript factors through $U$, then it is a coarsening of the original representation. Corollary~\ref{cor:concept-bottleneck-mono} applies directly: coarsening cannot reduce the largest collision fiber and cannot reduce the pointwise adaptive fiber budget. Thus repeated or noisy observations that never break the original fibers cannot remove the residual zero-error coding burden.
-\end{proof}
 
 \begin{remark}[Bit currency at fiber resolution]
 The fixed-length law pays for the worst collision fiber; the adaptive law pays for each fiber separately and averages under the source-induced law of $U$. These are two resolutions of the same object: the cost of naming the classes that remain collapsed inside each representation fiber.

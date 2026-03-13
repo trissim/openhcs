@@ -224,14 +224,14 @@ def run_regime(
 def render_tex_table(no_collapse: dict, partial: dict, total: dict) -> str:
     rows = [no_collapse, partial, total]
     row_labels = {
-        "no_collapse": "No collapse",
-        "partial_collapse": "Partial collapse",
-        "total_collapse": "Total collapse",
+        "no_collapse": "No",
+        "partial_collapse": "Partial",
+        "total_collapse": "Yes",
     }
     corpus_labels = {
-        "no_collapse": "reviewer demo ($20$ items)",
-        "partial_collapse": "semantic grid ($120$ items)",
-        "total_collapse": "semantic grid ($120$ items)",
+        "no_collapse": "reviewer demo",
+        "partial_collapse": "semantic grid",
+        "total_collapse": "semantic grid",
     }
 
     def threshold_bits(regime: dict) -> int:
@@ -252,7 +252,7 @@ def render_tex_table(no_collapse: dict, partial: dict, total: dict) -> str:
             a_pi(partial),
             a_pi(partial),
             threshold_bits(partial),
-            a_pi(total),
+            int(total["audit"]["item_count"]),
             threshold_bits(total),
         ),
         "",
@@ -261,9 +261,9 @@ def render_tex_table(no_collapse: dict, partial: dict, total: dict) -> str:
         r"\begin{table}[t]",
         r"\centering",
         r"\small",
-        r"\begin{tabular}{lcccccc}",
+        r"\begin{tabular}{l@{\,}c@{\,}c@{\,}c@{\,}c@{\,}c@{\,}c}",
         r"\hline",
-        r"Regime & Corpus & Quantization & Fibers & $A_\pi$ & Threshold bits & Collision rate \\",
+        r"Collapse & Corpus & Quant. & Fibers & $A_\pi$ & Thresh. & Coll. \\",
         r"\hline",
     ]
     for regime in rows:

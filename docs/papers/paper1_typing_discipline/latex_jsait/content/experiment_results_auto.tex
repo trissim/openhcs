@@ -6,13 +6,13 @@ These embedding experiments mirror the mechanized finite theory closely enough t
 \begin{table}[t]
 \centering
 \small
-\begin{tabular}{lcccccc}
+\begin{tabular}{l@{\,}c@{\,}c@{\,}c@{\,}c@{\,}c@{\,}c}
 \hline
-Regime & Corpus & Quantization & Fibers & $A_\pi$ & Threshold bits & Collision rate \\
+Collapse & Corpus & Quant. & Fibers & $A_\pi$ & Thresh. & Coll. \\
 \hline
-No collapse & reviewer demo ($20$ items) & round\_2dp & 20 & 1 & 0 & 0.00\% \\
-Partial collapse & semantic grid ($120$ items) & int8\_scale\_3p0 & 13 & 77 & 7 & 98.33\% \\
-Total collapse & semantic grid ($120$ items) & int8\_scale\_2p0 & 1 & 120 & 7 & 100.00\% \\
+No & reviewer demo & round\_2dp & 20 & 1 & 0 & 0.00\% \\
+Partial & semantic grid & int8\_scale\_3p0 & 13 & 77 & 7 & 98.33\% \\
+Yes & semantic grid & int8\_scale\_2p0 & 1 & 120 & 7 & 100.00\% \\
 \hline
 \end{tabular}
 \caption{Illustrative embedding-audit regimes for a MiniLM sentence-transformer after fixing a deployed quantization rule. The partial-collapse and total-collapse summaries are exported as Lean certificates and checked against the finite formulas used in the paper.}
