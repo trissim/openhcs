@@ -6,8 +6,6 @@ This paper isolates the structural object that makes that statement exact: the c
 
 The systems consequence is immediate. Symbolic handles, identifiers, keys, pointers, registry entries, and retrieval indices are not merely convenient engineering artifacts. They are the standard mechanisms by which real systems pay the identity debt left by non-injective semantic abstraction.
 
-Roadmap. Section~\ref{sec:model} defines the information barrier and the collision fibers. Section~\ref{sec:bits} gives the exact coding laws for fixed-length and adaptive side information. Section~\ref{sec:queries} shows that the query currency canonically reduces to an orthogonal minimal core and that all canonical minimal distinguishing families are equicardinal. Section~\ref{sec:distortion} derives the deterministic distortion floor and its entropy-sensitive companions. Section~\ref{sec:systems} explains the neurosymbolic and systems consequences. Section~\ref{sec:robustness} studies open-world fragility. \ifdefined\JSAITREVIEW Section~\ref{sec:conclusion} closes the paper. \else Section~\ref{sec:extensions} records extensions and open directions, and Section~\ref{sec:conclusion} concludes. \fi
-
 \subsection{Why This Is a Compression Problem}
 
 Let $C$ be a finite class label and let $U = \pi(C)$ be the representation available to the decoder. Exact identity recovery asks how much additional description is needed to recover $C$ from $U$. Once one writes the problem this way, the central combinatorial quantity is immediate:
@@ -42,6 +40,7 @@ Main contribution. The collision fiber geometry induced by a fixed representatio
 
 \paragraph{Machine-checked proofs.}
 All principal theorems in this paper have been formalized and verified in Lean 4. The mechanization functions as an integrity gate: informal arguments were admitted into the paper only after the corresponding formal proofs compiled without \texttt{sorry}.
+\input{machine_checked_claim}
 
 \subsection{Worked Example}
 

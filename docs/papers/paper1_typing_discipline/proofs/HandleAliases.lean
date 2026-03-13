@@ -19,6 +19,7 @@ import Paper1IT.ComputabilityQuantization
 import Paper1IT.GraphEntropyAsymptotic
 import axis_framework
 import lwd_converse
+import discipline_migration
 
 open AbstractClassSystem
 
@@ -43,6 +44,8 @@ abbrev ADV1 := adversary_forces_n_minus_1_queries -- Adversary forces n-1 querie
 abbrev MDL1 := model_completeness                -- Model completeness
 abbrev FXI1 := fixed_axis_incompleteness         -- Fixed observable basis is incomplete
 abbrev ZDT1 := @Ssot.Paper1IT.requiredTagBits_le_iff_le_pow -- Zero-error threshold by bit budget
+abbrev PD1 := nominal_pareto_dominates_shape -- Nominal Pareto dominates structural
+abbrev NOH1 := admissibility_no_hidden_state -- No hidden registries in valid traces
 
 /-- Canonical graph-entropy handle IDs (shared downstream). -/
 abbrev GPH2 := @Ssot.GraphEntropy.clique_card_le_colors

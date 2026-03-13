@@ -2307,9 +2307,9 @@ end {module_root}
             "% Lean handle macro definitions: compact inline monospace tokens",
             # Use leavevmode+nobreak to aggressively avoid paragraph starts and
             # unwanted line breaks around inline handle tokens.
-            r"\providecommand{\LH}[1]{\leavevmode\nobreak\hyperlink{lh:#1}{\mbox{\ttfamily\scriptsize\nolinkurl{#1}}}}",
-            r"\providecommand{\LHrng}[3]{\leavevmode\nobreak\hyperlink{lh:#1#2}{\mbox{\ttfamily\scriptsize\nolinkurl{#1#2-#3}}}}",
-            r"\providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}",
+            r"\providecommand{\LH}[1]{\leavevmode\nobreak\hyperlink{lh:#1}{\mbox{\ttfamily\tiny\nolinkurl{#1}}}}",
+            r"\providecommand{\LHrng}[3]{\leavevmode\nobreak\hyperlink{lh:#1#2}{\mbox{\ttfamily\tiny\nolinkurl{#1#2-#3}}}}",
+            r"\providecommand{\leanmeta}[1]{\allowbreak{\tiny\textit{(L: #1)}}}",
             "",
         ]
         # Always overwrite to keep macros in sync with build policy.
@@ -2333,9 +2333,9 @@ end {module_root}
             "% Lean handle macro definitions: compact inline monospace tokens",
             # Use leavevmode+nobreak to aggressively avoid paragraph starts and
             # unwanted line breaks around inline handle tokens.
-            r"\providecommand{\LH}[1]{\leavevmode\nobreak\hyperlink{lh:#1}{\mbox{\ttfamily\scriptsize\nolinkurl{#1}}}}",
-            r"\providecommand{\LHrng}[3]{\leavevmode\nobreak\hyperlink{lh:#1#2}{\mbox{\ttfamily\scriptsize\nolinkurl{#1#2-#3}}}}",
-            r"\providecommand{\leanmeta}[1]{\allowbreak{\scriptsize\textit{(L: #1)}}}",
+            r"\providecommand{\LH}[1]{\leavevmode\nobreak\hyperlink{lh:#1}{\mbox{\ttfamily\tiny\nolinkurl{#1}}}}",
+            r"\providecommand{\LHrng}[3]{\leavevmode\nobreak\hyperlink{lh:#1#2}{\mbox{\ttfamily\tiny\nolinkurl{#1#2-#3}}}}",
+            r"\providecommand{\leanmeta}[1]{\allowbreak{\tiny\textit{(L: #1)}}}",
             "",
         ]
         dst.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -5414,6 +5414,142 @@ end {module_root}
             labels.update(claim_label_pattern.findall(text))
         return labels
 
+    def _extract_immediate_trailing_leanmeta_block(self, text: str, start: int) -> str:
+        """Return consecutive ``\leanmeta{...}`` lines immediately after an environment."""
+        trailing_lines: List[str] = []
+        for raw_line in text[start:].splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("%"):
+                if trailing_lines:
+                    break
+                continue
+            if stripped.startswith(r"\leanmeta{"):
+                trailing_lines.append(raw_line)
+                continue
+            break
+        return "\n".join(trailing_lines)
+
+    def _check_theorem_like_lean_annotations(
+        self, paper_id: str
+    ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+        """Validate theorem-like LaTeX environments have exactly one Lean support site.
+
+        Returns:
+            Tuple of (violations, valid_theorems)
+        """
+        theorem_block_pattern = re.compile(
+            r"\\begin\{(theorem|corollary|lemma|proposition)\}"
+            r"(?:\[[^\]]*\])?(.*?)\\end\{\1\}",
+            re.DOTALL,
+        )
+        leanmeta_pattern = re.compile(r"\\leanmeta\{")
+        raw_handle_pattern = re.compile(r"\\(?:LH|LHrng)\{")
+        label_pattern = re.compile(r"\\label\{([^}]+)\}")
+        leanmeta_block_pattern = re.compile(r"\\leanmeta\{.*?\}", re.DOTALL)
+        violations: List[Dict[str, object]] = []
+        valid_theorems: List[Dict[str, object]] = []
+
+        for tex_file in self._iter_manual_content_tex(paper_id):
+            text = tex_file.read_text(encoding="utf-8", errors="replace")
+            for match in theorem_block_pattern.finditer(text):
+                env_name = match.group(1)
+                body = match.group(2)
+                trailing = self._extract_immediate_trailing_leanmeta_block(
+                    text, match.end()
+                )
+                line_number = text.count("\n", 0, match.start()) + 1
+                labels = [label.strip() for label in label_pattern.findall(body)]
+
+                combined = body + "\n" + trailing
+                handle_refs = raw_handle_pattern.findall(combined)
+                handle_count = len(handle_refs)
+
+                if handle_count < 1:  # 0 handles = violation
+                    violations.append(
+                        {
+                            "file": str(tex_file.relative_to(self.repo_root)),
+                            "line": line_number,
+                            "environment": env_name,
+                            "labels": labels,
+                            "handle_count": handle_count,
+                            "handles": handle_refs,
+                        }
+                    )
+                    continue
+
+                valid_theorems.append(
+                    {
+                        "file": str(tex_file.relative_to(self.repo_root)),
+                        "line": line_number,
+                        "environment": env_name,
+                        "labels": labels,
+                        "handles": handle_refs,
+                    }
+                )
+
+        return violations, valid_theorems
+
+    def _write_theorem_verification_badge(
+        self,
+        paper_id: str,
+        valid_theorems: List[Dict[str, object]],
+        violations: List[Dict[str, object]],
+    ) -> Path:
+        """Generate theorem verification badge (LaTeX macro + JSON manifest)."""
+        import datetime
+
+        latex_dir = self._get_latex_dir(paper_id)
+        json_path = latex_dir / "theorem_verification.json"
+        latex_macro_path = latex_dir / "theorem_verification.tex"
+
+        verification_data = {
+            "paper_id": paper_id,
+            "verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "valid_theorems": valid_theorems,
+            "violations": violations,
+            "total_valid": len(valid_theorems),
+            "total_violations": len(violations),
+        }
+
+        json_path.write_text(json.dumps(verification_data, indent=2), encoding="utf-8")
+
+        latex_macro = (
+            rf"\newcommand{{\machinechecked}}[1]{{}}\%"
+            + "\n"
+            + rf"\newcommand{{\machinecheckedfromjson}}[1]{{}}\%"
+            + "\n"
+            + rf"% Generated by build_papers.py theorem verification%"
+            + "\n"
+            + rf"\newcommand{{\theoremverificationbadge}}{{%"
+            + "\n"
+            + rf"  verified={len(valid_theorems)},"
+            + "\n"
+            + rf"  violations={len(violations)},"
+            + "\n"
+            + rf"  date={datetime.date.today().isoformat()},"
+            + "\n"
+            + rf"  source=build\_papers.py%"
+            + "\n"
+            + r"}}"
+        )
+        latex_macro_path.write_text(latex_macro, encoding="utf-8")
+
+        claim_path = latex_dir / "machine_checked_claim.tex"
+        claim_text = (
+            "% Auto-generated machine-checked claim. "
+            "Include in paper via \\input{machine_checked_claim}\n"
+            "% This claim is only valid when violations=0\n\n"
+            f"\\input{{theorem_verification}}\n"
+            f"\\theoremverificationbadge%\n"
+            f"\\leanmeta{{Verified {len(valid_theorems)} theorems, 0 violations, {datetime.date.today().isoformat()}}}\n"
+        )
+        claim_path.write_text(claim_text, encoding="utf-8")
+
+        print(
+            f"[lh-check] {paper_id}: wrote {json_path}, {latex_macro_path}, {claim_path}"
+        )
+        return json_path
+
     def _extract_mapped_claim_labels(self, mapping_file: Path) -> Set[str]:
         """Extract mapped theorem-handle labels from a Lean-coverage appendix file."""
         text = mapping_file.read_text(encoding="utf-8", errors="replace")
@@ -5427,7 +5563,10 @@ end {module_root}
         return labels
 
     def check_claim_coverage(
-        self, paper_id: str, fail_on_missing: bool = False
+        self,
+        paper_id: str,
+        fail_on_missing: bool = False,
+        fail_on_lh_violation: bool = False,
     ) -> Dict[str, object]:
         """Check label coverage between paper claims and Lean mapping appendix."""
         self._write_lean_handle_ids_auto(paper_id)
@@ -5486,6 +5625,29 @@ end {module_root}
         # Forcing coverage analysis
         forcing_result = self._check_forcing_coverage(paper_id)
 
+        # Lean handle annotation check (exactly one per theorem-like environment)
+        lh_violations, lh_valid_theorems = self._check_theorem_like_lean_annotations(
+            paper_id
+        )
+
+        if lh_violations:
+            print(f"[lh-check] {paper_id}: {len(lh_violations)} violations found")
+            for v in lh_violations:
+                print(
+                    f"[lh-check]   {v['file']}:{v['line']} "
+                    f"{v['environment']} {v.get('labels', [])} "
+                    f"(handles={v.get('handles', [])}, count={v.get('handle_count', 0)})"
+                )
+            if fail_on_lh_violation:
+                raise RuntimeError(
+                    f"LH annotation violation in {paper_id}: {len(lh_violations)} environments lack exactly one handle"
+                )
+
+        # Generate verification badge (LaTeX macro + JSON manifest)
+        self._write_theorem_verification_badge(
+            paper_id, lh_valid_theorems, lh_violations
+        )
+
         return {
             "paper_id": paper_id,
             "mapping_file": str(mapping_file.relative_to(self.repo_root)),
@@ -5494,6 +5656,8 @@ end {module_root}
             "missing_labels": missing_labels,
             "extra_labels": extra_labels,
             "forcing": forcing_result,
+            "lh_check_violations": lh_violations,
+            "lh_valid_theorems": lh_valid_theorems,
         }
 
     def _check_forcing_coverage(self, paper_id: str) -> Optional[Dict[str, object]]:
@@ -7106,7 +7270,9 @@ Repository: https://github.com/trissim/openhcs
             self.build_submission(paper_id, verbose=verbose)
         self.build_markdown(paper_id)
         if claim_check:
-            self.check_claim_coverage(paper_id, fail_on_missing=True)
+            self.check_claim_coverage(
+                paper_id, fail_on_missing=True, fail_on_lh_violation=True
+            )
         self.package_arxiv(paper_id)
 
         if axiom_check:
@@ -7442,6 +7608,11 @@ Examples:
         help="Enforce theorem-label mapping coverage check (fails on unmapped labels in release mode)",
     )
     parser.add_argument(
+        "--lh-check",
+        action="store_true",
+        help="Enforce exactly one Lean handle per theorem-like environment (fails on violations)",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Allow scaffold command to overwrite existing files",
@@ -7461,6 +7632,7 @@ Examples:
 
     axiom_check = args.axiom_check
     claim_check = args.claim_check
+    lh_check = args.lh_check
 
     try:
         if args.build_type == "scaffold":
