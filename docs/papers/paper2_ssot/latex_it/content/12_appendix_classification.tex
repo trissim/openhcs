@@ -7,26 +7,85 @@ This appendix provides a consolidated classification of representative systems a
 \scriptsize
 \setlength{\tabcolsep}{2pt}
 \renewcommand{\arraystretch}{1.18}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.12\linewidth}>{\RaggedRight\arraybackslash}p{0.16\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}X@{}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.12\linewidth}>{\RaggedRight\arraybackslash}p{0.11\linewidth}>{\centering\arraybackslash}p{0.06\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.055\linewidth}>{\centering\arraybackslash}p{0.08\linewidth}X@{}}
 \toprule
 \textbf{Host family} & \textbf{Host / Pattern} & \textbf{Class} & \textbf{Prop.} & \textbf{Prov.} & \textbf{Rate 1} & \textbf{Mechanism} \\
 \midrule
-Programming languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native. \\
+Prog. languages & Python~\cite{pep487,pythondatamodel2025} & C & yes & yes & yes & For the structural facts considered here, class-definition hooks and runtime hierarchy introspection are host-native. \\
 Databases & Engine-maintained materialized view~\cite{postgresMaterializedViews2025,postgresPgMatviews2025} & C & yes & yes & yes & The engine maintains the derived relation and exposes catalog metadata for it. \\
-Programming languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance. \\
-Programming languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime. \\
-Programming languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime. \\
-Programming languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries. \\
+Prog. languages & Rust~\cite{rustref2024} & B & partial & no & no & Compile-time macro generation exists, but the compiled runtime artifact does not retain derivation provenance. \\
+Prog. languages & TypeScript / JavaScript~\cite{typescriptDecorators2025,javascriptDecorators2025} & B & partial & no & no & Decorators can attach metadata, but type erasure and missing subclass provenance block exact verification in the host runtime. \\
+Prog. languages & Java~\cite{gosling2021java} & A/B & no & no & no & Under the runtime-only host interpretation used here, annotations and related derivation tooling are external to the JVM runtime. \\
+Prog. languages & Go~\cite{gospec2024} & A/B & no & no & no & Reflection exists, but there are no definition-time hooks or host-native implementer registries. \\
 Databases & External ETL copy / duplicate summary table & A/B & no & no & no & Synchronization is externalized, and provenance is no longer intrinsic to the host database. \\
-Dependencies & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated. \\
-Dependencies & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands. \\
-Dependencies & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself. \\
-Dependencies & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits. \\
+Deps. & npm~\cite{npmLock2026,npmExplain2026,npmLs2026} & A & no & yes & no & Lockfile and query commands expose provenance, but manifest edits require explicit npm operations before the derived state is updated. \\
+Deps. & Cargo~\cite{cargoLockGuide2026,cargoTree2026,cargoMetadata2026} & A & no & yes & no & Resolved-dependency provenance is exposed, but \texttt{Cargo.lock} remains a distinct derived artifact synchronized through Cargo commands. \\
+Deps. & Poetry~\cite{poetryCli2026} & A & no & yes & no & The resolved graph is queryable, but lock regeneration is an explicit step rather than part of the source edit itself. \\
+Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no & Provenance is queryable, but the lockfile remains separately maintained rather than automatically updated with source edits. \\
 \bottomrule
 \end{tabularx}
 \par\smallskip
 \textbf{Table A.1.} Classification of representative systems. The same theorem-level coordinates apply uniformly across programming-language runtimes, databases, and dependency managers, so the systems analysis is a single validation table rather than a domain-by-domain survey.
 \label{tab:host-checks-a-appendix}
 \par\medskip
-\par
 \endgroup
+
+\section*{Mechanized Verification (Lean 4)}\label{sec:appendix-lean}
+
+The main theorem chains are machine-checked in Lean 4, and the cited proof modules compile with zero \texttt{sorry} placeholders. The paper keeps some proofs abbreviated for readability, but full formal proofs of the cited results appear in the supplementary Lean artifact.
+
+For the asymptotic arguments, the artifact formalizes the relevant block power-rate sequences directly and proves the required supermultiplicative or subadditive inequalities on those sequences before invoking Fekete-style convergence lemmas. The asymptotic capacity and asymptotic upper values are therefore obtained inside the formal development from explicit sequence objects rather than only quoted as external limits. The cited asymptotic theorems use classical reasoning in the same way as the corresponding finite graph and entropy arguments.
+
+The artifact covers the theorem packages used in the paper:
+\begin{itemize}
+\item the threshold and unified-converse package: coherence, independent rate, the side-information lower bound, pair injectivity, clique/fiber/global budget bounds, conditional-entropy and decoder-output reformulations, deterministic data processing, and the budgeted finite-error extension;
+\item the graph and asymptotic-capacity package: an explicit confusability graph object, exact recovery as colorability, exact success-set cardinality and weighted success mass via largest colorable induced subgraphs, strong-power identification for block confusability, supermultiplicative block growth, Fekete-style asymptotic Shannon capacity, complement-chromatic upper bounds, and a fixed Lov\'asz-$\vartheta$ upper theory with standard orthonormal, primal-PSD, and dual forms;
+\item the equality package: the clique-fiber equality theorem, export back to the original view-family model through transitivity of confusability, the meet-witness sufficient condition, and the stronger fiber-coherence collapse criterion;
+\item the affine fact-matroid package: semantic determination as span membership of coordinate functionals, the representable matroid on fact indices, and the identification of minimal determining fact sets with the matroid bases;
+\item the downstream consequence package: derivation, the timing constraint, causal propagation, provenance observability, the realizability iff theorem, and the $O(1)$ / $\Omega(n)$ rate-complexity gap.
+\end{itemize}
+
+The supplementary artifact contains the theorem-to-declaration coverage matrix, proof inventory, and build instructions.
+
+\section*{Claim Mapping to Lean Handles}\label{sec:appendix-claims}
+
+\scriptsize
+\sloppy
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.22\linewidth}>{\raggedright\arraybackslash}p{0.10\linewidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Paper handle} & \textbf{Status} & \textbf{Lean support} \\
+\midrule
+\nolinkurl{cor:integrity-threshold} & Full & \LH{COH2}, \LH{COH1} \\
+\nolinkurl{cor:matroid-capacity-bounds} & Full & \LH{FM3}, \LH{FM6}, \LH{FM7}, \LH{FM8}, \LH{FM9}, \LH{FM10}, \LH{FM11} \\
+\nolinkurl{lem:confusability-clique} & Full & \LH{OM2} \\
+\nolinkurl{lem:info-dof} & Full & \LH{CC3} \\
+\nolinkurl{thm:affine-fact-matroid} & Full & \LH{FM1}, \LH{FM2}, \LH{FM4}, \LH{FM5}, \LH{FM12} \\
+\nolinkurl{thm:asymptotic-capacity} & Full & \LH{MF7}, \LH{MF13}, \LH{MF14}, \LH{MF15}, \LH{MF16}, \LH{MF17}, \LH{MF22}, \LH{MF23} \\
+\nolinkurl{thm:causal-necessary} & Full & \LH{REQ2} \\
+\nolinkurl{thm:coherence-capacity} & Full & \LH{CC4}, \LH{CAP3}, \LH{CAP2} \\
+\nolinkurl{lem:confusability-converse} & Full & \LH{OM2} \\
+\nolinkurl{lem:derivation-excludes} & Full & \LH{CC1} \\
+\nolinkurl{lem:dof-gt-one-incoherence} & Full & \LH{COH2} \\
+\nolinkurl{lem:dof-one-coherence} & Full & \LH{COH1} \\
+\nolinkurl{lem:equivalence-viewpoint} & Full & \LH{CC2}, \LH{OM1}, \LH{OM2}, \LH{OM5}, \LH{OM6}, \LH{OM7}, \LH{OM8}, \LH{OM10}, \LH{OM11} \\
+\nolinkurl{lem:fano-converse} & Full & \LH{CC2} \\
+\nolinkurl{lem:finite-error-budgeted} & Full & \LH{OM3}, \LH{OM4} \\
+\nolinkurl{lem:independence} & Full & \LH{IND1}, \LH{IND2} \\
+\nolinkurl{lem:lower-bound} & Full & \LH{BND2} \\
+\nolinkurl{lem:multifact-colorability} & Full & \LH{MF8}, \LH{MF9}, \LH{MF12} \\
+\nolinkurl{lem:multifact-max-success} & Full & \LH{MF2}, \LH{MF10} \\
+\nolinkurl{lem:multifact-nonclique} & Full & \LH{MF1}, \LH{MF3}, \LH{MF4}, \LH{MF5}, \LH{MF6} \\
+\nolinkurl{lem:multifact-product} & Full & \LH{MF18}, \LH{MF19}, \LH{MF20}, \LH{MF21} \\
+\nolinkurl{lem:multifact-success-set} & Full & \LH{MF11} \\
+\nolinkurl{lem:pair-injective} & Full & \LH{OM8}, \LH{OM9} \\
+\nolinkurl{lem:provenance-necessary} & Full & \LH{REQ3} \\
+\nolinkurl{lem:side-info} & Full & \LH{CC5} \\
+\nolinkurl{lem:ssot-iff} & Full & \LH{L1} \\
+\nolinkurl{lem:timing-forces} & Full & \LH{REQ1}, \LH{TRI1} \\
+\nolinkurl{lem:unbounded-gap} & Full & \LH{BND3} \\
+\nolinkurl{lem:upper-bound} & Full & \LH{BND1} \\
+\bottomrule
+\end{tabularx}
+
+\noindent\textit{Auto summary: mapped 29/29 (full=29, derived=0, unmapped=0).}
