@@ -39,10 +39,11 @@ The following tractable subcases are all mechanized in the artifact, but at two 
 \item \textbf{Tree-structured dependencies:} Coordinates are ordered such that $s_i$ depends only on $(s_1, \ldots, s_{i-1})$. The artifact certifies an explicit sufficiency checker for this class.
 \item \textbf{Bounded treewidth:} The interaction graph has treewidth $\leq w$ and utility factors over edges. The artifact certifies reduction to bounded-treewidth CSP together with the bound $O(n \cdot k^{w+1})$ inherited from the standard CSP algorithm.
 \item \textbf{Coordinate symmetry:} Utility is invariant under coordinate permutations. The artifact certifies reduction to orbit-type representatives together with the resulting orbit-count bound $O\bigl(\binom{d+k-1}{k-1}^2\bigr)$.
+\item \textbf{Fixed-parameter tractability:} SUFFICIENCY-CHECK is FPT in $(|A|, |I|)$ with kernel $2^{|I|}$. When both parameters are bounded, the problem admits a polynomial-time algorithm.
 \end{enumerate}
 \end theorem}
 
-\leanmeta{\LH{DQ44}, \LH{DQ51}, \LH{DQ57}, \LH{DQ63}, \LH{DQ77}, \LH{DQ81}, \LH{DQ85}, \LH{DQ86}, \LH{DQ87}, \LH{DQ88}, \LH{DQ89}.}
+\leanmeta{\LH{DQ44}, \LH{DQ51}, \LH{DQ57}, \LH{DQ63}, \LH{DQ77}, \LH{DQ81}, \LH{DQ85}, \LH{DQ86}, \LH{DQ87}, \LH{DQ88}, \LH{DQ89}, \LH{DQ90}.}
 
 The following subsections provide the formal definitions and reduction theorems for each tractable subcase.
 
