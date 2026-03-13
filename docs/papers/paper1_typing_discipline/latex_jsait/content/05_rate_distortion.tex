@@ -3,7 +3,7 @@
 \paragraph{Currency comparison.}
 The counting and entropy converses above show that auxiliary bits, queries, and accepted distortion are alternative currencies for the same residual ambiguity. This section makes one exchange explicit: how many bits must be paid to drive distortion to zero on a collision fiber, and what floor remains when those bits are withheld.
 
-The general law is fiberwise. For arbitrary finite sources, the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
+The general law is fiberwise. For arbitrary finite sources \cite{CoverThomas2006,berger1971rate}, the optimal recoverable mass decomposes exactly across representation fibers. The clean closed form arises in the uniform single-block corner, where the collision geometry alone determines the full budget-distortion tradeoff.
 
 \subsection{Finite Fiberwise Decomposition}\label{sec:fiberwise-decomposition}
 
@@ -93,6 +93,7 @@ Under the hypotheses of Theorem~\ref{thm:semantic-identity-rate-distortion}, zer
 L \ge \log_2 a.
 \]
 \end{corollary}
+\leanmeta{\LH{ZDT1}}
 
 \begin{proof}
 By Theorem~\ref{thm:semantic-identity-rate-distortion}, zero distortion is achievable exactly when $D^\star(L)=0$, equivalently when $2^L \ge a$, which is the same as $L \ge \log_2 a$.
@@ -129,7 +130,7 @@ The exact formula above is stated for the uniform source on a single collision b
 
 \subsection{Finite Entropy Converses}\label{sec:entropy-converses}
 
-The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities, placing the semantic identity problem inside classical Shannon theory.
+The counting-based converses above are combinatorial: they bound distortion in terms of fiber sizes and tag budgets. A complementary family of converses connects distortion to information-theoretic quantities \cite{CoverThomas2006,csiszar2011information}, placing the semantic identity problem inside classical Shannon theory.
 
 The following theorems are mechanized in the RDC series, from \LH{RDC1} through \LH{RDC9}. They apply to any finite source, any observation map, and any tag/decoder pair.
 
@@ -172,21 +173,5 @@ The success probability is bounded by the maximum atom mass times the budget (un
 \end{proof}
 
 \begin{remark}[Counting versus entropy converses]
-The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap. Distortion is governed by how much entropy the observation/tag pair can carry. For high-entropy sources with large collision blocks, the entropy bound may be tighter than the counting bound; for low-entropy sources with concentrated mass, the counting bound dominates. Together, the two converse families provide complementary views of the same fiber geometry, one combinatorial and one information-theoretic.
-
-Theorem~\ref{thm:fano-converse} is a finite, deterministic, zero-error variant of the classical Fano inequality. The binary entropy term $h_b(D)$ captures uncertainty about decoder success; the $\log(O \cdot T)$ term is the rate of the observation/tag channel; the $\log(K-1)$ is the standard Fano confusion penalty.
+The counting converse $2^L \ge a$ is sharp in the zero-error regime but silent about source structure. The entropy converses fill this gap: for high-entropy sources the entropy bound may be tighter, while for low-entropy sources the counting bound dominates. Together they provide complementary views of the same fiber geometry.
 \end{remark}
-
-\subsection{Worked Example}
-
-Return to the running example with profiles
-\[
-A=000,\quad B=000,\quad C=100,\quad D=110,\quad E=111.
-\]
-The fixed-length theorem gives $A_\pi=2$, so one extra bit is necessary and sufficient for exact recovery. The adaptive theorem says more: the fiber over profile $000$ requires one bit, while the singleton fibers over $100$, $110$, and $111$ require zero bits. Thus the expected auxiliary rate is exactly the probability of landing in the collided fiber.
-
-This is the representation-level interpretation the paper emphasizes. The representation already resolves three of the four fibers completely; the only irreducible metadata cost is the one residual collision between $A$ and $B$.
-
-The fiberwise decomposition theorem gives the same result structurally: the global optimum is the sum of the fiberwise optima, with the collided fiber contributing its top-$T$ mass and the singleton fibers contributing their full mass. The uniform single-block formula is the special case where all source mass lies in one fiber.
-
-The next section turns this coding object into a representation-sufficiency theory: once the residual ambiguity of each fiber is explicit, one can ask exactly which downstream tasks, helper views, and modular factors eliminate it and which do not.
