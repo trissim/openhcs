@@ -35,7 +35,6 @@ Deps. & pnpm~\cite{pnpmInstall2026,pnpmWhy2026,pnpmList2026} & A & no & yes & no
 The main theorem chains are machine-checked in Lean 4, and the cited proof modules compile with zero \texttt{sorry} placeholders. The paper keeps some proofs abbreviated for readability, but full formal proofs of the cited results appear in the supplementary Lean artifact.
 
 For the asymptotic arguments, the artifact formalizes the relevant block power-rate sequences directly and proves the required supermultiplicative or subadditive inequalities on those sequences before invoking Fekete-style convergence lemmas. The asymptotic capacity and asymptotic upper values are therefore obtained inside the formal development from explicit sequence objects rather than only quoted as external limits. The cited asymptotic theorems use classical reasoning in the same way as the corresponding finite graph and entropy arguments.
-
 The artifact covers the theorem packages used in the paper:
 \begin{itemize}
 \item the threshold and unified-converse package: coherence, independent rate, the side-information lower bound, pair injectivity, clique/fiber/global budget bounds, conditional-entropy and decoder-output reformulations, deterministic data processing, and the budgeted finite-error extension;
