@@ -4279,10 +4279,19 @@ end {module_root}
         self._validate_true_paths(paper_id)
         self._update_paper_date(latex_file)
 
+        # Clean up old bbl/blg files to ensure fresh bibliography generation
+        # This fixes issues where stale empty bbl files cause BibTeX to not generate citations
+        aux_name = latex_file.stem
+        for ext in [".bbl", ".blg"]:
+            old_file = latex_dir / f"{aux_name}{ext}"
+            if old_file.exists():
+                old_file.unlink()
+                if verbose:
+                    print(f"[build]   Removed stale {old_file.name}")
+
         print(f"[build] Building {paper_id} LaTeX...")
 
         # Full build cycle for proper citation/reference resolution
-        aux_name = latex_file.stem
         build_steps = [
             (
                 ["pdflatex", "-interaction=nonstopmode", latex_file.name],
@@ -4371,10 +4380,19 @@ end {module_root}
         self._write_proof_hardness_index_auto(paper_id)
         self._update_paper_date(latex_file)
 
+        # Clean up old bbl/blg files to ensure fresh bibliography generation
+        # This fixes issues where stale empty bbl files cause BibTeX to not generate citations
+        job_name = latex_file.stem + "_submission"
+        for ext in [".bbl", ".blg"]:
+            old_file = latex_dir / f"{job_name}{ext}"
+            if old_file.exists():
+                old_file.unlink()
+                if verbose:
+                    print(f"[build]   Removed stale {old_file.name}")
+
         print(f"[build] Building {paper_id} submission PDF ({description})...")
 
         # Use jobname to output a separate PDF without overwriting the standard one
-        job_name = latex_file.stem + "_submission"
         hook_name = self._write_submission_build_hook(latex_dir)
         tex_input = (
             f"\\def{latex_flag}{{}}\\input{{{hook_name}}}\\input{{{latex_file.name}}}"
@@ -5853,6 +5871,20 @@ end {module_root}
             for src_file in content_dir.glob("*.tex"):
                 shutil.copy2(src_file, content_dest / src_file.name)
                 copied_count += 1
+
+        # Fix preamble.tex for arXiv: update lean-handle-macros path
+        # In the source tree it uses ../../shared/lean-handle-macros.tex
+        # but in the arXiv package the file is in the same directory
+        preamble_file = package_dir / "preamble.tex"
+        if preamble_file.exists():
+            content = preamble_file.read_text(encoding="utf-8")
+            updated_content = content.replace(
+                r"\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}",
+                r"\InputIfFileExists{lean-handle-macros.tex}{}{}"
+            )
+            if updated_content != content:
+                preamble_file.write_text(updated_content, encoding="utf-8")
+                print(f"[arxiv]   Fixed preamble.tex: lean-handle-macros path updated")
 
         print(f"[arxiv]   LaTeX sources: {copied_count} files")
 
