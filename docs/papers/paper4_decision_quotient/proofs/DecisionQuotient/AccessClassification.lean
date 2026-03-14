@@ -22,6 +22,7 @@
   - Lean handles: LH{AP1}, LH{AP2}
 -/
 
+import Mathlib.Tactic
 import DecisionQuotient.Basic
 import DecisionQuotient.Complexity
 import DecisionQuotient.DimensionalComplexity
@@ -32,6 +33,7 @@ import DecisionQuotient.StochasticSequential.Basic
 namespace DecisionQuotient
 
 open DecisionQuotient.Physics
+open DimensionalComplexity
 
 /- ============================================================================
   Access Pattern Hierarchy
@@ -64,6 +66,15 @@ end AccessPattern
 /- ============================================================================
   Component Theorems (Regime-Specific Membership)
   ============================================================================-/
+
+/-- Direct classification: each access pattern determines a complexity class.
+    This function maps the access-pattern enum to the paper's complexity
+    class identifiers. -/
+def accessPatternComplexity : AccessPattern → DimensionalComplexity.ComplexityClass
+  | .explicitState      => .P
+  | .succinctStatic     => .coNP
+  | .succinctStochastic => .PP
+  | .succinctSequential => .PSPACE
 
 /-- EP ⊆ 𝒫: Explicit-state sufficiency checking is in P.
 
@@ -143,5 +154,42 @@ theorem lh_AP1 :
       | .succinctStochastic => True
       | .succinctSequential => True :=
   access_pattern_classification
+
+/-! ============================================================================
+  Injectivity of the complexity mapping
+  ============================================================================ -/
+
+/-- The mapping from access patterns to complexity classes is injective.
+    Different access patterns evaluate to different ComplexityClass constructors,
+    so equality of their images forces equality of the patterns. -/
+theorem accessPatternComplexity_injective :
+    ∀ {pat1 pat2 : AccessPattern},
+      accessPatternComplexity pat1 = accessPatternComplexity pat2 →
+      pat1 = pat2 := by
+  intro pat1 pat2 h_eq
+  match pat1, pat2 with
+  | .explicitState,      .explicitState      => rfl
+  | .explicitState,      .succinctStatic     => exact absurd h_eq (by decide)
+  | .explicitState,      .succinctStochastic => exact absurd h_eq (by decide)
+  | .explicitState,      .succinctSequential => exact absurd h_eq (by decide)
+  | .succinctStatic,     .explicitState      => exact absurd h_eq (by decide)
+  | .succinctStatic,     .succinctStatic     => rfl
+  | .succinctStatic,     .succinctStochastic => exact absurd h_eq (by decide)
+  | .succinctStatic,     .succinctSequential => exact absurd h_eq (by decide)
+  | .succinctStochastic, .explicitState      => exact absurd h_eq (by decide)
+  | .succinctStochastic, .succinctStatic     => exact absurd h_eq (by decide)
+  | .succinctStochastic, .succinctStochastic => rfl
+  | .succinctStochastic, .succinctSequential => exact absurd h_eq (by decide)
+  | .succinctSequential, .explicitState      => exact absurd h_eq (by decide)
+  | .succinctSequential, .succinctStatic     => exact absurd h_eq (by decide)
+  | .succinctSequential, .succinctStochastic => exact absurd h_eq (by decide)
+  | .succinctSequential, .succinctSequential => rfl
+
+/-- Handle: LH{AP2} - injectivity alias -/
+theorem lh_AP2 :
+    ∀ {pat1 pat2 : AccessPattern},
+      accessPatternComplexity pat1 = accessPatternComplexity pat2 →
+      pat1 = pat2 :=
+  accessPatternComplexity_injective
 
 end DecisionQuotient
