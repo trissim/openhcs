@@ -5872,19 +5872,67 @@ end {module_root}
                 shutil.copy2(src_file, content_dest / src_file.name)
                 copied_count += 1
 
-        # Fix preamble.tex for arXiv: update lean-handle-macros path
+        # Also copy lean-handle-macros.tex from shared/ into package root
+        # This ensures the file exists in the package for package-local includes
+        shared_macros_src = self.papers_dir / "shared" / "lean-handle-macros.tex"
+        if shared_macros_src.exists():
+            shutil.copy2(shared_macros_src, package_dir / "lean-handle-macros.tex")
+
+        # Fix all .tex/.sty files for arXiv: update lean-handle-macros path
         # In the source tree it uses ../../shared/lean-handle-macros.tex
         # but in the arXiv package the file is in the same directory
-        preamble_file = package_dir / "preamble.tex"
-        if preamble_file.exists():
-            content = preamble_file.read_text(encoding="utf-8")
-            updated_content = content.replace(
-                r"\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}",
-                r"\InputIfFileExists{lean-handle-macros.tex}{}{}"
-            )
+        # Handle both \InputIfFileExists and \input variants
+        old_patterns = [
+            r"\InputIfFileExists{../../shared/lean-handle-macros.tex}{}{}",
+            r"\input{../../shared/lean-handle-macros.tex}",
+        ]
+        new_patterns = [
+            r"\InputIfFileExists{lean-handle-macros.tex}{}{}",
+            r"\input{lean-handle-macros.tex}",
+        ]
+
+        # Fix all .tex files in package root
+        for tex_file in package_dir.glob("*.tex"):
+            content = tex_file.read_text(encoding="utf-8")
+            updated_content = content
+            for old_pat, new_pat in zip(old_patterns, new_patterns):
+                updated_content = updated_content.replace(old_pat, new_pat)
             if updated_content != content:
-                preamble_file.write_text(updated_content, encoding="utf-8")
-                print(f"[arxiv]   Fixed preamble.tex: lean-handle-macros path updated")
+                tex_file.write_text(updated_content, encoding="utf-8")
+                print(
+                    f"[arxiv]   Fixed {tex_file.name}: lean-handle-macros path updated"
+                )
+
+        # Fix all .tex files in content/ subdirectory
+        content_dest = package_dir / "content"
+        if content_dest.exists():
+            for tex_file in content_dest.glob("*.tex"):
+                content = tex_file.read_text(encoding="utf-8")
+                updated_content = content
+                for old_pat, new_pat in zip(old_patterns, new_patterns):
+                    updated_content = updated_content.replace(old_pat, new_pat)
+                if updated_content != content:
+                    tex_file.write_text(updated_content, encoding="utf-8")
+                    print(
+                        f"[arxiv]   Fixed content/{tex_file.name}: lean-handle-macros path updated"
+                    )
+
+        # For submission packages: if wrapper is main.tex but actual latex file is different,
+        # copy the aux/bbl from the actual latex file to main.aux/main.bbl so citations work
+        meta = self._get_paper_meta(paper_id)
+        if meta.latex_file != "main.tex":
+            actual_aux = package_dir / f"{meta.latex_file.replace('.tex', '')}.aux"
+            actual_bbl = package_dir / f"{meta.latex_file.replace('.tex', '')}.bbl"
+            if actual_aux.exists():
+                shutil.copy2(actual_aux, package_dir / "main.aux")
+                print(
+                    f"[arxiv]   Copied {actual_aux.name} -> main.aux for citation resolution"
+                )
+            if actual_bbl.exists():
+                shutil.copy2(actual_bbl, package_dir / "main.bbl")
+                print(
+                    f"[arxiv]   Copied {actual_bbl.name} -> main.bbl for citation resolution"
+                )
 
         print(f"[arxiv]   LaTeX sources: {copied_count} files")
 

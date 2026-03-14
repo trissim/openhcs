@@ -48,6 +48,7 @@ build:
     - ".tex"
     - ".bib"
     - ".bbl"
+    - ".aux"
     - ".cls"
     - ".sty"
   lean_exclude_dirs:
