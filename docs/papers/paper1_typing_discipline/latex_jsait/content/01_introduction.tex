@@ -1,6 +1,6 @@
 \subsection{Problem Statement}
 
-Symbolic systems are exact identity capable. Variables denote specific objects, pointers target precise memory locations, and database keys refer to singular records. This exactness is not incidental—it is foundational to symbolic computation, which requires that distinct entities remain distinguishable whenever operations depend on their identity.
+Symbolic systems are exact identity capable. Variables denote specific objects, pointers target precise memory locations, and database keys refer to singular records. This exactness is not incidental; it is fundamental to symbolic computation, which requires that distinct entities remain distinguishable whenever operations depend on their identity.
 
 Neural embeddings operate differently. They generalize by compressing away semantic detail, mapping distinct inputs to the same representation when those inputs are deemed functionally equivalent. The benefit is generalization: the embedding captures similarity structure and supports efficient nearest-neighbor operations. The cost is collision ambiguity: multiple distinct entities can share the same embedding value, and the representation alone no longer identifies which entity is meant.
 
