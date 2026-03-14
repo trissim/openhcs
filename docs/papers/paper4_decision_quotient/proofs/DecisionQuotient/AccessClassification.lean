@@ -162,34 +162,46 @@ theorem lh_AP1 :
 /-- The mapping from access patterns to complexity classes is injective.
     Different access patterns evaluate to different ComplexityClass constructors,
     so equality of their images forces equality of the patterns. -/
-theorem accessPatternComplexity_injective :
+theorem accessPatternComplexity_injective
+    (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
+    (hP_neq_PP : ComplexityClass.P ≠ ComplexityClass.PP)
+    (hP_neq_PSPACE : ComplexityClass.P ≠ ComplexityClass.PSPACE)
+    (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
+    (hcoNP_neq_PSPACE : ComplexityClass.coNP ≠ ComplexityClass.PSPACE)
+    (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE) :
     ∀ {pat1 pat2 : AccessPattern},
       accessPatternComplexity pat1 = accessPatternComplexity pat2 →
       pat1 = pat2 := by
   intro pat1 pat2 h_eq
   match pat1, pat2 with
   | .explicitState,      .explicitState      => rfl
-  | .explicitState,      .succinctStatic     => exact absurd h_eq (by decide)
-  | .explicitState,      .succinctStochastic => exact absurd h_eq (by decide)
-  | .explicitState,      .succinctSequential => exact absurd h_eq (by decide)
-  | .succinctStatic,     .explicitState      => exact absurd h_eq (by decide)
+  | .explicitState,      .succinctStatic     => False.elim (hP_neq_coNP h_eq)
+  | .explicitState,      .succinctStochastic => False.elim (hP_neq_PP h_eq)
+  | .explicitState,      .succinctSequential => False.elim (hP_neq_PSPACE h_eq)
+  | .succinctStatic,     .explicitState      => False.elim (hP_neq_coNP h_eq.symm)
   | .succinctStatic,     .succinctStatic     => rfl
-  | .succinctStatic,     .succinctStochastic => exact absurd h_eq (by decide)
-  | .succinctStatic,     .succinctSequential => exact absurd h_eq (by decide)
-  | .succinctStochastic, .explicitState      => exact absurd h_eq (by decide)
-  | .succinctStochastic, .succinctStatic     => exact absurd h_eq (by decide)
+  | .succinctStatic,     .succinctStochastic => False.elim (hcoNP_neq_PP h_eq)
+  | .succinctStatic,     .succinctSequential => False.elim (hcoNP_neq_PSPACE h_eq)
+  | .succinctStochastic, .explicitState      => False.elim (hP_neq_PP h_eq.symm)
+  | .succinctStochastic, .succinctStatic     => False.elim (hcoNP_neq_PP h_eq.symm)
   | .succinctStochastic, .succinctStochastic => rfl
-  | .succinctStochastic, .succinctSequential => exact absurd h_eq (by decide)
-  | .succinctSequential, .explicitState      => exact absurd h_eq (by decide)
-  | .succinctSequential, .succinctStatic     => exact absurd h_eq (by decide)
-  | .succinctSequential, .succinctStochastic => exact absurd h_eq (by decide)
+  | .succinctStochastic, .succinctSequential => False.elim (hPP_neq_PSPACE h_eq)
+  | .succinctSequential, .explicitState      => False.elim (hP_neq_PSPACE h_eq.symm)
+  | .succinctSequential, .succinctStatic     => False.elim (hcoNP_neq_PSPACE h_eq.symm)
+  | .succinctSequential, .succinctStochastic => False.elim (hPP_neq_PSPACE h_eq.symm)
   | .succinctSequential, .succinctSequential => rfl
 
 /-- Handle: LH{AP2} - injectivity alias -/
 theorem lh_AP2 :
-    ∀ {pat1 pat2 : AccessPattern},
-      accessPatternComplexity pat1 = accessPatternComplexity pat2 →
-      pat1 = pat2 :=
+    ∀ (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
+      (hP_neq_PP : ComplexityClass.P ≠ ComplexityClass.PP)
+      (hP_neq_PSPACE : ComplexityClass.P ≠ ComplexityClass.PSPACE)
+      (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
+      (hcoNP_neq_PSPACE : ComplexityClass.coNP ≠ ComplexityClass.PSPACE)
+      (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE),
+      ∀ {pat1 pat2 : AccessPattern},
+        accessPatternComplexity pat1 = accessPatternComplexity pat2 →
+        pat1 = pat2 :=
   accessPatternComplexity_injective
 
 end DecisionQuotient
