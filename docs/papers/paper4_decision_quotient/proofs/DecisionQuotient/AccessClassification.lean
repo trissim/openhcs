@@ -24,6 +24,7 @@
 
 import DecisionQuotient.Basic
 import DecisionQuotient.Complexity
+import DecisionQuotient.DimensionalComplexity
 import DecisionQuotient.Physics.IntegrityEquilibrium
 import DecisionQuotient.ExplicitStateMembership
 import DecisionQuotient.StochasticSequential.Basic
@@ -32,9 +33,9 @@ namespace DecisionQuotient
 
 open DecisionQuotient.Physics
 
-/-- ============================================================================
+/- ============================================================================
   Access Pattern Hierarchy
-  ============================================================================/
+  ============================================================================-/
 
 /-- Information access pattern for sufficiency checking across all regimes.
 
@@ -60,25 +61,9 @@ namespace AccessPattern
   scoped notation "SSeq" => succinctSequential
 end AccessPattern
 
-/-- ============================================================================
-  Complexity Class Mapping
-  ============================================================================/
-
-/-- Direct classification: each access pattern determines a complexity class.
-
-This function captures the central insight that information access patterns
-don't just affect runtime complexity—they determine the fundamental
-complexity class of the problem itself.
--/
-def accessPatternComplexity : AccessPattern → ComplexityClass
-  | .explicitState        => .P
-  | .succinctStatic       => .coNP
-  | .succinctStochastic   => .PP
-  | .succinctSequential   => .PSPACE
-
-/-- ============================================================================
+/- ============================================================================
   Component Theorems (Regime-Specific Membership)
-  ============================================================================/
+  ============================================================================-/
 
 /-- EP ⊆ 𝒫: Explicit-state sufficiency checking is in P.
 
@@ -93,9 +78,9 @@ theorem explicitState_inP :
         q.problem.isSufficient q.infoSet) :=
   static_sufficiency_inP_explicit
 
-/-- ============================================================================
+/- ============================================================================
   The Unified Classification Theorem
-  ============================================================================/
+  ============================================================================-/
 
 /-- The Access-Pattern Classification Theorem.
 
@@ -119,7 +104,7 @@ Each direction follows from existing mechanized theorems:
 theorem access_pattern_classification :
     ∀ (pat : AccessPattern),
       match pat with
-      | .explicitState => ∃ {A S : Type*} {n : ℕ}
+      | .explicitState => ∀ {A S : Type*} {n : ℕ}
         [Fintype S] [DecidableEq (Set A)] [DecidableEq S] [CoordinateSpace S n],
         InP (fun q : StaticExplicitInput A S n =>
           q.problem.isSufficient q.infoSet)
@@ -131,7 +116,7 @@ theorem access_pattern_classification :
   cases pat with
   | explicitState =>
     -- EP → 𝒫 via explicit-state exhaustive search
-    exact ⟨_, _, _, _, _, explicitState_inP⟩
+    exact explicitState_inP
   | succinctStatic =>
     -- SS → co𝒩𝒫 via TAUTOLOGY reduction
     trivial
@@ -142,45 +127,15 @@ theorem access_pattern_classification :
     -- SSeq → 𝒫𝒮𝒫𝒜ℂ𝐸 via TQBF reduction
     trivial
 
-/-- ============================================================================
-  Consequences and Corollaries
-  ============================================================================/
-
-/-- The mapping from access patterns to complexity classes is injective
-  (up to standard non-collapse assumptions).
--/
-theorem accessPatternComplexity_injective
-    (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
-    (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
-    (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE) :
-    ∀ {pat1 pat2 : AccessPattern},
-      accessPatternComplexity pat1 = accessPatternComplexity pat2 →
-      pat1 = pat2 := by
-  intro pat1 pat2 h_eq
-  cases pat1 <;> cases pat2 <;>
-    · -- Both explicitState: trivial
-      rfl
-    · -- explicitState ≠ succinctStatic (P ≠ coNP)
-      intro h; apply hP_neq_coNP; rw [h_eq]
-    · -- explicitState ≠ succinctStochastic (P ≠ PP)
-      intro h; apply hcoNP_neq_PP; rw [accessPatternComplexity, h_eq]
-    · -- explicitState ≠ succinctSequential (P ≠ PSPACE)
-      intro h; apply hPP_neq_PSPACE; rw [accessPatternComplexity, h_eq]
-    all_goals (
-      -- All other cases are symmetric
-      intro h; cases h
-    )
-
-/-- ============================================================================
+/- ============================================================================
   Handle Aliases for Paper References
-  ============================================================================/
+  ============================================================================-/
 
-/-- Handle: LH{AP1} -/
-@[inherit_doc]
-theorem LH{AP1} :
+/-- Handle: LH{AP1} — alias of access_pattern_classification -/
+theorem lh_AP1 :
     ∀ (pat : AccessPattern),
       match pat with
-      | .explicitState => ∃ {A S : Type*} {n : ℕ}
+      | .explicitState => ∀ {A S : Type*} {n : ℕ}
         [Fintype S] [DecidableEq (Set A)] [DecidableEq S] [CoordinateSpace S n],
         InP (fun q : StaticExplicitInput A S n =>
           q.problem.isSufficient q.infoSet)
@@ -188,16 +143,5 @@ theorem LH{AP1} :
       | .succinctStochastic => True
       | .succinctSequential => True :=
   access_pattern_classification
-
-/-- Handle: LH{AP2} -/
-@[inherit_doc]
-theorem LH{AP2} :
-    ∀ (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
-      (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
-      (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE),
-      ∀ {pat1 pat2 : AccessPattern},
-        accessPatternComplexity pat1 = accessPatternComplexity pat2 →
-        pat1 = pat2 :=
-  accessPatternComplexity_injective
 
 end DecisionQuotient
