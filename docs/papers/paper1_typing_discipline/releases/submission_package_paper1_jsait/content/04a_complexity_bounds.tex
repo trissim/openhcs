@@ -58,7 +58,7 @@ Assume there is a computable certifier for $P(c):=\mathrm{HasBarrier}(\mathrm{ev
 \end{proof}
 
 \begin{remark}[Certification interpretation]
-The Rice-style theorem is the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. For compression system designers deploying learned representations, this means that any zero-error recovery guarantee derived from a finite training corpus cannot be automatically relied upon to hold for new classes that the encoder will encounter in production—explicit identity metadata or a restrictive growth model becomes necessary to maintain formal guarantees.
+The Rice-style theorem is the algorithmic counterpart to extension instability. Even when a current deployment appears collision-free, there is no general computable procedure that certifies this property for arbitrary future-generating code. For compression system designers deploying learned representations, this means that any zero-error recovery guarantee derived from a finite training corpus cannot be automatically relied upon to hold for new classes that the encoder will encounter in production; explicit identity metadata or a restrictive growth model becomes necessary to maintain formal guarantees.
 \end{remark}
 
 \begin{corollary}[Certification consequence for persistent \texorpdfstring{$D=0$}{D=0} claims]

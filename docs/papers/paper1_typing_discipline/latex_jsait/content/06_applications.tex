@@ -82,7 +82,7 @@ Let $S=\sigma(C)$ be an additional deterministic view available to the decoder. 
 \leanmeta{\LH{GPH40}}
 
 \begin{proof}
-The pair $(U,S)$ is just a refined deterministic representation. Exact recovery is therefore possible exactly when the downstream task is constant on the fibers of that refined representation.
+The pair $(U,S)$ is a refined deterministic representation. Exact recovery is therefore possible exactly when the downstream task is constant on the fibers of that refined representation.
 \end{proof}
 
 \begin{corollary}[Helper-view monotonicity]\label{cor:helper-view-mono}
@@ -103,7 +103,7 @@ In a genuinely factorized product setting, where the class space decomposes as a
 For coordinatewise product representations, each joint fiber is exactly the product of the corresponding component fibers, so their cardinalities multiply. Taking the largest such product yields multiplicativity of the worst-case residual ambiguity.
 \end{proof}
 
-For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to Y}$, or the adaptive fiber profile is a representation-analysis problem rather than part of the theorem. In a finite explicit registry or index this is just fiber counting; in a large learned embedding one instead needs explicit collision enumeration after discretization or provable upper and lower bounds. The point of the present results is to identify what those quantities mean once they are known.
+For learned representations, estimating quantities such as $A_\pi$, $A_{\pi \to Y}$, or the adaptive fiber profile is a representation-analysis problem rather than part of the theorem. In a finite explicit registry or index this is fiber counting; in a large learned embedding one instead needs explicit collision enumeration after discretization or provable upper and lower bounds. The point of the present results is to identify what those quantities mean once they are known.
 
 Concretely, the task-sufficiency theorem says the representation is sufficient precisely when every fiber carries one task label, and the helper-view and factorized laws say when added views contribute genuinely new exact information.
 

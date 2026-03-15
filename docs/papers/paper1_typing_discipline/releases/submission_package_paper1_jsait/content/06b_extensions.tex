@@ -4,11 +4,11 @@ The main theorem chain identifies the structural laws governing zero-error ident
 
 The paper provides complete zero-error theory for the fixed-representation setting. The fiberwise decomposition theorem applies to any finite source distribution. The entropy converses apply to any observation map and tag budget. The query and stability laws apply to any attribute family. The uniform single-block closed form is the special case that collapses to an explicit formula.
 
-Several natural extensions remain open. Stochastic representations, noisy channels, and asymptotic block analysis would each modify the model while preserving the core insight that fiber geometry governs residual cost.
+Several extensions remain open. Stochastic representations, noisy channels, and asymptotic block analysis would each modify the model while preserving the core insight that fiber geometry governs residual cost.
 
 \subsection{Noisy and Lossy Observation}
 
-With noisy representations or noisy side channels, repeated sampling can reduce error, so the natural problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems. Once the deterministic representation assumption is relaxed, the confusability structure is no longer a disjoint union of cliques, and the problem moves closer to the richer graph-entropy regime studied by K\"orner and Witsenhausen.
+With noisy representations or noisy side channels, repeated sampling can reduce error, so the problem becomes the tradeoff among side-information rate, repeated evidence, and target error level. In this regime, the deterministic fibers are replaced by probabilistic confusion neighborhoods, and the main open question is how the exact fiber laws relax into probabilistic coding theorems. Once the deterministic representation assumption is relaxed, the confusability structure is no longer a disjoint union of cliques, and the problem moves closer to the richer graph-entropy regime studied by K\"orner and Witsenhausen.
 
 \subsection{Growth and Budgeting}
 
@@ -26,13 +26,13 @@ The entropy-sensitive converses (RDC series) are now presented in the main text 
 
 \subsection{Semantic Distortion Measures}
 
-The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The natural open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.
+The paper treats $D$ as binary misidentification probability. A lossy extension would replace that with hierarchical distortion, weighted misclassification penalties, or other task-specific semantic losses. The open problem is then to characterize how the side-information rate changes when near misses and catastrophic confusions are not penalized equally, so that the fiber geometry interacts with a distortion matrix rather than a binary error indicator.
 
 This matters most in settings where classes carry internal geometry or hierarchy: the current theory distinguishes zero error from nonzero error, while a lossy theory would need to distinguish tolerable confusion from unacceptable confusion.
 
 \subsection{Privacy, Security, and Three-Resource Geometry}
 
-Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. The intro and main results already record the finite explicit disclosure separation: nominal access has unit disclosure budget, while tag-free zero-error identity resolution can require $n-1$ primitive disclosures in the adversarial family (\LH{PRIV3}). This is another facet of the same residual ambiguity: one may pay for exact identification with side-information bits or with additional disclosures. The natural extension is to study how imposing explicit leakage constraints changes the feasible naming information that can be exposed while still certifying identity or class membership.
+Nominal tags also suggest privacy-preserving class-membership proofs and stronger verification mechanisms in model-registry settings. The intro and main results already record the finite explicit disclosure separation: nominal access has unit disclosure budget, while tag-free zero-error identity resolution can require $n-1$ primitive disclosures in the adversarial family (\LH{PRIV3}). This is another facet of the same residual ambiguity: one may pay for exact identification with side-information bits or with additional disclosures. One direction is to study how imposing explicit leakage constraints changes the feasible naming information that can be exposed while still certifying identity or class membership.
 
 More broadly, the present side-information viewpoint invites comparison with rate-distortion-perception formulations \cite{blau2019rethinking} and with conditional source coding more directly. The main missing theorem is a genuinely entropy-sensitive zero-error variable-length characterization.
 
