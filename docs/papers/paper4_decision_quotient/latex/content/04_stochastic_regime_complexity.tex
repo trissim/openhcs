@@ -51,21 +51,22 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 
 \paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the natural positive-support base case.
 
-\begin{center}
-\begin{tabular}{p{0.21\textwidth}p{0.23\textwidth}p{0.2\textwidth}p{0.25\textwidth}}
+\begingroup
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.22\linewidth}>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
-\textbf{Predicate/query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
+\textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
 \midrule
- Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness classification claimed \\
-
- Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; explicit finite searches; support-sensitive obstruction/bridge lemmas & Open; see text; conjecture (coNP\-hard?) \\
-
-Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata for the upper-bound argument & No direct formalization of oracle Turing machines or oracle classes \\
-
-Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No end-to-end oracle-machine formalization of the stated oracle-class membership \\
+Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness claimed \\
+\midrule
+Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; finite searches; obstruction/bridge lemmas & Open; conjecture coNP-hard \\
+\midrule
+Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata & No oracle-machine formalization \\
+\midrule
+Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No oracle-class membership formalization \\
 \bottomrule
-\end{tabular}
-\end{center}
+\end{tabularx}
+\endgroup
 
 The rest of this section unpacks the four rows of this summary. The preservation side is complete in explicit state and under full-support inheritance, and now also has support-sensitive partial results beyond full support. The decisiveness side carries the strongest succinct-encoding classification currently established in the paper.
 
