@@ -26,11 +26,11 @@ At first glance, \textsc{Minimum-Sufficient-Set} seems to have the form
 \exists I\; \forall s,s'\in S:
 \quad s_I=s'_I \implies \Opt(s)=\Opt(s').
 \]
-If that syntax reflected the true structure of the problem, one might expect a $\Sigma_2^P$ classification. The algorithm suggested by this structure is: guess a coordinate set $I$, then universally verify that every agreeing state pair induces the same optimal-action set. On its face, static exact minimization therefore looks like a genuine existential--universal search problem.
+That syntax suggests a $\Sigma_2^P$ classification. The algorithm suggested by this structure is: guess a coordinate set $I$, then universally verify that every agreeing state pair induces the same optimal-action set. On its face, static exact minimization therefore looks like a genuine existential--universal search problem.
 
 \subsection{Structural Characterization of Minimum Sufficiency}
 
-Proposition~\ref{prop:minimal-relevant-equiv} removes the outer search layer: a set is sufficient exactly when it contains every relevant coordinate, so the minimum sufficient set is simply the relevant-coordinate set. This is the key structural theorem of the static regime. Static exact minimization is therefore a relevance-counting problem, not a genuinely alternating search problem.
+Proposition~\ref{prop:minimal-relevant-equiv} removes the outer search layer: a set is sufficient exactly when it contains every relevant coordinate, so the minimum sufficient set is simply the relevant-coordinate set. This is the central structural theorem of the static regime. Static exact minimization is therefore a relevance-counting problem, not a genuinely alternating search problem.
 
 That collapse is specific to minimum sufficiency. \textsc{Anchor-Sufficiency} still asks the algorithm to choose an assignment $\alpha$ and then certify a universal condition on the induced fiber, so its existential layer cannot be absorbed into a structural characterization of the instance.
 

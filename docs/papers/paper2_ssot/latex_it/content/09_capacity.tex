@@ -14,7 +14,7 @@ The answer depends on the failure topology:
 \item Because our confusability graph has \emph{structure} (as in the 4-cycle example of Section~\ref{sec:binary-square}), the ambiguity growth is controlled by that structure. Some state pairs remain distinguishable even across multiple blocks.
 \end{itemize}
 
-The key mathematical insight is that $n$-fold block composition turns the confusability graph into its $n$-fold \emph{strong power}:
+Under $n$-fold block composition, the confusability graph becomes its $n$-fold \emph{strong power}:
 \[
 G_n \;=\; G^{\boxtimes n}.
 \]
@@ -30,8 +30,8 @@ where $\alpha_n$ denotes the largest one-shot zero-error code size in the $n$-bl
 
 More sharply, the block-level graph itself factors correctly. Confusability between concatenated $(m+n)$-block states is equivalent to adjacency in the strong product of the $m$-block and $n$-block confusability graphs, packaged formally as an explicit graph isomorphism. Thus the repeated-block system is not only bounded by strong-product arguments at the codebook level; it is literally a strong-product graph-power object for the same induced failure map.\leanmeta{\LHrng{MFT}{29}{30}, \LHrng{MFT}{38}{39}}
 
-\paragraph{Why the strong product arises.}
-The strong product structure may appear surprising at first. One might expect that if block 1 is confusable and block 2 is not, the pair should still be confusable (an ``OR-product'' over blocks). The key is that block confusability requires a \emph{single location tuple} $\ell = (\ell_1, \ell_2)$ that works \emph{simultaneously} for both blocks:
+\paragraph{Conjunction, not disjunction.}
+Block confusability requires a \emph{single location tuple} $\ell = (\ell_1, \ell_2)$ that works \emph{simultaneously} for both blocks:
 \begin{itemize}
 \item Block 1: observe location $\ell_1$, must match
 \item Block 2: observe location $\ell_2$, must match
