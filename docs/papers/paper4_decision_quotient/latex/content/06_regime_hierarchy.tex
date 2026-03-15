@@ -5,18 +5,22 @@ The static, stochastic, and sequential formulations are the paper's central orga
 \subsection{Complexity Matrix}
 
 \begin{center}
-\begin{tabular}{lccc}
+\begingroup
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.22\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
 \toprule
-Regime / predicate & Base query & Minimum & Anchor \\
+\textbf{Regime / predicate} & \textbf{Base query} & \textbf{Minimum} & \textbf{Anchor} \\
 \midrule
 Static & coNP-complete & coNP-complete & $\Sigma_2^P$-complete \\
 \midrule
-Stochastic preservation & P (explicit), bridge theorems & P (explicit); coNP-complete (full support) / open (general) & P (explicit); $\Sigma_2^P$-complete (full support) / open (general) \\
+Stochastic preservation & P (explicit), bridge theorems & P (explicit); coNP-complete (full) / open (general) & P (explicit); $\Sigma_2^P$-complete (full) / open (general) \\
+\midrule
 Stochastic decisiveness & P (explicit), PP-hard (succinct) & PP-hard, in $\textsf{NP}^{\textsf{PP}}$ & PP-hard, in $\textsf{NP}^{\textsf{PP}}$ \\
 \midrule
 Sequential & PSPACE-complete & PSPACE-complete & PSPACE-complete \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
+\endgroup
 \end{center}
 
 This table is the paper's compact summary. The stochastic regime contains two parallel predicates with distinct complexity profiles: preservation and decisiveness. In the static regime, sufficiency and minimum sufficiency are coNP-complete and anchor sufficiency is $\Sigma_2^P$-complete. In the stochastic regime, preservation (stochastic sufficiency) has explicit-state tractability and bridge theorems back to static sufficiency and the optimizer quotient; the minimum and anchor preservation variants are also polynomial-time in explicit state, inherit coNP-completeness and $\Sigma_2^P$-completeness under full support, and admit support-sensitive obstruction and bridge lemmas beyond full support, while the full general-distribution classification remains open. Decisiveness (stochastic decisiveness) has the sharper succinct-encoding classification: polynomial-time in the explicit-state model, PP-hardness in the succinct model, and paper-level $\textsf{NP}^{\textsf{PP}}$ membership for the anchor and minimum variants. The artifact mechanizes the finite witness/checking schemas and reduction cores underlying those upper bounds. In the sequential regime, sufficiency, minimum, and anchor queries are PSPACE-complete.

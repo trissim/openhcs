@@ -9,7 +9,8 @@ The regime hierarchy identifies where exact relevance certification sits in the 
 \small
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.19\linewidth}>{\RaggedRight\arraybackslash}p{0.19\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.18\linewidth}@{}}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.19\linewidth}>{\RaggedRight\arraybackslash}m{0.19\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
 \textbf{Encoding} & \textbf{Support regime} & \textbf{Complexity consequence} & \textbf{Source} \\
 \midrule
