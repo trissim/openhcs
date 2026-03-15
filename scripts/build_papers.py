@@ -5858,8 +5858,17 @@ end {module_root}
         copied_count = 0
 
         # Copy top-level LaTeX files
+        # Skip main.tex when it is a submission wrapper (i.e. the actual latex entry
+        # point is a different file). The submission wrapper defines \JSAITREVIEW and
+        # would produce the review format instead of the journal format on arXiv.
+        # A clean arXiv main.tex wrapper is written below after the copy loop.
+        submission_wrapper_name = (
+            "main.tex" if meta.latex_file != "main.tex" else None
+        )
         for ext in self.build_config.latex_source_extensions:
             for src_file in latex_dir.glob(f"*{ext}"):
+                if src_file.name == submission_wrapper_name:
+                    continue
                 shutil.copy2(src_file, package_dir / src_file.name)
                 copied_count += 1
 
