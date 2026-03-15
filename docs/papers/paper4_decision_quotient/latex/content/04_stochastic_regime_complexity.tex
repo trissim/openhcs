@@ -4,7 +4,7 @@ We now add a distribution over states. Once utilities are compared through condi
 
 \subsection{Preservation and Decisiveness}
 
-In static decision problems, the natural exact question is whether hiding coordinates preserves the optimizer. In stochastic decision problems, preservation is still natural, but it is no longer the only exact question. One can also ask whether the retained signal is itself a complete decision interface, meaning that every observable fiber has a unique conditional optimum. That is the decisiveness predicate. The two predicates are not equivalent: a coordinate set may preserve the full-information optimizer without being decisive, and it may be decisive without preserving the full-information optimizer. Probability therefore produces two parallel exact questions rather than one uniform stochastic analogue.
+In static decision problems, the exact question is whether hiding coordinates preserves the optimizer. In stochastic decision problems, preservation is still a well-defined exact question, but it is no longer the only one. One can also ask whether the retained signal is itself a complete decision interface, meaning that every observable fiber has a unique conditional optimum. That is the decisiveness predicate. The two predicates are not equivalent: a coordinate set may preserve the full-information optimizer without being decisive, and it may be decisive without preserving the full-information optimizer. Probability therefore produces two parallel exact questions rather than one uniform stochastic analogue.
 
 \subsection{Stochastic Decision Problems}
 
@@ -49,7 +49,7 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 
 \subsection{Stochastic Status at a Glance}
 
-\paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the natural positive-support base case.
+\paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the full-support base case.
 
 \begingroup
 \renewcommand{\tabularxcolumn}[1]{m{#1}}
@@ -110,12 +110,12 @@ Third, why coNP rather than PP: preservation is syntactically universal, because
 coarse optimizer matches the full optimizer at every state, so its quantifier shape matches
 the static coNP classification. Decisiveness is PP-hard because it requires majority-style
 conditional expected-utility comparisons. Preservation compares optimizer sets rather than
-aggregating utilities, so the natural hardness source is counterexample exclusion (coNP)
+aggregating utilities, so the hardness source is counterexample exclusion (coNP)
 rather than majority counting (PP); support-sensitivity complicates reduction engineering
 but not the high-level quantifier structure.
 
 \paragraph{Reduction intuition.}
-A natural hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
+A candidate hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
 
 Open Problem 4.2. Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
@@ -208,7 +208,7 @@ The first statement composes the unconditional bridge from stochastic preservati
 \end{proof}
 
 \paragraph{What this paper establishes for preservation.}
-For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability for the base, minimum, and anchor queries (Theorem~\ref{thm:stochastic-preservation-explicit}, Proposition~\ref{prop:stochastic-preservation-variant-search}, and Theorem~\ref{thm:stochastic-preservation-variants-explicit}), static-to-stochastic bridge theorems (Propositions~\ref{prop:stochastic-to-static-sufficiency} and~\ref{prop:stochastic-full-support-equiv}), quotient equivalence under full support (Proposition~\ref{prop:stochastic-quotient-equiv}), and full-support inheritance for the minimum and anchor variants (Theorem~\ref{thm:stochastic-preservation-full-support-variants}). Beyond full support, the paper now also isolates unconditional obstruction lemmas and positive-support bridge results (Proposition~\ref{prop:stochastic-preservation-partial-general}). This yields a complete classification for stochastic preservation under full support, the natural base case in which every state has nonzero probability, together with support-sensitive partial theory beyond that base case. The general-distribution case still introduces technical complications from zero-probability fibers, and the paper does not claim a full general-distribution classification for the minimum and anchor preservation variants or a succinct-encoding hardness classification for the preservation predicate itself. The PP-hardness results in the stochastic row concern decisiveness and its anchor/minimum variants, not preservation itself.
+For stochastic sufficiency in the preservation sense, this paper proves explicit-state tractability for the base, minimum, and anchor queries (Theorem~\ref{thm:stochastic-preservation-explicit}, Proposition~\ref{prop:stochastic-preservation-variant-search}, and Theorem~\ref{thm:stochastic-preservation-variants-explicit}), static-to-stochastic bridge theorems (Propositions~\ref{prop:stochastic-to-static-sufficiency} and~\ref{prop:stochastic-full-support-equiv}), quotient equivalence under full support (Proposition~\ref{prop:stochastic-quotient-equiv}), and full-support inheritance for the minimum and anchor variants (Theorem~\ref{thm:stochastic-preservation-full-support-variants}). Beyond full support, the paper now also isolates unconditional obstruction lemmas and positive-support bridge results (Proposition~\ref{prop:stochastic-preservation-partial-general}). This yields a complete classification for stochastic preservation under full support, the full-support base case in which every state has nonzero probability, together with support-sensitive partial theory beyond that base case. The general-distribution case still introduces technical complications from zero-probability fibers, and the paper does not claim a full general-distribution classification for the minimum and anchor preservation variants or a succinct-encoding hardness classification for the preservation predicate itself. The PP-hardness results in the stochastic row concern decisiveness and its anchor/minimum variants, not preservation itself.
 
 \begin{problem}[STOCHASTIC-DECISIVENESS-CHECK]\label{prob:stochastic-singleton-sufficiency}
 \textbf{Input:} $\mathcal{D}_S=(A,X_1,\ldots,X_n,U,P)$ and $I\subseteq\{1,\ldots,n\}$. \\
