@@ -34,7 +34,7 @@ If a host system does not expose enough structural information to separate the r
 A fact $F$ is \emph{structural} if every location encoding $F$ is fixed when the underlying object, declaration, or artifact is created. After that moment, the encoding can be read and compared, but not retroactively re-created without a new edit event.
 \end{definition}
 
-Structural facts are the natural exact-consistency setting because they expose a clear creation moment. Examples include schema declarations, registry membership rules, dependency metadata, and interface-level constraints.
+Structural facts are the canonical exact-consistency setting because they expose a clear creation moment. Examples include schema declarations, registry membership rules, dependency metadata, and interface-level constraints.
 
 \begin{theorem}[Timing Constraint for Structural Derivation]\label{thm:timing-forces}
 For structural facts, derivation must occur no later than the moment at which the relevant encoding locations become fixed.
