@@ -7,13 +7,17 @@ This section fixes the abstract vocabulary used throughout the paper. We work wi
 \small
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.18\linewidth}>{\RaggedRight\arraybackslash}p{0.20\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.24\linewidth}@{}}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}m{0.18\linewidth}>{\RaggedRight\arraybackslash}m{0.30\linewidth}>{\RaggedRight\arraybackslash}m{0.21\linewidth}>{\RaggedRight\arraybackslash}X@{}}
 \toprule
 \textbf{Object} & \textbf{Quantifier shape} & \textbf{Certifies} & \textbf{Role} \\
 \midrule
 SUFFICIENCY-CHECK & universal over state pairs & exact coordinate sufficiency & baseline certification predicate \\
-MINIMUM-SUFFICIENT-SET & apparent $\exists I\,\forall$ pair check & smallest sufficient support & collapses to relevance containment in the static regime \\
+\midrule
+MINIMUM-SUFFICIENT-SET & \parbox[c]{0.20\linewidth}{apparent $\exists I\,\forall (s,s')$ check} & smallest sufficient support & collapses to relevance containment in the static regime \\
+\midrule
 ANCHOR-SUFFICIENCY & $\exists$ anchor, then universal fiber check & exact preservation on one chosen fiber & retains the outer existential layer \\
+\midrule
 Optimizer quotient & universal factorization property & coarsest decision-preserving abstraction & canonical structural object \\
 \bottomrule
 \end{tabularx}

@@ -20,10 +20,7 @@ Construct a decision problem $\mathcal{D}=(A,X_1,\ldots,X_n,U)$ by taking action
 \end{proof}
 
 \paragraph{Concrete case study.}
-Consider a simplified service configuration with three parameters: cache mode $p_1\in\{\mathrm{off},\mathrm{on}\}$, retry policy $p_2\in\{1,3\}$, and replica count $p_3\in\{1,2\}$. Let the observable behavior set be $B=\{\mathrm{latency\text{-}ok},\mathrm{write\text{-}safe},\mathrm{cost\text{-}ok}\}$. Suppose enabling the cache affects only latency, increasing retries affects only write safety, and replica count affects write safety and cost. Then Theorem~\ref{prop:config-sufficiency} turns the simplification question into an exact sufficiency question on the induced decision problem: which parameter subsets preserve the optimal-behavior set? In this toy instance, if the target simplification must preserve write safety and cost but is indifferent to latency, the exact behavior-preserving core is $\{p_2,p_3\}$, while $p_1$ is irrelevant to that target behavior set. The example is small enough to inspect by hand, but it is already an instance of the general Lean-backed reduction from behavior preservation to sufficiency.
-
-\paragraph{OpenHCS-style pipeline configuration.}
-The same issue appears in scientific workflow orchestration, where a controller assembles a pipeline from a partially nested configuration object and then compiles work only for the selected outputs and wells. In the OpenHCS codebase bundled with this repository, one execution path builds a global pipeline configuration from parameters such as the worker count, output-directory suffix, and well filter before compiling the pipeline and materializing only the selected wells; see, e.g., the configuration construction in \texttt{openhcs/runtime/execution\_server.py} and the scenario table in \texttt{tests/pyqt\_gui/integration/test\_end\_to\_end\_workflow\_foundation.py}. In that setting, the exact practical question is not merely whether two configurations often behave similarly, but whether a smaller visible parameter interface provably preserves the induced compilation and execution decisions for every admissible dataset and run condition. The results of this paper say that such exact interface minimization is a genuine certification problem: on structured cases it can be tractable, but in the general succinct regime one should expect worst-case hardness even when a single compiled execution is easy to obtain.
+Consider a simplified service configuration with three parameters: cache mode $p_1\in\{\mathrm{off},\mathrm{on}\}$, retry policy $p_2\in\{1,3\}$, and replica count $p_3\in\{1,2\}$. Let the observable behavior set be $B=\{\mathrm{latency\text{-}ok},\mathrm{write\text{-}safe},\mathrm{cost\text{-}ok}\}$. Suppose enabling the cache affects only latency, increasing retries affects only write safety, and replica count affects write safety and cost. Then Theorem~\ref{prop:config-sufficiency} turns the simplification question into an exact sufficiency question on the induced decision problem: which parameter subsets preserve the optimal-behavior set? In this toy instance, if the target simplification must preserve write safety and cost but is indifferent to latency, the exact behavior-preserving core is $\{p_2,p_3\}$, while $p_1$ is irrelevant to that target behavior set. The example is small enough to inspect by hand, but it is already an instance of the general Lean-backed reduction from behavior preservation to sufficiency. \leanmeta{\LH{CR1}, \LH{CT12}.}
 
 \subsubsection{Formalized toy POMDP example}
 
@@ -48,7 +45,7 @@ In particular, checking whether the coarse observation $\phi$ preserves Bayes-op
 
 \begin{proof}
 By construction $U(a,s)=r(a,s)$ so the full-information optimal-action set in $\mathcal{D}$ equals $\Opt_{\mathrm{full}}(s)$. The coarse-induced optimizer for $\phi$ is, by definition, the set of actions maximizing the conditional expectation of $U$ given the coarse signal. That conditional expectation is exactly the Bayes expectation used to define $\Opt_{\mathrm{obs}}$. Therefore the preservation condition from Section~\ref{sec:stochastic} (equality of full-information and coarse-induced optimizers on every state) is equivalent to the displayed identity.
-\end{proof} \leanmeta{\LH{PreservationExamples.lean}.}
+\end{proof} \leanmeta{\LH{EX1}.}
 
 \paragraph{Worked numeric instance.}
 Consider the one-step POMDP with states $S=\{s_1,s_2\}$, actions $A=\{a,b\}$, prior $p(s_1)=p(s_2)=1/2$, observation map $o(s_1)=o_1,o(s_2)=o_2$, and reward table
@@ -59,7 +56,7 @@ Let $g:O\to O'$ be the constant map that coarsens both observations to a single 
 \[
 \mathbb{E}[r(a,S)\mid\phi]=\tfrac12(2+0)=1,\qquad \mathbb{E}[r(b,S)\mid\phi]=\tfrac12(1+3)=2.
 \]
-Thus the coarse-induced optimizer is $\{b\}$ while the full-information optimizer at $s_1$ is $\{a\}$, so $\phi$ does not preserve Bayes-optimal actions for this instance. This tiny numeric example illustrates how coarse observations can change the optimal-action correspondence and therefore fail the stochastic preservation predicate. \leanmeta{\LH{ConcreteExamples.lean}.}
+Thus the coarse-induced optimizer is $\{b\}$ while the full-information optimizer at $s_1$ is $\{a\}$, so $\phi$ does not preserve Bayes-optimal actions for this instance. This tiny numeric example illustrates how coarse observations can change the optimal-action correspondence and therefore fail the stochastic preservation predicate. \leanmeta{\LH{EX3}.}
 
 This gives a direct, elementary encoding of one-step planning questions as stochastic preservation instances. The explicit-state encoding of the POMDP yields an explicit-state preservation instance, while a succinct encoding of transition or observation structure yields a succinct encoding of the corresponding decision problem, explaining how the same modelling choices generate the different complexity behaviors reported in Section~\ref{sec:stochastic}.
 
@@ -91,7 +88,7 @@ which is exactly the condition that the projection $\pi$ preserves the optimal-a
 
 \begin{proof}
 By definition $\gamma$ is redundant when every full maximizer projects to a maximizer of the collapsed objective and conversely every maximizer of the collapsed objective has a witness in the full space; the displayed equivalence is a restatement of that property. The left-to-right implication is immediate from the definition of $g_e$, and the right-to-left implication follows because if some projected maximizer has a preimage that attains the collapsed optimum, then there exists a full configuration achieving the same maximum in the original objective. Rewriting these statements as equalities of optimal-action sets for the derived decision problem $\mathcal{D}_{\mathrm{hp}}$ yields the claimed reduction to a static-style preservation check.
-\end{proof} \leanmeta{\LH{PreservationExamples.lean}.}
+\end{proof} \leanmeta{\LH{EX2}.}
 
 The construction above is explicit and elementary. It shows that hyperparameter redundancy questions can be phrased exactly as decision-preservation predicates within our static regime, and that succinct encodings of the environment family or return functions translate into succinct encodings of the corresponding static instance. In practice this lets one import the static-regime hardness and tractability statements directly into the hyperparameter setting.
 

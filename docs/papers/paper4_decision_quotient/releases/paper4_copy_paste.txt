@@ -1,15 +1,15 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-13T18:26:05.924674
+Generated: 2026-03-15T03:35:20.620902
 
 === HUMAN COPY/PASTE ===
 
 Title: Decision Quotient: A Regime-Sensitive Complexity Theory of Exact Relevance Certification
 
 Abstract (Unicode, for Zenodo):
-Which coordinates of a decision problem can be hidden without changing the decision, and what is the coarsest exact abstraction that preserves all decision-relevant distinctions? We study this as an exact relevance-certification problem organized around the optimizer quotient. We classify how hard it is to certify this structure across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, sufficiency collapses to relevance containment, so minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding with bridge theorems to static sufficiency and the optimizer quotient, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in NP^PP. In the sequential regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive an integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
+Which coordinates of a decision problem can be hidden without changing the decision, and what is the coarsest exact abstraction that preserves all decision-relevant distinctions? We study this as an exact relevance-certification problem organized around the optimizer quotient. We classify how hard it is to certify this structure across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, sufficiency collapses to relevance containment, so minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding with bridge theorems to static sufficiency and the optimizer quotient, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in NPᴾᴾ. In the sequential regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive an integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
 
 Abstract (MathJax, for arXiv):
-Which coordinates of a decision problem can be hidden without changing the decision, and what is the coarsest exact abstraction that preserves all decision-relevant distinctions? We study this as an exact relevance-certification problem organized around the optimizer quotient. We classify how hard it is to certify this structure across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, sufficiency collapses to relevance containment, so minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding with bridge theorems to static sufficiency and the optimizer quotient, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in NP\^PP. In the sequential regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive an integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
+Which coordinates of a decision problem can be hidden without changing the decision, and what is the coarsest exact abstraction that preserves all decision-relevant distinctions? We study this as an exact relevance-certification problem organized around the optimizer quotient. We classify how hard it is to certify this structure across three settings: static (counterexample exclusion), stochastic (conditioning and expectation), and sequential (temporal structure). In the static regime, sufficiency collapses to relevance containment, so minimum sufficiency is coNP-complete. In the stochastic regime, preservation and decisiveness separate: preservation is polynomial-time under explicit-state encoding with bridge theorems to static sufficiency and the optimizer quotient, while decisiveness is PP-hard under succinct encoding with anchor and minimum variants in $\textsf{NP}^{\textsf{PP}}$. In the sequential regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state tractability and succinct-encoding hardness, derive an integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies the optimizer-quotient universal property, main reductions, and finite decider core.
 
 arXiv Comments:
 Computational Complexity submission. Lean 4 artifact: 22068 lines, 1015 theorems/lemmas across 67 files (0 sorry placeholders).
@@ -31,7 +31,7 @@ zenodo:
     the stochastic regime, preservation and decisiveness separate: preservation is
     polynomial-time under explicit-state encoding with bridge theorems to static sufficiency
     and the optimizer quotient, while decisiveness is PP-hard under succinct encoding
-    with anchor and minimum variants in NP^PP. In the sequential regime, all queries
+    with anchor and minimum variants in NPᴾᴾ. In the sequential regime, all queries
     are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state
     tractability and succinct-encoding hardness, derive an integrity-competence trilemma,
     and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies
@@ -50,12 +50,12 @@ arxiv:
     the stochastic regime, preservation and decisiveness separate: preservation is
     polynomial-time under explicit-state encoding with bridge theorems to static sufficiency
     and the optimizer quotient, while decisiveness is PP-hard under succinct encoding
-    with anchor and minimum variants in NP\^PP. In the sequential regime, all queries
-    are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state
-    tractability and succinct-encoding hardness, derive an integrity-competence trilemma,
-    and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies
-    the optimizer-quotient universal property, main reductions, and finite decider
-    core.'
+    with anchor and minimum variants in $\textsf{NP}^{\textsf{PP}}$. In the sequential
+    regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast
+    between explicit-state tractability and succinct-encoding hardness, derive an
+    integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4
+    artifact mechanically verifies the optimizer-quotient universal property, main
+    reductions, and finite decider core.'
   comments: 'Computational Complexity submission. Lean 4 artifact: 22068 lines, 1015
     theorems/lemmas across 67 files (0 sorry placeholders).'
 abstract_variants:
@@ -69,7 +69,7 @@ abstract_variants:
     the stochastic regime, preservation and decisiveness separate: preservation is
     polynomial-time under explicit-state encoding with bridge theorems to static sufficiency
     and the optimizer quotient, while decisiveness is PP-hard under succinct encoding
-    with anchor and minimum variants in NP^PP. In the sequential regime, all queries
+    with anchor and minimum variants in NPᴾᴾ. In the sequential regime, all queries
     are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state
     tractability and succinct-encoding hardness, derive an integrity-competence trilemma,
     and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies
@@ -85,9 +85,9 @@ abstract_variants:
     the stochastic regime, preservation and decisiveness separate: preservation is
     polynomial-time under explicit-state encoding with bridge theorems to static sufficiency
     and the optimizer quotient, while decisiveness is PP-hard under succinct encoding
-    with anchor and minimum variants in NP\^PP. In the sequential regime, all queries
-    are PSPACE-complete. We also prove an encoding-sensitive contrast between explicit-state
-    tractability and succinct-encoding hardness, derive an integrity-competence trilemma,
-    and isolate twelve tractable subcases. A Lean 4 artifact mechanically verifies
-    the optimizer-quotient universal property, main reductions, and finite decider
-    core.'
+    with anchor and minimum variants in $\textsf{NP}^{\textsf{PP}}$. In the sequential
+    regime, all queries are PSPACE-complete. We also prove an encoding-sensitive contrast
+    between explicit-state tractability and succinct-encoding hardness, derive an
+    integrity-competence trilemma, and isolate twelve tractable subcases. A Lean 4
+    artifact mechanically verifies the optimizer-quotient universal property, main
+    reductions, and finite decider core.'

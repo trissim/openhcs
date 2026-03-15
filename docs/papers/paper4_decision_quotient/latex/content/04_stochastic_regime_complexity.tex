@@ -41,7 +41,7 @@ Using the same conditional optimizer map $\Opt^{\mathrm{stoch}}_I$, a coordinate
 In the paper, we refer to this as \emph{stochastic decisiveness}. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
 \end{definition}
 
-\paragraph{Why this changes complexity.}
+\paragraph{From witness exclusion to counting.}
 Static sufficiency asks whether any counterexample pair exists. Stochastic sufficiency asks whether the conditional optimizer obtained from the retained coordinates still matches the fully conditioned optimizer, while stochastic decisiveness asks whether every admissible fiber has a uniquely determined conditional optimum. The first question is about ruling out disagreeing state pairs; the second and third are about conditional expected-utility comparisons on each fiber. That shift from witness exclusion to weighted counting comparison is exactly what brings stochastic hardness into the picture.
 
 \paragraph{Example.}
@@ -87,7 +87,7 @@ Under the explicit-state encoding, \textsc{Stochastic-Sufficiency-Check} is deci
 For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\Opt^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\Opt(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound \leanmeta{\LHrng{DC}{91}{93}.} Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model.
 \end{proof}
 
-\paragraph{Conjecture 11.1 (Support-Sensitive Preservation Complexity).}
+\paragraph{Conjecture 4.1 (Support-Sensitive Preservation Complexity).}
 Under the succinct encoding of Section~\ref{sec:encoding}, \textsc{Stochastic-Preservation-Check}
 for general distributions (without the full-support assumption) is coNP-hard.
 
@@ -117,9 +117,9 @@ but not the high-level quantifier structure.
 \paragraph{Reduction intuition.}
 A natural hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
 
-Open Problem 11.2. Determine the exact succinct-encoding complexity of
+Open Problem 4.2. Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
-for general distributions. Under Conjecture 11.1, these inherit coNP-completeness and
+for general distributions. Under Conjecture 4.1, these inherit coNP-completeness and
 $\Sigma_2^P$-completeness respectively, matching the static regime; resolving the conjecture
 would complete the final open cell in the regime matrix (Table~2).
 

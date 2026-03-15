@@ -9,13 +9,17 @@ Our theory provides comprehensive coverage of tractable subcases. The artifact c
 \small
 \setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.12}
-\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{0.20\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}p{0.22\linewidth}@{}}
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
 \textbf{Restriction} & \textbf{Why it helps} & \textbf{Complexity} \\
 \midrule
 Low tensor rank & factored evaluation avoids full state enumeration & $O(|A| \cdot R \cdot n)$ \\
+\midrule
 Tree structure & dynamic programming over dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
+\midrule
 Bounded treewidth & interaction checking reduces to low-width CSP & $O(n \cdot k^{w+1})$ \\
+\midrule
 Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k-1}{k-1}^2\bigr)$ \\
 \bottomrule
 \end{tabularx}
@@ -240,15 +244,17 @@ For fixed $k$, this is $O(d^{k-1})$, polynomial in $d$.
 %% ============================================================
 \subsection{Practical Implications}\label{sec:tract-practical}
 
-The six tractable cases correspond to common modeling scenarios:
+The formally developed tractable subcases correspond to common modeling scenarios. The structurally nontrivial cases each remove a distinct source of hardness:
 
 \begin{itemize}
-\item \textbf{Bounded actions:} Small action sets (e.g., binary decisions, few alternatives).
-\item \textbf{Separable utility:} Additive cost models, linear utility functions.
-\item \textbf{Low tensor rank:} Factored preference models, low-rank approximations.
-\item \textbf{Tree structure:} Hierarchical decision processes, causal models with tree structure.
-\item \textbf{Bounded treewidth:} Spatial models, graphical models with limited interaction.
-\item \textbf{Coordinate symmetry:} Exchangeable features, order-invariant utilities.
+\item \textbf{Bounded actions:} Small action sets (e.g., binary decisions, few alternatives). Brute-force enumeration is polynomial when $|A|$ is constant.
+\item \textbf{Separable utility:} Additive cost models, linear utility functions. The optimizer is independent of state, making any coordinate set sufficient.
+\item \textbf{Low tensor rank:} Factored preference models, low-rank approximations in recommendation systems or multi-attribute utility theory.
+\item \textbf{Tree structure:} Hierarchical decision processes, causal models with chain or tree dependency. Dynamic programming replaces exhaustive search.
+\item \textbf{Bounded treewidth:} Spatial models, graphical models with limited interaction width. CSP algorithms on low-treewidth graphs handle the sufficiency check.
+\item \textbf{Coordinate symmetry:} Exchangeable features, order-invariant utilities (e.g., set-valued inputs). Orbit-type representatives collapse the comparison space.
 \end{itemize}
+
+Simple edge cases also yield immediate tractability without structural argument: single action ($|\mathrm{Opt}| = |A|$ trivially), bounded state space (exhaustive search is polynomial in $|S|$), strict dominance (one action always weakly optimal), and constant optimal set ($\mathrm{Opt}(s)$ independent of $s$).
 
 For problems given in the succinct encoding without these structural restrictions, the hardness results of Section~\ref{sec:hardness} apply, justifying heuristic approaches.

@@ -41,7 +41,7 @@ Using the same conditional optimizer map $\Opt^{\mathrm{stoch}}_I$, a coordinate
 In the paper, we refer to this as \emph{stochastic decisiveness}. In the current artifact, this is the stochastic predicate with the strongest succinct-encoding complexity package.
 \end{definition}
 
-\paragraph{Why this changes complexity.}
+\paragraph{From witness exclusion to counting.}
 Static sufficiency asks whether any counterexample pair exists. Stochastic sufficiency asks whether the conditional optimizer obtained from the retained coordinates still matches the fully conditioned optimizer, while stochastic decisiveness asks whether every admissible fiber has a uniquely determined conditional optimum. The first question is about ruling out disagreeing state pairs; the second and third are about conditional expected-utility comparisons on each fiber. That shift from witness exclusion to weighted counting comparison is exactly what brings stochastic hardness into the picture.
 
 \paragraph{Example.}
@@ -51,21 +51,22 @@ Consider a stochastic decision problem with $S=\{s_1,s_2\}$, $A=\{a,b\}$, unifor
 
 \paragraph{Table 2.} Regime classification summary for the stochastic row. Open entries mark explicit scope boundaries. Under full support, stochastic preservation is completely classified in the natural positive-support base case.
 
-\begin{center}
-\begin{tabular}{p{0.21\textwidth}p{0.23\textwidth}p{0.2\textwidth}p{0.25\textwidth}}
+\begingroup
+\renewcommand{\tabularxcolumn}[1]{m{#1}}
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash\hyphenpenalty=10000\exhyphenpenalty=10000}m{0.15\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}m{0.22\linewidth}>{\RaggedRight\arraybackslash}m{0.18\linewidth}@{}}
 \toprule
-\textbf{Predicate/query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
+\textbf{Predicate/} \textbf{query} & \textbf{What is proved here} & \textbf{Mechanized core} & \textbf{Open / not formalized} \\
 \midrule
- Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness classification claimed \\
-
- Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; explicit finite searches; support-sensitive obstruction/bridge lemmas & Open; see text; conjecture (coNP\-hard?) \\
-
-Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata for the upper-bound argument & No direct formalization of oracle Turing machines or oracle classes \\
-
-Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No end-to-end oracle-machine formalization of the stated oracle-class membership \\
+Stochastic sufficiency (preservation) & Polynomial-time under explicit-state encoding; bridges to static sufficiency and the optimizer quotient & Explicit-state decider; full-support bridge package & No succinct-encoding hardness claimed \\
+\midrule
+Minimum / anchor preservation & Polynomial-time in explicit state; under full support, inherit coNP-completeness / $\Sigma_2^P$-completeness from the static regime & Full-support inheritance theorems; finite searches; obstruction/bridge lemmas & Open; conjecture coNP-hard \\
+\midrule
+Stochastic decisiveness & Polynomial-time under explicit-state encoding; PP-hard under succinct encoding & Reduction core; finite witness/checking schemata & No oracle-machine formalization \\
+\midrule
+Minimum / anchor decisiveness & PP-hard; in $\textsf{NP}^{\textsf{PP}}$ at paper level & Existential witness/checking schemata; bounded explicit-state searches & No oracle-class membership formalization \\
 \bottomrule
-\end{tabular}
-\end{center}
+\end{tabularx}
+\endgroup
 
 The rest of this section unpacks the four rows of this summary. The preservation side is complete in explicit state and under full-support inheritance, and now also has support-sensitive partial results beyond full support. The decisiveness side carries the strongest succinct-encoding classification currently established in the paper.
 
@@ -86,7 +87,7 @@ Under the explicit-state encoding, \textsc{Stochastic-Sufficiency-Check} is deci
 For a fixed information set $I$, the verifier scans the finite state space and checks whether the conditional fiber optimizer $\Opt^{\mathrm{stoch}}_I(s_I)$ agrees with the fully conditioned optimizer $\Opt(s)$ at every state $s$. The artifact contains a counted explicit-state search witnessing exactly this predicate together with a linear-in-$|S|$ step bound \leanmeta{\LHrng{DC}{91}{93}.} Hence stochastic sufficiency is polynomial-time decidable in the explicit-state model.
 \end{proof}
 
-\paragraph{Conjecture 11.1 (Support-Sensitive Preservation Complexity).}
+\paragraph{Conjecture 4.1 (Support-Sensitive Preservation Complexity).}
 Under the succinct encoding of Section~\ref{sec:encoding}, \textsc{Stochastic-Preservation-Check}
 for general distributions (without the full-support assumption) is coNP-hard.
 
@@ -116,9 +117,9 @@ but not the high-level quantifier structure.
 \paragraph{Reduction intuition.}
 A natural hardness reduction would encode static counterexample pairs into zero-probability witness states of the distribution. Concretely, from a TAUTOLOGY instance $\varphi$, one could construct a succinct stochastic decision problem where the distribution assigns zero mass to a carefully chosen set of states that encode the $\varphi$-violating assignments. Preservation must check the universal condition over ALL states, including these zero-probability witnesses, so a coNP-style verification can detect the hidden TAUTOLOGY counterexample even though the distribution never observes it. This intuition aligns with the support-sensitive obstruction lemmas (Proposition~\ref{prop:stochastic-preservation-partial-general}) but requires overcoming the technical challenge of succinctly encoding witness-state support.
 
-Open Problem 11.2. Determine the exact succinct-encoding complexity of
+Open Problem 4.2. Determine the exact succinct-encoding complexity of
 \textsc{Stochastic-Minimum-Preservation} and \textsc{Stochastic-Anchor-Preservation}
-for general distributions. Under Conjecture 11.1, these inherit coNP-completeness and
+for general distributions. Under Conjecture 4.1, these inherit coNP-completeness and
 $\Sigma_2^P$-completeness respectively, matching the static regime; resolving the conjecture
 would complete the final open cell in the regime matrix (Table~2).
 
@@ -255,7 +256,7 @@ U(\mathrm{hold}_L,s)=U(\mathrm{hold}_R,s)=\frac12-2^{-(n+1)},
 \]
 with $I=\emptyset$. There is only one admissible fiber, so stochastic decisiveness asks whether the prior-optimal action is unique. By construction, this happens exactly when $\mathbb{E}[\varphi]\ge 1/2$, i.e., in the MAJSAT case. Thus MAJSAT many-one reduces to stochastic decisiveness.
 
-For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. Concretely, the artifact verifies the existential-universal quantifier structure of the predicate, the witness-checking schema that guesses an anchor and verifies conditional-uniqueness using PP comparisons, and the finite-step-counted search wrappers (handles OU1 to OU2, OU6 to OU7) that bound the nondeterministic guessing phase. The standard oracle-machine reduction proving NP^PP membership is argued in the paper text and not mechanized. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning.
+For the upper bound, failure of decisiveness is witnessed by one bad state whose observed fiber does not have a singleton conditional optimum. The current artifact packages exactly this no-witness characterization together with the corresponding existential witness schema, and the two directions are bundled in a summary theorem \leanmeta{\LHrng{OU}{8}{11}.} These mechanized witness/checking packages verify the finite combinatorial core used by the paper's oracle-class arguments. Concretely, the artifact verifies the existential-universal quantifier structure of the predicate, the witness-checking schema that guesses an anchor and verifies conditional-uniqueness using PP comparisons, and the finite-step-counted search wrappers (handles OU1 to OU2, OU6 to OU7) that bound the nondeterministic guessing phase. The standard oracle-machine reduction proving $\textsf{NP}^{\textsf{PP}}$ membership is argued in the paper text and not mechanized. The corresponding $\textsf{coNP}^{\textsf{PP}}$-style and $\textsf{NP}^{\textsf{PP}}$-style memberships are then proved in the paper text by standard complexity-theoretic reasoning.
 \end{proof}
 
 \begin{proposition}[Stochastic Decisiveness Yields Stochastic Anchor Sufficiency]\label{prop:stochastic-anchor-refinement}

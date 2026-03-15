@@ -70,11 +70,11 @@ end AccessPattern
 /-- Direct classification: each access pattern determines a complexity class.
     This function maps the access-pattern enum to the paper's complexity
     class identifiers. -/
-def accessPatternComplexity : AccessPattern → DimensionalComplexity.ComplexityClass
-  | .explicitState      => .P
-  | .succinctStatic     => .coNP
-  | .succinctStochastic => .PP
-  | .succinctSequential => .PSPACE
+def accessPatternComplexity : AccessPattern → DecisionQuotient.DimensionalComplexity.ComplexityClass
+  | .explicitState      => DecisionQuotient.DimensionalComplexity.ComplexityClass.P
+  | .succinctStatic     => DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP
+  | .succinctStochastic => DecisionQuotient.DimensionalComplexity.ComplexityClass.PP
+  | .succinctSequential => DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE
 
 /-- EP ⊆ 𝒫: Explicit-state sufficiency checking is in P.
 
@@ -163,42 +163,42 @@ theorem lh_AP1 :
     Different access patterns evaluate to different ComplexityClass constructors,
     so equality of their images forces equality of the patterns. -/
 theorem accessPatternComplexity_injective
-    (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
-    (hP_neq_PP : ComplexityClass.P ≠ ComplexityClass.PP)
-    (hP_neq_PSPACE : ComplexityClass.P ≠ ComplexityClass.PSPACE)
-    (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
-    (hcoNP_neq_PSPACE : ComplexityClass.coNP ≠ ComplexityClass.PSPACE)
-    (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE) :
+    (hP_neq_coNP : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP)
+    (hP_neq_PP : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PP)
+    (hP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE)
+    (hcoNP_neq_PP : DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PP)
+    (hcoNP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE)
+    (hPP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE) :
     ∀ {pat1 pat2 : AccessPattern},
       accessPatternComplexity pat1 = accessPatternComplexity pat2 →
-      pat1 = pat2 := by
-  intro pat1 pat2 h_eq
-  match pat1, pat2 with
-  | .explicitState,      .explicitState      => rfl
-  | .explicitState,      .succinctStatic     => False.elim (hP_neq_coNP h_eq)
-  | .explicitState,      .succinctStochastic => False.elim (hP_neq_PP h_eq)
-  | .explicitState,      .succinctSequential => False.elim (hP_neq_PSPACE h_eq)
-  | .succinctStatic,     .explicitState      => False.elim (hP_neq_coNP h_eq.symm)
-  | .succinctStatic,     .succinctStatic     => rfl
-  | .succinctStatic,     .succinctStochastic => False.elim (hcoNP_neq_PP h_eq)
-  | .succinctStatic,     .succinctSequential => False.elim (hcoNP_neq_PSPACE h_eq)
-  | .succinctStochastic, .explicitState      => False.elim (hP_neq_PP h_eq.symm)
-  | .succinctStochastic, .succinctStatic     => False.elim (hcoNP_neq_PP h_eq.symm)
-  | .succinctStochastic, .succinctStochastic => rfl
-  | .succinctStochastic, .succinctSequential => False.elim (hPP_neq_PSPACE h_eq)
-  | .succinctSequential, .explicitState      => False.elim (hP_neq_PSPACE h_eq.symm)
-  | .succinctSequential, .succinctStatic     => False.elim (hcoNP_neq_PSPACE h_eq.symm)
-  | .succinctSequential, .succinctStochastic => False.elim (hPP_neq_PSPACE h_eq.symm)
-  | .succinctSequential, .succinctSequential => rfl
+      pat1 = pat2 :=
+  fun {pat1} {pat2} h_eq =>
+    match pat1, pat2 with
+    | .explicitState,      .explicitState      => rfl
+    | .explicitState,      .succinctStatic     => False.elim (hP_neq_coNP h_eq)
+    | .explicitState,      .succinctStochastic => False.elim (hP_neq_PP h_eq)
+    | .explicitState,      .succinctSequential => False.elim (hP_neq_PSPACE h_eq)
+    | .succinctStatic,     .explicitState      => False.elim (hP_neq_coNP h_eq.symm)
+    | .succinctStatic,     .succinctStatic     => rfl
+    | .succinctStatic,     .succinctStochastic => False.elim (hcoNP_neq_PP h_eq)
+    | .succinctStatic,     .succinctSequential => False.elim (hcoNP_neq_PSPACE h_eq)
+    | .succinctStochastic, .explicitState      => False.elim (hP_neq_PP h_eq.symm)
+    | .succinctStochastic, .succinctStatic     => False.elim (hcoNP_neq_PP h_eq.symm)
+    | .succinctStochastic, .succinctStochastic => rfl
+    | .succinctStochastic, .succinctSequential => False.elim (hPP_neq_PSPACE h_eq)
+    | .succinctSequential, .explicitState      => False.elim (hP_neq_PSPACE h_eq.symm)
+    | .succinctSequential, .succinctStatic     => False.elim (hcoNP_neq_PSPACE h_eq.symm)
+    | .succinctSequential, .succinctStochastic => False.elim (hPP_neq_PSPACE h_eq.symm)
+    | .succinctSequential, .succinctSequential => rfl
 
 /-- Handle: LH{AP2} - injectivity alias -/
 theorem lh_AP2 :
-    ∀ (hP_neq_coNP : ComplexityClass.P ≠ ComplexityClass.coNP)
-      (hP_neq_PP : ComplexityClass.P ≠ ComplexityClass.PP)
-      (hP_neq_PSPACE : ComplexityClass.P ≠ ComplexityClass.PSPACE)
-      (hcoNP_neq_PP : ComplexityClass.coNP ≠ ComplexityClass.PP)
-      (hcoNP_neq_PSPACE : ComplexityClass.coNP ≠ ComplexityClass.PSPACE)
-      (hPP_neq_PSPACE : ComplexityClass.PP ≠ ComplexityClass.PSPACE),
+    ∀ (hP_neq_coNP : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP)
+      (hP_neq_PP : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PP)
+      (hP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.P ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE)
+      (hcoNP_neq_PP : DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PP)
+      (hcoNP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.coNP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE)
+      (hPP_neq_PSPACE : DecisionQuotient.DimensionalComplexity.ComplexityClass.PP ≠ DecisionQuotient.DimensionalComplexity.ComplexityClass.PSPACE),
       ∀ {pat1 pat2 : AccessPattern},
         accessPatternComplexity pat1 = accessPatternComplexity pat2 →
         pat1 = pat2 :=
