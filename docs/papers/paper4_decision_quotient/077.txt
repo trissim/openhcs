@@ -1,0 +1,477 @@
+                                Proceedings of the Twenty-Third International Joint Conference on Artificial Intelligence
+
+
+
+
+                          Detecting and Exploiting Subproblem Tractability
+
+                        Christian Bessiere                                                Clement Carbonnel
+                       Université Montpellier                                           Université de Grenoble
+                        Montpellier, France                                                 Grenoble, France
+                        bessiere@lirmm.fr                                          clement.carbonnel@ensimag.imag.fr
+
+          Emmanuel Hebrard                             George Katsirelos                                            Toby Walsh
+             LAAS-CNRS                                    MIAT, INRA                                              NICTA & UNSW
+           Toulouse, France                             Toulouse, France                                          Sydney, Australia
+            hebrard@laas.fr                     george.katsirelos@toulouse.inra.fr                            toby.walsh@nicta.com.au
+
+
+                          Abstract                                              tractable class. For instance, many tractable classes are de-
+                                                                                fined by a restricted constraint language and even a single ex-
+     Constraint satisfaction problems may be nearly                             tra constraint excludes an instance from this tractable class.
+     tractable. For instance, most of the relations in                          In this case, even though the instance is “close” to being a
+     a problem might belong to a tractable language.                            member of the class, we cannot directly exploit tractability.
+     We introduce a method to take advantage of this
+     fact by computing a backdoor to this tractable                                We make a significant step toward filling the gap between
+     language. The method can be applied to many                                theory and practice in this domain. We introduce a method to
+     tractable classes for which the membership test is                         take advantage of instances “almost” fitting a tractable class.
+     itself tractable. We introduce therefore two poly-                         Proximity to a tractable class is a powerful tool in solving a
+     nomial membership testing algorithms, to check if                          problem instance. The basic idea is to branch first on the part
+     a language is closed under a majority or conser-                           of the problem that makes it intractable in order to obtain a
+     vative Mal’tsev polymorphism, respectively. Then                           tractable subproblem. We propose a scheme that performs
+     we show that computing a minimal backdoor for                              such reasoning automatically. We quantify the tractability
+     such classes is fixed parameter tractable (FPT) if                         of a CSP instance with respect to a tractable class Γ by the
+     the tractable subset of relations is given, and W[2]-                      size of the smallest backdoor [Williams et al., 2003], i.e., the
+     complete otherwise. Finally, we report experimen-                          smallest set of variables that yields a member of Γ when in-
+     tal results on the XCSP benchmark set. We identi-                          stantiated. Once a backdoor is found, we can solve an in-
+     fied a few promising problem classes where prob-                           stance by branching first on the backdoor variables, and then
+     lems were nearly closed under a majority polymor-                          using a polynomial algorithm for Γ. Instances of this type are
+     phism and small backdoors could be computed.                               fixed parameter tractable (FPT) in the parameter k equal to
+                                                                                the size of their backdoor.
+1   Introduction                                                                    We consider first the tractable class defined by languages
+The characterisation of tractable classes of constraint satisfac-               admitting a majority polymorphism. Unfortunately, we prove
+tion problems is an active and important research area. How-                    it is W[2]-hard to compute a minimal backdoor with respect
+ever, most constraint toolkits do not exploit tractable classes                 to this class. However, if we fix the target tractable language
+in any specific way. Indeed, solvers often struggle to solve                    (i.e., we fix a subset of the relations of the problem admitting
+tractable problems [Petke and Jeavons, 2009]. What prevents                     a majority polymorphism), then finding a minimal backdoor
+tractability results from being more widely used in practice?                   is fixed parameter tractable. This tractable subset can be com-
+Part of the answer comes from the problem of testing mem-                       mon to families of instances. In this case, even if obtaining
+bership. The question of membership of a given problem in-                      such a subset is computationally expensive, the cost can be
+stance to a polynomial class is not always easy to answer.                      amortized over many instances. For each instance, we can
+Moreover, since many tractable classes exist, many member-                      compute a backdoor relative to the tractable subset computed
+hip tests may be needed. Unfortunately, membership testing                      offline, and solve the instance using it, both with a complex-
+has not received the same attention as the problem of identify-                 ity exponential only in the size of the backdoor. This scheme
+ing tractable classes in the first place. Additionally, problem                 thus constitutes a way to take advantage automatically of an
+instances are often messy and do not belong to any known                        instance being “almost” tractable. We report experimental re-
+
+
+
+                                                                          468
+sults assessing the practicality of this approach.1                         obtained from G(P) by replacing each hyperedge by a clique
+   Since our method is highly dependent on the ability to test              of edges.
+membership to a tractable class efficiently, we introduce new
+polynomial membership testing algorithms for two important
+tractable classes. A future challenge is to reduce the large                Polymorphisms. Throughout the paper we will consider
+polynomial complexity of these algorithms and to devise al-                 classes of CSPs whose languages admit a polymorphism of
+gorithms for other classes. Nevertheless, we were able to                   a certain kind. Constraint problems whose language is closed
+use our algorithms in experiments on the XCSP [Roussel and                  under certain kinds of polymorphisms (majority, affine, con-
+Lecoutre, 2009] benchmark library. Some problem classes in                  stant, or binary idempotent commutative and associative) are
+this library are indeed “almost” tractable as a large subset of             tractable [Jeavons et al., 1997]. It was later shown [Bula-
+their language is closed under a majority polymorphism.                     tov and Dalmau, 2006] that the Mal’tsev polymorphism also
+                                                                            yields a tractable language.
+   The paper is organised as follows: In Section 3, we in-
+troduce two polynomial membership testing algorithms for                       Let C be a constraint, r = |X(C)| its arity. The map-
+tractable classes where the membership test was not previ-                  ping f : V (C)m 7→ V (C), of arity2 m, is a polymorphism
+ously known to be tractable. Then in Sections 4 and 5, we                   of R(C) (or R(C) is closed under f ) iff for every m-tuple
+describe our general FPT scheme, and analyse its complex-                   (τ1 , . . . , τm ) of elements of R(C), we have:
+ity depending on if we know which subset of the language is                    hf (τ1 [1], . . . , τm [1]), . . . , f (τ1 [r], . . . , τm [r])i ∈ R(C)
+tractable. Finally, in Section 6 we report experimental results
+with majority polymorphisms on the XCSP repository.                            Consider the relations R1 = {h1, 0i, h1, 1i} and
+                                                                            R2 = {h0, 1, 0i, h0, 0, 0i, h1, 0, 1i, h1, 1, 1i}. The function
+2   Formal Background                                                       f (x, y) = (x + y mod 2) is not a polymorphism of R1 be-
+                                                                            cause hf (1, 1), f (0, 1)i = h0, 1i 6∈ R1 . However, it is a poly-
+Constraint Satisfaction Problems. A constraint satisfac-                    morphism of R2 . To see this we consider the operator f on
+tion problem (CSP) consists of deciding if a constraint net-                all possible pairs of tuples (since f is commutative we con-
+work has solutions. A constraint network P is defined by                    siderer unordered pairs). Pairs involving the tuple h0, 0, 0i are
+the triple hX , D, Ci, where X = {x1 , . . . , xn } is a set of n           mapped to the other element of the pair. Repetitions of a tu-
+variables, D is a set of values, D(x) ⊆ D is the finite set                 ple t are mapped to h0, 0, 0i. We illustrate the three remaining
+of possible values for x (its domain), and C is set of con-                 cases below. For each pair of tuples τ1 , τ2 and each variable
+straints. A constraint C ∈ C consists of a scope X(C) and                   xi we give the value of the function f (τ1 [xi ], τ2 [xi ]):
+a relation R(C) over the domains of the variables in X(C).
+V (C), the set of available values for variables constrained by
+                              S                                               f       f        f         f       f        f          f       f       f
+C is defined by V (C) = x∈X(C) D(x). Given a network                         z}|{    z}|{     z}|{      z}|{    z}|{     z}|{       z}|{    z}|{    z}|{
+                                                                              0       1        0         0       1        0          1       0       1
+P = hX , D, Ci, we let n = |X | be the number of variables,                   1       0        1         1       1        1          1       1       1
+d = |D| be the number of values, e = |C| be the number                       |{z}
+                                                                              =
+                                                                                     |{z}
+                                                                                      =
+                                                                                              |{z}
+                                                                                               =
+                                                                                                        |{z}
+                                                                                                         =
+                                                                                                                |{z}
+                                                                                                                  =
+                                                                                                                         |{z}
+                                                                                                                          =
+                                                                                                                                    |{z}
+                                                                                                                                     =
+                                                                                                                                            |{z}
+                                                                                                                                             =
+                                                                                                                                                    |{z}
+                                                                                                                                                     =
+of constraints, and t = maxC∈C (|R(C)|) be the maximum                         1       1       1          1       0       1          0       1       0
+number of tuples in a relation. Given a tuple τ ∈ R(C), we
+denote τ [x] the element of τ corresponding to x ∈ X(C).                       A ternary polymorphism f has the majority property iff for
+   Constraint solvers typically use backtracking search to ex-              all v, w ∈ V (C), it holds that f (v, v, w) = f (v, w, v) =
+plore the space of partial assignments. After each assignment,              f (w, v, v) = v. It is Mal’tsev if v, w ∈ V (C), it holds that
+constraint propagation algorithms prune the search space by                 f (v, v, w) = f (w, v, v) = w. Note a polymorphism can-
+enforcing a local consistency. Given a variable x, a value                  not be both Mal’tsev and majority. A polymorphism f of
+v ∈ D(x) and a constraint C such that x ∈ X(C), the                         arity m is idempotent iff for all v ∈ V (C), f (v, . . . , v) = v.
+assignment hx, vi is arc consistent (AC) with respect to C                  Moreover, it is conservative iff for all hv1 , . . . , vm i ∈ Dm :
+iff there exists a tuple τ ∈ R(C) such that τ [x] = v and                   f (v1 , . . . , vm ) ∈ {v1 , . . . , vm }.
+∀y ∈ X(C), τ [y] ∈ D(y). Such a tuple is called a support
+for hx, vi. A constraint network P = hX , D, Ci is arc con-                 Parameterized complexity. A problem is fixed-parameter
+sistent iff, for all variables x ∈ X , for all values v ∈ D(x),             tractable (FPT) if it can be solved in O(f (k)nc ) time where
+hx, vi is arc consistent with respect to all constraints C ∈ C.             f is any computable function, n is the size of the input, k
+We write AC(P) for the constraint network obtained by re-                   is some parameter, and c is a constant. For example, vertex
+moving all values from P that are not arc consistent. If the re-            cover is fixed-parameter tractable with respect to the size of
+sulting constraint network is empty, P is arc inconsistent. An              the cover k since it can be solved in O(1.31951k k 2 + kn)
+assignment hx, vi is singleton arc consistent (SAC) iff, the                time [Downey et al., 1999]. Above F P T , Downey and
+constraint network obtained by setting x to v is not arc incon-             Fellows have proposed a hierarchy of fixed-parameter in-
+sistent. For a network P, we define a constraint hypergraph                 tractable problem classes:
+G(P) with a vertex for each variable and a hyperedge equal
+to the scope of each constraint. The primal graph Gc (P) is                                 F P T ⊆ W [1] ⊆ W [2] ⊆ . . . ⊆ XP
+    1                                                                           2
+      The source code developed for this evaluation is available at               Observe that the arity of a polymorphism is orthogonal to the
+http://sourceforge.net/projects/kpoly                                       arity of a constraint.
+
+
+
+
+                                                                      469
+For instance, the clique problem is W [1]-complete with re-                        • Iteratively enforce SAC on this problem and assign a
+spect to the size of the clique, whilst the dominating set prob-                      variable.
+lem is W [2]-complete with respect to the size of the dom-                         • If SAC fails return False, otherwise, if all variables
+inating set. There is considerable evidence to suggest that                           are assigned return True.
+W [1]-hardness implies parametric intractability and that W [t]
+is strictly easier than W [t + 1]. The class XP contains prob-                     SAC can be enforced in O(ndT ) on a constraint network
+lems that can be solved in time O(nf (k) ).                                     involving n variables of domain size d, where T is the time
+                                                                                complexity of achieving AC [Bessiere and Debruyne, 2008].
+                                                                                The network Pmaj (Γ, D) has d3 variables of domain size d,
+3     Detecting Tractable Problems                                              and lt3 constraints. Since AC can be achieved in O(er(t+d))
+We first give two new polynomial membership testing algo-                       and SAC can be enforced up to d3 times on this network, the
+rithms: one for testing whether a set of relations is closed                    total time complexity of the procedure is O(rd7 lt3 (t + d)).
+under a majority polymorphism, and a second for testing                         In addition, building the indicator problem takes lt3 time. 
+whether a set of binary relations is closed under a conser-
+vative Mal’tsev polymorphism. We shall use the notion of                        3.2   Conservative Mal’tsev on binary relations
+indicator problem introduced in [Jeavons et al., 1997].                         As previously, we shall use a specific form of indicator prob-
+Definition 1 (Indicator problem). Let Γ be a set of relations                   lem to detect conservative Mal’tsev polymorphisms of binary
+over a domain D. The indicator problem of order m of Γ,                         relations. We call Pmal (Γ, D) the constraint network equal
+denoted Pm (Γ, D), is defined as follows:                                       to P3 (Γ, D) with the extra following constraints:
+    • A set of variables X = {xv̄ | v̄ ∈ Dm };                                            ∀hv, wi ∈ D2 , xhv,w,wi = xhw,w,vi = v
+    • A domain (common to all variables) D;
+                                                                                            ∀hu, v, wi ∈ D3 , xhu,v,wi ∈ {u, v, w}
+    • Each relation R ∈ Γ of arity r, and each tuple                               Moreover, for the purpose of our demonstration, we
+      sequence hτ1 , . . . , τm i ∈ Rm , yields the constraint                  shall reformulate the indicator problem Pmal (Γ, D) as fol-
+      (hxv̄1 , . . . , xv̄r i, R) where v̄i = hτ1 [i], . . . , τm [i]i.         lows. For every triple hu, v, wi we replace the domain of
+   The solutions of an indicator problem Pm (Γ, D) are poly-                    xhu,v,wi by {1, 2, 3}, and for each constraint C = (S, R)
+morphisms of a language Γ over a domain D. There is one                         of Pmal (Γ, D), where S = hxhv1 ,v2 ,v3 i , xhw1 ,w2 ,w3 i i, we
+variable per m-tuple of values in D, standing for the image of                  replace R by R|S = {hi, ji | hvi , wj i ∈ ({v1 , v2 , v3 } ×
+this tuple under the polymorphism. For a relation R of arity                    {w1 , w2 , w3 } ∩ R)}. Notice that values may be repeated.
+r, and for each combination of m tuples of R, there is a con-                   For instance the domain of xhv,w,vi is {1, 2, 3}, however the
+straint on the r variables obtained by traversing these m tu-                   values 1 and 3 are symmetric and both share the same sup-
+ples component-wise whose relation is precisely R. This con-                    ports corresponding to those of v. Clearly, the reformulation
+straint ensures that applying the polymorphism component-                       preserves the satisfiability of Pmal (Γ, D), though it may in-
+wise on these tuples yields a tuple that belongs to R.                          troduce symmetric solutions.
+3.1     Majority                                                                Lemma 1 (derived from [Bulatov, 2002]). Let R be some
+                                                                                binary relation that has a Mal’tsev polymorphism. Then, R
+It has been recently shown [Chen et al., 2013] that we can
+                                                                                is rectangular, i.e., for any values a, b, c, d, if < a, c >, <
+solve a problem backtrack-free by applying SAC at each
+                                                                                a, d > and < b, c > ∈ R, then < b, d >∈ R.
+node when the set of relations admits a majority polymor-
+phism. We shall use this property to detect a majority poly-                       It follows that a binary constraint C admits a Mal’tsev
+morphism. We use a specific indicator problem Pmaj (Γ, D)                       polymorphism only if the digraph whose edges are given by
+defined as P3 (Γ, D), with the following extra constraints:                     the tuples of R(C) is a set of disjoint bicliques.
+                                                                                Lemma 2. Let Γ be a language of binary relations, D be
+      ∀hv, wi ∈ D2 , xhv,v,wi = xhv,w,vi = xhw,v,vi = v                         a set of values, and R ∈ Γ. Let S = hxhu,v,wi , xha,b,ci i
+Theorem 1. The existence of a majority polymorphism of a                        and C = (S, R|S ) be a constraint of AC(Pmal (Γ, D)). If Γ
+language Γ over a domain D can be decided in O(rd7 lt3 (t +                     is closed under a conservative Mal’tsev polymorphism, then
+d)). where l = |Γ|, d = |D|, t and r are, respectively, the                     R|S is either:
+maximum size and arity of a relation in Γ.                                        • The equality relation, or
+Proof: There is a bijection between solutions of Pmaj (Γ, D)                      • The universal relation, or
+and majority polymorphisms of Γ over D. Notice that the
+language of Pmaj (Γ, D) is precisely Γ plus extra unary con-                      • The union of {h2, 2i} and {1, 3} × {1, 3}.
+straints that are by definition closed under the majority opera-
+tion. This ensures that Γ admits a majority polymorphim over
+D iff Pmaj (Γ, D) can be solved backtrack-free using SAC.                       Proof: Observe that C can only be part of the in-
+   The following backtrack-free procedure detects a majority                    dicator problem if {hu, ai, hv, bi, hw, ci} ⊆ R, hence
+polymorphism of a set of relations Γ over a domain D:                           {h1, 1i, h2, 2i, h3, 3i} ⊆ R|S .
+    • Build the indicator problem Pmaj ({R(C) | C ∈ C}, D).                        Then, by Lemma 1, R|S is either :
+
+
+
+                                                                          470
+           1             1   1            1   1             1                   transformations (including AC), we can solve the indicator
+                                                                                problem by assigning any value in {1, 3} ∩ D(x) to each
+           2             2   2            2   2             2                   variable x. Therefore, if enforcing AC returns a failure, or
+                                                                                if no such such assignment can be built, then we know that Γ
+           3             3   3            3   3             3
+                                                                                is not closed under any Mal’tsev polymorphism. Moreover,
+                                                                                each step in this procedure takes linear time in the number of
+                                                                                constraints of the indicator problem (which equals d6 where
+    Figure 1: The 3 possible structures for R|S after AC.                       d = |D| in the worst case). Creating the indicator problem
+                                                                                takes O(ld6 ) time.                                         
+  • A single biclique (universal relation) ;
+  • 3 bicliques, (equality relation) ;                                          4     Exploiting Tractable Subproblems
+  • 2 bicliques (one has a single edge).                                        Our approach to exploiting tractable subproblems is by iden-
+                                                                                tifying a small backdoor. We are not limited to a specific
+  The latter case yields 3 possibilities :                                      tractable class, but can use any class characterized by a poly-
+                                                                                morphism that satisfies either of two properties: idempotency,
+           1          1      1          1     1           1
+                                                                                or, more strongly, being conservative. The stronger property
+                                                                                gives an algorithm that is FPT in a strictly smaller parameter.
+           2          2      2          2     2           2                     Both majority and Mal’tsev imply idempotency. The exact
+                                                                                problem is stated as follows.
+           3          3      3          3     3           3                                NAME : A LMOST-T RACTABLE -CSP(P)
+                                                                                           I NPUT: A CSP P = hX , D, C1 ∪ C2 i and a prop-
+            (a) Case 1       (b) Case 2        (c) Case 3
+                                                                                                      erty P such that P2 = hX , D, C2 i belongs
+                                                                                                      to a tractable class characterised by a poly-
+   In case 1, the existence of the edges {h1, 1i, h2, 1i, h3, 3i}                                     morphism with property P .
+implies that {hu, ai, hv, ai, hw, ci} ⊆ R. Consequently, the                      PARAMETERS : d: domain size, m: the number of vari-
+constraint (hxhu,v,wi , xha,a,ci i, R|hxhu,v,wi ,xha,a,ci i ) belong to                               ables in C1 , k: the minimum vertex cover
+Pmal (Γ, D) with R|hxhu,v,wi ,xha,a,ci i = R|S . However, by                                          of the primal graph of C1 , kh : the min-
+construction of the indicator problem D(xha,a,ci ) = {3}.                                             imum hyper vertex cover of the hyper
+Therefore, enforcing AC on this constraint will reduce the                                            graph of C1 , and r: the maximum arity of
+domain of xhu,v,wi to the singleton {3} since only the tuple                                          constraints in C1 .
+h3, 3i is a support. In other words, this constraint will be en-                       P ROBLEM : Is P satisfiable?
+tailed, hence can be removed after enforcing AC.                                   Our approach to exploit almost tractable subproblems is in-
+   The same reasoning applies to case 2, and the only possi-                    spired by the cycle-cutset method [Dechter and Pearl, 1987].
+bility left is case 3.                                                         This instantiates variables of the constraint network until the
+                                                                                remaining subproblem is acyclic, where directed arc consis-
+Corollary 1. If we:                                                             tency will solve the problem in polynomial time [Freuder,
+  • Enforce arc consistency on the indicator problem,                           1982]. The cycle cutset method can be seen as one of the
+                                                                                first attempts to solve almost tractable problems. However,
+  • Remove all constraints involving assigned variable(s),
+                                                                                the tractable class was based on the structure of the network
+  • Merge all variables constrained together by an equality,                    rather than the language.
+  • Remove all universal relations,
+                                                                                4.1    Idempotent classes
+  Then the resulting network only has constrained variables                     An assignment is a unary relation with a single tuple, which
+with domain size ≥ 2, and every relation will be equal to:                      is closed under any idempotent polymorphism. We use this
+                                                                                in our first FPT algorithm.
+               {h1, 1i, h1, 3i, h2, 2i, h3, 1i, h3, 3i}
+                                                                                Theorem 3. A LMOST-T RACTABLE -CSP( IDEMPOTENT ) is
+   Therefore, assigning every non-assigned variable x to                        FPT with parameter d + m.
+{1, 3} ∩ D(x) is always a solution. Indeed, every variable’s
+domain contains at least two values so it contains either 1 or                  Proof: We show that the set of all m variables that participate
+3, and they are always compatible. Now we can easily prove                      in constraints in C1 form a backdoor with respect to the algo-
+that this tractable class can be detected in polynomial time.                   rithm for the tractable class. Indeed, let C2 be closed under the
+                                                                                idempotent polymorphism f . Since f (v, . . . , v) = v, any re-
+Theorem 2. The existence of a conservative Mal’tsev poly-                       lation with a single tuple is closed under f , so the union of C2
+morphism of a language Γ over a domain D can be decided                         with the assignment relations is also closed under f . There-
+in O(ld6 ) where l = |Γ| and d = |D|.                                           fore, instantiating the variables that appear in constraints in
+Proof: By Corollary 1, we know that if Γ is closed under                        C1 leaves a tractable instance. The search tree entailed by the
+a conservative Mal’tsev polymorphism, after a sequence of                       backdoor has size dm .                                         
+
+
+
+                                                                          471
+4.2    Conservative classes                                                   Proof:      Let R1 = {(1, 3), (1, 4), (2, 5)}, R2 =
+A set of prunings can be expressed by the addition of unary                   {(1, 3), (2, 4), (1, 5)}, R3 = {(2, 3(k − 2)), (1, 3(k − 2) +
+constraints to a CSP. Moreover, all unary relations are closed                1), (2, 3(k − 2) + 2)} and Ri = {((3(i − 3), 3(i − 2)), (3(i −
+under any conservative polymorphism. In this case there ex-                   3)+1, 3(i−2)+1), (3(i−3)+2, 3(i−2)+2)} for 4 ≤ i ≤ k.
+ists an algorithm which is exponential in the strictly smaller                For example, for k = 4 this is instantiated to
+parameter k. We note that k ≤ (r − 1)kh < m.                                                     R1      R2      R3      R4
+                                                                                                1 3     1 3     2 6     3 6
+Theorem 4. A LMOST-T RACTABLE -CSP(C ONSERVATIVE )
+                                                                                                1 4     2 4     1 7     4 7
+is FPT with parameter d + k.                                                                    2 5     1 5     1 8     5 8
+Proof: We use this vertex cover of the primal graph of P1
+                                                                                 We first show that the complete set of relations admits
+as a backdoor. That is, we branch on the variables of the ver-
+                                                                              no conservative majority polymorphism f . From R1 we get
+tex cover, yielding a tree of size dk . At each leaf of this tree,
+                                                                              f (3, 4, 5) ∈ {3, 4} and from R2 we get f (3, 4, 5) ∈ {3, 5},
+all constraints of C1 are reduced to unary constraints, so the
+                                                                              so f (3, 4, 5) = 3. From R3 we get f (3(k − 2), 3(k − 2) +
+induced CSP P 0 has all the constraints of P2 and addition-
+                                                                              1, 3(k − 2) + 2) ∈ {3(k − 2) + 1, 3(k − 2) + 2}. Finally, from
+ally some unary constraints, therefore P 0 belongs to the same
+                                                                              Ri , 4 ≤ i ≤ k, we get f (3(i−2), 3(i−2)+1, 3(i−2)+2) =
+conservative tractable class as P2 and its satisfiability can be
+                                                                              j ⇐⇒ f (3(i − 1), 3(i − 1) + 1, 3(i − 1) + 2) = j + 3. This
+determined in polynomial time.                                  
+                                                                              chain gives us that f (3, 4, 5) ∈ {4, 5} 63 3.
+                                                                                 On the other hand, consider any subset of at most k − 1
+5     Identifying Tractable Subproblems                                       relations. If we omit either R1 or R2 , we only require
+When we do not know explicitly which set of relations be-                     f (3, 4, 5) ∈ {3, 4} (respectively, {3, 5}) which has a non-
+longs to a tractable language, we face a harder problem than                  empty intersection with {4, 5}. If we omit R3 , we place no
+just finding the backdoor. We must also guess the subset of                   restriction on f (3(k − 2), 3(k − 2) + 1, 3(k − 2) + 2), so it
+relations that gives a small backdoor. We will demonstrate                    does not conflict with f (3, 4, 5) = 3. Finally, if we omit any
+this difficulty on languages that are tractable under a major-                of the relations R4 , . . . , Rk , we break the chain that connects
+ity polymorphism. We conjecture that similar results hold for                 f (3, 4, 5) to f (3(k − 2), 3(k − 2) + 1, 3(k − 2) + 2), so they
+other tractable languages.                                                    can be chosen independently. Therefore, any subset of k − 1
+      NAME: PARTITION -M AJORITY-CSP                                          relations has a conservative majority polymorphism.              
+      I NPUT: A CSP hX , D, Ci, integer k                                     Theorem 6. PARTITION -M AJORITY-CSP is W [2]-hard
+  P ROBLEM: Does there exist a partition of C into                            when the parameter is k, the size of the vertex cover of the
+                 C1 , C2 such that C2 admits a conservative                   primal graph Gc (P).
+                 majority polymorphism and C1 has a ver-                      Proof: We reduce from an instance of Hitting Set over the
+                 tex cover of size at most k?                                 universe U , with sets S1 , . . . , Sm , each of size p, and with
+Theorem 5. PARTITION -M AJORITY-CSP is NP-complete                            minimum hitting set size s to an instance of PARTITION -
+even for binary CSPs.                                                         M AJORITY-CSP with k = s with maximum arity 2. Indeed,
+                                                                              Hitting Set is W [2]-hard for the parameter s. Note that we
+Proof: A partition along with the vertex cover provides a                     assume all sets have the same size. If that is not the case, we
+witness, because of Theorem 1, so the problem is in NP.                       pad each set using new unique elements.
+For hardness, we reduce from Vertex Cover on a graph                             We create a variable Xe for each element e in the Hitting
+G = {V, E}. We construct a CSP P = hX, Ci with a                              Set problem and a variable XS for each set S. For each set S,
+variable for each vertex and a constraint between two vari-                   we create a set RS of p relations using the method of lemma
+ables iff there exists an edge between the corresponding ver-                 3 and using distinct values for each set. We then create p
+tices. All constraints are the same relation R = {(1, 1),                     constraints CXS Xe for each e ∈ S using the relations of RS .
+(1, 2), (2, 3), (4, 1), (5, 2), (4, 3), (7, 1), (6, 2), (6, 3)}. This         This CSP has a partition into C1 and C2 s.t. the vertex cover
+relation has no majority polymorphism, as the first three                     of C1 is k = s iff the minimum hitting set has size s.
+tuples require that f (1, 2, 3) ∈ {1, 2}, the next three re-                     (⇒) Suppose H is a hitting set. For each element e ∈ H
+quire that f (1, 2, 3) ∈ {2, 3} and the last three require that               and for every set S such that e ∈ S, we place CXe XS in C1 .
+f (1, 2, 3) ∈ {1, 3}. No subset of constraints admits a major-                Since H is a hitting set, C2 contains at most p − 1 relations
+ity polymorphism, so C2 has to be empty. Hence the problem                    from each set of p relations that involve variable XS . There-
+is equivalent to finding the minimum vertex cover.                           fore, the relations involving XS that are in C2 admit a con-
+    When the parameter is the size of the vertex cover Gc (P),                servative majority polymorphism. Since relations involving
+it is easy to see that PARTITION -M AJORITY-CSP is in XP .                    XS are over disjoint domains with relations involving XS 0
+Let S be a subset of k variables and C1 be the constraints                    for any set S 0 different from S, they do not interfere with
+which are covered by S in Gc (P). We can test in polynomial                   the parts of the polymorphism affecting each other. Thus C2
+time whether C2 has a conservative majority polymorphism.                     has a conservative majority polymorphism. Moreover, the set
+There are O(nk ) such sets, which gives an XP algorithm.                      {Xe |e ∈ H} is a vertex cover of C1 by the fact that we only
+Lemma 3. For any k ≥ 3, there exists a set of k relations                     include constraints that involve one of these variables in C1 .
+such that every subset of k −1 relations admits a conservative                   (⇐) We first show that C1 includes exactly one constraint
+majority polymorphism but the entire set does not.                            of the form CXe XS for each set S. It includes at least one
+
+
+
+                                                                        472
+such constraint, otherwise C2 does not admit a majority poly-               which reduce runtime in practice. First, we performed pre-
+morphism. To show it includes at most one such constraint,                  processing of an instance with SAC to reduce the size of
+observe first that vertex cover is monotone, i.e., adding edges             the indicator problem. Second, we implemented a nogood
+cannot decrease the size of the minimum vertex cover. Sec-                  database of sublanguages which admit no majority polymor-
+ond, in order to ensure that C2 admits a majority polymor-                  phism in order to avoid testing any of their supersets. We
+phism, we only need one out of every p relations that involve               also perform pre-emptive detection of trivially blocking and
+a variable XS to be in C1 and by monotonicity of vertex cover               majority-friendly relations. For testing existence of a major-
+we can assume that the other p − 1 are relations are in C2 .                ity polymorphism, we enforce SAC on the indicator problem
+   Since each XS appears in exactly one relation in C1 , if it              using SAC3-SDS [Bessiere et al., 2011]. We compute vertex
+is in the vertex cover to cover the constraint CXS Xe , we can              covers using the basic O(2k p(n)) algorithm combined with a
+replace it by Xe and get a vertex cover that is no larger. So               few heuristics inspired from [Balasubramanian et al., 1998].
+there exists a minimum size vertex cover with variables Xe                     We implemented the algorithm in C++ and ran experiments
+only. This set of variables corresponds to a set of elements                on a 2.2 Ghz Intel Core i7 with 8 Gb of memory on 191 se-
+covering the sets S1 , . . . , Sm , because each covers at least            ries of instances made available from the Fourth International
+one relation CXe XS , these constraints encode set inclusion                Constraint Solver Competition. We used only instances with-
+and all sets are covered by the chosen relations.                          out global constraints and converted all constraints to exten-
+   This result also implies W [2]-hardness for partitioning                 sional form. For each family of instances, we tested the algo-
+when the tractable subproblem is closed under a non-                        rithm on a sample of representative instances. We placed an
+conservative majority polymorphism. On the other hand, if                   upper bound of 40 on the computed backdoor size. If the al-
+the parameter also includes the domain size then we lose                    gorithm reported no backdoor for any instance in the sample,
+hardness. However, the complexity of the best algorithm we                  we pessimistically concluded that no instance in that family
+have in this case is rather impractical.                                    has a small backdoor, otherwise we ran the algorithm on the
+Theorem 7. PARTITION -M AJORITY-CSP is FPT when the                         remaining instances.
+parameter is d + k + r.                                                        The results are mostly (but not wholly) negative, as we
+                                                                            failed to find non-trivial tractable subproblems on most in-
+Proof: Given rdomain size d and maximum constraint arity
+                                                                            stances of the 191 tested families. The most frequent cause
+r, there are 2d possible relations. Suppose C1 and C2 are
+                                                                            of failure is the indicator problem being too large to fit in
+the partitions. If there exist two constraints c1 and c2 with
+                                                                            memory (primary cause for 135 families). Other causes in-
+the same relation R such that c1 ∈ C1 and c2 ∈ C2 , then the
+                                                                            clude being solved by preprocessing (16), or having a large
+partition C10 = C1 \ {c1 }, C20 = C2 ∪ {c1 } is such that C20 still
+                                                                            backdoor size with respect to the problem size (40).
+admits a conservative majority polymorphism, while the min-
+imum vertex cover of C10 cannot be larger than the minimum                     However, some families do show promising results. The 5
+vertex cover of C1 . So it is sufficient to consider only parti-            “prime” families, created by van Dongen, and in which each
+tions  of the relations rather than of the constraints. There are           constraint is a linear equation with prime numbers as coeffi-
+   dr
+22 possible partitions of the relations into C1 and C2 and for              cients produced the most interesting tractable subproblems.
+each of these we can discover the minimum vertex cover of                   For each of these series, the relations are intentional and con-
+the primal graph of C2 in time 2k , and verify in polynomial                version to extensional form yields very large relations. How-
+time that C2 admits a conservative majority polymorphism.                   ever, when the conversion is possible (9 instances out of 36
+                                                  dr                        for the first family), a subproblem closed under conservative
+The total complexity of this algorithm is O(22 dk p(n)). 
+      r                                                                     majority polymorphism was found with a very small back-
+   2d is much larger than the number of constraints in any                  door (see figure 2). We were also able to find a backdoor of
+practical problem, even for very small values of d and r.                   size 22 on the instance “driverlogw-01c-sat_ext”,
+However, when the number of different relationsr
+                                                        in an in-           involving 71 variables. However this family contains only
+stance is q, it is always the case that q < 2d .                            seven instances, and the other six either had no small back-
+Corollary 2. PARTITION -M AJORITY-CSP is FPT when the                       door or too large an indicator problem.
+parameter is k + q, where k is the size of the vertex cover and
+q is the number of distinct relations in P.
+Proof: The proof of theorem 7 goes through when we only                     7   Conclusions
+consider the q different relations present in P. The complex-
+ity of this algorithm is O(dk 2q p(n)).                                    We have argued that we can exploit constraint satisfaction
+                                                                            problems which are nearly tractable. The basic idea is to
+                                                                            compute a backdoor into a tractable language. Our method
+6   Implementation and Evaluation                                           requires a tractable membership test. We therefore intro-
+In order to assess the practical value of this approach, and                duced two new polynomial time membership testing algo-
+to find almost-polynomial series of instances, we have im-                  rithms which check if a language admits a majority or a con-
+plemented this procedure using conservative majority poly-                  servative Mal’tsev polymorphism. We proved that comput-
+morphisms as the target polynomial class. We implemented                    ing a minimal backdoor for such classes is fixed parameter
+the algorithm of Corollary 2 in a branch-and-bound fashion,                 tractable when the tractable subset of relations is given, and
+rather than generate-and-test. We made several improvements                 W[2]-complete otherwise.
+
+
+
+                                                                      473
+      Instance       #Var.   #Act.   #Fix.   #Rel.   time (s)         [Petke and Jeavons, 2009] Justyna Petke and Peter Jeavons.
+  driverlogw-01c       71     53      22     2/14       0.40             Tractable benchmarks for constraint programming. Tech-
+ primes-10-20-2-1     100     79       3     2/20     439.92             nical Report RR-09-07, OUCL, 2009.
+ primes-10-40-2-1     100     56       6     3/40     344.92
+ primes-10-40-3-1     100     43       3     3/40       7.80          [Roussel and Lecoutre, 2009] Olivier       Roussel       and
+ primes-10-60-2-1     100     28       0     0/59       0.01             Christophe Lecoutre.        Xml representation of con-
+ primes-10-60-2-3     100     14       0     0/59       0.09             straint networks: Format xcsp 2.1. Technical report,
+ primes-10-60-3-1     100     17       0     0/59       0.00             CoRR abs/0902.2362, feb 2009.
+ primes-10-80-2-1     100     11       0     0/79       0.00
+ primes-10-80-2-3     100      4       0     0/79       0.08          [Williams et al., 2003] Ryan Williams, Carla P. Gomes, and
+ primes-10-80-3-1     100      8       0     0/79       0.01             Bart Selman. Backdoors to typical case complexity. In
+                                                                         Proceedings of the 18th international joint conference on
+                                                                         Artificial intelligence, IJCAI’03, pages 1173–1178, San
+Figure 2: Results for almost tractable instances. #Var is the
+                                                                         Francisco, CA, USA, 2003. Morgan Kaufmann Publishers
+number of variables, #Act is the number of non-assigned vari-
+                                                                         Inc.
+ables after SAC, #Fix is the size of the backdoor and #Rel is
+the ratio of relations that need to be removed.
+
+References
+[Balasubramanian et al., 1998] R.      Balasubramanian,
+  Michael R. Fellows, and Venkatesh Raman. An Im-
+  proved Fixed-Parameter Algorithm for Vertex Cover. Inf.
+  Process. Lett., 65(3):163–168, 1998.
+[Bessiere and Debruyne, 2008] Christian Bessiere and Ro-
+  muald Debruyne. Theoretical analysis of singleton arc
+  consistency and its extensions. Artif. Intell., 172(1):29–
+  41, 2008.
+[Bessiere et al., 2011] Christian Bessiere, Stephane Cardon,
+  Romuald Debruyne, and Christophe Lecoutre. Efficient
+  Algorithms for Singleton Arc Consistency. Constraints,
+  16:25–53, 2011.
+[Bulatov and Dalmau, 2006] Andrei A. Bulatov and Vı́ctor
+  Dalmau. A simple algorithm for mal’tsev constraints.
+  SIAM J. Comput., 36(1):16–27, 2006.
+[Bulatov, 2002] Andrei A. Bulatov. Mal’tsev constraints are
+  tractable. Electronic Colloquium on Computational Com-
+  plexity (ECCC), (034), 2002.
+[Chen et al., 2013] Hubie Chen, Victor Dalmau, and Berit
+  Grußien. Arc Consistency and Friends. J Logic Computa-
+  tion, 23(1):87–108, 2013.
+[Dechter and Pearl, 1987] R. Dechter and J. Pearl. The
+  cycle-cutset method for improving search performance in
+  ai applications. In Proceedings 3rd IEEE Conference on
+  AI Applications, pages 224–230, Orlando FL, 1987.
+[Downey et al., 1999] R. G. Downey, M. R. Fellows, and
+  U. Stege. Parameterized complexity: A framework for
+  systematically confronting computational intractability. In
+  Contemporary Trends in Discrete Mathematics: From DI-
+  MACS and DIMATIA to the Future, volume 49 of DIMACS
+  Series in Discrete Mathematics and Theoretical Computer
+  Science, pages 49–99. 1999.
+[Freuder, 1982] Eugene C. Freuder. A sufficient condition
+   for backtrack-free search. J. ACM, 29(1):24–32, 1982.
+[Jeavons et al., 1997] Peter Jeavons, David A. Cohen, and
+   Marc Gyssens. Closure properties of constraints. J. ACM,
+   44(4):527–548, 1997.
+
+
+
+                                                                474
+
