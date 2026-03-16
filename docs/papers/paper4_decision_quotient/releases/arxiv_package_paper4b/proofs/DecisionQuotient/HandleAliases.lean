@@ -48,6 +48,8 @@ import DecisionQuotient.GraphNontriviality
 import DecisionQuotient.WitnessCheckingDuality
 import DecisionQuotient.Summary
 import DecisionQuotient.Dichotomy
+import DecisionQuotient.Examples.ConcreteExamples
+import DecisionQuotient.Examples.PreservationExamples
 import DecisionQuotient.Tractability.StructuralRank
 import DecisionQuotient.Tractability.BoundedActions
 import DecisionQuotient.Tractability.SeparableUtility
@@ -84,6 +86,7 @@ import DecisionQuotient.FunctionalInformation
 import DecisionQuotient.Quotient
 import DecisionQuotient.AbstractionCollapse
 import DecisionQuotient.Bridges
+import DecisionQuotient.AccessClassification
 
 namespace DecisionQuotient
 
@@ -1600,5 +1603,16 @@ abbrev SSV1 := @StochasticSequential.fiberExpectedUtility_eq_of_agreeOn
 abbrev SSV2 := @StochasticSequential.fiberOpt_eq_of_agreeOn
 -- SSV3: set-valued stochastic sufficiency holds (ties allowed)
 abbrev SSV3 := @StochasticSequential.stochasticSetSufficient_universal
+
+/-! ## Engineering example handles (EX)
+    Examples/PreservationExamples.lean and Examples/ConcreteExamples.lean
+-/
+
+-- EX1: POMDP reduction to stochastic preservation
+abbrev EX1 := @Examples.pomdp_reduction_to_preservation
+-- EX2: Hyperparameter reduction to static preservation
+abbrev EX2 := @Examples.hyperparam_reduction_to_static
+-- EX3: Concrete toy POMDP example (full opt at s1 contains a)
+abbrev EX3 := @Examples.toy_full_opt_s1_contains_a
 
 end DecisionQuotient

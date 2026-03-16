@@ -2,7 +2,7 @@ OpenHCS Paper Build Log
 ========================
 
 Paper: paper2 - Formal Foundations for the Single Source of Truth Principle: A Language Design Specification Derived from Epistemic Coherence
-Package Date: 2026-03-13T05:04:21.999243
+Package Date: 2026-03-15T04:36:38.277699
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
@@ -51,7 +51,19 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-⚠ [3181/3288] Replayed Ssot.MultiFact
+ℹ [587/669] Replayed AbstractClassSystem.Typing
+info: AbstractClassSystem/Typing.lean:110:0: []
+info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
+info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
+ AbstractClassSystem.UnifiedCapability.provenance,
+ AbstractClassSystem.UnifiedCapability.enumeration,
+ AbstractClassSystem.UnifiedCapability.conflictResolution,
+ AbstractClassSystem.UnifiedCapability.interfaceCheck]
+⚠ [3067/3087] Replayed lwd_converse
+warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+⚠ [3201/3288] Replayed Ssot.MultiFact
 warning: Ssot/MultiFact.lean:54:27: This simp argument is unused:
   card_state_eq
 
@@ -364,19 +376,7 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: Ssot/MultiFact.lean:7106:45: Try `simp at hi` instead of `simpa using hi`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3191/3288] Replayed lwd_converse
-warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
-
-Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-ℹ [3197/3288] Replayed AbstractClassSystem.Typing
-info: AbstractClassSystem/Typing.lean:110:0: []
-info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
-info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
- AbstractClassSystem.UnifiedCapability.provenance,
- AbstractClassSystem.UnifiedCapability.enumeration,
- AbstractClassSystem.UnifiedCapability.conflictResolution,
- AbstractClassSystem.UnifiedCapability.interfaceCheck]
-⚠ [3212/3288] Replayed Ssot.FactMatroid
+⚠ [3210/3288] Replayed Ssot.FactMatroid
 warning: Ssot/FactMatroid.lean:29:8: automatically included section variable(s) unused in theorem `Ssot.FactMatroid.AffineFamily.origin_mem_stateSet`:
   [Field K]
   [Fintype ι]

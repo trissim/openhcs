@@ -63,6 +63,10 @@ H.~S. Witsenhausen and A.~D. Wyner, ``A conditional entropy bound for a pair of
   discrete random variables,'' \emph{IEEE Transactions on Information Theory},
   vol.~21, no.~5, pp. 493--501, 1975.
 
+\bibitem{oxley2011matroid}
+J.~Oxley, \emph{Matroid Theory}, 2nd~ed.\hskip 1em plus 0.5em minus 0.4em\relax
+  Oxford University Press, 2011.
+
 \bibitem{orlitsky2001coding}
 A.~Orlitsky and J.~R. Roche, ``Coding for computing,'' \emph{IEEE Transactions
   on Information Theory}, vol.~47, no.~3, pp. 903--917, 2001.

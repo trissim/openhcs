@@ -6,6 +6,13 @@ Edoardo Amaldi and Viggo Kann.
   relations in linear systems.
 \newblock {\em Theoretical Computer Science}, 209(1-2):237--260, 1998.
 
+\bibitem{bessiere2013detecting}
+Christian Bessiere, Clement Carbonnel, Emmanuel Hebrard, George Katsirelos, and
+  Toby Walsh.
+\newblock Detecting and exploiting subproblem tractability.
+\newblock In {\em Proceedings of the Twenty-Third International Joint
+  Conference on Artificial Intelligence (IJCAI)}, pages 468--474, 2013.
+
 \bibitem{blackwell1953equivalent}
 David Blackwell.
 \newblock Equivalent comparisons of experiments.
@@ -15,6 +22,11 @@ David Blackwell.
 Avrim~L. Blum and Pat Langley.
 \newblock Selection of relevant features and examples in machine learning.
 \newblock {\em Artificial Intelligence}, 97(1-2):245--271, 1997.
+
+\bibitem{bodlaender1993tourist}
+Hans~L. Bodlaender.
+\newblock A tourist guide through treewidth.
+\newblock In {\em Acta Cybernetica}, volume~11, pages 1--21, 1993.
 
 \bibitem{chockler2004responsibility}
 Hana Chockler and Joseph~Y. Halpern.
@@ -43,6 +55,11 @@ Yannick Forster, Edith Heiter, and Gert Smolka.
 \newblock Verified programming of {Turing} machines in {Coq}.
 \newblock In {\em Proceedings of the 8th ACM SIGPLAN International Conference
   on Certified Programs and Proofs}, pages 114--127. ACM, 2019.
+
+\bibitem{freuder1990complexity}
+Eugene~C. Freuder.
+\newblock Complexity of k-tree structured constraint satisfaction problems.
+\newblock {\em Proceedings of AAAI}, pages 4--9, 1990.
 
 \bibitem{givan2003equivalence}
 Robert Givan, Thomas Dean, and Matthew Greig.
@@ -161,6 +178,13 @@ Peter Spirtes, Clark Glymour, and Richard Scheines.
 \newblock The {Lean} mathematical library.
 \newblock {\em Proceedings of the 9th ACM SIGPLAN International Conference on
   Certified Programs and Proofs}, pages 367--381, 2020.
+
+\bibitem{williams2003backdoors}
+Ryan Williams, Carla~P. Gomes, and Bart Selman.
+\newblock Backdoors to typical case complexity.
+\newblock In {\em Proceedings of the Eighteenth International Joint Conference
+  on Artificial Intelligence (IJCAI)}, pages 1173--1178. Morgan Kaufmann
+  Publishers Inc., 2003.
 
 \bibitem{multiplier}
 Xiaofeng Zhang et~al.

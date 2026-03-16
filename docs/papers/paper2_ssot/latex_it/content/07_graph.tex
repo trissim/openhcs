@@ -38,13 +38,15 @@ Because the graph is 2-colorable (e.g., color by parity $c(x_1,x_2) = x_1 \oplus
 \item Graph-theoretic properties (chromatic number, independence number) determine exact recovery costs.
 \end{enumerate}
 
+\noindent\textbf{Coding-theoretic interpretation.} This 4-cycle structure has a direct interpretation in error-correcting codes. Coloring by parity $c(x_1,x_2) = x_1 \oplus x_2$ is exactly a syndrome: the tag reveals whether the two bits match. With one syndrome bit ($T=2$), we can decode perfectly because each color class contains non-adjacent states. With no tag ($T=1$), we cannot distinguish adjacent vertices, exactly as in the classic binary symmetric channel without feedback. The confusability graph is precisely the confusion graph of a code with parity-check matrix $H = [1\; 1]$: adjacent vertices are those the code cannot separate.
+
 Figure~\ref{fig:failure-topology} contrasts this structured failure with the clique-shaped failure that arises when no observation provides any discrimination. The theorems below generalize this phenomenon to arbitrary multi-fact partial-view systems.
 
 \subsection{General Graph Characterization}
 
 This section turns the one-shot obstruction into the paper's main structural object: the confusability graph induced by admissible partial views. The single-fact converse family treats ambiguity classes that are effectively clique-shaped under the observation transcript. One extension is to let the latent state be a tuple of facts and let each location reveal only a subset of coordinates. Failure then becomes structured: some latent pairs remain indistinguishable and others do not, so the resulting confusability graph need not be complete.
 
-In this extension, ambiguity is now over full latent tuples rather than single fact values: two tuples are confusable when the allowed partial observations fail to separate them. The induced graph is therefore a failure map for the architecture, not merely a bookkeeping device.
+In this extension, ambiguity is now over full latent tuples rather than single fact values: two tuples are confusable when the allowed partial observations fail to separate them. The induced graph is therefore a failure map for the architecture.
 
 The graph can be handled either explicitly or implicitly. If there are $d$ facts over an alphabet of size $q$, then the latent state space has cardinality $q^d$, so any explicit confusability graph materialization already starts from an exponentially large vertex set.\leanmeta{\LH{MFT113}} A naive explicit construction ranges over at most $q^{2d}$ ordered state pairs.\leanmeta{\LHrng{MFT}{116}{117}} For that reason the appropriate algorithmic interface is implicit: the formalization packages adjacency as a Boolean confusability oracle on state pairs, proves that this oracle is equivalent to the confusability relation itself, and also packages an equivalent agreement-set oracle together with a linear bound on the total view-membership work needed by the direct scan implementation.\leanmeta{\LHrng{MFT}{114}{115}, \LHrng{MFT}{132}{135}} Under the standard explicit representation in which a latent tuple is stored as a length-$d$ coordinate array and each admissible view is stored as its coordinate subset, this one-shot oracle is therefore computable by direct inspection in deterministic time $O(d + \sum_{\ell}|V_\ell|)$, hence $O(Ld)$ for $L$ views: compute the agreement set of the two tuples once, then scan the views and test whether some view is contained in that agreement set. The theory below is therefore compatible with implicit graph access even when explicit graph materialization is impractical, while still leaving the one-shot adjacency test itself polynomial in the size of its explicit input.
 
@@ -69,7 +71,7 @@ Let $G_{\mathrm{conf}}$ be the confusability graph.
 \emph{Sufficiency.} Suppose $c$ is a proper $T$-coloring of $G_{\mathrm{conf}}$. Define the auxiliary tag of a latent tuple to be its color. If two latent tuples produce the same observation and the same color, then they are confusable and adjacent, contradicting proper colorability. Therefore the joint observation-color map is injective, and Theorem~\ref{thm:pair-injective} yields an exact decoder.
 \end{proof}
 
-An edge of $G_{\mathrm{conf}}$ records a specific pair of latent states that the view architecture cannot separate exactly, and a proper coloring is exactly a disambiguation budget that resolves those failures. Exact recovery cost is therefore determined by failure topology, not merely by the fact that more than one source exists.
+An edge of $G_{\mathrm{conf}}$ records a specific pair of latent states that the view architecture cannot separate exactly, and a proper coloring is exactly a disambiguation budget that resolves those failures. Exact recovery cost is determined by failure topology, not by the count of sources alone.
 
 This statement is packaged through an explicit simple confusability graph object, and for $n$ repeated copies the full block confusability graph is identified with the $n$-fold strong power of the one-shot confusability graph. The zero-error criterion is therefore literally a graph-colorability theorem on an explicit power family rather than only an analogy.\leanmeta{\LHrng{MFT}{34}{35}}
 
@@ -136,4 +138,4 @@ T_{\mathrm{exact}}(W^{\otimes m}) = 2^m.
 \]
 This provides an infinite family of non-clique examples, generated directly by the model, on which the graph object, the exact budget, and the strong-product law all interact nontrivially rather than only in the single four-cycle case. At this point the paper has moved decisively beyond the trivial threshold story: above the unit-rate corner, not all failures are equally severe, because the architecture can induce a non-clique topology with a strictly more structured recovery law. \leanmeta{\LHrng{MFT}{11}{13}, \LHrng{MFT}{16}{17}, \LHrng{MFT}{29}{30}}
 
-Once exact one-shot recovery is governed by graph colorability, repeated composition naturally lifts the theory to strong graph powers and asymptotic zero-error rates. The next subsection makes that lift explicit.
+Once exact one-shot recovery is governed by graph colorability, repeated composition lifts the theory to strong graph powers and asymptotic zero-error rates. The next subsection makes that lift explicit.

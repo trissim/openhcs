@@ -1,6 +1,6 @@
 # Paper: Physical Grounding and Engineering Consequences of Decision-Relevant Information
 
-**Status**: ITP/CPP-ready | **Lean**: 66349 lines, 2940 theorems
+**Status**: ITP/CPP-ready | **Lean**: 66580 lines, 2945 theorems
 
 ---
 
@@ -3806,7 +3806,7 @@ Informally: if exact support is not certified, do not make exact claims; when co
 
 # Lean 4 Proof Listings {#app:lean}
 
-The complete Lean 4 formalization is available in the companion artifact (Zenodo DOI listed on the title page). The mechanization consists of 66349 lines across 226 files, with 2940 theorem/lemma statements.
+The complete Lean 4 formalization is available in the companion artifact (Zenodo DOI listed on the title page). The mechanization consists of 66580 lines across 227 files, with 2945 theorem/lemma statements.
 
 **Handle IDs.** Inline theorem metadata now cites compact IDs (for example, `HD6`, `CC12`, `IC4`) instead of full theorem constants. The full ID-to-handle mapping is listed in Section [1.1](#sec:lean-handle-id-map){reference-type="ref" reference="sec:lean-handle-id-map"}.
 
@@ -8295,6 +8295,6 @@ The proofs compile with Lean 4 and contain no `sorry` placeholders. Run `lake bu
 
 All theorems are formalized in Lean 4:
 - Location: `docs/papers/paper4_decision_quotient/proofs/`
-- Lines: 66349
-- Theorems: 2940
+- Lines: 66580
+- Theorems: 2945
 - `sorry` placeholders: 0

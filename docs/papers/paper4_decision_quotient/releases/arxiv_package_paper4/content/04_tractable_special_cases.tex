@@ -2,7 +2,7 @@
 
 We distinguish the encodings of Section~\ref{sec:encoding}. The tractability results below state the model assumption explicitly.
 
-Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. These subcases are not merely isolated exceptions. Each removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
+Our theory provides comprehensive coverage of tractable subcases. The artifact certifies explicit decision procedures for several families, and also certifies paper-specific reductions and complexity transfers connecting structurally interesting restrictions to standard polynomial-time algorithmic backbones. Each subcase removes one of the structural sources of hardness in exact certification: unrestricted action comparison, cross-coordinate interaction, high-width dependency structure, or unnecessary state-space multiplicity.
 
 \begingroup
 \centering
@@ -14,6 +14,10 @@ Our theory provides comprehensive coverage of tractable subcases. The artifact c
 \toprule
 \textbf{Restriction} & \textbf{Why it helps} & \textbf{Complexity} \\
 \midrule
+Bounded actions & brute-force enumeration is polynomial in $|S|$ when $|A|$ constant & $O(|S|^2 \cdot k^2)$ \\
+\midrule
+Separable utility & optimal action independent of state & $O(1)$ \\
+\midrule
 Low tensor rank & factored evaluation avoids full state enumeration & $O(|A| \cdot R \cdot n)$ \\
 \midrule
 Tree structure & dynamic programming over dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
@@ -24,7 +28,7 @@ Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Tractability map.} Each nontrivial restriction above removes a structural hardness source. Additional simple cases include bounded actions ($O(|S|^2 \cdot k^2)$ when $|A|$ is fixed, separable utility ($O(1)$), and constant or dominated optimal sets ($O(1)$). Formal definitions for all cases are retained in the subsections below.
+\textbf{Tractability map.} Each restriction above removes a structural hardness source. Formal definitions for all cases are retained in the subsections below.
 \endgroup
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}
@@ -145,14 +149,14 @@ A coordinate is relevant iff varying its value changes the optimal action set.
 
 %% ============================================================
 \subsection{Bounded Treewidth}\label{sec:tract-treewidth}
-
-The tree-structured case generalizes to bounded treewidth interaction graphs via CSP reduction.
+ 
+The tree-structured case generalizes to bounded treewidth interaction graphs via CSP reduction. This directly parallels backdoor tractability methods for CSPs~\cite{bessiere2013detecting}, where finding a small backdoor to a tractable class enables efficient solving.
 
 \begin{definition}[Interaction Graph]\label{def:interaction-graph}
 Given a pairwise utility decomposition, the \emph{interaction graph} $G = (V, E)$ has:
 \begin{itemize}
 \item Vertices $V = \{1, \ldots, n\}$ (one per coordinate)
-\item Edges $E = \{(i, j) : i \text{ and } j \text{ interact in the utility}\}$
+\item Edges $E = \{(i, j) : i \text{ and } j \text{ interact in } \text{utility}\}$
 \end{itemize}
 \end{definition}
 
@@ -165,13 +169,13 @@ with unary terms $u_i$ and binary terms $u_{ij}$ given explicitly.
 \end{definition}
 
 \begin{theorem}[Bounded Treewidth Reduction]\label{thm:treewidth}
-If the interaction graph has treewidth $\leq w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with the standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$.
+If the interaction graph has treewidth $\le w$ and utility is pairwise with explicit factors, the artifact certifies a reduction to bounded-treewidth CSP together with standard complexity bound $O(n \cdot k^{w+1})$, where $k = \max_i |X_i|$. The reduction bridges to established CSP algorithms~\cite{bodlaender1993tourist, freuder1990complexity, bessiere2013detecting}.
 \end{theorem}
 
 \leanmeta{\LHrng{DQ}{79}{81}.}
 
 \begin{proof}
-The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus the formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard, while the paper-specific bridge to that algorithm is mechanized.
+The artifact certifies the paper-specific reduction from pairwise sufficiency checking to a CSP on the interaction graph \leanmeta{\LH{DQ80}.} It also certifies the transfer of the standard bounded-treewidth complexity bound \leanmeta{\LH{DQ79}, \LH{DQ81}.} Thus formal support here is a certified reduction-and-transfer theorem: the bounded-treewidth algorithm itself is standard (drawing on backdoor tractability methods~\cite{bessiere2013detecting}), while the paper-specific bridge to that algorithm is mechanized.
 \end{proof}
 
 %% ============================================================

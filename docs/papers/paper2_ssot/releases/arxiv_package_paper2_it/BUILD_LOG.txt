@@ -2,7 +2,7 @@ OpenHCS Paper Build Log
 ========================
 
 Paper: paper2_it - Exact Consistency Under Partial Views: Graph Colorability, Capacity, and Equality in Multi-Location Encodings
-Package Date: 2026-03-15T03:56:16.256647
+Package Date: 2026-03-16T19:04:14.326035
 Lean Toolchain: leanprover/lean4:v4.27.0-rc1
 
 Proof Statistics:
@@ -51,7 +51,7 @@ Proof Files:
 COMPILATION OUTPUT (lake build)
 ================================================================================
 
-ℹ [587/693] Replayed AbstractClassSystem.Typing
+ℹ [587/615] Replayed AbstractClassSystem.Typing
 info: AbstractClassSystem/Typing.lean:110:0: []
 info: AbstractClassSystem/Typing.lean:111:0: [AbstractClassSystem.UnifiedCapability.interfaceCheck]
 info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapability.identity,
@@ -59,11 +59,11 @@ info: AbstractClassSystem/Typing.lean:112:0: [AbstractClassSystem.UnifiedCapabil
  AbstractClassSystem.UnifiedCapability.enumeration,
  AbstractClassSystem.UnifiedCapability.conflictResolution,
  AbstractClassSystem.UnifiedCapability.interfaceCheck]
-⚠ [3084/3146] Replayed lwd_converse
+⚠ [3084/3160] Replayed lwd_converse
 warning: lwd_converse.lean:36:48: try 'simp' instead of 'simpa'
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3201/3288] Replayed Ssot.MultiFact
+⚠ [3200/3228] Replayed Ssot.MultiFact
 warning: Ssot/MultiFact.lean:54:27: This simp argument is unused:
   card_state_eq
 
@@ -376,7 +376,7 @@ Note: This linter can be disabled with `set_option linter.unnecessarySimpa false
 warning: Ssot/MultiFact.lean:7106:45: Try `simp at hi` instead of `simpa using hi`
 
 Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
-⚠ [3210/3288] Replayed Ssot.FactMatroid
+⚠ [3209/3228] Replayed Ssot.FactMatroid
 warning: Ssot/FactMatroid.lean:29:8: automatically included section variable(s) unused in theorem `Ssot.FactMatroid.AffineFamily.origin_mem_stateSet`:
   [Field K]
   [Fintype ι]

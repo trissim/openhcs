@@ -1,5 +1,5 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-13T05:07:19.425008
+Generated: 2026-03-15T04:40:31.874248
 
 === HUMAN COPY/PASTE ===
 
@@ -28,7 +28,7 @@ Complexity: SUFFICIENCY-CHECK and MINIMUM-SUFFICIENT-SET are coNP-complete; ANCH
 Thermodynamic results use Landauer's floor $k_BT\ln 2$ as a declared premise; mismatch/residual dissipation terms yield $dU\geq\lambda\,dC$. Reduction correctness is machine-checked in Lean 4; polytime computability is a standard hypothesis.
 
 arXiv Comments:
-Theory of Computing submission. Lean 4 artifact: 40606 lines, 1709 theorems/lemmas across 142 files (0 sorry placeholders).
+Theory of Computing submission. Lean 4 artifact: 40837 lines, 1714 theorems/lemmas across 143 files (0 sorry placeholders).
 
 === MACHINE YAML ===
 paper_id: paper4_toc
@@ -82,8 +82,8 @@ arxiv:
     Thermodynamic results use Landauer''s floor $k_BT\ln 2$ as a declared premise;
     mismatch/residual dissipation terms yield $dU\geq\lambda\,dC$. Reduction correctness
     is machine-checked in Lean 4; polytime computability is a standard hypothesis.'
-  comments: 'Theory of Computing submission. Lean 4 artifact: 40606 lines, 1709 theorems/lemmas
-    across 142 files (0 sorry placeholders).'
+  comments: 'Theory of Computing submission. Lean 4 artifact: 40837 lines, 1714 theorems/lemmas
+    across 143 files (0 sorry placeholders).'
 abstract_variants:
   unicode: 'Abstract
 

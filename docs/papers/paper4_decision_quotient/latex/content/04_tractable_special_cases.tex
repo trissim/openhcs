@@ -14,6 +14,10 @@ Our theory provides comprehensive coverage of tractable subcases. The artifact c
 \toprule
 \textbf{Restriction} & \textbf{Why it helps} & \textbf{Complexity} \\
 \midrule
+Bounded actions & brute-force enumeration is polynomial in $|S|$ when $|A|$ constant & $O(|S|^2 \cdot k^2)$ \\
+\midrule
+Separable utility & optimal action independent of state & $O(1)$ \\
+\midrule
 Low tensor rank & factored evaluation avoids full state enumeration & $O(|A| \cdot R \cdot n)$ \\
 \midrule
 Tree structure & dynamic programming over dependency tree suffices & $O(n \cdot |A| \cdot k_{\max})$ \\
@@ -24,7 +28,7 @@ Coordinate symmetry & orbit types replace raw state pairs & $O\!\bigl(\binom{d+k
 \bottomrule
 \end{tabularx}
 \par\smallskip
-\textbf{Tractability map.} Each nontrivial restriction above removes a structural hardness source. Additional simple cases include bounded actions ($O(|S|^2 \cdot k^2)$ when $|A|$ is fixed, separable utility ($O(1)$), and constant or dominated optimal sets ($O(1)$). Formal definitions for all cases are retained in the subsections below.
+\textbf{Tractability map.} Each restriction above removes a structural hardness source. Formal definitions for all cases are retained in the subsections below.
 \endgroup
 
 \begin{theorem}[Tractable Subcases]\label{thm:tractable}

@@ -1,6 +1,6 @@
 \section{Introduction}\label{introduction}
 
-The substantive question in multi-location consistency is what exact ambiguity structure survives once a system exposes only partial views of its latent state, and what formal integrity guarantees are possible in that regime. This paper answers that question with a zero-error graph-capacity theory for deterministic partial views on latent tuples.
+The substantive question in distributed source coding with side information is what exact ambiguity structure survives once a system exposes only partial observations of its source, and what formal structural integrity guarantees are possible in that regime. Structural integrity here means the code can correct erasures: the mapping from source to observable syndrome is injective, so the latent state is uniquely recoverable from the observable tag. This paper answers that question with a zero-error graph-capacity theory for deterministic partial views on latent tuples.
 
 The theory is predictive: given only the view-family specification, the full failure topology, exact recovery law, asymptotic capacity, and standard upper bounds are deductive consequences of the architecture, with the realizable graph class fully characterized.
 
@@ -11,7 +11,7 @@ When one latent fact or tuple of facts is represented at several modifiable loca
 
 The graph-generation mechanism is now more sharply characterized. On the full labeled tuple space, the exact coordinate-view model realizes exactly the confusability relations determined by upward-closed families of coordinate-agreement sets: two distinct tuples are adjacent if and only if their agreement set lies in such a family, and conversely every upward-closed family is realizable by some view architecture.\leanmeta{\LHrng{MFT}{125}{128}} When the alphabet has at least two symbols, every proper agreement set occurs for some distinct tuple pair, so this is a complete characterization up to the vacuous full-agreement case of identical tuples.\leanmeta{\LHrng{MFT}{129}{131}} Coordinatewise alphabet permutations still act by graph automorphisms, and any latent tuple can be carried to any other by such an automorphism.\leanmeta{\LHrng{MFT}{120}{124}} Hence the induced graphs form a specific monotone agreement-set class rather than an arbitrary finite graph family. The model already generates non-clique graphs, includes the cluster-collapse subclass on which equality is explicit, and is closed under the block-composition operation that becomes strong product on confusability graphs. The binary square already yields a $4$-cycle rather than a clique, and its iterates give a concrete infinite non-clique strong-product family inside the class.
 
-\subsection{Problem Formulation}\label{sec:encoding-problem}
+\subsection{Distributed Source Coding Formulation}\label{sec:encoding-problem}
 
 The model yields an exact-consistency analogue of zero-error resolvability for modifiable encodings. Rate is measured by the number of independently writable locations; we refer to this quantity as the \emph{independent rate} and use \emph{degrees of freedom} (DOF) only as shorthand.
 
@@ -23,7 +23,7 @@ The model yields an exact-consistency analogue of zero-error resolvability for m
 
 \noindent\textbf{Finite converse foundation.} Let $X$ be a finite latent source, let $Y$ be the deterministic observation transcript available to a resolver, and let $T$ be a finite auxiliary tag. Exact zero-error recovery from $(Y,T)$ is possible exactly when the pair map $x \mapsto (Y(x),T(x))$ is injective on the surviving ambiguity class. The same obstruction appears as confusability, counting, conditional-entropy, decoder-output, and finite-gap formulations, and it admits a budgeted finite-error extension. In particular, exact $k$-way resolution requires at least $\log_2 k$ bits of side information.\leanmeta{\LHrng{OBS}{1}{2}, \LH{OBS5}, \LH{CIA3}, \LH{PRB47}, \LH{PRB55}, \LH{PRB68}, \LH{PRB81}, \LH{PRB83}, \LH{PRB85}, \LH{PRB87}, \LH{PRB90}}
 
-\noindent\textbf{Boundary corollary.} For deterministic multi-location encodings, the zero-incoherence threshold equals $1$: the single-source regime is the unique no-failure corner, and it is exactly the structural-integrity regime. The richer mathematics begins once the finite obstruction survives and acquires nontrivial confusability structure.\leanmeta{\LHrng{COH}{1}{2}, \LH{RAT1}, \LHrng{CAP}{2}{3}}
+\noindent\textbf{Boundary corollary.} For deterministic multi-location encodings, the zero-incoherence threshold equals $1$: the single-source regime is the unique no-failure corner, and it is exactly the structural-integrity regime. In coding-theoretic terms, this is the erasure-correcting regime where the syndrome uniquely determines the message. The richer mathematics begins once the finite obstruction survives and acquires nontrivial confusability structure.\leanmeta{\LHrng{COH}{1}{2}, \LH{RAT1}, \LHrng{CAP}{2}{3}}
 
 \noindent\textbf{Secondary fact-side question.} The same framework also supports a second structural question: which fact coordinates are determined by others across the realized state family? Under an affine restriction, that coordinate-dependence question becomes the standard span-membership condition on coordinate functionals, so the induced fact-closure is a representable matroid on fact indices. The value of this specialization here is operational rather than linear-algebraic novelty: the same realized-state model then carries two complementary invariants, a graph on latent states and, in the affine regime, a matroid on coordinates whose rank gives upper bounds on confusability and capacity. Those bounds are algorithmically tractable once the affine family is presented explicitly by a basis or generator matrix for its direction space; under that representation, the relevant rank quantity is exactly the rank of the restricted coordinate projection and satisfies formal size bounds such as $t(S)\le |S|$, so the computation reduces to Gaussian elimination.\leanmeta{\LHrng{AFM}{1}{11}}
 
@@ -47,7 +47,7 @@ The scope is finite facts represented at multiple locations under admissible edi
 
 \subsection{Contributions}\label{sec:contributions}
 
-The main contributions are grouped into the core graph-capacity arc and the consequence arcs built on the same model.
+The main contributions are grouped into the core graph-capacity arc and the application consequences built on the same model.
 \paragraph{Core graph-capacity contributions.}
 \begin{itemize}
 \tightlist

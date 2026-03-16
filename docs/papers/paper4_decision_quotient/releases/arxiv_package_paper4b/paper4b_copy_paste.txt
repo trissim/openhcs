@@ -1,5 +1,5 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-13T05:07:53.542988
+Generated: 2026-03-15T04:41:24.673935
 
 === HUMAN COPY/PASTE ===
 
@@ -24,7 +24,7 @@ A parallel Bayesian thread starts from finite counting and the inequality $\log 
 The Lean 4 development records the quotient, Bayesian, and information-theoretic lemmas used in the paper.
 
 arXiv Comments:
-IEEE Transactions on Information Theory submission. Lean 4 artifact: 66349 lines, 2940 theorems/lemmas across 226 files (0 sorry placeholders).
+IEEE Transactions on Information Theory submission. Lean 4 artifact: 66580 lines, 2945 theorems/lemmas across 227 files (0 sorry placeholders).
 
 === MACHINE YAML ===
 paper_id: paper4b
@@ -83,7 +83,7 @@ arxiv:
     The Lean 4 development records the quotient, Bayesian, and information-theoretic
     lemmas used in the paper.'
   comments: 'IEEE Transactions on Information Theory submission. Lean 4 artifact:
-    66349 lines, 2940 theorems/lemmas across 226 files (0 sorry placeholders).'
+    66580 lines, 2945 theorems/lemmas across 227 files (0 sorry placeholders).'
 abstract_variants:
   unicode: 'This paper studies convergence in decision-relevant information. For a
     decision problem 𝒟 = (A, S, U) with S = X₁ × ⋯ × Xₙ, a coordinate set is sufficient

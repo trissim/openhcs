@@ -1,5 +1,5 @@
 AUTO-GENERATED COPY/PASTE METADATA
-Generated: 2026-03-13T05:05:47.016779
+Generated: 2026-03-15T04:38:19.233848
 
 === HUMAN COPY/PASTE ===
 
@@ -38,7 +38,7 @@ All theorems are machine-checked in Lean 4 with no `sorry` placeholders. The onl
 Keywords: thermodynamics, Landauer principle, entropy production, information theory, structural rank, formal verification, degrees of freedom
 
 arXiv Comments:
-Draft submission. Lean 4 artifact: 70469 lines, 3150 theorems/lemmas across 243 files (0 sorry placeholders).
+Draft submission. Lean 4 artifact: 70700 lines, 3155 theorems/lemmas across 244 files (0 sorry placeholders).
 
 === MACHINE YAML ===
 paper_id: paper3
@@ -127,8 +127,8 @@ arxiv:
 
     Keywords: thermodynamics, Landauer principle, entropy production, information
     theory, structural rank, formal verification, degrees of freedom'
-  comments: 'Draft submission. Lean 4 artifact: 70469 lines, 3150 theorems/lemmas
-    across 243 files (0 sorry placeholders).'
+  comments: 'Draft submission. Lean 4 artifact: 70700 lines, 3155 theorems/lemmas
+    across 244 files (0 sorry placeholders).'
 abstract_variants:
   unicode: 'We study leverage as a structural invariant of information-processing
     systems. For any system A with capabilities Cap(A) > 0, we prove a Five-Way Equivalence:

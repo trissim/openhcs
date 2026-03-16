@@ -12,7 +12,7 @@ Let $\mathcal{C}$ be a finite class space and let $\pi : \mathcal{C} \to \mathca
 \leanmeta{\LH{ACS8}}
 
 \begin{proof}
-\emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(c)$ determines $c$ uniquely. The decoder simply inverts the class-to-representation map.
+\emph{Achievability}: If $\pi$ is injective on classes, then observing $\pi(c)$ determines $c$ uniquely. The decoder inverts the class-to-representation map.
 
 \emph{Converse}: Suppose two distinct classes $c_1 \neq c_2$ share the same representation value: $\pi(c_1)=\pi(c_2)$. Then any decoder $g(U)$ outputs the same class label on both inputs, so it cannot be correct for both. Hence zero-error recovery without auxiliary description is impossible.
 \end{proof}
@@ -126,7 +126,7 @@ In the running example, the collision block $\{A,B\}$ shows that $A_\pi = 2$, so
 
 \subsection{Exact Finite-Block Law}
 
-The ambiguity converse extends exactly to blocks, so the main compression law is not merely one-shot. The next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
+The ambiguity converse extends exactly to blocks: the next theorem family gives exact finite-block scaling rather than an asymptotic approximation.
 
 \begin{theorem}[Exact one-shot feasibility threshold]\label{thm:graph-one-shot-threshold}
 For an alphabet of $n$ auxiliary descriptions, zero-error class recovery is feasible if and only if
