@@ -8,6 +8,32 @@ This is NOT a code organization problem. This is a MATHEMATICAL problem.
 
 ---
 
+## DESIGN PRINCIPLES (MUST PRESERVE)
+
+From original docstring - these are INVARIANTS that must survive refactoring:
+
+```
+Declarative   — papers.yaml is the SSOT. Code derives, never guesses.
+Fail-Loud    — validate structure upfront; abort with a clear message.
+Orthogonal   — one method, one responsibility. No side-channel coupling.
+Idempotent   — every step can be re-run safely; lake caching handles dedup.
+```
+
+---
+
+## STRUCTURAL INVARIANTS (MUST PRESERVE)
+
+All derived from papers.yaml:
+
+```
+1. Content:  paper_dir / meta.latex_dir / "content" / *.tex
+2. Proofs:   paper_dir / meta.proofs_dir /             (lake project root)
+3. Output:   paper_dir / "releases" /                  (pdf, md, tar.gz …)
+4. Graphs:   graph_infra / "graphs" / <paper_id>.json  (every packaged paper)
+```
+
+---
+
 ## MATHEMATICAL ANALYSIS
 
 ### The Structure
@@ -18,11 +44,36 @@ ALL builds follow the same MONOID structure:
 validate inputs → gather inputs → process → write outputs
 ```
 
-This is isomorphic across ALL 6 build types:
-- build_lean: validate proofs → gather .lean → lake build → write .olean
-- build_latex: validate latex → gather .tex → pdflatex → write .pdf
-- build_markdown: validate latex → gather .tex → pandoc → write .md
-- etc.
+This is isomorphic across ALL build types (must preserve all steps):
+
+## AUTO-GENERATED FILES (must preserve)
+
+The build pipeline generates these files (specs must capture all):
+
+### LaTeX content/ directory:
+- `lean_stats.tex` - line/theorem/sorry counts (local + cumulative + release)
+- `assumption_ledger_auto.tex` - assumption bundles
+- `lean_handle_ids_auto.tex` - LH{} ID table
+- `claim_mapping_auto.tex` - claim→Lean matrix
+- `proof_hardness_index_auto.tex` - hardness profiles
+
+### Shared (synced from papers/shared/):
+- `paper-preamble.sty` - shared preamble
+
+### Build steps:
+- build_lean: 
+  1. check exists → 2. check lakefile → 3. collect deps → 4. sync local deps → 5. sync graph_infra → 6. write export → 7. run lake → 8. handle cache → 9. collect JSON
+  
+- build_latex: 
+  1. sync shared preambles → 2. write lean_stats → 3. write handle_ids → 4. write assumption_ledger → 5. normalize claimstamps → 6. write claim_mapping → 7. write hardness_index → 8. mark claims in graph → 9. rewrite handles → 10. pdflatex cycle
+  
+- build_markdown: pandoc LaTeX → Markdown, expand \Lean* macros
+
+- build_submission: similar to latex but with submission_format
+
+- package_arxiv: copy PDF, markdown, metadata, latex sources, lean proofs, experiments, graph visualizer
+
+- build_copy_paste_metadata: extract title, abstract (unicode, mathjax), generate YAML
 
 ### The Insight
 
@@ -75,7 +126,7 @@ class BuildSpec:
     """Mathematical specification of a build - data, not code.
     
     Note: Some processors are complex (e.g., build_lean has 9 steps: 
-    check_exists → check_lakefile → collect_deps → sync_deps → sync_graph 
+    check_exists → check_lakefile → collect_deps → sync_deps → sync_graph → write_export → run_lake → handle_cache → collect_json) 
     → write_export → run_lake → handle_cache → collect_json).
     These remain as functions, but the SPEC is data.
     """
