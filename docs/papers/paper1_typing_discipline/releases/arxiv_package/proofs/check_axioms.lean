@@ -1,6 +1,0 @@
-import abstract_class_system
-
-#print axioms AbstractClassSystem.lattice_dominance
-#print axioms AbstractClassSystem.shape_cannot_distinguish
-#print axioms AbstractClassSystem.protocol_not_alternative
-#print axioms AbstractClassSystem.Typ.equivProjection

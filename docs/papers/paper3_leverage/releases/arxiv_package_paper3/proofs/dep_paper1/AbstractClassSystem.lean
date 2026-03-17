@@ -1,8 +1,0 @@
--- Root module for AbstractClassSystem library
-import AbstractClassSystem.Core
-import AbstractClassSystem.Typing
-import AbstractClassSystem.Extended
-import AbstractClassSystem.Bridge
-import AbstractClassSystem.AxisClosure
-import AbstractClassSystem.GraphBridges
-import AbstractClassSystem.Undecidability
