@@ -54,14 +54,35 @@ class BuildType(Enum):
     SUBMISSION = "submission"
     ARXIV = "arxiv"
     METADATA = "metadata"
+    SCAFFOLD = "scaffold"
+
+    # Add CHECK specs for validation
+class CheckType(Enum):
+    AXIOM = "axiom-check"      # Verify what axioms each theorem depends on
+    CLAIM = "claim-check"     # Verify theorem-label mapping coverage (fail_on_missing, fail_on_lh_violation)
+    LH = "lh-check"           # Enforce exactly one Lean handle per theorem
+
+@dataclass(frozen=True)
+class CheckSpec:
+    """Specification for validation checks."""
+    name: CheckType
+    processor: Callable
+    fail_on_missing: bool = False     # For claim-check: fail if labels not mapped
+    fail_on_lh_violation: bool = False  # For claim-check: fail if multiple Lean handles
 
 @dataclass(frozen=True)
 class BuildSpec:
-    """Mathematical specification of a build - data, not code."""
+    """Mathematical specification of a build - data, not code.
+    
+    Note: Some processors are complex (e.g., build_lean has 9 steps: 
+    check_exists → check_lakefile → collect_deps → sync_deps → sync_graph 
+    → write_export → run_lake → handle_cache → collect_json).
+    These remain as functions, but the SPEC is data.
+    """
     name: BuildType
     input_paths: List[Callable]      # Functions that return input paths
     validator: Callable              # Input validation
-    processor: Callable              # Main processing function
+    processor: Callable              # Main processing function (can be complex)
     output_paths: List[Callable]    # Functions that derive output paths
     dependencies: List[BuildType]   # Other builds required first
 
@@ -82,6 +103,33 @@ LATEX_SPEC = BuildSpec(
     processor=run_pdflatex_cycle,
     output_paths=[lambda pr: pr.get_releases_dir() / "*.pdf"],
     dependencies=[BuildType.LEAN]  # Requires Lean compiled first
+)
+
+SCAFFOLD_SPEC = BuildSpec(
+    name=BuildType.SCAFFOLD,
+    input_paths=[],  # No inputs needed
+    validator=lambda _: True,
+    processor=run_scaffold,
+    output_paths=[],  # Creates structure, no outputs
+    dependencies=[]
+)
+
+# Check specs preserve ALL validation functionality
+AXIOM_CHECK_SPEC = CheckSpec(
+    name=CheckType.AXIOM,
+    processor=run_axiom_check,
+)
+
+CLAIM_CHECK_SPEC = CheckSpec(
+    name=CheckType.CLAIM,
+    processor=run_claim_check,
+    fail_on_missing=False,
+    fail_on_lh_violation=False,
+)
+
+LH_CHECK_SPEC = CheckSpec(
+    name=CheckType.LH,
+    processor=run_lh_check,
 )
 ```
 
@@ -251,7 +299,88 @@ scripts/build/
 ├── normalizer.py     # ~60 lines  - dict-driven
 ├── stats.py          # ~80 lines  - data-driven
 ├── file_ops.py       # ~80 lines  - copy/write as specs
-└── cli.py            # ~50 lines  - thin wrapper
+└── cli.py            # ~100 lines - ALL commands and flags
+
+---
+
+## COMPLETE CLI SPEC
+
+```python
+# scripts/build/cli.py
+"""
+Full CLI - preserves ALL original functionality plus adds new:
+- release, all, lean, latex, markdown, arxiv, submission, metadata, scaffold
+- claim-check, axiom-check, lh-check
+- verbose, quiet, overwrite flags
+"""
+import argparse
+from pathlib import Path
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Unified paper builder",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/build_papers.py release           # Full release build for all papers
+  python scripts/build_papers.py release paper1    # Full release for paper1 only
+  python scripts/build_papers.py lean paper1 -v    # Build Paper 1 Lean proofs (verbose)
+  python scripts/build_papers.py latex paper2       # Build Paper 2 LaTeX
+  python scripts/build_papers.py lean paper2 --axiom-check  # Build + check axioms
+  python scripts/build_papers.py claim-check paper4_toc    # Verify theorem-label mapping
+  python scripts/build_papers.py submission paper1_jsait     # Build JSAIT review PDF
+  python scripts/build_papers.py metadata paper4_toc         # Generate copy-paste metadata
+  python scripts/build_papers.py scaffold paper6             # Create boilerplate
+        """
+    )
+    parser.add_argument(
+        "build_type",
+        nargs="?",
+        default="release",
+        choices=[
+            "release",    # Full release pipeline
+            "all",         # Build all of one type
+            "lean",        # Lean proofs only
+            "latex",       # LaTeX PDF only
+            "markdown",    # Markdown only
+            "arxiv",       # ArXiv package only
+            "submission",  # Submission format only
+            "metadata",    # Copy-paste metadata only
+            "scaffold",    # Create boilerplate
+        ],
+        help="What to build (default: release)",
+    )
+    parser.add_argument(
+        "paper",
+        nargs="?",
+        default="all",
+        help="Which paper id from papers.yaml, or all (default: all)",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show detailed output")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Minimal output (errors only)")
+    parser.add_argument("--axiom-check", action="store_true", 
+        help="Run axiom verification on Lean theorems (checks what axioms each theorem depends on)")
+    parser.add_argument("--claim-check", action="store_true", 
+        help="Enforce theorem-label mapping coverage check (fails on unmapped labels)")
+    parser.add_argument("--lh-check", action="store_true", 
+        help="Enforce exactly one Lean handle per theorem-like environment (fails on violations)")
+    parser.add_argument("--overwrite", action="store_true", 
+        help="Allow scaffold command to overwrite existing files")
+    
+    args = parser.parse_args()
+    
+    # Dispatch to builder
+    builder = Builder(path_resolver, specs)
+    
+    if args.build_type == "release":
+        builder.release(args.paper, verbose=not args.quiet, 
+                       axiom_check=args.axiom_check, 
+                       claim_check=args.claim_check,
+                       lh_check=args.lh_check)
+    elif args.build_type == "all":
+        builder.build_all(args.paper, verbose=not args.quiet)
+    # ... other commands
+```
 ```
 
 **TOTAL: ~600 lines (92% reduction from 7789)**
