@@ -1091,6 +1091,93 @@ build_papers.py (CLI)
 
 ---
 
+## ALIGNMENT WITH REFACTORING DOCS
+
+### From refactoring_principles.rst:
+- [x] "Algebraic Common Factors" - PathResolver, FileWriter, ContentExtractor factor common patterns
+- [x] "Single-Use Function Inlining" - wrapper methods deleted
+- [x] "Mathematical Simplification" - duplicate build_steps consolidated
+
+### From architectural_refactoring_patterns.rst:
+- [x] "Explicit Dependency Injection" - builders take PathResolver in constructor
+- [x] "Indirection Minimization" - wrapper methods removed
+- [x] "Fail-Loud" - already in codebase
+- [x] "Consistent Interface Design" - uniform patterns
+- [ ] "ABC Contract Enforcement" - NOT YET ADDED
+
+### Add: ABC Contracts for Builders
+
+Per docs: "Use ABCs to enforce explicit contracts and enable polymorphism."
+
+The ABC should hold ALL common methods - this collapses duplication:
+
+```python
+# scripts/build/builders/base.py
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, Optional
+
+class BuildStrategy(ABC):
+    """ABC contract for all builders - COLLSPSES common methods into ONE class."""
+    
+    def __init__(self, path_resolver: 'PathResolver'):
+        self.path_resolver = path_resolver
+    
+    # COMMON METHODS - all builders inherit these (COLLAPSED from 8 builders)
+    
+    def get_paper_dir(self, paper_id: str) -> Path:
+        return self.path_resolver.derive(paper_id)
+    
+    def get_latex_dir(self, paper_id: str) -> Path:
+        meta = self.path_resolver.get_meta(paper_id)
+        return self.path_resolver.derive(paper_id, meta.latex_dir)
+    
+    def get_content_dir(self, paper_id: str) -> Path:
+        meta = self.path_resolver.get_meta(paper_id)
+        return self.path_resolver.derive(paper_id, meta.latex_dir, "content")
+    
+    def get_releases_dir(self, paper_id: str) -> Path:
+        return self.path_resolver.releases(paper_id)
+    
+    def get_proofs_dir(self, paper_id: str) -> Path:
+        meta = self.path_resolver.get_meta(paper_id)
+        return self.path_resolver.derive(paper_id, meta.proofs_dir)
+    
+    def validate_structure(self, paper_id: str) -> bool:
+        """Validate paper has required structure."""
+        return self.get_paper_dir(paper_id).exists()
+    
+    def get_meta(self, paper_id: str) -> PaperMeta:
+        return self.path_resolver.get_meta(paper_id)
+    
+    # ABSTRACT METHODS - must be implemented by each builder
+    
+    @abstractmethod
+    def build(self, paper_id: str, **kwargs) -> Any:
+        """Build the artifact for this paper."""
+        pass
+    
+    @abstractmethod
+    def supports(self, paper_id: str) -> bool:
+        """Check if this builder supports the given paper."""
+        pass
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Builder name for logging."""
+        pass
+```
+
+**This collapses:**
+- 5 path getter methods × 8 builders = 40 methods → 5 methods in ABC
+- 8 `validate_structure` methods → 1 method in ABC
+- 8 `get_meta` calls → 1 method in ABC
+
+**Total: ~50 methods collapsed into ABC**
+
+---
+
 ## SUMMARY: What Changes
 
 | Original | Refactored |
