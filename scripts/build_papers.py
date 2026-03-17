@@ -422,34 +422,13 @@ class PaperBuilder:
             raise ValueError(f"Unknown paper: {paper_id}. Valid papers: {valid}")
         return self.papers[paper_id]
 
-    def _get_paper_dir(self, paper_id: str) -> Path:
-        """Get paper directory path."""
+    def _derive_path(self, paper_id: str, *parts: str) -> Path:
+        """Single invariant: derive any paper-related path."""
         meta = self._get_paper_meta(paper_id)
-        return self.papers_dir / meta.dir_name
+        return self.papers_dir / meta.dir_name / Path(*parts)
 
-    def _get_content_dir(self, paper_id: str) -> Path:
-        """Get content directory: paper_dir/latex/content (INVARIANT 2)."""
-        meta = self._get_paper_meta(paper_id)
-        return self.papers_dir / meta.dir_name / meta.latex_dir / "content"
-
-    def _get_latex_dir(self, paper_id: str) -> Path:
-        """Get LaTeX directory for a paper."""
-        meta = self._get_paper_meta(paper_id)
-        return self._get_paper_dir(paper_id) / meta.latex_dir
-
-    def _get_releases_dir(self, paper_id: str) -> Path:
-        """Get releases directory, creating if needed (INVARIANT 3)."""
-        releases_dir = self._get_paper_dir(paper_id) / "releases"
-        releases_dir.mkdir(parents=True, exist_ok=True)
-        return releases_dir
-
-    def _get_markdown_dir(self, paper_id: str) -> Path:
-        """Get Markdown directory for a paper."""
-        return self._get_paper_dir(paper_id) / "markdown"
-
-    def _get_markdown_file(self, paper_id: str) -> Path:
         """Get canonical Markdown output path for a paper."""
-        return self._get_markdown_dir(paper_id) / f"{paper_id}.md"
+        return self._derive_path(paper_id) / f"{paper_id}.md"
 
     def _generated_content_files(self) -> Set[str]:
         """Return configured auto-generated content file names."""
@@ -467,7 +446,7 @@ class PaperBuilder:
                 if tex_file.suffix == ".tex" and tex_file.name not in generated_files
             )
 
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return []
         return sorted(
@@ -721,7 +700,7 @@ This directory was scaffolded by `scripts/build_papers.py scaffold {meta.paper_i
             raise ValueError(f"{paper_id}: scaffold_from cannot reference itself")
 
         source_meta = self._get_paper_meta(source_id)
-        source_latex_dir = self._get_paper_dir(source_id) / source_meta.latex_dir
+        source_latex_dir = self._derive_path(source_id) / source_meta.latex_dir
         source_main = source_latex_dir / source_meta.latex_file
         if not source_main.exists():
             raise FileNotFoundError(
@@ -818,10 +797,10 @@ end {module_root}
     ) -> Dict[str, List[Path]]:
         """Create required folder/file boilerplate for a paper entry in papers.yaml."""
         meta = self._get_paper_meta(paper_id)
-        paper_dir = self._get_paper_dir(paper_id)
+        paper_dir = self._derive_path(paper_id)
         latex_dir = paper_dir / meta.latex_dir
         content_dir = latex_dir / "content"
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         releases_dir = paper_dir / "releases"
         markdown_dir = paper_dir / "markdown"
         proofs_dir_was_nonempty = proofs_dir.exists() and any(proofs_dir.iterdir())
@@ -943,7 +922,7 @@ end {module_root}
     ) -> List[Path]:
         """Discover included TeX files for a paper under simple flag evaluation."""
         meta = self._get_paper_meta(paper_id)
-        main_tex = self._get_paper_dir(paper_id) / meta.latex_dir / meta.latex_file
+        main_tex = self._derive_path(paper_id) / meta.latex_dir / meta.latex_file
         if not main_tex.exists():
             raise FileNotFoundError(f"Main LaTeX file not found: {main_tex}")
 
@@ -1195,13 +1174,13 @@ end {module_root}
         creates local alias directories so lake path-dependencies remain stable
         across source and packaged builds.
         """
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if not proofs_dir.exists():
             return
 
         dep_ids = self._collect_lean_dependency_closure(paper_id)
         for dep_id in dep_ids:
-            src = self._get_paper_proofs_dir(dep_id)
+            src = self._derive_path(dep_id)
             if not src.exists():
                 continue
             alias = proofs_dir / f"dep_{dep_id}"
@@ -1238,7 +1217,7 @@ end {module_root}
         )
         if not src.exists():
             return
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if not proofs_dir.exists():
             return
         dst = proofs_dir / "DependencyGraph.lean"
@@ -1247,7 +1226,7 @@ end {module_root}
 
     def _write_graph_export_lean(self, paper_id: str) -> None:
         """Generate graph and declaration-info export drivers from compiled modules."""
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if not proofs_dir.exists():
             return
 
@@ -1309,7 +1288,7 @@ end {module_root}
         bytecode for all imports, no re-elaboration, no collision. #export_graph_json
         runs with the full type-checked environment and writes graph.json.
         """
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         graph_export = proofs_dir / "GraphExport.lean"
         decl_export = proofs_dir / "DeclInfoExport.lean"
         dep_graph = proofs_dir / "DependencyGraph.lean"
@@ -1718,9 +1697,9 @@ end {module_root}
     def _iter_lean_roots_for_paper(self, paper_id: str) -> List[Tuple[str, Path]]:
         """Return `(source_paper_id, proofs_dir)` for paper + transitive dependencies."""
         roots: List[Tuple[str, Path]] = []
-        roots.append((paper_id, self._get_paper_proofs_dir(paper_id)))
+        roots.append((paper_id, self._derive_path(paper_id)))
         for dep in self._collect_lean_dependency_closure(paper_id):
-            roots.append((dep, self._get_paper_proofs_dir(dep)))
+            roots.append((dep, self._derive_path(dep)))
         return roots
 
     def _derive_module_roots_from_lakefile(self, proofs_dir: Path) -> List[str]:
@@ -1760,7 +1739,7 @@ end {module_root}
     def _derive_module_roots(self, paper_id: str) -> List[str]:
         """Derive importable top-level Lean module roots for a paper."""
         meta = self._get_paper_meta(paper_id)
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         roots: List[str] = []
 
         # 1) Explicit metadata root, if provided.
@@ -1903,7 +1882,7 @@ end {module_root}
 
     def _get_lean_stats(self, paper_id: str) -> LeanStats:
         """Get computed Lean stats for a paper or variant."""
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         return self._compute_lean_stats(proofs_dir)
 
     def _iter_transitive_lean_dependency_ids(self, paper_id: str) -> List[str]:
@@ -1930,7 +1909,7 @@ end {module_root}
         seen_dirs: set[Path] = set()
 
         def add_dir(pid: str) -> None:
-            proofs_dir = self._get_paper_proofs_dir(pid)
+            proofs_dir = self._derive_path(pid)
             if not proofs_dir.exists():
                 return
             key = proofs_dir.resolve()
@@ -1983,7 +1962,7 @@ end {module_root}
         if include_dependencies:
             roots = self._iter_lean_roots_for_paper(paper_id)
         else:
-            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+            roots = [(paper_id, self._derive_path(paper_id))]
 
         decl_pattern = re.compile(
             r"\b(?:theorem|lemma|def|abbrev|class|structure)\s+([A-Za-z_][A-Za-z0-9_'.]*)"
@@ -2063,7 +2042,7 @@ end {module_root}
         if include_dependencies:
             roots = self._iter_lean_roots_for_paper(paper_id)
         else:
-            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+            roots = [(paper_id, self._derive_path(paper_id))]
 
         module_index: Dict[str, Tuple[str, str]] = {}
         for source_paper_id, proofs_dir in roots:
@@ -2106,7 +2085,7 @@ end {module_root}
         visited: Set[Tuple[str, str]] = set(seed_modules)
         while queue:
             source_paper_id, module_path = queue.pop()
-            proofs_dir = self._get_paper_proofs_dir(source_paper_id)
+            proofs_dir = self._derive_path(source_paper_id)
             lean_file = proofs_dir / f"{module_path}.lean"
             if not lean_file.exists():
                 continue
@@ -2260,7 +2239,7 @@ end {module_root}
 
     def _get_lean_file_stats(self, paper_id: str) -> Dict[str, LeanFileStats]:
         """Get per-file Lean stats for a paper or variant."""
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         return self._compute_lean_file_stats(proofs_dir)
 
     def _sync_shared_preambles(self, paper_id: str) -> None:
@@ -2270,7 +2249,7 @@ end {module_root}
         build/release commands should always compile against the shared preamble set.
         """
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         if not latex_dir.exists():
             return
 
@@ -2297,7 +2276,7 @@ end {module_root}
         compact, monospace tokens without editing individual paper files.
         """
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         if not latex_dir.exists():
             return
 
@@ -2387,7 +2366,7 @@ end {module_root}
     def _write_latex_lean_stats(self, paper_id: str) -> None:
         """Write auto-generated Lean stats macros into latex/content/lean_stats.tex."""
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         content_dir = latex_dir / "content"
         if not content_dir.exists():
             return
@@ -2443,7 +2422,7 @@ end {module_root}
         for dep_paper_id in meta.lean_dependencies:
             if dep_paper_id not in self.papers:
                 continue
-            dep_proofs_dir = self._get_paper_proofs_dir(dep_paper_id)
+            dep_proofs_dir = self._derive_path(dep_paper_id)
             if not dep_proofs_dir.exists():
                 continue
             dep_stats = self._compute_lean_stats(dep_proofs_dir)
@@ -2488,7 +2467,7 @@ end {module_root}
     def _iter_claim_closure_sources(self, paper_id: str) -> List[Path]:
         """Return ClaimClosure Lean sources for assumption-ledger extraction."""
         meta = self._get_paper_meta(paper_id)
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if not proofs_dir.exists():
             return []
 
@@ -2599,7 +2578,7 @@ end {module_root}
     def _write_assumption_ledger_auto(self, paper_id: str) -> None:
         """Write auto-generated assumption-ledger snippet when available."""
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         content_dir = latex_dir / "content"
         if not content_dir.exists():
             return
@@ -2619,7 +2598,7 @@ end {module_root}
         bayes_theorem_handles: Set[str] = set()
         source_labels: List[str] = []
 
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         for src in source_files:
             rel = src.relative_to(proofs_dir)
             source_labels.append(str(rel).replace("\\", "/"))
@@ -2745,7 +2724,7 @@ end {module_root}
 
     def _read_existing_lean_handle_rows(self, paper_id: str) -> List[Tuple[str, str]]:
         """Read existing `(ID, handle)` rows from `lean_handle_ids_auto.tex`."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         map_file = content_dir / "lean_handle_ids_auto.tex"
         if not map_file.exists():
             return []
@@ -2795,7 +2774,7 @@ end {module_root}
         if include_dependencies:
             roots = self._iter_lean_roots_for_paper(paper_id)
         else:
-            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+            roots = [(paper_id, self._derive_path(paper_id))]
 
         decl_pattern = re.compile(
             r"\b(?:theorem|lemma|def|abbrev|class|structure)\s+([A-Za-z_][A-Za-z0-9_'.]*)"
@@ -2889,7 +2868,7 @@ end {module_root}
         self, paper_id: str, files: Optional[List[Path]] = None
     ) -> Set[str]:
         """Extract explicit Lean handles referenced in paper content via `\\nolinkurl{...}`."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return set()
 
@@ -2934,7 +2913,7 @@ end {module_root}
         self, paper_id: str, files: Optional[List[Path]] = None
     ) -> Set[str]:
         """Extract raw Lean handles still referenced via `\\LH{handle_name}`."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return set()
 
@@ -2970,7 +2949,7 @@ end {module_root}
         if include_dependencies:
             roots = self._iter_lean_roots_for_paper(paper_id)
         else:
-            roots = [(paper_id, self._get_paper_proofs_dir(paper_id))]
+            roots = [(paper_id, self._derive_path(paper_id))]
 
         ident_pattern = re.compile(r"^[A-Za-z_][A-Za-z0-9_']*$")
 
@@ -3174,7 +3153,7 @@ end {module_root}
         self, paper_id: str, files: Optional[List[Path]] = None
     ) -> None:
         """Write compact Lean-handle ID table used by `\\LH{...}` references."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return
         if files is None:
@@ -3354,7 +3333,7 @@ end {module_root}
         This keeps prose readable and clickable without requiring manual conversion
         in each paper's content files.
         """
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return
 
@@ -3592,7 +3571,7 @@ end {module_root}
         self, paper_id: str
     ) -> Dict[str, str]:
         """Extract label -> regime mapping from claimstamps in a source paper."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return {}
 
@@ -3625,7 +3604,7 @@ end {module_root}
         multi-label stamps and accumulates all tags seen for each label so the
         generated hardness index can be derived from the same claim metadata.
         """
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return {}
 
@@ -3690,7 +3669,7 @@ end {module_root}
 
     def _write_proof_hardness_index_auto(self, paper_id: str) -> None:
         """Write auto-generated proof hardness index from claim labels/tags."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return
 
@@ -3773,7 +3752,7 @@ end {module_root}
         - empty claim-block stamps derive from the claim label
         - empty regime tags inherit from scaffold source when available, else `RG`
         """
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return
 
@@ -3849,7 +3828,7 @@ end {module_root}
         compact ``\\LH{ID}`` markers or as raw fully qualified declaration names
         wrapped in ``\\nolinkurl{...}`` inside ``\\leanmeta{...}``.
         """
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return {}
 
@@ -3984,7 +3963,7 @@ end {module_root}
 
     def _read_lean_handle_id_map(self, paper_id: str) -> Dict[str, str]:
         """Read generated Lean-handle ID map: LH code -> full Lean handle."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         map_file = content_dir / "lean_handle_ids_auto.tex"
         if not map_file.exists():
             return {}
@@ -4025,7 +4004,7 @@ end {module_root}
 
     def _read_claim_mapping_table_handles(self, paper_id: str) -> Dict[str, List[str]]:
         """Read label->handles from an existing `claim_mapping_auto.tex` table."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         mapping_file = content_dir / "claim_mapping_auto.tex"
         if not mapping_file.exists():
             return {}
@@ -4057,7 +4036,7 @@ end {module_root}
     def _write_claim_mapping_auto(self, paper_id: str) -> None:
         """Write auto-generated claim coverage matrix from derived theorem anchors."""
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         content_dir = latex_dir / "content"
         if not content_dir.exists():
             return
@@ -4182,7 +4161,7 @@ end {module_root}
         Runs `lake build` in that directory.
         Captures output for inclusion in BUILD_LOG.txt.
         """
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
 
         if not proofs_dir.exists():
             print(f"[build] No proofs directory for {paper_id}, skipping...")
@@ -4267,7 +4246,7 @@ end {module_root}
         For variants (e.g., paper1_jsait), uses variant-specific naming.
         """
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_latex_dir(paper_id)
+        latex_dir = self._derive_path(paper_id)
         latex_file = latex_dir / meta.latex_file
 
         if not latex_file.exists():
@@ -4360,7 +4339,7 @@ end {module_root}
         description = sub_fmt.get("description", "review format")
 
         meta = self._get_paper_meta(paper_id)
-        paper_dir = self._get_paper_dir(paper_id)
+        paper_dir = self._derive_path(paper_id)
         latex_dir = paper_dir / meta.latex_dir
         latex_file = latex_dir / meta.latex_file
 
@@ -4578,8 +4557,8 @@ end {module_root}
         For variants (e.g., paper1_jsait), uses variant-specific naming.
         """
         meta = self._get_paper_meta(paper_id)
-        out_dir = self._get_markdown_dir(paper_id)
-        out_file = self._get_markdown_file(paper_id)
+        out_dir = self._derive_path(paper_id)
+        out_file = self._derive_path(paper_id)
 
         out_dir.mkdir(parents=True, exist_ok=True)
         print(f"[build-md] Building {paper_id}: {meta.name}...")
@@ -4681,7 +4660,7 @@ end {module_root}
     def _extract_main_latex_title(self, paper_id: str) -> str | None:
         """Extract the displayed title from the variant's main LaTeX file."""
         meta = self._get_paper_meta(paper_id)
-        main_tex = self._get_paper_dir(paper_id) / meta.latex_dir / meta.latex_file
+        main_tex = self._derive_path(paper_id) / meta.latex_dir / meta.latex_file
         if not main_tex.exists():
             return None
 
@@ -4698,7 +4677,7 @@ end {module_root}
         if title:
             return title
         meta = self._get_paper_meta(paper_id)
-        main_tex = self._get_paper_dir(paper_id) / meta.latex_dir / meta.latex_file
+        main_tex = self._derive_path(paper_id) / meta.latex_dir / meta.latex_file
         raise ValueError(
             f"{paper_id}: missing canonical LaTeX title in {main_tex.relative_to(self.repo_root)} "
             "(expected \\\\title{...})"
@@ -4706,7 +4685,7 @@ end {module_root}
 
     def _extract_abstract_latex(self, paper_id: str) -> Optional[str]:
         """Extract abstract LaTeX content from content/abstract.tex."""
-        abstract_file = self._get_content_dir(paper_id) / "abstract.tex"
+        abstract_file = self._derive_path(paper_id) / "abstract.tex"
         if not abstract_file.exists():
             return None
 
@@ -5277,7 +5256,7 @@ end {module_root}
             # Footer
             f.write("\n\n---\n\n## Machine-Checked Proofs\n\n")
             f.write(f"All theorems are formalized in Lean 4:\n")
-            proofs_rel = self._get_paper_proofs_dir(meta.paper_id).relative_to(
+            proofs_rel = self._derive_path(meta.paper_id).relative_to(
                 self.repo_root
             )
             f.write(f"- Location: `{proofs_rel}/`\n")
@@ -5398,7 +5377,7 @@ end {module_root}
     def _get_claim_mapping_file(self, paper_id: str) -> Optional[Path]:
         """Locate theorem-handle mapping file for claim coverage checks."""
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_paper_dir(paper_id) / meta.latex_dir
+        latex_dir = self._derive_path(paper_id) / meta.latex_dir
         if meta.claim_mapping_file:
             explicit = latex_dir / meta.claim_mapping_file
             return explicit if explicit.exists() else None
@@ -5417,7 +5396,7 @@ end {module_root}
 
     def _extract_paper_claim_labels(self, paper_id: str) -> Set[str]:
         """Extract theorem/corollary/lemma/proposition labels from content/*.tex."""
-        content_dir = self._get_content_dir(paper_id)
+        content_dir = self._derive_path(paper_id)
         if not content_dir.exists():
             return set()
 
@@ -5516,7 +5495,7 @@ end {module_root}
         """Generate theorem verification badge (LaTeX macro + JSON manifest)."""
         import datetime
 
-        latex_dir = self._get_latex_dir(paper_id)
+        latex_dir = self._derive_path(paper_id)
         json_path = latex_dir / "theorem_verification.json"
         latex_macro_path = latex_dir / "theorem_verification.tex"
 
@@ -5796,7 +5775,7 @@ end {module_root}
     def _validate_and_get_pdf(self, paper_id: str) -> Path:
         """Validate PDF exists and return path. Fail-loud if missing."""
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_latex_dir(paper_id)
+        latex_dir = self._derive_path(paper_id)
         pdfs = list(latex_dir.glob("*.pdf"))
 
         if not pdfs:
@@ -5813,7 +5792,7 @@ end {module_root}
         # Must match build_markdown(), which writes <paper_id>.md.
         # This is critical for variants (e.g., paper4_toc) that share dir_name
         # with a base paper but have different LaTeX sources/content.
-        md_file = self._get_markdown_file(paper_id)
+        md_file = self._derive_path(paper_id)
 
         if not md_file.exists():
             raise FileNotFoundError(
@@ -5848,7 +5827,7 @@ end {module_root}
         Also copies content/ subdirectory if present.
         """
         meta = self._get_paper_meta(paper_id)
-        latex_dir = self._get_latex_dir(paper_id)
+        latex_dir = self._derive_path(paper_id)
 
         if not latex_dir.exists():
             print(f"[arxiv]   No LaTeX directory for {paper_id}, skipping...")
@@ -5967,7 +5946,7 @@ end {module_root}
         path (with conflict-safe fallback), so bridge imports resolve without
         manual per-paper path patching.
         """
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
 
         if not proofs_dir.exists():
             print(f"[arxiv]   No proofs directory for {paper_id}, skipping...")
@@ -5978,7 +5957,7 @@ end {module_root}
 
         dep_ids = self._collect_lean_dependency_closure(paper_id)
         roots: List[Tuple[str, Path]] = [(paper_id, proofs_dir)]
-        roots.extend((dep_id, self._get_paper_proofs_dir(dep_id)) for dep_id in dep_ids)
+        roots.extend((dep_id, self._derive_path(dep_id)) for dep_id in dep_ids)
         release_module_closure = self._get_release_module_closure(paper_id)
 
         paper_files: List[Path] = []
@@ -6044,7 +6023,7 @@ end {module_root}
         # Copy dependency package config files (needed for `require ... from "./dep_*"`).
         dep_config_files = ["lean-toolchain", "lake-manifest.json", "lakefile.lean"]
         for dep_paper_id in dep_ids:
-            dep_src = self._get_paper_proofs_dir(dep_paper_id)
+            dep_src = self._derive_path(dep_paper_id)
             if not dep_src.exists():
                 continue
             dep_dest = lean_dest / f"dep_{dep_paper_id}"
@@ -6062,7 +6041,7 @@ end {module_root}
         self._generate_proofs_readme(paper_id, paper_files, lean_dest)
 
         for dep_paper_id in dep_ids:
-            dep_proofs_dir = self._get_paper_proofs_dir(dep_paper_id)
+            dep_proofs_dir = self._derive_path(dep_paper_id)
             if dep_proofs_dir.exists():
                 if release_module_closure is None:
                     dep_count = len(self._iter_paper_lean_files(dep_proofs_dir))
@@ -6139,7 +6118,7 @@ end {module_root}
         portable and reviewable.
         """
         meta = self._get_paper_meta(paper_id)
-        paper_dir = self._get_paper_dir(paper_id)
+        paper_dir = self._derive_path(paper_id)
 
         configured_sources = list(meta.experiment_paths)
         legacy_source = paper_dir / "experiments"
@@ -6248,9 +6227,9 @@ end {module_root}
         if not meta.experiment_commands:
             return
 
-        paper_dir = self._get_paper_dir(paper_id)
-        latex_dir = self._get_latex_dir(paper_id)
-        content_dir = self._get_content_dir(paper_id)
+        paper_dir = self._derive_path(paper_id)
+        latex_dir = self._derive_path(paper_id)
+        content_dir = self._derive_path(paper_id)
         releases_dir = self._get_releases_dir(paper_id)
         python_bin = self.repo_root / ".venv" / "bin" / "python"
         python_exec = str(python_bin if python_bin.exists() else Path(sys.executable))
@@ -7237,7 +7216,7 @@ MIT License - See main repository for details.
         log_file = package_dir / "BUILD_LOG.txt"
 
         # Paper-specific proof files from paper's proofs directory
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if release_module_closure is None:
             paper_lean_files = self._iter_paper_lean_files(proofs_dir)
         else:
@@ -7392,7 +7371,7 @@ Repository: https://github.com/trissim/openhcs
         import re
         from collections import defaultdict
 
-        proofs_dir = self._get_paper_proofs_dir(paper_id)
+        proofs_dir = self._derive_path(paper_id)
         if not proofs_dir.exists():
             print(f"[axiom-check] No proofs directory for {paper_id}, skipping...")
             return {}
