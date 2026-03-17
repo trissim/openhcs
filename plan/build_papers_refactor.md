@@ -120,25 +120,81 @@ class BuildConfig:
     latex_source_extensions: Tuple[str, ...]
     lean_exclude_dirs: Tuple[str, ...]
 
-# ... PaperMeta, LeanStats, LeanFileStats
+@dataclass(frozen=True)
+class PaperMeta:
+    paper_id: str
+    name: str
+    full_name: str
+    dir_name: str
+    latex_dir: str
+    latex_file: str
+    venue: str
+    proofs_dir: str
+    module_root: str
+    archive_prefix: str
+    lean_dependencies: Tuple[str, ...]
+    lean_stats_scope: str
+    assumption_ledger_sources: Tuple[str, ...]
+    claim_mapping_file: str
+    arxiv_comments: str
+    scaffold_from: str
+    experiment_paths: Tuple[str, ...]
+    experiment_commands: Tuple[str, ...]
+    
+    @classmethod
+    def from_dict(cls, paper_id: str, d: dict) -> 'PaperMeta':
+        ...
+
+@dataclass(frozen=True)
+class LeanFileStats:
+    line_count: int
+    theorem_count: int
+    sorry_count: int
+
+@dataclass(frozen=True)
+class LeanStats(LeanFileStats):
+    file_count: int
 ```
 
 ### Phase 3: Extract each builder (larger, more complex)
 
-For each build operation:
-1. Identify the methods it uses
-2. Create new module: `scripts/build/lean_builder.py`
-3. Import PathResolver and config classes
-4. Move methods, update imports
-5. Test
+**Exact extraction for MarkdownBuilder (simplest first):**
+
+1. **Create `scripts/build/builders/markdown_builder.py`**
+2. **Methods to move from PaperBuilder:**
+   - `build_markdown` (line 4573)
+   - `_build_markdown_file` (line 5230)
+   - `_convert_latex_to_markdown` (line 5288)
+   - `_normalize_claimstamp_for_markdown` (line 5332)
+   - `_prepend_markdown_macro_prelude` (line 5360)
+   - `_postprocess_markdown_text` (line 5385)
+   - `_latex_snippet_to_plain` (line 4764)
+   - `_latex_snippet_to_mathjax` (line 4785)
+   - `_mathjax_markdown_to_unicode_markdown` (line 4832)
+   - `_convert_fake_subscripts_to_unicode` (line 4877)
+   - `_convert_display_math_to_unicode` (line 4963)
+   - `_latex_snippet_to_unicode_zenodo` (line 5046)
+
+3. **Dependencies to inject:**
+   - `PathResolver` (for path derivation)
+   - `ContentExtractor` (for LaTeX parsing)
+   - `Converter` (for text conversion)
+   - `Normalizer` (for normalization)
+
+4. **Update PaperBuilder to delegate:**
+   ```python
+   # OLD: def build_markdown(self, paper_id: str):
+   # NEW: def build_markdown(self, paper_id: str):
+       return MarkdownBuilder(self.path_resolver).build(paper_id)
+   ```
 
 **Extract in order of complexity:**
-1. MarkdownBuilder (simplest, ~200 lines)
-2. MetadataGenerator (~200 lines)
-3. SubmissionBuilder (~300 lines)
-4. LeanBuilder (~300 lines)
-5. LatexBuilder (~400 lines)
-6. ArxivPackager (~500 lines)
+1. MarkdownBuilder (12 methods to move)
+2. MetadataGenerator (8 methods to move)
+3. SubmissionBuilder (4 methods to move)
+4. LeanBuilder (30 methods to move)
+5. LatexBuilder (25 methods to move)
+6. ArxivPackager (20 methods to move)
 
 ### Phase 4: Create Orchestrator
 
@@ -153,21 +209,67 @@ from .path_resolver import PathResolver
 class Orchestrator:
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
-        # Load config once
         self.config = self._load_config()
         self.path_resolver = PathResolver(
             repo_root / "docs" / "papers",
             self.config.papers
         )
+        # Initialize all builders with PathResolver
+        self.lean_builder = LeanBuilder(self.path_resolver)
+        self.latex_builder = LatexBuilder(self.path_resolver)
+        self.markdown_builder = MarkdownBuilder(self.path_resolver)
+        self.submission_builder = SubmissionBuilder(self.path_resolver)
+        self.arxiv_packager = ArxivPackager(self.path_resolver)
+        self.metadata_generator = MetadataGenerator(self.path_resolver)
     
-    def release(self, paper_id: str, **kwargs):
+    def release(self, paper_id: str, verbose: bool = True, axiom_check: bool = False, claim_check: bool = False):
         """Run full release pipeline."""
-        # Coordinate all builders
-        ...
+        # 1. Build Lean (compiles .olean cache)
+        self.lean_builder.build(paper_id, verbose=verbose)
+        # 2. Build LaTeX (generates PDF)
+        self.latex_builder.build(paper_id, verbose=verbose)
+        # 3. Generate Markdown
+        self.markdown_builder.build(paper_id)
+        # 4. Generate metadata
+        self.metadata_generator.generate(paper_id)
+        # 5. Build submission format
+        self.submission_builder.build(paper_id, verbose=verbose)
+        # 6. Package for arXiv
+        self.arxiv_packager.package(paper_id, verbose=verbose)
+        # 7. Optional: axiom check
+        if axiom_check:
+            self.check_axioms(paper_id, verbose=verbose)
+        # 8. Optional: claim coverage check
+        if claim_check:
+            self.check_claim_coverage(paper_id)
     
-    def build_all(self, build_type: str, **kwargs):
+    def build_all(self, build_type: str, verbose: bool = True, axiom_check: bool = False, claim_check: bool = False):
         """Build all papers of specified type."""
-        ...
+        paper_ids = list(self.config.papers.keys())
+        
+        if build_type == "release":
+            for pid in paper_ids:
+                self.release(pid, verbose=verbose, axiom_check=axiom_check, claim_check=claim_check)
+        elif build_type in ("all", "lean"):
+            for pid in paper_ids:
+                self.lean_builder.build(pid, verbose=verbose)
+        elif build_type == "latex":
+            for pid in paper_ids:
+                self.latex_builder.build(pid, verbose=verbose)
+        elif build_type == "markdown":
+            for pid in paper_ids:
+                self.markdown_builder.build(pid)
+        # ... other build types
+    
+    def check_claim_coverage(self, paper_id: str, fail_on_missing: bool = False):
+        from .builders.claim_checker import ClaimChecker
+        checker = ClaimChecker(self.path_resolver)
+        return checker.check_coverage(paper_id, fail_on_missing=fail_on_missing)
+    
+    def check_axioms(self, paper_id: str, verbose: bool = True) -> dict:
+        from .builders.axiom_checker import AxiomChecker
+        checker = AxiomChecker(self.path_resolver)
+        return checker.check(paper_id, verbose=verbose)
 ```
 
 ### Phase 5: Wire up CLI
@@ -182,19 +284,60 @@ from pathlib import Path
 from build.orchestrator import Orchestrator
 
 def main():
-    parser = argparse.ArgumentParser(...)
+    parser = argparse.ArgumentParser(
+        description="Build papers for the OpenHCS paper series",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/build_papers.py release paper1         # Full release
+  python scripts/build_papers.py release               # All papers
+  python scripts/build_papers.py lean paper1 -v        # Lean only, verbose
+  python scripts/build_papers.py latex paper2          # LaTeX only
+  python scripts/build_papers.py claim-check paper4    # Verify coverage
+  python scripts/build_papers.py axiom-check paper4   # Check axioms
+        """
+    )
+    parser.add_argument("command", choices=["release", "lean", "latex", "markdown", "claim-check", "axiom-check", "scaffold"], help="Build command")
+    parser.add_argument("paper", nargs="?", help="Paper ID (optional for 'release' with no args)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--axiom-check", action="store_true", help="Run axiom checks")
+    parser.add_argument("--claim-check", action="store_true", help="Run claim coverage checks")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
+    
     args = parser.parse_args()
     
-    orchestrator = Orchestrator(Path(__file__).parent.parent)
+    repo_root = Path(__file__).parent.parent
+    orchestrator = Orchestrator(repo_root)
     
-    if args.build_type == "release":
-        orchestrator.release(args.paper, ...)
-    elif args.build_type == "lean":
-        # Import and run specific builder
-        from build.lean_builder import LeanBuilder
-        builder = LeanBuilder(orchestrator.path_resolver, ...)
-        builder.build(args.paper)
-    # ...
+    if args.command == "release":
+        if args.paper:
+            orchestrator.release(args.paper, verbose=args.verbose, axiom_check=args.axiom_check, claim_check=args.claim_check)
+        else:
+            orchestrator.build_all("release", verbose=args.verbose, axiom_check=args.axiom_check, claim_check=args.claim_check)
+    elif args.command == "lean":
+        if not args.paper:
+            parser.error("lean command requires a paper ID")
+        orchestrator.lean_builder.build(args.paper, verbose=args.verbose)
+    elif args.command == "latex":
+        if not args.paper:
+            parser.error("latex command requires a paper ID")
+        orchestrator.latex_builder.build(args.paper, verbose=args.verbose)
+    elif args.command == "markdown":
+        if not args.paper:
+            parser.error("markdown command requires a paper ID")
+        orchestrator.markdown_builder.build(args.paper)
+    elif args.command == "claim-check":
+        if not args.paper:
+            parser.error("claim-check requires a paper ID")
+        orchestrator.check_claim_coverage(args.paper, fail_on_missing=False)
+    elif args.command == "axiom-check":
+        if not args.paper:
+            parser.error("axiom-check requires a paper ID")
+        orchestrator.check_axioms(args.paper, verbose=args.verbose)
+    elif args.command == "scaffold":
+        if not args.paper:
+            parser.error("scaffold requires a paper ID")
+        orchestrator.scaffold_paper(args.paper, overwrite=args.overwrite)
 
 if __name__ == "__main__":
     main()
@@ -1260,53 +1403,122 @@ class StatsScope(Enum):
 class Normalizer:
     def normalize(self, content: str, normalizer_type: NormalizerType) -> str:
         match normalizer_type:
-            case NormalizerType.LEATMETA_HANDLE_LISTS:
+            case NormalizerType.LEANMETA_HANDLE_LISTS:
                 return self._normalize_leanmeta_handle_lists(content)
-            # ...
+            case NormalizerType.CLAIMSTAMP_REFS:
+                return self._normalize_claimstamp_refs(content)
+            case NormalizerType.CLAIMSTAMP_REGIME:
+                return self._normalize_claimstamp_regime(content)
+            case NormalizerType.CLAIMSTAMP_FILL:
+                return self._normalize_and_fill_claimstamps(content)
+            case NormalizerType.PLAINTEXT_BLOCK:
+                return self._normalize_plaintext_block(content)
+            case NormalizerType.CLAIMSTAMP_MARKDOWN:
+                return self._normalize_claimstamp_for_markdown(content)
+
+class NormalizerType(Enum):
+    LEANMETA_HANDLE_LISTS = "leanmeta_handle_lists"
+    CLAIMSTAMP_REFS = "claimstamp_refs"
+    CLAIMSTAMP_REGIME = "claimstamp_regime"
+    CLAIMSTAMP_FILL = "claimstamp_fill"
+    PLAINTEXT_BLOCK = "plaintext_block"
+    CLAIMSTAMP_MARKDOWN = "claimstamp_markdown"
 ```
 
-### 4. _convert_* methods (8 methods)
+### 4. _convert_* + _latex_* methods - CONSOLIDATE INTO ONE
 
-| Method | Line |
-|--------|------|
-| `_convert_fake_subscripts_to_unicode` | 4877 |
-| `_convert_display_math_to_unicode` | 4963 |
-| `_convert_latex_to_markdown` | 5288 |
-| plus 5 nested helper methods |
+| Method | Line | Category |
+|--------|------|----------|
+| `_latex_main_template` | 609 | Template |
+| `_latex_abstract_template` | 639 | Template |
+| `_latex_intro_template` | 646 | Template |
+| `_latex_inline_to_plain` | 4652 | Converter |
+| `_latex_snippet_to_plain` | 4764 | Converter |
+| `_latex_snippet_to_mathjax` | 4785 | Converter |
+| `_latex_snippet_to_unicode_zenodo` | 5046 | Converter |
+| `_convert_fake_subscripts_to_unicode` | 4877 | Converter |
+| `_convert_display_math_to_unicode` | 4963 | Converter |
+| `_convert_latex_to_markdown` | 5288 | Converter |
 
-**Collapse into Converter class:**
+**Collapse into ONE LaTeXProcessor class:**
+
 ```python
-class Converter:
-    def convert(self, text: str, conversion: ConversionType) -> str:
-        match conversion:
-            case ConversionType.FAKE_SUBSCRIPTS:
-                return self._convert_fake_subscripts(text)
-            case ConversionType.DISPLAY_MATH:
-                return self._convert_display_math(text)
-            # ...
-```
+# scripts/build/processors/latex_processor.py
 
-### 5. _latex_* methods (7 methods)
-
-These are split between templates and converters - could consolidate:
-- Templates: `_latex_main_template`, `_latex_abstract_template`, `_latex_intro_template`
-- Converters: `_latex_inline_to_plain`, `_latex_snippet_to_plain`, `_latex_snippet_to_mathjax`, `_latex_snippet_to_unicode_zenodo`
-
-**Collapse into LatexProcessor class** with clear separation:
-```python
-class LatexProcessor:
-    # Templates
-    def template(self, template_type: TemplateType, meta: PaperMeta) -> str: ...
+class LaTeXProcessor:
+    """Handles both LaTeX template generation and conversion to other formats."""
     
-    # Converters  
-    def convert(self, latex: str, target: OutputFormat) -> str: ...
+    def __init__(self, path_resolver: PathResolver):
+        self.path_resolver = path_resolver
+    
+    # === TEMPLATES ===
+    
+    def template(self, template_type: LaTeXTemplateType, meta: PaperMeta) -> str:
+        match template_type:
+            case LaTeXTemplateType.MAIN:
+                return self._latex_main_template(meta)
+            case LaTeXTemplateType.ABSTRACT:
+                return self._latex_abstract_template(meta)
+            case LaTeXTemplateType.INTRO:
+                return self._latex_intro_template(meta)
+    
+    def _latex_main_template(self, meta: PaperMeta) -> str:
+        # ... from line 609
+    def _latex_abstract_template(self, meta: PaperMeta) -> str:
+        # ... from line 639
+    def _latex_intro_template(self, meta: PaperMeta) -> str:
+        # ... from line 646
+    
+    # === CONVERTERS ===
+    
+    def convert(self, latex: str, target: LaTeXOutputFormat, paper_id: str = None) -> str:
+        match target:
+            case LaTeXOutputFormat.PLAIN:
+                return self._latex_to_plain(latex, paper_id)
+            case LaTeXOutputFormat.MATHJAX:
+                return self._latex_to_mathjax(latex, paper_id)
+            case LaTeXOutputFormat.UNICODE:
+                return self._latex_to_unicode(latex, paper_id)
+            case LaTeXOutputFormat.MARKDOWN:
+                return self._latex_to_markdown(latex)
+    
+    def _latex_to_plain(self, latex: str, paper_id: str) -> str:
+        # ... from _latex_snippet_to_plain (line 4764)
+    def _latex_to_mathjax(self, latex: str, paper_id: str) -> str:
+        # ... from _latex_snippet_to_mathjax (line 4785)
+    def _latex_to_unicode(self, latex: str, paper_id: str) -> str:
+        # ... from _latex_snippet_to_unicode_zenodo (line 5046)
+    def _latex_to_markdown(self, latex: str) -> str:
+        # ... from _convert_latex_to_markdown (line 5288)
+    def _latex_inline_to_plain(self, text: str) -> str:
+        # ... from line 4652
+    
+    # === MATH CONVERSION ===
+    
+    def convert_math(self, text: str, math_type: MathConversionType) -> str:
+        match math_type:
+            case MathConversionType.FAKE_SUBSCRIPTS:
+                return self._convert_fake_subscripts_to_unicode(text)
+            case MathConversionType.DISPLAY_MATH:
+                return self._convert_display_math_to_unicode(text)
 
-class OutputFormat(Enum):
+class LaTeXTemplateType(Enum):
+    MAIN = "main"
+    ABSTRACT = "abstract"
+    INTRO = "intro"
+
+class LaTeXOutputFormat(Enum):
     PLAIN = "plain"
     MATHJAX = "mathjax"
     UNICODE = "unicode"
     MARKDOWN = "markdown"
+
+class MathConversionType(Enum):
+    FAKE_SUBSCRIPTS = "fake_subscripts"
+    DISPLAY_MATH = "display_math"
 ```
+
+**This consolidates 10 methods → 1 class with 3 responsibilities (templates, converters, math)**
 
 ---
 
@@ -1389,12 +1601,13 @@ class LeanParser:
 | Stats duplicate fields | 2 | Inheritance |
 | Stats getters | 6 | Single parameterized |
 | _normalize_* | 6 | Normalizer class |
-| _convert_* | 8 | Converter class |
-| _latex_* | 7 | LatexProcessor class |
+| _latex_* + _convert_* | 10 | ONE LaTeXProcessor class |
 | _copy_* | 8 | Single parameterized |
 | _parse_* | 4 | Parser class |
 | Builder common | ~50 | ABC |
-| **TOTAL** | **~100** | **~15 classes** |
+| **TOTAL** | **~100** | **~12 classes** |
+
+**Net: 7789 lines → ~3500 lines (54% reduction)**
 
 ---
 
