@@ -1178,6 +1178,226 @@ class BuildStrategy(ABC):
 
 ---
 
+## MORE STRUCTURAL DUPLICATION FOUND
+
+### 1. LeanStats / LeanFileStats DUPLICATE FIELDS
+
+```python
+# CURRENT (lines 308-323) - DUPLICATE FIELDS!
+@dataclass(frozen=True)
+class LeanStats:
+    line_count: int          # DUPLICATE
+    theorem_count: int       # DUPLICATE  
+    sorry_count: int         # DUPLICATE
+    file_count: int
+
+@dataclass(frozen=True)
+class LeanFileStats:
+    line_count: int          # DUPLICATE
+    theorem_count: int       # DUPLICATE
+    sorry_count: int         # DUPLICATE
+```
+
+**Collapse with inheritance:**
+```python
+@dataclass(frozen=True)
+class LeanFileStats:
+    line_count: int
+    theorem_count: int
+    sorry_count: int
+
+@dataclass(frozen=True)
+class LeanStats(LeanFileStats):
+    file_count: int
+```
+
+### 2. Stats Getters - SAME PATTERN (6 methods)
+
+| Method | Line | Pattern |
+|--------|------|---------|
+| `_get_lean_stats` | 1904 | get stats |
+| `_get_cumulative_lean_stats` | 1927 | get stats + deps |
+| `_get_content_backed_lean_stats` | 2163 | get stats from content |
+| `_get_claim_backed_lean_stats` | 2201 | get stats from claims |
+| `_get_release_lean_stats` | 2239 | get stats for release |
+| `_get_lean_file_stats` | 2261 | get file stats |
+
+**Collapse into single parameterized method:**
+```python
+class LeanStatsComputer:
+    def get_stats(self, paper_id: str, scope: StatsScope) -> LeanStats:
+        """Single method - scope determines what to compute."""
+        match scope:
+            case StatsScope.PAPER:
+                return self._compute_paper_stats(paper_id)
+            case StatsScope.CUMULATIVE:
+                return self._compute_cumulative_stats(paper_id)
+            case StatsScope.CONTENT_BACKED:
+                return self._compute_content_backed(paper_id)
+            # ...
+
+class StatsScope(Enum):
+    PAPER = "paper"
+    CUMULATIVE = "cumulative"
+    CONTENT_BACKED = "content_backed"
+    CLAIM_BACKED = "claim_backed"
+    RELEASE = "release"
+```
+
+### 3. _normalize_* methods (6 methods)
+
+| Method | Line |
+|--------|------|
+| `_normalize_leanmeta_handle_lists` | 3386 |
+| `_normalize_claimstamp_refs` | 3511 |
+| `_normalize_claimstamp_regime` | 3531 |
+| `_normalize_and_fill_claimstamps` | 3768 |
+| `_normalize_plaintext_block` | 4723 |
+| `_normalize_claimstamp_for_markdown` | 5332 |
+
+**Collapse into Normalizer class:**
+```python
+class Normalizer:
+    def normalize(self, content: str, normalizer_type: NormalizerType) -> str:
+        match normalizer_type:
+            case NormalizerType.LEATMETA_HANDLE_LISTS:
+                return self._normalize_leanmeta_handle_lists(content)
+            # ...
+```
+
+### 4. _convert_* methods (8 methods)
+
+| Method | Line |
+|--------|------|
+| `_convert_fake_subscripts_to_unicode` | 4877 |
+| `_convert_display_math_to_unicode` | 4963 |
+| `_convert_latex_to_markdown` | 5288 |
+| plus 5 nested helper methods |
+
+**Collapse into Converter class:**
+```python
+class Converter:
+    def convert(self, text: str, conversion: ConversionType) -> str:
+        match conversion:
+            case ConversionType.FAKE_SUBSCRIPTS:
+                return self._convert_fake_subscripts(text)
+            case ConversionType.DISPLAY_MATH:
+                return self._convert_display_math(text)
+            # ...
+```
+
+### 5. _latex_* methods (7 methods)
+
+These are split between templates and converters - could consolidate:
+- Templates: `_latex_main_template`, `_latex_abstract_template`, `_latex_intro_template`
+- Converters: `_latex_inline_to_plain`, `_latex_snippet_to_plain`, `_latex_snippet_to_mathjax`, `_latex_snippet_to_unicode_zenodo`
+
+**Collapse into LatexProcessor class** with clear separation:
+```python
+class LatexProcessor:
+    # Templates
+    def template(self, template_type: TemplateType, meta: PaperMeta) -> str: ...
+    
+    # Converters  
+    def convert(self, latex: str, target: OutputFormat) -> str: ...
+
+class OutputFormat(Enum):
+    PLAIN = "plain"
+    MATHJAX = "mathjax"
+    UNICODE = "unicode"
+    MARKDOWN = "markdown"
+```
+
+---
+
+## UPDATED SUMMARY
+
+| Pattern | Count | Collapse |
+|---------|-------|----------|
+| Path getters | 8 | → PathResolver |
+| Stats duplicate fields | 2 | → Inheritance |
+| Stats getters | 6 | → Single parameterized method |
+| _normalize_* | 6 | → Normalizer class |
+| _convert_* | 8 | → Converter class |
+| _latex_* | 7 | → LatexProcessor class |
+| Builder common methods | ~50 | → ABC |
+
+**Total additional collapse: ~85 methods → ~10 methods**
+
+### 6. _copy_* methods (8 methods) - SAME PATTERN
+
+| Method | Line |
+|--------|------|
+| `_copy_pdf` | 5826 |
+| `_copy_markdown` | 5832 |
+| `_copy_copy_paste_metadata` | 5838 |
+| `_copy_latex_sources` | 5844 |
+| `_copy_lean_proofs` | 5959 |
+| `_copy_experiments` | 6134 |
+| `_copy_experiment_tree` | 6185 |
+| `_copy_graph_visualizer` | 6329 |
+
+**All follow: copy source to package_dir. Collapse:**
+
+```python
+class FileCopier:
+    def copy(self, paper_id: str, package_dir: Path, artifact: ArtifactType) -> None:
+        match artifact:
+            case ArtifactType.PDF:
+                src = self.path_resolver.get_pdf(paper_id)
+                shutil.copy2(src, package_dir / src.name)
+            case ArtifactType.MARKDOWN:
+                # ...
+            case ArtifactType.LEAN_PROOFS:
+                # ...
+
+class ArtifactType(Enum):
+    PDF = "pdf"
+    MARKDOWN = "markdown"
+    LATEX_SOURCES = "latex_sources"
+    LEAN_PROOFS = "lean_proofs"
+    EXPERIMENTS = "experiments"
+    GRAPH_VISUALIZER = "graph_visualizer"
+```
+
+### 7. _parse_* methods (4 methods)
+
+| Method | Line |
+|--------|------|
+| `_parse_assumption_bundles` | 2518 |
+| `_parse_conditional_handles` | 2554 |
+| `_parse_theorem_lemma_handles` | 2562 |
+| `_parse_alias_abbrev_map` | 2570 |
+
+**Collapse into Parser class:**
+```python
+class LeanParser:
+    def parse(self, content: str, parse_type: ParseType) -> Any:
+        match parse_type:
+            case ParseType.ASSUMPTION_BUNDLES:
+                return self._parse_assumption_bundles(content)
+            # ...
+```
+
+---
+
+## FINAL SUMMARY
+
+| Pattern | Count | Collapse To |
+|---------|-------|-------------|
+| Path getters | 8 | PathResolver |
+| Stats duplicate fields | 2 | Inheritance |
+| Stats getters | 6 | Single parameterized |
+| _normalize_* | 6 | Normalizer class |
+| _convert_* | 8 | Converter class |
+| _latex_* | 7 | LatexProcessor class |
+| _copy_* | 8 | Single parameterized |
+| _parse_* | 4 | Parser class |
+| Builder common | ~50 | ABC |
+| **TOTAL** | **~100** | **~15 classes** |
+
+---
+
 ## SUMMARY: What Changes
 
 | Original | Refactored |
