@@ -2,12 +2,37 @@
 Command-line interface for orthogonal projection generation.
 
 This module provides the main entry point for:
-- Processing plates one well at a time
-- Generating projections, composites, and mosaics
+- Processing plates one well at a time (or in parallel)
+- Generating projections, composites, mosaics, and Z-stack slice movies
 - Tracking progress and handling errors
 
+Features:
+- Well-by-well memory-efficient processing
+- Optional multiprocessing via -j/--jobs flag
+- Composite figures with XY/XZ/YZ projections
+- Z-stack slice movies (XY through Z, XZ through Y, YZ through X)
+- Z-gap stretching for XZ/YZ (consistent between figures and movies)
+- Plate mosaics and arbitrary group mosaics
+
+Usage:
+    # Single process - composites only
+    python -m scripts.figures.orthogonal_projections.cli \\
+        --plate-dir /path/to/plate_stitched/ \\
+        --output-dir /output/path/ \\
+        --z-gap 4.25
+
+    # Parallel processing with movies
+    python -m scripts.figures.orthogonal_projections.cli \\
+        --plate-dir /path/to/plate_stitched/ \\
+        --output-dir /output/path/ \\
+        --z-gap 4.25 \\
+        --create-movies \\
+        --movie-types xy xz yz \\
+        --movie-fps 10 \\
+        -j 4
+
 Invariants:
-- Sequential well processing (memory safety)
+- Sequential or parallel well processing
 - Progress tracking via logging
 - Failures are logged, not silent
 - All outputs tracked
@@ -16,7 +41,10 @@ Invariants:
 import argparse
 import gc
 import logging
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
@@ -87,6 +115,18 @@ class ProcessingConfig:
     dpi: int = 150
     z_gap: float = 1.0
     z_aspect: float = 0.1
+    num_workers: int = 1
+
+
+@dataclass
+class WellResult:
+    """Result from processing a single well."""
+
+    well_id: str
+    success: bool
+    composite_path: Optional[Path] = None
+    movie_outputs: List[MovieOutput] = field(default_factory=list)
+    error: Optional[str] = None
 
 
 @dataclass
@@ -236,9 +276,157 @@ def process_well_all_channels(
     return all_projections, composite_path, movie_outputs
 
 
+def _process_well_worker(
+    well_id: str,
+    plate_path_str: str,
+    z_paths_dict: Dict,
+    config_dict: Dict,
+) -> WellResult:
+    """
+    Worker function for parallel well processing.
+
+    Args:
+        well_id: Well ID to process
+        plate_path_str: String path to plate directory
+        z_paths_dict: Serialized z_paths_by_channel dict
+        config_dict: Serialized ProcessingConfig dict
+
+    Returns:
+        WellResult with outputs
+    """
+    from pathlib import Path as PP
+
+    from openhcs.core.config import DtypeConfig
+    from openhcs.constants.constants import DtypeConversion
+    from openhcs.processing.backends.processors.numpy_processor import (
+        create_orthogonal_projections,
+    )
+
+    from .composer import create_multi_channel_composite, save_composite_figure
+    from .constants import ChannelColorMapping, CompositeLayout, DEFAULT_CHANNEL_COLORS
+    from .discovery import WellChannelKey
+    from .io_handler import MovieOutput, load_z_stack, save_slice_movies_for_well
+    from .labeling import get_labeler
+
+    try:
+        plate_path = PP(plate_path_str)
+        dtype_config = DtypeConfig(
+            default_dtype_conversion=DtypeConversion.PRESERVE_INPUT
+        )
+
+        channel_colors = tuple(
+            ChannelColorMapping(
+                cc["channel_id"], cc["channel_name"], cc["color"], cc["visible"]
+            )
+            for cc in config_dict.get("channel_colors", [])
+        )
+
+        output_dir = PP(config_dict["output_dir"])
+        create_composites = config_dict.get("create_composites", True)
+        create_movies = config_dict.get("create_movies", False)
+        movie_types = tuple(config_dict.get("movie_types", ["xy", "xz", "yz"]))
+        movie_fps = config_dict.get("movie_fps", 10)
+        z_gap = config_dict.get("z_gap", 1.0)
+        z_aspect = config_dict.get("z_aspect", 0.1)
+        dpi = config_dict.get("dpi", 150)
+
+        z_paths_by_channel = {
+            WellChannelKey(
+                well_id=wk[0],
+                channel_id=wk[1],
+                channel_name=wk[2],
+            ): tuple(PP(p) for p in paths)
+            for wk, paths in z_paths_dict.items()
+        }
+
+        well_channel_keys = [
+            wk for wk in z_paths_by_channel.keys() if wk.well_id == well_id
+        ]
+
+        included_channels = frozenset(config_dict.get("included_channels", []))
+        excluded_channels = frozenset(config_dict.get("excluded_channels", []))
+        include_mode = config_dict.get("include_mode", False)
+
+        all_z_stacks = {}
+        all_projections = {}
+
+        for wk in well_channel_keys:
+            if include_mode:
+                if wk.channel_id not in included_channels:
+                    continue
+            else:
+                if wk.channel_id in excluded_channels:
+                    continue
+
+            z_paths = z_paths_by_channel.get(wk)
+            if not z_paths:
+                continue
+
+            z_stack = load_z_stack(z_paths)
+            all_z_stacks[wk.channel_id] = z_stack
+
+            projections = create_orthogonal_projections(
+                z_stack,
+                dtype_config=dtype_config,
+            )
+            all_projections[wk.channel_id] = projections
+
+        composite_path = None
+        if create_composites and all_projections:
+            layout = CompositeLayout(z_gap=z_gap, z_aspect=z_aspect)
+            channel_names = tuple(
+                wk.channel_name
+                for wk in well_channel_keys
+                if wk.channel_id in all_projections
+            )
+            title = f"Well {well_id}"
+
+            fig = create_multi_channel_composite(
+                all_projections,
+                title,
+                layout=layout,
+                channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
+                labeler=get_labeler("standard"),
+            )
+
+            composite_dir = output_dir / "composites"
+            composite_dir.mkdir(parents=True, exist_ok=True)
+            composite_path = composite_dir / f"{well_id}_composite.png"
+            save_composite_figure(fig, composite_path, dpi=dpi)
+
+        movie_outputs = []
+        if create_movies and all_z_stacks:
+            movie_dir = output_dir / "movies"
+            movie_outputs = save_slice_movies_for_well(
+                all_z_stacks,
+                well_id,
+                movie_dir,
+                slice_types=movie_types,
+                fps=movie_fps,
+                z_gap=z_gap,
+                channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
+            )
+
+        return WellResult(
+            well_id=well_id,
+            success=True,
+            composite_path=composite_path,
+            movie_outputs=movie_outputs,
+        )
+
+    except Exception as e:
+        import traceback
+
+        return WellResult(
+            well_id=well_id,
+            success=False,
+            error=f"{type(e).__name__}: {e}",
+        )
+
+
 def process_plate(config: ProcessingConfig) -> ProcessingResult:
     """
-    Process entire plate, one well at a time.
+    Process entire plate, with optional parallel processing.
     """
     result = ProcessingResult()
 
@@ -275,30 +463,91 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
 
     composite_paths = {}
 
-    for i, well_id in enumerate(wells, 1):
-        logger.info(f"Processing well {well_id} ({i}/{len(wells)})")
+    if config.num_workers > 1:
+        logger.info(f"Processing {len(wells)} wells with {config.num_workers} workers")
 
-        try:
-            _, composite_path, movie_outputs = process_well_all_channels(
-                well_id, well_keys, z_paths_by_channel, config, labeler
-            )
+        config_dict = {
+            "output_dir": str(config.output_dir),
+            "create_composites": config.create_composites,
+            "create_movies": config.create_movies,
+            "movie_types": config.movie_types,
+            "movie_fps": config.movie_fps,
+            "z_gap": config.z_gap,
+            "z_aspect": config.z_aspect,
+            "dpi": config.dpi,
+            "included_channels": list(config.included_channels),
+            "excluded_channels": list(config.excluded_channels),
+            "include_mode": config.include_mode,
+            "channel_colors": [
+                {
+                    "channel_id": cc.channel_id,
+                    "channel_name": cc.channel_name,
+                    "color": cc.color,
+                    "visible": cc.visible,
+                }
+                for cc in config.channel_colors
+            ],
+        }
 
-            if composite_path:
-                composite_paths[well_id] = composite_path
-                result.composite_outputs.append(composite_path)
+        z_paths_dict = {
+            (wk.well_id, wk.channel_id, wk.channel_name): [str(p) for p in paths]
+            for wk, paths in z_paths_by_channel.items()
+        }
 
-            result.movie_outputs.extend(movie_outputs)
+        with ProcessPoolExecutor(max_workers=config.num_workers) as executor:
+            futures = {
+                executor.submit(
+                    _process_well_worker,
+                    well_id,
+                    str(config.plate_path),
+                    z_paths_dict,
+                    config_dict,
+                ): well_id
+                for well_id in wells
+            }
 
-            result.processed_wells += 1
+            for future in as_completed(futures):
+                well_id = futures[future]
+                try:
+                    well_result = future.result()
+                    if well_result.success:
+                        if well_result.composite_path:
+                            composite_paths[well_id] = well_result.composite_path
+                            result.composite_outputs.append(well_result.composite_path)
+                        result.movie_outputs.extend(well_result.movie_outputs)
+                        result.processed_wells += 1
+                        logger.info(f"  Completed {well_id}")
+                    else:
+                        result.failed_wells.append(well_id)
+                        logger.error(f"  Failed {well_id}: {well_result.error}")
+                except Exception as e:
+                    result.failed_wells.append(well_id)
+                    logger.error(f"  Failed {well_id}: {e}")
+    else:
+        for i, well_id in enumerate(wells, 1):
+            logger.info(f"Processing well {well_id} ({i}/{len(wells)})")
 
-        except Exception as e:
-            import traceback
+            try:
+                _, composite_path, movie_outputs = process_well_all_channels(
+                    well_id, well_keys, z_paths_by_channel, config, labeler
+                )
 
-            logger.error(f"Failed to process well {well_id}: {e}")
-            logger.debug(traceback.format_exc())
-            result.failed_wells.append(well_id)
+                if composite_path:
+                    composite_paths[well_id] = composite_path
+                    result.composite_outputs.append(composite_path)
 
-        gc.collect()
+                result.movie_outputs.extend(movie_outputs)
+
+                result.processed_wells += 1
+
+            except Exception as e:
+                import traceback
+
+                logger.error(f"Failed to process well {well_id}: {e}")
+                logger.debug(traceback.format_exc())
+                result.failed_wells.append(well_id)
+
+            gc.collect()
 
     if config.create_plate_mosaic and composite_paths:
         logger.info("Creating plate mosaic...")
@@ -469,6 +718,14 @@ def main():
         "--z-aspect", type=float, default=0.1, help="Aspect ratio for XZ/YZ projections"
     )
 
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel workers (default: 1)",
+    )
+
     args = parser.parse_args()
 
     channel_colors = DEFAULT_CHANNEL_COLORS
@@ -504,11 +761,13 @@ def main():
         dpi=args.dpi,
         z_gap=args.z_gap,
         z_aspect=args.z_aspect,
+        num_workers=args.jobs,
     )
 
     logger.info(f"Processing plate: {config.plate_path}")
     logger.info(f"Output directory: {config.output_dir}")
     logger.info(f"Projections: {config.projections}")
+    logger.info(f"Workers: {config.num_workers}")
 
     result = process_plate(config)
 
