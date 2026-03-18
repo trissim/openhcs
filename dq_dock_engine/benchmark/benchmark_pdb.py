@@ -212,7 +212,7 @@ def run_vina(
 
     start = time.time()
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True)
         elapsed = time.time() - start
 
         if result.returncode != 0:
