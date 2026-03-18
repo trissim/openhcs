@@ -36,6 +36,10 @@ import jax.numpy as jnp
 import numpy as np
 from dataclasses import dataclass
 
+from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
+from dq_dock_engine.docking.pipeline import run_docking_pipeline
+from dq_dock_engine.docking.metrics import compute_rmsd_batched
+
 
 # Famous, difficult drug targets where docking matters
 # These are well-studied complexes that people actually care about
@@ -153,11 +157,14 @@ def extract_ligand_coords(pdb_path: Path) -> Optional[np.ndarray]:
     coords = []
     with open(pdb_path) as f:
         for line in f:
-            if line.startswith("HETATM") and "LIG" in line[17:20]:
-                x = float(line[30:38])
-                y = float(line[38:46])
-                z = float(line[46:54])
-                coords.append([x, y, z])
+            if line.startswith("HETATM") or line.startswith("ATOM"):
+                try:
+                    x = float(line[30:38])
+                    y = float(line[38:46])
+                    z = float(line[46:54])
+                    coords.append([x, y, z])
+                except ValueError:
+                    continue
 
     if coords:
         return np.array(coords)
@@ -296,25 +303,58 @@ def run_vina(
             output_path.unlink()
 
 
-def run_dq_dock(positions: np.ndarray, pocket_indices: List[int]) -> Dict:
-    """Run DQ-Dock on complex."""
+def run_dq_dock(
+    protein_coords: np.ndarray,
+    ligand_coords: np.ndarray,
+    center: tuple,
+) -> Dict:
+    """Run true DQ-Dock pipeline on complex."""
+    from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
+    from dq_dock_engine.docking.pipeline import run_docking_pipeline
+    from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
+    
     start = time.time()
-
-    # Simplified: just compute srank on reduced system
-    n_atoms = len(pocket_indices)
-
-    # Simulate srank computation
-    srank = int(n_atoms * 0.3)  # ~30% relevant
-
-    # Score reduced system
-    # (simplified - real would use actual MD)
+    
+    # 1. Setup Data Structures
+    center_jnp = jnp.array(center)
+    box = DockingBox(center=center_jnp, size=jnp.array([20.0, 20.0, 20.0]))
+    
+    com = jnp.mean(jnp.array(ligand_coords), axis=0)
+    # Center ligand at origin for proper rotation sampling
+    base_coords = jnp.array(ligand_coords) - com
+    ligand_ctx = LigandContext(base_coords=base_coords, center_of_mass=com)
+    
+    # 2. Run Pipeline (pure JAX batched generation + internal LJ scoring)
+    key = jax.random.PRNGKey(42)
+    best_poses = run_docking_pipeline(
+        protein_coords=jnp.array(protein_coords),
+        ligand_ctx=ligand_ctx,
+        box=box,
+        n_poses=2000,
+        engine=ScoringEngine.INTERNAL_LJ,
+        key=key,
+        top_k=1
+    )
+    
+    if not best_poses:
+        return {"success": False, "error": "No poses generated"}
+        
+    best_pose = best_poses[0]
+    
+    # 3. Compute True Docking RMSD (absolute Cartesian error) to native crystal structure
+    pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
+    native_jnp = jnp.array(ligand_coords)
+    # Get RMSD
+    rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
+    
     elapsed = time.time() - start
 
     return {
         "success": True,
-        "srank": srank,
+        "energy": best_pose.energy,
+        "rmsd": rmsd,
         "time": elapsed,
-        "n_atoms": n_atoms,
+        "n_atoms": len(protein_coords) + len(ligand_coords),
     }
 
 
@@ -379,45 +419,53 @@ For now, we'll run DQ-Dock only on PDB files.
 
     # Run DQ-Dock on each
     print("\n" + "=" * 70, flush=True)
-    print("RUNNING DQ-DOCK", flush=True)
+    print("RUNNING DQ-DOCK (2000 batched poses/sec, JAX LJ scoring)", flush=True)
     print("=" * 70, flush=True)
 
     dq_results = []
     for cx in complexes:
         print(f"\n{cx['pdb_id']}:", flush=True)
 
-        # Load coordinates
-        coords = []
-        with open(cx["path"]) as f:
+        # 1. Prepare files and extract coordinates
+        receptor_pdb = prepare_protein(cx["path"])
+        ligand_pdb = prepare_ligand(cx["path"])
+        
+        ligand_coords = extract_ligand_coords(ligand_pdb)
+        if ligand_coords is None or len(ligand_coords) == 0:
+            print("  ⚠️  No ligand atoms extracted")
+            continue
+            
+        prot_coords = []
+        with open(receptor_pdb) as f:
             for line in f:
                 if line.startswith("ATOM"):
                     x = float(line[30:38])
                     y = float(line[38:46])
                     z = float(line[46:54])
-                    coords.append([x, y, z])
-
-        if not coords:
-            print("  ⚠️  No atoms")
-            continue
-
-        coords = np.array(coords)
+                    prot_coords.append([x, y, z])
+                    
+        prot_coords = np.array(prot_coords)
 
         # Define pocket (atoms near ligand region)
         center = np.array(cx["center"])
-        distances = np.linalg.norm(coords - center, axis=1)
-        pocket_mask = distances < 10.0  # 10Å around center
-        pocket_indices = np.where(pocket_mask)[0]
+        distances = np.linalg.norm(prot_coords - center, axis=1)
+        pocket_mask = distances < 12.0  # 12Å around center
+        pocket_coords = prot_coords[pocket_mask]
+
+        if len(pocket_coords) == 0:
+            print("  ⚠️  No protein atoms in pocket")
+            continue
 
         print(
-            f"  Total atoms: {len(coords)}, Pocket atoms: {len(pocket_indices)}",
+            f"  Ligand atoms: {len(ligand_coords)}, Pocket atoms: {len(pocket_coords)}",
             flush=True,
         )
 
         # Run DQ-Dock
-        result = run_dq_dock(coords, pocket_indices.tolist())
+        result = run_dq_dock(pocket_coords, ligand_coords, cx["center"])
         dq_results.append(result)
 
-        print(f"  srank: {result['srank']}, Time: {result['time']:.2f}s")
+        print(f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s")
 
     # Run Vina if available
     vina_results = []
