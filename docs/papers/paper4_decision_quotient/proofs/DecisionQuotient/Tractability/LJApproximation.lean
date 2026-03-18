@@ -7,6 +7,8 @@
 -/
 import DecisionQuotient.Computation.ArrayDSL
 import DecisionQuotient.Tractability.CoarseApproximation
+import DecisionQuotient.Tractability.CutoffEpsilon
+import DecisionQuotient.Tractability.LatticeSum
 import Mathlib.Data.Finset.Max
 
 namespace DecisionQuotient
@@ -17,6 +19,8 @@ open Computation.ArrayDSL
 open CoarseApproximation
 open CertifiedPruning
 open FiniteTopK
+open Tractability
+open LatticeSum
 open Classical
 
 universe u v
@@ -130,6 +134,34 @@ noncomputable def exact_vs_cutoff_lj_pruning_certificate {A : Type u}
       intro a
       simpa using ljCutoffErrorRadius_spec (fun (a : A) (_ : Unit) => uDistance a) ε σ rc a ())
     hMargin
+
+/-- Utility-specific packaging theorem for LJ-family docking problems: once the
+    LJ tail perturbation inequality is proved, the generic finite-gap theorem
+    yields a `SatisfiesBoundedPotential` witness for the exact LJ utility. -/
+theorem exactLJ_satisfiesBoundedPotential_of_tailBound
+    (prob : MolecularSrank.MDBindingProblem)
+    [Fintype MolecularSrank.MDAction] [Fintype MolecularSrank.MDState] [Nonempty MolecularSrank.MDState]
+    (distance : MolecularSrank.MDAction → MolecularSrank.MDState → ℝ)
+    (ε σ tail_coefficient : ℝ)
+    (w : ∀ s : MolecularSrank.MDState,
+      { a : MolecularSrank.MDAction // StrictOpt prob.toDecisionProblem a s })
+    (hGapPos : 0 < finiteMinimumGap prob w)
+    (hUtility : prob.utility = fun a s => exactLJScore ε σ (distance a s))
+    (hTail : ∀ (atomIdx : Nat) (hAtomInProtein : atomIdx < prob.protein.numAtoms)
+      (axis : Fin 3) (s s' : MolecularSrank.MDState) (R : ℝ),
+      0 < R →
+      (∀ j : Fin (MolecularSrank.numMDCoordinates prob),
+        j ≠ MolecularSrank.proteinCoordFin prob atomIdx hAtomInProtein axis →
+        MolecularSrank.mdProj prob s j = MolecularSrank.mdProj prob s' j) →
+      ¬ MolecularSrank.atomWithinCutoff
+        (MolecularSrank.proteinAtom prob atomIdx hAtomInProtein) prob.bindingSite R →
+      (∀ a : MolecularSrank.MDAction,
+        |exactLJScore ε σ (distance a s) - exactLJScore ε σ (distance a s')|
+          ≤ tail_coefficient * latticeTailSum 6 R)) :
+    SatisfiesBoundedPotential prob tail_coefficient (finiteMinimumGap prob w) := by
+  apply satisfiesBoundedPotential_of_tailBound_and_finiteGap prob tail_coefficient w hGapPos
+  intro atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
+  simpa [hUtility] using hTail atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
 
 end LJApproximation
 end Tractability
