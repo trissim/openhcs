@@ -308,7 +308,6 @@ theorem sampled_potentialRelevantCoords_sufficient_of_relevance_subset
   have hiR' : i ∈ Finset.univ ∧ dp.isRelevant i := by
     simpa [R, Finset.mem_filter] using hiR
   exact hRelevantSubset i hiR'.2
-
 end SampledDockingCutoff
 end Tractability
 end DecisionQuotient

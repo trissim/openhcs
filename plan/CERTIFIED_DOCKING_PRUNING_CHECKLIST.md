@@ -247,9 +247,9 @@ Acceptance gate:
 
 ### 12. Ranking stability with ties and near-ties
 
-- [ ] Define an ambiguity band object
-- [ ] Prove containment of exact top-k inside a certified ambiguity band
-- [ ] Avoid claiming exact top-k equality when strict gaps fail
+- [x] Define an ambiguity band object
+- [x] Prove containment of exact top-k inside a certified ambiguity band
+- [x] Avoid claiming exact top-k equality when strict gaps fail
 
 ---
 
