@@ -789,6 +789,17 @@ For now, we'll run DQ-Dock only on PDB files.
         avg_time = np.mean([r["time"] for r in dq_results])
         print(f"{'DQ-Dock':<20} {avg_time:<12.2f} {len(dq_results)}/{len(complexes)}")
 
+        print("\nDQ-Dock by Formal Status")
+        print("-" * 50)
+        grouped_results: dict[str, list[dict]] = {}
+        for result in dq_results:
+            grouped_results.setdefault(result["formal_status"], []).append(result)
+        for status, results in grouped_results.items():
+            avg_status_time = np.mean([r["time"] for r in results])
+            print(
+                f"{status:<20} {avg_status_time:<12.2f} {len(results)}/{len(dq_results)}"
+            )
+
     if vina_results:
         successes = sum(1 for r in vina_results if r["success"])
         avg_time = np.mean([r["time"] for r in vina_results if r["success"]])

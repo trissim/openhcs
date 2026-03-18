@@ -50,6 +50,7 @@ Additional progress beyond the initial finite core:
 - a first Coulomb finite-domain exact/coarse approximation theorem now exists in `CoulombApproximation.lean`
 - the old analytic axiom in `Tractability/LatticeSum.lean` has been removed and replaced by axiom-free pointwise tail-bound witnesses
 - an abstract continuous-to-discrete bridge now exists in `GridConvergence.lean`, isolating the exact Lipschitz/resolution theorem shape needed to derive `eps(res)`-style approximation guarantees
+- the runtime benchmark now carries explicit formal-status labels and separates reported results by status, so heuristic execution paths are no longer silently presented as proof-backed
 
 The next frontier is now narrower and more mathematical:
 

@@ -193,7 +193,7 @@ Priority order:
 
 1. [x] Standard LJ vs cutoff LJ
 2. [x] Standard LJ vs softened LJ on bounded sampled domains
-3. [ ] Coulomb tail approximation only after the LJ case works
+3. [x] Coulomb tail approximation only after the LJ case works
 
 Acceptance gate:
 
@@ -241,9 +241,9 @@ Acceptance gate:
 
 ### 11. Uniform error bounds over sampled grids
 
-- [ ] Replace abstract perturbation assumptions with real bounds for selected score pairs
-- [ ] Track every constant explicitly
-- [ ] Keep the first target simple and finite
+- [x] Replace abstract perturbation assumptions with real bounds for selected score pairs
+- [x] Track every constant explicitly
+- [x] Keep the first target simple and finite
 
 ### 12. Ranking stability with ties and near-ties
 
@@ -280,8 +280,8 @@ Acceptance gate:
   - [x] `Certified`
   - [x] `ConditionallyCertified`
   - [x] `Heuristic`
-- [ ] Benchmark certified pruning separately from heuristic pruning
-- [ ] Do not route heuristic stages through proof-backed language without an explicit status downgrade
+- [x] Benchmark certified pruning separately from heuristic pruning
+- [x] Do not route heuristic stages through proof-backed language without an explicit status downgrade
 
 ---
 
@@ -299,4 +299,4 @@ Acceptance gate:
 - [x] Milestone B: exact-vs-coarse winner preservation is proved
 - [x] Milestone C: exact top-k survivor containment is proved
 - [x] Milestone D: cutoff/pocket pruning is certified as sufficiency-preserving
-- [ ] Milestone E: at least one real docking scorer pair discharges a physical approximation theorem
+- [x] Milestone E: at least one real docking scorer pair discharges a physical approximation theorem
