@@ -38,7 +38,7 @@ from dataclasses import dataclass
 
 from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
-from dq_dock_engine.docking.metrics import compute_rmsd_batched
+from dq_dock_engine.docking.metrics import compute_rmsd_batched, compute_docking_rmsd_batched
 
 
 # Famous, difficult drug targets where docking matters
@@ -117,7 +117,7 @@ def prepare_protein(pdb_path: Path) -> Path:
 
 
 def prepare_ligand(pdb_path: Path) -> Path:
-    """Prepare ligand for Vina - extract HETATM records from PDB file.
+    """Prepare ligand for Vina - extract primary ligand HETATM records from PDB file.
     
     Raises error if no ligand found in the PDB.
     """
@@ -125,24 +125,28 @@ def prepare_ligand(pdb_path: Path) -> Path:
     
     # Check if already extracted
     if ligand_path.exists():
-        return ligand_path
+        # Remove it if we are re-running to fix old bad extractions
+        ligand_path.unlink()
     
-    # Extract HETATM records (ligands, not water)
-    ligand_lines = []
+    # Auto-detect drug by finding most common non-water HETATM
+    resname_counts = {}
     with open(pdb_path) as f:
         for line in f:
             if line.startswith("HETATM"):
-                # Skip waters (HOH)
-                if "HOH" not in line[17:20]:
-                    ligand_lines.append(line)
-            elif line.startswith("ATOM"):
-                # Some ligands are in ATOM records
-                resname = line[17:20]
-                # Common drug/ligand residues
-                if resname not in ["ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", 
-                                   "GLY", "HIS", "ILE", "LEU", "LYS", "MET", "PHE", 
-                                   "PRO", "SER", "THR", "TRP", "TYR", "VAL"]:
-                    ligand_lines.append(line)
+                resname = line[17:20].strip()
+                if resname not in ["HOH", "DOD", "WAT"]:
+                    resname_counts[resname] = resname_counts.get(resname, 0) + 1
+                    
+    if not resname_counts:
+        raise ValueError(f"No ligand found in {pdb_path}")
+        
+    target_resname = max(resname_counts.items(), key=lambda x: x[1])[0]
+
+    ligand_lines = []
+    with open(pdb_path) as f:
+        for line in f:
+            if (line.startswith("HETATM") or line.startswith("ATOM")) and line[17:20].strip() == target_resname:
+                ligand_lines.append(line)
     
     if not ligand_lines:
         raise ValueError(f"No ligand found in {pdb_path}")
@@ -153,11 +157,19 @@ def prepare_ligand(pdb_path: Path) -> Path:
 
 
 def extract_ligand_coords(pdb_path: Path) -> Optional[np.ndarray]:
-    """Extract ligand coordinates from PDB file."""
+    """Extract heavy atom coordinates from PDB file (strips hydrogens)."""
     coords = []
     with open(pdb_path) as f:
         for line in f:
             if line.startswith("HETATM") or line.startswith("ATOM"):
+                # Strip hydrogens to ensure SMINA and DQ-Dock topologies match
+                element = line[76:78].strip()
+                if not element:
+                    if line[12:16].strip().startswith("H"):
+                        continue
+                elif element == "H":
+                    continue
+                    
                 try:
                     x = float(line[30:38])
                     y = float(line[38:46])
@@ -288,11 +300,31 @@ def run_vina(
                     except ValueError:
                         pass
 
+        # Parse best coordinates from the output PDB
+        best_coords = None
+        if output_path.exists() and best_affinity is not None:
+            coords = []
+            with open(output_path) as f:
+                for line in f:
+                    if line.startswith("ENDMDL"):
+                        break
+                    elif line.startswith("ATOM") or line.startswith("HETATM"):
+                        try:
+                            x = float(line[30:38])
+                            y = float(line[38:46])
+                            z = float(line[46:54])
+                            coords.append([x, y, z])
+                        except ValueError:
+                            pass
+            if coords:
+                best_coords = np.array(coords)
+
         return {
             "success": True,
             "best_affinity": best_affinity,
             "time": elapsed,
             "output": result.stdout,
+            "best_coords": best_coords,
         }
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Timeout", "time": 300}
@@ -500,9 +532,24 @@ For now, we'll run DQ-Dock only on PDB files.
                 print(f"  ❌ {error_msg}")
                 continue
 
+            # Compute SMINA RMSD
+            smina_rmsd = float('nan')
+            if result.get("best_coords") is not None and ligand_coords is not None:
+                if len(result["best_coords"]) != len(ligand_coords):
+                    print(f"  ⚠️  Atom count mismatch: Native={len(ligand_coords)}, SMINA={len(result['best_coords'])} (Slicing to min length)")
+                
+                # Assume original atom order is preserved at the beginning of the file (SMINA usually appends added atoms)
+                min_len = min(len(result["best_coords"]), len(ligand_coords))
+                if min_len > 0:
+                    pose_jnp = jnp.expand_dims(result["best_coords"][:min_len], axis=0)
+                    native_jnp = jnp.array(ligand_coords[:min_len])
+                    smina_rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
+
             print(
-                f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Time: {result['time']:.1f}s"
+                f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Native RMSD: {smina_rmsd:.2f}Å, Time: {result['time']:.1f}s"
             )
+
+            result["rmsd"] = smina_rmsd
 
     # Summary
     print("\n" + "=" * 70, flush=True)
