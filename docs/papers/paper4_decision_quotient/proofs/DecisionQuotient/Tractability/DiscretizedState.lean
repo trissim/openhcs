@@ -37,6 +37,10 @@ def boundedGridAtomEquiv (N N_Atoms : Nat) :
   left_inv _ := rfl
   right_inv _ := rfl
 
+noncomputable instance (N N_Atoms : Nat) : DecidableEq (BoundedGridAtom N N_Atoms) := by
+  classical
+  infer_instance
+
 instance (N N_Atoms : Nat) : Fintype (BoundedGridAtom N N_Atoms) := 
   Fintype.ofEquiv _ (boundedGridAtomEquiv N N_Atoms).symm
 
@@ -54,6 +58,10 @@ instance (NP NL N : Nat) : Fintype (GridMDState NP NL N) := by
       left_inv := fun _ => rfl,
       right_inv := fun _ => rfl }
   exact Fintype.ofEquiv _ E.symm
+
+noncomputable instance (NP NL N : Nat) : DecidableEq (GridMDState NP NL N) := by
+  classical
+  infer_instance
 
 /-- Convert a 1D grid coordinate to continuous space using `res` as physical spacing (e.g. 0.1 Å). -/
 noncomputable def gridToContinuous (N : Nat) (res : ℝ) (gPos : BoundedGrid N) : ℝ :=

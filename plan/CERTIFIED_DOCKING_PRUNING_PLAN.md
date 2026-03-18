@@ -1,6 +1,6 @@
 # Certified Docking Pruning Plan
 
-**Status**: Proposed mechanization roadmap
+**Status**: In progress
 **Date**: 2026-03-18
 **Scope**: Turn sampled docking and coarse-to-fine pruning into theorem-carrying transformations rather than empirical ranking heuristics.
 
@@ -25,6 +25,22 @@ What is missing is not another heuristic score. What is missing is a finite samp
 4. If a physical cutoff theorem supplies `OutsideCutoffApproximationBounded`, then outside-cutoff coordinates are formally irrelevant and may be erased.
 
 This plan is organized by proof leverage. The first phase is mostly theorem engineering and instance construction. The later phases become real research.
+
+### Progress Update
+
+Completed theorem-engineering chunks now live in Lean:
+
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/DiscretizedAction.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/GridMDInstances.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/SampledDocking.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/SampledDockingGap.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/FiniteTopK.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/RankingPreservation.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/TopKPreservation.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CertifiedPruning.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CoarseApproximation.lean`
+
+The next frontier is no longer finite-state infrastructure. The next frontier is theorem transport from docking locality and physical approximation assumptions into the sampled finite wrapper, starting with `SampledDockingCutoff.lean` and then a first real scorer-family approximation theorem.
 
 ---
 
