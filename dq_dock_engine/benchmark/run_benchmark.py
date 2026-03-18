@@ -13,6 +13,7 @@ import time
 import jax
 import jax.numpy as jnp
 
+
 # ---------------------------------------------------------------
 # Potential: pairwise LJ in standard reduced units
 # σ = 1, ε = 1, positions in units of σ, energies in units of ε
@@ -21,20 +22,20 @@ import jax.numpy as jnp
 def _lj_potential(positions: jnp.ndarray) -> float:
     """
     All-pairs LJ potential in reduced units (σ=1, ε=1).
-    
+
     JAX-safe: clamps dist_sq BEFORE computing 1/r^6 to avoid NaN gradient.
     (jnp.where does not block gradient flow through unselected branch.)
     """
     diffs = positions[:, None, :] - positions[None, :, :]
-    dist_sq = jnp.sum(diffs ** 2, axis=-1)
-    
+    dist_sq = jnp.sum(diffs**2, axis=-1)
+
     # Clamp BEFORE inverse — gradient is safe everywhere
-    dist_sq_safe = jnp.maximum(dist_sq, 0.5 ** 2)  # r_min = 0.5σ
-    r6 = dist_sq_safe ** 3  # r^6
+    dist_sq_safe = jnp.maximum(dist_sq, 0.5**2)  # r_min = 0.5σ
+    r6 = dist_sq_safe**3  # r^6
     inv_r6 = 1.0 / r6
-    inv_r12 = inv_r6 ** 2
+    inv_r12 = inv_r6**2
     pe = 4.0 * (inv_r12 - inv_r6)
-    
+
     # Zero self-interaction via identity mask
     n = positions.shape[0]
     pe = pe * (1.0 - jnp.eye(n))
@@ -47,12 +48,13 @@ def _make_fcc_positions(n_atoms: int, density: float = 0.8) -> jnp.ndarray:
     Density ρ* = 0.8 σ⁻³ is the standard LJ liquid state point.
     """
     import math
+
     # Volume per atom → box side
     vol_per_atom = 1.0 / density
-    side_length = (n_atoms * vol_per_atom) ** (1.0/3.0)
-    n_side = max(math.ceil(n_atoms ** (1.0/3.0)), 2)
+    side_length = (n_atoms * vol_per_atom) ** (1.0 / 3.0)
+    n_side = max(math.ceil(n_atoms ** (1.0 / 3.0)), 2)
     spacing = side_length / n_side
-    
+
     coords = []
     for ix in range(n_side):
         for iy in range(n_side):
@@ -64,7 +66,7 @@ def _make_fcc_positions(n_atoms: int, density: float = 0.8) -> jnp.ndarray:
                 break
         if len(coords) >= n_atoms:
             break
-    
+
     # Add small perturbation to break perfect symmetry
     pos = jnp.array(coords[:n_atoms])
     key = jax.random.PRNGKey(123)
@@ -93,22 +95,26 @@ def main():
         key, subkey = jax.random.split(key)
         velocities = jax.random.normal(subkey, (n_atoms, 3)) * 0.1
         masses = jnp.ones(n_atoms)
-        
+
         # Check minimum distance
         diffs = positions[:, None, :] - positions[None, :, :]
-        dist_sq = jnp.sum(diffs ** 2, axis=-1)
+        dist_sq = jnp.sum(diffs**2, axis=-1)
         dist_sq = jnp.where(dist_sq > 1e-10, dist_sq, 1e10)
         min_r = float(jnp.sqrt(jnp.min(dist_sq)))
-        
-        systems.append({
-            "name": f"{n_atoms}-atom",
-            "n_atoms": n_atoms,
-            "positions": positions,
-            "velocities": velocities,
-            "masses": masses,
-        })
-        print(f"  {n_atoms}-atom: min_r={min_r:.3f}σ  "
-              f"E={float(_lj_potential(positions)):.2f}ε")
+
+        systems.append(
+            {
+                "name": f"{n_atoms}-atom",
+                "n_atoms": n_atoms,
+                "positions": positions,
+                "velocities": velocities,
+                "masses": masses,
+            }
+        )
+        print(
+            f"  {n_atoms}-atom: min_r={min_r:.3f}σ  "
+            f"E={float(_lj_potential(positions)):.2f}ε"
+        )
 
     print()
 
@@ -126,8 +132,10 @@ def main():
         dt = time.time() - t0
         sys["srank"] = srank
         total_dim = 3 * sys["n_atoms"]
-        print(f"  {sys['name']:>10s}: srank={srank:3d}/{total_dim:3d} "
-              f"({srank/total_dim:.1%}) [{dt:.3f}s]")
+        print(
+            f"  {sys['name']:>10s}: srank={srank:3d}/{total_dim:3d} "
+            f"({srank / total_dim:.1%}) [{dt:.3f}s]"
+        )
 
     print()
 
@@ -143,9 +151,11 @@ def main():
         result = route_by_srank(sys["srank"], 3 * sys["n_atoms"])
         sys["tractability"] = result.tractability.name
         sys["speedup"] = result.estimated_speedup
-        print(f"  {sys['name']:>10s}: {result.tractability.name:15s} "
-              f"speedup={result.estimated_speedup:8.1f}x  "
-              f"({result.structural_reason})")
+        print(
+            f"  {sys['name']:>10s}: {result.tractability.name:15s} "
+            f"speedup={result.estimated_speedup:8.1f}x  "
+            f"({result.structural_reason})"
+        )
 
     print()
 
@@ -155,15 +165,23 @@ def main():
     print("4. VELOCITY-VERLET (100 steps, dt=0.001)")
     print("-" * 50)
 
-    from dq_dock_engine.physics.engine import MDState, VelocityVerlet, Langevin, hamiltonian
+    from dq_dock_engine.physics.engine import (
+        MDState,
+        VelocityVerlet,
+        Langevin,
+        hamiltonian,
+    )
 
     dt = 0.001
     n_steps = 100
 
     for sys in systems:
         state = MDState(
-            sys["positions"], sys["velocities"], sys["masses"],
-            0.0, jax.random.PRNGKey(0)
+            sys["positions"],
+            sys["velocities"],
+            sys["masses"],
+            0.0,
+            jax.random.PRNGKey(0),
         )
         integrator = VelocityVerlet()
         force_fn = jax.grad(lambda q: -_lj_potential(q))
@@ -178,8 +196,10 @@ def main():
 
         sys["md_time"] = md_time
         sys["energy_drift"] = drift
-        print(f"  {sys['name']:>10s}: |ΔH|={drift:.2e}ε  "
-              f"[{md_time:.3f}s, {n_steps/md_time:.0f} steps/s]")
+        print(
+            f"  {sys['name']:>10s}: |ΔH|={drift:.2e}ε  "
+            f"[{md_time:.3f}s, {n_steps / md_time:.0f} steps/s]"
+        )
 
     print()
 
@@ -191,8 +211,11 @@ def main():
 
     for sys in systems:
         state = MDState(
-            sys["positions"], sys["velocities"], sys["masses"],
-            0.0, jax.random.PRNGKey(1)
+            sys["positions"],
+            sys["velocities"],
+            sys["masses"],
+            0.0,
+            jax.random.PRNGKey(1),
         )
         # T* = 1.0 in reduced units (kB=1)
         integrator = Langevin(gamma=1.0, temperature=1.0, kb=1.0)
@@ -204,8 +227,10 @@ def main():
         lang_time = time.time() - t0
 
         sys["langevin_time"] = lang_time
-        print(f"  {sys['name']:>10s}: [{lang_time:.3f}s, "
-              f"{n_steps/lang_time:.0f} steps/s]")
+        print(
+            f"  {sys['name']:>10s}: [{lang_time:.3f}s, "
+            f"{n_steps / lang_time:.0f} steps/s]"
+        )
 
     print()
 
@@ -215,7 +240,10 @@ def main():
     print("6. PHASE SPACE GEOMETRY")
     print("-" * 50)
 
-    from dq_dock_engine.physics.phase_space import verify_liouville, verify_symplecticity
+    from dq_dock_engine.physics.phase_space import (
+        verify_liouville,
+        verify_symplecticity,
+    )
 
     small = systems[0]
     liouville_err = verify_liouville(_lj_potential, small["positions"], dt, 1.0)
@@ -235,8 +263,13 @@ def main():
     from dq_dock_engine.physics.engine import _velocity_verlet_step
 
     bea = verify_energy_conservation(
-        _lj_potential, small["positions"], small["velocities"],
-        small["masses"], dt, 50, _velocity_verlet_step
+        _lj_potential,
+        small["positions"],
+        small["velocities"],
+        small["masses"],
+        dt,
+        50,
+        _velocity_verlet_step,
     )
     print(f"  Shadow drift: {bea['shadow_drift']:.2e}ε")
     print(f"  True drift:   {bea['true_drift']:.2e}ε")
@@ -250,7 +283,8 @@ def main():
     print("-" * 50)
 
     from dq_dock_engine.physics.bounded_acquisition import (
-        energy_lower_bound, PhysicalGroundingBundle
+        energy_lower_bound,
+        PhysicalGroundingBundle,
     )
     from dq_dock_engine.physics.physical_core import CONSTANTS
 
@@ -259,7 +293,7 @@ def main():
         bundle = PhysicalGroundingBundle(
             srank=sys["srank"],
             sufficient_set_size=3 * sys["n_atoms"],
-            joules_per_bit=CONSTANTS.landauer_floor
+            joules_per_bit=CONSTANTS.landauer_floor,
         )
         print(f"  {sys['name']:>10s}: E_min={e_min:.2e} J  valid={bundle.validate()}")
 
@@ -272,7 +306,9 @@ def main():
     print("-" * 50)
 
     from dq_dock_engine.physics.tractability.molecular_srank import (
-        molecular_srank_bound, BindingSite, num_relevant_atoms
+        molecular_srank_bound,
+        BindingSite,
+        num_relevant_atoms,
     )
 
     for sys in systems:
@@ -297,8 +333,10 @@ def main():
 
     for sys in systems:
         uc = UnifiedComplexity(srank=sys["srank"])
-        print(f"  {sys['name']:>10s}: {uc.computational:10s}  "
-              f"bits={uc.information_bits}  states={uc.transport_states}")
+        print(
+            f"  {sys['name']:>10s}: {uc.computational:10s}  "
+            f"bits={uc.information_bits}  states={uc.transport_states}"
+        )
 
     print()
 
@@ -310,8 +348,8 @@ def main():
 
     from dq_dock_engine.physics.dominance import analyze_dominance
 
-    U_dom = jnp.array([[5., 5., 5.], [1., 2., 3.], [2., 1., 2.]])
-    U_hard = jnp.array([[3., 1.], [1., 3.]])
+    U_dom = jnp.array([[5.0, 5.0, 5.0], [1.0, 2.0, 3.0], [2.0, 1.0, 2.0]])
+    U_hard = jnp.array([[3.0, 1.0], [1.0, 3.0]])
     print(f"  Dominant:   {analyze_dominance(U_dom).srank_zero}")
     print(f"  Non-dom:    {analyze_dominance(U_hard).srank_zero}")
 
@@ -323,7 +361,11 @@ def main():
     print("12. CROSS-REGIME TRANSFER")
     print("-" * 50)
 
-    from dq_dock_engine.pipeline.cross_regime import Regime, base_complexity, check_all_transfers
+    from dq_dock_engine.pipeline.cross_regime import (
+        Regime,
+        base_complexity,
+        check_all_transfers,
+    )
 
     for r in Regime:
         print(f"  {r.name:12s}: {base_complexity(r).name}")
@@ -338,14 +380,19 @@ def main():
     print("13. BAYESIAN STRUCTURE LEARNING")
     print("-" * 50)
 
-    from dq_dock_engine.pipeline.temporal_learning import bayesian_update, abstention_set
+    from dq_dock_engine.pipeline.temporal_learning import (
+        bayesian_update,
+        abstention_set,
+    )
 
     post = {"sep": 0.3, "tw": 0.3, "ba": 0.2, "hard": 0.2}
     like = {"sep": 0.8, "tw": 0.1, "ba": 0.05, "hard": 0.05}
     for i in range(5):
         post = bayesian_update(post, like, evidence=0)
-        print(f"  Step {i+1}: P(sep)={post['sep']:.4f}  "
-              f"abstain={len(abstention_set(post, 0.01))}")
+        print(
+            f"  Step {i + 1}: P(sep)={post['sep']:.4f}  "
+            f"abstain={len(abstention_set(post, 0.01))}"
+        )
 
     print()
 
@@ -357,26 +404,43 @@ def main():
 
     from dq_dock_engine.physics.lattice_sum import lj6_cutoff_error, optimal_cutoff
 
-    for R in [5., 10., 15., 20.]:
+    for R in [5.0, 10.0, 15.0, 20.0]:
         print(f"  R={R:5.1f}: error={lj6_cutoff_error(R):.2e}")
     print(f"  Optimal R for ε=1e-4: {optimal_cutoff(1e-4):.1f}")
 
     print()
 
     # ---------------------------------------------------------------
-    # 15. TUR
+    # 15. THERMODYNAMIC UNCERTAINTY RELATION
+    # ---------------------------------------------------------------
+    # 15. THERMODYNAMIC UNCERTAINTY RELATION
     # ---------------------------------------------------------------
     print("15. THERMODYNAMIC UNCERTAINTY RELATION")
     print("-" * 50)
 
     from dq_dock_engine.physics.tur import tur_bound, multiple_futures_check
 
-    P = jnp.array([[0.7, 0.2, 0.1], [0.1, 0.6, 0.3], [0.3, 0.1, 0.6]])
-    pi = jnp.array([0.3, 0.35, 0.35])
-    J = jnp.array([1.0, 2.0, 3.0])
+    # Proper non-equilibrium test: 3-state driven chain (force-driven)
+    # Non-zero entropy production when π(0)P(0→1) ≠ π(1)P(1→0)
+    P = jnp.array(
+        [
+            [0.85, 0.15, 0.00],  # Driven forward: 0 -> 1
+            [0.05, 0.90, 0.05],  # Central state
+            [0.00, 0.20, 0.80],  # Driven forward: 2 -> 0
+        ]
+    )
+    pi = jnp.array(
+        [0.20, 0.60, 0.20]
+    )  # Non-equilibrium stationary (not satisfying detailed balance)
+
+    # Current: net flux from state 0 to state 2 (through state 1)
+    J = jnp.array([0.10, 0.00, -0.10])  # Forward current
+
     tur = tur_bound(pi, J, P)
+    print(f"  System: 3-state driven chain (non-equilibrium)")
     print(f"  Var/Mean² = {tur['lhs']:.4f} ≥ 2/σ = {tur['rhs']:.4f}")
     print(f"  TUR satisfied: {tur['satisfied']}")
+    print(f"  (entropy production σ = {tur['entropy_production']:.4f})")
 
     print()
 
@@ -387,13 +451,17 @@ def main():
     print("SUMMARY")
     print("=" * 70)
     print()
-    print(f"{'System':>10s} {'srank':>6s} {'Route':>15s} {'Speedup':>9s} "
-          f"{'VV t/s':>8s} {'|ΔH|':>10s}")
+    print(
+        f"{'System':>10s} {'srank':>6s} {'Route':>15s} {'Speedup':>9s} "
+        f"{'VV t/s':>8s} {'|ΔH|':>10s}"
+    )
     print("-" * 65)
     for sys in systems:
-        print(f"{sys['name']:>10s} {sys['srank']:>6d} {sys['tractability']:>15s} "
-              f"{sys['speedup']:>8.1f}x {sys['md_time']:>7.3f}s "
-              f"{sys['energy_drift']:>10.2e}")
+        print(
+            f"{sys['name']:>10s} {sys['srank']:>6d} {sys['tractability']:>15s} "
+            f"{sys['speedup']:>8.1f}x {sys['md_time']:>7.3f}s "
+            f"{sys['energy_drift']:>10.2e}"
+        )
     print()
     print(f"Liouville:  |det(J)-1| = {liouville_err:.2e}")
     print(f"Shadow H:   {bea['shadow_drift']:.2e}ε  (true: {bea['true_drift']:.2e}ε)")
@@ -402,6 +470,7 @@ def main():
     print()
     print("15 subsystems verified ✅")
     print()
+
 
 if __name__ == "__main__":
     main()
