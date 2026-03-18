@@ -36,7 +36,12 @@ import jax.numpy as jnp
 import numpy as np
 from dataclasses import dataclass
 
-from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
+from dq_dock_engine.docking.core import (
+    DockingBox,
+    LigandContext,
+    ScoringEngine,
+    FormalProofStatus,
+)
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking.metrics import (
     compute_rmsd_batched,
@@ -77,6 +82,20 @@ class PDBComplex:
     ligand_file: Path
     center: tuple  # docking center
     size: tuple  # docking box size
+
+
+def resolve_formal_status(
+    engine: ScoringEngine,
+    use_multi_stage: bool,
+    use_pocket_guided: bool,
+) -> FormalProofStatus:
+    """Return the formal status of the active runtime path.
+
+    IMPORTANT: the current benchmark path is not yet wired directly to the
+    theorem-backed pruning certificates, so all active modes remain heuristic.
+    """
+    del engine, use_multi_stage, use_pocket_guided
+    return FormalProofStatus.HEURISTIC
 
 
 def download_pdb(pdb_id: str, cache_dir: Path) -> Path:
@@ -517,6 +536,7 @@ def run_dq_dock(
     )
 
     key = jax.random.PRNGKey(42)
+    formal_status = resolve_formal_status(engine, use_multi_stage, use_pocket_guided)
     best_poses = run_docking_pipeline(
         protein_coords=jnp.array(pocket_coords),
         receptor_radii=jnp.array(pocket_radii),
@@ -553,6 +573,7 @@ def run_dq_dock(
         "rmsd": rmsd,
         "time": elapsed,
         "n_atoms": len(pocket_coords) + len(ligand_coords),
+        "formal_status": formal_status.name,
     }
 
 
@@ -626,8 +647,11 @@ For now, we'll run DQ-Dock only on PDB files.
     mode_label = "multi-stage composite" if use_multi_stage else "random picking"
     if use_pocket_guided and not use_multi_stage:
         mode_label = "pocket-guided picking"
+    formal_status = resolve_formal_status(
+        ScoringEngine.INTERNAL_LJ, use_multi_stage, use_pocket_guided
+    )
     print(
-        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label})",
+        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label}, {formal_status.name})",
         flush=True,
     )
     print("=" * 70, flush=True)
@@ -696,6 +720,7 @@ For now, we'll run DQ-Dock only on PDB files.
         print(
             f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s"
         )
+        print(f"  Formal Status: {result['formal_status']}")
 
     # Run Vina if available
     vina_results = []

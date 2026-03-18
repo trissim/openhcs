@@ -276,10 +276,10 @@ Acceptance gate:
 
 ## Runtime Integration Checklist
 
-- [ ] Add proof-status labels in the implementation/docs:
-  - [ ] `Certified`
-  - [ ] `ConditionallyCertified`
-  - [ ] `Heuristic`
+- [x] Add proof-status labels in the implementation/docs:
+  - [x] `Certified`
+  - [x] `ConditionallyCertified`
+  - [x] `Heuristic`
 - [ ] Benchmark certified pruning separately from heuristic pruning
 - [ ] Do not route heuristic stages through proof-backed language without an explicit status downgrade
 

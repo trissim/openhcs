@@ -19,6 +19,14 @@ class ScoringEngine(Enum):
     SOFT_LJ = auto()
 
 
+class FormalProofStatus(Enum):
+    """Formal status of a runtime docking path."""
+
+    CERTIFIED = auto()
+    CONDITIONALLY_CERTIFIED = auto()
+    HEURISTIC = auto()
+
+
 @dataclass(frozen=True)
 class DockingBox:
     """Bounding box for geometric constraints."""
