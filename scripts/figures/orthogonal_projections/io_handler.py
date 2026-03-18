@@ -237,6 +237,7 @@ def create_multi_channel_slice_movie(
     output_path: Path,
     slice_type: str = "xy",
     fps: int = 10,
+    z_gap: float = 1.0,
     channel_colors: Tuple = None,
 ) -> Path:
     """
@@ -247,6 +248,7 @@ def create_multi_channel_slice_movie(
         output_path: Path to save movie
         slice_type: "xy", "xz", or "yz"
         fps: Frames per second
+        z_gap: Vertical stretch factor for XZ/YZ frames (same as composite)
         channel_colors: Tuple of ChannelColorMapping
 
     Returns:
@@ -254,6 +256,7 @@ def create_multi_channel_slice_movie(
     """
     import imageio.v3 as iio
     import matplotlib.colors as mcolors
+    from scipy.ndimage import zoom
 
     from .constants import DEFAULT_CHANNEL_COLORS
 
@@ -290,6 +293,8 @@ def create_multi_channel_slice_movie(
     else:
         raise ValueError(f"Unknown slice_type: {slice_type}")
 
+    apply_stretch = slice_type in ("xz", "yz") and z_gap > 1.0
+
     for i in range(num_frames):
         if slice_type == "xy":
             h, w = y_size, x_size
@@ -317,6 +322,10 @@ def create_multi_channel_slice_movie(
                 rgb_frame[..., c] += slice_norm * rgb_color[c]
 
         rgb_frame = np.clip(rgb_frame, 0, 1)
+
+        if apply_stretch:
+            rgb_frame = zoom(rgb_frame, (z_gap, 1.0, 1.0), order=1)
+
         frame_uint8 = (rgb_frame * 255).astype(np.uint8)
         frames.append(frame_uint8)
 
@@ -332,6 +341,7 @@ def save_slice_movies_for_well(
     output_dir: Path,
     slice_types: Tuple[str, ...] = ("xy", "xz", "yz"),
     fps: int = 10,
+    z_gap: float = 1.0,
     channel_colors: Tuple = None,
 ) -> List[MovieOutput]:
     """
@@ -343,6 +353,7 @@ def save_slice_movies_for_well(
         output_dir: Directory to save movies
         slice_types: Which slice types to create
         fps: Frames per second
+        z_gap: Vertical stretch factor for XZ/YZ (same as composite)
         channel_colors: Color mappings
 
     Returns:
@@ -362,6 +373,7 @@ def save_slice_movies_for_well(
             output_path,
             slice_type=slice_type,
             fps=fps,
+            z_gap=z_gap,
             channel_colors=channel_colors,
         )
 

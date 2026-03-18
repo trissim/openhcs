@@ -217,6 +217,7 @@ def process_well_all_channels(
             movie_dir,
             slice_types=config.movie_types,
             fps=config.movie_fps,
+            z_gap=config.z_gap,
             channel_colors=config.channel_colors,
         )
         for mo in movie_outputs:
