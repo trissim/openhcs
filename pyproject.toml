@@ -22,4 +22,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["physics*", "data*", "pipeline*"]
+include = ["dq_dock_engine*"]
+
+[project.scripts]
+dq-dock = "dq_dock_engine.cli:main"

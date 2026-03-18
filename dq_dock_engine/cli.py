@@ -10,13 +10,13 @@ from enum import Enum, auto
 import jax
 import jax.numpy as jnp
 
-from data.pdb_utils import parse_pdb
-from physics.engine import MDState, VelocityVerlet, Langevin, hamiltonian, compute_forces
-from physics.potentials import LennardJones, CompositePotential
-from physics.srank import compute_srank
-from physics.thermodynamics import landauer_constant, thermodynamic_cost
-from physics.algorithms import run_standard_md, run_factorized
-from pipeline.router import route_by_srank, Tractability
+from dq_dock_engine.data.pdb_utils import parse_pdb
+from dq_dock_engine.physics.engine import MDState, VelocityVerlet, Langevin, hamiltonian, compute_forces
+from dq_dock_engine.physics.potentials import LennardJones, CompositePotential
+from dq_dock_engine.physics.srank import compute_srank
+from dq_dock_engine.physics.thermodynamics import landauer_constant, thermodynamic_cost
+from dq_dock_engine.physics.algorithms import run_standard_md, run_factorized
+from dq_dock_engine.pipeline.router import route_by_srank, Tractability
 
 class Command(Enum):
     """Enum-driven CLI dispatch (violation 10 fix)."""

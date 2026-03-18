@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List
-from pipeline.router import Tractability
+from dq_dock_engine.pipeline.router import Tractability
 
 @dataclass(frozen=True)
 class PhysicsSidechannel:

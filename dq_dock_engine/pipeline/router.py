@@ -25,7 +25,7 @@ class Tractability(Enum):
 
     def run(self, state, force_fn, dt: float, n_steps: int, **kwargs):
         """Enum-driven dispatch: Tractability.HARD.run(state, ...) instead of if/elif chains."""
-        from physics.algorithms import run_standard_md, run_factorized, run_separable
+        from dq_dock_engine.physics.algorithms import run_standard_md, run_factorized, run_separable
         dispatch = {
             Tractability.SEPARABLE: lambda: run_separable(state, force_fn),
             Tractability.TENSOR_RANK: lambda: run_factorized(state, force_fn, dt, n_steps),
