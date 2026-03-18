@@ -36,9 +36,11 @@ from .discovery import (
     get_microscope_handler,
 )
 from .io_handler import (
+    MovieOutput,
     ProjectionOutput,
     load_z_stack,
     save_all_projections,
+    save_slice_movies_for_well,
 )
 from .composer import (
     create_multi_channel_composite,
@@ -75,6 +77,9 @@ class ProcessingConfig:
     include_mode: bool = False
     save_individual_projections: bool = True
     create_composites: bool = True
+    create_movies: bool = False
+    movie_types: Tuple[str, ...] = ("xy", "xz", "yz")
+    movie_fps: int = 10
     create_plate_mosaic: bool = False
     mosaic_layout: MosaicLayout = None
     arbitrary_mosaics: Tuple[ArbitraryMosaicSpec, ...] = ()
@@ -93,6 +98,7 @@ class ProcessingResult:
     failed_wells: List[str] = field(default_factory=list)
     outputs: List[ProjectionOutput] = field(default_factory=list)
     composite_outputs: List[Path] = field(default_factory=list)
+    movie_outputs: List[MovieOutput] = field(default_factory=list)
     mosaic_outputs: List[Path] = field(default_factory=list)
 
 
@@ -140,15 +146,18 @@ def process_well_all_channels(
     z_paths_by_channel: Dict[WellChannelKey, Tuple[Path, ...]],
     config: ProcessingConfig,
     labeler: FigureLabeler,
-) -> Tuple[Dict[str, Dict[str, np.ndarray]], Optional[Path]]:
+) -> Tuple[Dict[str, Dict[str, np.ndarray]], Optional[Path], List[MovieOutput]]:
     """
     Process all channels for a single well.
 
     Returns:
-        - Dict of projections by channel
+        - Dict of projections by channel (empty after cleanup)
         - Path to composite figure (if created)
+        - List of movie outputs (if created)
     """
     all_projections = {}
+    all_z_stacks = {}
+    movie_outputs = []
 
     for channel_key in channel_keys:
         if channel_key.well_id != well_id:
@@ -167,6 +176,9 @@ def process_well_all_channels(
                 f"  No Z-slices found for {well_id} channel {channel_key.channel_id}"
             )
             continue
+
+        z_stack = load_z_stack(z_paths)
+        all_z_stacks[channel_key.channel_id] = z_stack
 
         projections = process_single_channel(channel_key, z_paths, config)
         all_projections[channel_key.channel_id] = projections
@@ -197,13 +209,30 @@ def process_well_all_channels(
 
         logger.info(f"  Saved composite: {composite_path}")
 
+    if config.create_movies and all_z_stacks:
+        movie_dir = config.output_dir / "movies"
+        movie_outputs = save_slice_movies_for_well(
+            all_z_stacks,
+            well_id,
+            movie_dir,
+            slice_types=config.movie_types,
+            fps=config.movie_fps,
+            channel_colors=config.channel_colors,
+        )
+        for mo in movie_outputs:
+            logger.info(f"  Saved movie: {mo.output_path}")
+
     for proj_dict in all_projections.values():
         for arr in proj_dict.values():
             del arr
     all_projections.clear()
+
+    for stack in all_z_stacks.values():
+        del stack
+    all_z_stacks.clear()
     gc.collect()
 
-    return all_projections, composite_path
+    return all_projections, composite_path, movie_outputs
 
 
 def process_plate(config: ProcessingConfig) -> ProcessingResult:
@@ -249,13 +278,15 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
         logger.info(f"Processing well {well_id} ({i}/{len(wells)})")
 
         try:
-            _, composite_path = process_well_all_channels(
+            _, composite_path, movie_outputs = process_well_all_channels(
                 well_id, well_keys, z_paths_by_channel, config, labeler
             )
 
             if composite_path:
                 composite_paths[well_id] = composite_path
                 result.composite_outputs.append(composite_path)
+
+            result.movie_outputs.extend(movie_outputs)
 
             result.processed_wells += 1
 
@@ -397,6 +428,27 @@ def main():
     )
 
     parser.add_argument(
+        "--create-movies",
+        action="store_true",
+        help="Create Z-stack slice movies (XY, XZ, YZ animations)",
+    )
+
+    parser.add_argument(
+        "--movie-types",
+        nargs="+",
+        default=["xy", "xz", "yz"],
+        choices=["xy", "xz", "yz"],
+        help="Which slice movie types to create",
+    )
+
+    parser.add_argument(
+        "--movie-fps",
+        type=int,
+        default=10,
+        help="Frames per second for movies",
+    )
+
+    parser.add_argument(
         "--format",
         default="tiff",
         choices=["tiff", "png"],
@@ -443,6 +495,9 @@ def main():
         include_mode=include_mode,
         save_individual_projections=not args.no_individual_projections,
         create_composites=not args.no_composites,
+        create_movies=args.create_movies,
+        movie_types=tuple(args.movie_types),
+        movie_fps=args.movie_fps,
         create_plate_mosaic=args.create_plate_mosaic,
         arbitrary_mosaics=arbitrary_mosaics,
         dpi=args.dpi,
@@ -464,6 +519,7 @@ def main():
     if result.failed_wells:
         logger.info(f"  Failed wells: {', '.join(result.failed_wells)}")
     logger.info(f"  Composites: {len(result.composite_outputs)}")
+    logger.info(f"  Movies: {len(result.movie_outputs)}")
     logger.info(f"  Mosaics: {len(result.mosaic_outputs)}")
 
 

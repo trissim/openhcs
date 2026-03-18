@@ -5,6 +5,7 @@ This module provides functions to:
 - Load Z-stacks from files
 - Build projection filenames using FilenameParser API
 - Save projections to disk
+- Create Z-stack movies (XY, XZ, YZ slice animations)
 
 Invariants:
 - I/O is isolated - can be mocked, replaced, or parallelized
@@ -15,7 +16,7 @@ Invariants:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import tifffile
@@ -28,6 +29,16 @@ class ProjectionOutput:
     """Immutable record of saved projection."""
 
     projection_type: str
+    output_path: Path
+    well_id: str
+    channel_id: str
+
+
+@dataclass(frozen=True)
+class MovieOutput:
+    """Immutable record of saved movie."""
+
+    movie_type: str
     output_path: Path
     well_id: str
     channel_id: str
@@ -163,3 +174,204 @@ def save_all_projections(
         outputs.append(output)
 
     return tuple(outputs)
+
+
+def create_slice_movie(
+    z_stack: np.ndarray,
+    output_path: Path,
+    slice_type: str = "xy",
+    fps: int = 10,
+    global_max: float = None,
+) -> Path:
+    """
+    Create a movie going through slices of a Z-stack.
+
+    Args:
+        z_stack: 3D array of shape (Z, Y, X)
+        output_path: Path to save movie (should end in .mp4 or .gif)
+        slice_type: "xy" (go through Z), "xz" (go through Y), "yz" (go through X)
+        fps: Frames per second
+        global_max: Optional max value for normalization (use same for all movies)
+
+    Returns:
+        Path to saved movie
+    """
+    import imageio.v3 as iio
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if global_max is None:
+        global_max = z_stack.max()
+    if global_max == 0:
+        global_max = 1
+
+    frames = []
+
+    if slice_type == "xy":
+        for z in range(z_stack.shape[0]):
+            frame = z_stack[z, :, :]
+            frame_norm = (frame / global_max * 255).astype(np.uint8)
+            frames.append(frame_norm)
+    elif slice_type == "xz":
+        for y in range(z_stack.shape[1]):
+            frame = z_stack[:, y, :]
+            frame_norm = (frame / global_max * 255).astype(np.uint8)
+            frames.append(frame_norm)
+    elif slice_type == "yz":
+        for x in range(z_stack.shape[2]):
+            frame = z_stack[:, :, x]
+            frame_norm = (frame / global_max * 255).astype(np.uint8)
+            frames.append(frame_norm)
+    else:
+        raise ValueError(f"Unknown slice_type: {slice_type}")
+
+    output_path = output_path.with_suffix(".gif")
+    iio.imwrite(str(output_path), frames, duration=1000 // fps, loop=0)
+
+    return output_path
+
+
+def create_multi_channel_slice_movie(
+    all_channel_stacks: Dict[str, np.ndarray],
+    output_path: Path,
+    slice_type: str = "xy",
+    fps: int = 10,
+    channel_colors: Tuple = None,
+) -> Path:
+    """
+    Create a multi-channel color overlay movie going through slices.
+
+    Args:
+        all_channel_stacks: Dict {channel_id: 3D array (Z, Y, X)}
+        output_path: Path to save movie
+        slice_type: "xy", "xz", or "yz"
+        fps: Frames per second
+        channel_colors: Tuple of ChannelColorMapping
+
+    Returns:
+        Path to saved movie
+    """
+    import imageio.v3 as iio
+    import matplotlib.colors as mcolors
+
+    from .constants import DEFAULT_CHANNEL_COLORS
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    channel_colors = channel_colors or DEFAULT_CHANNEL_COLORS
+    color_map = {cc.channel_id: cc for cc in channel_colors}
+
+    active_channels = [
+        cc
+        for cc in channel_colors
+        if cc.visible and cc.channel_id in all_channel_stacks
+    ]
+
+    global_max = 0
+    for cc in active_channels:
+        stack = all_channel_stacks[cc.channel_id]
+        global_max = max(global_max, stack.max())
+    if global_max == 0:
+        global_max = 1
+
+    first_stack = list(all_channel_stacks.values())[0]
+    z_size, y_size, x_size = first_stack.shape
+
+    frames = []
+
+    if slice_type == "xy":
+        num_frames = z_size
+    elif slice_type == "xz":
+        num_frames = y_size
+    elif slice_type == "yz":
+        num_frames = x_size
+    else:
+        raise ValueError(f"Unknown slice_type: {slice_type}")
+
+    for i in range(num_frames):
+        if slice_type == "xy":
+            h, w = y_size, x_size
+        elif slice_type == "xz":
+            h, w = z_size, x_size
+        else:
+            h, w = z_size, y_size
+
+        rgb_frame = np.zeros((h, w, 3), dtype=np.float32)
+
+        for cc in active_channels:
+            stack = all_channel_stacks[cc.channel_id]
+
+            if slice_type == "xy":
+                slice_data = stack[i, :, :]
+            elif slice_type == "xz":
+                slice_data = stack[:, i, :]
+            else:
+                slice_data = stack[:, :, i]
+
+            slice_norm = slice_data.astype(np.float32) / global_max
+            rgb_color = np.array(mcolors.to_rgb(cc.color))
+
+            for c in range(3):
+                rgb_frame[..., c] += slice_norm * rgb_color[c]
+
+        rgb_frame = np.clip(rgb_frame, 0, 1)
+        frame_uint8 = (rgb_frame * 255).astype(np.uint8)
+        frames.append(frame_uint8)
+
+    output_path = output_path.with_suffix(".gif")
+    iio.imwrite(str(output_path), frames, duration=1000 // fps, loop=0)
+
+    return output_path
+
+
+def save_slice_movies_for_well(
+    all_channel_stacks: Dict[str, np.ndarray],
+    well_id: str,
+    output_dir: Path,
+    slice_types: Tuple[str, ...] = ("xy", "xz", "yz"),
+    fps: int = 10,
+    channel_colors: Tuple = None,
+) -> List[MovieOutput]:
+    """
+    Save all slice movies for a well (multi-channel color overlay).
+
+    Args:
+        all_channel_stacks: Dict {channel_id: 3D array (Z, Y, X)}
+        well_id: Well identifier for naming
+        output_dir: Directory to save movies
+        slice_types: Which slice types to create
+        fps: Frames per second
+        channel_colors: Color mappings
+
+    Returns:
+        List of MovieOutput records
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    outputs = []
+
+    for slice_type in slice_types:
+        filename = f"{well_id}_{slice_type}_movie.gif"
+        output_path = output_dir / filename
+
+        actual_path = create_multi_channel_slice_movie(
+            all_channel_stacks,
+            output_path,
+            slice_type=slice_type,
+            fps=fps,
+            channel_colors=channel_colors,
+        )
+
+        outputs.append(
+            MovieOutput(
+                movie_type=slice_type,
+                output_path=actual_path,
+                well_id=well_id,
+                channel_id="composite",
+            )
+        )
+
+    return outputs
