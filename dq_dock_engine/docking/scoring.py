@@ -18,38 +18,62 @@ from dq_dock_engine.docking.core import ScoringEngine, ScoredPose
 
 
 @jax.jit
-def _score_single_lj(receptor_coords: jnp.ndarray, pose_coords: jnp.ndarray) -> float:
+def _score_single_lj(receptor_coords: jnp.ndarray, pose_coords: jnp.ndarray,
+                     receptor_radii: jnp.ndarray, ligand_radii: jnp.ndarray) -> float:
     """
-    Very crude pure-JAX inter-molecular LJ score.
-    receptor_coords: (N_rec, 3)
-    pose_coords: (N_lig, 3)
+    Atom-typed LJ score tuned for rigid-body docking.
+
+    Uses asymmetric weighting: strong repulsion (steric clash) + mild attraction
+    (shape complementarity). This matches the approach of real docking programs
+    where the score is dominated by clash avoidance.
+
+    Args:
+        receptor_coords: (N_rec, 3)
+        pose_coords:     (N_lig, 3)
+        receptor_radii:  (N_rec,) VdW radii in Angstroms
+        ligand_radii:    (N_lig,) VdW radii in Angstroms
     """
     diffs = receptor_coords[:, None, :] - pose_coords[None, :, :]
-    dist_sq = jnp.sum(diffs ** 2, axis=-1)
-    
-    # Clamp BEFORE inverse — gradient is safe everywhere
-    dist_sq_safe = jnp.maximum(dist_sq, 0.5 ** 2)  # r_min = 0.5σ
-    
-    r6 = dist_sq_safe ** 3
-    inv_r6 = 1.0 / r6
-    inv_r12 = inv_r6 ** 2
-    
-    pe = 4.0 * (inv_r12 - inv_r6)
+    dist_sq = jnp.sum(diffs ** 2, axis=-1)  # (N_rec, N_lig)
+
+    # Lorentz-Berthelot: sigma_ij = r_i + r_j  (sum of VdW radii)
+    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]  # (N_rec, N_lig)
+    sigma_sq = sigma_ij ** 2
+
+    # Clamp to prevent gradient overflow
+    dist_sq_safe = jnp.maximum(dist_sq, (0.5 * sigma_ij) ** 2)
+
+    r6 = (sigma_sq / dist_sq_safe) ** 3
+    r12 = r6 ** 2
+
+    # Asymmetric weighting: strong repulsion, mild attraction
+    # Standard LJ: 4*(r12 - r6)  → equal repulsion/attraction
+    # Docking LJ:  repulsion_weight * r12 - attraction_weight * r6
+    repulsion = 4.0 * r12        # Full repulsive wall
+    attraction = 0.4 * r6        # 10x weaker attractive well
+
+    pe = repulsion - attraction
     return jnp.sum(pe)
 
 
 @jax.jit
-def score_internal_lj(receptor_coords: jnp.ndarray, poses_coords: jnp.ndarray) -> jnp.ndarray:
+def score_internal_lj(receptor_coords: jnp.ndarray, poses_coords: jnp.ndarray,
+                      receptor_radii: jnp.ndarray, ligand_radii: jnp.ndarray) -> jnp.ndarray:
     """
-    Pure JAX batched internal LJ score.
-    receptor_coords: (N_rec, 3)
-    poses_coords: (N_poses, N_lig, 3)
-    
+    Pure JAX batched internal LJ score with atom-typed radii.
+
+    Args:
+        receptor_coords: (N_rec, 3)
+        poses_coords:    (N_poses, N_lig, 3)
+        receptor_radii:  (N_rec,) VdW radii
+        ligand_radii:    (N_lig,) VdW radii
+
     Returns:
         (N_poses,) array of scores
     """
-    batched_score = jax.vmap(_score_single_lj, in_axes=(None, 0))
-    return batched_score(receptor_coords, poses_coords)
+    # vmap over poses dimension; receptor/radii are shared (None)
+    batched_score = jax.vmap(_score_single_lj, in_axes=(None, 0, None, None))
+    return batched_score(receptor_coords, poses_coords, receptor_radii, ligand_radii)
 
 
 def _write_pdb(coords: np.ndarray, template_pdb: str, output_pdb: str):
@@ -132,12 +156,14 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
     Strict Enum dispatch for scoring.
     
     Required kwargs:
-      - INTERNAL_LJ: receptor_coords, poses_coords
+      - INTERNAL_LJ: receptor_coords, poses_coords, receptor_radii, ligand_radii
       - SMINA_EXACT: receptor_file, ligand_template, poses_coords
     """
     if engine == ScoringEngine.INTERNAL_LJ:
-        # Returns jnp.ndarray, we cast to np.ndarray for API consistency
-        return np.array(score_internal_lj(kwargs['receptor_coords'], kwargs['poses_coords']))
+        return np.array(score_internal_lj(
+            kwargs['receptor_coords'], kwargs['poses_coords'],
+            kwargs['receptor_radii'], kwargs['ligand_radii'],
+        ))
         
     elif engine == ScoringEngine.SMINA_EXACT:
         return score_smina_exact(

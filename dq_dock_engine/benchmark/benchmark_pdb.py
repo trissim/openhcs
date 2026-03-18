@@ -156,18 +156,24 @@ def prepare_ligand(pdb_path: Path) -> Path:
     return ligand_path
 
 
-def extract_ligand_coords(pdb_path: Path) -> Optional[np.ndarray]:
-    """Extract heavy atom coordinates from PDB file (strips hydrogens)."""
+from dq_dock_engine.docking.physics_params import get_vdw_radius
+
+def extract_coords_and_radii(pdb_path: Path, is_ligand: bool = True) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Extract heavy atom coordinates and VdW radii from PDB file."""
     coords = []
+    radii = []
     with open(pdb_path) as f:
         for line in f:
             if line.startswith("HETATM") or line.startswith("ATOM"):
-                # Strip hydrogens to ensure SMINA and DQ-Dock topologies match
                 element = line[76:78].strip()
                 if not element:
-                    if line[12:16].strip().startswith("H"):
-                        continue
-                elif element == "H":
+                    element_str = line[12:16].strip()
+                    if element_str.startswith("H"):
+                        if is_ligand: continue
+                        element = "H"
+                    else:
+                        element = element_str[0]
+                elif element == "H" and is_ligand:
                     continue
                     
                 try:
@@ -175,12 +181,13 @@ def extract_ligand_coords(pdb_path: Path) -> Optional[np.ndarray]:
                     y = float(line[38:46])
                     z = float(line[46:54])
                     coords.append([x, y, z])
+                    radii.append(get_vdw_radius(element))
                 except ValueError:
                     continue
 
     if coords:
-        return np.array(coords)
-    return None
+        return np.array(coords), np.array(radii)
+    return None, None
 
 
 def compute_pocket_center(ligand_coords: np.ndarray) -> tuple:
@@ -191,9 +198,13 @@ def compute_pocket_center(ligand_coords: np.ndarray) -> tuple:
 
 def find_docking_center(pdb_path: Path) -> tuple:
     """Find docking center from ligand in PDB."""
-    coords = extract_ligand_coords(pdb_path)
-    if coords is not None:
+    from dq_dock_engine.docking.pdb_io import parse_structure
+    try:
+        coords, _ = parse_structure(pdb_path)
         return compute_pocket_center(coords)
+    except ValueError:
+        pass
+
     # Fallback: center of protein
     coords = []
     with open(pdb_path) as f:
@@ -300,72 +311,113 @@ def run_vina(
                     except ValueError:
                         pass
 
-        # Parse best coordinates from the output PDB
+def parse_smina_output(pdb_path: Path) -> Optional[np.ndarray]:
+    """Extract first model's heavy atom coordinates from smina output."""
+    from dq_dock_engine.docking.pdb_io import parse_structure
+    try:
+        # PDB files from smina have multiple models; parse_structure reads first one until ENDMDL/END
+        coords, _ = parse_structure(pdb_path, strip_hydrogens=True)
+        return coords
+    except Exception:
+        return None
+
+
+def run_vina(
+    vina_path: str,
+    receptor: Path,
+    ligand: Path,
+    center: tuple,
+    size: tuple = (20, 20, 20),
+    exhaustiveness: int = 1,
+    n_models: int = 3,
+) -> Dict:
+    """Run smina docking."""
+    import tempfile
+    # Use a safe temp file path
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".pdb")
+    os.close(temp_fd)
+    output_path = Path(temp_path)
+
+    cmd = [
+        vina_path, "--receptor", str(receptor), "--ligand", str(ligand),
+        "--center_x", str(center[0]), "--center_y", str(center[1]), "--center_z", str(center[2]),
+        "--size_x", str(size[0]), "--size_y", str(size[1]), "--size_z", str(size[2]),
+        "--exhaustiveness", str(exhaustiveness), "--num_modes", str(n_models),
+        "--out", str(output_path),
+    ]
+
+    start = time.time()
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        elapsed = time.time() - start
+        
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr[:200], "time": elapsed}
+
+        best_affinity = None
+        in_results = False
+        for line in result.stdout.split("\n"):
+            if "mode |" in line and "affinity" in line:
+                in_results = True
+                continue
+            if in_results and line.strip() and line[0].isdigit():
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        best_affinity = float(parts[1])
+                        break
+                    except ValueError:
+                        pass
+
         best_coords = None
         if output_path.exists() and best_affinity is not None:
-            coords = []
-            with open(output_path) as f:
-                for line in f:
-                    if line.startswith("ENDMDL"):
-                        break
-                    elif line.startswith("ATOM") or line.startswith("HETATM"):
-                        try:
-                            x = float(line[30:38])
-                            y = float(line[38:46])
-                            z = float(line[46:54])
-                            coords.append([x, y, z])
-                        except ValueError:
-                            pass
-            if coords:
-                best_coords = np.array(coords)
+            best_coords = parse_smina_output(output_path)
 
         return {
             "success": True,
             "best_affinity": best_affinity,
             "time": elapsed,
-            "output": result.stdout,
             "best_coords": best_coords,
         }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Timeout", "time": 300}
     except Exception as e:
-        return {"success": False, "error": str(e), "time": 0}
+        return {"success": False, "error": str(e), "time": time.time() - start}
     finally:
         if output_path.exists():
             output_path.unlink()
 
 
 def run_dq_dock(
-    protein_coords: np.ndarray,
+    pocket_coords: np.ndarray,
+    pocket_radii: np.ndarray,
     ligand_coords: np.ndarray,
+    ligand_radii: np.ndarray,
     center: tuple,
 ) -> Dict:
-    """Run true DQ-Dock pipeline on complex."""
-    from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
+    """Run true DQ-Dock pipeline on complex using core infrastructure."""
+    from dq_dock_engine.docking.core import DockingBox, ScoringEngine
+    from dq_dock_engine.docking.pdb_io import build_ligand_context, build_receptor_arrays
     from dq_dock_engine.docking.pipeline import run_docking_pipeline
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
     
     start = time.time()
     
-    # 1. Setup Data Structures
     center_jnp = jnp.array(center)
     box = DockingBox(center=center_jnp, size=jnp.array([20.0, 20.0, 20.0]))
     
-    com = jnp.mean(jnp.array(ligand_coords), axis=0)
-    # Center ligand at origin for proper rotation sampling
-    base_coords = jnp.array(ligand_coords) - com
-    ligand_ctx = LigandContext(base_coords=base_coords, center_of_mass=com)
+    # Build LigandContext via core infra (auto-centers, stores radii)
+    ligand_ctx = build_ligand_context(ligand_coords, ligand_radii)
     
-    # 2. Run Pipeline (pure JAX batched generation + internal LJ scoring)
     key = jax.random.PRNGKey(42)
     best_poses = run_docking_pipeline(
-        protein_coords=jnp.array(protein_coords),
+        protein_coords=jnp.array(pocket_coords),
+        receptor_radii=jnp.array(pocket_radii),
         ligand_ctx=ligand_ctx,
         box=box,
-        n_poses=2000,
+        n_poses=10000,
         engine=ScoringEngine.INTERNAL_LJ,
         key=key,
-        top_k=1
+        top_k=1,
+        optimize=False,
     )
     
     if not best_poses:
@@ -373,10 +425,8 @@ def run_dq_dock(
         
     best_pose = best_poses[0]
     
-    # 3. Compute True Docking RMSD (absolute Cartesian error) to native crystal structure
     pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
     native_jnp = jnp.array(ligand_coords)
-    # Get RMSD
     rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
     
     elapsed = time.time() - start
@@ -386,7 +436,7 @@ def run_dq_dock(
         "energy": best_pose.energy,
         "rmsd": rmsd,
         "time": elapsed,
-        "n_atoms": len(protein_coords) + len(ligand_coords),
+        "n_atoms": len(pocket_coords) + len(ligand_coords),
     }
 
 
@@ -451,50 +501,45 @@ For now, we'll run DQ-Dock only on PDB files.
 
     # Run DQ-Dock on each
     print("\n" + "=" * 70, flush=True)
-    print("RUNNING DQ-DOCK (2000 batched poses/sec, JAX LJ scoring)", flush=True)
+    print("RUNNING DQ-DOCK (2000 batched poses, JAX atom-typed LJ scoring)", flush=True)
     print("=" * 70, flush=True)
 
     dq_results = []
     for cx in complexes:
         print(f"\n{cx['pdb_id']}:", flush=True)
 
-        # 1. Prepare files and extract coordinates
+        # 1. Use core pdb_io infrastructure for all parsing + atom typing
+        from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
+        
         receptor_pdb = prepare_protein(cx["path"])
         ligand_pdb = prepare_ligand(cx["path"])
         
-        ligand_coords = extract_ligand_coords(ligand_pdb)
-        if ligand_coords is None or len(ligand_coords) == 0:
-            print("  ⚠️  No ligand atoms extracted")
+        try:
+            ligand_coords, ligand_radii = parse_structure(ligand_pdb)
+            prot_coords, prot_radii = parse_structure(receptor_pdb)
+        except ValueError as e:
+            print(f"  ⚠️  {e}")
             continue
-            
-        prot_coords = []
-        with open(receptor_pdb) as f:
-            for line in f:
-                if line.startswith("ATOM"):
-                    x = float(line[30:38])
-                    y = float(line[38:46])
-                    z = float(line[46:54])
-                    prot_coords.append([x, y, z])
-                    
-        prot_coords = np.array(prot_coords)
 
-        # Define pocket (atoms near ligand region)
+        # Extract pocket via core infra
         center = np.array(cx["center"])
-        distances = np.linalg.norm(prot_coords - center, axis=1)
-        pocket_mask = distances < 12.0  # 12Å around center
-        pocket_coords = prot_coords[pocket_mask]
+        pocket_coords, pocket_radii = build_receptor_arrays(
+            prot_coords, prot_radii, center, pocket_radius=12.0
+        )
+        pocket_coords_np = np.array(pocket_coords)
+        pocket_radii_np = np.array(pocket_radii)
 
-        if len(pocket_coords) == 0:
+        if len(pocket_coords_np) == 0:
             print("  ⚠️  No protein atoms in pocket")
             continue
 
         print(
-            f"  Ligand atoms: {len(ligand_coords)}, Pocket atoms: {len(pocket_coords)}",
+            f"  Ligand atoms: {len(ligand_coords)}, Pocket atoms: {len(pocket_coords_np)}",
             flush=True,
         )
 
         # Run DQ-Dock
-        result = run_dq_dock(pocket_coords, ligand_coords, cx["center"])
+        result = run_dq_dock(pocket_coords_np, pocket_radii_np, ligand_coords, ligand_radii, cx["center"])
         dq_results.append(result)
 
         print(f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s")
@@ -535,20 +580,19 @@ For now, we'll run DQ-Dock only on PDB files.
             # Compute SMINA RMSD
             smina_rmsd = float('nan')
             if result.get("best_coords") is not None and ligand_coords is not None:
-                if len(result["best_coords"]) != len(ligand_coords):
-                    print(f"  ⚠️  Atom count mismatch: Native={len(ligand_coords)}, SMINA={len(result['best_coords'])} (Slicing to min length)")
+                pose_coords = result["best_coords"]
+                if len(pose_coords) != len(ligand_coords):
+                     print(f"  ⚠️  Atom count mismatch: Native={len(ligand_coords)}, SMINA={len(pose_coords)}")
                 
-                # Assume original atom order is preserved at the beginning of the file (SMINA usually appends added atoms)
-                min_len = min(len(result["best_coords"]), len(ligand_coords))
+                min_len = min(len(pose_coords), len(ligand_coords))
                 if min_len > 0:
-                    pose_jnp = jnp.expand_dims(result["best_coords"][:min_len], axis=0)
+                    pose_jnp = jnp.expand_dims(pose_coords[:min_len], axis=0)
                     native_jnp = jnp.array(ligand_coords[:min_len])
                     smina_rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
 
             print(
                 f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Native RMSD: {smina_rmsd:.2f}Å, Time: {result['time']:.1f}s"
             )
-
             result["rmsd"] = smina_rmsd
 
     # Summary

@@ -9,70 +9,101 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine, ScoredPose
+from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine, ScoredPose, PoseVector
 from dq_dock_engine.docking.placement import sample_random_poses, apply_poses
 from dq_dock_engine.docking.scoring import route_scoring
 
 
+from dq_dock_engine.docking.optimization import optimize_poses_batched
+
 def run_docking_pipeline(
     protein_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
     ligand_ctx: LigandContext,
     box: DockingBox,
     n_poses: int,
     engine: ScoringEngine,
     key: jax.Array,
     top_k: int = 10,
+    optimize: bool = True,
+    n_opt_steps: int = 50,
+    top_k_to_optimize: int = 200,
     **scoring_kwargs
 ) -> List[ScoredPose]:
     """
-    Run the complete pose prediction pipeline.
-    
-    Args:
-        protein_coords: (N_rec, 3) array of receptor coordinates
-        ligand_ctx: Immunable LigandContext
-        box: DockingBox defining search space
-        n_poses: Number of batched poses to sample
-        engine: ScoringEngine to use
-        key: JAX PRNG key
-        top_k: Number of best poses to return
-        scoring_kwargs: Additional arguments required by the chosen scoring engine.
-            (e.g., receptor_file and ligand_template for SMINA_EXACT)
-            
-    Returns:
-        List of the top_k ScoredPose objects, sorted by best (lowest) energy.
+    Run a two-stage pose prediction pipeline:
+    Stage 1: Fast global search (screening n_poses)
+    Stage 2: Local refinement (optimizing top_k_to_optimize poses)
     """
-    # 1. State Generation (Pure JAX, Batched)
+    # --- STAGE 1: GLOBAL SCREENING ---
     pose_vecs = sample_random_poses(key, box, n_poses)
-    batched_coords = apply_poses(ligand_ctx, pose_vecs)  # shape: (n_poses, N_lig, 3)
+    batched_coords = apply_poses(ligand_ctx, pose_vecs)
     
-    # 2. Scoring (Strict Enum Dispatch)
+    # Initial Scoring
     kwargs = {
         'receptor_coords': protein_coords,
+        'receptor_radii': receptor_radii,
+        'ligand_radii': ligand_ctx.base_radii,
         'poses_coords': batched_coords,
         **scoring_kwargs
     }
-    energies = route_scoring(engine, **kwargs)  # shape: (n_poses,)
+    initial_energies = route_scoring(engine, **kwargs)
     
-    # 3. Ranking & Selection
-    energies_jnp = jnp.asarray(energies)
+    if not optimize or engine != ScoringEngine.INTERNAL_LJ:
+        # Return top_k from initial screening
+        best_indices = jnp.argsort(initial_energies)[:min(top_k, n_poses)]
+        outputs = []
+        for idx in best_indices:
+            idx_i = int(idx)
+            outputs.append(ScoredPose(coords=batched_coords[idx_i], energy=float(initial_energies[idx_i]), engine=engine))
+        return outputs
+
+    # --- STAGE 2: LOCAL REFINEMENT ---
+    n_to_opt = min(top_k_to_optimize, n_poses)
+    screening_best_indices = jnp.argsort(initial_energies)[:n_to_opt]
     
-    # Handle cases where we asked for more poses than we generated
-    actual_k = min(top_k, n_poses)
+    # Extract top poses for optimization
+    top_translations = pose_vecs.translation[screening_best_indices]
+    top_quaternions = pose_vecs.quaternion[screening_best_indices]
     
-    # Get indices of the lowest energies
-    best_indices = jnp.argsort(energies_jnp)[:actual_k]
+    # Gradient Descent Optimization (Top Poses Only)
+    opt_t, opt_q = optimize_poses_batched(
+        translations=top_translations,
+        quaternions=top_quaternions,
+        ligand_base_coords=ligand_ctx.base_coords,
+        receptor_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_ctx.base_radii,
+        n_steps=n_opt_steps,
+        lr_t=0.05,
+        lr_q=0.05
+    )
     
-    # 4. Construct output
+    # Apply optimized transformations
+    opt_vecs = PoseVector(translation=opt_t, quaternion=opt_q)
+    opt_coords = apply_poses(ligand_ctx, opt_vecs)
+    
+    # Final Scoring
+    final_energies = route_scoring(
+        engine, 
+        receptor_coords=protein_coords,
+        receptor_radii=receptor_radii,
+        ligand_radii=ligand_ctx.base_radii,
+        poses_coords=opt_coords
+    )
+    
+    # Ranking & Selection
+    best_final_indices = jnp.argsort(final_energies)[:min(top_k, n_to_opt)]
+    
     best_poses = []
-    # Convert back to numpy for easy downstream usage in lists, 
-    # but keep JAX arrays internally if we want
-    for idx in best_indices:
-        idx_val = int(idx)
+    for idx in best_final_indices:
+        idx_i = int(idx)
         pose = ScoredPose(
-            coords=batched_coords[idx_val],
-            energy=float(energies[idx_val]),
+            coords=opt_coords[idx_i],
+            energy=float(final_energies[idx_i]),
             engine=engine
         )
         best_poses.append(pose)
         
     return best_poses
+

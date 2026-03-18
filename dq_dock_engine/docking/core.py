@@ -29,6 +29,7 @@ class DockingBox:
 class LigandContext:
     """Immutable context for a ligand prior to geometric transformation."""
     base_coords: jnp.ndarray    # shape (N, 3) relative to origin
+    base_radii: jnp.ndarray     # shape (N,)
     center_of_mass: jnp.ndarray # shape (3,)
 
 
