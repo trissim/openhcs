@@ -38,7 +38,10 @@ from dataclasses import dataclass
 
 from dq_dock_engine.docking.core import DockingBox, LigandContext, ScoringEngine
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
-from dq_dock_engine.docking.metrics import compute_rmsd_batched, compute_docking_rmsd_batched
+from dq_dock_engine.docking.metrics import (
+    compute_rmsd_batched,
+    compute_docking_rmsd_batched,
+)
 
 
 # Famous, difficult drug targets where docking matters
@@ -100,34 +103,73 @@ def download_pdb(pdb_id: str, cache_dir: Path) -> Path:
 
 def prepare_protein(pdb_path: Path) -> Path:
     """Prepare protein for Vina - use smina which handles PDB directly.
-    
+
     Extracts only ATOM records (protein) from the PDB file.
     """
     protein_path = pdb_path.parent / f"{pdb_path.stem}_protein.pdb"
     if protein_path.exists():
         return protein_path
-    
+
     with open(pdb_path) as f_in:
         with open(protein_path, "w") as f_out:
             for line in f_in:
                 if line.startswith("ATOM"):
                     f_out.write(line)
-    
+
     return protein_path
+
+
+def prepare_pocket_protein(
+    protein_path: Path,
+    center: tuple[float, float, float],
+    pocket_radius: float = 12.0,
+) -> Path:
+    """Write a pocket-only receptor PDB matching the filtered docking arrays."""
+    pocket_path = protein_path.parent / f"{protein_path.stem}_pocket.pdb"
+
+    center_array = np.array(center, dtype=float)
+    pocket_lines: list[str] = []
+
+    with open(protein_path) as f_in:
+        for line in f_in:
+            if not line.startswith("ATOM"):
+                continue
+            try:
+                coord = np.array(
+                    [
+                        float(line[30:38]),
+                        float(line[38:46]),
+                        float(line[46:54]),
+                    ],
+                    dtype=float,
+                )
+            except ValueError:
+                continue
+
+            if np.linalg.norm(coord - center_array) < pocket_radius:
+                pocket_lines.append(line)
+
+    if not pocket_lines:
+        raise ValueError(f"No pocket atoms found in {protein_path}")
+
+    with open(pocket_path, "w") as f_out:
+        f_out.writelines(pocket_lines)
+
+    return pocket_path
 
 
 def prepare_ligand(pdb_path: Path) -> Path:
     """Prepare ligand for Vina - extract primary ligand HETATM records from PDB file.
-    
+
     Raises error if no ligand found in the PDB.
     """
     ligand_path = pdb_path.parent / f"{pdb_path.stem}_ligand.pdb"
-    
+
     # Check if already extracted
     if ligand_path.exists():
         # Remove it if we are re-running to fix old bad extractions
         ligand_path.unlink()
-    
+
     # Auto-detect drug by finding most common non-water HETATM
     resname_counts = {}
     with open(pdb_path) as f:
@@ -136,21 +178,23 @@ def prepare_ligand(pdb_path: Path) -> Path:
                 resname = line[17:20].strip()
                 if resname not in ["HOH", "DOD", "WAT"]:
                     resname_counts[resname] = resname_counts.get(resname, 0) + 1
-                    
+
     if not resname_counts:
         raise ValueError(f"No ligand found in {pdb_path}")
-        
+
     target_resname = max(resname_counts.items(), key=lambda x: x[1])[0]
 
     ligand_lines = []
     with open(pdb_path) as f:
         for line in f:
-            if (line.startswith("HETATM") or line.startswith("ATOM")) and line[17:20].strip() == target_resname:
+            if (line.startswith("HETATM") or line.startswith("ATOM")) and line[
+                17:20
+            ].strip() == target_resname:
                 ligand_lines.append(line)
-    
+
     if not ligand_lines:
         raise ValueError(f"No ligand found in {pdb_path}")
-    
+
     with open(ligand_path, "w") as f:
         f.writelines(ligand_lines)
     return ligand_path
@@ -158,7 +202,10 @@ def prepare_ligand(pdb_path: Path) -> Path:
 
 from dq_dock_engine.docking.physics_params import get_vdw_radius
 
-def extract_coords_and_radii(pdb_path: Path, is_ligand: bool = True) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+
+def extract_coords_and_radii(
+    pdb_path: Path, is_ligand: bool = True
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """Extract heavy atom coordinates and VdW radii from PDB file."""
     coords = []
     radii = []
@@ -169,13 +216,14 @@ def extract_coords_and_radii(pdb_path: Path, is_ligand: bool = True) -> tuple[Op
                 if not element:
                     element_str = line[12:16].strip()
                     if element_str.startswith("H"):
-                        if is_ligand: continue
+                        if is_ligand:
+                            continue
                         element = "H"
                     else:
                         element = element_str[0]
                 elif element == "H" and is_ligand:
                     continue
-                    
+
                 try:
                     x = float(line[30:38])
                     y = float(line[38:46])
@@ -199,8 +247,9 @@ def compute_pocket_center(ligand_coords: np.ndarray) -> tuple:
 def find_docking_center(pdb_path: Path) -> tuple:
     """Find docking center from ligand in PDB."""
     from dq_dock_engine.docking.pdb_io import parse_structure
+
     try:
-        coords, _ = parse_structure(pdb_path)
+        coords, _ = parse_structure(pdb_path, return_elements=False)
         return compute_pocket_center(coords)
     except ValueError:
         pass
@@ -310,13 +359,20 @@ def run_vina(
                         break
                     except ValueError:
                         pass
+    finally:
+        if output_path.exists():
+            output_path.unlink()
+
 
 def parse_smina_output(pdb_path: Path) -> Optional[np.ndarray]:
     """Extract first model's heavy atom coordinates from smina output."""
     from dq_dock_engine.docking.pdb_io import parse_structure
+
     try:
         # PDB files from smina have multiple models; parse_structure reads first one until ENDMDL/END
-        coords, _ = parse_structure(pdb_path, strip_hydrogens=True)
+        coords, _ = parse_structure(
+            pdb_path, strip_hydrogens=True, return_elements=False
+        )
         return coords
     except Exception:
         return None
@@ -333,24 +389,43 @@ def run_vina(
 ) -> Dict:
     """Run smina docking."""
     import tempfile
+
     # Use a safe temp file path
     temp_fd, temp_path = tempfile.mkstemp(suffix=".pdb")
     os.close(temp_fd)
     output_path = Path(temp_path)
 
     cmd = [
-        vina_path, "--receptor", str(receptor), "--ligand", str(ligand),
-        "--center_x", str(center[0]), "--center_y", str(center[1]), "--center_z", str(center[2]),
-        "--size_x", str(size[0]), "--size_y", str(size[1]), "--size_z", str(size[2]),
-        "--exhaustiveness", str(exhaustiveness), "--num_modes", str(n_models),
-        "--out", str(output_path),
+        vina_path,
+        "--receptor",
+        str(receptor),
+        "--ligand",
+        str(ligand),
+        "--center_x",
+        str(center[0]),
+        "--center_y",
+        str(center[1]),
+        "--center_z",
+        str(center[2]),
+        "--size_x",
+        str(size[0]),
+        "--size_y",
+        str(size[1]),
+        "--size_z",
+        str(size[2]),
+        "--exhaustiveness",
+        str(exhaustiveness),
+        "--num_modes",
+        str(n_models),
+        "--out",
+        str(output_path),
     ]
 
     start = time.time()
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
         elapsed = time.time() - start
-        
+
         if result.returncode != 0:
             return {"success": False, "error": result.stderr[:200], "time": elapsed}
 
@@ -392,43 +467,84 @@ def run_dq_dock(
     ligand_coords: np.ndarray,
     ligand_radii: np.ndarray,
     center: tuple,
+    ligand_file: Path,
+    receptor_file: Path,
+    charge_method,
+    n_poses: int = 2000,
+    use_multi_stage: bool = False,
+    use_pocket_guided: bool = False,
+    engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
+    ligand_elements: list[str] | tuple[str, ...] | None = None,
+    receptor_elements: list[str] | tuple[str, ...] | None = None,
 ) -> Dict:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     from dq_dock_engine.docking.core import DockingBox, ScoringEngine
-    from dq_dock_engine.docking.pdb_io import build_ligand_context, build_receptor_arrays
+    from dq_dock_engine.docking.pdb_io import (
+        build_ligand_context,
+        build_receptor_arrays,
+    )
     from dq_dock_engine.docking.pipeline import run_docking_pipeline
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
-    
+
     start = time.time()
-    
+
     center_jnp = jnp.array(center)
     box = DockingBox(center=center_jnp, size=jnp.array([20.0, 20.0, 20.0]))
-    
-    # Build LigandContext via core infra (auto-centers, stores radii)
-    ligand_ctx = build_ligand_context(ligand_coords, ligand_radii)
-    
+
+    # Assign ligand elements/charges and build LigandContext
+    from dq_dock_engine.docking.charges import create_charge_assigner
+
+    if ligand_elements is None:
+        ligand_elements = None
+    else:
+        # ensure tuple input for assigner
+        ligand_elements = tuple(ligand_elements)
+
+    ligand_charges = None
+    if use_multi_stage and ligand_elements is not None:
+        assigner = create_charge_assigner(charge_method)
+        ligand_source = (
+            ligand_elements if assigner.method.name == "SIMPLE" else ligand_file
+        )
+        ligand_charges = assigner.assign(ligand_source).charges
+
+    # Build LigandContext via core infra (auto-centers, stores radii/elements/charges)
+    ligand_ctx = build_ligand_context(
+        ligand_coords,
+        ligand_radii,
+        elements=list(ligand_elements) if ligand_elements is not None else None,
+        charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
+    )
+
     key = jax.random.PRNGKey(42)
     best_poses = run_docking_pipeline(
         protein_coords=jnp.array(pocket_coords),
         receptor_radii=jnp.array(pocket_radii),
         ligand_ctx=ligand_ctx,
         box=box,
-        n_poses=10000,
-        engine=ScoringEngine.INTERNAL_LJ,
+        n_poses=n_poses,
+        engine=engine,
         key=key,
         top_k=1,
         optimize=False,
+        charge_method=charge_method,
+        receptor_file=receptor_file,
+        receptor_elements=tuple(receptor_elements)
+        if receptor_elements is not None
+        else None,
+        use_pocket_guided=use_pocket_guided,
+        use_multi_stage=use_multi_stage,
     )
-    
+
     if not best_poses:
         return {"success": False, "error": "No poses generated"}
-        
+
     best_pose = best_poses[0]
-    
+
     pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
     native_jnp = jnp.array(ligand_coords)
     rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
-    
+
     elapsed = time.time() - start
 
     return {
@@ -440,7 +556,13 @@ def run_dq_dock(
     }
 
 
-def run_benchmark(n_complexes: int = 10):
+def run_benchmark(
+    n_complexes: int = 10,
+    charge_method=None,
+    n_poses: int = 2000,
+    use_multi_stage: bool = False,
+    use_pocket_guided: bool = False,
+):
     """Run full benchmark."""
 
     print("=" * 70, flush=True)
@@ -501,7 +623,13 @@ For now, we'll run DQ-Dock only on PDB files.
 
     # Run DQ-Dock on each
     print("\n" + "=" * 70, flush=True)
-    print("RUNNING DQ-DOCK (2000 batched poses, JAX atom-typed LJ scoring)", flush=True)
+    mode_label = "multi-stage composite" if use_multi_stage else "random picking"
+    if use_pocket_guided and not use_multi_stage:
+        mode_label = "pocket-guided picking"
+    print(
+        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label})",
+        flush=True,
+    )
     print("=" * 70, flush=True)
 
     dq_results = []
@@ -510,21 +638,30 @@ For now, we'll run DQ-Dock only on PDB files.
 
         # 1. Use core pdb_io infrastructure for all parsing + atom typing
         from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
-        
+
         receptor_pdb = prepare_protein(cx["path"])
+        pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, cx["center"])
         ligand_pdb = prepare_ligand(cx["path"])
-        
+
         try:
-            ligand_coords, ligand_radii = parse_structure(ligand_pdb)
-            prot_coords, prot_radii = parse_structure(receptor_pdb)
+            ligand_coords, ligand_radii, ligand_elements = parse_structure(
+                ligand_pdb, return_elements=True
+            )
+            prot_coords, prot_radii, prot_elements = parse_structure(
+                receptor_pdb, return_elements=True
+            )
         except ValueError as e:
             print(f"  ⚠️  {e}")
             continue
 
         # Extract pocket via core infra
         center = np.array(cx["center"])
-        pocket_coords, pocket_radii = build_receptor_arrays(
-            prot_coords, prot_radii, center, pocket_radius=12.0
+        pocket_coords, pocket_radii, pocket_elements = build_receptor_arrays(
+            prot_coords,
+            prot_radii,
+            center,
+            pocket_radius=12.0,
+            receptor_elements=prot_elements,
         )
         pocket_coords_np = np.array(pocket_coords)
         pocket_radii_np = np.array(pocket_radii)
@@ -539,10 +676,26 @@ For now, we'll run DQ-Dock only on PDB files.
         )
 
         # Run DQ-Dock
-        result = run_dq_dock(pocket_coords_np, pocket_radii_np, ligand_coords, ligand_radii, cx["center"])
+        result = run_dq_dock(
+            pocket_coords_np,
+            pocket_radii_np,
+            ligand_coords,
+            ligand_radii,
+            cx["center"],
+            ligand_file=ligand_pdb,
+            receptor_file=pocket_receptor_pdb,
+            charge_method=charge_method,
+            n_poses=n_poses,
+            use_multi_stage=use_multi_stage,
+            use_pocket_guided=use_pocket_guided,
+            ligand_elements=ligand_elements,
+            receptor_elements=tuple(pocket_elements),
+        )
         dq_results.append(result)
 
-        print(f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s")
+        print(
+            f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s"
+        )
 
     # Run Vina if available
     vina_results = []
@@ -557,7 +710,7 @@ For now, we'll run DQ-Dock only on PDB files.
             # Prepare separate protein and ligand files
             receptor_pdb = prepare_protein(cx["path"])
             ligand_pdb = prepare_ligand(cx["path"])
-            
+
             print(f"  Receptor: {receptor_pdb.name}", flush=True)
             print(f"  Ligand: {ligand_pdb.name}", flush=True)
 
@@ -565,7 +718,7 @@ For now, we'll run DQ-Dock only on PDB files.
             result = run_vina(
                 vina_path,
                 str(receptor_pdb),  # receptor (PDB)
-                str(ligand_pdb),    # ligand (PDB)
+                str(ligand_pdb),  # ligand (PDB)
                 cx["center"],
             )
 
@@ -578,17 +731,21 @@ For now, we'll run DQ-Dock only on PDB files.
                 continue
 
             # Compute SMINA RMSD
-            smina_rmsd = float('nan')
+            smina_rmsd = float("nan")
             if result.get("best_coords") is not None and ligand_coords is not None:
                 pose_coords = result["best_coords"]
                 if len(pose_coords) != len(ligand_coords):
-                     print(f"  ⚠️  Atom count mismatch: Native={len(ligand_coords)}, SMINA={len(pose_coords)}")
-                
+                    print(
+                        f"  ⚠️  Atom count mismatch: Native={len(ligand_coords)}, SMINA={len(pose_coords)}"
+                    )
+
                 min_len = min(len(pose_coords), len(ligand_coords))
                 if min_len > 0:
                     pose_jnp = jnp.expand_dims(pose_coords[:min_len], axis=0)
                     native_jnp = jnp.array(ligand_coords[:min_len])
-                    smina_rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
+                    smina_rmsd = float(
+                        compute_docking_rmsd_batched(pose_jnp, native_jnp)[0]
+                    )
 
             print(
                 f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Native RMSD: {smina_rmsd:.2f}Å, Time: {result['time']:.1f}s"
@@ -621,10 +778,47 @@ Note: This is a simplified benchmark. For production use:
 
 
 if __name__ == "__main__":
+    from dq_dock_engine.docking.charges import ChargeMethod
+
     parser = argparse.ArgumentParser(description="Real PDB docking benchmark")
     parser.add_argument(
         "--n_complexes", type=int, default=10, help="Number of complexes"
     )
+    parser.add_argument(
+        "--charge_method",
+        type=str,
+        choices=("am1bcc", "gasteiger", "simple"),
+        required=True,
+        help="Charge assignment method for composite scoring",
+    )
+    parser.add_argument(
+        "--n_poses",
+        type=int,
+        default=2000,
+        help="Number of sampled poses for DQ-Dock",
+    )
+    parser.add_argument(
+        "--use_multi_stage",
+        action="store_true",
+        help="Enable the slower multi-stage composite scoring pipeline",
+    )
+    parser.add_argument(
+        "--use_pocket_guided",
+        action="store_true",
+        help="Use pocket-guided pose sampling instead of uniform random sampling",
+    )
     args = parser.parse_args()
 
-    run_benchmark(args.n_complexes)
+    charge_method = {
+        "am1bcc": ChargeMethod.AM1BCC,
+        "gasteiger": ChargeMethod.GASTEIGER,
+        "simple": ChargeMethod.SIMPLE,
+    }[args.charge_method]
+
+    run_benchmark(
+        args.n_complexes,
+        charge_method=charge_method,
+        n_poses=args.n_poses,
+        use_multi_stage=args.use_multi_stage,
+        use_pocket_guided=args.use_pocket_guided,
+    )
