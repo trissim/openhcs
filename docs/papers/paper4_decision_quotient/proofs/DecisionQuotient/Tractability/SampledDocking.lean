@@ -28,6 +28,10 @@ structure SampledActionFamily (A : Type u) [DecidableEq A] where
 abbrev SupportedAction {A : Type u} [DecidableEq A]
     (F : SampledActionFamily A) : Type u := { a : A // a ∈ F.support }
 
+instance {A : Type u} [DecidableEq A] (F : SampledActionFamily A) : Nonempty (SupportedAction F) := by
+  rcases F.nonempty with ⟨a, ha⟩
+  exact ⟨⟨a, ha⟩⟩
+
 /-- Restrict a decision problem to a finite sampled action support. -/
 def restrictedDecisionProblem {A : Type u} {S : Type v} [DecidableEq A]
     (dp : DecisionProblem A S) (F : SampledActionFamily A) :

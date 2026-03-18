@@ -59,6 +59,12 @@ instance (NP NL N : Nat) : Fintype (GridMDState NP NL N) := by
       right_inv := fun _ => rfl }
   exact Fintype.ofEquiv _ E.symm
 
+instance (NP NL N : Nat) : Nonempty (GridMDState NP NL N) := by
+  refine ⟨{
+    proteinAtoms := fun i => { index := i, posGrid := (0, 0, 0) }
+    ligandAtoms := fun i => { index := i, posGrid := (0, 0, 0) }
+  }⟩
+
 noncomputable instance (NP NL N : Nat) : DecidableEq (GridMDState NP NL N) := by
   classical
   infer_instance

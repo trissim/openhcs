@@ -6,6 +6,7 @@
   winner preservation and pruning certificates.
 -/
 import DecisionQuotient.Tractability.CertifiedPruning
+import DecisionQuotient.Tractability.DiscretizedState
 import DecisionQuotient.Tractability.SampledDockingGap
 
 namespace DecisionQuotient
@@ -15,6 +16,7 @@ namespace CoarseApproximation
 open SampledDockingGap
 open CertifiedPruning
 open FiniteTopK
+open Classical
 
 universe u v
 
@@ -22,6 +24,66 @@ universe u v
 def UniformUtilityApprox {A : Type u} {S : Type v}
     (exactDP coarseDP : DecisionProblem A S) (delta : ℝ) : Prop :=
   ∀ a s, |exactDP.utility a s - coarseDP.utility a s| ≤ delta
+
+/-- Exact finite-domain worst-case score discrepancy. This is not yet a physical
+    bound, but it is a rigorous finite-domain radius that always witnesses a
+    uniform approximation statement when both the action and state spaces are
+    finite and nonempty. -/
+noncomputable def scoreDiffs
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S]
+    (exactDP coarseDP : DecisionProblem A S) : Finset ℝ :=
+  (Finset.univ : Finset (A × S)).image
+    (fun p => |exactDP.utility p.1 p.2 - coarseDP.utility p.1 p.2|)
+
+theorem scoreDiffs_nonempty
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (exactDP coarseDP : DecisionProblem A S) :
+    (scoreDiffs exactDP coarseDP).Nonempty := by
+  rcases ‹Nonempty A› with ⟨a⟩
+  rcases ‹Nonempty S› with ⟨s⟩
+  refine ⟨|exactDP.utility a s - coarseDP.utility a s|, Finset.mem_image.mpr ?_⟩
+  exact ⟨(a, s), by simp, by simp⟩
+
+noncomputable def finiteUniformErrorRadius
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (exactDP coarseDP : DecisionProblem A S) : ℝ :=
+  (scoreDiffs exactDP coarseDP).max' (scoreDiffs_nonempty exactDP coarseDP)
+
+theorem abs_diff_le_finiteUniformErrorRadius
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (exactDP coarseDP : DecisionProblem A S)
+    (a : A) (s : S) :
+    |exactDP.utility a s - coarseDP.utility a s| ≤
+      finiteUniformErrorRadius exactDP coarseDP := by
+  classical
+  let diffs : Finset ℝ := scoreDiffs exactDP coarseDP
+  have hmem : |exactDP.utility a s - coarseDP.utility a s| ∈ diffs := by
+    refine Finset.mem_image.mpr ?_
+    exact ⟨(a, s), by simp, by simp⟩
+  rw [finiteUniformErrorRadius]
+  exact Finset.le_max' diffs _ hmem
+
+theorem finiteUniformErrorRadius_witnesses_uniformApprox
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (exactDP coarseDP : DecisionProblem A S) :
+    UniformUtilityApprox exactDP coarseDP (finiteUniformErrorRadius exactDP coarseDP) := by
+  intro a s
+  exact abs_diff_le_finiteUniformErrorRadius exactDP coarseDP a s
+
+/-- Sampled docking specialization: every finite sampled docking problem admits
+    a canonical exact finite-domain discrepancy radius witnessing uniform
+    approximation between its exact and coarse score families. -/
+theorem SampledDocking.SampledDockingProblem.finiteUniformErrorRadius_witnesses
+    {NP NL N : Nat} (prob : SampledDocking.SampledDockingProblem NP NL N) :
+    UniformUtilityApprox prob.exactDecisionProblem prob.coarseDecisionProblem
+      (finiteUniformErrorRadius prob.exactDecisionProblem prob.coarseDecisionProblem) := by
+  exact finiteUniformErrorRadius_witnesses_uniformApprox
+    prob.exactDecisionProblem prob.coarseDecisionProblem
 
 /-- Uniform approximation plus a strict utility gap implies winner preservation. -/
 theorem uniform_approx_implies_opt_invariance
