@@ -44,6 +44,15 @@ class MovieOutput:
     channel_id: str
 
 
+@dataclass(frozen=True)
+class AnimatedGifOutput:
+    """Immutable record of saved animated GIF."""
+
+    well_id: str
+    output_path: Path
+    movie_type: str
+
+
 def load_z_stack(file_paths: Tuple[Path, ...]) -> np.ndarray:
     """
     Load multiple Z-slice files into a 3D stack.
@@ -277,12 +286,13 @@ def create_multi_channel_slice_movie(
         if cc.visible and cc.channel_id in all_channel_stacks
     ]
 
-    global_max = 0
+    channel_maxes_movie = {}
     for cc in active_channels:
         stack = all_channel_stacks[cc.channel_id]
-        global_max = max(global_max, stack.max())
-    if global_max == 0:
-        global_max = 1
+        ch_max = float(stack.max())
+        if ch_max <= 0:
+            ch_max = 1.0
+        channel_maxes_movie[cc.channel_id] = ch_max
 
     first_stack = list(all_channel_stacks.values())[0]
     z_size, y_size, x_size = first_stack.shape
@@ -369,7 +379,8 @@ def create_multi_channel_slice_movie(
                 else:
                     slice_data = stack[:, :, i]
 
-                slice_norm = slice_data.astype(np.float32) / global_max
+                ch_max = channel_maxes_movie[cc.channel_id]
+                slice_norm = np.clip(slice_data.astype(np.float32) / ch_max, 0, 1)
                 rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
 
                 for c in range(3):
@@ -458,3 +469,366 @@ def save_slice_movies_for_well(
         )
 
     return outputs
+
+
+def _build_sync_composite_frame(
+    all_channel_stacks,
+    channel_maxes,
+    z_idx,
+    xy_h,
+    xy_w,
+    z_size,
+    xz_w,
+    yz_w,
+    xz_full_h,
+    total_height,
+    total_width,
+    right_col_width,
+    GAP,
+    z_gap,
+    layout,
+    active_channels,
+):
+    """Build one sync composite frame. Returns uint8 RGB array."""
+    import matplotlib.colors as mcolors
+    from scipy.ndimage import zoom
+
+    xy_rgb = np.zeros((xy_h, xy_w, 3), dtype=np.float32)
+    for cc in active_channels:
+        stack = all_channel_stacks[cc.channel_id]
+        slice_data = stack[z_idx, :, :].astype(np.float32)
+        ch_max = channel_maxes[cc.channel_id]
+        slice_norm = np.clip(slice_data / ch_max, 0, 1)
+        rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
+        for c in range(3):
+            xy_rgb[..., c] += slice_norm * rgb_color[c]
+    xy_rgb = np.clip(xy_rgb, 0, 1)
+
+    xz_rgb = np.zeros((z_size, xz_w, 3), dtype=np.float32)
+    for cc in active_channels:
+        stack = all_channel_stacks[cc.channel_id]
+        slice_data = stack[:, z_idx, :].astype(np.float32)
+        ch_max = channel_maxes[cc.channel_id]
+        slice_norm = np.clip(slice_data / ch_max, 0, 1)
+        rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
+        for c in range(3):
+            xz_rgb[..., c] += slice_norm * rgb_color[c]
+    xz_rgb = np.clip(xz_rgb, 0, 1)
+
+    yz_rgb = np.zeros((z_size, yz_w, 3), dtype=np.float32)
+    for cc in active_channels:
+        stack = all_channel_stacks[cc.channel_id]
+        slice_data = stack[:, :, z_idx].astype(np.float32)
+        ch_max = channel_maxes[cc.channel_id]
+        slice_norm = np.clip(slice_data / ch_max, 0, 1)
+        rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
+        for c in range(3):
+            yz_rgb[..., c] += slice_norm * rgb_color[c]
+    yz_rgb = np.clip(yz_rgb, 0, 1)
+
+    if z_gap > 1.0:
+        factor = int(round(z_gap))
+        remainder = z_gap - factor
+        xz_rgb = np.repeat(xz_rgb, factor, axis=0)
+        yz_rgb = np.repeat(yz_rgb, factor, axis=0)
+        if remainder > 0:
+            xz_rgb = zoom(xz_rgb, (1.0 + remainder / factor, 1.0, 1.0), order=1)
+            yz_rgb = zoom(yz_rgb, (1.0 + remainder / factor, 1.0, 1.0), order=1)
+
+    xz_h_actual = xz_rgb.shape[0]
+    yz_h_actual = yz_rgb.shape[0]
+
+    composite = np.zeros((total_height, total_width, 3), dtype=np.float32)
+
+    xy_y_start = (total_height - xy_h) // 2
+    composite[xy_y_start : xy_y_start + xy_h, :xy_w, :] = xy_rgb
+
+    right_group_start = (total_height - (xz_h_actual + GAP + yz_h_actual)) // 2
+
+    xz_y_start = right_group_start
+    xz_x_start = xy_w + (right_col_width - xz_w) // 2
+    composite[
+        xz_y_start : xz_y_start + xz_h_actual,
+        xz_x_start : xz_x_start + xz_w,
+        :,
+    ] = xz_rgb
+
+    yz_y_start = right_group_start + xz_h_actual + GAP
+    yz_x_start = xy_w + (right_col_width - yz_w) // 2
+    composite[
+        yz_y_start : yz_y_start + yz_h_actual,
+        yz_x_start : yz_x_start + yz_w,
+        :,
+    ] = yz_rgb
+
+    if layout.panel_titles:
+        composite[xy_y_start : xy_y_start + 15, 5:60, :] = 1.0
+        composite[
+            right_group_start : right_group_start + 15,
+            xz_x_start : xz_x_start + 50,
+            :,
+        ] = 1.0
+        composite[yz_y_start : yz_y_start + 15, yz_x_start : yz_x_start + 50, :] = 1.0
+
+    return (composite * 255).astype(np.uint8)
+
+
+def create_synchronized_composite_gif(
+    all_channel_stacks: Dict[str, np.ndarray],
+    output_path: Path,
+    layout,
+    channel_colors,
+    z_gap: float = 1.0,
+    fps: int = 10,
+    frame_step: int = 1,
+) -> Path:
+    """
+    Create a synchronized composite GIF with XY on left, XZ/YZ stacked on right.
+    """
+    import logging
+    import subprocess
+    import tempfile
+    import os
+
+    from .constants import DEFAULT_CHANNEL_COLORS
+
+    sync_logger = logging.getLogger(__name__)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    channel_colors = channel_colors or DEFAULT_CHANNEL_COLORS
+
+    active_channels = [
+        cc
+        for cc in channel_colors
+        if cc.visible and cc.channel_id in all_channel_stacks
+    ]
+
+    channel_maxes = {}
+    for cc in active_channels:
+        stack = all_channel_stacks[cc.channel_id]
+        ch_max = float(stack.max())
+        if ch_max <= 0:
+            ch_max = 1.0
+        channel_maxes[cc.channel_id] = ch_max
+
+    first_stack = list(all_channel_stacks.values())[0]
+    z_size, y_size, x_size = first_stack.shape
+
+    effective_z = z_size // frame_step
+    num_frames = min(effective_z, 120)
+
+    xz_full_h = int(z_size * z_gap) if z_gap > 1.0 else z_size
+    yz_full_h = xz_full_h
+
+    GAP = 50
+
+    xy_h, xy_w = y_size, x_size
+    xz_h, xz_w = xz_full_h, x_size
+    yz_h, yz_w = yz_full_h, y_size
+
+    right_col_width = max(xz_w, yz_w)
+    right_column_height = xz_h + GAP + yz_h
+    total_width = xy_w + right_col_width
+    total_height = max(xy_h, right_column_height)
+
+    output_path = output_path.with_suffix(".gif")
+    sync_logger.info(
+        f"  Writing sync composite GIF to {output_path.name} ({num_frames} frames, "
+        f"{total_width}x{total_height})"
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        palette_path = os.path.join(tmpdir, "palette.png")
+
+        palette_cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{total_width}x{total_height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-vf",
+            # This GIF is always opaque. Reserving a transparent palette entry
+            # reduces the usable color budget and can cause viewer-dependent
+            # black/transparent artifacts in later frames.
+            "palettegen=stats_mode=full:reserve_transparent=0",
+            palette_path,
+        ]
+
+        encode_cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{total_width}x{total_height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-i",
+            palette_path,
+            "-lavfi",
+            "paletteuse",
+            # Encode each frame as a full opaque image. ffmpeg's default GIF
+            # encoder flags use offsetting/transdiff optimization, which can
+            # introduce viewer-dependent corruption in later frames.
+            "-gifflags",
+            "-offsetting-transdiff",
+            "-loop",
+            "0",
+            "-r",
+            str(fps),
+            str(output_path),
+        ]
+
+        palette_proc = subprocess.Popen(
+            palette_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        for i in range(num_frames):
+            if i % 20 == 0 or i == num_frames - 1:
+                sync_logger.info(f"  Building frame {i + 1}/{num_frames}")
+            frame = _build_sync_composite_frame(
+                all_channel_stacks,
+                channel_maxes,
+                z_size - 1 - i * frame_step,
+                xy_h,
+                xy_w,
+                z_size,
+                xz_w,
+                yz_w,
+                xz_full_h,
+                total_height,
+                total_width,
+                right_col_width,
+                GAP,
+                z_gap,
+                layout,
+                active_channels,
+            )
+            palette_proc.stdin.write(frame.tobytes())
+
+        palette_proc.stdin.close()
+        palette_proc.wait()
+        palette_stderr = palette_proc.stderr.read().decode("utf-8", errors="ignore")
+        if palette_proc.returncode != 0:
+            raise RuntimeError(f"palettegen failed: {palette_stderr}")
+
+        sync_logger.info("  Encoding GIF with palette...")
+
+        encode_proc = subprocess.Popen(
+            encode_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+        for i in range(num_frames):
+            if i % 20 == 0 or i == num_frames - 1:
+                sync_logger.info(f"  Encoding frame {i + 1}/{num_frames}")
+            frame = _build_sync_composite_frame(
+                all_channel_stacks,
+                channel_maxes,
+                z_size - 1 - i * frame_step,
+                xy_h,
+                xy_w,
+                z_size,
+                xz_w,
+                yz_w,
+                xz_full_h,
+                total_height,
+                total_width,
+                right_col_width,
+                GAP,
+                z_gap,
+                layout,
+                active_channels,
+            )
+            try:
+                encode_proc.stdin.write(frame.tobytes())
+            except BrokenPipeError:
+                break
+
+        encode_proc.stdin.close()
+        encode_proc.wait()
+        encode_stderr = encode_proc.stderr.read().decode("utf-8", errors="ignore")
+        if encode_proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg paletteuse failed: {encode_stderr}")
+
+    sync_logger.info(
+        f"  Completed sync composite GIF: {output_path.stat().st_size / 1024 / 1024:.1f} MB"
+    )
+    return output_path
+
+
+def save_synchronized_gif_for_well(
+    all_channel_stacks: Dict[str, np.ndarray],
+    well_id: str,
+    output_dir: Path,
+    layout=None,
+    channel_colors=None,
+    z_gap: float = 1.0,
+    fps: int = 10,
+    frame_step: int = 1,
+) -> List[AnimatedGifOutput]:
+    """
+    Save synchronized composite GIF for a well.
+
+    Args:
+        all_channel_stacks: Dict {channel_id: 3D array (Z, Y, X)}
+        well_id: Well identifier for naming
+        output_dir: Directory to save GIF
+        layout: CompositeLayout for layout parameters
+        channel_colors: Color mappings
+        z_gap: Vertical stretch factor
+        fps: Frames per second
+        frame_step: Step through XY frames
+
+    Returns:
+        List of AnimatedGifOutput records
+    """
+    from .constants import DEFAULT_CHANNEL_COLORS, CompositeLayout
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    layout = layout or CompositeLayout()
+
+    filename = f"{well_id}_composite_sync.gif"
+    output_path = output_dir / filename
+
+    actual_path = create_synchronized_composite_gif(
+        all_channel_stacks,
+        output_path,
+        layout=layout,
+        channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
+        z_gap=z_gap,
+        fps=fps,
+        frame_step=frame_step,
+    )
+
+    return [
+        AnimatedGifOutput(
+            well_id=well_id,
+            output_path=actual_path,
+            movie_type="composite_sync",
+        )
+    ]

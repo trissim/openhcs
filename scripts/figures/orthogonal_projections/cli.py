@@ -64,11 +64,13 @@ from .discovery import (
     get_microscope_handler,
 )
 from .io_handler import (
+    AnimatedGifOutput,
     MovieOutput,
     ProjectionOutput,
     load_z_stack,
     save_all_projections,
     save_slice_movies_for_well,
+    save_synchronized_gif_for_well,
 )
 from .composer import (
     create_multi_channel_composite,
@@ -107,6 +109,7 @@ class ProcessingConfig:
     save_individual_projections: bool = True
     create_composites: bool = True
     create_movies: bool = False
+    create_sync_gifs: bool = False
     movie_types: Tuple[str, ...] = ("xy", "xz", "yz")
     movie_fps: int = 10
     movie_bit_depth: int = 8
@@ -128,6 +131,7 @@ class WellResult:
     success: bool
     composite_path: Optional[Path] = None
     movie_outputs: List[MovieOutput] = field(default_factory=list)
+    sync_gif_outputs: List[AnimatedGifOutput] = field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -141,6 +145,7 @@ class ProcessingResult:
     outputs: List[ProjectionOutput] = field(default_factory=list)
     composite_outputs: List[Path] = field(default_factory=list)
     movie_outputs: List[MovieOutput] = field(default_factory=list)
+    sync_gif_outputs: List[AnimatedGifOutput] = field(default_factory=list)
     mosaic_outputs: List[Path] = field(default_factory=list)
 
 
@@ -188,7 +193,12 @@ def process_well_all_channels(
     z_paths_by_channel: Dict[WellChannelKey, Tuple[Path, ...]],
     config: ProcessingConfig,
     labeler: FigureLabeler,
-) -> Tuple[Dict[str, Dict[str, np.ndarray]], Optional[Path], List[MovieOutput]]:
+) -> Tuple[
+    Dict[str, Dict[str, np.ndarray]],
+    Optional[Path],
+    List[MovieOutput],
+    List[AnimatedGifOutput],
+]:
     """
     Process all channels for a single well.
 
@@ -200,6 +210,7 @@ def process_well_all_channels(
     all_projections = {}
     all_z_stacks = {}
     movie_outputs = []
+    sync_gif_outputs = []
 
     for channel_key in channel_keys:
         if channel_key.well_id != well_id:
@@ -266,6 +277,20 @@ def process_well_all_channels(
         for mo in movie_outputs:
             logger.info(f"  Saved movie: {mo.output_path}")
 
+    if config.create_sync_gifs and all_z_stacks:
+        sync_gif_dir = config.output_dir / "sync_gifs"
+        sync_gif_outputs = save_synchronized_gif_for_well(
+            all_z_stacks,
+            well_id,
+            sync_gif_dir,
+            layout=CompositeLayout(z_gap=config.z_gap, z_aspect=config.z_aspect),
+            channel_colors=config.channel_colors,
+            z_gap=config.z_gap,
+            fps=config.movie_fps,
+        )
+        for sg in sync_gif_outputs:
+            logger.info(f"  Saved sync GIF: {sg.output_path}")
+
     for proj_dict in all_projections.values():
         for arr in proj_dict.values():
             del arr
@@ -276,7 +301,7 @@ def process_well_all_channels(
     all_z_stacks.clear()
     gc.collect()
 
-    return all_projections, composite_path, movie_outputs
+    return all_projections, composite_path, movie_outputs, sync_gif_outputs
 
 
 def _process_well_worker(
@@ -308,7 +333,13 @@ def _process_well_worker(
     from .composer import create_multi_channel_composite, save_composite_figure
     from .constants import ChannelColorMapping, CompositeLayout, DEFAULT_CHANNEL_COLORS
     from .discovery import WellChannelKey
-    from .io_handler import MovieOutput, load_z_stack, save_slice_movies_for_well
+    from .io_handler import (
+        AnimatedGifOutput,
+        MovieOutput,
+        load_z_stack,
+        save_slice_movies_for_well,
+        save_synchronized_gif_for_well,
+    )
     from .labeling import get_labeler
 
     try:
@@ -327,6 +358,7 @@ def _process_well_worker(
         output_dir = PP(config_dict["output_dir"])
         create_composites = config_dict.get("create_composites", True)
         create_movies = config_dict.get("create_movies", False)
+        create_sync_gifs = config_dict.get("create_sync_gifs", False)
         movie_types = tuple(config_dict.get("movie_types", ["xy", "xz", "yz"]))
         movie_fps = config_dict.get("movie_fps", 10)
         movie_bit_depth = config_dict.get("movie_bit_depth", 8)
@@ -412,11 +444,25 @@ def _process_well_worker(
                 channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
             )
 
+        sync_gif_outputs = []
+        if create_sync_gifs and all_z_stacks:
+            sync_gif_dir = output_dir / "sync_gifs"
+            sync_gif_outputs = save_synchronized_gif_for_well(
+                all_z_stacks,
+                well_id,
+                sync_gif_dir,
+                layout=CompositeLayout(z_gap=z_gap, z_aspect=z_aspect),
+                channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
+                z_gap=z_gap,
+                fps=movie_fps,
+            )
+
         return WellResult(
             well_id=well_id,
             success=True,
             composite_path=composite_path,
             movie_outputs=movie_outputs,
+            sync_gif_outputs=sync_gif_outputs,
         )
 
     except Exception as e:
@@ -479,6 +525,7 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
             "output_dir": str(config.output_dir),
             "create_composites": config.create_composites,
             "create_movies": config.create_movies,
+            "create_sync_gifs": config.create_sync_gifs,
             "movie_types": config.movie_types,
             "movie_fps": config.movie_fps,
             "movie_bit_depth": config.movie_bit_depth,
@@ -525,6 +572,7 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
                             composite_paths[well_id] = well_result.composite_path
                             result.composite_outputs.append(well_result.composite_path)
                         result.movie_outputs.extend(well_result.movie_outputs)
+                        result.sync_gif_outputs.extend(well_result.sync_gif_outputs)
                         result.processed_wells += 1
                         logger.info(f"  Completed {well_id}")
                     else:
@@ -538,8 +586,10 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
             logger.info(f"Processing well {well_id} ({i}/{len(wells)})")
 
             try:
-                _, composite_path, movie_outputs = process_well_all_channels(
-                    well_id, well_keys, z_paths_by_channel, config, labeler
+                _, composite_path, movie_outputs, sync_gif_outputs = (
+                    process_well_all_channels(
+                        well_id, well_keys, z_paths_by_channel, config, labeler
+                    )
                 )
 
                 if composite_path:
@@ -547,6 +597,7 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
                     result.composite_outputs.append(composite_path)
 
                 result.movie_outputs.extend(movie_outputs)
+                result.sync_gif_outputs.extend(sync_gif_outputs)
 
                 result.processed_wells += 1
 
@@ -698,6 +749,12 @@ def main():
     )
 
     parser.add_argument(
+        "--create-sync-gifs",
+        action="store_true",
+        help="Create synchronized composite GIFs (XY left, XZ/YZ right)",
+    )
+
+    parser.add_argument(
         "--movie-types",
         nargs="+",
         default=["xy", "xz", "yz"],
@@ -777,6 +834,7 @@ def main():
         save_individual_projections=not args.no_individual_projections,
         create_composites=not args.no_composites,
         create_movies=args.create_movies,
+        create_sync_gifs=args.create_sync_gifs,
         movie_types=tuple(args.movie_types),
         movie_fps=args.movie_fps,
         movie_bit_depth=args.movie_bit_depth,
@@ -804,6 +862,7 @@ def main():
         logger.info(f"  Failed wells: {', '.join(result.failed_wells)}")
     logger.info(f"  Composites: {len(result.composite_outputs)}")
     logger.info(f"  Movies: {len(result.movie_outputs)}")
+    logger.info(f"  Sync GIFs: {len(result.sync_gif_outputs)}")
     logger.info(f"  Mosaics: {len(result.mosaic_outputs)}")
 
 
