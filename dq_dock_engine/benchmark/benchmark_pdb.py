@@ -95,15 +95,56 @@ def download_pdb(pdb_id: str, cache_dir: Path) -> Path:
 
 
 def prepare_protein(pdb_path: Path) -> Path:
-    """Prepare protein for Vina (add hydrogens, etc)."""
-    # Simplified: just return the PDB for now
-    # Real docking would use prepare_receptor4.py
-    return pdb_path
+    """Prepare protein for Vina - use smina which handles PDB directly.
+    
+    Extracts only ATOM records (protein) from the PDB file.
+    """
+    protein_path = pdb_path.parent / f"{pdb_path.stem}_protein.pdb"
+    if protein_path.exists():
+        return protein_path
+    
+    with open(pdb_path) as f_in:
+        with open(protein_path, "w") as f_out:
+            for line in f_in:
+                if line.startswith("ATOM"):
+                    f_out.write(line)
+    
+    return protein_path
 
 
-def prepare_ligand(ligand_path: Path) -> Path:
-    """Prepare ligand for Vina."""
-    # Simplified
+def prepare_ligand(pdb_path: Path) -> Path:
+    """Prepare ligand for Vina - extract HETATM records from PDB file.
+    
+    Raises error if no ligand found in the PDB.
+    """
+    ligand_path = pdb_path.parent / f"{pdb_path.stem}_ligand.pdb"
+    
+    # Check if already extracted
+    if ligand_path.exists():
+        return ligand_path
+    
+    # Extract HETATM records (ligands, not water)
+    ligand_lines = []
+    with open(pdb_path) as f:
+        for line in f:
+            if line.startswith("HETATM"):
+                # Skip waters (HOH)
+                if "HOH" not in line[17:20]:
+                    ligand_lines.append(line)
+            elif line.startswith("ATOM"):
+                # Some ligands are in ATOM records
+                resname = line[17:20]
+                # Common drug/ligand residues
+                if resname not in ["ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", 
+                                   "GLY", "HIS", "ILE", "LEU", "LYS", "MET", "PHE", 
+                                   "PRO", "SER", "THR", "TRP", "TYR", "VAL"]:
+                    ligand_lines.append(line)
+    
+    if not ligand_lines:
+        raise ValueError(f"No ligand found in {pdb_path}")
+    
+    with open(ligand_path, "w") as f:
+        f.writelines(ligand_lines)
     return ligand_path
 
 
@@ -154,14 +195,14 @@ def check_vina() -> Optional[str]:
     """Find Vina or SMINA binary."""
     import shutil
 
-    # Check common locations
-    for name in ["vina", "smina", "autodock_vina"]:
+    # Check common locations - prefer smina over vina
+    for name in ["smina", "vina", "autodock_vina"]:
         path = shutil.which(name)
         if path:
             return path
 
     # Check local directory
-    for name in ["vina", "smina"]:
+    for name in ["smina", "vina"]:
         local = Path(f"./{name}")
         if local.exists():
             return str(local.absolute())
@@ -175,8 +216,8 @@ def run_vina(
     ligand: Path,
     center: tuple,
     size: tuple = (20, 20, 20),
-    exhaustiveness: int = 8,
-    n_models: int = 9,
+    exhaustiveness: int = 1,  # Reduced for faster benchmarking
+    n_models: int = 3,  # Reduced for faster benchmarking
 ) -> Dict:
     """Run Vina docking."""
     import tempfile
@@ -218,16 +259,26 @@ def run_vina(
         if result.returncode != 0:
             return {"success": False, "error": result.stderr[:200], "time": elapsed}
 
-        # Parse best affinity
+        # Parse best affinity - look for mode line after results header
+        # Format: "mode |   affinity | dist from best mode" followed by data
         best_affinity = None
+        in_results = False
         for line in result.stdout.split("\n"):
-            if "1" in line and "kcal/mol" in line:
+            # Skip until we see the results header
+            if "mode |" in line and "affinity" in line:
+                in_results = True
+                continue
+            # Skip separator line
+            if in_results and line.startswith("-----"):
+                continue
+            # Parse data lines (start with digit, have affinity value)
+            if in_results and line.strip() and line[0].isdigit():
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
                         best_affinity = float(parts[1])
                         break
-                    except:
+                    except ValueError:
                         pass
 
         return {
@@ -378,23 +429,32 @@ For now, we'll run DQ-Dock only on PDB files.
         for cx in complexes:
             print(f"\n{cx['pdb_id']}...", flush=True)
 
-            # For Vina, we need separate protein and ligand files
-            # Simplified: use the whole PDB as receptor
+            # Prepare separate protein and ligand files
+            receptor_pdb = prepare_protein(cx["path"])
+            ligand_pdb = prepare_ligand(cx["path"])
+            
+            print(f"  Receptor: {receptor_pdb.name}", flush=True)
+            print(f"  Ligand: {ligand_pdb.name}", flush=True)
+
+            # Run Vina docking
             result = run_vina(
                 vina_path,
-                cx["path"],  # receptor
-                cx["path"],  # ligand (simplified - would need separate)
+                str(receptor_pdb),  # receptor (PDB)
+                str(ligand_pdb),    # ligand (PDB)
                 cx["center"],
             )
 
             vina_results.append(result)
 
-            if result["success"]:
-                print(
-                    f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Time: {result['time']:.1f}s"
-                )
-            else:
-                print(f"  ❌ {result.get('error', 'failed')}")
+            # Must have successfully parsed affinity
+            if not result["success"] or result["best_affinity"] is None:
+                error_msg = result.get("error", "Failed to parse SMINA output")
+                print(f"  ❌ {error_msg}")
+                continue
+
+            print(
+                f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Time: {result['time']:.1f}s"
+            )
 
     # Summary
     print("\n" + "=" * 70, flush=True)
