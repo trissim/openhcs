@@ -82,6 +82,23 @@ theorem ljCutoffErrorRadius_spec {A : Type u} {S : Type v}
   unfold ljCutoffErrorRadius
   exact Finset.le_max' diffs _ hMem
 
+/-- Explicit cutoff-side coefficient obtained by normalizing the finite-domain
+    LJ cutoff error radius by the lattice tail term at the chosen cutoff. -/
+noncomputable def ljCutoffTailCoefficient {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ) : ℝ :=
+  ljCutoffErrorRadius distance ε σ rc / latticeTailSum 6 rc
+
+theorem ljCutoffErrorRadius_eq_tailCoefficient_mul
+    {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ)
+    (hTail : latticeTailSum 6 rc ≠ 0) :
+    ljCutoffErrorRadius distance ε σ rc =
+      ljCutoffTailCoefficient distance ε σ rc * latticeTailSum 6 rc := by
+  unfold ljCutoffTailCoefficient
+  field_simp [hTail]
+
 /-- Concrete uniform-approximation theorem for exact LJ versus cutoff LJ on a
     finite sampled domain. -/
 theorem exact_vs_cutoff_lj_uniformApprox {A : Type u} {S : Type v}
@@ -94,6 +111,17 @@ theorem exact_vs_cutoff_lj_uniformApprox {A : Type u} {S : Type v}
   intro a s
   simpa [exactLJDecisionProblem, cutoffLJDecisionProblem] using
     ljCutoffErrorRadius_spec distance ε σ rc a s
+
+theorem exact_vs_cutoff_lj_uniformApprox_with_tailCoefficient {A : Type u} {S : Type v}
+    [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
+    (distance : A → S → ℝ) (ε σ rc : ℝ)
+    (hTail : latticeTailSum 6 rc ≠ 0) :
+    UniformUtilityApprox
+      (exactLJDecisionProblem distance ε σ)
+      (cutoffLJDecisionProblem distance ε σ rc)
+      (ljCutoffTailCoefficient distance ε σ rc * latticeTailSum 6 rc) := by
+  rw [← ljCutoffErrorRadius_eq_tailCoefficient_mul distance ε σ rc hTail]
+  exact exact_vs_cutoff_lj_uniformApprox distance ε σ rc
 
 theorem exact_vs_cutoff_lj_opt_invariance {A : Type u} {S : Type v}
     [Fintype A] [Fintype S] [Nonempty A] [Nonempty S]
