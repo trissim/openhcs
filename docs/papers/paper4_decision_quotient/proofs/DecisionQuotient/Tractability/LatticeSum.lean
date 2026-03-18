@@ -55,10 +55,10 @@ theorem point_in_dyadicShell_bound (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ 
     · exact hRpos
   have hnorm_pos : 0 < latticeNorm n := by linarith [hlt]
   -- monotonicity for integer powers: if 0 ≤ a ≤ b then a^6 ≤ b^6
-  have hpow6 : ((2 ^ k : ℝ) * R) ^ 6 ≤ latticeNorm n ^ 6 := by
-    apply pow_le_pow_of_le_one; -- fallback to a generic lemma; if name differs we'll refine below
-    · linarith
-    · linarith
+  have hbase_le : (2 : ℝ) ^ k * R ≤ latticeNorm n := by linarith [hlt]
+  have hbase_nonneg : 0 ≤ (2 : ℝ) ^ k * R := by positivity
+  have hpow6 : (((2 : ℝ) ^ k * R) ^ 6) ≤ latticeNorm n ^ 6 := by
+    exact pow_le_pow_left hbase_nonneg hbase_le 6
   -- take reciprocals: a ≤ b and a,b>0 implies 1/b ≤ 1/a, so 1/(norm^6) ≤ 1/((2^k R)^6)
   exact one_div_le_one_div_of_le (pow_pos hnorm_pos 6) (pow_pos hpos_base 6) hpow6
 
@@ -135,16 +135,106 @@ theorem latticeTailSum6_le_M_div_R3 (R : ℝ) (hR : 1 ≤ R) :
   have : latticeTailSum 6 R = ∑' k, ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ) := by
     -- every nonzero lattice point with norm > R belongs to exactly one dyadic shell
     -- Decompose the sum by grouping indices by their shell index k
-    have : ∀ n : ℤ × ℤ × ℤ, (let norm := latticeNorm n in if R < norm then
-        ∃ k, (2 ^ k : ℝ) * R < norm ∧ norm ≤ (2 ^ (k + 1) : ℝ) * R else True) := by
-      intro n
-      simp only [latticeNorm]
-      by_cases h : R < latticeNorm n
-      · have : 0 < latticeNorm n := by linarith [h]
-        -- choose k such that 2^k * R < norm ≤ 2^(k+1) * R; at least one exists by iterating
-        -- existence: take k = floor(log2 (norm / R)) when R>0; here R≥1 so straightforward
-        admit
-      · simp
+    -- First prove existence: each n with R < norm lies in some dyadic shell
+    have exists_shell : ∀ n, R < latticeNorm n → ∃ k, n ∈ dyadicShell R k := by
+      intro n hn
+      have hRpos : 0 < R := by linarith [hR]
+      have hnorm_pos : 0 < latticeNorm n := by linarith [hn]
+      let x := latticeNorm n / R
+      have hx_gt1 : 1 < x := by
+        calc
+          1 = R / R := by field_simp [hRpos.ne']
+          _ < latticeNorm n / R := by simpa using hn
+      -- find m with x ≤ 2^m using `Nat.exists_pow_ge` style lemma; implement directly
+       -- choose the least m with x ≤ 2^m using Nat.find (classical existence above)
+       have hex : ∃ m : ℕ, x ≤ (2 : ℝ) ^ m := by
+         -- use unboundedness of powers of 2; produce any witness by Archimedean argument
+         have : (2 : ℝ) > 1 := by norm_num
+         have hxpos : 0 < x := by linarith [hx_gt1]
+         have := Real.pow_unbounded_of_gt_one (by norm_num : 2 > 1) (by linarith : 0 < x)
+         exact this
+       let m := Nat.find hex
+       have hm : x ≤ (2 : ℝ) ^ m := Nat.find_spec hex
+       have hm_min : ∀ j, j < m → ¬(x ≤ (2 : ℝ) ^ j) := Nat.find_min' hex
+       -- prove m ≥ 1 because x > 1
+       have m_ge_one : 1 ≤ m := by
+         by_contra H
+         have hm0 : m = 0 := Nat.eq_zero_of_not_pos (not_le.mp H)
+         have : x ≤ (2 : ℝ) ^ 0 := by simpa [hm0] using hm
+         simp at this
+         linarith
+       let k := m - 1
+       use k
+       simp [dyadicShell]
+       -- show latticeNorm n ≤ 2^(k+1) * R
+       have hk1 : k + 1 = m := by simpa [k] using (Nat.sub_add_cancel m_ge_one)
+       have hle : latticeNorm n ≤ (2 : ℝ) ^ (k + 1) * R := by
+         calc
+           latticeNorm n = x * R := by field_simp [hRpos.ne']
+           _ ≤ (2 : ℝ) ^ m * R := by linarith [hm]
+           _ = (2 : ℝ) ^ (k + 1) * R := by simp [hk1]
+       -- show (2^k * R) < latticeNorm n using minimality of m
+       have hk_lt : ¬(x ≤ (2 : ℝ) ^ k) := by
+         apply (hm_min k)
+         have : k < m := by
+           have : k + 1 = m := hk1
+           simpa using Nat.lt_succ_iff.mp (by simp [k])
+           -- fallback: use Nat.sub_lt m (_)
+         exact this
+       have hlt : (2 : ℝ) ^ k < x := by linarith [not_le_of_not hk_lt]
+       have hltR : (2 : ℝ) ^ k * R < latticeNorm n := by
+         calc
+           (2 : ℝ) ^ k * R < x * R := by linarith
+           _ = latticeNorm n := by field_simp [hRpos.ne']
+       split
+       exact ⟨hltR, hle⟩
+    -- Using the existence lemma we can upper bound the tail by summing shell sums
+    have cover_sum : latticeTailSum 6 R ≤ ∑' k, ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ) := by
+      -- Every term of the original tsum is nonnegative, and each contributing index
+      -- (those with R < norm) appears in some dyadic shell by `exists_shell`.
+      -- We hence compare the tsum over ℤ^3 with the double nonnegative series over k and points in the shell.
+      have h_nonneg : ∀ n, 0 ≤ (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0) := by
+        intro n
+        split_ifs <;> positivity
+      have eq_term : ∀ n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0) ≤
+          ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) := by
+        intro n
+        by_cases h : R < latticeNorm n
+        · rcases exists_shell n h with ⟨k0, hk0⟩
+          have : ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) ≥
+            (if n ∈ dyadicShell R k0 then 1 / (latticeNorm n ^ 6) else 0) := by apply tsum_ge_of_nonneg; intro; positivity
+          calc
+            (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)
+                = 1 / (latticeNorm n ^ 6) := by simp [h]
+            _ = (if n ∈ dyadicShell R k0 then 1 / (latticeNorm n ^ 6) else 0) := by simp [hk0]
+            _ ≤ ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) := this
+        · -- if not contributing, both sides are 0
+          simp [h]
+      -- Now sum (tsum) the pointwise inequality over all n using `tsum_mono'` for nonnegatives
+      have : (∑' n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)) ≤
+          (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by
+        apply tsum_le_tsum
+        · intro n; exact h_nonneg n
+        intro n; exact (eq_term n)
+      -- Fubini (nonnegative) allows swapping the tsums and dropping indicator since inner sum is finite
+      have swap : (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) =
+        (∑' k, ∑' n, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by
+        apply tsum_comm
+        intro; positivity
+      calc
+        latticeTailSum 6 R = (∑' n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)) := rfl
+        _ ≤ (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := this
+        _ = (∑' k, ∑' n, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by rw [swap]
+        _ = (∑' k, ∑ n in dyadicShell R k, 1 / (latticeNorm n ^ 6)) := by
+          congr
+          funext k
+          -- inner tsum over n reduces to finite sum over `dyadicShell R k` because the indicator is nonzero only on that finite set
+          have hfin : summable fun n => (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) := by
+            apply summable_of_nonneg_of_tendsto_nat_add (fun _ => by positivity)
+            -- finite support → summable; use `tsum_eq_sum_of_finite` style; but here we simply rely on `tsum` equals `Finset.sum` for finite support
+            admit
+          admit
+    -- now apply shell bounds and geometric series
     admit
   -- finish by applying the shell bound and the geometric-series constant
   admit
