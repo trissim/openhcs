@@ -35,7 +35,6 @@ class VelocityVerlet(Integrator):
     def step(self, state: MDState, force_fn: Callable, dt: float) -> MDState:
         return _velocity_verlet_step(state, force_fn, dt)
 
-@jit
 def _velocity_verlet_step(state: MDState, force_fn: Callable, dt: float) -> MDState:
     q, v, m = state.positions, state.velocities, state.masses[:, None]
 
@@ -65,7 +64,6 @@ class Langevin(Integrator):
             state, force_fn, dt, self.gamma, self.temperature, self.kb
         )
 
-@jit
 def _langevin_step(
     state: MDState, force_fn: Callable, dt: float,
     gamma: float, temperature: float, kb: float
@@ -99,14 +97,12 @@ def _langevin_step(
 
 # --- Force computation (from ArrayDSL.lean::computeForces) ---
 
-@jit
 def compute_forces(potential_fn: Callable, positions: jnp.ndarray) -> jnp.ndarray:
     """F = -∇U. Direct translation of ArrayDSL.lean::computeForces."""
     return -grad(potential_fn)(positions)
 
 # --- Hamiltonian (from SymplecticIntegrator.lean::hamiltonian) ---
 
-@jit
 def hamiltonian(potential_fn: Callable, state: MDState) -> float:
     """H(q,p) = KE + PE. Direct translation of SymplecticIntegrator.lean::hamiltonian."""
     kinetic = 0.5 * jnp.sum(state.velocities ** 2 * state.masses[:, None])
