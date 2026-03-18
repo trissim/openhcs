@@ -2,11 +2,22 @@
 """
 Real PDB-based Docking Benchmark
 
-Downloads actual PDB complexes and runs DQ-Dock vs Vina comparison.
-Requires: Vina binary installed manually (conda install -c conda-forge vina)
+Downloads famous drug-target complexes and runs DQ-Dock vs SMINA comparison.
+These are well-studied, difficult targets where docking actually matters.
+
+Famous drug targets:
+- HIV-1 Protease: Major AIDS drug target
+- CDK2 Kinase: Cancer target
+- SARS-CoV-2 Mpro: COVID-19 drug target
+- Carbonic anhydrase: Anti-glaucoma, altitude sickness
+- Thrombin: Blood thinner target
+- BACE-1: Alzheimer's target
 
 Usage:
     python benchmark_pdb.py --n_complexes 10
+
+Requirements:
+    smina: yay -S smina-bin
 """
 
 import argparse
@@ -26,18 +37,27 @@ import numpy as np
 from dataclasses import dataclass
 
 
-# PDB IDs for testing (small, diverse set)
+# Famous, difficult drug targets where docking matters
+# These are well-studied complexes that people actually care about
 TEST_PDB_IDS = [
-    "1ah7",  # Small protein-ligand
-    "1aj7",
-    "1akk",
-    "1al5",
-    "1am0",
-    "1an2",
-    "1ao7",
-    "1aq4",
-    "1av3",
-    "1ay7",
+    # HIV-1 Protease - famous drug target, challenging docking
+    "1hvr",  # HIV-1 protease with inhibitor
+    "1ajx",  # HIV-1 protease
+    # Kinases - largest drug target class, difficult
+    "1jvp",  # CDK2 kinase
+    "1ywr",  # AKT kinase
+    # Carbonic anhydrase - tight binding, important
+    "1z00",  # Carbonic anhydrase II
+    # SARS-CoV-2 main protease - COVID drug target
+    "6lu7",  # Mpro with inhibitor
+    # Thrombin - important drug target
+    "1ppb",  # Thrombin
+    # BACE - Alzheimer's drug target, challenging
+    "4pei",  # BACE-1
+    # Factor VII - important for blood clotting
+    "1fak",  # Factor VIIa
+    # Tankyrase - cancer target
+    "3t0i",  # Tankyrase
 ]
 
 
