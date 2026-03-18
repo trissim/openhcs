@@ -8,6 +8,7 @@
 -/
 import DecisionQuotient.Tractability.MolecularSrank
 import DecisionQuotient.Tractability.SampledDocking
+import DecisionQuotient.Information
 
 namespace DecisionQuotient
 namespace Tractability
@@ -195,6 +196,37 @@ theorem sampled_small_pocket_low_srank
       (restrictedDecisionProblem prob.toDecisionProblem samples) ≤ 3 * K + 3 * L := by
   have hBase := sampled_md_srank_bound prob samples aStar hStrictAll hBounded hCapture
   omega
+
+/-- Generic sufficiency bridge: once one proves that every relevant coordinate
+    of the sampled restricted problem lies in `potentialRelevantCoords`, the
+    retained coordinate set is sufficient provided the sampled state
+    representation supports the usual `ProductSpace` machinery and the full
+    coordinate projection is injective. This isolates the remaining work to a
+    compatibility theorem between the chosen `ProductSpace` instance and the
+    cutoff-locality coordinate space. -/
+theorem sampled_potentialRelevantCoords_sufficient_of_relevance_subset
+    (prob : MDBindingProblem)
+    (samples : SampledActionFamily MDAction)
+    [ProductSpace MDState (numMDCoordinates prob)]
+    [DecidableEq (Fin (numMDCoordinates prob))]
+    (hRelevantSubset : ∀ i,
+      (restrictedDecisionProblem prob.toDecisionProblem samples).isRelevant i →
+      i ∈ potentialRelevantCoords prob)
+    (hinj : ∀ s s' : MDState,
+      (∀ i : Fin (numMDCoordinates prob), CoordinateSpace.proj s i = CoordinateSpace.proj s' i) → s = s') :
+    (restrictedDecisionProblem prob.toDecisionProblem samples).isSufficient
+      (potentialRelevantCoords prob) := by
+  classical
+  let dp := restrictedDecisionProblem prob.toDecisionProblem samples
+  let R : Finset (Fin (numMDCoordinates prob)) := Finset.univ.filter dp.isRelevant
+  have hRelevantSuff : dp.isSufficient R := by
+    simpa [R] using relevantSet_isSufficient dp hinj
+  apply dp.sufficient_superset R (potentialRelevantCoords prob) hRelevantSuff
+  intro i hi
+  have hiR : i ∈ R := hi
+  have hiR' : i ∈ Finset.univ ∧ dp.isRelevant i := by
+    simpa [R, Finset.mem_filter] using hiR
+  exact hRelevantSubset i hiR'.2
 
 end SampledDockingCutoff
 end Tractability

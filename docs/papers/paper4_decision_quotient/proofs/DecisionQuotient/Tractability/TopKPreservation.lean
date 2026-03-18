@@ -6,6 +6,7 @@
   under uniform score approximation.
 -/
 import DecisionQuotient.Tractability.FiniteTopK
+import DecisionQuotient.Tractability.RankingPreservation
 import Mathlib.Data.Real.Basic
 import Mathlib.Tactic
 
@@ -14,6 +15,7 @@ namespace Tractability
 namespace TopKPreservation
 
 open FiniteTopK
+open RankingPreservation
 
 variable {A : Type*} [Fintype A] [DecidableEq A]
 
@@ -35,6 +37,22 @@ theorem exact_topK_subset_survivorSet_of_margin
   have hExactMargin : tau + delta ≤ uExact a := hMargin a haTop
   rw [mem_survivorSet_iff]
   linarith
+
+/-- Boundary-gap specialization of the conservative survivor theorem. -/
+theorem topK_preserved_of_boundary_gap
+    (uExact uCoarse : A → ℝ)
+    [Nonempty A]
+    (k : Nat)
+    (hk : 0 < k)
+    (tau delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hGap : delta ≤ BoundaryGap uExact k hk tau) :
+    topKSet uExact k ⊆ survivorSet uCoarse tau := by
+  apply exact_topK_subset_survivorSet_of_margin uExact uCoarse k tau delta hApprox
+  intro a ha
+  have hBoundary : tau + delta ≤ kthUtility uExact k hk :=
+    threshold_plus_delta_le_of_boundaryGap uExact k hk tau delta hGap
+  exact le_trans hBoundary (kthUtility_le_of_mem_topKSet uExact k hk a ha)
 
 /-- If an exact score lies at least `delta` below threshold `tau`, then the
     coarse score also lies below `tau` and the action is safely excluded from

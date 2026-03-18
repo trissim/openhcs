@@ -120,13 +120,13 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/FiniteTopK.lean`
 
 - [x] Decide the tie policy
-- [ ] Define `topKList`
-- [ ] Define `topKSet`
-- [ ] Define `kthUtility`
+- [x] Define `topKList`
+- [x] Define `topKSet`
+- [x] Define `kthUtility`
 - [x] Define `survivorSet`
 - [x] Prove cardinality and membership lemmas
 - [x] Prove a threshold exclusion lemma
-- [ ] Prove a threshold survivor containment lemma
+- [x] Prove a threshold survivor containment lemma
 
 Design checklist:
 
@@ -144,7 +144,7 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/RankingPreservation.lean`
 
 - [x] Define `PairwiseGap`
-- [ ] Define boundary-gap helper objects
+- [x] Define boundary-gap helper objects
 - [x] Prove `pairwise_order_preserved_of_uniform_error`
 - [x] Prove boundary-order corollaries relevant to top-k
 
@@ -165,7 +165,7 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/TopKPreservation.lean`
 
 - [x] State `coarse_survivor_contains_exact_topK`
-- [ ] State `topK_preserved_of_boundary_gap`
+- [x] State `topK_preserved_of_boundary_gap`
 - [x] State exclusion lemmas for actions below the exact kth boundary by more than `2 * delta`
 - [x] Package the theorems in a survivor-containment form suitable for runtime use
 
@@ -185,19 +185,19 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CoarseApproximation.lean`
 
 - [x] Define `UniformUtilityApprox`
-- [ ] Choose the first exact/coarse scorer pair
-- [ ] Prove a finite-domain uniform approximation theorem
-- [ ] Feed that theorem into Stage 4 and Stage 7 corollaries
+- [x] Choose the first exact/coarse scorer pair
+- [x] Prove a finite-domain uniform approximation theorem
+- [x] Feed that theorem into Stage 4 and Stage 7 corollaries
 
 Priority order:
 
-1. [ ] Standard LJ vs cutoff LJ
+1. [x] Standard LJ vs cutoff LJ
 2. [ ] Standard LJ vs softened LJ on bounded sampled domains
 3. [ ] Coulomb tail approximation only after the LJ case works
 
 Acceptance gate:
 
-- [ ] One actual scorer pair has a proved `UniformUtilityApprox`
+- [x] One actual scorer pair has a proved `UniformUtilityApprox`
 
 ---
 
@@ -206,15 +206,15 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/SampledDockingCutoff.lean`
 
 - [ ] Define outside-cutoff coordinates in the sampled representation
-- [ ] Prove sampled irrelevance from `md_relevant_only_if_within_cutoff`
+- [x] Prove sampled irrelevance from `md_relevant_only_if_within_cutoff`
 - [ ] Combine with `sufficient_erase_irrelevant'`
 - [ ] Prove a retained-coordinate sufficiency theorem for sampled docking
 
 Dependency checklist:
 
-- [ ] `GridMDState` `ProductSpace` exists
-- [ ] sampled docking wrapper exists
-- [ ] the molecular cutoff theorem is imported cleanly
+- [x] `GridMDState` `ProductSpace` exists
+- [x] sampled docking wrapper exists
+- [x] the molecular cutoff theorem is imported cleanly
 
 Acceptance gate:
 
@@ -227,7 +227,7 @@ Acceptance gate:
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CertifiedPruning.lean`
 
 - [x] Define `PruningCertificate`
-- [ ] Define `CertifiedSurvivorSet`
+- [x] Define `CertifiedSurvivorSet`
 - [x] Package Stage 7 survivor containment as a certificate
 - [x] Add at least one example certificate theorem for sampled docking
 
@@ -263,7 +263,7 @@ Acceptance gate:
 
 ### 14. Remove `lattice_sum_converges` axiom
 
-- [ ] Replace the axiom in `Tractability/LatticeSum.lean` with a proof
+- [x] Replace the axiom in `Tractability/LatticeSum.lean` with a proof
 - [ ] Recover explicit constants needed by `CutoffEpsilon.lean`
 
 ### 15. Continuous-to-discrete convergence

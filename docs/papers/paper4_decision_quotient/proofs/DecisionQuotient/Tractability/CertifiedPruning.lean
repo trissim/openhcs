@@ -22,6 +22,12 @@ structure PruningCertificate (A : Type*) [DecidableEq A] where
   exactTopK : Finset A
   sound : exactTopK ⊆ survivors
 
+/-- A survivor set packaged together with a pruning certificate. -/
+structure CertifiedSurvivorSet (A : Type*) [DecidableEq A] where
+  survivors : Finset A
+  certificate : PruningCertificate A
+  survivors_eq : survivors = certificate.survivors
+
 /-- Package the basic top-k survivor containment theorem into a certificate. -/
 noncomputable def certificate_of_topK_margin
     (uExact uCoarse : A → ℝ)
@@ -43,6 +49,18 @@ theorem certificate_sound
     (certificate_of_topK_margin uExact uCoarse k tau delta hApprox hMargin).exactTopK
       ⊆ (certificate_of_topK_margin uExact uCoarse k tau delta hApprox hMargin).survivors :=
   (certificate_of_topK_margin uExact uCoarse k tau delta hApprox hMargin).sound
+
+noncomputable def certifiedSurvivorSet_of_topK_margin
+    (uExact uCoarse : A → ℝ)
+    (k : Nat)
+    (tau delta : ℝ)
+    (hApprox : ∀ a, |uExact a - uCoarse a| ≤ delta)
+    (hMargin : ∀ a, a ∈ topKWithTies uExact k → tau + delta ≤ uExact a) :
+    CertifiedSurvivorSet A :=
+  let cert := certificate_of_topK_margin uExact uCoarse k tau delta hApprox hMargin
+  { survivors := cert.survivors
+    certificate := cert
+    survivors_eq := rfl }
 
 end CertifiedPruning
 end Tractability

@@ -6,15 +6,32 @@
 -/
 import Mathlib.Data.Real.Basic
 import Mathlib.Tactic
+import DecisionQuotient.Tractability.FiniteTopK
 
 namespace DecisionQuotient
 namespace Tractability
 namespace RankingPreservation
 
+open FiniteTopK
+
 variable {A : Type*}
 
 /-- Pairwise utility gap. -/
 def PairwiseGap (u : A → ℝ) (a b : A) : ℝ := u a - u b
+
+/-- Boundary gap between the exact top-k utility threshold and a coarse
+    threshold `tau`. -/
+noncomputable def BoundaryGap {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
+    (u : A → ℝ) (k : Nat) (hk : 0 < k) (tau : ℝ) : ℝ :=
+  kthUtility u k hk - tau
+
+theorem threshold_plus_delta_le_of_boundaryGap
+    {A : Type*} [Fintype A] [DecidableEq A] [Nonempty A]
+    (u : A → ℝ) (k : Nat) (hk : 0 < k) (tau delta : ℝ)
+    (hGap : delta ≤ BoundaryGap u k hk tau) :
+    tau + delta ≤ kthUtility u k hk := by
+  unfold BoundaryGap at hGap
+  linarith
 
 /-- If coarse scores approximate exact scores within `delta` uniformly, and the
     exact pairwise gap exceeds `2 * delta`, the pairwise order is preserved. -/

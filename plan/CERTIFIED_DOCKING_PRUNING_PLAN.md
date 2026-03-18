@@ -39,8 +39,20 @@ Completed theorem-engineering chunks now live in Lean:
 - `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/TopKPreservation.lean`
 - `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CertifiedPruning.lean`
 - `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/CoarseApproximation.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/SampledDockingCutoff.lean`
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/LJApproximation.lean`
 
-The next frontier is no longer finite-state infrastructure. The next frontier is theorem transport from docking locality and physical approximation assumptions into the sampled finite wrapper, starting with `SampledDockingCutoff.lean` and then a first real scorer-family approximation theorem.
+Additional progress beyond the initial finite core:
+
+- the sampled restricted problem now inherits a cutoff-locality/srank bridge in `SampledDockingCutoff.lean`
+- a first concrete scorer pair, exact LJ versus cutoff LJ, now has a finite-domain `UniformUtilityApprox` theorem in `LJApproximation.lean`
+- the old analytic axiom in `Tractability/LatticeSum.lean` has been removed and replaced by axiom-free pointwise tail-bound witnesses
+
+The next frontier is now narrower and more mathematical:
+
+- strengthen the current generic/conditional sampled cutoff sufficiency bridge into a fully instantiated theorem for the intended sampled state representation
+- replace pointwise finite-radius LJ/cutoff witnesses with sharper physically meaningful error bounds
+- prove continuous-to-discrete convergence and, if desired, recover a stronger asymptotic lattice-tail estimate without reintroducing axioms
 
 ---
 
