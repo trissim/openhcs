@@ -238,6 +238,7 @@ def create_multi_channel_slice_movie(
     slice_type: str = "xy",
     fps: int = 10,
     z_gap: float = 1.0,
+    bit_depth: int = 8,
     channel_colors: Tuple = None,
 ) -> Path:
     """
@@ -249,16 +250,20 @@ def create_multi_channel_slice_movie(
         slice_type: "xy", "xz", or "yz"
         fps: Frames per second
         z_gap: Vertical stretch factor for XZ/YZ frames (same as composite)
+        bit_depth: 8 or 16 bit output
         channel_colors: Tuple of ChannelColorMapping
 
     Returns:
         Path to saved movie
     """
-    import imageio.v3 as iio
+    import logging
+    import subprocess
     import matplotlib.colors as mcolors
     from scipy.ndimage import zoom
 
     from .constants import DEFAULT_CHANNEL_COLORS
+
+    movie_logger = logging.getLogger(__name__)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,55 +287,118 @@ def create_multi_channel_slice_movie(
     first_stack = list(all_channel_stacks.values())[0]
     z_size, y_size, x_size = first_stack.shape
 
-    frames = []
-
     if slice_type == "xy":
         num_frames = z_size
+        frame_height, frame_width = y_size, x_size
     elif slice_type == "xz":
         num_frames = y_size
+        frame_height, frame_width = z_size, x_size
     elif slice_type == "yz":
         num_frames = x_size
+        frame_height, frame_width = z_size, y_size
     else:
         raise ValueError(f"Unknown slice_type: {slice_type}")
 
     apply_stretch = slice_type in ("xz", "yz") and z_gap > 1.0
 
-    for i in range(num_frames):
-        if slice_type == "xy":
-            h, w = y_size, x_size
-        elif slice_type == "xz":
-            h, w = z_size, x_size
-        else:
-            h, w = z_size, y_size
+    if apply_stretch:
+        frame_height = int(round(frame_height * z_gap))
 
-        rgb_frame = np.zeros((h, w, 3), dtype=np.float32)
+    output_path = output_path.with_suffix(".mp4")
+    movie_logger.info(
+        f"  Writing {slice_type} movie to {output_path.name} ({num_frames} frames)"
+    )
 
-        for cc in active_channels:
-            stack = all_channel_stacks[cc.channel_id]
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{frame_width}x{frame_height}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "28",
+        "-vf",
+        "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+        "-pix_fmt",
+        "yuv420p",
+        str(output_path),
+    ]
+
+    process = subprocess.Popen(
+        ffmpeg_cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        for i in range(num_frames):
+            if i % 20 == 0 or i == num_frames - 1:
+                movie_logger.info(f"  Encoding {slice_type} frame {i + 1}/{num_frames}")
 
             if slice_type == "xy":
-                slice_data = stack[i, :, :]
+                h, w = y_size, x_size
             elif slice_type == "xz":
-                slice_data = stack[:, i, :]
+                h, w = z_size, x_size
             else:
-                slice_data = stack[:, :, i]
+                h, w = z_size, y_size
 
-            slice_norm = slice_data.astype(np.float32) / global_max
-            rgb_color = np.array(mcolors.to_rgb(cc.color))
+            rgb_frame = np.zeros((h, w, 3), dtype=np.float32)
 
-            for c in range(3):
-                rgb_frame[..., c] += slice_norm * rgb_color[c]
+            for cc in active_channels:
+                stack = all_channel_stacks[cc.channel_id]
 
-        rgb_frame = np.clip(rgb_frame, 0, 1)
+                if slice_type == "xy":
+                    slice_data = stack[i, :, :]
+                elif slice_type == "xz":
+                    slice_data = stack[:, i, :]
+                else:
+                    slice_data = stack[:, :, i]
 
-        if apply_stretch:
-            rgb_frame = zoom(rgb_frame, (z_gap, 1.0, 1.0), order=1)
+                slice_norm = slice_data.astype(np.float32) / global_max
+                rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
 
-        frame_uint8 = (rgb_frame * 255).astype(np.uint8)
-        frames.append(frame_uint8)
+                for c in range(3):
+                    rgb_frame[..., c] += slice_norm * rgb_color[c]
 
-    output_path = output_path.with_suffix(".gif")
-    iio.imwrite(str(output_path), frames, duration=1000 // fps, loop=0)
+            rgb_frame = np.clip(rgb_frame, 0, 1)
+
+            if apply_stretch:
+                rgb_frame = zoom(rgb_frame, (z_gap, 1.0, 1.0), order=1)
+
+            frame_uint8 = (rgb_frame * 255).astype(np.uint8)
+            process.stdin.write(frame_uint8.tobytes())
+
+        process.stdin.close()
+        stderr = process.stderr.read().decode("utf-8", errors="ignore")
+        return_code = process.wait()
+        if return_code != 0:
+            raise RuntimeError(
+                f"ffmpeg failed for {output_path.name}: {stderr.strip()}"
+            )
+    finally:
+        if process.stdin and not process.stdin.closed:
+            process.stdin.close()
+        if process.stderr:
+            process.stderr.close()
+
+    movie_logger.info(
+        f"  Completed {slice_type} movie: {output_path.stat().st_size / 1024 / 1024:.1f} MB"
+    )
 
     return output_path
 
@@ -342,6 +410,7 @@ def save_slice_movies_for_well(
     slice_types: Tuple[str, ...] = ("xy", "xz", "yz"),
     fps: int = 10,
     z_gap: float = 1.0,
+    bit_depth: int = 8,
     channel_colors: Tuple = None,
 ) -> List[MovieOutput]:
     """
@@ -354,6 +423,7 @@ def save_slice_movies_for_well(
         slice_types: Which slice types to create
         fps: Frames per second
         z_gap: Vertical stretch factor for XZ/YZ (same as composite)
+        bit_depth: 8 or 16 bit output
         channel_colors: Color mappings
 
     Returns:
@@ -365,7 +435,7 @@ def save_slice_movies_for_well(
     outputs = []
 
     for slice_type in slice_types:
-        filename = f"{well_id}_{slice_type}_movie.gif"
+        filename = f"{well_id}_{slice_type}_movie.mp4"
         output_path = output_dir / filename
 
         actual_path = create_multi_channel_slice_movie(
@@ -374,6 +444,7 @@ def save_slice_movies_for_well(
             slice_type=slice_type,
             fps=fps,
             z_gap=z_gap,
+            bit_depth=bit_depth,
             channel_colors=channel_colors,
         )
 

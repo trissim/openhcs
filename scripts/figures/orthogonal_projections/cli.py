@@ -102,12 +102,14 @@ class ProcessingConfig:
     channel_colors: Tuple[ChannelColorMapping, ...] = DEFAULT_CHANNEL_COLORS
     excluded_channels: FrozenSet[str] = frozenset()
     included_channels: FrozenSet[str] = frozenset()
+    included_wells: FrozenSet[str] = frozenset()
     include_mode: bool = False
     save_individual_projections: bool = True
     create_composites: bool = True
     create_movies: bool = False
     movie_types: Tuple[str, ...] = ("xy", "xz", "yz")
     movie_fps: int = 10
+    movie_bit_depth: int = 8
     create_plate_mosaic: bool = False
     mosaic_layout: MosaicLayout = None
     arbitrary_mosaics: Tuple[ArbitraryMosaicSpec, ...] = ()
@@ -258,6 +260,7 @@ def process_well_all_channels(
             slice_types=config.movie_types,
             fps=config.movie_fps,
             z_gap=config.z_gap,
+            bit_depth=config.movie_bit_depth,
             channel_colors=config.channel_colors,
         )
         for mo in movie_outputs:
@@ -326,6 +329,7 @@ def _process_well_worker(
         create_movies = config_dict.get("create_movies", False)
         movie_types = tuple(config_dict.get("movie_types", ["xy", "xz", "yz"]))
         movie_fps = config_dict.get("movie_fps", 10)
+        movie_bit_depth = config_dict.get("movie_bit_depth", 8)
         z_gap = config_dict.get("z_gap", 1.0)
         z_aspect = config_dict.get("z_aspect", 0.1)
         dpi = config_dict.get("dpi", 150)
@@ -404,6 +408,7 @@ def _process_well_worker(
                 slice_types=movie_types,
                 fps=movie_fps,
                 z_gap=z_gap,
+                bit_depth=movie_bit_depth,
                 channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
             )
 
@@ -455,6 +460,10 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
     )
 
     wells = sorted(set(wk.well_id for wk in well_keys))
+
+    if config.included_wells:
+        wells = [w for w in wells if w in config.included_wells]
+
     result.total_wells = len(wells)
 
     labeler = get_labeler("standard")
@@ -472,6 +481,7 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
             "create_movies": config.create_movies,
             "movie_types": config.movie_types,
             "movie_fps": config.movie_fps,
+            "movie_bit_depth": config.movie_bit_depth,
             "z_gap": config.z_gap,
             "z_aspect": config.z_aspect,
             "dpi": config.dpi,
@@ -640,6 +650,10 @@ def main():
     )
 
     parser.add_argument(
+        "--wells", nargs="+", help="Include ONLY these wells (well IDs, e.g. R01C06)"
+    )
+
+    parser.add_argument(
         "--exclude-channels", nargs="+", help="Exclude these channels (channel IDs)"
     )
 
@@ -699,6 +713,14 @@ def main():
     )
 
     parser.add_argument(
+        "--movie-bit-depth",
+        type=int,
+        default=8,
+        choices=[8, 16],
+        help="Bit depth for movie output (8 or 16)",
+    )
+
+    parser.add_argument(
         "--format",
         default="tiff",
         choices=["tiff", "png"],
@@ -750,12 +772,14 @@ def main():
         channel_colors=channel_colors,
         excluded_channels=excluded_channels,
         included_channels=included_channels,
+        included_wells=frozenset(args.wells) if args.wells else frozenset(),
         include_mode=include_mode,
         save_individual_projections=not args.no_individual_projections,
         create_composites=not args.no_composites,
         create_movies=args.create_movies,
         movie_types=tuple(args.movie_types),
         movie_fps=args.movie_fps,
+        movie_bit_depth=args.movie_bit_depth,
         create_plate_mosaic=args.create_plate_mosaic,
         arbitrary_mosaics=arbitrary_mosaics,
         dpi=args.dpi,
