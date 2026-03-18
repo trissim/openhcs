@@ -205,10 +205,10 @@ Acceptance gate:
 
 ### File: `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/SampledDockingCutoff.lean`
 
-- [ ] Define outside-cutoff coordinates in the sampled representation
+- [x] Define outside-cutoff coordinates in the sampled representation
 - [x] Prove sampled irrelevance from `md_relevant_only_if_within_cutoff`
-- [ ] Combine with `sufficient_erase_irrelevant'`
-- [ ] Prove a retained-coordinate sufficiency theorem for sampled docking
+- [x] Combine with `sufficient_erase_irrelevant'`
+- [x] Prove a retained-coordinate sufficiency theorem for sampled docking
 
 Dependency checklist:
 
@@ -268,9 +268,9 @@ Acceptance gate:
 
 ### 15. Continuous-to-discrete convergence
 
-- [ ] Add `GridConvergence.lean`
-- [ ] Prove a resolution-to-utility-error theorem
-- [ ] Feed the resulting `eps(res)` into `UniformUtilityApprox`
+- [x] Add `GridConvergence.lean`
+- [x] Prove a resolution-to-utility-error theorem
+- [x] Feed the resulting `eps(res)` into `UniformUtilityApprox`
 
 ---
 
@@ -298,5 +298,5 @@ Acceptance gate:
 - [x] Milestone A: finite sampled docking is a formal `DecisionProblem`
 - [x] Milestone B: exact-vs-coarse winner preservation is proved
 - [x] Milestone C: exact top-k survivor containment is proved
-- [ ] Milestone D: cutoff/pocket pruning is certified as sufficiency-preserving
+- [x] Milestone D: cutoff/pocket pruning is certified as sufficiency-preserving
 - [ ] Milestone E: at least one real docking scorer pair discharges a physical approximation theorem

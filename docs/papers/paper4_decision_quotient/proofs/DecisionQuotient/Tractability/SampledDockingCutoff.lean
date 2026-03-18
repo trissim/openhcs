@@ -79,6 +79,87 @@ theorem sampled_md_relevant_only_if_within_cutoff
   exact md_relevant_only_if_within_cutoff
     prob atomIdx hAtomInProtein axis aStar hStrictAll hBounded hAmbientRel
 
+/-- The sampled retained coordinate set: protein coordinates whose atoms lie
+    within cutoff, together with all ligand coordinates. -/
+noncomputable def sampledRetainedCoords (prob : MDBindingProblem) :
+    Finset (Fin (numMDCoordinates prob)) :=
+  potentialRelevantCoords prob
+
+/-- Coordinates outside the sampled retained set. -/
+noncomputable def sampledOutsideCutoffCoords (prob : MDBindingProblem) :
+    Finset (Fin (numMDCoordinates prob)) :=
+  Finset.univ \ sampledRetainedCoords prob
+
+/-- Any sampled restricted coordinate outside the retained set is irrelevant. -/
+theorem sampled_outsideCutoffCoord_irrelevant
+    (prob : MDBindingProblem)
+    (samples : SampledActionFamily MDAction)
+    (i : Fin (numMDCoordinates prob))
+    [Fintype MDAction]
+    (aStar : MDAction)
+    (hStrictAll : ∀ s, StrictOpt prob.toDecisionProblem aStar s ∨ ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (hCapture : ∀ s, ∃ a : SupportedAction samples, a.1 ∈ prob.toDecisionProblem.Opt s)
+    (hOut : i ∈ sampledOutsideCutoffCoords prob) :
+    @DecisionProblem.isIrrelevant (SupportedAction samples) MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob)
+      (restrictedDecisionProblem prob.toDecisionProblem samples) i := by
+  classical
+  rw [@DecisionProblem.irrelevant_iff_not_relevant (SupportedAction samples) MDState
+    (numMDCoordinates prob) (mdCoordinateSpaceStruct prob)
+    (restrictedDecisionProblem prob.toDecisionProblem samples) i]
+  intro hRel
+  have hNotRetained : i ∉ sampledRetainedCoords prob := by
+    simpa [sampledOutsideCutoffCoords, sampledRetainedCoords, Finset.mem_sdiff] using hOut
+  by_cases hProtein : i.1 < 3 * prob.protein.numAtoms
+  · have hIdx : i.1 / 3 < prob.protein.numAtoms := by omega
+    have hAxis : i.1 % 3 < 3 := Nat.mod_lt _ (by decide)
+    have heq : i = proteinCoordFin prob (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩ := by
+      ext
+      simp [proteinCoordFin]
+      omega
+    rw [heq] at hRel
+    have hWithin : atomWithinCutoff
+        (proteinAtom prob (i.1 / 3) hIdx) prob.bindingSite prob.cutoff := by
+      exact sampled_md_relevant_only_if_within_cutoff
+        prob samples (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩ aStar hStrictAll hBounded hCapture hRel
+    have hInRetained : i ∈ sampledRetainedCoords prob := by
+      rw [sampledRetainedCoords]
+      apply Finset.mem_union.mpr
+      left
+      rw [potentialProteinRelevantCoords, Finset.mem_map]
+      use ⟨⟨i.1 / 3, hIdx⟩, ⟨i.1 % 3, hAxis⟩⟩
+      constructor
+      · rw [Finset.mem_product]
+        constructor
+        · rw [relevantAtomPositions, Finset.mem_filter]
+          exact ⟨Finset.mem_univ _, hWithin⟩
+        · exact Finset.mem_univ _
+      · change proteinCoordFin prob (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩ = i
+        exact heq.symm
+    exact hNotRetained hInRetained
+  · have hLigand : i ∈ potentialLigandCoords prob := by
+      rw [potentialLigandCoords, Finset.mem_map]
+      let lIdx := (i.1 - 3 * prob.protein.numAtoms) / 3
+      let axis := (i.1 - 3 * prob.protein.numAtoms) % 3
+      have hl : lIdx < prob.ligand.numAtoms := by
+        have : i.1 < numMDCoordinates prob := i.2
+        unfold numMDCoordinates at this
+        omega
+      have haxis : axis < 3 := Nat.mod_lt _ (by decide)
+      use ⟨⟨lIdx, hl⟩, ⟨axis, haxis⟩⟩
+      constructor
+      · rw [Finset.mem_product]
+        exact ⟨Finset.mem_univ _, Finset.mem_univ _⟩
+      · change ligandCoordFin prob ⟨lIdx, hl⟩ ⟨axis, haxis⟩ = i
+        ext
+        simp [ligandCoordFin]
+        omega
+    have hInRetained : i ∈ sampledRetainedCoords prob := by
+      rw [sampledRetainedCoords]
+      exact Finset.mem_union.mpr (Or.inr hLigand)
+    exact hNotRetained hInRetained
+
 /-- Structural-rank bound for the sampled restricted docking problem. If the
     sampled support captures an ambient optimum at every state, then the sampled
     restricted problem inherits the same cutoff-based srank upper bound as the
