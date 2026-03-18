@@ -1,55 +1,63 @@
 import jax.numpy as jnp
 from jax import jit
-from .kernels import lennard_jones_potential, pairwise_distances, sum_pair_potentials
+from .kernels import lennard_jones_potential, pairwise_distances, apply_cutoff
+from abc import ABC, abstractmethod
 
 """
 Potential functions for molecular interactions.
-Verified in ArrayDSL.lean and documented in BornOppenheimer.lean.
+ABC contract enforces consistent interface for all potentials.
 """
 
-@jit
-def lennard_jones(
-    q_ligand: jnp.ndarray, 
-    q_protein: jnp.ndarray, 
-    epsilon: float = 1.0, 
-    sigma: float = 1.0
-) -> float:
-    """LJ potential between ligand and protein atoms."""
-    def pot(r):
-        return lennard_jones_potential(r, epsilon, sigma)
-    return sum_pair_potentials(q_ligand, q_protein, pot)
+class Potential(ABC):
+    """ABC Contract: all potentials expose a single `energy` method."""
+    @abstractmethod
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+        """Compute total interaction energy between two atom sets."""
 
-@jit
-def electrostatic_potential(
-    q_ligand: jnp.ndarray, 
-    q_protein: jnp.ndarray, 
-    charges_ligand: jnp.ndarray, 
-    charges_protein: jnp.ndarray
-) -> float:
-    """
-    Coulomb potential.
-    U = Σ Σ (k * q_i * q_j) / r_ij
-    """
-    dists = pairwise_distances(q_ligand, q_protein)
-    # Using 1e-10 guard for safety
-    dists_safe = jnp.where(dists > 1e-10, dists, 1e-10)
-    interaction_matrix = (charges_ligand[:, None] * charges_protein[None, :]) / dists_safe
-    # Mask out the diagonal if same array but here we assume different arrays
-    return jnp.sum(interaction_matrix)
+class LennardJones(Potential):
+    """LJ potential. Verified in ArrayDSL.lean::lennardJones."""
+    def __init__(self, epsilon: float = 1.0, sigma: float = 1.0, cutoff: float = 10.0):
+        self.epsilon = epsilon
+        self.sigma = sigma
+        self.cutoff = cutoff
 
-@jit
-def hydrophobic_potential(
-    q_ligand: jnp.ndarray, 
-    q_protein: jnp.ndarray, 
-    hydrophobicity_ligand: jnp.ndarray, 
-    hydrophobicity_protein: jnp.ndarray,
-    rc: float = 4.0
-) -> float:
-    """
-    Simplified hydrophobic potential based on contact surface and distance.
-    U = Σ Σ h_i * h_j * f(r_ij)
-    """
-    dists = pairwise_distances(q_ligand, q_protein)
-    # Contact is 1 if r < rc, else 0
-    contact = jnp.where(dists < rc, 1.0, 0.0)
-    return jnp.sum(hydrophobicity_ligand[:, None] * hydrophobicity_protein[None, :] * contact)
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+        dists = pairwise_distances(q_a, q_b)
+        masked = apply_cutoff(dists, self.cutoff)
+        # Reuse DSL primitive directly
+        return jnp.sum(lennard_jones_potential(masked, self.epsilon, self.sigma))
+
+class Electrostatic(Potential):
+    """Coulomb potential. Uses DSL: pairwiseDistances, applyCutoff."""
+    def __init__(self, charges_a: jnp.ndarray, charges_b: jnp.ndarray, cutoff: float = 12.0):
+        self.charges_a = charges_a
+        self.charges_b = charges_b
+        self.cutoff = cutoff
+
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+        dists = pairwise_distances(q_a, q_b)
+        masked = apply_cutoff(dists, self.cutoff)
+        # Singularity guard consistent with ArrayDSL.lean::lennardJones pattern
+        r_safe = jnp.where(masked > 1e-10, masked, 1e-10)
+        charge_product = self.charges_a[:, None] * self.charges_b[None, :]
+        return jnp.sum(jnp.where(masked > 0, charge_product / r_safe, 0.0))
+
+class Hydrophobic(Potential):
+    """Contact-based hydrophobic potential. Uses DSL: pairwiseDistances, applyCutoff."""
+    def __init__(self, h_a: jnp.ndarray, h_b: jnp.ndarray, cutoff: float = 4.0):
+        self.h_a = h_a
+        self.h_b = h_b
+        self.cutoff = cutoff
+
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+        dists = pairwise_distances(q_a, q_b)
+        contact = jnp.where(dists < self.cutoff, 1.0, 0.0)
+        return jnp.sum(self.h_a[:, None] * self.h_b[None, :] * contact)
+
+class CompositePotential(Potential):
+    """Sum of multiple potentials. Genericism enforcement."""
+    def __init__(self, potentials: list[Potential]):
+        self.potentials = potentials
+
+    def energy(self, q_a: jnp.ndarray, q_b: jnp.ndarray) -> float:
+        return sum(p.energy(q_a, q_b) for p in self.potentials)

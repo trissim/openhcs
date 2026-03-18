@@ -1,42 +1,28 @@
 import jax.numpy as jnp
 from dataclasses import dataclass
-from typing import Optional
 
 @dataclass(frozen=True)
 class MolecularTensor:
     """
-    5D tensor representation for OpenHCS-compatible docking.
-    Physical shape: (batch, ligand, protein, conformation, feature)
-    OpenHCS 3D mapping: (C, Y, X)
-    - C = Feature (Interaction type)
-    - Y = Conformation/Pose
-    - X = Atom/Residue coordinate
+    Core tensor representation for molecular systems.
+    Shape: (N_atoms, 3) for positions.
+    Minimal fields — no duplication of charge/type data held by potentials.
     """
-    data: jnp.ndarray
-    atom_types: jnp.ndarray
-    charges: jnp.ndarray
-    
-    @property
-    def shape(self):
-        return self.data.shape
+    positions: jnp.ndarray   # (N, 3)
+    masses: jnp.ndarray      # (N,)
 
-    def to_openhcs_format(self) -> jnp.ndarray:
-        """
-        Flatten/Reshape to OpenHCS (C, Y, X) format.
-        Assuming incoming data is (N_atoms, 3) for now.
-        """
-        # C = 1 (feature is just position), Y = 1 (single conformation), X = N_atoms * 3
-        return self.data.reshape(1, 1, -1)
+    @property
+    def n_atoms(self) -> int:
+        return self.positions.shape[0]
 
 @dataclass(frozen=True)
 class InteractionTensor:
     """
-    Tensor representing interaction between ligand and protein.
-    Shape: (n_interactions, n_ligand_atoms, n_protein_residues)
+    Tensor representing pairwise interactions.
+    Shape: (n_types, n_a, n_b)
     """
     tensor: jnp.ndarray
-    interaction_types: Optional[jnp.ndarray] = None
-    
+
     @property
-    def n_interactions(self):
+    def n_interaction_types(self) -> int:
         return self.tensor.shape[0]

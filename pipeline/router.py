@@ -1,28 +1,39 @@
+"""Update router.py to use enum-driven dispatch into algorithms."""
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import Callable, Dict, Any, List
+from typing import Callable, Optional
 import jax.numpy as jnp
 
 class Tractability(Enum):
-    """
-    Cases derived from StructuralRank.lean for provable efficiency.
-    """
-    SEPARABLE = auto()      # srank = 0
-    TENSOR_RANK = auto()    # Low tensor rank (factorized)
-    TREEWIDTH = auto()      # Bounded treewidth
-    SYMMETRIC = auto()      # Orbit reduction
-    HARD = auto()           # coNP-hard (requires approximation)
+    """Cases derived from StructuralRank.lean for provable efficiency."""
+    SEPARABLE = auto()
+    TENSOR_RANK = auto()
+    TREEWIDTH = auto()
+    SYMMETRIC = auto()
+    HARD = auto()
 
     @property
     def algorithm_path(self) -> str:
-        """Indirection Minimization: Direct property access instead of dispatch tables."""
+        """Indirection Minimization: direct property on enum."""
         return {
-            Tractability.SEPARABLE: "physics.algorithms.separable",
-            Tractability.TENSOR_RANK: "physics.algorithms.tensor_rank",
-            Tractability.TREEWIDTH: "physics.algorithms.treewidth",
-            Tractability.SYMMETRIC: "physics.algorithms.symmetric",
-            Tractability.HARD: "physics.algorithms.standard_md",
+            Tractability.SEPARABLE: "physics.algorithms.run_separable",
+            Tractability.TENSOR_RANK: "physics.algorithms.run_factorized",
+            Tractability.TREEWIDTH: "physics.algorithms.run_factorized",
+            Tractability.SYMMETRIC: "physics.algorithms.run_factorized",
+            Tractability.HARD: "physics.algorithms.run_standard_md",
         }[self]
+
+    def run(self, state, force_fn, dt: float, n_steps: int, **kwargs):
+        """Enum-driven dispatch: Tractability.HARD.run(state, ...) instead of if/elif chains."""
+        from physics.algorithms import run_standard_md, run_factorized, run_separable
+        dispatch = {
+            Tractability.SEPARABLE: lambda: run_separable(state, force_fn),
+            Tractability.TENSOR_RANK: lambda: run_factorized(state, force_fn, dt, n_steps),
+            Tractability.TREEWIDTH: lambda: run_factorized(state, force_fn, dt, n_steps),
+            Tractability.SYMMETRIC: lambda: run_factorized(state, force_fn, dt, n_steps),
+            Tractability.HARD: lambda: run_standard_md(state, force_fn, dt, n_steps, **kwargs),
+        }
+        return dispatch[self]()
 
 @dataclass(frozen=True)
 class RouterResult:
@@ -33,26 +44,18 @@ class RouterResult:
 
     @property
     def algorithm(self) -> str:
-        """Indirection Minimization: Access algorithm path directly from the enum."""
         return self.tractability.algorithm_path
 
 def route_by_srank(srank: int, total_dim: int) -> RouterResult:
-    """
-    Algebraic decision logic following DQ-Dock principles.
-    Uses concise lookup and ternary logic for clarity.
-    """
+    """Algebraic decision logic. Concise ternary chain."""
     ratio = srank / total_dim
-    
-    # Mathematical Simplification: Use a concise conditional chain
     tractability = (
         Tractability.SEPARABLE if srank == 0 else
         Tractability.TENSOR_RANK if ratio < 0.1 else
         Tractability.TREEWIDTH if ratio < 0.5 else
         Tractability.HARD
     )
-    
     speedup = float('inf') if srank == 0 else (1.0/ratio if ratio > 0 else 1.0)
     if tractability == Tractability.TENSOR_RANK:
-        speedup = speedup ** 2 # Quadratic speedup for factorized kernels
-        
+        speedup = speedup ** 2
     return RouterResult(tractability, srank, speedup)

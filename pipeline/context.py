@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
-import jax.numpy as jnp
+from typing import List
+from pipeline.router import Tractability
 
 @dataclass(frozen=True)
 class PhysicsSidechannel:
@@ -13,19 +13,14 @@ class PhysicsSidechannel:
     thermodynamic_cost: float = 0.0
     relevant_features: List[int] = field(default_factory=list)
     complexity_bits: float = 0.0
-    tractability: str = "unknown"
+    tractability: Tractability = Tractability.HARD  # Enum, not magic string
 
-@dataclass
+@dataclass(frozen=True)
 class PhysicsContext:
     """
-    Extended execution context for OpenHCS pipelines.
-    Provides the environment for verifiable physics computations.
+    Frozen execution context for verifiable physics computations.
+    Explicit dependency injection: no hidden state, no dead methods.
     """
-    energy_budget: float = 1e-18  # Default budget in Joules
+    energy_budget: float = 1e-18  # Joules
     temperature: float = 300.0     # K
     sidechannel: PhysicsSidechannel = field(default_factory=PhysicsSidechannel)
-    
-    def log_physics(self, energy: float, srank: int):
-        """Update the sidechannel data (immutable update pattern)."""
-        # This is a bit simplified for now
-        pass
