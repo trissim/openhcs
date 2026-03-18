@@ -8,7 +8,7 @@
 
 ## Stage 0: Preconditions
 
-- [ ] Confirm `lake build` succeeds in `docs/papers/paper4_decision_quotient/proofs`
+- [x] Confirm `lake build` succeeds in `docs/papers/paper4_decision_quotient/proofs`
 - [ ] Confirm the current theorem anchors still match the plan:
   - [x] `EpsilonUtilityGap.lean`
   - [x] `Sufficiency.lean`
@@ -68,7 +68,7 @@ Proof sketch checklist:
 
 Acceptance gate:
 
-- [ ] `DecisionProblem.sufficient_erase_irrelevant'` typechecks on a toy `GridMDState` decision problem
+- [x] `DecisionProblem.sufficient_erase_irrelevant'` typechecks on a toy `GridMDState` decision problem
 
 ---
 

@@ -113,6 +113,19 @@ noncomputable instance {NP NL N : Nat} : ProductSpace (GridMDState NP NL N) (Gri
     exact (functionProductSpace (BoundedGrid N) (GridCoordCount NP NL)).replace_proj_ne
       (toFlat s) (toFlat s') i j hne
 
+/-- The generic irrelevance-erasure theorem applies directly to discretized MD
+    states through the `ProductSpace` instance above. -/
+theorem gridMDState_sufficient_erase_irrelevant
+    {NP NL N : Nat} {A : Type*}
+    [DecidableEq (Fin (GridCoordCount NP NL))]
+    (dp : DecisionProblem A (GridMDState NP NL N))
+    (I : Finset (Fin (GridCoordCount NP NL)))
+    (i : Fin (GridCoordCount NP NL))
+    (hI : dp.isSufficient I)
+    (hirr : dp.isIrrelevant i) :
+    dp.isSufficient (I.erase i) :=
+  dp.sufficient_erase_irrelevant' I i hI hirr
+
 end GridMDInstances
 end Tractability
 end DecisionQuotient
