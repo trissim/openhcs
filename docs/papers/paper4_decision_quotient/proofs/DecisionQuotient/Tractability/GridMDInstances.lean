@@ -92,51 +92,6 @@ theorem toFlat_fromFlat {NP NL N : Nat}
       (fun coord => f ((Fintype.equivFin (GridCoord NP NL)) coord)))
     ((Fintype.equivFin (GridCoord NP NL)).symm i)
 
-/-- Reconstructing a discretized state from its flat coordinate function
-    recovers the original discretized state. This establishes that the
-    `toFlat`/`fromFlat` pair are inverses on the canonical representation
-    used elsewhere in the proofs. -/
-theorem fromFlat_toFlat {NP NL N : Nat}
-    (s : GridMDState NP NL N) :
-    fromFlat (toFlat s) = s := by
-  -- Destructure the state into its component maps for a direct, fieldwise
-  -- extensionality proof.
-  cases s with
-  | mk protein ligand =>
-    -- Prove equality of the two function fields produced by `fromFlat` and
-    -- the original state by `funext` and then finishing with `GridMDState.mk`'s
-    -- injectivity lemma.
-    have hprot :
-      (fromFlat (toFlat { proteinAtoms := protein, ligandAtoms := ligand })).proteinAtoms =
-        protein := by
-      funext atom
-      -- Compare individual coordinate axes; `fin_cases` exposes the three axes
-      -- so `simp` can reduce the definitions to reflexivity.
-      funext axis
-      fin_cases axis
-      simp [fromFlat, toFlat, coordFunToGridMDState, gridCoordProj, tripleProj]
-
-    have hlig :
-      (fromFlat (toFlat { proteinAtoms := protein, ligandAtoms := ligand })).ligandAtoms =
-        ligand := by
-      funext atom
-      funext axis
-      fin_cases axis
-      simp [fromFlat, toFlat, coordFunToGridMDState, gridCoordProj, tripleProj]
-
-    -- Use the generated `mk.injEq` lemma to assemble the field equalities into
-    -- the full state equality.
-    apply GridMDState.mk.injEq.mpr
-    constructor
-    · exact hprot
-    · exact hlig
-
-theorem toFlat_injective {NP NL N : Nat} :
-    Function.Injective (@toFlat NP NL N) := by
-  intro s t h
-  have := congrArg fromFlat h
-  simpa [fromFlat_toFlat] using this
-
 noncomputable instance {NP NL N : Nat} : CoordinateSpace (GridMDState NP NL N) (GridCoordCount NP NL) where
   Coord := fun _ => BoundedGrid N
   proj := fun s i => toFlat s i

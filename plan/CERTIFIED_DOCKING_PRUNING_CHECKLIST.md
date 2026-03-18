@@ -264,7 +264,7 @@ Acceptance gate:
 ### 14. Remove `lattice_sum_converges` axiom
 
 - [x] Replace the axiom in `Tractability/LatticeSum.lean` with a proof
-- [ ] Recover explicit constants needed by `CutoffEpsilon.lean`
+- [x] Recover explicit constants needed by `CutoffEpsilon.lean`
 
 ### 15. Continuous-to-discrete convergence
 

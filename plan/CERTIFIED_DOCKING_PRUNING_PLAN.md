@@ -48,9 +48,10 @@ Additional progress beyond the initial finite core:
 - a first concrete scorer pair, exact LJ versus cutoff LJ, now has a finite-domain `UniformUtilityApprox` theorem in `LJApproximation.lean`
 - exact LJ versus softened LJ now has the same finite-domain approximation treatment in `SoftLJApproximation.lean`
 - a first Coulomb finite-domain exact/coarse approximation theorem now exists in `CoulombApproximation.lean`
-- the old analytic axiom in `Tractability/LatticeSum.lean` has been removed and replaced by axiom-free pointwise tail-bound witnesses
+- the old analytic axiom in `Tractability/LatticeSum.lean` has been removed and replaced by explicit 6-power and 12-power geometric tail bounds with concrete constants
 - an abstract continuous-to-discrete bridge now exists in `GridConvergence.lean`, isolating the exact Lipschitz/resolution theorem shape needed to derive `eps(res)`-style approximation guarantees
 - the runtime benchmark now carries explicit formal-status labels and separates reported results by status, so heuristic execution paths are no longer silently presented as proof-backed
+- the full Lean proof project now builds again after repairing the sampled/grid/lattice theorem slice
 
 The next frontier is now narrower and more mathematical:
 

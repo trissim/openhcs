@@ -6,9 +6,11 @@
   This justifies the cutoff approximation in molecular dynamics (Lennard-Jones 6-12).
 -/
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Algebra.Order.Archimedean.Basic
 import Mathlib.Analysis.PSeries
 import Mathlib.Data.Real.Basic
 import Mathlib.Data.Finset.Basic
+import Mathlib.Topology.Algebra.InfiniteSum.Real
 import Mathlib.Topology.Algebra.InfiniteSum.Basic
 
 namespace DecisionQuotient
@@ -32,23 +34,64 @@ noncomputable def latticeTailSum (s : ℝ) (R : ℝ) : ℝ :=
   finite shells of points whose Euclidean norm lies in (2^k * R, 2^(k+1) * R].
   The proofs below use crude cube-enclosure cardinality bounds and then a
   geometric-series summation for the two exponents used by Lennard-Jones.
-/-
+-/
 
-def latticeNorm (n : ℤ × ℤ × ℤ) : ℝ :=
+noncomputable def latticeNorm (n : ℤ × ℤ × ℤ) : ℝ :=
   Real.sqrt ((n.1 : ℝ) ^ 2 + (n.2.1 : ℝ) ^ 2 + (n.2.2 : ℝ) ^ 2)
 
-def dyadicShell (R : ℝ) (k : ℕ) : Finset (ℤ × ℤ × ℤ) :=
-  let B := Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))
-  let m := (2 * B.natAbs + 1)
-  let coords := (Finset.range m).image (fun i => (i : ℤ) - B)
-  let cube := ((coords.product coords).product coords).image fun t => (t.1.1, t.1.2, t.2)
-  cube.filter fun n => (2 ^ k : ℝ) * R < latticeNorm n ∧ latticeNorm n ≤ (2 ^ (k + 1) : ℝ) * R
+noncomputable def tailTerm6 (n : ℤ × ℤ × ℤ) : ℝ := 1 / latticeNorm n ^ (6 : ℕ)
 
-theorem point_in_dyadicShell_bound (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ × ℤ × ℤ}
+noncomputable def tailTerm12 (n : ℤ × ℤ × ℤ) : ℝ := 1 / latticeNorm n ^ (12 : ℕ)
+
+noncomputable def shellBoundInt (R : ℝ) (k : ℕ) : ℤ :=
+  Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))
+
+noncomputable def shellCoordCount (R : ℝ) (k : ℕ) : Nat :=
+  2 * (shellBoundInt R k).natAbs + 1
+
+noncomputable def shellCoords (R : ℝ) (k : ℕ) : Finset ℤ :=
+  Finset.Icc (-shellBoundInt R k) (shellBoundInt R k)
+
+noncomputable def shellCube (R : ℝ) (k : ℕ) : Finset (ℤ × ℤ × ℤ) :=
+  (((shellCoords R k).product (shellCoords R k)).product (shellCoords R k)).image
+    (fun t => (t.1.1, t.1.2, t.2))
+
+noncomputable def dyadicShell (R : ℝ) (k : ℕ) : Finset (ℤ × ℤ × ℤ) :=
+  (shellCube R k).filter fun n => (2 ^ k : ℝ) * R < latticeNorm n ∧ latticeNorm n ≤ (2 ^ (k + 1) : ℝ) * R
+
+lemma coords_card_eq (R : ℝ) (k : ℕ) :
+    (shellCoords R k).card = shellCoordCount R k := by
+  unfold shellCoords
+  rw [Int.card_Icc]
+  unfold shellCoordCount shellBoundInt
+  simp
+  omega
+
+lemma shellCube_card_eq (R : ℝ) (k : ℕ) :
+    (shellCube R k).card = (shellCoordCount R k) ^ 3 := by
+  classical
+  unfold shellCube
+  have hinj :
+      Function.Injective (fun t : (ℤ × ℤ) × ℤ => (t.1.1, t.1.2, t.2)) := by
+    intro a b h
+    rcases a with ⟨⟨a1, a2⟩, a3⟩
+    rcases b with ⟨⟨b1, b2⟩, b3⟩
+    simp at h
+    aesop
+  calc
+    (shellCube R k).card
+        = (shellCoordCount R k) * (shellCoordCount R k) * (shellCoordCount R k) := by
+          simpa [Finset.card_product, coords_card_eq] using
+            (Finset.card_image_of_injective
+              (s := (((shellCoords R k).product (shellCoords R k)).product (shellCoords R k)))
+              (f := fun t : (ℤ × ℤ) × ℤ => (t.1.1, t.1.2, t.2)) hinj)
+    _ = (shellCoordCount R k) ^ 3 := by ring
+
+theorem point_in_dyadicShell_bound6 (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ × ℤ × ℤ}
     (hn : n ∈ dyadicShell R k) :
-    1 / (latticeNorm n ^ 6) ≤ 1 / (((2 ^ k : ℝ) * R) ^ 6) := by
-  simp [dyadicShell, latticeNorm] at hn
-  have hlt : (2 ^ k : ℝ) * R < latticeNorm n := (Finset.mem_filter.mp hn).2.1
+    tailTerm6 n ≤ 1 / (((2 ^ k : ℝ) * R) ^ (6 : ℕ)) := by
+  rw [dyadicShell, Finset.mem_filter] at hn
+  have hlt : (2 ^ k : ℝ) * R < latticeNorm n := hn.2.1
   have hpos_base : 0 < (2 ^ k : ℝ) * R := by
     apply mul_pos
     · apply pow_pos; norm_num
@@ -58,230 +101,573 @@ theorem point_in_dyadicShell_bound (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ 
   have hbase_le : (2 : ℝ) ^ k * R ≤ latticeNorm n := by linarith [hlt]
   have hbase_nonneg : 0 ≤ (2 : ℝ) ^ k * R := by positivity
   have hpow6 : (((2 : ℝ) ^ k * R) ^ 6) ≤ latticeNorm n ^ 6 := by
-    exact pow_le_pow_left hbase_nonneg hbase_le 6
-  -- take reciprocals: a ≤ b and a,b>0 implies 1/b ≤ 1/a, so 1/(norm^6) ≤ 1/((2^k R)^6)
-  exact one_div_le_one_div_of_le (pow_pos hnorm_pos 6) (pow_pos hpos_base 6) hpow6
+    exact pow_le_pow_left₀ hbase_nonneg hbase_le 6
+  have hrecip : 1 / (latticeNorm n ^ (6 : ℕ)) ≤ 1 / (((2 : ℝ) ^ k * R) ^ (6 : ℕ)) :=
+    one_div_le_one_div_of_le (pow_pos hpos_base 6) hpow6
+  simpa [tailTerm6] using hrecip
+
+theorem point_in_dyadicShell_bound12 (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ × ℤ × ℤ}
+    (hn : n ∈ dyadicShell R k) :
+    tailTerm12 n ≤ 1 / (((2 ^ k : ℝ) * R) ^ (12 : ℕ)) := by
+  rw [dyadicShell, Finset.mem_filter] at hn
+  have hlt : (2 ^ k : ℝ) * R < latticeNorm n := hn.2.1
+  have hpos_base : 0 < (2 ^ k : ℝ) * R := by
+    apply mul_pos
+    · apply pow_pos; norm_num
+    · exact hRpos
+  have hnorm_pos : 0 < latticeNorm n := by linarith [hlt]
+  have hbase_le : (2 : ℝ) ^ k * R ≤ latticeNorm n := by linarith [hlt]
+  have hbase_nonneg : 0 ≤ (2 : ℝ) ^ k * R := by positivity
+  have hpow12 : (((2 : ℝ) ^ k * R) ^ 12) ≤ latticeNorm n ^ 12 := by
+    exact pow_le_pow_left₀ hbase_nonneg hbase_le 12
+  have hrecip : 1 / (latticeNorm n ^ (12 : ℕ)) ≤ 1 / (((2 : ℝ) ^ k * R) ^ (12 : ℕ)) :=
+    one_div_le_one_div_of_le (pow_pos hpos_base 12) hpow12
+  simpa [tailTerm12] using hrecip
+
+theorem point_in_dyadicShell_bound (R : ℝ) (hRpos : 0 < R) {k : ℕ} {n : ℤ × ℤ × ℤ}
+    (hn : n ∈ dyadicShell R k) :
+    1 / (latticeNorm n ^ 6) ≤ 1 / (((2 ^ k : ℝ) * R) ^ 6) := by
+  simpa [tailTerm6] using point_in_dyadicShell_bound6 R hRpos hn
+
+theorem coord1_abs_le_latticeNorm (n : ℤ × ℤ × ℤ) :
+    |(n.1 : ℝ)| ≤ latticeNorm n := by
+  apply le_of_sq_le_sq
+  · rw [sq_abs, latticeNorm, Real.sq_sqrt]
+    · nlinarith [sq_nonneg (n.2.1 : ℝ), sq_nonneg (n.2.2 : ℝ)]
+    · positivity
+  · unfold latticeNorm
+    positivity
+
+theorem coord2_abs_le_latticeNorm (n : ℤ × ℤ × ℤ) :
+    |(n.2.1 : ℝ)| ≤ latticeNorm n := by
+  apply le_of_sq_le_sq
+  · rw [sq_abs, latticeNorm, Real.sq_sqrt]
+    · nlinarith [sq_nonneg (n.1 : ℝ), sq_nonneg (n.2.2 : ℝ)]
+    · positivity
+  · unfold latticeNorm
+    positivity
+
+theorem coord3_abs_le_latticeNorm (n : ℤ × ℤ × ℤ) :
+    |(n.2.2 : ℝ)| ≤ latticeNorm n := by
+  apply le_of_sq_le_sq
+  · rw [sq_abs, latticeNorm, Real.sq_sqrt]
+    · nlinarith [sq_nonneg (n.1 : ℝ), sq_nonneg (n.2.1 : ℝ)]
+    · positivity
+  · unfold latticeNorm
+    positivity
+
+theorem mem_shellCoords_of_abs_le (R : ℝ) (k : ℕ) {z : ℤ}
+    (hz : |z| ≤ shellBoundInt R k) :
+    z ∈ shellCoords R k := by
+  unfold shellCoords
+  rw [Finset.mem_Icc]
+  simpa [abs_le] using hz
+
+theorem mem_shellCube_of_norm_le (R : ℝ) (k : ℕ) {n : ℤ × ℤ × ℤ}
+    (hn : latticeNorm n ≤ (2 ^ (k + 1) : ℝ) * R) :
+    n ∈ shellCube R k := by
+  have hceil : (2 ^ (k + 1) : ℝ) * R ≤ (shellBoundInt R k : ℝ) := by
+    simpa [shellBoundInt] using (Nat.le_ceil ((2 ^ (k + 1) : ℝ) * R))
+  have h1r : |(n.1 : ℝ)| ≤ (shellBoundInt R k : ℝ) :=
+    le_trans (coord1_abs_le_latticeNorm n) (hn.trans hceil)
+  have h2r : |(n.2.1 : ℝ)| ≤ (shellBoundInt R k : ℝ) :=
+    le_trans (coord2_abs_le_latticeNorm n) (hn.trans hceil)
+  have h3r : |(n.2.2 : ℝ)| ≤ (shellBoundInt R k : ℝ) :=
+    le_trans (coord3_abs_le_latticeNorm n) (hn.trans hceil)
+  have h1 : |n.1| ≤ shellBoundInt R k := by exact_mod_cast h1r
+  have h2 : |n.2.1| ≤ shellBoundInt R k := by exact_mod_cast h2r
+  have h3 : |n.2.2| ≤ shellBoundInt R k := by exact_mod_cast h3r
+  unfold shellCube
+  rw [Finset.mem_image]
+  refine ⟨((n.1, n.2.1), n.2.2), ?_, by simp⟩
+  simp [Finset.mem_product, mem_shellCoords_of_abs_le R k h1, mem_shellCoords_of_abs_le R k h2,
+    mem_shellCoords_of_abs_le R k h3]
+
+theorem exists_mem_dyadicShell (R : ℝ) (hR : 1 ≤ R) {n : ℤ × ℤ × ℤ}
+    (hn : R < latticeNorm n) :
+    ∃ k : ℕ, n ∈ dyadicShell R k := by
+  let x : ℝ := latticeNorm n / R
+  have hRpos : 0 < R := by linarith [hR]
+  have hx1 : 1 < x := by
+    unfold x
+    exact (one_lt_div hRpos).2 hn
+  obtain ⟨m, hmLower, hmUpper⟩ := exists_nat_pow_near (x := x) (y := (2 : ℝ)) (le_of_lt hx1) one_lt_two
+  by_cases hEq : x = (2 : ℝ) ^ m
+  · have hmpos : 0 < m := by
+      by_contra hm0
+      have hmzero : m = 0 := Nat.eq_zero_of_not_pos hm0
+      rw [hmzero] at hEq
+      simp at hEq
+      linarith
+    let k := m - 1
+    have hk1 : k + 1 = m := by
+      unfold k
+      omega
+    have hklt : k < m := by
+      unfold k
+      omega
+    have hlower : (2 : ℝ) ^ k * R < latticeNorm n := by
+      have hpow : (2 : ℝ) ^ k < (2 : ℝ) ^ m := by
+        exact pow_lt_pow_right₀ one_lt_two hklt
+      have hxmul : x * R = latticeNorm n := by
+        unfold x
+        field_simp [hRpos.ne']
+      calc
+        (2 : ℝ) ^ k * R < (2 : ℝ) ^ m * R := by
+          gcongr
+        _ = x * R := by rw [hEq]
+        _ = latticeNorm n := hxmul
+    have hupper : latticeNorm n ≤ (2 : ℝ) ^ (k + 1) * R := by
+      have hxmul : x * R = latticeNorm n := by
+        unfold x
+        field_simp [hRpos.ne']
+      calc
+        latticeNorm n = x * R := hxmul.symm
+        _ = (2 : ℝ) ^ m * R := by rw [hEq]
+        _ = (2 : ℝ) ^ (k + 1) * R := by rw [hk1]
+        _ ≤ (2 : ℝ) ^ (k + 1) * R := by rfl
+    refine ⟨k, ?_⟩
+    rw [dyadicShell, Finset.mem_filter]
+    exact ⟨mem_shellCube_of_norm_le R k hupper, hlower, hupper⟩
+  · have hlower : (2 : ℝ) ^ m * R < latticeNorm n := by
+      have hpow : (2 : ℝ) ^ m < x := lt_of_le_of_ne hmLower (Ne.symm hEq)
+      have hxmul : x * R = latticeNorm n := by
+        unfold x
+        field_simp [hRpos.ne']
+      calc
+        (2 : ℝ) ^ m * R < x * R := by
+          gcongr
+        _ = latticeNorm n := hxmul
+    have hupper : latticeNorm n ≤ (2 : ℝ) ^ (m + 1) * R := by
+      have hxmul : latticeNorm n = x * R := by
+        unfold x
+        field_simp [hRpos.ne']
+      calc
+        latticeNorm n = x * R := hxmul
+        _ ≤ (2 : ℝ) ^ (m + 1) * R := by
+          nlinarith [hmUpper]
+    refine ⟨m, ?_⟩
+    rw [dyadicShell, Finset.mem_filter]
+    exact ⟨mem_shellCube_of_norm_le R m hupper, hlower, hupper⟩
+
+theorem dyadicShell_disjoint (R : ℝ) (hR : 0 < R) {k l : ℕ} (hkl : k ≠ l) :
+    Disjoint (dyadicShell R k) (dyadicShell R l) := by
+  classical
+  rcases lt_or_gt_of_ne hkl with hlt | hgt
+  · refine Finset.disjoint_left.mpr ?_
+    intro n hnk hnl
+    rw [dyadicShell, Finset.mem_filter] at hnk hnl
+    have hkUpper : latticeNorm n ≤ (2 : ℝ) ^ (k + 1) * R := hnk.2.2
+    have hlLower : (2 : ℝ) ^ l * R < latticeNorm n := hnl.2.1
+    have hpowNat : 2 ^ (k + 1) ≤ 2 ^ l := by
+      exact Nat.pow_le_pow_right (by norm_num) (Nat.succ_le_of_lt hlt)
+    have hpow : (2 : ℝ) ^ (k + 1) ≤ (2 : ℝ) ^ l := by
+      exact_mod_cast hpowNat
+    have hmul : (2 : ℝ) ^ (k + 1) * R ≤ (2 : ℝ) ^ l * R := by
+      exact mul_le_mul_of_nonneg_right hpow hR.le
+    linarith
+  · simpa [disjoint_comm] using (dyadicShell_disjoint R hR (k := l) (l := k) hgt.ne)
+
+theorem tsum_shellIndicators_eq_tailTerm6 (R : ℝ) (hR : 1 ≤ R) {n : ℤ × ℤ × ℤ}
+    (hn : R < latticeNorm n) :
+    ∑' k : ℕ, (if n ∈ dyadicShell R k then tailTerm6 n else 0) = tailTerm6 n := by
+  have hRpos : 0 < R := by linarith [hR]
+  rcases exists_mem_dyadicShell R hR hn with ⟨k0, hk0⟩
+  have hsingle : ∀ k : ℕ, k ≠ k0 → (if n ∈ dyadicShell R k then tailTerm6 n else 0) = 0 := by
+    intro k hkneq
+    by_cases hk : n ∈ dyadicShell R k
+    · exfalso
+      exact (Finset.disjoint_left.mp (dyadicShell_disjoint R hRpos hkneq)) hk hk0
+    · simp [hk]
+  simpa [hk0] using (tsum_eq_single (L := SummationFilter.unconditional ℕ)
+    (f := fun k : ℕ => if n ∈ dyadicShell R k then tailTerm6 n else 0) k0 hsingle)
+
+theorem tsum_shellIndicators_eq_tailTerm12 (R : ℝ) (hR : 1 ≤ R) {n : ℤ × ℤ × ℤ}
+    (hn : R < latticeNorm n) :
+    ∑' k : ℕ, (if n ∈ dyadicShell R k then tailTerm12 n else 0) = tailTerm12 n := by
+  have hRpos : 0 < R := by linarith [hR]
+  rcases exists_mem_dyadicShell R hR hn with ⟨k0, hk0⟩
+  have hsingle : ∀ k : ℕ, k ≠ k0 → (if n ∈ dyadicShell R k then tailTerm12 n else 0) = 0 := by
+    intro k hkneq
+    by_cases hk : n ∈ dyadicShell R k
+    · exfalso
+      exact (Finset.disjoint_left.mp (dyadicShell_disjoint R hRpos hkneq)) hk hk0
+    · simp [hk]
+  simpa [hk0] using (tsum_eq_single (L := SummationFilter.unconditional ℕ)
+    (f := fun k : ℕ => if n ∈ dyadicShell R k then tailTerm12 n else 0) k0 hsingle)
 
 /-!
   For the purposes of the LJ tail we only need the two concrete exponents.
   The following lemmas derive a crude shell-cardinality bound and then sum
   the geometric series for s = 6 and s = 12.
-/-
+-/
 
 theorem shell_card_bound (R : ℝ) {k : ℕ} (hR : 1 ≤ R) :
     (dyadicShell R k).card ≤ (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 := by
-  -- dyadicShell is a filtered subset of the explicit cube constructed in the definition
-  simp [dyadicShell]
-  let B := Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))
-  let m := (2 * B.natAbs + 1)
-  let coords := (Finset.range m).image (fun i => (i : ℤ) - B)
-  let cube := ((coords.product coords).product coords).image fun t => (t.1.1, t.1.2, t.2)
-  have : dyadicShell R k ⊆ cube := by
-    -- by construction the filter in dyadicShell only selects points from `cube`
-    apply Finset.filter_subset
-  apply (Finset.card_le_of_subset this)
-  simp [cube]
-  -- card coords = m, card cube = m^3
-  have hcoords : coords.card = m := by
-    -- image of range by bijection i ↦ (i : ℤ) - B preserves cardinality
-    have : (fun i : ℕ => (i : ℤ) - B) = (fun i => (i : ℤ) - B) := rfl
-    apply Finset.card_image_of_injective
-    · intro a b h
-      simp at h
-      have : (a : ℤ) - B = (b : ℤ) - B := h
-      have : (a : ℤ) = (b : ℤ) := by linarith
-      exact congrArg Int.toNat this
-    · intros
-      simp
+  let _hR := hR
   calc
-    (dyadicShell R k).card ≤ cube.card := by apply Finset.card_le_of_subset (Finset.filter_subset _ _)
-    _ = (coords.card) * (coords.card) * (coords.card) := by simp [cube]
-    _ = m ^ 3 := by rw [hcoords]; ring
+    (dyadicShell R k).card ≤ (shellCube R k).card := by
+      unfold dyadicShell
+      exact Finset.card_filter_le (shellCube R k) _
+    _ = (shellCoordCount R k) ^ 3 := shellCube_card_eq R k
+    _ = (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 := by
+      simp [shellCoordCount, shellBoundInt]
 
 theorem dyadicShell_sum_le6 (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
-    ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ) ≤
-      ( (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 ) *
-        ((2 ^ k : ℝ) * R) ^ (-6 : ℝ) := by
-  -- Combine cardinality and pointwise bound; use trivial estimates where needed.
-  have hcard := shell_card_bound R (by assumption)
+    Finset.sum (dyadicShell R k) tailTerm6 ≤
+      (((2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 : ℕ) : ℝ) *
+        (1 / (((2 ^ k : ℝ) * R) ^ (6 : ℕ))) := by
+  have hcard_nat := shell_card_bound (R := R) (k := k) hR
+  have hRpos : 0 < R := by linarith [hR]
+  have hcard : ((dyadicShell R k).card : ℝ) ≤
+      (((2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 : ℕ) : ℝ) := by
+    exact_mod_cast hcard_nat
+  let bound : ℝ := 1 / (((2 ^ k : ℝ) * R) ^ (6 : ℕ))
+  calc
+    Finset.sum (dyadicShell R k) tailTerm6 ≤ Finset.sum (dyadicShell R k) (fun _ => bound) := by
+      apply Finset.sum_le_sum
+      intro n hn
+      exact point_in_dyadicShell_bound6 R hRpos hn
+    _ = (dyadicShell R k).card * bound := by simp [bound]
+    _ ≤ (((2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 : ℕ) : ℝ) * bound := by
+      exact mul_le_mul_of_nonneg_right hcard (by positivity)
+
+theorem shellCoordCount_le_eight_mul_base (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    (shellCoordCount R k : ℝ) ≤ 8 * ((2 : ℝ) ^ k * R) := by
+  let x : ℝ := (2 : ℝ) ^ k * R
+  have hx_one : 1 ≤ x := by
+    have hpow : 1 ≤ (2 : ℝ) ^ k := by
+      exact one_le_pow₀ (by norm_num : (1 : ℝ) ≤ 2)
+    have hR' : 1 ≤ R := hR
+    nlinarith
+  have hx_nonneg : 0 ≤ x := by linarith
+  have hceil_lt : ((Nat.ceil (2 * x) : ℕ) : ℝ) < 2 * x + 1 := by
+    exact_mod_cast Nat.ceil_lt_add_one (show 0 ≤ 2 * x by positivity)
+  have hcount_eq : (shellCoordCount R k : ℝ) = 2 * (Nat.ceil (2 * x) : ℕ) + 1 := by
+    unfold shellCoordCount shellBoundInt x
+    have hpow2 : ((2 : ℝ) ^ (k + 1)) * R = 2 * ((2 : ℝ) ^ k * R) := by
+      rw [pow_succ]
+      ring
+    simp [hpow2]
+  rw [hcount_eq]
+  have hcount_lt : 2 * ((Nat.ceil (2 * x) : ℕ) : ℝ) + 1 < 4 * x + 3 := by
+    linarith
+  have hupper : 4 * x + 3 ≤ 8 * x := by
+    nlinarith
+  exact le_trans (le_of_lt hcount_lt) hupper
+
+theorem shell_card_bound_real (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    ((dyadicShell R k).card : ℝ) ≤ 512 * (((2 : ℝ) ^ k * R) ^ (3 : ℕ)) := by
+  have hcard_nat : (dyadicShell R k).card ≤ (shellCoordCount R k) ^ 3 := by
+    calc
+      (dyadicShell R k).card ≤ (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 :=
+        shell_card_bound (R := R) (k := k) hR
+      _ = (shellCoordCount R k) ^ 3 := by simp [shellCoordCount, shellBoundInt]
+  have hcard : ((dyadicShell R k).card : ℝ) ≤ (shellCoordCount R k : ℝ) ^ (3 : ℕ) := by
+    exact_mod_cast hcard_nat
+  have hcount : (shellCoordCount R k : ℝ) ≤ 8 * ((2 : ℝ) ^ k * R) :=
+    shellCoordCount_le_eight_mul_base R hR k
+  have hcount_nonneg : 0 ≤ (shellCoordCount R k : ℝ) := by positivity
+  have hpow : (shellCoordCount R k : ℝ) ^ (3 : ℕ) ≤ (8 * ((2 : ℝ) ^ k * R)) ^ (3 : ℕ) := by
+    exact pow_le_pow_left₀ hcount_nonneg hcount 3
+  calc
+    ((dyadicShell R k).card : ℝ) ≤ (shellCoordCount R k : ℝ) ^ (3 : ℕ) := hcard
+    _ ≤ (8 * ((2 : ℝ) ^ k * R)) ^ (3 : ℕ) := hpow
+    _ = 512 * (((2 : ℝ) ^ k * R) ^ (3 : ℕ)) := by ring
+
+theorem dyadicShell_sum_le6_over_base (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    Finset.sum (dyadicShell R k) tailTerm6 ≤ 512 / (((2 : ℝ) ^ k * R) ^ (3 : ℕ)) := by
+  have hbase_card := shell_card_bound_real R hR k
+  have hRpos : 0 < R := by linarith [hR]
+  have hbase_pos : 0 < (2 : ℝ) ^ k * R := by
+    apply mul_pos
+    · positivity
+    · exact hRpos
+  let base : ℝ := (2 : ℝ) ^ k * R
+  have hsum_le : Finset.sum (dyadicShell R k) tailTerm6 ≤ Finset.sum (dyadicShell R k) (fun _ => 1 / (base ^ (6 : ℕ))) := by
+    apply Finset.sum_le_sum
+    intro n hn
+    simpa [base] using point_in_dyadicShell_bound6 R hRpos hn
+  have hsum_eq : Finset.sum (dyadicShell R k) (fun _ => 1 / (base ^ (6 : ℕ))) =
+      ((dyadicShell R k).card : ℝ) * (1 / (base ^ (6 : ℕ))) := by
+    simp
+  calc
+    Finset.sum (dyadicShell R k) tailTerm6 ≤ ((dyadicShell R k).card : ℝ) * (1 / (base ^ (6 : ℕ))) := by
+      exact hsum_le.trans_eq hsum_eq
+    _ ≤ (512 * (base ^ (3 : ℕ))) * (1 / (base ^ (6 : ℕ))) := by
+      exact mul_le_mul_of_nonneg_right hbase_card (by positivity)
+    _ = 512 / (base ^ (3 : ℕ)) := by
+      field_simp [pow_pos hbase_pos 3, pow_pos hbase_pos 6]
+    _ = 512 / (((2 : ℝ) ^ k * R) ^ (3 : ℕ)) := by rfl
+
+theorem dyadicShell_sum_le12_over_base (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    Finset.sum (dyadicShell R k) tailTerm12 ≤ 512 / (((2 : ℝ) ^ k * R) ^ (9 : ℕ)) := by
+  have hbase_card := shell_card_bound_real R hR k
+  have hRpos : 0 < R := by linarith [hR]
+  have hbase_pos : 0 < (2 : ℝ) ^ k * R := by
+    apply mul_pos
+    · positivity
+    · exact hRpos
+  let base : ℝ := (2 : ℝ) ^ k * R
+  have hsum_le : Finset.sum (dyadicShell R k) tailTerm12 ≤ Finset.sum (dyadicShell R k) (fun _ => 1 / (base ^ (12 : ℕ))) := by
+    apply Finset.sum_le_sum
+    intro n hn
+    simpa [base] using point_in_dyadicShell_bound12 R hRpos hn
+  have hsum_eq : Finset.sum (dyadicShell R k) (fun _ => 1 / (base ^ (12 : ℕ))) =
+      ((dyadicShell R k).card : ℝ) * (1 / (base ^ (12 : ℕ))) := by
+    simp
+  calc
+    Finset.sum (dyadicShell R k) tailTerm12 ≤ ((dyadicShell R k).card : ℝ) * (1 / (base ^ (12 : ℕ))) := by
+      exact hsum_le.trans_eq hsum_eq
+    _ ≤ (512 * (base ^ (3 : ℕ))) * (1 / (base ^ (12 : ℕ))) := by
+      exact mul_le_mul_of_nonneg_right hbase_card (by positivity)
+    _ = 512 / (base ^ (9 : ℕ)) := by
+      field_simp [pow_pos hbase_pos 3, pow_pos hbase_pos 9, pow_pos hbase_pos 12]
+    _ = 512 / (((2 : ℝ) ^ k * R) ^ (9 : ℕ)) := by rfl
+
+lemma shell_geometric_identity (k : ℕ) (R : ℝ) :
+    (((2 : ℝ) ^ k) * R) ^ 3 = R ^ 3 * (8 : ℝ) ^ k := by
+  have h8 : (8 : ℝ) = 2 ^ 3 := by norm_num
+  rw [h8]
+  rw [mul_pow]
+  rw [← pow_mul, ← pow_mul]
+  rw [mul_comm k 3]
+  rw [mul_comm ((2 : ℝ) ^ (3 * k)) (R ^ 3)]
+
+lemma shell_inv_identity (k : ℕ) : (1 / 8 : ℝ) ^ k * (8 : ℝ) ^ k = 1 := by
+  rw [← mul_pow]
+  have h : (1 / 8 : ℝ) * 8 = 1 := by norm_num
+  rw [h, one_pow]
+
+theorem dyadicShell_sum_le6_geometric (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    Finset.sum (dyadicShell R k) tailTerm6 ≤ (512 / R ^ (3 : ℕ)) * (1 / 8 : ℝ) ^ k := by
   have hRpos : 0 < R := by linarith [hR]
   calc
-    ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ)
-        ≤ (dyadicShell R k).card * ((2 ^ k : ℝ) * R) ^ (-6 : ℝ) := by
-      apply Finset.sum_le_card_mul
-      intro n hn
-      exact (point_in_dyadicShell_bound R hRpos (hn : n ∈ dyadicShell R k))
-    _ ≤ ( (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 ) *
-        ((2 ^ k : ℝ) * R) ^ (-6 : ℝ) := by
-      apply mul_le_mul_right' hcard
+    Finset.sum (dyadicShell R k) tailTerm6 ≤ 512 / ((((2 : ℝ) ^ k) * R) ^ (3 : ℕ)) :=
+      dyadicShell_sum_le6_over_base R hR k
+    _ = (512 / R ^ (3 : ℕ)) * (1 / 8 : ℝ) ^ k := by
+      rw [shell_geometric_identity k R]
+      have h_frac : (1 / 8 : ℝ) ^ k = 1 / (8 : ℝ) ^ k := by
+        exact one_div_pow 8 k
+      rw [h_frac]
+      have hR3 : R ^ (3 : ℕ) ≠ 0 := by positivity
+      have h8 : (8 : ℝ) ^ k ≠ 0 := by positivity
+      field_simp [hR3, h8]
+
+noncomputable def shellTerm6 (R : ℝ) (k : ℕ) (n : ℤ × ℤ × ℤ) : ℝ :=
+  if n ∈ dyadicShell R k then tailTerm6 n else 0
+
+noncomputable def shellTerm12 (R : ℝ) (k : ℕ) (n : ℤ × ℤ × ℤ) : ℝ :=
+  if n ∈ dyadicShell R k then tailTerm12 n else 0
+
+noncomputable def shellTerm6Sig (R : ℝ) (p : Σ _ : ℕ, ℤ × ℤ × ℤ) : ℝ :=
+  shellTerm6 R p.1 p.2
+
+noncomputable def shellTerm12Sig (R : ℝ) (p : Σ _ : ℕ, ℤ × ℤ × ℤ) : ℝ :=
+  shellTerm12 R p.1 p.2
+
+noncomputable def shellIndexOf (R : ℝ) (hR : 1 ≤ R) (n : ℤ × ℤ × ℤ) : ℕ :=
+  if hn : R < latticeNorm n then Classical.choose (exists_mem_dyadicShell R hR hn) else 0
+
+theorem shellIndex_mem (R : ℝ) (hR : 1 ≤ R) {n : ℤ × ℤ × ℤ}
+    (hn : R < latticeNorm n) :
+    n ∈ dyadicShell R (shellIndexOf R hR n) := by
+  unfold shellIndexOf
+  simp [hn, Classical.choose_spec (exists_mem_dyadicShell R hR hn)]
+
+theorem hasSum_shellTerm6 (R : ℝ) (k : ℕ) :
+    HasSum (L := SummationFilter.unconditional (ℤ × ℤ × ℤ))
+      (fun n => shellTerm6 R k n) (Finset.sum (dyadicShell R k) (shellTerm6 R k)) := by
+  classical
+  refine hasSum_sum_of_ne_finset_zero
+    (L := SummationFilter.unconditional (ℤ × ℤ × ℤ))
+    (s := dyadicShell R k) (f := fun n => shellTerm6 R k n) ?_
+  intro n hn
+  simp [shellTerm6, hn]
+
+theorem hasSum_shellTerm12 (R : ℝ) (k : ℕ) :
+    HasSum (L := SummationFilter.unconditional (ℤ × ℤ × ℤ))
+      (fun n => shellTerm12 R k n) (Finset.sum (dyadicShell R k) (shellTerm12 R k)) := by
+  classical
+  refine hasSum_sum_of_ne_finset_zero
+    (L := SummationFilter.unconditional (ℤ × ℤ × ℤ))
+    (s := dyadicShell R k) (f := fun n => shellTerm12 R k n) ?_
+  intro n hn
+  simp [shellTerm12, hn]
 
 theorem latticeTailSum6_le_M_div_R3 (R : ℝ) (hR : 1 ≤ R) :
-    latticeTailSum 6 R ≤ ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 * (1 / (1 - (1 / 8))) ) / R ^ (3 : ℝ) := by
-  -- Sum shells k = 0..∞; for s=6 factor 2^{k(3-6)} = 2^{-3k} = (1/8)^k geometric series
-  have hseries : ∑' (k : ℕ), (2 ^ (k : ℝ)) ^ (-3 : ℝ) = 1 / (1 - (1 / 8)) := by
-    -- geometric series for ratio 1/8
-    have eq : ∀ k, (2 ^ (k : ℝ)) ^ (-3 : ℝ) = (1 / 8) ^ k := by
-      intro k
-      calc
-        (2 ^ (k : ℝ)) ^ (-3 : ℝ) = 2 ^ (k * -3) := by simp [Real.rpow_mul]
-        _ = (2 ^ -3) ^ k := by simp [Real.rpow_mul]
-        _ = (1 / 8) ^ k := by simp [pow_inv]
-    have : ∑' k, (1 / 8) ^ k = 1 / (1 - (1 / 8)) := by
-      have : summable fun k => (1 / 8) ^ k := by apply summable_geometric_of_lt_1; norm_num
-      simp [tsum_eq_sum_of_summable this]
-    simp [eq] at this
-    exact this
-  -- Decompose latticeTailSum into shell sums and apply dyadicShell_sum_le6
-  have : latticeTailSum 6 R = ∑' k, ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ) := by
-    -- every nonzero lattice point with norm > R belongs to exactly one dyadic shell
-    -- Decompose the sum by grouping indices by their shell index k
-    -- First prove existence: each n with R < norm lies in some dyadic shell
-    have exists_shell : ∀ n, R < latticeNorm n → ∃ k, n ∈ dyadicShell R k := by
-      intro n hn
-      have hRpos : 0 < R := by linarith [hR]
-      have hnorm_pos : 0 < latticeNorm n := by linarith [hn]
-      let x := latticeNorm n / R
-      have hx_gt1 : 1 < x := by
-        calc
-          1 = R / R := by field_simp [hRpos.ne']
-          _ < latticeNorm n / R := by simpa using hn
-      -- find m with x ≤ 2^m using `Nat.exists_pow_ge` style lemma; implement directly
-       -- choose the least m with x ≤ 2^m using Nat.find (classical existence above)
-       have hex : ∃ m : ℕ, x ≤ (2 : ℝ) ^ m := by
-         -- use unboundedness of powers of 2; produce any witness by Archimedean argument
-         have : (2 : ℝ) > 1 := by norm_num
-         have hxpos : 0 < x := by linarith [hx_gt1]
-         have := Real.pow_unbounded_of_gt_one (by norm_num : 2 > 1) (by linarith : 0 < x)
-         exact this
-       let m := Nat.find hex
-       have hm : x ≤ (2 : ℝ) ^ m := Nat.find_spec hex
-       have hm_min : ∀ j, j < m → ¬(x ≤ (2 : ℝ) ^ j) := Nat.find_min' hex
-       -- prove m ≥ 1 because x > 1
-       have m_ge_one : 1 ≤ m := by
-         by_contra H
-         have hm0 : m = 0 := Nat.eq_zero_of_not_pos (not_le.mp H)
-         have : x ≤ (2 : ℝ) ^ 0 := by simpa [hm0] using hm
-         simp at this
-         linarith
-       let k := m - 1
-       use k
-       simp [dyadicShell]
-       -- show latticeNorm n ≤ 2^(k+1) * R
-       have hk1 : k + 1 = m := by simpa [k] using (Nat.sub_add_cancel m_ge_one)
-       have hle : latticeNorm n ≤ (2 : ℝ) ^ (k + 1) * R := by
-         calc
-           latticeNorm n = x * R := by field_simp [hRpos.ne']
-           _ ≤ (2 : ℝ) ^ m * R := by linarith [hm]
-           _ = (2 : ℝ) ^ (k + 1) * R := by simp [hk1]
-       -- show (2^k * R) < latticeNorm n using minimality of m
-       have hk_lt : ¬(x ≤ (2 : ℝ) ^ k) := by
-         apply (hm_min k)
-         have : k < m := by
-           have : k + 1 = m := hk1
-           simpa using Nat.lt_succ_iff.mp (by simp [k])
-           -- fallback: use Nat.sub_lt m (_)
-         exact this
-       have hlt : (2 : ℝ) ^ k < x := by linarith [not_le_of_not hk_lt]
-       have hltR : (2 : ℝ) ^ k * R < latticeNorm n := by
-         calc
-           (2 : ℝ) ^ k * R < x * R := by linarith
-           _ = latticeNorm n := by field_simp [hRpos.ne']
-       split
-       exact ⟨hltR, hle⟩
-    -- Using the existence lemma we can upper bound the tail by summing shell sums
-    have cover_sum : latticeTailSum 6 R ≤ ∑' k, ∑ n in (dyadicShell R k), latticeNorm n ^ (-6 : ℝ) := by
-      -- Every term of the original tsum is nonnegative, and each contributing index
-      -- (those with R < norm) appears in some dyadic shell by `exists_shell`.
-      -- We hence compare the tsum over ℤ^3 with the double nonnegative series over k and points in the shell.
-      have h_nonneg : ∀ n, 0 ≤ (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0) := by
-        intro n
-        split_ifs <;> positivity
-      have eq_term : ∀ n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0) ≤
-          ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) := by
-        intro n
-        by_cases h : R < latticeNorm n
-        · rcases exists_shell n h with ⟨k0, hk0⟩
-          have : ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) ≥
-            (if n ∈ dyadicShell R k0 then 1 / (latticeNorm n ^ 6) else 0) := by apply tsum_ge_of_nonneg; intro; positivity
-          calc
-            (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)
-                = 1 / (latticeNorm n ^ 6) := by simp [h]
-            _ = (if n ∈ dyadicShell R k0 then 1 / (latticeNorm n ^ 6) else 0) := by simp [hk0]
-            _ ≤ ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0) := this
-        · -- if not contributing, both sides are 0
-          simp [h]
-      -- Now sum (tsum) the pointwise inequality over all n using `tsum_mono'` for nonnegatives
-      have : (∑' n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)) ≤
-          (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by
-        apply tsum_le_tsum
-        · intro n; exact h_nonneg n
-        intro n; exact (eq_term n)
-      -- Fubini (nonnegative) allows swapping the tsums and dropping indicator since inner sum is finite
-      have swap : (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) =
-        (∑' k, ∑' n, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by
-        apply tsum_comm
-        intro; positivity
-      calc
-        latticeTailSum 6 R = (∑' n, (if R < latticeNorm n then 1 / (latticeNorm n ^ 6) else 0)) := rfl
-        _ ≤ (∑' n, ∑' k, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := this
-        _ = (∑' k, ∑' n, (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) := by rw [swap]
-        _ = (∑' k, ∑ n in dyadicShell R k, 1 / (latticeNorm n ^ 6)) := by
-          congr
-          funext k
-          -- inner tsum over n reduces to finite sum over `dyadicShell R k` because the indicator is nonzero only on that finite set
-          -- The inner series has finite support (only nonzero on the finite `dyadicShell R k`),
-          -- hence its `tsum` equals the `Finset.sum` over that shell.
-          have : (∑' (n : ℤ × ℤ × ℤ), (if n ∈ dyadicShell R k then 1 / (latticeNorm n ^ 6) else 0)) =
-              ∑ n in dyadicShell R k, 1 / (latticeNorm n ^ 6) := by
-            apply tsum_eq_sum_of_finite
-            · -- show finite support: the set {n | n ∈ dyadicShell R k} is finite
-              have : (fun n => (if n ∈ dyadicShell R k then (1 : ℝ) else 0)) has_finite_support := by
-                -- support is exactly `dyadicShell R k`, which is finite because it's a `Finset`
-                refine has_finite_support.mk _
-                use (dyadicShell R k).toFinset
-                intro n
-                simp [Finset.mem_toFinset]
-            · intro; positivity
-          exact this
-    -- now apply shell bounds and geometric series
-    have term_le := fun k => (dyadicShell_sum_le6 R (by assumption) k)
-    have : ∑' k, ∑ n in dyadicShell R k, 1 / (latticeNorm n ^ 6) ≤
-        ∑' k, ( (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3) *
-          ((2 : ℝ) ^ k * R) ^ (-6 : ℝ) := by
-      apply tsum_mono
-      · intro k; positivity
-      intro k; exact term_le k
-    -- factor out R^-6 and simplify geometric series in 2^{-3k}
-    have : (2 : ℝ) ^ k ^ (-6 : ℝ) = (2 ^ (k : ℝ)) ^ (-6 : ℝ) := by simp
-    -- use the geometric series constant `hseries` from above and crude bounds on the ceil term (bound it by the k=0 case)
-    have ceil_bound : ∀ k, (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 ≤
-        (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 := by
-      intro k
-      -- crude monotonicity: ceil(2^{k+1} R) ≥ ceil(2 * R) so natAbs grows; but we keep as admit for now
-      admit
-    have : ∑' k, ( (2 * (Int.ofNat (Nat.ceil ((2 ^ (k + 1) : ℝ) * R))).natAbs + 1) ^ 3 ) *
-          ((2 : ℝ) ^ k * R) ^ (-6 : ℝ)
-        ≤ ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 ) *
-          ∑' k, ((2 : ℝ) ^ k * R) ^ (-6 : ℝ) := by
-      apply tsum_mul_right_le
-      · intro k; positivity
-      · intro k; apply mul_le_mul_right' (ceil_bound k)
+    latticeTailSum 6 R ≤ (512 * (1 / (1 - (1 / 8)))) / R ^ 3 := by
+  have hNonneg : ∀ p, 0 ≤ shellTerm6Sig R p := by
+    intro p
+    unfold shellTerm6Sig shellTerm6 tailTerm6
+    positivity
+  have hInnerSummable : ∀ k, Summable (fun n => shellTerm6 R k n) := by
+    intro k
+    exact (hasSum_shellTerm6 R k).summable
+  have hCollapse : ∀ k, ∑' n, shellTerm6 R k n = Finset.sum (dyadicShell R k) tailTerm6 := by
+    intro k
     calc
-      latticeTailSum 6 R ≤ ∑' k, ∑ n in dyadicShell R k, 1 / (latticeNorm n ^ 6) := cover_sum
-      _ ≤ ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 ) * ∑' k, ((2 : ℝ) ^ k * R) ^ (-6 : ℝ) := by
-        apply le_trans (this) (le_rfl)
-      _ = ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 ) *
-          (∑' k, (2 ^ (k : ℝ)) ^ (-6 : ℝ) * R ^ (-6 : ℝ)) := by simp [mul_assoc]
-      _ = ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 ) * R ^ (-6 : ℝ) *
-          ∑' k, (2 ^ (k : ℝ)) ^ (-6 : ℝ) := by ring
-      _ = ( (2 * (Int.ofNat (Nat.ceil (2 * R))).natAbs + 1) ^ 3 ) * R ^ (-6 : ℝ) *
-          ∑' k, (2 ^ (k : ℝ)) ^ (-3 : ℝ) := by
-        -- because (2^k)^(-6) = (2^k)^(-3*2) and we only need 2^{-3k} combined with R^{-6}
-        admit
-    -- finish by converting R^-6 to R^-3 and plugging `hseries` (coarse algebra to get M6 / R^3)
-    admit
-  -- finish by applying the shell bound and the geometric-series constant
-  admit
+      ∑' n, shellTerm6 R k n = Finset.sum (dyadicShell R k) (shellTerm6 R k) := (hasSum_shellTerm6 R k).tsum_eq
+      _ = Finset.sum (dyadicShell R k) tailTerm6 := by
+        apply Finset.sum_congr rfl
+        intro n hn
+        unfold shellTerm6
+        simp [hn]
+  have hGeomSummable : Summable (fun k : ℕ => (512 / R ^ 3) * (1 / 8 : ℝ) ^ k) :=
+    Summable.mul_left _ (summable_geometric_of_lt_one (by positivity) (by norm_num))
+  have hOuterSummable : Summable (fun k : ℕ => ∑' n, shellTerm6 R k n) := by
+    apply Summable.of_nonneg_of_le (f := fun k : ℕ => (512 / R ^ 3) * (1 / 8 : ℝ) ^ k)
+      (g := fun k : ℕ => ∑' n, shellTerm6 R k n)
+    · intro k
+      rw [hCollapse k]
+      exact Finset.sum_nonneg (fun _ _ => by unfold tailTerm6; positivity)
+    · intro k
+      rw [hCollapse k]
+      exact dyadicShell_sum_le6_geometric R hR k
+    · exact hGeomSummable
+  have hOuterSummable' : Summable (fun k : ℕ => Finset.sum (dyadicShell R k) tailTerm6) := by
+    simpa [hCollapse] using hOuterSummable
+  have hSigSummable : Summable (shellTerm6Sig R) := by
+    exact (summable_sigma_of_nonneg hNonneg).2 ⟨hInnerSummable, hOuterSummable⟩
+  have hInj : Function.Injective (fun n => (⟨shellIndexOf R hR n, n⟩ : Σ _ : ℕ, ℤ × ℤ × ℤ)) := by
+    intro a b h
+    exact congrArg Sigma.snd h
+  have hEval : ∀ n, shellTerm6Sig R ⟨shellIndexOf R hR n, n⟩ = if R < latticeNorm n then tailTerm6 n else 0 := by
+    intro n
+    unfold shellTerm6Sig shellTerm6
+    by_cases hn : R < latticeNorm n
+    · simp [hn, shellIndex_mem R hR hn]
+    · have hNotMem : n ∉ dyadicShell R (shellIndexOf R hR n) := by
+        intro hMem
+        rw [dyadicShell, Finset.mem_filter] at hMem
+        have hpow : (1 : ℝ) ≤ 2 ^ (shellIndexOf R hR n) := by
+          exact one_le_pow₀ (by norm_num : (1 : ℝ) ≤ 2)
+        have hle : R ≤ (2 ^ (shellIndexOf R hR n) : ℝ) * R := by
+          exact le_mul_of_one_le_left (by linarith [hR]) hpow
+        exact hn (lt_of_le_of_lt hle hMem.2.1)
+      simp [hn, hNotMem]
+  have hOuterBound : (∑' k : ℕ, ∑' n, shellTerm6 R k n)
+      ≤ ∑' k : ℕ, (512 / R ^ 3) * (1 / 8 : ℝ) ^ k := by
+    have hpoint : ∀ k : ℕ, Finset.sum (dyadicShell R k) tailTerm6 ≤ (512 / R ^ 3) * (1 / 8 : ℝ) ^ k := by
+      intro k
+      exact dyadicShell_sum_le6_geometric R hR k
+    have hbound' : (∑' k : ℕ, Finset.sum (dyadicShell R k) tailTerm6)
+        ≤ ∑' k : ℕ, (512 / R ^ 3) * (1 / 8 : ℝ) ^ k := by
+      exact Summable.tsum_le_tsum hpoint hOuterSummable' hGeomSummable
+    simpa [hCollapse] using hbound'
+  calc
+    latticeTailSum 6 R = ∑' n, if R < latticeNorm n then tailTerm6 n else 0 := by
+      simp [latticeTailSum, latticeNorm, tailTerm6]
+    _ = ∑' n, shellTerm6Sig R ⟨shellIndexOf R hR n, n⟩ := by simp_rw [hEval]
+    _ ≤ ∑' p, shellTerm6Sig R p := tsum_comp_le_tsum_of_inj hSigSummable hNonneg hInj
+    _ = ∑' k : ℕ, ∑' n, shellTerm6 R k n := hSigSummable.tsum_sigma
+    _ ≤ ∑' k : ℕ, (512 / R ^ 3) * (1 / 8 : ℝ) ^ k := hOuterBound
+    _ = (512 / R ^ 3) * ((1 - (1 / 8))⁻¹) := by
+      rw [tsum_mul_left, tsum_geometric_of_lt_one (by positivity) (by norm_num)]
+    _ = (512 * (1 / (1 - (1 / 8)))) / R ^ 3 := by
+      rw [one_div]
+      ring
+
+lemma shell_geometric_identity12 (k : ℕ) (R : ℝ) :
+    (((2 : ℝ) ^ k) * R) ^ 9 = R ^ 9 * (512 : ℝ) ^ k := by
+  have h512 : (512 : ℝ) = 2 ^ 9 := by norm_num
+  rw [h512]
+  rw [mul_pow]
+  rw [← pow_mul, ← pow_mul]
+  rw [mul_comm k 9]
+  rw [mul_comm ((2 : ℝ) ^ (9 * k)) (R ^ 9)]
+
+lemma shell_inv_identity12 (k : ℕ) : (1 / 512 : ℝ) ^ k * (512 : ℝ) ^ k = 1 := by
+  rw [← mul_pow]
+  have h : (1 / 512 : ℝ) * 512 = 1 := by norm_num
+  rw [h, one_pow]
+
+theorem dyadicShell_sum_le12_geometric (R : ℝ) (hR : 1 ≤ R) (k : ℕ) :
+    Finset.sum (dyadicShell R k) tailTerm12 ≤ (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := by
+  calc
+    Finset.sum (dyadicShell R k) tailTerm12 ≤ 512 / ((((2 : ℝ) ^ k) * R) ^ 9) :=
+      dyadicShell_sum_le12_over_base R hR k
+    _ = (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := by
+      rw [shell_geometric_identity12 k R]
+      have h_frac : (1 / 512 : ℝ) ^ k = 1 / (512 : ℝ) ^ k := by
+        exact one_div_pow 512 k
+      rw [h_frac]
+      have hR9 : R ^ 9 ≠ 0 := by positivity
+      have h512 : (512 : ℝ) ^ k ≠ 0 := by positivity
+      field_simp [hR9, h512]
+
+theorem latticeTailSum12_le_M_div_R9 (R : ℝ) (hR : 1 ≤ R) :
+    latticeTailSum 12 R ≤ (512 * (1 / (1 - (1 / 512)))) / R ^ 9 := by
+  have hNonneg : ∀ p, 0 ≤ shellTerm12Sig R p := by
+    intro p
+    unfold shellTerm12Sig shellTerm12 tailTerm12
+    positivity
+  have hInnerSummable : ∀ k, Summable (fun n => shellTerm12 R k n) := by
+    intro k
+    exact (hasSum_shellTerm12 R k).summable
+  have hCollapse : ∀ k, ∑' n, shellTerm12 R k n = Finset.sum (dyadicShell R k) tailTerm12 := by
+    intro k
+    calc
+      ∑' n, shellTerm12 R k n = Finset.sum (dyadicShell R k) (shellTerm12 R k) := (hasSum_shellTerm12 R k).tsum_eq
+      _ = Finset.sum (dyadicShell R k) tailTerm12 := by
+        apply Finset.sum_congr rfl
+        intro n hn
+        unfold shellTerm12
+        simp [hn]
+  have hGeomSummable : Summable (fun k : ℕ => (512 / R ^ 9) * (1 / 512 : ℝ) ^ k) :=
+    Summable.mul_left _ (summable_geometric_of_lt_one (by positivity) (by norm_num))
+  have hOuterSummable : Summable (fun k : ℕ => ∑' n, shellTerm12 R k n) := by
+    apply Summable.of_nonneg_of_le (f := fun k : ℕ => (512 / R ^ 9) * (1 / 512 : ℝ) ^ k)
+      (g := fun k : ℕ => ∑' n, shellTerm12 R k n)
+    · intro k
+      rw [hCollapse k]
+      exact Finset.sum_nonneg (fun _ _ => by unfold tailTerm12; positivity)
+    · intro k
+      rw [hCollapse k]
+      exact dyadicShell_sum_le12_geometric R hR k
+    · exact hGeomSummable
+  have hOuterSummable' : Summable (fun k : ℕ => Finset.sum (dyadicShell R k) tailTerm12) := by
+    simpa [hCollapse] using hOuterSummable
+  have hSigSummable : Summable (shellTerm12Sig R) := by
+    exact (summable_sigma_of_nonneg hNonneg).2 ⟨hInnerSummable, hOuterSummable⟩
+  have hInj : Function.Injective (fun n => (⟨shellIndexOf R hR n, n⟩ : Σ _ : ℕ, ℤ × ℤ × ℤ)) := by
+    intro a b h
+    exact congrArg Sigma.snd h
+  have hEval : ∀ n, shellTerm12Sig R ⟨shellIndexOf R hR n, n⟩ = if R < latticeNorm n then tailTerm12 n else 0 := by
+    intro n
+    unfold shellTerm12Sig shellTerm12
+    by_cases hn : R < latticeNorm n
+    · simp [hn, shellIndex_mem R hR hn]
+    · have hNotMem : n ∉ dyadicShell R (shellIndexOf R hR n) := by
+        intro hMem
+        rw [dyadicShell, Finset.mem_filter] at hMem
+        have hpow : (1 : ℝ) ≤ 2 ^ (shellIndexOf R hR n) := by
+          exact one_le_pow₀ (by norm_num : (1 : ℝ) ≤ 2)
+        have hle : R ≤ (2 ^ (shellIndexOf R hR n) : ℝ) * R := by
+          exact le_mul_of_one_le_left (by linarith [hR]) hpow
+        exact hn (lt_of_le_of_lt hle hMem.2.1)
+      simp [hn, hNotMem]
+  have hOuterBound : (∑' k : ℕ, ∑' n, shellTerm12 R k n)
+      ≤ ∑' k : ℕ, (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := by
+    have hpoint : ∀ k : ℕ, Finset.sum (dyadicShell R k) tailTerm12 ≤ (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := by
+      intro k
+      exact dyadicShell_sum_le12_geometric R hR k
+    have hbound' : (∑' k : ℕ, Finset.sum (dyadicShell R k) tailTerm12)
+        ≤ ∑' k : ℕ, (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := by
+      exact Summable.tsum_le_tsum hpoint hOuterSummable' hGeomSummable
+    simpa [hCollapse] using hbound'
+  calc
+    latticeTailSum 12 R = ∑' n, if R < latticeNorm n then tailTerm12 n else 0 := by
+      simp [latticeTailSum, latticeNorm, tailTerm12]
+    _ = ∑' n, shellTerm12Sig R ⟨shellIndexOf R hR n, n⟩ := by simp_rw [hEval]
+    _ ≤ ∑' p, shellTerm12Sig R p := tsum_comp_le_tsum_of_inj hSigSummable hNonneg hInj
+    _ = ∑' k : ℕ, ∑' n, shellTerm12 R k n := hSigSummable.tsum_sigma
+    _ ≤ ∑' k : ℕ, (512 / R ^ 9) * (1 / 512 : ℝ) ^ k := hOuterBound
+    _ = (512 / R ^ 9) * ((1 - (1 / 512))⁻¹) := by
+      rw [tsum_mul_left, tsum_geometric_of_lt_one (by positivity) (by norm_num)]
+    _ = (512 * (1 / (1 - (1 / 512)))) / R ^ 9 := by
+      rw [one_div]
+      ring
 
 /--
   Pointwise radius-dependent tail bound for the Lennard-Jones 6-power term.
