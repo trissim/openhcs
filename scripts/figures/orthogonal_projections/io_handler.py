@@ -218,7 +218,8 @@ def create_slice_movie(
     frames = []
 
     if slice_type == "xy":
-        for z in range(z_stack.shape[0]):
+        # Scan XY in the inverted direction so the video runs top-to-bottom.
+        for z in range(z_stack.shape[0] - 1, -1, -1):
             frame = z_stack[z, :, :]
             frame_norm = (frame / global_max * 255).astype(np.uint8)
             frames.append(frame_norm)
@@ -373,7 +374,7 @@ def create_multi_channel_slice_movie(
                 stack = all_channel_stacks[cc.channel_id]
 
                 if slice_type == "xy":
-                    slice_data = stack[i, :, :]
+                    slice_data = stack[z_size - 1 - i, :, :]
                 elif slice_type == "xz":
                     slice_data = stack[:, i, :]
                 else:
@@ -709,7 +710,7 @@ def create_synchronized_composite_gif(
             frame = _build_sync_composite_frame(
                 all_channel_stacks,
                 channel_maxes,
-                z_size - 1 - i * frame_step,
+                i * frame_step,
                 xy_h,
                 xy_w,
                 z_size,
@@ -747,7 +748,7 @@ def create_synchronized_composite_gif(
             frame = _build_sync_composite_frame(
                 all_channel_stacks,
                 channel_maxes,
-                z_size - 1 - i * frame_step,
+                i * frame_step,
                 xy_h,
                 xy_w,
                 z_size,
