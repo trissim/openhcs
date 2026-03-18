@@ -301,6 +301,9 @@ theorem sampled_potentialRelevantCoords_sufficient_of_relevance_subset
   let dp := restrictedDecisionProblem prob.toDecisionProblem samples
   let R : Finset (Fin (numMDCoordinates prob)) := Finset.univ.filter dp.isRelevant
   have hRelevantSuff : dp.isSufficient R := by
+    -- The `relevantSet_isSufficient` lemma expects a `ProductSpace` instance
+    -- for the ambient type and an injectivity hypothesis. We provide those via
+    -- the `hinj` argument and the `[ProductSpace MDState _]` instance above.
     simpa [R] using relevantSet_isSufficient dp hinj
   apply dp.sufficient_superset R (potentialRelevantCoords prob) hRelevantSuff
   intro i hi
