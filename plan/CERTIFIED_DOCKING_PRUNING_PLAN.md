@@ -46,6 +46,8 @@ Additional progress beyond the initial finite core:
 
 - the sampled restricted problem now inherits a cutoff-locality/srank bridge in `SampledDockingCutoff.lean`
 - a first concrete scorer pair, exact LJ versus cutoff LJ, now has a finite-domain `UniformUtilityApprox` theorem in `LJApproximation.lean`
+- exact LJ versus softened LJ now has the same finite-domain approximation treatment in `SoftLJApproximation.lean`
+- a first Coulomb finite-domain exact/coarse approximation theorem now exists in `CoulombApproximation.lean`
 - the old analytic axiom in `Tractability/LatticeSum.lean` has been removed and replaced by axiom-free pointwise tail-bound witnesses
 - an abstract continuous-to-discrete bridge now exists in `GridConvergence.lean`, isolating the exact Lipschitz/resolution theorem shape needed to derive `eps(res)`-style approximation guarantees
 

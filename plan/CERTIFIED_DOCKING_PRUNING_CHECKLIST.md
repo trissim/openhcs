@@ -192,7 +192,7 @@ Acceptance gate:
 Priority order:
 
 1. [x] Standard LJ vs cutoff LJ
-2. [ ] Standard LJ vs softened LJ on bounded sampled domains
+2. [x] Standard LJ vs softened LJ on bounded sampled domains
 3. [ ] Coulomb tail approximation only after the LJ case works
 
 Acceptance gate:
