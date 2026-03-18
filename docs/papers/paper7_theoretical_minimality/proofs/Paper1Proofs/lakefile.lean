@@ -20,6 +20,8 @@ def weakLeanArgs : Array String :=
     #[]
 
 package «nominal_resolution» where
+  -- Use shared packages directory
+  packagesDir := "/home/ts/code/projects/papers-archive/docs/papers/.lake-shared/packages"
   moreServerArgs := moreServerArgs
   -- add any package configuration options here
 

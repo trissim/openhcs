@@ -2,6 +2,8 @@ import Lake
 open Lake DSL
 
 package «TheoreticalMinimality» where
+  -- Use shared packages directory
+  packagesDir := "/home/ts/code/projects/papers-archive/docs/papers/.lake-shared/packages"
   leanOptions := #[
     ⟨`pp.unicode.fun, true⟩,
     ⟨`autoImplicit, false⟩

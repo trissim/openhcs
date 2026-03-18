@@ -15,6 +15,8 @@ def weakLeanArgs : Array String :=
     #[]
 
 package «pentalogy_proofs» where
+  -- Use shared packages directory
+  packagesDir := "/home/ts/code/projects/papers-archive/docs/papers/.lake-shared/packages"
   moreServerArgs := moreServerArgs
 
 require mathlib from git
