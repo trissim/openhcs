@@ -1867,12 +1867,12 @@ class GninaBenchmarkEngine(CLIDockingBenchmarkEngine):
     @classmethod
     def installation_message(cls) -> str:
         return """
-❌ GNINA not found!
+GNINA not found or not functional.
 
 To run this benchmark with GNINA comparisons:
 
-1. Install gnina from an official release binary
-2. Make sure 'gnina' is in your PATH
+1. Download the CUDA 12 build: gnina v1.3.2 from github.com/gnina/gnina/releases
+2. Install CUDA 12 runtimes into a venv (see setup instructions)
 3. Re-run this benchmark
 """
 
