@@ -107,6 +107,10 @@ class ComplexSummaryRow:
     pocket_atoms: int
     rmsd: float
     time: float
+    dq_pose_pdb: str | None = None
+    vina_pose_pdb: str | None = None
+    receptor_pdb: str | None = None
+    native_ligand_pdb: str | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +131,7 @@ class VinaSummaryRow:
     best_mode_rmsd: float
     time: float
     affinity: float
+    vina_pose_pdb: str | None = None
 
 
 @dataclass(frozen=True)
@@ -711,6 +716,26 @@ def create_benchmark_output_paths(output_dir: Path) -> BenchmarkOutputPaths:
     )
 
 
+def benchmark_pose_dir(output_paths: BenchmarkOutputPaths) -> Path:
+    pose_dir = output_paths.json_path.with_suffix("").with_name(
+        output_paths.json_path.stem + "_poses"
+    )
+    pose_dir.mkdir(parents=True, exist_ok=True)
+    return pose_dir
+
+
+def save_pose_from_template(
+    coords: np.ndarray, template_pdb: Path, output_pdb: Path
+) -> None:
+    from dq_dock_engine.docking.scoring import _write_pdb
+
+    _write_pdb(coords, str(template_pdb), str(output_pdb))
+
+
+def copy_structure_for_viewing(source: Path, destination: Path) -> None:
+    shutil.copy2(source, destination)
+
+
 def save_benchmark_results(
     output_paths: BenchmarkOutputPaths,
     *,
@@ -738,12 +763,21 @@ def save_benchmark_results(
         str(cx["pdb_id"]): result for cx, result in zip(complexes, dq_results)
     }
     vina_map = {row.pdb_id: row for row in vina_rows}
+    expect_vina_alignment = phase in {"vina", "complete"} and len(vina_rows) > 0
+    if expect_vina_alignment:
+        missing_vina = sorted(set(dq_map) - set(vina_map))
+        extra_vina = sorted(set(vina_map) - set(dq_map))
+        if missing_vina or extra_vina:
+            raise ValueError(
+                "Vina results are out of sync with DQ-Dock results: "
+                f"missing={missing_vina}, extra={extra_vina}"
+            )
 
     csv_rows: list[dict[str, object]] = []
     for pdb_id, row in dq_map.items():
         cx = complex_map[pdb_id]
         dq_result = dq_result_map[pdb_id]
-        vina_row = vina_map.get(pdb_id)
+        vina_row = vina_map[pdb_id] if expect_vina_alignment else None
         csv_rows.append(
             {
                 "pdb_id": pdb_id,
@@ -756,9 +790,13 @@ def save_benchmark_results(
                 "dq_energy": dq_result.energy,
                 "dq_rmsd": row.rmsd,
                 "dq_time_s": row.time,
+                "dq_pose_pdb": row.dq_pose_pdb,
                 "gap_proof": format_gap_proof_label(dq_result.certified),
                 "native_rank": dq_result.native_rank,
                 "energy_gap": dq_result.energy_gap,
+                "vina_pose_pdb": None if vina_row is None else vina_row.vina_pose_pdb,
+                "receptor_pdb": row.receptor_pdb,
+                "native_ligand_pdb": row.native_ligand_pdb,
                 "vina_affinity": None if vina_row is None else vina_row.affinity,
                 "vina_top_rmsd": None if vina_row is None else vina_row.top_rmsd,
                 "vina_best_mode_rmsd": None
@@ -784,9 +822,13 @@ def save_benchmark_results(
                 "dq_energy",
                 "dq_rmsd",
                 "dq_time_s",
+                "dq_pose_pdb",
                 "gap_proof",
                 "native_rank",
                 "energy_gap",
+                "vina_pose_pdb",
+                "receptor_pdb",
+                "native_ligand_pdb",
                 "vina_affinity",
                 "vina_top_rmsd",
                 "vina_best_mode_rmsd",
@@ -836,6 +878,9 @@ def save_benchmark_results(
                 "rmsd": _safe_json_value(row.rmsd),
                 "time_s": _safe_json_value(row.time),
                 "energy": _safe_json_value(dq_result_map[row.pdb_id].energy),
+                "pose_pdb": row.dq_pose_pdb,
+                "receptor_pdb": row.receptor_pdb,
+                "native_ligand_pdb": row.native_ligand_pdb,
                 "gap_proof": format_gap_proof_label(
                     dq_result_map[row.pdb_id].certified
                 ),
@@ -852,6 +897,7 @@ def save_benchmark_results(
                 "best_returned_mode_rmsd": _safe_json_value(row.best_mode_rmsd),
                 "time_s": _safe_json_value(row.time),
                 "affinity": _safe_json_value(row.affinity),
+                "pose_pdb": row.vina_pose_pdb,
             }
             for row in vina_rows
         ],
@@ -878,6 +924,7 @@ def run_vina(
     n_models: int = 20,
     energy_range: float = 12.0,
     min_rmsd_filter: float = 0.5,
+    saved_output_pdb: Path | None = None,
 ) -> VinaResult:
     """Run a strong-search smina configuration for known-pocket redocking."""
     # Use a safe temp file path
@@ -932,6 +979,8 @@ def run_vina(
         affinities = parse_smina_affinities(result.stdout)
         models = parse_smina_models(output_path) if output_path.exists() else ()
         top_coords = models[0] if models else None
+        if saved_output_pdb is not None and output_path.exists():
+            shutil.copy2(output_path, saved_output_pdb)
 
         return VinaResult(
             success=True,
@@ -964,7 +1013,7 @@ def run_dq_dock(
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
     max_retries: int = 6,
-) -> BenchmarkResult:
+) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     from dq_dock_engine.docking.core import DockingBox, ScoringEngine
     from dq_dock_engine.docking.pdb_io import (
@@ -1009,6 +1058,7 @@ def run_dq_dock(
     base_key = jax.random.PRNGKey(42)
     formal_status = "DQ-Dock"
     best_result: BenchmarkResult | None = None
+    best_pose_coords: np.ndarray | None = None
 
     for attempt in range(max_retries):
         try:
@@ -1051,7 +1101,7 @@ def run_dq_dock(
                     time=time.time() - start,
                     n_atoms=0,
                     formal_status=formal_status,
-                )
+                ), None
 
             elapsed = time.time() - start
             best_pose = best_poses[0]
@@ -1070,6 +1120,7 @@ def run_dq_dock(
 
             if best_result is None or attempt_result.rmsd < best_result.rmsd:
                 best_result = attempt_result
+                best_pose_coords = np.asarray(best_pose.coords)
 
             if attempt < max_retries - 1 and rmsd > RMSD_THRESHOLD:
                 n_poses *= 2
@@ -1094,7 +1145,7 @@ def run_dq_dock(
                 time=time.time() - start,
                 n_atoms=0,
                 formal_status=formal_status,
-            )
+            ), None
 
     if best_result is None:
         return BenchmarkResult(
@@ -1104,9 +1155,9 @@ def run_dq_dock(
             time=time.time() - start,
             n_atoms=0,
             formal_status=formal_status,
-        )
+        ), None
 
-    return best_result
+    return best_result, best_pose_coords
 
 
 def run_benchmark(
@@ -1163,6 +1214,7 @@ For now, we'll run DQ-Dock only on PDB files.
     cache_dir = Path("./pdb_cache")
     cache_dir.mkdir(exist_ok=True)
     output_paths = create_benchmark_output_paths(results_dir)
+    pose_dir = benchmark_pose_dir(output_paths)
     vina_prep_protocol = (
         "direct_pdb"
         if vina_prep_tools is None
@@ -1316,8 +1368,13 @@ For now, we'll run DQ-Dock only on PDB files.
             flush=True,
         )
 
+        receptor_view_path = pose_dir / f"{cx['pdb_id']}_receptor.pdb"
+        native_ligand_view_path = pose_dir / f"{cx['pdb_id']}_native_ligand.pdb"
+        copy_structure_for_viewing(receptor_pdb, receptor_view_path)
+        copy_structure_for_viewing(ligand_pdb, native_ligand_view_path)
+
         # Run DQ-Dock
-        result = run_dq_dock(
+        result, dq_pose_coords = run_dq_dock(
             pocket_coords_np,
             pocket_radii_np,
             ligand_coords,
@@ -1333,6 +1390,10 @@ For now, we'll run DQ-Dock only on PDB files.
             ligand_elements=ligand_elements,
             receptor_elements=tuple(pocket_elements),
         )
+        dq_pose_path: Path | None = None
+        if dq_pose_coords is not None:
+            dq_pose_path = pose_dir / f"{cx['pdb_id']}_dq_dock_pose.pdb"
+            save_pose_from_template(dq_pose_coords, ligand_pdb, dq_pose_path)
         dq_results.append(result)
         dq_rows.append(
             ComplexSummaryRow(
@@ -1342,6 +1403,9 @@ For now, we'll run DQ-Dock only on PDB files.
                 pocket_atoms=len(pocket_coords_np),
                 rmsd=result.rmsd,
                 time=result.time,
+                dq_pose_pdb=None if dq_pose_path is None else str(dq_pose_path),
+                receptor_pdb=str(receptor_view_path),
+                native_ligand_pdb=str(native_ligand_view_path),
             )
         )
 
@@ -1399,6 +1463,7 @@ For now, we'll run DQ-Dock only on PDB files.
             )
 
             prep_temp_dir: Path | None = None
+            vina_pose_output_path = pose_dir / f"{cx['pdb_id']}_vina_pose.pdb"
             try:
                 try:
                     vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
@@ -1421,6 +1486,7 @@ For now, we'll run DQ-Dock only on PDB files.
                     vina_receptor,
                     vina_ligand,
                     cx["center"],
+                    saved_output_pdb=vina_pose_output_path,
                 )
                 if (
                     not result.success
@@ -1436,6 +1502,7 @@ For now, we'll run DQ-Dock only on PDB files.
                         receptor_pdb,
                         ligand_pdb,
                         cx["center"],
+                        saved_output_pdb=vina_pose_output_path,
                     )
             finally:
                 if prep_temp_dir is not None:
@@ -1505,6 +1572,7 @@ For now, we'll run DQ-Dock only on PDB files.
                     best_mode_rmsd=best_mode_rmsd,
                     time=result.time,
                     affinity=result.best_affinity,
+                    vina_pose_pdb=str(vina_pose_output_path),
                 )
             )
 
@@ -1608,6 +1676,7 @@ For now, we'll run DQ-Dock only on PDB files.
     )
     print(f"  Results JSON: {json_path}")
     print(f"  Results CSV: {csv_path}")
+    print(f"  Pose Files: {pose_dir}")
     print(
         f"  Report Markdown: {json_path.with_suffix('').with_name(json_path.stem + '_report.md')}"
     )
