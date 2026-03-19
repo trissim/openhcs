@@ -291,7 +291,8 @@ def get_casf_2007_entries() -> list[PDBEntry]:
     except ImportError as exc:
         raise RuntimeError("benchmark_pdb module unavailable") from exc
 
-    cache = Path("/tmp/casf2007_pdb_cache")
+    # Use local repo cache dir to match run_benchmark behavior (./casf2007_pdb_cache)
+    cache = Path("./casf2007_pdb_cache")
     if not cache.exists():
         raise RuntimeError(
             f"PDB cache not found at {cache}. "
