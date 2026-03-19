@@ -56,6 +56,23 @@ import DecisionQuotient.Tractability.SeparableUtility
 import DecisionQuotient.Tractability.TreeStructure
 import DecisionQuotient.Tractability.Dimensional
 import DecisionQuotient.Tractability.Tightness
+import DecisionQuotient.Tractability.CutoffEpsilon
+import DecisionQuotient.Tractability.LatticeSum
+import DecisionQuotient.Tractability.LJApproximation
+import DecisionQuotient.Tractability.SoftLJApproximation
+import DecisionQuotient.Tractability.CoulombApproximation
+import DecisionQuotient.Tractability.CoarseApproximation
+import DecisionQuotient.Tractability.CertifiedPruning
+import DecisionQuotient.Tractability.SampledDocking
+import DecisionQuotient.Tractability.SampledDockingGap
+import DecisionQuotient.Tractability.SampledDockingCutoff
+import DecisionQuotient.Tractability.GridMDInstances
+import DecisionQuotient.Tractability.GridConvergence
+import DecisionQuotient.Tractability.FiniteTopK
+import DecisionQuotient.Tractability.NearTieBand
+import DecisionQuotient.Tractability.RankingPreservation
+import DecisionQuotient.Tractability.TopKPreservation
+import DecisionQuotient.Tractability.MolecularSrank
 import DecisionQuotient.Information
 import DecisionQuotient.Information.RateDistortion
 import DecisionQuotient.Information.RDSrank
@@ -871,6 +888,61 @@ abbrev DQ82 := @orbitType_eq_iff
 abbrev DQ83 := @symmetric_optimalActions_orbit_invariant
 abbrev DQ84 := @sufficiency_reduces_to_cross_orbit_check
 abbrev DQ85 := @symmetric_sufficiency_complexity_bound
+
+abbrev MD1 := @Tractability.MolecularSrank.outside_cutoff_is_irrelevant
+abbrev MD2 := @Tractability.MolecularSrank.md_relevant_only_if_within_cutoff
+abbrev MD3 := @Tractability.MolecularSrank.md_srank_bound
+abbrev MD4 := @Tractability.MolecularSrank.small_pocket_low_srank
+abbrev MD5 := @Tractability.MolecularSrank.docking_small_pocket_bound
+abbrev MD6 := @Tractability.MolecularSrank.md_srank_matches_dq_definition
+abbrev MD7 := @Tractability.MolecularSrank.md_thermodynamic_lower_bound
+
+abbrev LJ1 := @Tractability.LJApproximation.ljCutoffErrorRadius_spec
+abbrev LJ2 := @Tractability.LJApproximation.exact_vs_cutoff_lj_uniformApprox
+abbrev LJ3 := @Tractability.LJApproximation.exact_vs_cutoff_lj_opt_invariance
+abbrev LJ4 := @Tractability.LJApproximation.exactLJ_is_BoundedPotential
+abbrev LJ5 := @Tractability.SoftLJApproximation.ljSofteningErrorRadius_spec
+abbrev LJ6 := @Tractability.SoftLJApproximation.exact_vs_softened_lj_uniformApprox
+
+abbrev CB1 := @Tractability.CoulombApproximation.coulombCutoffErrorRadius_spec
+abbrev CB2 := @Tractability.CoulombApproximation.exact_vs_cutoff_coulomb_uniformApprox
+abbrev CB3 := @Tractability.CoulombApproximation.exactCoulomb_satisfiesBoundedPotential_of_tailBound
+abbrev CB4 := @Tractability.CoulombApproximation.exactRealEwald_satisfiesBoundedPotential_of_tailBound
+
+abbrev BP1 := @Tractability.finiteMinimumGap_le_strictUtilityGap
+abbrev BP2 := @Tractability.satisfiesBoundedPotential_of_tailBound_and_finiteGap
+abbrev BP3 := @Tractability.large_cutoff_implies_bounded
+
+abbrev APX1 := @Tractability.CoarseApproximation.finiteUniformErrorRadius_witnesses_uniformApprox
+abbrev APX2 := @Tractability.CoarseApproximation.SampledDocking.SampledDockingProblem.finiteUniformErrorRadius_witnesses
+abbrev APX3 := @Tractability.CoarseApproximation.uniform_approx_implies_opt_invariance
+
+abbrev SD1 := @Tractability.SampledDockingGap.strictUtilityGap_lifted_exact
+abbrev SD2 := @Tractability.SampledDockingGap.sampled_epsilon_margin_invariance
+abbrev SD3 := @Tractability.SampledDockingGap.SampledDockingProblem.exact_coarse_opt_agree_of_gap
+abbrev SD4 := @Tractability.SampledDockingCutoff.sampled_md_relevant_only_if_within_cutoff
+abbrev SD5 := @Tractability.SampledDockingCutoff.sampled_outsideCutoffCoord_irrelevant
+abbrev SD6 := @Tractability.SampledDockingCutoff.sampled_md_srank_bound
+abbrev SD7 := @Tractability.SampledDockingCutoff.sampled_small_pocket_low_srank
+abbrev SD8 := @Tractability.SampledDockingCutoff.sampled_potentialRelevantCoords_sufficient_of_relevance_subset
+abbrev SD9 := @Tractability.SampledDockingCutoff.sampled_insideCutoff_sufficient
+
+abbrev TK1 := @Tractability.NearTieBand.exact_topK_subset_ambiguityBand
+abbrev TK2 := @Tractability.RankingPreservation.pairwise_order_preserved_of_uniform_error
+abbrev TK3 := @Tractability.RankingPreservation.coarse_gap_positive_of_exact_gap_margin
+abbrev TK4 := @Tractability.TopKPreservation.exact_topK_subset_survivorSet_of_margin
+abbrev TK5 := @Tractability.TopKPreservation.topK_preserved_of_boundary_gap
+abbrev TK6 := @Tractability.TopKPreservation.exclude_of_exact_below_threshold_margin
+
+abbrev GD1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelevant
+abbrev GD2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox
+abbrev GD3 := @Tractability.GridConvergence.lipschitzUtilityApprox_implies_resolutionControlled
+abbrev CP1 := @Tractability.CertifiedPruning.certificate_sound
+
+abbrev LS1 := @Tractability.LatticeSum.latticeTailSum6_le_M_div_R3
+abbrev LS2 := @Tractability.LatticeSum.latticeTailSum12_le_M_div_R9
+abbrev LS3 := @Tractability.LatticeSum.lj6_tail_bound
+abbrev LS4 := @Tractability.LatticeSum.lj12_tail_bound
 
 -- Decision Problem (DP) additional handles
 abbrev DP6 := ClaimClosure.DP6  -- Empty-set sufficiency iff constant

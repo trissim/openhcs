@@ -200,3 +200,19 @@ papers:
     latex_dir: "latex"
     latex_file: "formality_arxiv.tex"
     venue: "Draft"
+
+  paper8:
+    name: "DQDock"
+    full_name: "DQDock: A Formally Verified Virtual Docking Engine"
+    dir: "paper8_dqdock"
+    latex_dir: "latex"
+    latex_file: "main.tex"
+    venue: "Draft"
+    lean_dependencies:
+      - "paper1"
+      - "paper2"
+      - "paper4"
+    assumption_ledger_sources:
+      - "DQDock/ClaimClosure.lean"
+      - "DQDock/HandleAliases.lean"
+    claim_mapping_file: "content/claim_mapping_auto.tex"
