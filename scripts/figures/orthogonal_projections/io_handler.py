@@ -494,10 +494,12 @@ def _build_sync_composite_frame(
     import matplotlib.colors as mcolors
     from scipy.ndimage import zoom
 
+    xy_z_idx = z_size - 1 - z_idx
+
     xy_rgb = np.zeros((xy_h, xy_w, 3), dtype=np.float32)
     for cc in active_channels:
         stack = all_channel_stacks[cc.channel_id]
-        slice_data = stack[z_idx, :, :].astype(np.float32)
+        slice_data = stack[xy_z_idx, :, :].astype(np.float32)
         ch_max = channel_maxes[cc.channel_id]
         slice_norm = np.clip(slice_data / ch_max, 0, 1)
         rgb_color = np.array(mcolors.to_rgb(cc.color), dtype=np.float32)
@@ -528,13 +530,37 @@ def _build_sync_composite_frame(
     yz_rgb = np.clip(yz_rgb, 0, 1)
 
     if z_gap > 1.0:
-        factor = int(round(z_gap))
-        remainder = z_gap - factor
-        xz_rgb = np.repeat(xz_rgb, factor, axis=0)
-        yz_rgb = np.repeat(yz_rgb, factor, axis=0)
-        if remainder > 0:
-            xz_rgb = zoom(xz_rgb, (1.0 + remainder / factor, 1.0, 1.0), order=1)
-            yz_rgb = zoom(yz_rgb, (1.0 + remainder / factor, 1.0, 1.0), order=1)
+        # Use the externally computed full height (xz_full_h) to produce a
+        # consistent stretched height for XZ/YZ across the whole GIF. The
+        # previous approach used integer repeats + a fractional zoom which
+        # could yield a different actual height than the value used when
+        # computing total_height, producing negative slice indices and
+        # broadcasting errors. We compute a uniform zoom factor and then
+        # ensure the output height exactly matches xz_full_h by cropping or
+        # padding as needed.
+        desired_h = xz_full_h
+        if z_size <= 0:
+            zoom_factor = 1.0
+        else:
+            zoom_factor = float(desired_h) / float(z_size)
+
+        xz_rgb = zoom(xz_rgb, (zoom_factor, 1.0, 1.0), order=1)
+        yz_rgb = zoom(yz_rgb, (zoom_factor, 1.0, 1.0), order=1)
+
+        # Ensure exact integer height expected by the layout
+        def _ensure_height(arr, target_h):
+            h = arr.shape[0]
+            if h == target_h:
+                return arr
+            if h > target_h:
+                return arr[:target_h]
+            # pad at bottom with zeros
+            pad_h = target_h - h
+            pad = np.zeros((pad_h, arr.shape[1], arr.shape[2]), dtype=arr.dtype)
+            return np.concatenate([arr, pad], axis=0)
+
+        xz_rgb = _ensure_height(xz_rgb, desired_h)
+        yz_rgb = _ensure_height(yz_rgb, desired_h)
 
     xz_h_actual = xz_rgb.shape[0]
     yz_h_actual = yz_rgb.shape[0]
@@ -703,14 +729,20 @@ def create_synchronized_composite_gif(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        # Debug captures for the first few frames to validate shapes/bytes
+        palette_bytes = {}
+        capture_n = 2
+        debug_dir = os.path.join(tmpdir, "debug_frames")
+        os.makedirs(debug_dir, exist_ok=True)
 
         for i in range(num_frames):
             if i % 20 == 0 or i == num_frames - 1:
                 sync_logger.info(f"  Building frame {i + 1}/{num_frames}")
+            z_idx = z_size - 1 - (i * frame_step)
             frame = _build_sync_composite_frame(
                 all_channel_stacks,
                 channel_maxes,
-                i * frame_step,
+                z_idx,
                 xy_h,
                 xy_w,
                 z_size,
@@ -725,7 +757,51 @@ def create_synchronized_composite_gif(
                 layout,
                 active_channels,
             )
-            palette_proc.stdin.write(frame.tobytes())
+
+            # Basic sanity checks: shape and byte length
+            expected_shape = (total_height, total_width, 3)
+            if frame.shape != expected_shape:
+                # Dump frame for inspection
+                try:
+                    import imageio.v3 as iio
+
+                    dump_path = os.path.join(
+                        debug_dir, f"palette_frame_badshape_{i:03}.png"
+                    )
+                    iio.imwrite(dump_path, frame)
+                except Exception:
+                    pass
+                raise AssertionError(
+                    f"Frame {i} shape {frame.shape} != expected {expected_shape}"
+                )
+
+            b = frame.tobytes()
+            expected_len = total_width * total_height * 3
+            if len(b) != expected_len:
+                raise AssertionError(
+                    f"Frame {i} bytes {len(b)} != expected {expected_len}"
+                )
+
+            # Capture first N frames for byte-for-byte comparison
+            if i < capture_n:
+                palette_bytes[i] = b
+                try:
+                    import imageio.v3 as iio
+
+                    iio.imwrite(
+                        os.path.join(debug_dir, f"palette_frame_{i:03}.png"), frame
+                    )
+                except Exception:
+                    sync_logger.info(
+                        f"  Could not write debug PNG for palette frame {i}"
+                    )
+
+            # Log small fingerprint
+            sync_logger.debug(
+                f"  Palette frame {i}: shape={frame.shape} bytes={len(b)} head={b[:16].hex()}"
+            )
+
+            palette_proc.stdin.write(b)
 
         palette_proc.stdin.close()
         palette_proc.wait()
@@ -742,13 +818,15 @@ def create_synchronized_composite_gif(
             stderr=subprocess.PIPE,
         )
 
+        # During encode, re-build frames and compare first N bytes to palette capture
         for i in range(num_frames):
             if i % 20 == 0 or i == num_frames - 1:
                 sync_logger.info(f"  Encoding frame {i + 1}/{num_frames}")
+            z_idx = z_size - 1 - (i * frame_step)
             frame = _build_sync_composite_frame(
                 all_channel_stacks,
                 channel_maxes,
-                i * frame_step,
+                z_idx,
                 xy_h,
                 xy_w,
                 z_size,
@@ -763,8 +841,39 @@ def create_synchronized_composite_gif(
                 layout,
                 active_channels,
             )
+
+            b = frame.tobytes()
+            # Compare to palette bytes if we captured them
+            if i in palette_bytes:
+                if b != palette_bytes[i]:
+                    # Dump discrepant frames for inspection
+                    try:
+                        import imageio.v3 as iio
+
+                        iio.imwrite(
+                            os.path.join(debug_dir, f"encode_frame_{i:03}.png"), frame
+                        )
+                        with open(
+                            os.path.join(debug_dir, f"palette_frame_{i:03}.raw"), "wb"
+                        ) as f:
+                            f.write(palette_bytes[i])
+                        with open(
+                            os.path.join(debug_dir, f"encode_frame_{i:03}.raw"), "wb"
+                        ) as f:
+                            f.write(b)
+                    except Exception:
+                        sync_logger.info(
+                            f"  Could not write debug PNG/raw for frame {i}"
+                        )
+                    sync_logger.error(
+                        f"Byte mismatch for frame {i}: palette head={palette_bytes[i][:16].hex()} encode head={b[:16].hex()}"
+                    )
+                    raise AssertionError(
+                        f"Frame {i} bytes differ between palette and encode pass"
+                    )
+
             try:
-                encode_proc.stdin.write(frame.tobytes())
+                encode_proc.stdin.write(b)
             except BrokenPipeError:
                 break
 
