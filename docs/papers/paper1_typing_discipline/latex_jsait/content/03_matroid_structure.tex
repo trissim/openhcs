@@ -24,12 +24,12 @@ Equivalently, $d$ is the smallest number of primitive queries that suffices for 
 These notions differ: an inclusion-minimal distinguishing family may be larger than a minimum-cardinality one. The operational lower bound below depends only on the quantity $d$.
 \end{remark}
 
-In the running example from Section~\ref{sec:bits}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$.
+In the running example from Section~\ref{sec:bits}, $\{q_1,q_2,q_3\}$ is distinguishing and no pair of primitive queries is distinguishing, so the minimum distinguishing number is $d=3$. The exact operational law is that any attribute-only zero-error witness procedure must pay at least this many queries in the worst case.
 
 \begin{theorem}[Attribute-only lower bound]\label{thm:interface-lower-bound}
 For attribute-only observers, zero-error class identity checking requires
 \[
-W(\text{class-identity}) = \Omega(d)
+W(\text{class-identity}) \ge d
 \]
 in the worst case, where $d$ is the minimum distinguishing number.
 \end{theorem}
@@ -39,12 +39,14 @@ in the worst case, where $d$ is the minimum distinguishing number.
 Assume a zero-error attribute-only procedure halts after fewer than $d$ queries on every execution path. Fix one execution path and let $Q \subseteq \mathcal I$ be the set of queried attributes on that path, so $|Q|<d$. By definition of $d$, no set of size less than $d$ is distinguishing. Hence there exist values $v,w$ from different classes with identical answers on all attributes in $Q$. An adversary can answer the procedure's queries consistently with both $v$ and $w$, so the transcript and output coincide on two different classes, contradicting zero-error identification.
 \end{proof}
 
-\begin{corollary}[Lower bound on attribute-only witness cost]\label{cor:attribute-only-witness-lb}
-For any attribute-only observer, $W(\text{class-identity}) \ge d$.
+This exact finite lower bound is the operational query law in full generality.
+
+\begin{corollary}[Asymptotic reading of the attribute-only witness cost]\label{cor:attribute-only-witness-lb}
+For any attribute-only observer, $W(\text{class-identity}) = \Omega(d)$.
 \end{corollary}
 \leanmeta{\LH{ACS1}}
 
-This is the operational query law in full generality. It says how much interrogation is needed when the representation leaves ambiguity unresolved and no explicit identity bits are transmitted.
+It says how much interrogation is needed when the representation leaves ambiguity unresolved and no explicit identity bits are transmitted.
 
 \subsection{Counting Bridge to Bit Currency}
 
@@ -146,7 +148,7 @@ The lower bound $\lceil \log_2 A_{\pi} \rceil \le d$ is exact whenever the canon
 \textbf{Observer Class} & \textbf{Witness Procedure} & \textbf{Witness Cost $W$} \\
 \hline
 Nominal-tag & Single tag read & $O(1)$ \\
-Attribute-only & Query a distinguishing family of minimum size & $\Omega(d)$ \\
+Attribute-only & Query a distinguishing family of minimum size & $\ge d$ \\
 Canonical axis core & Query any matroid basis of the core & exact basis cardinality \\
 \hline
 \end{tabular}
