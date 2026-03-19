@@ -31,7 +31,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Sequence, cast
+from typing import List, Literal, Optional, Sequence, cast
 import urllib.request
 import gzip
 import shutil
@@ -1920,7 +1920,7 @@ def run_benchmark(
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
-    include_competitors: bool = True,
+    competitors: Literal["all", "none", "smina", "gnina"] = "all",
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -1930,16 +1930,16 @@ def run_benchmark(
     print("REAL PDB DOCKING BENCHMARK", flush=True)
     print("=" * 70, flush=True)
 
+    _COMPETITOR_ENGINES: dict[str, type[CLIDockingBenchmarkEngine]] = {
+        "smina": SminaBenchmarkEngine,
+        "gnina": GninaBenchmarkEngine,
+    }
+    _selected = set(_COMPETITOR_ENGINES) if competitors == "all" else {competitors}
+
     engines: list[BenchmarkEngine] = [
         DQDockBenchmarkEngine(),
+        *(_COMPETITOR_ENGINES[name].build() for name in _selected),
     ]
-    if include_competitors:
-        engines.extend(
-            [
-                SminaBenchmarkEngine.build(),
-                GninaBenchmarkEngine.build(),
-            ]
-        )
     for engine in engines:
         engine.announce()
 
@@ -2145,6 +2145,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only DQ-Dock and skip external competitor engines",
     )
+    parser.add_argument(
+        "--competitors",
+        type=str,
+        choices=("all", "none", "smina", "gnina"),
+        default="all",
+        help="Which competitor engines to run (default: all). "
+        "'none' is same as --dq_only. 'smina'/'gnina' run that engine only.",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2157,6 +2165,11 @@ if __name__ == "__main__":
         "simple": ChargeMethod.SIMPLE,
     }[args.charge_method]
 
+    if args.dq_only:
+        competitor_choice = "none"
+    else:
+        competitor_choice = args.competitors
+
     run_benchmark(
         args.n_complexes,
         charge_method=charge_method,
@@ -2165,5 +2178,5 @@ if __name__ == "__main__":
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,
-        include_competitors=not args.dq_only,
+        competitors=competitor_choice,
     )
