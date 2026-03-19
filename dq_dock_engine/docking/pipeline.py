@@ -70,6 +70,8 @@ def run_docking_pipeline(
         use_pocket_guided: Use pocket-guided sampling
         use_multi_stage: Use multi-stage filtering
         config: DockingConfig for CERTIFIED or HEURISTIC mode
+        include_native: If True, compute certification against the native pose.
+            This does not inject the native pose into the returned ranked poses.
     """
     # Determine effective engine based on config
     if config is not None and config.mode == DockingMode.CERTIFIED:
@@ -271,7 +273,7 @@ def _compute_native_certification(
     config: DockingConfig | None,
     protein_coords: jnp.ndarray,
     coords: jnp.ndarray,
-    pre_opt_scores: jnp.ndarray,
+    pre_opt_scores: jnp.ndarray | np.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_ctx: LigandContext,
     include_native: bool,

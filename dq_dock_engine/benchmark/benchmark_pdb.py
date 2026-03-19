@@ -778,7 +778,7 @@ For now, we'll run DQ-Dock only on PDB files.
         dq_results.append(result)
 
         print(
-            f"  Best Energy: {result.energy:.2f} kcal/mol, Native RMSD: {result.rmsd:.2f}A, Time: {result.time:.2f}s"
+            f"  Best Energy: {result.energy:.2f} kcal/mol, Sampled Pose RMSD: {result.rmsd:.2f}A, Time: {result.time:.2f}s"
         )
         print(f"  Formal Status: {result.formal_status}", end="")
         if result.certified is not None:
@@ -788,6 +788,11 @@ For now, we'll run DQ-Dock only on PDB files.
             if result.energy_gap is not None:
                 print(f", Gap: {result.energy_gap:.4f}", end="")
         print()
+        if result.native_rank is not None:
+            print(
+                "  Certification compares native pre-optimization energy against sampled poses.",
+                flush=True,
+            )
 
     # Run Vina if available
     vina_results = []
@@ -840,7 +845,7 @@ For now, we'll run DQ-Dock only on PDB files.
                     )
 
             print(
-                f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Native RMSD: {smina_rmsd:.2f}Å, Time: {result['time']:.1f}s"
+                f"  Affinity: {result['best_affinity']:.2f} kcal/mol, Pose RMSD to native: {smina_rmsd:.2f}Å, Time: {result['time']:.1f}s"
             )
             result["rmsd"] = smina_rmsd
 
