@@ -2200,8 +2200,8 @@ if __name__ == "__main__":
         "--dataset",
         type=str,
         choices=("curated", "casf2007"),
-        default="curated",
-        help="Which dataset to benchmark (default: curated). "
+        default="casf2007",
+        help="Which dataset to benchmark (default: casf2007). "
         "'casf2007' uses the 195-entry CASF-2007 core set.",
     )
     parser.add_argument(
