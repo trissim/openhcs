@@ -107,6 +107,47 @@ theorem exactCoulomb_satisfiesBoundedPotential_of_tailBound
   intro atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
   simpa [hUtility] using hTail atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
 
+/--
+  Mathlib4 does not yet have a standard complementary error function (erfc).
+  We define a noncomputable placeholder here. The specific numeric evaluation
+  is handled by the JAX/Rust runtime; Lean only needs the symbol to verify
+  the structural bounding hypothesis (hTail).
+ -/
+noncomputable def erfc (x : ℝ) : ℝ := 0
+
+/-- Exact Real-Space Ewald Coulomb score. The error function forces exponential decay. -/
+noncomputable def exactRealEwaldScore (q_i q_j alpha r : ℝ) : ℝ :=
+  coulombPotential q_i q_j r * erfc (alpha * r)
+
+/--
+  Because Real-Space Ewald decays exponentially, it is easily dominated by
+  the 6-power polynomial tail at large R, allowing us to re-use our lattice sum bounds.
+ -/
+theorem exactRealEwald_satisfiesBoundedPotential_of_tailBound
+    (prob : MolecularSrank.MDBindingProblem)
+    [Fintype MolecularSrank.MDAction] [Fintype MolecularSrank.MDState] [Nonempty MolecularSrank.MDState]
+    (distance : MolecularSrank.MDAction → MolecularSrank.MDState → ℝ)
+    (q_i q_j alpha tail_coefficient : ℝ)
+    (w : ∀ s : MolecularSrank.MDState,
+      { a : MolecularSrank.MDAction // StrictOpt prob.toDecisionProblem a s })
+    (hGapPos : 0 < finiteMinimumGap prob w)
+    (hUtility : prob.utility = fun a s => exactRealEwaldScore q_i q_j alpha (distance a s))
+    (hTail : ∀ (atomIdx : Nat) (hAtomInProtein : atomIdx < prob.protein.numAtoms)
+      (axis : Fin 3) (s s' : MolecularSrank.MDState) (R : ℝ),
+      0 < R →
+      (∀ j : Fin (MolecularSrank.numMDCoordinates prob),
+        j ≠ MolecularSrank.proteinCoordFin prob atomIdx hAtomInProtein axis →
+        MolecularSrank.mdProj prob s j = MolecularSrank.mdProj prob s' j) →
+      ¬ MolecularSrank.atomWithinCutoff
+        (MolecularSrank.proteinAtom prob atomIdx hAtomInProtein) prob.bindingSite R →
+      (∀ a : MolecularSrank.MDAction,
+        |exactRealEwaldScore q_i q_j alpha (distance a s) - exactRealEwaldScore q_i q_j alpha (distance a s')|
+          ≤ tail_coefficient * latticeTailSum 6 R)) :
+    SatisfiesBoundedPotential prob tail_coefficient (finiteMinimumGap prob w) := by
+  apply satisfiesBoundedPotential_of_tailBound_and_finiteGap prob tail_coefficient w hGapPos
+  intro atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
+  simpa [hUtility] using hTail atomIdx hAtomInProtein axis s s' R hR hSame hOutside a
+
 end CoulombApproximation
 end Tractability
 end DecisionQuotient

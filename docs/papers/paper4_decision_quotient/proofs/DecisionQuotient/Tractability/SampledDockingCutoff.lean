@@ -289,7 +289,6 @@ theorem sampled_potentialRelevantCoords_sufficient_of_relevance_subset
     (prob : MDBindingProblem)
     (samples : SampledActionFamily MDAction)
     [ProductSpace MDState (numMDCoordinates prob)]
-    [DecidableEq (Fin (numMDCoordinates prob))]
     (hRelevantSubset : ∀ i,
       (restrictedDecisionProblem prob.toDecisionProblem samples).isRelevant i →
       i ∈ potentialRelevantCoords prob)
@@ -297,20 +296,87 @@ theorem sampled_potentialRelevantCoords_sufficient_of_relevance_subset
       (∀ i : Fin (numMDCoordinates prob), CoordinateSpace.proj s i = CoordinateSpace.proj s' i) → s = s') :
     (restrictedDecisionProblem prob.toDecisionProblem samples).isSufficient
       (potentialRelevantCoords prob) := by
-  classical
   let dp := restrictedDecisionProblem prob.toDecisionProblem samples
+  letI : DecidablePred dp.isRelevant := Classical.decPred _
   let R : Finset (Fin (numMDCoordinates prob)) := Finset.univ.filter dp.isRelevant
-  have hRelevantSuff : dp.isSufficient R := by
-    -- The `relevantSet_isSufficient` lemma expects a `ProductSpace` instance
-    -- for the ambient type and an injectivity hypothesis. We provide those via
-    -- the `hinj` argument and the `[ProductSpace MDState _]` instance above.
-    simpa [R] using relevantSet_isSufficient dp hinj
-  apply dp.sufficient_superset R (potentialRelevantCoords prob) hRelevantSuff
-  intro i hi
-  have hiR : i ∈ R := hi
-  have hiR' : i ∈ Finset.univ ∧ dp.isRelevant i := by
-    simpa [R, Finset.mem_filter] using hiR
-  exact hRelevantSubset i hiR'.2
+  have hRelevantSuff : dp.isSufficient R := relevantSet_isSufficient dp hinj
+  have hSub : R ⊆ potentialRelevantCoords prob := by
+    intro i hi
+    have hiR' : dp.isRelevant i := (Finset.mem_filter.mp hi).2
+    exact hRelevantSubset i hiR'
+  exact DecisionProblem.sufficient_superset dp R (potentialRelevantCoords prob) hRelevantSuff hSub
+
+/--
+  STAGE 9 ACCEPTANCE GATE: Under the cutoff boundedness premise, the inside-cutoff
+  retained coordinates are sufficient for the sampled restricted docking problem.
+  This is the key theorem that justifies pruning atoms outside the cutoff radius.
+-/
+theorem sampled_insideCutoff_sufficient
+    (prob : MDBindingProblem)
+    (samples : SampledActionFamily MDAction)
+    [Fintype MDAction]
+    [ProductSpace MDState (numMDCoordinates prob)]
+    (aStar : MDAction)
+    (hStrictAll : ∀ s, StrictOpt prob.toDecisionProblem aStar s ∨ ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (hCapture : ∀ s, ∃ a : SupportedAction samples, a.1 ∈ prob.toDecisionProblem.Opt s)
+    (hCompat : ∀ s s' i, CoordinateSpace.proj s i = CoordinateSpace.proj s' i ↔ mdProj prob s i = mdProj prob s' i)
+    (hinj : ∀ s s' : MDState,
+      (∀ i : Fin (numMDCoordinates prob), CoordinateSpace.proj s i = CoordinateSpace.proj s' i) → s = s') :
+    (restrictedDecisionProblem prob.toDecisionProblem samples).isSufficient
+      (potentialRelevantCoords prob) := by
+  apply sampled_potentialRelevantCoords_sufficient_of_relevance_subset prob samples
+  · intro i hrel
+    have hrel_md : @DecisionProblem.isRelevant (SupportedAction samples) MDState (numMDCoordinates prob)
+        (mdCoordinateSpaceStruct prob) (restrictedDecisionProblem prob.toDecisionProblem samples) i := by
+      rcases hrel with ⟨s, s', hSame, hOptNe⟩
+      refine ⟨s, s', ?_, hOptNe⟩
+      intro j hj
+      have hsj := hSame j hj
+      exact (hCompat s s' j).mp hsj
+    by_cases hProtein : i.1 < 3 * prob.protein.numAtoms
+    · have hIdx : i.1 / 3 < prob.protein.numAtoms := by omega
+      have hAxis : i.1 % 3 < 3 := Nat.mod_lt _ (by decide)
+      have heq : i = proteinCoordFin prob (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩ := by
+        apply Fin.ext
+        simp only [proteinCoordFin]
+        omega
+      have hrel_md' : @DecisionProblem.isRelevant (SupportedAction samples) MDState (numMDCoordinates prob)
+          (mdCoordinateSpaceStruct prob) (restrictedDecisionProblem prob.toDecisionProblem samples)
+          (proteinCoordFin prob (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩) := by
+        rw [← heq]
+        exact hrel_md
+      have hWithin : atomWithinCutoff
+          (proteinAtom prob (i.1 / 3) hIdx) prob.bindingSite prob.cutoff := by
+        exact sampled_md_relevant_only_if_within_cutoff
+          prob samples (i.1 / 3) hIdx ⟨i.1 % 3, hAxis⟩ aStar hStrictAll hBounded hCapture hrel_md'
+      apply Finset.mem_union.mpr
+      left
+      rw [potentialProteinRelevantCoords, Finset.mem_map]
+      use ⟨⟨i.1 / 3, hIdx⟩, ⟨i.1 % 3, hAxis⟩⟩
+      constructor
+      · rw [Finset.mem_product]
+        letI dec_within : DecidablePred (fun j : Fin prob.protein.numAtoms => atomWithinCutoff (proteinAtom prob j.1 j.2) prob.bindingSite prob.cutoff) := Classical.decPred _
+        exact ⟨by rw [relevantAtomPositions, Finset.mem_filter]; exact ⟨Finset.mem_univ _, hWithin⟩, Finset.mem_univ _⟩
+      · exact heq.symm
+    · apply Finset.mem_union.mpr
+      right
+      rw [potentialLigandCoords, Finset.mem_map]
+      let lIdx := (i.1 - 3 * prob.protein.numAtoms) / 3
+      let axis := (i.1 - 3 * prob.protein.numAtoms) % 3
+      have hl : lIdx < prob.ligand.numAtoms := by
+        have : i.1 < numMDCoordinates prob := i.2
+        unfold numMDCoordinates at this; omega
+      have haxis : axis < 3 := Nat.mod_lt _ (by decide)
+      use ⟨⟨lIdx, hl⟩, ⟨axis, haxis⟩⟩
+      constructor
+      · rw [Finset.mem_product]; exact ⟨Finset.mem_univ _, Finset.mem_univ _⟩
+      · change ligandCoordFin prob ⟨lIdx, hl⟩ ⟨axis, haxis⟩ = i
+        apply Fin.ext
+        simp only [ligandCoordFin]
+        omega
+  · exact hinj
+
 end SampledDockingCutoff
 end Tractability
 end DecisionQuotient
