@@ -7,26 +7,76 @@ import jax.numpy as jnp
 
 from dq_dock_engine.docking.core import LigandContext, PoseVector
 from dq_dock_engine.docking.placement import _apply_single_pose
-from dq_dock_engine.docking.scoring import _score_single_lj
+from dq_dock_engine.docking.scoring import _score_single_lj, _score_certified_lj
+from dq_dock_engine.docking_config import DockingConfig, DockingMode
 
 
-def _pose_loss_fn(
+def _pose_loss_certified(
     translation: jnp.ndarray,
     quaternion: jnp.ndarray,
     base_coords: jnp.ndarray,
     receptor_coords: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
 ) -> jnp.ndarray:
-    """
-    Computes the energy of a single pose given its transformation parameters.
-    """
     q_norm = quaternion / jnp.linalg.norm(quaternion)
     pose_coords = _apply_single_pose(base_coords, translation, q_norm)
-    energy = _score_single_lj(
-        receptor_coords, pose_coords, receptor_radii, ligand_radii
+    energy, _ = _score_certified_lj(
+        receptor_coords, pose_coords, receptor_radii, ligand_radii, cutoff, epsilon
     )
     return energy
+
+
+def _step_body(curr_t, curr_q, lr_t, lr_q, *loss_extra):
+    energy, (grad_t, grad_q) = jax.value_and_grad(
+        _score_single_lj, argnums=(0, 1), has_aux=False
+    )(curr_t, curr_q, *loss_extra)
+
+    grad_t_norm = jnp.linalg.norm(grad_t)
+    grad_q_norm = jnp.linalg.norm(grad_q)
+
+    grad_t_dir = jnp.where(
+        grad_t_norm > 1e-6, grad_t / grad_t_norm, jnp.zeros_like(grad_t)
+    )
+    grad_q_dir = jnp.where(
+        grad_q_norm > 1e-6, grad_q / grad_q_norm, jnp.zeros_like(grad_q)
+    )
+
+    step_t = jnp.minimum(grad_t_norm * lr_t, 0.1) * grad_t_dir
+    step_q = jnp.minimum(grad_q_norm * lr_q, 0.05) * grad_q_dir
+
+    next_t = curr_t - step_t
+    next_q = curr_q - step_q
+    next_q = next_q / jnp.linalg.norm(next_q)
+
+    return next_t, next_q
+
+
+def _step_body_certified(curr_t, curr_q, lr_t, lr_q, lc, rc, rr, lr, cutoff, epsilon):
+    energy, (grad_t, grad_q) = jax.value_and_grad(
+        _pose_loss_certified, argnums=(0, 1), has_aux=False
+    )(curr_t, curr_q, lc, rc, rr, lr, cutoff, epsilon)
+
+    grad_t_norm = jnp.linalg.norm(grad_t)
+    grad_q_norm = jnp.linalg.norm(grad_q)
+
+    grad_t_dir = jnp.where(
+        grad_t_norm > 1e-6, grad_t / grad_t_norm, jnp.zeros_like(grad_t)
+    )
+    grad_q_dir = jnp.where(
+        grad_q_norm > 1e-6, grad_q / grad_q_norm, jnp.zeros_like(grad_q)
+    )
+
+    step_t = jnp.minimum(grad_t_norm * lr_t, 0.1) * grad_t_dir
+    step_q = jnp.minimum(grad_q_norm * lr_q, 0.05) * grad_q_dir
+
+    next_t = curr_t - step_t
+    next_q = curr_q - step_q
+    next_q = next_q / jnp.linalg.norm(next_q)
+
+    return next_t, next_q
 
 
 def _optimize_single(
@@ -39,45 +89,41 @@ def _optimize_single(
     n_steps: int,
     lr_t: float,
     lr_q: float,
+    use_certified: bool,
+    cutoff: jnp.ndarray | None,
+    epsilon: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Optimize a single pose using gradient descent."""
-    value_and_grad_fn = jax.value_and_grad(_pose_loss_fn, argnums=(0, 1))
+    if use_certified:
 
-    def step_fn(i, val):
-        curr_t, curr_q = val
-        energy, (grad_t, grad_q) = value_and_grad_fn(
-            curr_t,
-            curr_q,
-            ligand_base_coords,
-            receptor_coords,
-            receptor_radii,
-            ligand_radii,
-        )
+        def body_fn(i, val):
+            return _step_body_certified(
+                val[0],
+                val[1],
+                lr_t,
+                lr_q,
+                ligand_base_coords,
+                receptor_coords,
+                receptor_radii,
+                ligand_radii,
+                cutoff,
+                epsilon,
+            )
 
-        grad_t_norm = jnp.linalg.norm(grad_t)
-        grad_q_norm = jnp.linalg.norm(grad_q)
+        return jax.lax.fori_loop(0, n_steps, body_fn, (t, q))
+    else:
 
-        grad_t_dir = jnp.where(
-            grad_t_norm > 1e-6, grad_t / grad_t_norm, jnp.zeros_like(grad_t)
-        )
-        grad_q_dir = jnp.where(
-            grad_q_norm > 1e-6, grad_q / grad_q_norm, jnp.zeros_like(grad_q)
-        )
+        def body_fn(i, val):
+            return _step_body(
+                val[0],
+                val[1],
+                lr_t,
+                lr_q,
+                receptor_coords,
+                receptor_radii,
+                ligand_radii,
+            )
 
-        step_t = jnp.minimum(grad_t_norm * lr_t, 0.1) * grad_t_dir
-        step_q = jnp.minimum(grad_q_norm * lr_q, 0.05) * grad_q_dir
-
-        next_t = curr_t - step_t
-        next_q = curr_q - step_q
-        next_q = next_q / jnp.linalg.norm(next_q)
-
-        return next_t, next_q
-
-    final_t, final_q = jax.lax.fori_loop(0, n_steps, step_fn, (t, q))
-    return final_t, final_q
-
-
-_optimize_single_jit = jax.jit(_optimize_single, static_argnames=["n_steps"])
+        return jax.lax.fori_loop(0, n_steps, body_fn, (t, q))
 
 
 def optimize_poses_batched(
@@ -90,28 +136,23 @@ def optimize_poses_batched(
     n_steps: int = 50,
     lr_t: float = 0.05,
     lr_q: float = 0.05,
+    config: DockingConfig | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """
-    Optimize a batch of poses using JAX gradient descent.
+    if config is not None and config.mode == DockingMode.CERTIFIED:
+        target_error = config.target_error if config.target_error > 0 else 0.001
+        from dq_dock_engine.physics.lattice_sum import optimal_cutoff
 
-    Args:
-        translations: (N, 3) translations
-        quaternions: (N, 4) quaternions
-        ligand_base_coords: Ligand coordinates centered at origin
-        receptor_coords: Protein coordinates
-        receptor_radii: (N_rec,) VdW radii
-        ligand_radii: (N_lig,) VdW radii
-        n_steps: Number of gradient descent steps
-        lr_t: Learning rate for translation
-        lr_q: Learning rate for quaternion (rotation)
-
-    Returns:
-        tuple containing optimized (translations, quaternions)
-    """
+        cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
+        use_certified = True
+        epsilon = 0.086
+    else:
+        cutoff = None
+        use_certified = False
+        epsilon = 0.0
 
     def batch_fn(args):
         t, q = args
-        return _optimize_single_jit(
+        return _optimize_single(
             t,
             q,
             ligand_base_coords,
@@ -121,6 +162,9 @@ def optimize_poses_batched(
             n_steps,
             lr_t,
             lr_q,
+            use_certified,
+            cutoff,
+            epsilon,
         )
 
     batched_optimize = jax.vmap(batch_fn, in_axes=((0, 0),))

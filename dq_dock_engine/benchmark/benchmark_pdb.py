@@ -535,7 +535,7 @@ def run_dq_dock(
         engine=engine,
         key=key,
         top_k=1,
-        optimize=False,
+        optimize=True,
         charge_method=charge_method,
         receptor_file=receptor_file,
         receptor_elements=tuple(receptor_elements)

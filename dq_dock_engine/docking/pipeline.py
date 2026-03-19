@@ -192,11 +192,11 @@ def run_docking_pipeline(
                     engine=engine,
                 )
             )
-        cert = _compute_certification(
+        cert = _compute_native_certification(
             config=config,
             protein_coords=protein_coords,
             coords=batched_coords,
-            scores=final_scores,
+            pre_opt_scores=final_scores,
             receptor_radii=receptor_radii,
             ligand_ctx=ligand_ctx,
             include_native=include_native,
@@ -204,10 +204,12 @@ def run_docking_pipeline(
         return outputs, cert
 
     # --- LOCAL OPTIMIZATION ---
+    pre_opt_scores = final_scores
+
     from dq_dock_engine.docking.placement import apply_poses
 
     n_to_opt = min(top_k_to_optimize, n_poses)
-    opt_indices = jnp.argsort(final_scores)[:n_to_opt]
+    opt_indices = jnp.argsort(pre_opt_scores)[:n_to_opt]
 
     top_translations = pose_vecs.translation[opt_indices]
     top_quaternions = pose_vecs.quaternion[opt_indices]
@@ -222,6 +224,7 @@ def run_docking_pipeline(
         n_steps=n_opt_steps,
         lr_t=0.05,
         lr_q=0.05,
+        config=config,
     )
 
     opt_vecs = PoseVector(translation=opt_t, quaternion=opt_q)
@@ -236,12 +239,12 @@ def run_docking_pipeline(
     }
     final_scores = route_scoring(effective_engine, **kwargs)
 
-    # --- CERTIFICATION (after optimization) ---
-    cert = _compute_certification(
+    # --- CERTIFICATION ---
+    cert = _compute_native_certification(
         config=config,
         protein_coords=protein_coords,
         coords=opt_coords,
-        scores=final_scores,
+        pre_opt_scores=pre_opt_scores,
         receptor_radii=receptor_radii,
         ligand_ctx=ligand_ctx,
         include_native=include_native,
@@ -264,11 +267,11 @@ def run_docking_pipeline(
     return best_poses, cert
 
 
-def _compute_certification(
+def _compute_native_certification(
     config: DockingConfig | None,
     protein_coords: jnp.ndarray,
     coords: jnp.ndarray,
-    scores: jnp.ndarray,
+    pre_opt_scores: jnp.ndarray,
     receptor_radii: jnp.ndarray,
     ligand_ctx: LigandContext,
     include_native: bool,
@@ -277,50 +280,51 @@ def _compute_certification(
         return None
 
     target_error = config.target_error if config.target_error > 0 else 0.001
+    _, error_bound = score_certified_lj(
+        protein_coords,
+        coords[:1],
+        receptor_radii,
+        ligand_ctx.base_radii,
+        target_error=target_error,
+    )
+    error_bound = float(error_bound)
+
+    pre_scores_list = [float(s) for s in pre_opt_scores]
+    best_energy = min(pre_scores_list)
 
     if include_native:
         native_coords = ligand_ctx.base_coords + ligand_ctx.center_of_mass
-        all_coords = jnp.concatenate([coords, native_coords[None]], axis=0)
-        all_scores, error_bound = score_certified_lj(
+        native_score_arr, _ = score_certified_lj(
             protein_coords,
-            all_coords,
+            native_coords[None],
             receptor_radii,
             ligand_ctx.base_radii,
             target_error=target_error,
         )
-        native_idx = len(all_scores) - 1
-        native_rank = int((all_scores < all_scores[native_idx]).sum()) + 1
-        sorted_energies = sorted(float(s) for s in all_scores)
-        if native_rank == 1:
-            gap = sorted_energies[1] - sorted_energies[0]
-            return NativeCertification(
-                decision=CertificationDecision.CERTIFIED_BETTER,
-                energy_gap=gap,
-                error_bound=float(error_bound),
-                native_rank=1,
-            )
-        else:
-            best_energy = float(all_scores[jnp.argmin(all_scores)])
-            gap = abs(float(all_scores[native_idx]) - best_energy)
-            return NativeCertification(
-                decision=CertificationDecision.UNCERTIFIED,
-                energy_gap=gap,
-                error_bound=float(error_bound),
-                native_rank=native_rank,
-            )
+        native_energy = float(native_score_arr[0])
+        native_rank = int((pre_opt_scores < native_energy).sum()) + 1
+        gap = abs(native_energy - best_energy)
+
+        two_bound = 2 * error_bound
+        decision = (
+            CertificationDecision.CERTIFIED_BETTER
+            if gap > two_bound
+            else CertificationDecision.UNCERTIFIED
+        )
+        return NativeCertification(
+            decision=decision,
+            energy_gap=gap,
+            error_bound=error_bound,
+            native_rank=native_rank,
+        )
     else:
-        _, error_bound = score_certified_lj(
-            protein_coords,
-            coords[:1],
-            receptor_radii,
-            ligand_ctx.base_radii,
-            target_error=target_error,
+        sorted_indices = sorted(
+            range(len(pre_scores_list)), key=lambda i: pre_scores_list[i]
         )
-        scores_list = [float(s) for s in scores]
-        sorted_indices = sorted(range(len(scores_list)), key=lambda i: scores_list[i])
-        best_idx = sorted_indices[0]
         if len(sorted_indices) < 2:
             return None
         return GapCertification.from_energies(
-            scores_list[best_idx], scores_list[sorted_indices[1]], float(error_bound)
+            pre_scores_list[sorted_indices[0]],
+            pre_scores_list[sorted_indices[1]],
+            error_bound,
         )
