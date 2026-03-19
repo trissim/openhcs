@@ -41,6 +41,7 @@ from dq_dock_engine.docking.core import (
     LigandContext,
     ScoringEngine,
     FormalProofStatus,
+    BenchmarkResult,
 )
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
 from dq_dock_engine.docking.pdb_io import parse_structure
@@ -483,7 +484,7 @@ def run_dq_dock(
     engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
-) -> Dict:
+) -> BenchmarkResult:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     from dq_dock_engine.docking.core import DockingBox, ScoringEngine
     from dq_dock_engine.docking.pdb_io import (
@@ -525,7 +526,7 @@ def run_dq_dock(
 
     key = jax.random.PRNGKey(42)
     formal_status = resolve_formal_status(config)
-    best_poses = run_docking_pipeline(
+    result_tuple = run_docking_pipeline(
         protein_coords=jnp.array(pocket_coords),
         receptor_radii=jnp.array(pocket_radii),
         ligand_ctx=ligand_ctx,
@@ -543,10 +544,19 @@ def run_dq_dock(
         config=config,
         use_pocket_guided=use_pocket_guided,
         use_multi_stage=use_multi_stage,
+        include_native=config.mode.value == "certified",
     )
+    best_poses, cert = result_tuple[0], result_tuple[1]
 
     if not best_poses:
-        return {"success": False, "error": "No poses generated"}
+        return BenchmarkResult(
+            success=False,
+            energy=0.0,
+            rmsd=0.0,
+            time=time.time() - start,
+            n_atoms=0,
+            formal_status=formal_status.name,
+        )
 
     best_pose = best_poses[0]
 
@@ -556,14 +566,14 @@ def run_dq_dock(
 
     elapsed = time.time() - start
 
-    return {
-        "success": True,
-        "energy": best_pose.energy,
-        "rmsd": rmsd,
-        "time": elapsed,
-        "n_atoms": len(pocket_coords) + len(ligand_coords),
-        "formal_status": formal_status.name,
-    }
+    return BenchmarkResult.from_certification(
+        pose_energy=best_pose.energy,
+        pose_rmsd=rmsd,
+        elapsed=elapsed,
+        n_atoms=len(pocket_coords) + len(ligand_coords),
+        formal_status=formal_status.name,
+        cert=cert,
+    )
 
 
 def run_benchmark(
@@ -707,9 +717,16 @@ For now, we'll run DQ-Dock only on PDB files.
         dq_results.append(result)
 
         print(
-            f"  Best Energy: {result['energy']:.2f} kcal/mol, Native RMSD: {result['rmsd']:.2f}Å, Time: {result['time']:.2f}s"
+            f"  Best Energy: {result.energy:.2f} kcal/mol, Native RMSD: {result.rmsd:.2f}A, Time: {result.time:.2f}s"
         )
-        print(f"  Formal Status: {result['formal_status']}")
+        print(f"  Formal Status: {result.formal_status}", end="")
+        if result.certified is not None:
+            print(f", Certified: {result.certified}", end="")
+            if result.native_rank is not None:
+                print(f", Native Rank: {result.native_rank}", end="")
+            if result.energy_gap is not None:
+                print(f", Gap: {result.energy_gap:.4f}", end="")
+        print()
 
     # Run Vina if available
     vina_results = []
@@ -775,16 +792,16 @@ For now, we'll run DQ-Dock only on PDB files.
     print("-" * 50)
 
     if dq_results:
-        avg_time = np.mean([r["time"] for r in dq_results])
+        avg_time = np.mean([r.time for r in dq_results])
         print(f"{'DQ-Dock':<20} {avg_time:<12.2f} {len(dq_results)}/{len(complexes)}")
 
         print("\nDQ-Dock by Formal Status")
         print("-" * 50)
-        grouped_results: dict[str, list[dict]] = {}
+        grouped_results: dict[str, list[BenchmarkResult]] = {}
         for result in dq_results:
-            grouped_results.setdefault(result["formal_status"], []).append(result)
+            grouped_results.setdefault(result.formal_status, []).append(result)
         for status, results in grouped_results.items():
-            avg_status_time = np.mean([r["time"] for r in results])
+            avg_status_time = np.mean([r.time for r in results])
             print(
                 f"{status:<20} {avg_status_time:<12.2f} {len(results)}/{len(dq_results)}"
             )

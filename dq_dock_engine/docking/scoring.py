@@ -9,8 +9,7 @@ PROOF STATUS SUMMARY:
   - route_scoring: HEURISTIC (dispatch only)
 """
 
-from dq_dock_engine.proof_status import heuristic
-
+from dataclasses import dataclass
 from typing import List, Dict, Callable
 import os
 import subprocess
@@ -21,19 +20,66 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from dq_dock_engine.docking.core import ScoringEngine, ScoredPose
+from dq_dock_engine.proof_status import certified, heuristic, ProofStatus
+from dq_dock_engine.docking.core import ScoringEngine, ScoredPose, GapCertification
 from dq_dock_engine.physics.lattice_sum import optimal_cutoff, lj6_cutoff_error
-from dq_dock_engine.proof_status import certified, ProofStatus
 
-# Physical calibration for LJ potential
-# Typical well depth for carbon-carbon interactions in kcal/mol
-# From standard force fields (AMBER, CHARMM)
 _EPSILON_KCAL_MOL = 0.086
-from dq_dock_engine.proof_status import certified, ProofStatus
+
+
+@dataclass(frozen=True)
+class CertifiedBatchResult:
+    scores: jnp.ndarray
+    error_bound: float
+    target_error: float
+    cutoff_radius: float
+
+    def certify_gap(self, idx_a: int, idx_b: int) -> GapCertification:
+        return GapCertification.from_energies(
+            float(self.scores[idx_a]),
+            float(self.scores[idx_b]),
+            self.error_bound,
+        )
+
+    def certify_top_k(self, k: int = 1) -> list[GapCertification]:
+        sorted_indices = jnp.argsort(self.scores)
+        best_idx = int(sorted_indices[0])
+        certifications = []
+        for i in range(1, k):
+            if i >= len(sorted_indices):
+                break
+            cert = self.certify_gap(best_idx, int(sorted_indices[i]))
+            certifications.append(cert)
+        return certifications
+
+
+def score_certified_batch(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+) -> CertifiedBatchResult:
+    scores, error_bound = score_certified_lj(
+        receptor_coords,
+        poses_coords,
+        receptor_radii,
+        ligand_radii,
+        target_error=target_error,
+        epsilon=epsilon,
+    )
+    R = optimal_cutoff(target_error, s=6.0)
+    return CertifiedBatchResult(
+        scores=scores,
+        error_bound=error_bound,
+        target_error=target_error,
+        cutoff_radius=R,
+    )
 
 
 @jax.jit
-@heuristic()  # HEURISTIC: ad-hoc weights
+@heuristic()
 def _score_single_lj(
     receptor_coords: jnp.ndarray,
     pose_coords: jnp.ndarray,

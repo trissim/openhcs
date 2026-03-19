@@ -19,21 +19,6 @@ def get_vdw_radius(element: str) -> float:
       - These are GROUND TRUTH measurements, not heuristics
       - Used for all physics-based scoring
     """
-
-
-from dq_dock_engine.proof_status import heuristic
-
-
-@heuristic()  # EMPIRICAL: experimental crystallographic data
-def get_vdw_radius(element: str) -> float:
-    """
-    Return Van der Waals radius in Angstroms for a given element.
-
-    PROOF STATUS: EMPIRICAL (no formal proof)
-      - Source: Bondi (1964) compilation of crystallographic data
-      - Values vary slightly between sources
-      - Used for heuristic scoring only
-    """
     element = element.strip().upper()
     radii = {
         "H": 1.20,
