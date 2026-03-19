@@ -513,6 +513,7 @@ def sample_intelligent_poses(
     box_size: float,
     n_poses: int,
     protein_coords: jnp.ndarray,
+    receptor_elements: tuple[str, ...] | None,
     ligand_com: jnp.ndarray,
     strategy: SamplingStrategy = SamplingStrategy.HYBRID,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -531,6 +532,7 @@ def sample_intelligent_poses(
         box_size: Size of docking box
         n_poses: Number of poses to sample
         protein_coords: Protein coordinates for pocket analysis
+        receptor_elements: Receptor elements aligned with protein_coords
         ligand_com: Ligand center of mass
         strategy: Sampling strategy (RANDOM, GUIDED, HYBRID)
 
@@ -543,7 +545,12 @@ def sample_intelligent_poses(
     pocket_mask = distances < pocket_radius
     pocket_coords = protein_coords[pocket_mask]
 
-    pocket_elements = tuple(["C"] * len(pocket_coords))
+    if receptor_elements is None:
+        pocket_elements = tuple(["C"] * len(pocket_coords))
+    else:
+        pocket_elements = tuple(
+            element for element, keep in zip(receptor_elements, pocket_mask) if keep
+        )
 
     sampler = create_pocket_sampler()
 

@@ -95,6 +95,7 @@ def run_docking_pipeline(
             box_size=float(box.size[0]),
             n_poses=n_poses,
             protein_coords=protein_coords,
+            receptor_elements=receptor_elements,
             ligand_com=ligand_ctx.center_of_mass,
             strategy=SamplingStrategy.HYBRID,
         )
@@ -191,7 +192,7 @@ def run_docking_pipeline(
                 ScoredPose(
                     coords=batched_coords[idx_i],
                     energy=float(final_scores[idx_i]),
-                    engine=engine,
+                    engine=effective_engine,
                 )
             )
         cert = _compute_native_certification(
@@ -262,7 +263,7 @@ def run_docking_pipeline(
             ScoredPose(
                 coords=opt_coords[idx_i],
                 energy=float(final_scores[idx_i]),
-                engine=engine,
+                engine=effective_engine,
             )
         )
 

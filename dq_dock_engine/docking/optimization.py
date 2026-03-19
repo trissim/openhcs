@@ -11,6 +11,19 @@ from dq_dock_engine.docking.scoring import _score_single_lj, _score_certified_lj
 from dq_dock_engine.docking_config import DockingConfig, DockingMode
 
 
+def _pose_loss_heuristic(
+    translation: jnp.ndarray,
+    quaternion: jnp.ndarray,
+    base_coords: jnp.ndarray,
+    receptor_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+) -> jnp.ndarray:
+    q_norm = quaternion / jnp.linalg.norm(quaternion)
+    pose_coords = _apply_single_pose(base_coords, translation, q_norm)
+    return _score_single_lj(receptor_coords, pose_coords, receptor_radii, ligand_radii)
+
+
 def _pose_loss_certified(
     translation: jnp.ndarray,
     quaternion: jnp.ndarray,
@@ -31,7 +44,7 @@ def _pose_loss_certified(
 
 def _step_body(curr_t, curr_q, lr_t, lr_q, *loss_extra):
     energy, (grad_t, grad_q) = jax.value_and_grad(
-        _score_single_lj, argnums=(0, 1), has_aux=False
+        _pose_loss_heuristic, argnums=(0, 1), has_aux=False
     )(curr_t, curr_q, *loss_extra)
 
     grad_t_norm = jnp.linalg.norm(grad_t)
@@ -118,6 +131,7 @@ def _optimize_single(
                 val[1],
                 lr_t,
                 lr_q,
+                ligand_base_coords,
                 receptor_coords,
                 receptor_radii,
                 ligand_radii,

@@ -763,9 +763,14 @@ def save_benchmark_results(
         str(cx["pdb_id"]): result for cx, result in zip(complexes, dq_results)
     }
     vina_map = {row.pdb_id: row for row in vina_rows}
-    expect_vina_alignment = phase in {"vina", "complete"} and len(vina_rows) > 0
-    if expect_vina_alignment:
-        missing_vina = sorted(set(dq_map) - set(vina_map))
+    expect_complete_vina_alignment = phase == "complete" and len(vina_rows) > 0
+    allow_partial_vina_alignment = phase == "vina"
+    if expect_complete_vina_alignment or allow_partial_vina_alignment:
+        missing_vina = (
+            sorted(set(dq_map) - set(vina_map))
+            if expect_complete_vina_alignment
+            else []
+        )
         extra_vina = sorted(set(vina_map) - set(dq_map))
         if missing_vina or extra_vina:
             raise ValueError(
@@ -777,7 +782,11 @@ def save_benchmark_results(
     for pdb_id, row in dq_map.items():
         cx = complex_map[pdb_id]
         dq_result = dq_result_map[pdb_id]
-        vina_row = vina_map[pdb_id] if expect_vina_alignment else None
+        vina_row = (
+            vina_map.get(pdb_id)
+            if (expect_complete_vina_alignment or allow_partial_vina_alignment)
+            else None
+        )
         csv_rows.append(
             {
                 "pdb_id": pdb_id,

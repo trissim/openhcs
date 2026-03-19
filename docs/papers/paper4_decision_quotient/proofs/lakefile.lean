@@ -11,3 +11,6 @@ require mathlib from git
 lean_lib «DecisionQuotient» where
   globs := #[.submodules `DecisionQuotient]
   srcDir := "."
+
+lean_exe "arraydsl-export" where
+  root := `ArrayDSLExportMain
