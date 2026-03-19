@@ -1971,6 +1971,8 @@ def run_benchmark(
 
     output_paths = create_benchmark_output_paths(results_dir)
     pose_dir = benchmark_pose_dir(output_paths)
+    # Ensure pose output directory exists before any per-complex writes
+    pose_dir.mkdir(parents=True, exist_ok=True)
     competitor_metadata = tuple(
         cast(CLIDockingBenchmarkEngine, engine).metadata()
         for engine in engines
