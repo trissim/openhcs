@@ -16,7 +16,7 @@ Invariants:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import tifffile
@@ -51,6 +51,74 @@ class AnimatedGifOutput:
     well_id: str
     output_path: Path
     movie_type: str
+
+
+@dataclass(frozen=True)
+class SyncGifCompressionOptions:
+    """Compression controls for synchronized GIF output."""
+
+    scale: float = 1.0
+    frame_step: int = 1
+    max_colors: int = 256
+    dither: str = "sierra2_4a"
+    diff_mode: str = "rectangle"
+
+
+@dataclass(frozen=True)
+class SyncGifOptions:
+    """Full option set for synchronized GIF generation."""
+
+    fps: int = 10
+    compression: SyncGifCompressionOptions = SyncGifCompressionOptions()
+
+
+SYNC_GIF_COMPRESSION_PRESETS = {
+    "quality": SyncGifCompressionOptions(),
+    "balanced": SyncGifCompressionOptions(
+        scale=0.75,
+        frame_step=2,
+        max_colors=192,
+        dither="bayer",
+        diff_mode="rectangle",
+    ),
+    "powerpoint": SyncGifCompressionOptions(
+        scale=0.5,
+        frame_step=2,
+        max_colors=128,
+        dither="bayer",
+        diff_mode="rectangle",
+    ),
+    "compact": SyncGifCompressionOptions(
+        scale=0.4,
+        frame_step=3,
+        max_colors=96,
+        dither="bayer",
+        diff_mode="rectangle",
+    ),
+}
+
+
+def build_sync_gif_options(
+    fps: int = 10,
+    profile: str = "quality",
+    scale: Optional[float] = None,
+    frame_step: Optional[int] = None,
+    max_colors: Optional[int] = None,
+    dither: Optional[str] = None,
+    diff_mode: Optional[str] = None,
+) -> SyncGifOptions:
+    """Build sync GIF options from a preset with optional overrides."""
+    preset = SYNC_GIF_COMPRESSION_PRESETS[profile]
+    return SyncGifOptions(
+        fps=fps,
+        compression=SyncGifCompressionOptions(
+            scale=preset.scale if scale is None else scale,
+            frame_step=preset.frame_step if frame_step is None else frame_step,
+            max_colors=preset.max_colors if max_colors is None else max_colors,
+            dither=preset.dither if dither is None else dither,
+            diff_mode=preset.diff_mode if diff_mode is None else diff_mode,
+        ),
+    )
 
 
 def load_z_stack(file_paths: Tuple[Path, ...]) -> np.ndarray:
@@ -600,14 +668,24 @@ def _build_sync_composite_frame(
     return (composite * 255).astype(np.uint8)
 
 
+def _resize_rgb_frame(frame: np.ndarray, scale: float) -> np.ndarray:
+    """Resize an RGB frame for GIF compression while preserving uint8 output."""
+    if scale == 1.0:
+        return frame
+
+    from scipy.ndimage import zoom
+
+    resized = np.asarray(zoom(frame, (scale, scale, 1.0), order=1))
+    return np.asarray(np.clip(resized, 0, 255), dtype=np.uint8)
+
+
 def create_synchronized_composite_gif(
     all_channel_stacks: Dict[str, np.ndarray],
     output_path: Path,
     layout,
     channel_colors,
     z_gap: float = 1.0,
-    fps: int = 10,
-    frame_step: int = 1,
+    options: SyncGifOptions = SyncGifOptions(),
 ) -> Path:
     """
     Create a synchronized composite GIF with XY on left, XZ/YZ stacked on right.
@@ -643,6 +721,10 @@ def create_synchronized_composite_gif(
     first_stack = list(all_channel_stacks.values())[0]
     z_size, y_size, x_size = first_stack.shape
 
+    fps = options.fps
+    compression = options.compression
+    frame_step = compression.frame_step
+
     effective_z = z_size // frame_step
     num_frames = min(effective_z, 120)
 
@@ -660,10 +742,13 @@ def create_synchronized_composite_gif(
     total_width = xy_w + right_col_width
     total_height = max(xy_h, right_column_height)
 
+    scaled_width = max(1, int(round(total_width * compression.scale)))
+    scaled_height = max(1, int(round(total_height * compression.scale)))
+
     output_path = output_path.with_suffix(".gif")
     sync_logger.info(
         f"  Writing sync composite GIF to {output_path.name} ({num_frames} frames, "
-        f"{total_width}x{total_height})"
+        f"{scaled_width}x{scaled_height})"
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -679,7 +764,7 @@ def create_synchronized_composite_gif(
             "-pix_fmt",
             "rgb24",
             "-s",
-            f"{total_width}x{total_height}",
+            f"{scaled_width}x{scaled_height}",
             "-r",
             str(fps),
             "-i",
@@ -688,7 +773,7 @@ def create_synchronized_composite_gif(
             # This GIF is always opaque. Reserving a transparent palette entry
             # reduces the usable color budget and can cause viewer-dependent
             # black/transparent artifacts in later frames.
-            "palettegen=stats_mode=full:reserve_transparent=0",
+            f"palettegen=stats_mode=full:reserve_transparent=0:max_colors={compression.max_colors}",
             palette_path,
         ]
 
@@ -702,7 +787,7 @@ def create_synchronized_composite_gif(
             "-pix_fmt",
             "rgb24",
             "-s",
-            f"{total_width}x{total_height}",
+            f"{scaled_width}x{scaled_height}",
             "-r",
             str(fps),
             "-i",
@@ -710,7 +795,7 @@ def create_synchronized_composite_gif(
             "-i",
             palette_path,
             "-lavfi",
-            "paletteuse",
+            f"paletteuse=dither={compression.dither}:diff_mode={compression.diff_mode}",
             # Encode each frame as a full opaque image. ffmpeg's default GIF
             # encoder flags use offsetting/transdiff optimization, which can
             # introduce viewer-dependent corruption in later frames.
@@ -757,9 +842,10 @@ def create_synchronized_composite_gif(
                 layout,
                 active_channels,
             )
+            frame = _resize_rgb_frame(frame, compression.scale)
 
             # Basic sanity checks: shape and byte length
-            expected_shape = (total_height, total_width, 3)
+            expected_shape = (scaled_height, scaled_width, 3)
             if frame.shape != expected_shape:
                 # Dump frame for inspection
                 try:
@@ -776,7 +862,7 @@ def create_synchronized_composite_gif(
                 )
 
             b = frame.tobytes()
-            expected_len = total_width * total_height * 3
+            expected_len = scaled_width * scaled_height * 3
             if len(b) != expected_len:
                 raise AssertionError(
                     f"Frame {i} bytes {len(b)} != expected {expected_len}"
@@ -841,6 +927,7 @@ def create_synchronized_composite_gif(
                 layout,
                 active_channels,
             )
+            frame = _resize_rgb_frame(frame, compression.scale)
 
             b = frame.tobytes()
             # Compare to palette bytes if we captured them
@@ -896,8 +983,7 @@ def save_synchronized_gif_for_well(
     layout=None,
     channel_colors=None,
     z_gap: float = 1.0,
-    fps: int = 10,
-    frame_step: int = 1,
+    options: SyncGifOptions = SyncGifOptions(),
 ) -> List[AnimatedGifOutput]:
     """
     Save synchronized composite GIF for a well.
@@ -909,8 +995,7 @@ def save_synchronized_gif_for_well(
         layout: CompositeLayout for layout parameters
         channel_colors: Color mappings
         z_gap: Vertical stretch factor
-        fps: Frames per second
-        frame_step: Step through XY frames
+        options: Sync GIF playback and compression options
 
     Returns:
         List of AnimatedGifOutput records
@@ -931,8 +1016,7 @@ def save_synchronized_gif_for_well(
         layout=layout,
         channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
         z_gap=z_gap,
-        fps=fps,
-        frame_step=frame_step,
+        options=options,
     )
 
     return [

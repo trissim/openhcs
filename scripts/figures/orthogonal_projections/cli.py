@@ -67,6 +67,8 @@ from .io_handler import (
     AnimatedGifOutput,
     MovieOutput,
     ProjectionOutput,
+    SyncGifOptions,
+    build_sync_gif_options,
     load_z_stack,
     save_all_projections,
     save_slice_movies_for_well,
@@ -83,6 +85,7 @@ from .mosaic import (
     save_mosaic,
 )
 from .labeling import FigureLabeler, get_labeler
+from .exporters import DeckExportOptions, collect_figure_assets, export_slide_deck
 from openhcs.processing.backends.processors.numpy_processor import (
     create_orthogonal_projections,
 )
@@ -110,6 +113,9 @@ class ProcessingConfig:
     create_composites: bool = True
     create_movies: bool = False
     create_sync_gifs: bool = False
+    sync_gif_options: SyncGifOptions = SyncGifOptions()
+    export_pptx: bool = False
+    pptx_options: Optional[DeckExportOptions] = None
     movie_types: Tuple[str, ...] = ("xy", "xz", "yz")
     movie_fps: int = 10
     movie_bit_depth: int = 8
@@ -147,6 +153,7 @@ class ProcessingResult:
     movie_outputs: List[MovieOutput] = field(default_factory=list)
     sync_gif_outputs: List[AnimatedGifOutput] = field(default_factory=list)
     mosaic_outputs: List[Path] = field(default_factory=list)
+    deck_outputs: List[Path] = field(default_factory=list)
 
 
 def _get_default_dtype_config():
@@ -286,7 +293,7 @@ def process_well_all_channels(
             layout=CompositeLayout(z_gap=config.z_gap, z_aspect=config.z_aspect),
             channel_colors=config.channel_colors,
             z_gap=config.z_gap,
-            fps=config.movie_fps,
+            options=config.sync_gif_options,
         )
         for sg in sync_gif_outputs:
             logger.info(f"  Saved sync GIF: {sg.output_path}")
@@ -361,10 +368,20 @@ def _process_well_worker(
         create_sync_gifs = config_dict.get("create_sync_gifs", False)
         movie_types = tuple(config_dict.get("movie_types", ["xy", "xz", "yz"]))
         movie_fps = config_dict.get("movie_fps", 10)
+        sync_gif_options_dict = config_dict.get("sync_gif_options", {})
         movie_bit_depth = config_dict.get("movie_bit_depth", 8)
         z_gap = config_dict.get("z_gap", 1.0)
         z_aspect = config_dict.get("z_aspect", 0.1)
         dpi = config_dict.get("dpi", 150)
+        sync_gif_options = build_sync_gif_options(
+            fps=sync_gif_options_dict.get("fps", movie_fps),
+            profile=sync_gif_options_dict.get("profile", "quality"),
+            scale=sync_gif_options_dict.get("scale"),
+            frame_step=sync_gif_options_dict.get("frame_step"),
+            max_colors=sync_gif_options_dict.get("max_colors"),
+            dither=sync_gif_options_dict.get("dither"),
+            diff_mode=sync_gif_options_dict.get("diff_mode"),
+        )
 
         z_paths_by_channel = {
             WellChannelKey(
@@ -454,7 +471,7 @@ def _process_well_worker(
                 layout=CompositeLayout(z_gap=z_gap, z_aspect=z_aspect),
                 channel_colors=channel_colors or DEFAULT_CHANNEL_COLORS,
                 z_gap=z_gap,
-                fps=movie_fps,
+                options=sync_gif_options,
             )
 
         return WellResult(
@@ -528,6 +545,15 @@ def process_plate(config: ProcessingConfig) -> ProcessingResult:
             "create_sync_gifs": config.create_sync_gifs,
             "movie_types": config.movie_types,
             "movie_fps": config.movie_fps,
+            "sync_gif_options": {
+                "fps": config.sync_gif_options.fps,
+                "profile": "quality",
+                "scale": config.sync_gif_options.compression.scale,
+                "frame_step": config.sync_gif_options.compression.frame_step,
+                "max_colors": config.sync_gif_options.compression.max_colors,
+                "dither": config.sync_gif_options.compression.dither,
+                "diff_mode": config.sync_gif_options.compression.diff_mode,
+            },
             "movie_bit_depth": config.movie_bit_depth,
             "z_gap": config.z_gap,
             "z_aspect": config.z_aspect,
@@ -671,6 +697,25 @@ def parse_mosaic_group(group_str: str) -> ArbitraryMosaicSpec:
     return ArbitraryMosaicSpec(name=name, well_ids=wells)
 
 
+def export_powerpoint_deck(
+    config: ProcessingConfig, result: ProcessingResult
+) -> Optional[Path]:
+    """Export generated figures to a PowerPoint deck."""
+    if not config.export_pptx or config.pptx_options is None:
+        return None
+
+    assets = collect_figure_assets(
+        composite_outputs=result.composite_outputs,
+        sync_gif_outputs=result.sync_gif_outputs,
+        movie_outputs=result.movie_outputs,
+    )
+    deck_result = export_slide_deck(assets, config.pptx_options)
+    result.deck_outputs.append(deck_result.output_path)
+    logger.info(f"Saved PowerPoint deck: {deck_result.output_path}")
+    logger.info(f"  Slide count: {deck_result.slide_count}")
+    return deck_result.output_path
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -755,6 +800,66 @@ def main():
     )
 
     parser.add_argument(
+        "--sync-gif-profile",
+        choices=["quality", "balanced", "powerpoint", "compact"],
+        default="quality",
+        help="Compression profile for synchronized GIFs",
+    )
+
+    parser.add_argument(
+        "--sync-gif-scale",
+        type=float,
+        help="Optional scale override for synchronized GIF output",
+    )
+
+    parser.add_argument(
+        "--sync-gif-frame-step",
+        type=int,
+        help="Optional frame-step override for synchronized GIF output",
+    )
+
+    parser.add_argument(
+        "--sync-gif-max-colors",
+        type=int,
+        help="Optional palette-size override for synchronized GIF output",
+    )
+
+    parser.add_argument(
+        "--sync-gif-dither",
+        choices=["sierra2_4a", "bayer", "none"],
+        help="Optional dithering mode for synchronized GIF output",
+    )
+
+    parser.add_argument(
+        "--export-pptx",
+        action="store_true",
+        help="Export generated figures to a PowerPoint deck",
+    )
+
+    parser.add_argument(
+        "--pptx-output",
+        help="Output path for PowerPoint deck (defaults to output-dir/orthogonal_projections.pptx)",
+    )
+
+    parser.add_argument(
+        "--pptx-include-composites",
+        action="store_true",
+        help="Include composite PNGs in PowerPoint export",
+    )
+
+    parser.add_argument(
+        "--pptx-include-sync-gifs",
+        action="store_true",
+        help="Include synchronized GIFs in PowerPoint export",
+    )
+
+    parser.add_argument(
+        "--pptx-include-movies",
+        action="store_true",
+        help="Include composite movies in PowerPoint export",
+    )
+
+    parser.add_argument(
         "--movie-types",
         nargs="+",
         default=["xy", "xz", "yz"],
@@ -821,6 +926,38 @@ def main():
     if args.mosaic_groups:
         arbitrary_mosaics = tuple(parse_mosaic_group(g) for g in args.mosaic_groups)
 
+    sync_gif_options = build_sync_gif_options(
+        fps=args.movie_fps,
+        profile=args.sync_gif_profile,
+        scale=args.sync_gif_scale,
+        frame_step=args.sync_gif_frame_step,
+        max_colors=args.sync_gif_max_colors,
+        dither=args.sync_gif_dither,
+    )
+
+    pptx_include_any = (
+        args.pptx_include_composites
+        or args.pptx_include_sync_gifs
+        or args.pptx_include_movies
+    )
+    pptx_include_composites = args.pptx_include_composites or not pptx_include_any
+    pptx_include_sync_gifs = args.pptx_include_sync_gifs or not pptx_include_any
+    pptx_output = (
+        Path(args.pptx_output)
+        if args.pptx_output
+        else Path(args.output_dir) / "orthogonal_projections.pptx"
+    )
+    pptx_options = None
+    if args.export_pptx:
+        pptx_options = DeckExportOptions(
+            output_path=pptx_output,
+            include_composites=pptx_include_composites,
+            include_sync_gifs=pptx_include_sync_gifs,
+            include_movies=args.pptx_include_movies,
+            deck_title="OpenHCS Orthogonal Projections",
+            plate_name=Path(args.plate_dir).name,
+        )
+
     config = ProcessingConfig(
         plate_path=Path(args.plate_dir),
         output_dir=Path(args.output_dir),
@@ -835,6 +972,9 @@ def main():
         create_composites=not args.no_composites,
         create_movies=args.create_movies,
         create_sync_gifs=args.create_sync_gifs,
+        sync_gif_options=sync_gif_options,
+        export_pptx=args.export_pptx,
+        pptx_options=pptx_options,
         movie_types=tuple(args.movie_types),
         movie_fps=args.movie_fps,
         movie_bit_depth=args.movie_bit_depth,
@@ -852,6 +992,8 @@ def main():
     logger.info(f"Workers: {config.num_workers}")
 
     result = process_plate(config)
+    if config.export_pptx:
+        export_powerpoint_deck(config, result)
 
     logger.info("=" * 50)
     logger.info("Processing complete!")
@@ -864,6 +1006,7 @@ def main():
     logger.info(f"  Movies: {len(result.movie_outputs)}")
     logger.info(f"  Sync GIFs: {len(result.sync_gif_outputs)}")
     logger.info(f"  Mosaics: {len(result.mosaic_outputs)}")
+    logger.info(f"  Decks: {len(result.deck_outputs)}")
 
 
 if __name__ == "__main__":
