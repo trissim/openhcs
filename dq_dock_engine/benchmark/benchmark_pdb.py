@@ -47,6 +47,12 @@ from dq_dock_engine.docking.metrics import (
     compute_rmsd_batched,
     compute_docking_rmsd_batched,
 )
+from dq_dock_engine.docking_config import (
+    DockingConfig,
+    DockingMode,
+    CERTIFIED_DOCKING,
+    HEURISTIC_SCREENING,
+)
 
 
 # Famous, difficult drug targets where docking matters
@@ -85,17 +91,14 @@ class PDBComplex:
 
 
 def resolve_formal_status(
-    engine: ScoringEngine,
-    use_multi_stage: bool,
-    use_pocket_guided: bool,
+    config: DockingConfig,
 ) -> FormalProofStatus:
-    """Return the formal status of the active runtime path.
-
-    IMPORTANT: the current benchmark path is not yet wired directly to the
-    theorem-backed pruning certificates, so all active modes remain heuristic.
-    """
-    del engine, use_multi_stage, use_pocket_guided
-    return FormalProofStatus.HEURISTIC
+    """Return the formal status based on docking configuration mode."""
+    match config.mode:
+        case DockingMode.CERTIFIED:
+            return FormalProofStatus.CERTIFIED
+        case DockingMode.HEURISTIC:
+            return FormalProofStatus.HEURISTIC
 
 
 def download_pdb(pdb_id: str, cache_dir: Path) -> Path:
@@ -489,6 +492,7 @@ def run_dq_dock(
     ligand_file: Path,
     receptor_file: Path,
     charge_method,
+    config: DockingConfig,
     n_poses: int = 2000,
     use_multi_stage: bool = False,
     use_pocket_guided: bool = False,
@@ -536,7 +540,7 @@ def run_dq_dock(
     )
 
     key = jax.random.PRNGKey(42)
-    formal_status = resolve_formal_status(engine, use_multi_stage, use_pocket_guided)
+    formal_status = resolve_formal_status(config)
     best_poses = run_docking_pipeline(
         protein_coords=jnp.array(pocket_coords),
         receptor_radii=jnp.array(pocket_radii),
@@ -580,6 +584,7 @@ def run_dq_dock(
 def run_benchmark(
     n_complexes: int = 10,
     charge_method=None,
+    config: DockingConfig = HEURISTIC_SCREENING,
     n_poses: int = 2000,
     use_multi_stage: bool = False,
     use_pocket_guided: bool = False,
@@ -647,11 +652,9 @@ For now, we'll run DQ-Dock only on PDB files.
     mode_label = "multi-stage composite" if use_multi_stage else "random picking"
     if use_pocket_guided and not use_multi_stage:
         mode_label = "pocket-guided picking"
-    formal_status = resolve_formal_status(
-        ScoringEngine.INTERNAL_LJ, use_multi_stage, use_pocket_guided
-    )
+    formal_status = resolve_formal_status(config)
     print(
-        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label}, {formal_status.name})",
+        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label}, {config.mode.name} mode, {formal_status.name})",
         flush=True,
     )
     print("=" * 70, flush=True)
@@ -709,6 +712,7 @@ For now, we'll run DQ-Dock only on PDB files.
             ligand_file=ligand_pdb,
             receptor_file=pocket_receptor_pdb,
             charge_method=charge_method,
+            config=config,
             n_poses=n_poses,
             use_multi_stage=use_multi_stage,
             use_pocket_guided=use_pocket_guided,
@@ -843,7 +847,17 @@ if __name__ == "__main__":
         action="store_true",
         help="Use pocket-guided pose sampling instead of uniform random sampling",
     )
+    parser.add_argument(
+        "--certified",
+        action="store_true",
+        help="Use CERTIFIED_DOCKING mode (Lean proofs + NIST constants only)",
+    )
     args = parser.parse_args()
+
+    config = CERTIFIED_DOCKING if args.certified else HEURISTIC_SCREENING
+    is_valid, warnings = config.validate()
+    for warning in warnings:
+        print(f"Config warning: {warning}")
 
     charge_method = {
         "am1bcc": ChargeMethod.AM1BCC,
@@ -854,6 +868,7 @@ if __name__ == "__main__":
     run_benchmark(
         args.n_complexes,
         charge_method=charge_method,
+        config=config,
         n_poses=args.n_poses,
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
