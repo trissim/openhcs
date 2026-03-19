@@ -13,6 +13,8 @@ import DecisionQuotient.CheckAxioms
 import DecisionQuotient.ClaimClosure
 import DecisionQuotient.Complexity
 import DecisionQuotient.ComplexityMain
+import DecisionQuotient.Computation.ArrayDSL
+import DecisionQuotient.Computation.LennardJonesDeriv
 import DecisionQuotient.Computation
 import DecisionQuotient.ComputationalDecisionProblem
 import DecisionQuotient.CrossPaperDependencies
@@ -126,8 +128,11 @@ import DecisionQuotient.ToolCollapse
 import DecisionQuotient.Tractability.BoundedActions
 import DecisionQuotient.Tractability.BoundedStateSpace
 import DecisionQuotient.Tractability.Dimensional
+import DecisionQuotient.Tractability.DiscretizedState
 import DecisionQuotient.Tractability.Dominance
+import DecisionQuotient.Tractability.EpsilonUtilityGap
 import DecisionQuotient.Tractability.FPT
+import DecisionQuotient.Tractability.MolecularSrank
 import DecisionQuotient.Tractability.MultiplicativeSeparable
 import DecisionQuotient.Tractability.SeparableUtility
 import DecisionQuotient.Tractability.SingleAction
