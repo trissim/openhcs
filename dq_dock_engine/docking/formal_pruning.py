@@ -3,6 +3,8 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from dq_dock_engine.arraydsl import ambiguityBandMask, topKWithTiesMask
+
 
 def _scores_to_utilities(scores: jax.Array) -> jax.Array:
     return -scores
@@ -10,18 +12,14 @@ def _scores_to_utilities(scores: jax.Array) -> jax.Array:
 
 def top_k_with_ties_mask(scores: jax.Array, k: int = 1) -> jax.Array:
     utilities = _scores_to_utilities(scores)
-    strict_better = utilities[None, :] > utilities[:, None]
-    better_counts = jnp.sum(strict_better, axis=1)
-    return better_counts < k
+    return topKWithTiesMask(utilities, k)
 
 
 def ambiguity_band_mask(scores: jax.Array, k: int, epsilon: float) -> jax.Array:
     if k <= 0:
         raise ValueError("k must be positive")
     utilities = _scores_to_utilities(scores)
-    sorted_utilities = jnp.sort(utilities)[::-1]
-    kth_boundary = sorted_utilities[min(k - 1, len(sorted_utilities) - 1)]
-    return utilities >= (kth_boundary - epsilon)
+    return ambiguityBandMask(utilities, k, epsilon)
 
 
 def certified_survivor_mask(

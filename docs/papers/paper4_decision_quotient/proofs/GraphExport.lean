@@ -147,6 +147,7 @@ import DecisionQuotient.Tractability.EpsilonUtilityGap
 import DecisionQuotient.Tractability.EwaldSummation
 import DecisionQuotient.Tractability.FPT
 import DecisionQuotient.Tractability.FiniteTopK
+import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.GridConvergence
 import DecisionQuotient.Tractability.GridMDInstances
 import DecisionQuotient.Tractability.LJApproximation

@@ -110,6 +110,78 @@ noncomputable def rowWiseDistance {rows cols : ℕ}
     (q1 q2 : MDTensor rows cols) : MDArray rows :=
   mkMDArray (fun i => distance (q1 i) (q2 i))
 
+/-- Condition a probability vector on a boolean support mask. -/
+noncomputable def supportConditioning {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool) : MDArray n :=
+  mkMDArray (fun i => if mask i then probs i else 0)
+
+/-- Normalize a nonnegative weight vector to unit sum.
+    The caller is responsible for ensuring the denominator is positive. -/
+noncomputable def normalizeProbabilityVector {n : ℕ} (weights : MDArray n) : MDArray n :=
+  let z := reduce_sum weights
+  mkMDArray (fun i => weights i / z)
+
+/-- Uniform probability vector over the support of a template tensor. -/
+noncomputable def uniformProbabilityVectorLike {n : ℕ} (_template : MDArray n) : MDArray n :=
+  normalizeProbabilityVector (mkMDArray (fun _ => 1))
+
+/-- Probability vector with explicit no-op mass at index 0 and uniform remainder. -/
+noncomputable def noopBiasedProbabilityVectorLike {n : ℕ}
+    (_template : MDArray n)
+    (noopMass : ℝ) : MDArray n :=
+  if h : n = 0 then
+    mkMDArray (fun _ => 0)
+  else if hOne : n = 1 then
+    mkMDArray (fun _ => 1)
+  else
+    let remainder := (1 - noopMass) / (n - 1)
+    mkMDArray (fun i => if i.1 = 0 then noopMass else remainder)
+
+/-- Conservative top-k-with-ties mask over utility values.
+    An action survives when fewer than `k` actions are strictly better. -/
+noncomputable def topKWithTiesMask {n : ℕ}
+    (utilities : MDArray n)
+    (k : ℕ) : Fin n → Bool :=
+  fun i =>
+    let strictBetter : Finset (Fin n) :=
+      (Finset.univ : Finset (Fin n)).filter (fun j => utilities i < utilities j)
+    strictBetter.card < k
+
+/-- Certified ambiguity band around the kth utility boundary. -/
+noncomputable def ambiguityBandMask {n : ℕ}
+    (utilities : MDArray n)
+    (k : ℕ)
+    (eps : ℝ) : Fin n → Bool :=
+  if hk : 0 < k then
+    let topKValues : Finset ℝ := ((Finset.univ : Finset (Fin n)).filter (fun i => topKWithTiesMask utilities k i)).image utilities
+    if hTop : topKValues.Nonempty then
+      let kthBoundary := topKValues.min' hTop
+      fun i => kthBoundary - eps ≤ utilities i
+    else
+      fun _ => false
+  else
+    fun _ => false
+
+/-- Deterministic first-max selector under a boolean mask.
+    Returns `0` when the masked support is empty. -/
+noncomputable def stableArgmaxMasked {n : ℕ}
+    (values : MDArray n)
+    (mask : Fin n → Bool) : ℕ :=
+  let survivors : Finset (Fin n) := (Finset.univ : Finset (Fin n)).filter (fun i => mask i)
+  if hNonempty : survivors.Nonempty then
+    let maxValue := (survivors.image values).max' <| by
+      rcases hNonempty with ⟨i, hi⟩
+      exact ⟨values i, Finset.mem_image.mpr ⟨i, hi, rfl⟩⟩
+    let maximizers := survivors.filter (fun i => values i = maxValue)
+    let hMaximizers : maximizers.Nonempty := by
+      have hMaxMem : maxValue ∈ survivors.image values := Finset.max'_mem _ _
+      rcases Finset.mem_image.mp hMaxMem with ⟨witness, hWitness, hWitnessEq⟩
+      exact ⟨witness, by simp [maximizers, hWitness, hWitnessEq]⟩
+    (maximizers.min' hMaximizers).1
+  else
+    0
+
 /-- Apply a rigid 3D transform defined by a quaternion and translation to one point. -/
 noncomputable def rigidTransformPoint3D
     (point : MDArray 3)
@@ -146,6 +218,62 @@ noncomputable def rigidTransform3D {n : ℕ}
     (quaternion : MDArray 4)
     (translation : MDArray 3) : CoordSet n :=
   fun i => rigidTransformPoint3D (coords i) quaternion translation
+
+/-- Build a unit quaternion from an axis-angle parameterization. -/
+noncomputable def axisAngleQuaternion
+    (axis : MDArray 3)
+    (angle : ℝ) : MDArray 4 :=
+  let half := angle / 2
+  let s := Real.sin half
+  mkMDArray fun i =>
+    if h0 : i.1 = 0 then
+      Real.cos half
+    else if h1 : i.1 = 1 then
+      axis ⟨0, by decide⟩ * s
+    else if h2 : i.1 = 2 then
+      axis ⟨1, by decide⟩ * s
+    else
+      axis ⟨2, by decide⟩ * s
+
+/-- Canonical local translation stencil in 3D with signed axis steps. -/
+noncomputable def localTranslationStencil3D (step : ℝ) : MDTensor 6 3 :=
+  fun i =>
+    match i.1 with
+    | 0 => mkMDArray (fun j => if j.1 = 0 then step else 0)
+    | 1 => mkMDArray (fun j => if j.1 = 0 then -step else 0)
+    | 2 => mkMDArray (fun j => if j.1 = 1 then step else 0)
+    | 3 => mkMDArray (fun j => if j.1 = 1 then -step else 0)
+    | 4 => mkMDArray (fun j => if j.1 = 2 then step else 0)
+    | _ => mkMDArray (fun j => if j.1 = 2 then -step else 0)
+
+/-- Canonical local rotation stencil as signed quarter-step quaternions around
+    the Cartesian axes. -/
+noncomputable def localRotationStencil3D (angle : ℝ) : MDTensor 6 4 :=
+  let ex := mkMDArray (fun i => if i.1 = 0 then 1 else 0)
+  let ey := mkMDArray (fun i => if i.1 = 1 then 1 else 0)
+  let ez := mkMDArray (fun i => if i.1 = 2 then 1 else 0)
+  fun i =>
+    match i.1 with
+    | 0 => axisAngleQuaternion ex angle
+    | 1 => axisAngleQuaternion ex (-angle)
+    | 2 => axisAngleQuaternion ey angle
+    | 3 => axisAngleQuaternion ey (-angle)
+    | 4 => axisAngleQuaternion ez angle
+    | _ => axisAngleQuaternion ez (-angle)
+
+/-- Fixed deterministic quaternion dictionary for certified global support. -/
+noncomputable def quaternionDictionary8 : MDTensor 8 4 :=
+  let half := Real.sqrt (1 / 2 : ℝ)
+  fun i =>
+    match i.1 with
+    | 0 => mkMDArray (fun j => if j.1 = 0 then 1 else 0)
+    | 1 => mkMDArray (fun j => if j.1 = 1 then 1 else 0)
+    | 2 => mkMDArray (fun j => if j.1 = 2 then 1 else 0)
+    | 3 => mkMDArray (fun j => if j.1 = 3 then 1 else 0)
+    | 4 => mkMDArray (fun j => if j.1 = 0 ∨ j.1 = 1 then half else 0)
+    | 5 => mkMDArray (fun j => if j.1 = 0 ∨ j.1 = 2 then half else 0)
+    | 6 => mkMDArray (fun j => if j.1 = 0 ∨ j.1 = 3 then half else 0)
+    | _ => mkMDArray (fun _ => 1 / 2)
 
 /-! ## 3. Derivative Definitions -/
 
@@ -276,6 +404,7 @@ inductive ExprKind where
 inductive ScalarType where
   | real
   | boolean
+  | integer
   deriving Repr, DecidableEq
 
 /-- Structured lowering category for Python/JAX code generation. -/
@@ -288,6 +417,17 @@ inductive LoweringKind where
   | rowWiseNorm
   | distance
   | rowWiseDistance
+  | supportConditioning
+  | normalizeProbabilityVector
+  | uniformProbabilityVectorLike
+  | noopBiasedProbabilityVectorLike
+  | topKWithTiesMask
+  | ambiguityBandMask
+  | stableArgmaxMasked
+  | axisAngleQuaternion
+  | localTranslationStencil3D
+  | localRotationStencil3D
+  | quaternionDictionary8
   | rigidTransform3D
   | pairwiseDistances
   | pairwiseDistances3D
@@ -440,6 +580,166 @@ def exportPrimitives : List PrimitiveIR := [
     jaxSymbol := "norm"
     supportsGrad := true
     leanSymbol := "DecisionQuotient.Computation.ArrayDSL.rowWiseDistance"
+  },
+  {
+    name := "supportConditioning"
+    args := [
+      { name := "probs", kind := .tensor, scalarType? := some .real },
+      { name := "mask", kind := .tensor, scalarType? := some .boolean }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .supportConditioning
+    jaxModule := "jax.numpy"
+    jaxSymbol := "where"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.supportConditioning"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.supportConditioning_zero_of_mask_false"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "normalizeProbabilityVector"
+    args := [
+      { name := "weights", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .normalizeProbabilityVector
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sum"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector_sum_one"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "uniformProbabilityVectorLike"
+    args := [
+      { name := "template", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .uniformProbabilityVectorLike
+    jaxModule := "jax.numpy"
+    jaxSymbol := "ones_like"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.uniformProbabilityVectorLike"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector_sum_one"
+    proofStatus? := some "CONDITIONALLY_CERTIFIED"
+  },
+  {
+    name := "noopBiasedProbabilityVectorLike"
+    args := [
+      { name := "template", kind := .tensor, scalarType? := some .real },
+      { name := "noop_mass", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .noopBiasedProbabilityVectorLike
+    jaxModule := "jax.numpy"
+    jaxSymbol := "concatenate"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.noopBiasedProbabilityVectorLike"
+  },
+  {
+    name := "topKWithTiesMask"
+    args := [
+      { name := "utilities", kind := .tensor, scalarType? := some .real },
+      { name := "k", kind := .scalar, scalarType? := some .integer }
+    ]
+    resultKind := .tensor
+    scalarType? := some .boolean
+    loweringKind := .topKWithTiesMask
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sum"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.topKWithTiesMask"
+    proofRef? := some "DecisionQuotient.Tractability.FiniteTopK.mem_topKWithTies_iff"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "ambiguityBandMask"
+    args := [
+      { name := "utilities", kind := .tensor, scalarType? := some .real },
+      { name := "k", kind := .scalar, scalarType? := some .integer },
+      { name := "epsilon", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .boolean
+    loweringKind := .ambiguityBandMask
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sort"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.ambiguityBandMask"
+    proofRef? := some "DecisionQuotient.Tractability.NearTieBand.exact_topK_subset_ambiguityBand"
+    proofStatus? := some "CONDITIONALLY_CERTIFIED"
+  },
+  {
+    name := "stableArgmaxMasked"
+    args := [
+      { name := "values", kind := .tensor, scalarType? := some .real },
+      { name := "mask", kind := .tensor, scalarType? := some .boolean }
+    ]
+    resultKind := .scalar
+    scalarType? := some .integer
+    loweringKind := .stableArgmaxMasked
+    jaxModule := "jax.numpy"
+    jaxSymbol := "argmax"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.stableArgmaxMasked"
+    proofRef? := some "DecisionQuotient.Tractability.FormalLocalOptimizer.deterministic_pick_mem_ambiguityBand"
+    proofStatus? := some "CONDITIONALLY_CERTIFIED"
+  },
+  {
+    name := "axisAngleQuaternion"
+    args := [
+      { name := "axis", kind := .tensor, scalarType? := some .real },
+      { name := "angle", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .axisAngleQuaternion
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sin"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.axisAngleQuaternion"
+  },
+  {
+    name := "localTranslationStencil3D"
+    args := [
+      { name := "step", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .localTranslationStencil3D
+    jaxModule := "jax.numpy"
+    jaxSymbol := "array"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.localTranslationStencil3D"
+  },
+  {
+    name := "localRotationStencil3D"
+    args := [
+      { name := "angle", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .localRotationStencil3D
+    jaxModule := "jax.numpy"
+    jaxSymbol := "stack"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.localRotationStencil3D"
+  },
+  {
+    name := "quaternionDictionary8"
+    args := []
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .quaternionDictionary8
+    jaxModule := "jax.numpy"
+    jaxSymbol := "array"
+    supportsGrad := false
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.quaternionDictionary8"
   },
   {
     name := "rigidTransform3D"
@@ -677,6 +977,17 @@ def PrimitiveIR.jaxExpr (primitive : PrimitiveIR) : String :=
   | .rowWiseNorm => "jnp.linalg.norm(arr, axis=-1)"
   | .distance => "jnp.linalg.norm(arr1 - arr2)"
   | .rowWiseDistance => "jnp.linalg.norm(arr1 - arr2, axis=-1)"
+  | .supportConditioning => "jnp.where(mask, probs, 0.0)"
+  | .normalizeProbabilityVector => "weights / jnp.sum(weights)"
+  | .uniformProbabilityVectorLike => "jnp.ones_like(template) / jnp.sum(jnp.ones_like(template))"
+  | .noopBiasedProbabilityVectorLike => "jnp.concatenate([jnp.array([noop_mass]), jnp.full((template.shape[0] - 1,), (1 - noop_mass) / (template.shape[0] - 1))])"
+  | .topKWithTiesMask => "jnp.sum(utilities[None, :] > utilities[:, None], axis=1) < k"
+  | .ambiguityBandMask => "utilities >= jnp.sort(utilities)[::-1][k - 1] - epsilon"
+  | .stableArgmaxMasked => "jnp.argmax(jnp.where(mask, values, -jnp.inf))"
+  | .axisAngleQuaternion => "half = angle / 2; jnp.array([jnp.cos(half), axis[0] * jnp.sin(half), axis[1] * jnp.sin(half), axis[2] * jnp.sin(half)])"
+  | .localTranslationStencil3D => "jnp.array([[step, 0, 0], [-step, 0, 0], [0, step, 0], [0, -step, 0], [0, 0, step], [0, 0, -step]], dtype=jnp.float32)"
+  | .localRotationStencil3D => "axes = jnp.eye(3, dtype=jnp.float32); return jnp.stack([axisAngleQuaternion(axes[0], angle), axisAngleQuaternion(axes[0], -angle), axisAngleQuaternion(axes[1], angle), axisAngleQuaternion(axes[1], -angle), axisAngleQuaternion(axes[2], angle), axisAngleQuaternion(axes[2], -angle)], axis=0)"
+  | .quaternionDictionary8 => "half = jnp.sqrt(jnp.array(0.5, dtype=jnp.float32)); return jnp.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[half,half,0,0],[half,0,half,0],[half,0,0,half],[0.5,0.5,0.5,0.5]], dtype=jnp.float32)"
   | .rigidTransform3D => "coords @ rotation_matrix(quaternion).T + translation"
   | .pairwiseDistances => "jnp.abs(coords1[:, None] - coords2[None, :])"
   | .pairwiseDistances3D => "jnp.linalg.norm(coords1[:, None, :] - coords2[None, :, :], axis=-1)"
@@ -711,6 +1022,30 @@ theorem norm_nonneg_bound {n : ℕ} (arr : MDArray n) :
 theorem distance_triangle_bound {n : ℕ} (a b c : MDArray n) :
     distance a c ≤ distance a b + distance b c := by
   exact dist_triangle a b c
+
+/-- Support conditioning never introduces positive mass outside the declared mask. -/
+theorem supportConditioning_zero_of_mask_false {n : ℕ}
+    (probs : MDArray n)
+    (mask : Fin n → Bool)
+    (i : Fin n)
+    (hFalse : mask i = false) :
+    supportConditioning probs mask i = 0 := by
+  change (if mask i then probs i else 0) = 0
+  simp [hFalse]
+
+/-- Normalizing a weight vector with positive total mass yields unit sum. -/
+theorem normalizeProbabilityVector_sum_one {n : ℕ}
+    (weights : MDArray n)
+    (hPos : 0 < reduce_sum weights) :
+    reduce_sum (normalizeProbabilityVector weights) = 1 := by
+  unfold normalizeProbabilityVector reduce_sum
+  change (∑ i, weights i / ∑ j, weights j) = 1
+  have hz : (∑ j, weights j) ≠ 0 := hPos.ne'
+  calc
+    ∑ i, weights i / ∑ j, weights j
+        = ∑ i, weights i * (∑ j, weights j)⁻¹ := by simp [div_eq_mul_inv]
+    _ = (∑ i, weights i) * (∑ j, weights j)⁻¹ := by rw [Finset.sum_mul]
+    _ = 1 := by field_simp [hz]
 
 /-- THEOREM: L2 norm square is sum of squares. -/
 theorem norm_sq_eq_sum_sq {n : ℕ} (arr : MDArray n) :

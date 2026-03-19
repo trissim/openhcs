@@ -12,6 +12,17 @@ from dq_dock_engine.generated.arraydsl_primitives import (
     rowWiseNorm,
     distance,
     rowWiseDistance,
+    supportConditioning,
+    normalizeProbabilityVector,
+    uniformProbabilityVectorLike,
+    noopBiasedProbabilityVectorLike,
+    topKWithTiesMask,
+    ambiguityBandMask,
+    stableArgmaxMasked,
+    axisAngleQuaternion,
+    localTranslationStencil3D,
+    localRotationStencil3D,
+    quaternionDictionary8,
     rigidTransform3D,
     pairwiseDistances,
     pairwiseDistances3D,
@@ -139,6 +150,160 @@ register_primitive(
         proof_ref=None,
         proof_status=None,
         callable=rowWiseDistance,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='supportConditioning',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.supportConditioning',
+        jax_module='jax.numpy',
+        jax_symbol='where',
+        lowering_kind='support_conditioning',
+        supports_grad=True,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.supportConditioning_zero_of_mask_false',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=supportConditioning,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='normalizeProbabilityVector',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='normalize_probability_vector',
+        supports_grad=True,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector_sum_one',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=normalizeProbabilityVector,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='uniformProbabilityVectorLike',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.uniformProbabilityVectorLike',
+        jax_module='jax.numpy',
+        jax_symbol='ones_like',
+        lowering_kind='uniform_probability_vector_like',
+        supports_grad=False,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector_sum_one',
+        proof_status=ProofStatus.CONDITIONALLY_CERTIFIED,
+        callable=uniformProbabilityVectorLike,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='noopBiasedProbabilityVectorLike',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.noopBiasedProbabilityVectorLike',
+        jax_module='jax.numpy',
+        jax_symbol='concatenate',
+        lowering_kind='noop_biased_probability_vector_like',
+        supports_grad=False,
+        proof_ref=None,
+        proof_status=None,
+        callable=noopBiasedProbabilityVectorLike,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='topKWithTiesMask',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.topKWithTiesMask',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='top_k_with_ties_mask',
+        supports_grad=False,
+        proof_ref='DecisionQuotient.Tractability.FiniteTopK.mem_topKWithTies_iff',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=topKWithTiesMask,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='ambiguityBandMask',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.ambiguityBandMask',
+        jax_module='jax.numpy',
+        jax_symbol='sort',
+        lowering_kind='ambiguity_band_mask',
+        supports_grad=False,
+        proof_ref='DecisionQuotient.Tractability.NearTieBand.exact_topK_subset_ambiguityBand',
+        proof_status=ProofStatus.CONDITIONALLY_CERTIFIED,
+        callable=ambiguityBandMask,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='stableArgmaxMasked',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.stableArgmaxMasked',
+        jax_module='jax.numpy',
+        jax_symbol='argmax',
+        lowering_kind='stable_argmax_masked',
+        supports_grad=False,
+        proof_ref='DecisionQuotient.Tractability.FormalLocalOptimizer.deterministic_pick_mem_ambiguityBand',
+        proof_status=ProofStatus.CONDITIONALLY_CERTIFIED,
+        callable=stableArgmaxMasked,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='axisAngleQuaternion',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.axisAngleQuaternion',
+        jax_module='jax.numpy',
+        jax_symbol='sin',
+        lowering_kind='axis_angle_quaternion',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=axisAngleQuaternion,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='localTranslationStencil3D',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.localTranslationStencil3D',
+        jax_module='jax.numpy',
+        jax_symbol='array',
+        lowering_kind='local_translation_stencil_3d',
+        supports_grad=False,
+        proof_ref=None,
+        proof_status=None,
+        callable=localTranslationStencil3D,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='localRotationStencil3D',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.localRotationStencil3D',
+        jax_module='jax.numpy',
+        jax_symbol='stack',
+        lowering_kind='local_rotation_stencil_3d',
+        supports_grad=False,
+        proof_ref=None,
+        proof_status=None,
+        callable=localRotationStencil3D,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='quaternionDictionary8',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.quaternionDictionary8',
+        jax_module='jax.numpy',
+        jax_symbol='array',
+        lowering_kind='quaternion_dictionary_8',
+        supports_grad=False,
+        proof_ref=None,
+        proof_status=None,
+        callable=quaternionDictionary8,
     )
 )
 
@@ -348,6 +513,17 @@ ARRAYDSL_PRIMITIVES = tuple(PRIMITIVE_REGISTRY[name] for name in [
     'rowWiseNorm',
     'distance',
     'rowWiseDistance',
+    'supportConditioning',
+    'normalizeProbabilityVector',
+    'uniformProbabilityVectorLike',
+    'noopBiasedProbabilityVectorLike',
+    'topKWithTiesMask',
+    'ambiguityBandMask',
+    'stableArgmaxMasked',
+    'axisAngleQuaternion',
+    'localTranslationStencil3D',
+    'localRotationStencil3D',
+    'quaternionDictionary8',
     'rigidTransform3D',
     'pairwiseDistances',
     'pairwiseDistances3D',

@@ -69,6 +69,7 @@ import DecisionQuotient.Tractability.SampledDockingCutoff
 import DecisionQuotient.Tractability.GridMDInstances
 import DecisionQuotient.Tractability.GridConvergence
 import DecisionQuotient.Tractability.FiniteTopK
+import DecisionQuotient.Tractability.FormalLocalOptimizer
 import DecisionQuotient.Tractability.NearTieBand
 import DecisionQuotient.Tractability.RankingPreservation
 import DecisionQuotient.Tractability.TopKPreservation
@@ -938,11 +939,21 @@ abbrev GD1 := @Tractability.GridMDInstances.gridMDState_sufficient_erase_irrelev
 abbrev GD2 := @Tractability.GridConvergence.resolutionControlledApprox_implies_uniformApprox
 abbrev GD3 := @Tractability.GridConvergence.lipschitzUtilityApprox_implies_resolutionControlled
 abbrev CP1 := @Tractability.CertifiedPruning.certificate_sound
+abbrev FLO1 := @Tractability.FormalLocalOptimizer.survivor_certificate_support
+abbrev FLO2 := @Tractability.FormalLocalOptimizer.conditioned_claim_admissible_of_evidence
+abbrev FLO3 := @Tractability.FormalLocalOptimizer.deterministic_pick_mem_ambiguityBand
+abbrev FLO4 := @Tractability.FormalLocalOptimizer.restrictedPrior_zero_outside
+abbrev FLO5 := @Tractability.FormalLocalOptimizer.restrictedPrior_eq_prior_of_full_support
 
 abbrev LS1 := @Tractability.LatticeSum.latticeTailSum6_le_M_div_R3
 abbrev LS2 := @Tractability.LatticeSum.latticeTailSum12_le_M_div_R9
 abbrev LS3 := @Tractability.LatticeSum.lj6_tail_bound
 abbrev LS4 := @Tractability.LatticeSum.lj12_tail_bound
+
+abbrev ADL1 := @Computation.ArrayDSL.norm_nonneg_bound
+abbrev ADL2 := @Computation.ArrayDSL.distance_triangle_bound
+abbrev ADL3 := @Computation.ArrayDSL.supportConditioning_zero_of_mask_false
+abbrev ADL4 := @Computation.ArrayDSL.normalizeProbabilityVector_sum_one
 
 -- Decision Problem (DP) additional handles
 abbrev DP6 := ClaimClosure.DP6  -- Empty-set sufficiency iff constant

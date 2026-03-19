@@ -46,6 +46,75 @@ def rowWiseDistance(arr1, arr2):
     return jnp.linalg.norm(arr1 - arr2, axis=-1)
 
 
+def supportConditioning(probs, mask):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.supportConditioning."""
+    return jnp.where(mask, probs, 0.0)
+
+
+def normalizeProbabilityVector(weights):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.normalizeProbabilityVector."""
+    return weights / jnp.sum(weights)
+
+
+def uniformProbabilityVectorLike(template):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.uniformProbabilityVectorLike."""
+    weights = jnp.ones_like(template, dtype=jnp.float32)
+    return weights / jnp.sum(weights)
+
+
+def noopBiasedProbabilityVectorLike(template, noop_mass):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.noopBiasedProbabilityVectorLike."""
+    n = template.shape[0]
+    if n == 0:
+        return jnp.zeros_like(template, dtype=jnp.float32)
+    if n == 1:
+        return jnp.ones_like(template, dtype=jnp.float32)
+    remainder = (1.0 - noop_mass) / (n - 1)
+    return jnp.concatenate([jnp.array([noop_mass], dtype=jnp.float32), jnp.full((n - 1,), remainder, dtype=jnp.float32)])
+
+
+def topKWithTiesMask(utilities, k):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.topKWithTiesMask."""
+    strict_better = utilities[None, :] > utilities[:, None]
+    return jnp.sum(strict_better, axis=1) < k
+
+
+def ambiguityBandMask(utilities, k, epsilon):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.ambiguityBandMask."""
+    sorted_utilities = jnp.sort(utilities)[::-1]
+    kth_boundary = sorted_utilities[jnp.maximum(k - 1, 0)]
+    return utilities >= (kth_boundary - epsilon)
+
+
+def stableArgmaxMasked(values, mask):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.stableArgmaxMasked."""
+    return jnp.argmax(jnp.where(mask, values, -jnp.inf))
+
+
+def axisAngleQuaternion(axis, angle):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.axisAngleQuaternion."""
+    half = angle / 2.0
+    s = jnp.sin(half)
+    return jnp.array([jnp.cos(half), axis[0] * s, axis[1] * s, axis[2] * s], dtype=jnp.float32)
+
+
+def localTranslationStencil3D(step):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.localTranslationStencil3D."""
+    return jnp.array([[step, 0.0, 0.0], [-step, 0.0, 0.0], [0.0, step, 0.0], [0.0, -step, 0.0], [0.0, 0.0, step], [0.0, 0.0, -step]], dtype=jnp.float32)
+
+
+def localRotationStencil3D(angle):
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.localRotationStencil3D."""
+    axes = jnp.eye(3, dtype=jnp.float32)
+    return jnp.stack([axisAngleQuaternion(axes[0], angle), axisAngleQuaternion(axes[0], -angle), axisAngleQuaternion(axes[1], angle), axisAngleQuaternion(axes[1], -angle), axisAngleQuaternion(axes[2], angle), axisAngleQuaternion(axes[2], -angle)], axis=0)
+
+
+def quaternionDictionary8():
+    """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.quaternionDictionary8."""
+    half = jnp.sqrt(jnp.array(0.5, dtype=jnp.float32))
+    return jnp.array([[1.0,0.0,0.0,0.0],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0],[0.0,0.0,0.0,1.0],[half,half,0.0,0.0],[half,0.0,half,0.0],[half,0.0,0.0,half],[0.5,0.5,0.5,0.5]], dtype=jnp.float32)
+
+
 def rigidTransform3D(coords, quaternion, translation):
     """Generated wrapper for DecisionQuotient.Computation.ArrayDSL.rigidTransform3D."""
     w, x, y, z = quaternion[0], quaternion[1], quaternion[2], quaternion[3]
@@ -147,6 +216,17 @@ __all__ = [
     'rowWiseNorm',
     'distance',
     'rowWiseDistance',
+    'supportConditioning',
+    'normalizeProbabilityVector',
+    'uniformProbabilityVectorLike',
+    'noopBiasedProbabilityVectorLike',
+    'topKWithTiesMask',
+    'ambiguityBandMask',
+    'stableArgmaxMasked',
+    'axisAngleQuaternion',
+    'localTranslationStencil3D',
+    'localRotationStencil3D',
+    'quaternionDictionary8',
     'rigidTransform3D',
     'pairwiseDistances',
     'pairwiseDistances3D',

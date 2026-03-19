@@ -19,6 +19,7 @@ def exprKindToString : ExprKind → String
 def scalarTypeToString : ScalarType → String
   | .real => "real"
   | .boolean => "boolean"
+  | .integer => "integer"
 
 def loweringKindToString : LoweringKind → String
   | .vmap => "vmap"
@@ -29,6 +30,17 @@ def loweringKindToString : LoweringKind → String
   | .rowWiseNorm => "row_wise_norm"
   | .distance => "distance"
   | .rowWiseDistance => "row_wise_distance"
+  | .supportConditioning => "support_conditioning"
+  | .normalizeProbabilityVector => "normalize_probability_vector"
+  | .uniformProbabilityVectorLike => "uniform_probability_vector_like"
+  | .noopBiasedProbabilityVectorLike => "noop_biased_probability_vector_like"
+  | .topKWithTiesMask => "top_k_with_ties_mask"
+  | .ambiguityBandMask => "ambiguity_band_mask"
+  | .stableArgmaxMasked => "stable_argmax_masked"
+  | .axisAngleQuaternion => "axis_angle_quaternion"
+  | .localTranslationStencil3D => "local_translation_stencil_3d"
+  | .localRotationStencil3D => "local_rotation_stencil_3d"
+  | .quaternionDictionary8 => "quaternion_dictionary_8"
   | .rigidTransform3D => "rigid_transform_3d"
   | .pairwiseDistances => "pairwise_distances"
   | .pairwiseDistances3D => "pairwise_distances_3d"

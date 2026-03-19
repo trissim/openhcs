@@ -1848,6 +1848,72 @@ For now, we'll run DQ-Dock only on PDB files.
         ]
 
 
+class GninaBenchmarkEngine(CLIDockingBenchmarkEngine):
+    engine_id = "gnina"
+    display_name = "GNINA"
+
+    @classmethod
+    def candidate_binary_names(cls) -> tuple[str, ...]:
+        return ("gnina",)
+
+    @classmethod
+    def preparation_strategies(cls) -> tuple[DockingPreparationStrategy, ...]:
+        return (DirectPDBPreparationStrategy(),)
+
+    @classmethod
+    def score_name(cls) -> str:
+        return "affinity"
+
+    @classmethod
+    def installation_message(cls) -> str:
+        return """
+❌ GNINA not found!
+
+To run this benchmark with GNINA comparisons:
+
+1. Install gnina from an official release binary
+2. Make sure 'gnina' is in your PATH
+3. Re-run this benchmark
+"""
+
+    def build_command(
+        self,
+        prepared_inputs: PreparedDockingInputs,
+        complex_entry: PreparedBenchmarkComplex,
+        output_path: Path,
+    ) -> list[str]:
+        assert self.binary_path is not None
+        return [
+            self.binary_path,
+            "--receptor",
+            str(prepared_inputs.receptor_path),
+            "--ligand",
+            str(prepared_inputs.ligand_path),
+            "--center_x",
+            str(complex_entry.center[0]),
+            "--center_y",
+            str(complex_entry.center[1]),
+            "--center_z",
+            str(complex_entry.center[2]),
+            "--size_x",
+            "20",
+            "--size_y",
+            "20",
+            "--size_z",
+            "20",
+            "--exhaustiveness",
+            "64",
+            "--num_modes",
+            "20",
+            "--energy_range",
+            "12.0",
+            "--min_rmsd_filter",
+            "0.5",
+            "--seed",
+            "42",
+        ]
+
+
 def run_benchmark(
     n_complexes: int = 10,
     charge_method=None,
@@ -1856,6 +1922,7 @@ def run_benchmark(
     use_multi_stage: bool = False,
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
+    include_competitors: bool = True,
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -1867,8 +1934,14 @@ def run_benchmark(
 
     engines: list[BenchmarkEngine] = [
         DQDockBenchmarkEngine(),
-        SminaBenchmarkEngine.build(),
     ]
+    if include_competitors:
+        engines.extend(
+            [
+                SminaBenchmarkEngine.build(),
+                GninaBenchmarkEngine.build(),
+            ]
+        )
     for engine in engines:
         engine.announce()
 
@@ -2069,6 +2142,11 @@ if __name__ == "__main__":
         default=Path("benchmark_results"),
         help="Directory for CSV/JSON benchmark outputs",
     )
+    parser.add_argument(
+        "--dq_only",
+        action="store_true",
+        help="Run only DQ-Dock and skip external competitor engines",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2089,4 +2167,5 @@ if __name__ == "__main__":
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,
+        include_competitors=not args.dq_only,
     )

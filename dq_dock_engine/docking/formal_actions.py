@@ -5,6 +5,11 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
+from dq_dock_engine.arraydsl import (
+    axisAngleQuaternion,
+    localRotationStencil3D,
+    localTranslationStencil3D,
+)
 from dq_dock_engine.physics.kernels import rigid_transform_3d
 
 
@@ -30,16 +35,7 @@ def _normalize_quaternion(quaternion: jax.Array) -> jax.Array:
 
 
 def _axis_angle_to_quaternion(axis: jax.Array, angle_rad: float) -> jax.Array:
-    half = angle_rad / 2.0
-    sin_half = jnp.sin(half)
-    quat = jnp.array(
-        [
-            jnp.cos(half),
-            axis[0] * sin_half,
-            axis[1] * sin_half,
-            axis[2] * sin_half,
-        ]
-    )
+    quat = jnp.asarray(axisAngleQuaternion(axis, angle_rad))
     return _normalize_quaternion(quat)
 
 
@@ -53,13 +49,8 @@ def create_certified_action_family(
         jnp.array([0.0, 1.0, 0.0]),
         jnp.array([0.0, 0.0, 1.0]),
     )
-    translations = (
-        jnp.array([translation_step, 0.0, 0.0]),
-        jnp.array([-translation_step, 0.0, 0.0]),
-        jnp.array([0.0, translation_step, 0.0]),
-        jnp.array([0.0, -translation_step, 0.0]),
-        jnp.array([0.0, 0.0, translation_step]),
-        jnp.array([0.0, 0.0, -translation_step]),
+    translations = tuple(
+        jnp.asarray(localTranslationStencil3D(translation_step))[i] for i in range(6)
     )
 
     identity_quaternion = jnp.array([1.0, 0.0, 0.0, 0.0])
@@ -81,17 +72,17 @@ def create_certified_action_family(
             )
         )
 
+    rotation_stencil = jnp.asarray(localRotationStencil3D(rotation_step_rad))
     next_action_id = len(actions)
-    for axis in axes:
-        for signed_angle in (rotation_step_rad, -rotation_step_rad):
-            actions.append(
-                CertifiedLocalAction(
-                    action_id=next_action_id,
-                    translation_delta=jnp.zeros(3),
-                    quaternion_delta=_axis_angle_to_quaternion(axis, signed_angle),
-                )
+    for quaternion_delta in rotation_stencil:
+        actions.append(
+            CertifiedLocalAction(
+                action_id=next_action_id,
+                translation_delta=jnp.zeros(3),
+                quaternion_delta=_normalize_quaternion(quaternion_delta),
             )
-            next_action_id += 1
+        )
+        next_action_id += 1
 
     return CertifiedActionFamily(
         actions=tuple(actions),

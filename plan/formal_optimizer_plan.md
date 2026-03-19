@@ -608,6 +608,20 @@ Status: not yet implemented
   - RMSD `0.40A`
   - benchmark completed successfully end-to-end
 
+## DSL lowering follow-up
+
+The optimizer implementation should keep shrinking the amount of handwritten
+Python policy math. To that end, the ArrayDSL bridge now needs to own the core
+belief-update algebra as well, not just geometry and pairwise physics.
+
+Required bridge primitives:
+
+- `supportConditioning`
+- `normalizeProbabilityVector`
+
+These make the posterior update mechanically Lean-exported/JAX-callable even if
+the higher-level action-family orchestration remains in Python.
+
 ## Remaining proof/completeness gaps
 
 1. **Coarse certified surrogate is still degenerate**
@@ -660,3 +674,289 @@ and instead performs local refinement as:
 - theorem-backed certified survivor/ambiguity reasoning
 - explicit Bayes conditioning
 - deterministic admissible action selection
+
+## Iteration 2 - Closing the four remaining gaps
+
+This section replaces the previous vague follow-up list with explicit work
+packages, theorem hooks, runtime objects, and acceptance criteria.
+
+### Gap 1 - Coarse certified surrogate is still degenerate
+
+#### Problem
+
+The current formal optimizer sets:
+
+- `u_exact = certified LJ score`
+- `u_coarse = u_exact`
+- `delta = 0`
+
+This is rigorous but useless for tractability. It does not exercise:
+
+- `CoarseApproximation.UniformUtilityApprox`
+- `SampledDockingGap.sampled_epsilon_margin_invariance`
+- `CertifiedPruning.certificate_of_topK_margin`
+- `TopKPreservation.exact_topK_subset_survivorSet_of_margin`
+
+#### Implementation target
+
+Define a genuine **certified coarse local surrogate** over the same local action
+family. The first version should be cheaper than exact scoring while preserving a
+uniform certified discrepancy bound.
+
+#### Recommended surrogate
+
+Use a receptor-trimmed certified score:
+
+- `u_exact(a)`
+  - certified LJ against the full retained receptor atom set
+- `u_coarse(a)`
+  - certified LJ against a theorem-backed trimmed receptor subset
+  - e.g. atoms inside a stricter local relevance shell, or a capped local
+    top-contact subset determined deterministically from the current pose center
+
+#### Why this is the right next step
+
+- stays within certified LJ scoring
+- avoids reintroducing heuristic scorers
+- creates a real exact/coarse pair
+- naturally supports uniform discrepancy bounds via explicit omitted-interaction
+  tail accounting
+
+#### Lean hooks
+
+- `CoarseApproximation.finiteUniformErrorRadius_witnesses_uniformApprox`
+- `CoarseApproximation.uniform_approx_implies_opt_invariance`
+- `CertifiedPruning.certificate_of_topK_margin`
+- `TopKPreservation.exact_topK_subset_survivorSet_of_margin`
+- `RankingPreservation.pairwise_order_preserved_of_uniform_error`
+- `NearTieBand.exact_topK_subset_ambiguityBand`
+
+#### Runtime design
+
+Add:
+
+```python
+@dataclass(frozen=True)
+class CertifiedCoarseScoreBundle:
+    exact_scores: jax.Array
+    coarse_scores: jax.Array
+    delta: float
+    survivor_mask: jax.Array
+    ambiguity_mask: jax.Array
+```
+
+New module responsibilities:
+
+- `dq_dock_engine/docking/formal_surrogates.py`
+  - `select_trimmed_receptor_subset(...)`
+  - `score_exact_local_family(...)`
+  - `score_coarse_local_family(...)`
+  - `certified_uniform_delta(...)`
+
+#### Acceptance criteria
+
+- `u_coarse` differs from `u_exact` on real examples
+- `delta` is explicit and nonnegative
+- survivor set is derived from the theorem-backed margin conditions, not from ad
+  hoc masking
+- unit tests cover exact/coarse agreement on easy cases and nontrivial pruning on
+  realistic cases
+
+### Gap 2 - Prior choice is explicit, not yet theorem-wrapped
+
+#### Problem
+
+The current local optimizer uses a uniform prior over the finite local action
+family. That is explicit and deterministic, but it is still just an assumption.
+
+#### Implementation target
+
+Promote the local prior to a typed, declared object with an explicit semantic
+contract and theorem wrapper.
+
+#### Recommended first semantics
+
+Use a **symmetry-respecting local prior**:
+
+- no-op action has declared prior mass `p_noop`
+- all non-noop actions share the remaining mass equally
+- default first pass may still set all masses uniformly, but the runtime object
+  must make the assumption inspectable
+
+#### Runtime design
+
+Add:
+
+```python
+@dataclass(frozen=True)
+class CertifiedPriorSpec:
+    kind: Literal["uniform", "noop_biased"]
+    noop_mass: float
+```
+
+Rules:
+
+- every certified optimizer run serializes the chosen prior spec
+- prior construction is a pure function of `CertifiedPriorSpec` and the action
+  family size
+- prior validity is checked fail-loud (`sum=1`, all masses nonnegative)
+
+#### Lean theorem wrapper needed
+
+Add a small wrapper theorem stating that, for a declared finite support family,
+Bayesian conditioning from any valid prior over that family remains inside the
+admissible update discipline as long as the likelihood/evidence channel is the
+certified survivor event.
+
+This does **not** need to prove uniform is uniquely correct; it needs to prove
+the update is admissible once the prior is declared.
+
+#### Acceptance criteria
+
+- prior object appears in optimizer state / report artifacts
+- no implicit prior construction remains in code
+- Lean wrapper exists, or at minimum the runtime is organized so the theorem can
+  refer to the exact Python-side object semantics
+
+### Gap 3 - Admissibility wrapper theorem still missing
+
+#### Problem
+
+The runtime already does support-restriction Bayes conditioning, but the exact
+paper-to-runtime theorem bridge is not yet stated.
+
+#### Required theorem wrappers
+
+We need two small, high-value wrappers:
+
+1. **Certified survivor conditioning is admissible**
+   - If a finite action family carries a declared prior and the evidence event is
+     a certified survivor set produced by the exact/coarse margin theorem, then
+     the posterior update is an admissible update rule in the Paper 4 sense.
+
+2. **Deterministic tie-break inside certified ambiguity band is admissible**
+   - If the exact top-k lies inside the ambiguity band, then selecting the first
+     action under a fixed deterministic order remains a valid admissible report /
+     action-selection refinement.
+
+#### Likely Lean home
+
+Recommended file:
+
+- `docs/papers/paper4_decision_quotient/proofs/DecisionQuotient/Tractability/FormalLocalOptimizer.lean`
+
+Imports:
+
+- `BayesFromDQ`
+- `TemporalLearning`
+- `SampledDocking`
+- `SampledDockingGap`
+- `CertifiedPruning`
+- `NearTieBand`
+- `IntegrityCompetence`
+
+#### Runtime impact
+
+Once these wrappers exist, the Python code should attach theorem handles to:
+
+- posterior update
+- survivor certificate construction
+- deterministic action selection
+
+#### Acceptance criteria
+
+- theorem names exist and are exported through handle aliases
+- optimizer module docstrings cite the exact theorem handles
+- no remaining comment says “admissible in spirit” or similar handwaving
+
+### Gap 4 - Certified sampling outside local refinement is still heuristic
+
+#### Problem
+
+The formal optimizer currently refines poses that were obtained from upstream
+heuristic pocket-guided sampling.
+
+#### Scope split
+
+There are two distinct layers:
+
+- **global proposal generation**
+- **local certified refinement**
+
+The current work fully addresses the second layer only.
+
+#### Recommended next certified replacement
+
+Introduce a deterministic **coarse certified global action family** over the
+docking box:
+
+- finite translation lattice over the box center/extent
+- finite quaternion dictionary
+- deterministic enumeration order
+
+This can reuse the same sampled-docking finite support semantics as the local
+optimizer.
+
+#### Runtime design
+
+Add:
+
+- `dq_dock_engine/docking/formal_sampling.py`
+  - box lattice generation
+  - deterministic quaternion dictionary
+  - global action family packaging
+
+Then certified pipeline becomes:
+
+1. certified global finite support
+2. theorem-backed certified pruning / top-k retention
+3. certified local optimizer over deterministic local action families
+
+#### Why not random Sobol yet
+
+Low-discrepancy sequences are promising, but the existing Lean library already
+has a more immediate bridge via finite sampled supports. Deterministic finite
+enumeration is easier to make theorem-faithful right now.
+
+#### Acceptance criteria
+
+- certified mode no longer calls `sample_intelligent_poses`
+- certified mode no longer uses `SamplingStrategy.HYBRID`
+- certified global proposals are serialized as finite action-family metadata
+
+## Ordered next implementation steps
+
+### Workstream A - non-degenerate certified coarse surrogate
+
+1. create `formal_surrogates.py`
+2. implement trimmed-receptor exact/coarse family scoring
+3. derive survivor mask from theorem-style `delta`
+4. add tests showing `u_exact != u_coarse` on realistic inputs
+
+### Workstream B - explicit prior object
+
+1. add `CertifiedPriorSpec`
+2. replace hardcoded `uniform_prior(...)` calls with typed prior construction
+3. emit prior metadata in optimizer state / benchmark artifacts
+
+### Workstream C - theorem wrapper prep
+
+1. create `FormalLocalOptimizer.lean` scaffold
+2. state survivor-conditioning admissibility theorem
+3. state deterministic tie-break admissibility theorem
+4. export handles through `HandleAliases.lean`
+
+### Workstream D - certified global sampler
+
+1. create `formal_sampling.py`
+2. deterministic translation lattice + quaternion dictionary
+3. certified mode pipeline bypasses heuristic pocket-guided sampling
+
+## Exit condition for the next pass
+
+The next iteration should be considered complete only when:
+
+- exact/coarse certified local refinement is nontrivial
+- prior is explicit and serialized
+- theorem wrapper file exists for local optimizer admissibility
+- certified mode no longer depends on heuristic global sampling

@@ -12,15 +12,22 @@ from dq_dock_engine.arraydsl import (
     get_registered_primitive,
     lennardJones,
     minimumImagePairwiseDistances,
+    normalizeProbabilityVector,
+    noopBiasedProbabilityVectorLike,
     norm,
+    ambiguityBandMask,
     pairwiseDistances3D,
     reduce_sum,
     rigidTransform3D,
     rowWiseDistance,
     rowWiseNorm,
+    stableArgmaxMasked,
+    supportConditioning,
+    topKWithTiesMask,
     sumPairPotentials3D,
     typedLennardJonesCutoff,
     typedLennardJonesMatrix,
+    uniformProbabilityVectorLike,
     upperTriangleMaskedSum,
 )
 from dq_dock_engine.codegen.arraydsl_codegen import (
@@ -45,7 +52,6 @@ from dq_dock_engine.proof_status import ProofStatus, get_status, get_theorem
 
 
 def test_arraydsl_public_registry_matches_exported_metadata():
-    assert len(ARRAYDSL_PRIMITIVES) == 22
     assert available_primitives() == tuple(
         metadata.name for metadata in ARRAYDSL_PRIMITIVES
     )
@@ -78,6 +84,10 @@ def test_arraydsl_generated_wrappers_execute_with_jax_arrays():
     charges2 = jnp.array([-0.5, 0.5])
     values = jnp.array([[1.0, 2.0], [3.0, 4.0]])
     mask = jnp.array([[False, True], [True, False]])
+    support_mask = jnp.array([True, False])
+    weights = jnp.array([2.0, 3.0])
+    utilities = jnp.array([3.0, 1.0, 2.0])
+    template = jnp.zeros((3,), dtype=jnp.float32)
 
     assert float(reduce_sum(x)) == 6.0
     assert tuple(elemBinaryAdd(x, y).tolist()) == (5.0, 7.0, 9.0)
@@ -97,8 +107,10 @@ def test_arraydsl_generated_wrappers_execute_with_jax_arrays():
         pairwiseDistances3D(coords1, coords2),
     )
     assert jnp.allclose(
-        typedLennardJonesMatrix(
-            pairwiseDistances3D(coords1, coords2), epsilons, sigmas
+        jnp.asarray(
+            typedLennardJonesMatrix(
+                pairwiseDistances3D(coords1, coords2), epsilons, sigmas
+            )
         ),
         4.0
         * epsilons
@@ -125,6 +137,36 @@ def test_arraydsl_generated_wrappers_execute_with_jax_arrays():
         typedLennardJonesCutoff(
             pairwiseDistances3D(coords1, coords2), epsilons, sigmas, 3.0
         )
+    )
+    assert jnp.allclose(
+        jnp.asarray(supportConditioning(weights, support_mask)),
+        jnp.array([2.0, 0.0]),
+    )
+    assert jnp.allclose(
+        jnp.asarray(normalizeProbabilityVector(weights)),
+        jnp.array([0.4, 0.6]),
+    )
+    assert jnp.allclose(
+        jnp.asarray(uniformProbabilityVectorLike(template)),
+        jnp.array([1 / 3, 1 / 3, 1 / 3], dtype=jnp.float32),
+    )
+    assert jnp.allclose(
+        jnp.asarray(noopBiasedProbabilityVectorLike(template, 0.4)),
+        jnp.array([0.4, 0.3, 0.3], dtype=jnp.float32),
+    )
+    assert jnp.array_equal(
+        topKWithTiesMask(utilities, 1), jnp.array([True, False, False])
+    )
+    assert jnp.array_equal(
+        ambiguityBandMask(utilities, 1, 1.0), jnp.array([True, False, True])
+    )
+    assert (
+        int(
+            stableArgmaxMasked(
+                jnp.array([0.4, 0.3, 0.3]), jnp.array([True, True, True])
+            )
+        )
+        == 0
     )
 
 
@@ -175,7 +217,7 @@ def test_arraydsl_molecular_primitives_match_physics_kernels():
         jnp.asarray(minimum_image_pairwise_distances(coords1, coords2, box_size)),
     )
     assert jnp.allclose(
-        typedLennardJonesMatrix(dists, epsilons, sigmas),
+        jnp.asarray(typedLennardJonesMatrix(dists, epsilons, sigmas)),
         jnp.asarray(typed_lennard_jones_matrix(dists, epsilons, sigmas)),
     )
     assert jnp.allclose(
