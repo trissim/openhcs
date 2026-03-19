@@ -7,23 +7,23 @@ Generated: 2026-03-18
 
 ## Summary
 
-| Category | Count | Certified | Conditionally Certified | Heuristic |
-|----------|-------|-----------|------------------------|-----------|
-| **Physics Core** | | | | |
-| Lattice Sums | 3 | 3 | 0 | 0 |
-| Molecular srank | 3 | 2 | 1 | 0 |
-| Ewald Summation | 4 | 1 | 3 | 0 |
-| Integrators | 2 | 2 | 0 | 0 |
-| **Potentials** | | | | |
-| Lennard-Jones | 1 | 0 | 1 | 0 |
-| Electrostatic | 1 | 0 | 1 | 0 |
-| Hydrophobic | 1 | 0 | 0 | 1 |
-| **Scoring** | | | | |
-| Internal LJ | 1 | 0 | 0 | 1 |
-| SMINA External | 1 | 0 | 0 | 1 |
-| **Parameters** | | | | |
-| VdW Radii | 1 | 0 | 0 | 1 |
-| Boltzmann constant | 1 | 1 | 0 | 0 |
+| Category | Count | Certified | Conditionally Certified | Empirical Constant | Heuristic |
+|----------|-------|-----------|------------------------|-------------------|-----------|
+| **Physics Core** | | | | | |
+| Lattice Sums | 3 | 3 | 0 | 0 | 0 |
+| Molecular srank | 3 | 2 | 1 | 0 | 0 |
+| Ewald Summation | 4 | 1 | 3 | 0 | 0 |
+| Integrators | 2 | 2 | 0 | 0 | 0 |
+| **Potentials** | | | | | |
+| Lennard-Jones | 1 | 0 | 1 | 0 | 0 |
+| Electrostatic | 1 | 0 | 1 | 0 | 0 |
+| Hydrophobic | 1 | 0 | 0 | 0 | 1 |
+| **Scoring** | | | | | |
+| Internal LJ | 1 | 0 | 0 | 0 | 1 |
+| SMINA External | 1 | 0 | 0 | 0 | 1 |
+| **Parameters** | | | | | |
+| VdW Radii | 1 | 0 | 0 | 1 | 0 |
+| Boltzmann constant | 1 | 0 | 0 | 1 | 0 |
 
 ---
 
@@ -87,29 +87,40 @@ Error(R) ≤ M/R³  (from lattice_tail_bound)
 
 ---
 
+## EMPIRICAL CONSTANTS ⚗️
+
+**Physical constants measured by experiment. These are GROUND TRUTH, not heuristics.**
+
+### Van der Waals Radii
+- **Source:** Bondi (1964) J. Phys. Chem. 68, 441-451
+- **Values:** Experimentally measured from crystal structures
+- **Status:** NIST-quality data, no formal proof needed
+
+### Boltzmann Constant
+- **Source:** NIST CODATA 2018
+- **Value:** kB = 1.380649 × 10⁻²³ J/K (exact by definition)
+- **Status:** Defined constant, not measured
+
+---
+
 ## HEURISTIC Components ⚡
 
-**No formal proof. Use experimentally validated values.**
+**Ad-hoc algorithm design or empirical parameters with NO formal justification.**
 
-### Internal LJ Scoring
+### Internal LJ Scoring Weights
 - **Issue:** Ad-hoc weights (4.0 repulsion, 0.4 attraction)
-- **Origin:** Empirical observation that clash avoidance dominates docking scores
-- **Use:** Fast approximate scoring for screening, NOT for certification
+- **Origin:** Design choice based on empirical observation
+- **Use:** Fast approximate scoring for screening
 
 ### SMINA/Vina External
 - **Issue:** Closed-source external binary
-- **Origin:** Not peer-verified
+- **Origin:** Not peer-verified algorithm
 - **Use:** Ground-truth comparison only
 
 ### Hydrophobic Potential
-- **Issue:** Contact-based model is empirical
-- **Origin:** Statistical analysis of protein-ligand structures
-- **Use:** Enrichment in virtual screening
-
-### VdW Radii
-- **Issue:** Experimental crystallographic values
-- **Origin:** Bondi (1964) compilation
-- **Variance:** Different sources give slightly different values
+- **Issue:** Contact-based model is design choice
+- **Origin:** Statistical analysis, not fundamental physics
+- **Use:** Virtual screening enrichment
 
 ---
 

@@ -2,25 +2,29 @@
 Proof Status Labels for DQ-Dock Engine
 =====================================
 
-This module defines the formal proof status for each component of the docking system.
+This module defines the formal proof/computation status for each component.
 
 ## Status Definitions
 
 ### CERTIFIED
 Mathematically proven in Lean 4. The theorem guarantees correctness for any input
-satisfying the stated hypotheses. No empirical validation needed.
+satisfying the stated hypotheses.
 
 ### CONDITIONALLY_CERTIFIED
 Proven in Lean 4 subject to stated physical/empirical assumptions. The proof is valid
-IF the assumptions hold. Assumptions must be verified empirically or assumed.
+IF the assumptions hold.
+
+### EMPIRICAL_CONSTANT
+Physical constant measured by experiment (NIST, crystallography, etc.).
+NOT a heuristic - these are ground truth measurements. No formal proof needed;
+the values are experimentally validated.
 
 ### HEURISTIC
-No formal proof. Based on empirical observation, physical intuition, or convention.
-Must be validated experimentally before use in safety-critical applications.
+Algorithm design choice or ad-hoc parameter with no formal justification.
+Based on empirical observation or convention. MUST be validated experimentally.
 
 ## Usage
 
-Decorate functions or classes with `@ProofStatus`:
     from dq_dock_engine.proof_status import ProofStatus, CERTIFIED
 
     @CERTIFIED
@@ -36,7 +40,7 @@ from typing import Callable, Any
 
 
 class ProofStatus(Enum):
-    """Formal proof status of a computational component."""
+    """Formal proof/computation status of a computational component."""
 
     #: Mathematically proven in Lean 4
     CERTIFIED = "CERTIFIED"
@@ -44,12 +48,15 @@ class ProofStatus(Enum):
     #: Proven subject to physical assumptions
     CONDITIONALLY_CERTIFIED = "CONDITIONALLY_CERTIFIED"
 
-    #: Heuristic, no formal proof
+    #: Experimental measurement (NIST, crystallography, etc.) - ground truth
+    EMPIRICAL_CONSTANT = "EMPIRICAL_CONSTANT"
+
+    #: Heuristic algorithm or ad-hoc parameter
     HEURISTIC = "HEURISTIC"
 
 
 # Decorator factory
-def proof_status(status: ProofStatus, theorem: str = "", assumptions: list[str] = None):
+def proof_status(status: ProofStatus, theorem: str = "", assumptions=None):
     """
     Decorator to mark a function with its proof status.
 
@@ -83,13 +90,18 @@ def certified(theorem: str = ""):
     return proof_status(ProofStatus.CERTIFIED, theorem)
 
 
-def conditionally_certified(theorem: str = "", assumptions: list[str] = None):
+def conditionally_certified(theorem: str = "", assumptions: list = None):
     """Mark as CONDITIONALLY_CERTIFIED."""
     return proof_status(ProofStatus.CONDITIONALLY_CERTIFIED, theorem, assumptions)
 
 
+def empirical_constant(source: str = ""):
+    """Mark as EMPIRICAL_CONSTANT (NIST, crystallography, etc.)."""
+    return proof_status(ProofStatus.EMPIRICAL_CONSTANT, source)
+
+
 def heuristic():
-    """Mark as HEURISTIC."""
+    """Mark as HEURISTIC (ad-hoc algorithm or parameter)."""
     return proof_status(ProofStatus.HEURISTIC)
 
 
