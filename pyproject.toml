@@ -14,6 +14,10 @@ dependencies = [
     "chex>=0.1.5",
     "mdanalysis>=2.0.0",
     "rdkit>=2022.3.1",
+    "meeko>=0.6.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
 ]
 
 [build-system]

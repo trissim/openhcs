@@ -1,0 +1,209 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+
+def _load_payload(json_path: Path) -> dict:
+    with open(json_path) as f:
+        return json.load(f)
+
+
+def _write_markdown_report(payload: dict, report_path: Path) -> None:
+    summary = payload["summary"]
+    dq_rows = payload["dq_dock"]
+    vina_rows = payload["vina"]
+    excluded_rows = payload["excluded"]
+
+    lines = [
+        "# PDB Redocking Benchmark",
+        "",
+        f"- Phase: `{summary['phase']}`",
+        f"- Charge method: `{summary['charge_method']}`",
+        f"- Requested complexes: `{summary['n_complexes_requested']}`",
+        f"- Completed DQ-Dock complexes: `{summary['n_complexes_run']}`",
+        f"- Completed Vina complexes: `{summary['n_vina_completed']}`",
+        f"- Excluded complexes: `{summary['n_complexes_excluded']}`",
+        f"- Poses: `{summary['n_poses']}`",
+        f"- Optimization steps: `{summary['n_opt_steps']}`",
+        f"- Pocket-guided sampling: `{summary['use_pocket_guided']}`",
+        f"- Vina preparation: `{summary['vina_prep_protocol']}`",
+        f"- Competitors: `{', '.join(summary['competitors'])}`",
+        "",
+        "## Summary",
+        "",
+        f"- DQ-Dock avg RMSD: `{summary['dq_avg_rmsd']}`",
+        f"- DQ-Dock total time (s): `{summary['dq_total_time_s']}`",
+        f"- Vina avg top-pose RMSD: `{summary['vina_avg_top_rmsd']}`",
+        f"- Vina avg best-returned-mode RMSD: `{summary['vina_avg_best_mode_rmsd']}`",
+        f"- Vina total time (s): `{summary['vina_total_time_s']}`",
+        f"- Total benchmark time (s): `{summary['total_benchmark_time_s']}`",
+        "",
+        "## DQ-Dock",
+        "",
+        "| PDB | Target | RMSD | Time (s) | Energy | Gap Proof | Native Rank | Energy Gap |",
+        "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |",
+    ]
+
+    for row in dq_rows:
+        lines.append(
+            f"| {row['pdb_id']} | {row['target_name']} | {row['rmsd']:.3f} | {row['time_s']:.3f} | {row['energy']:.3f} | {row['gap_proof']} | {row['native_rank']} | {row['energy_gap']} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Vina",
+            "",
+            "| PDB | Target | Top RMSD | Best Returned RMSD | Time (s) | Affinity |",
+            "| --- | --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in vina_rows:
+        lines.append(
+            f"| {row['pdb_id']} | {row['target_name']} | {row['top_rmsd']:.3f} | {row['best_returned_mode_rmsd']:.3f} | {row['time_s']:.3f} | {row['affinity']:.3f} |"
+        )
+
+    if excluded_rows:
+        lines.extend(
+            [
+                "",
+                "## Excluded",
+                "",
+                "| PDB | Reason |",
+                "| --- | --- |",
+            ]
+        )
+        for row in excluded_rows:
+            lines.append(f"| {row['pdb_id']} | {row['reason']} |")
+
+    report_path.write_text("\n".join(lines) + "\n")
+
+
+def _plot_rmsd(payload: dict, output_path: Path) -> None:
+    dq_df = pd.DataFrame(payload["dq_dock"])
+    vina_df = pd.DataFrame(payload["vina"])
+    if dq_df.empty:
+        return
+
+    merged = dq_df[["pdb_id", "target_name", "rmsd"]].rename(
+        columns={"rmsd": "DQ-Dock"}
+    )
+    if not vina_df.empty:
+        merged = merged.merge(
+            vina_df[["pdb_id", "top_rmsd", "best_returned_mode_rmsd"]],
+            on="pdb_id",
+            how="left",
+        ).rename(
+            columns={
+                "top_rmsd": "Vina top pose",
+                "best_returned_mode_rmsd": "Vina best returned",
+            }
+        )
+
+    plot_df = merged.melt(
+        id_vars=["pdb_id", "target_name"],
+        value_vars=[c for c in merged.columns if c not in {"pdb_id", "target_name"}],
+        var_name="Method",
+        value_name="RMSD",
+    )
+    plot_df = plot_df.dropna(subset=["RMSD"])
+    if plot_df.empty:
+        return
+
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=plot_df, x="pdb_id", y="RMSD", hue="Method")
+    plt.axhline(2.0, color="red", linestyle="--", linewidth=1, label="2A success")
+    plt.ylabel("RMSD (A)")
+    plt.xlabel("PDB")
+    plt.title("Redocking RMSD by Complex")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+
+def _plot_timing(payload: dict, output_path: Path) -> None:
+    dq_df = pd.DataFrame(payload["dq_dock"])
+    vina_df = pd.DataFrame(payload["vina"])
+    if dq_df.empty:
+        return
+
+    dq_plot = dq_df[["pdb_id", "time_s"]].copy()
+    dq_plot["Method"] = "DQ-Dock"
+    dq_plot = dq_plot.rename(columns={"time_s": "Time"})
+    frames = [dq_plot]
+    if not vina_df.empty:
+        vina_plot = vina_df[["pdb_id", "time_s"]].copy()
+        vina_plot["Method"] = "Vina"
+        vina_plot = vina_plot.rename(columns={"time_s": "Time"})
+        frames.append(vina_plot)
+    plot_df = pd.concat(frames, ignore_index=True)
+
+    plt.figure(figsize=(12, 6))
+    sns.barplot(data=plot_df, x="pdb_id", y="Time", hue="Method")
+    plt.yscale("log")
+    plt.ylabel("Runtime (s, log scale)")
+    plt.xlabel("PDB")
+    plt.title("Runtime by Complex")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+
+def _plot_scatter(payload: dict, output_path: Path) -> None:
+    dq_df = pd.DataFrame(payload["dq_dock"])
+    vina_df = pd.DataFrame(payload["vina"])
+    if dq_df.empty or vina_df.empty:
+        return
+
+    merged = dq_df[["pdb_id", "rmsd"]].merge(
+        vina_df[["pdb_id", "best_returned_mode_rmsd"]],
+        on="pdb_id",
+        how="inner",
+    )
+    if merged.empty:
+        return
+
+    limit = max(
+        float(merged["rmsd"].max()), float(merged["best_returned_mode_rmsd"].max()), 2.0
+    )
+    plt.figure(figsize=(6.5, 6.5))
+    sns.scatterplot(data=merged, x="best_returned_mode_rmsd", y="rmsd", s=90)
+    for _, row in merged.iterrows():
+        plt.text(row["best_returned_mode_rmsd"], row["rmsd"], row["pdb_id"], fontsize=8)
+    plt.plot([0, limit], [0, limit], linestyle="--", color="gray")
+    plt.xlabel("Vina best returned RMSD (A)")
+    plt.ylabel("DQ-Dock RMSD (A)")
+    plt.title("DQ-Dock vs Vina RMSD")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=220, bbox_inches="tight")
+    plt.close()
+
+
+def render_redocking_report(json_path: Path) -> dict[str, Path]:
+    payload = _load_payload(json_path)
+    base = json_path.with_suffix("")
+    markdown_path = base.with_name(base.name + "_report.md")
+    rmsd_path = base.with_name(base.name + "_rmsd.png")
+    timing_path = base.with_name(base.name + "_timing.png")
+    scatter_path = base.with_name(base.name + "_scatter.png")
+
+    _write_markdown_report(payload, markdown_path)
+    _plot_rmsd(payload, rmsd_path)
+    _plot_timing(payload, timing_path)
+    _plot_scatter(payload, scatter_path)
+
+    return {
+        "markdown": markdown_path,
+        "rmsd": rmsd_path,
+        "timing": timing_path,
+        "scatter": scatter_path,
+    }

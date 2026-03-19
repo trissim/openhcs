@@ -61,6 +61,7 @@ from dq_dock_engine.benchmark.large_pdb_ids import (
     get_benchmark_entries,
     get_default_ligand_entries,
 )
+from dq_dock_engine.benchmark.redocking_report import render_redocking_report
 
 
 # Famous, difficult drug targets where docking matters
@@ -136,6 +137,7 @@ class BenchmarkOutputPaths:
 
 @dataclass(frozen=True)
 class VinaPrepTools:
+    tool_family: str
     receptor_tool: str
     ligand_tool: str
 
@@ -521,11 +523,36 @@ def check_vina() -> Optional[str]:
 
 
 def check_vina_prep_tools() -> VinaPrepTools | None:
+    mk_receptor = shutil.which("mk_prepare_receptor.py")
+    mk_ligand = shutil.which("mk_prepare_ligand.py")
+    if mk_receptor is not None and mk_ligand is not None:
+        return VinaPrepTools(
+            tool_family="meeko",
+            receptor_tool=mk_receptor,
+            ligand_tool=mk_ligand,
+        )
+
     receptor_tool = shutil.which("prepare_receptor4.py")
     ligand_tool = shutil.which("prepare_ligand4.py")
     if receptor_tool is not None and ligand_tool is not None:
-        return VinaPrepTools(receptor_tool=receptor_tool, ligand_tool=ligand_tool)
+        return VinaPrepTools(
+            tool_family="autodocktools",
+            receptor_tool=receptor_tool,
+            ligand_tool=ligand_tool,
+        )
     return None
+
+
+def convert_ligand_pdb_to_sdf(ligand_pdb: Path, ligand_sdf: Path) -> None:
+    from rdkit import Chem
+
+    mol = Chem.MolFromPDBFile(str(ligand_pdb), removeHs=False)
+    if mol is None:
+        raise ValueError(f"RDKit failed to parse ligand PDB: {ligand_pdb}")
+    mol = Chem.AddHs(mol, addCoords=True)
+    writer = Chem.SDWriter(str(ligand_sdf))
+    writer.write(mol)
+    writer.close()
 
 
 def prepare_vina_inputs(
@@ -540,24 +567,44 @@ def prepare_vina_inputs(
     receptor_pdbqt = temp_dir / f"{receptor_pdb.stem}.pdbqt"
     ligand_pdbqt = temp_dir / f"{ligand_pdb.stem}.pdbqt"
 
-    receptor_cmd = [
-        prep_tools.receptor_tool,
-        "-r",
-        str(receptor_pdb),
-        "-o",
-        str(receptor_pdbqt),
-        "-A",
-        "checkhydrogens",
-    ]
-    ligand_cmd = [
-        prep_tools.ligand_tool,
-        "-l",
-        str(ligand_pdb),
-        "-o",
-        str(ligand_pdbqt),
-        "-A",
-        "checkhydrogens",
-    ]
+    if prep_tools.tool_family == "meeko":
+        ligand_sdf = temp_dir / f"{ligand_pdb.stem}.sdf"
+        convert_ligand_pdb_to_sdf(ligand_pdb, ligand_sdf)
+        receptor_cmd = [
+            prep_tools.receptor_tool,
+            "--read_pdb",
+            str(receptor_pdb),
+            "-o",
+            str(temp_dir / receptor_pdb.stem),
+            "-p",
+            str(receptor_pdbqt),
+        ]
+        ligand_cmd = [
+            prep_tools.ligand_tool,
+            "-i",
+            str(ligand_sdf),
+            "-o",
+            str(ligand_pdbqt),
+        ]
+    else:
+        receptor_cmd = [
+            prep_tools.receptor_tool,
+            "-r",
+            str(receptor_pdb),
+            "-o",
+            str(receptor_pdbqt),
+            "-A",
+            "checkhydrogens",
+        ]
+        ligand_cmd = [
+            prep_tools.ligand_tool,
+            "-l",
+            str(ligand_pdb),
+            "-o",
+            str(ligand_pdbqt),
+            "-A",
+            "checkhydrogens",
+        ]
 
     subprocess.run(receptor_cmd, check=True, capture_output=True, text=True)
     subprocess.run(ligand_cmd, check=True, capture_output=True, text=True)
@@ -670,6 +717,7 @@ def save_benchmark_results(
     n_opt_steps: int,
     use_multi_stage: bool,
     use_pocket_guided: bool,
+    vina_prep_protocol: str,
     bench_elapsed: float,
     phase: str,
     complexes: list[dict],
@@ -758,6 +806,7 @@ def save_benchmark_results(
         "n_opt_steps": n_opt_steps,
         "use_multi_stage": use_multi_stage,
         "use_pocket_guided": use_pocket_guided,
+        "vina_prep_protocol": vina_prep_protocol,
         "competitors": ["smina"],
         "total_benchmark_time_s": bench_elapsed,
         "dq_avg_rmsd": None
@@ -810,6 +859,8 @@ def save_benchmark_results(
 
     with open(json_path, "w") as f:
         json.dump(payload, f, indent=2)
+
+    render_redocking_report(json_path)
 
     return json_path, csv_path
 
@@ -1078,7 +1129,9 @@ def run_benchmark(
     if vina_path:
         print(f"\n✅ Vina found: {vina_path}")
         if vina_prep_tools is not None:
-            print("✅ AutoDock preparation tools found; Vina will use PDBQT inputs")
+            print(
+                f"✅ {vina_prep_tools.tool_family} preparation tools found; Vina will try PDBQT inputs first"
+            )
         else:
             print(
                 "⚠️  AutoDock preparation tools not found; Vina will use direct PDB inputs"
@@ -1107,6 +1160,11 @@ For now, we'll run DQ-Dock only on PDB files.
     cache_dir = Path("./pdb_cache")
     cache_dir.mkdir(exist_ok=True)
     output_paths = create_benchmark_output_paths(results_dir)
+    vina_prep_protocol = (
+        "direct_pdb"
+        if vina_prep_tools is None
+        else f"{vina_prep_tools.tool_family}_pdbqt_with_direct_fallback"
+    )
 
     print(
         f"\nDownloading {n_complexes} PDB complexes from saved benchmark list...",
@@ -1180,6 +1238,7 @@ For now, we'll run DQ-Dock only on PDB files.
         n_opt_steps=n_opt_steps,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=effective_pocket_guided,
+        vina_prep_protocol=vina_prep_protocol,
         bench_elapsed=time.time() - bench_start,
         phase="curation",
         complexes=complexes,
@@ -1311,6 +1370,7 @@ For now, we'll run DQ-Dock only on PDB files.
             n_opt_steps=n_opt_steps,
             use_multi_stage=use_multi_stage,
             use_pocket_guided=effective_pocket_guided,
+            vina_prep_protocol=vina_prep_protocol,
             bench_elapsed=time.time() - bench_start,
             phase="dq_dock",
             complexes=complexes,
@@ -1352,6 +1412,21 @@ For now, we'll run DQ-Dock only on PDB files.
                     vina_ligand,
                     cx["center"],
                 )
+                if (
+                    not result.success
+                    and vina_prep_tools is not None
+                    and vina_receptor != receptor_pdb
+                ):
+                    print(
+                        "  PDBQT attempt failed; retrying with direct PDB inputs",
+                        flush=True,
+                    )
+                    result = run_vina(
+                        vina_path,
+                        receptor_pdb,
+                        ligand_pdb,
+                        cx["center"],
+                    )
             finally:
                 if prep_temp_dir is not None:
                     shutil.rmtree(prep_temp_dir, ignore_errors=True)
@@ -1374,6 +1449,7 @@ For now, we'll run DQ-Dock only on PDB files.
                     n_opt_steps=n_opt_steps,
                     use_multi_stage=use_multi_stage,
                     use_pocket_guided=effective_pocket_guided,
+                    vina_prep_protocol=vina_prep_protocol,
                     bench_elapsed=time.time() - bench_start,
                     phase="vina",
                     complexes=complexes,
@@ -1432,6 +1508,7 @@ For now, we'll run DQ-Dock only on PDB files.
                 n_opt_steps=n_opt_steps,
                 use_multi_stage=use_multi_stage,
                 use_pocket_guided=effective_pocket_guided,
+                vina_prep_protocol=vina_prep_protocol,
                 bench_elapsed=time.time() - bench_start,
                 phase="vina",
                 complexes=complexes,
@@ -1480,8 +1557,13 @@ For now, we'll run DQ-Dock only on PDB files.
 
     if vina_results:
         successes = sum(1 for r in vina_results if r.success)
-        avg_time = np.mean([r.time for r in vina_results if r.success])
-        vina_total = sum(r.time for r in vina_results if r.success)
+        successful_vina_times = [r.time for r in vina_results if r.success]
+        avg_time = (
+            float(np.mean(successful_vina_times))
+            if successful_vina_times
+            else float("nan")
+        )
+        vina_total = sum(successful_vina_times)
         print(
             f"{'Vina':<20} {avg_time:<12.1f} {vina_total:<12.1f} {successes}/{len(vina_results)}"
         )
@@ -1505,6 +1587,7 @@ For now, we'll run DQ-Dock only on PDB files.
         n_opt_steps=n_opt_steps,
         use_multi_stage=use_multi_stage,
         use_pocket_guided=effective_pocket_guided,
+        vina_prep_protocol=vina_prep_protocol,
         bench_elapsed=bench_elapsed,
         phase="complete",
         complexes=complexes,
@@ -1515,6 +1598,18 @@ For now, we'll run DQ-Dock only on PDB files.
     )
     print(f"  Results JSON: {json_path}")
     print(f"  Results CSV: {csv_path}")
+    print(
+        f"  Report Markdown: {json_path.with_suffix('').with_name(json_path.stem + '_report.md')}"
+    )
+    print(
+        f"  RMSD Plot: {json_path.with_suffix('').with_name(json_path.stem + '_rmsd.png')}"
+    )
+    print(
+        f"  Timing Plot: {json_path.with_suffix('').with_name(json_path.stem + '_timing.png')}"
+    )
+    print(
+        f"  Scatter Plot: {json_path.with_suffix('').with_name(json_path.stem + '_scatter.png')}"
+    )
 
 
 if __name__ == "__main__":
