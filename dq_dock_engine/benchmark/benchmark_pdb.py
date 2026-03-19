@@ -578,6 +578,9 @@ def prepare_vina_inputs(
             str(temp_dir / receptor_pdb.stem),
             "-p",
             str(receptor_pdbqt),
+            "-a",
+            "--default_altloc",
+            "A",
         ]
         ligand_cmd = [
             prep_tools.ligand_tool,
@@ -1397,11 +1400,18 @@ For now, we'll run DQ-Dock only on PDB files.
 
             prep_temp_dir: Path | None = None
             try:
-                vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
-                    vina_prep_tools,
-                    receptor_pdb,
-                    ligand_pdb,
-                )
+                try:
+                    vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
+                        vina_prep_tools,
+                        receptor_pdb,
+                        ligand_pdb,
+                    )
+                except Exception as exc:
+                    print(
+                        f"  PDBQT preparation failed; retrying with direct PDB inputs ({exc})",
+                        flush=True,
+                    )
+                    vina_receptor, vina_ligand = receptor_pdb, ligand_pdb
                 print(f"  Receptor: {vina_receptor.name}", flush=True)
                 print(f"  Ligand: {vina_ligand.name}", flush=True)
 
@@ -1606,6 +1616,9 @@ For now, we'll run DQ-Dock only on PDB files.
     )
     print(
         f"  Timing Plot: {json_path.with_suffix('').with_name(json_path.stem + '_timing.png')}"
+    )
+    print(
+        f"  Timing Plot (Log): {json_path.with_suffix('').with_name(json_path.stem + '_timing_log.png')}"
     )
     print(
         f"  Scatter Plot: {json_path.with_suffix('').with_name(json_path.stem + '_scatter.png')}"

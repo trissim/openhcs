@@ -144,7 +144,7 @@ def _plot_rmsd(payload: dict, output_path: Path) -> None:
     plt.close()
 
 
-def _plot_timing(payload: dict, output_path: Path) -> None:
+def _plot_timing(payload: dict, output_path: Path, *, log_scale: bool) -> None:
     dq_df = pd.DataFrame(payload["dq_dock"])
     vina_df = pd.DataFrame(payload["vina"])
     if dq_df.empty:
@@ -171,10 +171,14 @@ def _plot_timing(payload: dict, output_path: Path) -> None:
     label_count = len(set(plot_df["label"].tolist()))
     plt.figure(figsize=(max(12, 1.5 * label_count), 7.5))
     sns.barplot(data=cast(pd.DataFrame, plot_df), x="label", y="Time", hue="Method")
-    plt.yscale("log")
-    plt.ylabel("Runtime (s, log scale)")
+    if log_scale:
+        plt.yscale("log")
+        plt.ylabel("Runtime (s, log scale)")
+        plt.title("Runtime by Complex (Log Scale)")
+    else:
+        plt.ylabel("Runtime (s)")
+        plt.title("Runtime by Complex")
     plt.xlabel("Complex")
-    plt.title("Runtime by Complex")
     plt.xticks(rotation=0, ha="center", fontsize=8)
     plt.subplots_adjust(bottom=0.3)
     plt.tight_layout()
@@ -223,16 +227,19 @@ def render_redocking_report(json_path: Path) -> dict[str, Path]:
     markdown_path = base.with_name(base.name + "_report.md")
     rmsd_path = base.with_name(base.name + "_rmsd.png")
     timing_path = base.with_name(base.name + "_timing.png")
+    timing_log_path = base.with_name(base.name + "_timing_log.png")
     scatter_path = base.with_name(base.name + "_scatter.png")
 
     _write_markdown_report(payload, markdown_path)
     _plot_rmsd(payload, rmsd_path)
-    _plot_timing(payload, timing_path)
+    _plot_timing(payload, timing_path, log_scale=False)
+    _plot_timing(payload, timing_log_path, log_scale=True)
     _plot_scatter(payload, scatter_path)
 
     return {
         "markdown": markdown_path,
         "rmsd": rmsd_path,
         "timing": timing_path,
+        "timing_log": timing_log_path,
         "scatter": scatter_path,
     }
