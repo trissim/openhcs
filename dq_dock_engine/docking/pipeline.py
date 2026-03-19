@@ -70,7 +70,7 @@ def run_docking_pipeline(
     # Determine effective engine based on config
     if config is not None and config.mode == DockingMode.CERTIFIED:
         effective_engine = ScoringEngine.CERTIFIED_LJ
-        target_error = config.cutoff_radius if config.cutoff_radius > 0 else 0.001
+        target_error = config.target_error if config.target_error > 0 else 0.001
         scoring_kwargs["target_error"] = target_error
     else:
         effective_engine = engine

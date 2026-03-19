@@ -49,18 +49,17 @@ class DockingConfig:
 
     mode: DockingMode
 
-    # Cutoff radius (Angstroms)
-    # CERTIFIED: Computed from error bound
-    # HEURISTIC: User-specified
-    cutoff_radius: float = 10.0
+    #: CERTIFIED: Target error bound in kcal/mol (passed to optimal_cutoff)
+    #: HEURISTIC: Cutoff radius in Angstroms for ad-hoc scoring
+    target_error: float = 0.001
 
-    # Energy gap threshold for certification
-    # CERTIFIED: Must exceed 2 × lattice_tail_bound(R)
+    #: Energy gap threshold for certification
+    #: CERTIFIED: Must exceed 2 × lattice_tail_bound(R)
     min_energy_gap: float = 0.0
 
-    # Use external SMINA/Vina scoring?
-    # CERTIFIED: Never
-    # HEURISTIC: Optional for comparison
+    #: Use external SMINA/Vina scoring?
+    #: CERTIFIED: Never
+    #: HEURISTIC: Optional for comparison
     use_external_scorer: bool = False
 
     @property
@@ -83,8 +82,8 @@ class DockingConfig:
                     "CERTIFIED mode: use_external_scorer=True conflicts with "
                     "formal guarantee. External scorers are HEURISTIC."
                 )
-            if self.cutoff_radius <= 0:
-                warnings.append("CERTIFIED mode: cutoff_radius must be positive.")
+            if self.target_error <= 0:
+                warnings.append("CERTIFIED mode: target_error must be positive.")
 
         return len(warnings) == 0, warnings
 
@@ -92,14 +91,14 @@ class DockingConfig:
 # Predefined configurations
 CERTIFIED_DOCKING = DockingConfig(
     mode=DockingMode.CERTIFIED,
-    cutoff_radius=0.001,  # Target error bound in kcal/mol
+    target_error=0.001,  # kcal/mol, passed to optimal_cutoff -> R=29.29Å
     min_energy_gap=0.0,
     use_external_scorer=False,
 )
 
 HEURISTIC_SCREENING = DockingConfig(
     mode=DockingMode.HEURISTIC,
-    cutoff_radius=8.0,  # Typical heuristic cutoff
+    target_error=8.0,  # Angstroms, heuristic cutoff radius
     min_energy_gap=0.0,
     use_external_scorer=True,
 )
