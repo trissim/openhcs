@@ -26,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -131,6 +132,12 @@ class VinaSummaryRow:
 class BenchmarkOutputPaths:
     json_path: Path
     csv_path: Path
+
+
+@dataclass(frozen=True)
+class VinaPrepTools:
+    receptor_tool: str
+    ligand_tool: str
 
 
 @dataclass(frozen=True)
@@ -513,6 +520,50 @@ def check_vina() -> Optional[str]:
     return None
 
 
+def check_vina_prep_tools() -> VinaPrepTools | None:
+    receptor_tool = shutil.which("prepare_receptor4.py")
+    ligand_tool = shutil.which("prepare_ligand4.py")
+    if receptor_tool is not None and ligand_tool is not None:
+        return VinaPrepTools(receptor_tool=receptor_tool, ligand_tool=ligand_tool)
+    return None
+
+
+def prepare_vina_inputs(
+    prep_tools: VinaPrepTools | None,
+    receptor_pdb: Path,
+    ligand_pdb: Path,
+) -> tuple[Path, Path, Path | None]:
+    if prep_tools is None:
+        return receptor_pdb, ligand_pdb, None
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="vina_prep_"))
+    receptor_pdbqt = temp_dir / f"{receptor_pdb.stem}.pdbqt"
+    ligand_pdbqt = temp_dir / f"{ligand_pdb.stem}.pdbqt"
+
+    receptor_cmd = [
+        prep_tools.receptor_tool,
+        "-r",
+        str(receptor_pdb),
+        "-o",
+        str(receptor_pdbqt),
+        "-A",
+        "checkhydrogens",
+    ]
+    ligand_cmd = [
+        prep_tools.ligand_tool,
+        "-l",
+        str(ligand_pdb),
+        "-o",
+        str(ligand_pdbqt),
+        "-A",
+        "checkhydrogens",
+    ]
+
+    subprocess.run(receptor_cmd, check=True, capture_output=True, text=True)
+    subprocess.run(ligand_cmd, check=True, capture_output=True, text=True)
+    return receptor_pdbqt, ligand_pdbqt, temp_dir
+
+
 def _extract_pdb_element(line: str) -> str:
     element = line[76:78].strip()
     if element:
@@ -775,8 +826,6 @@ def run_vina(
     min_rmsd_filter: float = 0.5,
 ) -> VinaResult:
     """Run a strong-search smina configuration for known-pocket redocking."""
-    import tempfile
-
     # Use a safe temp file path
     temp_fd, temp_path = tempfile.mkstemp(suffix=".pdb")
     os.close(temp_fd)
@@ -1025,8 +1074,15 @@ def run_benchmark(
 
     # Check Vina
     vina_path = check_vina()
+    vina_prep_tools = check_vina_prep_tools()
     if vina_path:
         print(f"\n✅ Vina found: {vina_path}")
+        if vina_prep_tools is not None:
+            print("✅ AutoDock preparation tools found; Vina will use PDBQT inputs")
+        else:
+            print(
+                "⚠️  AutoDock preparation tools not found; Vina will use direct PDB inputs"
+            )
     else:
         print("""
 ❌ Vina not found!
@@ -1279,16 +1335,26 @@ For now, we'll run DQ-Dock only on PDB files.
                 cx["path"], preferred_resname=cx["preferred_resname"]
             )
 
-            print(f"  Receptor: {receptor_pdb.name}", flush=True)
-            print(f"  Ligand: {ligand_pdb.name}", flush=True)
+            prep_temp_dir: Path | None = None
+            try:
+                vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
+                    vina_prep_tools,
+                    receptor_pdb,
+                    ligand_pdb,
+                )
+                print(f"  Receptor: {vina_receptor.name}", flush=True)
+                print(f"  Ligand: {vina_ligand.name}", flush=True)
 
-            # Run Vina docking
-            result = run_vina(
-                vina_path,
-                receptor_pdb,
-                ligand_pdb,
-                cx["center"],
-            )
+                # Run Vina docking
+                result = run_vina(
+                    vina_path,
+                    vina_receptor,
+                    vina_ligand,
+                    cx["center"],
+                )
+            finally:
+                if prep_temp_dir is not None:
+                    shutil.rmtree(prep_temp_dir, ignore_errors=True)
 
             vina_results.append(result)
 
@@ -1296,6 +1362,26 @@ For now, we'll run DQ-Dock only on PDB files.
             if not result.success or result.best_affinity is None:
                 error_msg = result.error or "Failed to parse SMINA output"
                 print(f"  ❌ {error_msg}")
+                save_benchmark_results(
+                    output_paths,
+                    charge_method_name=(
+                        "unknown"
+                        if charge_method is None
+                        else charge_method.name.lower()
+                    ),
+                    n_complexes_requested=n_complexes,
+                    n_poses=n_poses,
+                    n_opt_steps=n_opt_steps,
+                    use_multi_stage=use_multi_stage,
+                    use_pocket_guided=effective_pocket_guided,
+                    bench_elapsed=time.time() - bench_start,
+                    phase="vina",
+                    complexes=complexes,
+                    dq_rows=dq_rows,
+                    dq_results=dq_results,
+                    vina_rows=vina_rows,
+                    excluded_rows=excluded_rows,
+                )
                 continue
 
             top_rmsd = float("nan")
@@ -1429,13 +1515,6 @@ For now, we'll run DQ-Dock only on PDB files.
     )
     print(f"  Results JSON: {json_path}")
     print(f"  Results CSV: {csv_path}")
-
-    print("""
-Note: This is a simplified benchmark. For production use:
-- Use prepare_receptor4.py and prepare_ligand4.py for Vina
-- Provide separate ligand files
-- Use proper scoring functions
-""")
 
 
 if __name__ == "__main__":
