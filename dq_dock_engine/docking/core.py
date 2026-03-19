@@ -17,6 +17,7 @@ class ScoringEngine(Enum):
     SMINA_EXACT = auto()
     VINARDO = auto()
     SOFT_LJ = auto()
+    CERTIFIED_LJ = auto()  # Lean-proven bounded LJ with certified cutoff
 
 
 class FormalProofStatus(Enum):

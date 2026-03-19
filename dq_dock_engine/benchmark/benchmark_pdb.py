@@ -43,6 +43,7 @@ from dq_dock_engine.docking.core import (
     FormalProofStatus,
 )
 from dq_dock_engine.docking.pipeline import run_docking_pipeline
+from dq_dock_engine.docking.pdb_io import parse_structure
 from dq_dock_engine.docking.metrics import (
     compute_rmsd_batched,
     compute_docking_rmsd_batched,
@@ -268,26 +269,12 @@ def compute_pocket_center(ligand_coords: np.ndarray) -> tuple:
 
 def find_docking_center(pdb_path: Path) -> tuple:
     """Find docking center from ligand in PDB."""
-    from dq_dock_engine.docking.pdb_io import parse_structure
-
     try:
-        coords, _ = parse_structure(pdb_path, return_elements=False)
+        ligand_pdb = prepare_ligand(pdb_path)
+        coords, _, _ = parse_structure(ligand_pdb, return_elements=True)
         return compute_pocket_center(coords)
     except ValueError:
         pass
-
-    # Fallback: center of protein
-    coords = []
-    with open(pdb_path) as f:
-        for line in f:
-            if line.startswith("ATOM"):
-                x = float(line[30:38])
-                y = float(line[38:46])
-                z = float(line[46:54])
-                coords.append([x, y, z])
-
-    if coords:
-        return tuple(np.mean(coords, axis=0))
 
     return (0.0, 0.0, 0.0)
 
@@ -556,6 +543,7 @@ def run_dq_dock(
         receptor_elements=tuple(receptor_elements)
         if receptor_elements is not None
         else None,
+        config=config,
         use_pocket_guided=use_pocket_guided,
         use_multi_stage=use_multi_stage,
     )

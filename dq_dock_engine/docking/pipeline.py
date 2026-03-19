@@ -6,8 +6,8 @@ with multi-stage filtering and pocket-guided sampling.
 """
 
 from pathlib import Path
+from typing import List, Optional
 
-from typing import List
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -20,8 +20,9 @@ from dq_dock_engine.docking.core import (
     PoseVector,
 )
 from dq_dock_engine.docking.charges import ChargeMethod
-from dq_dock_engine.docking.scoring import route_scoring
+from dq_dock_engine.docking.scoring import route_scoring, score_certified_lj
 from dq_dock_engine.docking.optimization import optimize_poses_batched
+from dq_dock_engine.docking_config import DockingConfig, DockingMode
 
 
 def run_docking_pipeline(
@@ -36,6 +37,7 @@ def run_docking_pipeline(
     *,
     charge_method: ChargeMethod | None = None,
     receptor_file: str | Path | None = None,
+    config: DockingConfig | None = None,
     top_k: int = 10,
     optimize: bool = True,
     n_opt_steps: int = 50,
@@ -55,7 +57,7 @@ def run_docking_pipeline(
         ligand_ctx: Ligand context
         box: Docking box constraints
         n_poses: Number of poses to generate
-        engine: Scoring engine (INTERNAL_LJ, VINARDO, SOFT_LJ)
+        engine: Base scoring engine (may be overridden by config)
         key: JAX random key
         top_k: Number of top poses to return
         optimize: Whether to run local optimization
@@ -63,7 +65,16 @@ def run_docking_pipeline(
         top_k_to_optimize: Top poses to optimize
         use_pocket_guided: Use pocket-guided sampling
         use_multi_stage: Use multi-stage filtering
+        config: DockingConfig for CERTIFIED or HEURISTIC mode
     """
+    # Determine effective engine based on config
+    if config is not None and config.mode == DockingMode.CERTIFIED:
+        effective_engine = ScoringEngine.CERTIFIED_LJ
+        target_error = config.cutoff_radius if config.cutoff_radius > 0 else 0.001
+        scoring_kwargs["target_error"] = target_error
+    else:
+        effective_engine = engine
+
     # --- POSE GENERATION ---
     if use_pocket_guided:
         from dq_dock_engine.docking.pocket_sampling import (
@@ -161,7 +172,7 @@ def run_docking_pipeline(
             "poses_coords": batched_coords,
             **scoring_kwargs,
         }
-        final_scores = route_scoring(engine, **kwargs)
+        final_scores = route_scoring(effective_engine, **kwargs)
 
     # --- SELECT TOP POSES ---
     best_indices = jnp.argsort(final_scores)[: min(top_k, n_poses)]
@@ -210,7 +221,7 @@ def run_docking_pipeline(
         "ligand_radii": ligand_ctx.base_radii,
         "poses_coords": opt_coords,
     }
-    final_scores = route_scoring(engine, **kwargs)
+    final_scores = route_scoring(effective_engine, **kwargs)
 
     # --- RANKING ---
     best_final_indices = jnp.argsort(final_scores)[: min(top_k, n_to_opt)]

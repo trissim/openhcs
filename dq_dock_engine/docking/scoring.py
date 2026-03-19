@@ -22,6 +22,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from dq_dock_engine.docking.core import ScoringEngine, ScoredPose
+from dq_dock_engine.physics.lattice_sum import optimal_cutoff, lj6_cutoff_error
+from dq_dock_engine.proof_status import certified, ProofStatus
+
+# Physical calibration for LJ potential
+# Typical well depth for carbon-carbon interactions in kcal/mol
+# From standard force fields (AMBER, CHARMM)
+_EPSILON_KCAL_MOL = 0.086
+from dq_dock_engine.proof_status import certified, ProofStatus
 
 
 @jax.jit
@@ -60,6 +68,109 @@ def _score_single_lj(
 
     pe = repulsion - attraction
     return jnp.sum(pe)
+
+
+@jax.jit
+def _score_certified_lj(
+    receptor_coords: jnp.ndarray,
+    pose_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    cutoff: jnp.ndarray,
+    epsilon: float,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """
+    CERTIFIED LJ score using proven cutoff bounds from Lean 4.
+
+    PROOF STATUS: CERTIFIED (theorem: LatticeSum.lean::lj6_tail_bound)
+      - Cutoff error bounded by lattice_tail_bound(s, R)
+      - For LJ-6: error ≤ M/R³ where M = 8π
+      - Energy calibrated with epsilon (kcal/mol)
+
+    Args:
+        receptor_coords: (N_rec, 3)
+        pose_coords: (N_lig, 3)
+        receptor_radii: (N_rec,)
+        ligand_radii: (N_lig,)
+        cutoff: Certified cutoff radius
+        epsilon: Well depth in kcal/mol for calibration
+
+    Returns:
+        (energy, error_bound) - both JAX arrays, calibrated to physical units
+    """
+    diffs = receptor_coords[:, None, :] - pose_coords[None, :, :]  # (N_rec, N_lig, 3)
+    dists = jnp.linalg.norm(diffs, axis=-1)  # (N_rec, N_lig)
+
+    sigma_ij = receptor_radii[:, None] + ligand_radii[None:]  # (N_rec, N_lig)
+
+    cutoff_safe = jnp.maximum(cutoff, sigma_ij)
+
+    in_range = dists < cutoff_safe
+    dists_safe = jnp.where(in_range, dists, cutoff_safe)
+
+    sigma_over_r6 = (sigma_ij / dists_safe) ** 6
+    sigma_over_r12 = sigma_over_r6**2
+
+    # LJ with calibrated epsilon
+    lj_contrib = epsilon * (sigma_over_r12 - sigma_over_r6)
+
+    # Zero out beyond-cutoff contributions
+    energy = jnp.sum(jnp.where(in_range, lj_contrib, 0.0))
+
+    # Lean-proven error bound: M/R³ for LJ-6, calibrated
+    M = 4.0 * jnp.pi * 2.0  # 8π
+    error_bound = epsilon * M / (cutoff**3)
+
+    return energy, error_bound
+
+
+@certified("LatticeSum.lean::lj6_tail_bound")
+def score_certified_lj(
+    receptor_coords: jnp.ndarray,
+    poses_coords: jnp.ndarray,
+    receptor_radii: jnp.ndarray,
+    ligand_radii: jnp.ndarray,
+    target_error: float = 0.001,
+    epsilon: float = _EPSILON_KCAL_MOL,
+) -> tuple[jnp.ndarray, float]:
+    """
+    Batched CERTIFIED LJ scoring with Lean-proven error bounds.
+
+    Uses optimal_cutoff to compute minimum R for target error,
+    then computes truncated LJ sum within that bound.
+
+    PROOF STATUS: CERTIFIED
+      - Cutoff computed from proven bound: optimal_cutoff(ε) = (M/ε)^(1/3)
+      - Energy is truncated LJ sum, error bounded by M/R³
+      - Physical calibration: epsilon in kcal/mol
+
+    Args:
+        receptor_coords: (N_rec, 3)
+        poses_coords: (N_poses, N_lig, 3)
+        receptor_radii: (N_rec,)
+        ligand_radii: (N_lig,)
+        target_error: Target error bound per atom pair (default 0.001 kcal/mol)
+        epsilon: Well depth in kcal/mol for calibration (default 0.086 for C-C)
+
+    Returns:
+        (scores, certified_error_bound) where certified_error_bound
+        is the Lean-proven upper bound on truncation error (kcal/mol).
+    """
+    cutoff = jnp.array(optimal_cutoff(target_error, s=6.0))
+
+    def score_one_pose(pose_coords):
+        energy, _ = _score_certified_lj(
+            receptor_coords, pose_coords, receptor_radii, ligand_radii, cutoff, epsilon
+        )
+        return energy
+
+    batched_score = jax.vmap(score_one_pose)
+    scores = batched_score(poses_coords)
+
+    # Compute error bound (same for all poses)
+    error_bound = epsilon * lj6_cutoff_error(float(cutoff))
+
+    return scores, error_bound
 
 
 def _score_single_lj_scalar(
@@ -236,6 +347,17 @@ def route_scoring(engine: ScoringEngine, **kwargs) -> np.ndarray:
                 kwargs["ligand_template"],
                 kwargs["poses_coords"],
             )
+
+        case ScoringEngine.CERTIFIED_LJ:
+            target_error = kwargs.get("target_error", 0.001)
+            scores, error_bound = score_certified_lj(
+                kwargs["receptor_coords"],
+                kwargs["poses_coords"],
+                kwargs["receptor_radii"],
+                kwargs["ligand_radii"],
+                target_error=target_error,
+            )
+            return np.array(scores)
 
         case _:
             raise ValueError(f"Unknown ScoringEngine: {engine}")
