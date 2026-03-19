@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
+from typing import cast
 
 import matplotlib
 
@@ -10,6 +12,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+
+
+def _graph_label(pdb_id: str, target_name: str) -> str:
+    wrapped_target = textwrap.fill(target_name, width=16)
+    return f"{pdb_id}\n{wrapped_target}"
 
 
 def _load_payload(json_path: Path) -> dict:
@@ -94,37 +101,44 @@ def _plot_rmsd(payload: dict, output_path: Path) -> None:
     if dq_df.empty:
         return
 
-    merged = dq_df[["pdb_id", "target_name", "rmsd"]].rename(
-        columns={"rmsd": "DQ-Dock"}
-    )
+    merged = dq_df[["pdb_id", "target_name", "rmsd"]].copy()
+    merged["DQ-Dock"] = merged.pop("rmsd")
     if not vina_df.empty:
         merged = merged.merge(
             vina_df[["pdb_id", "top_rmsd", "best_returned_mode_rmsd"]],
             on="pdb_id",
             how="left",
-        ).rename(
-            columns={
-                "top_rmsd": "Vina top pose",
-                "best_returned_mode_rmsd": "Vina best returned",
-            }
         )
-
-    plot_df = merged.melt(
-        id_vars=["pdb_id", "target_name"],
-        value_vars=[c for c in merged.columns if c not in {"pdb_id", "target_name"}],
-        var_name="Method",
-        value_name="RMSD",
+        merged["Vina top pose"] = merged.pop("top_rmsd")
+        merged["Vina best returned"] = merged.pop("best_returned_mode_rmsd")
+    merged["label"] = merged.apply(
+        lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])), axis=1
     )
-    plot_df = plot_df.dropna(subset=["RMSD"])
+
+    plot_df = cast(
+        pd.DataFrame,
+        merged.melt(
+            id_vars=["pdb_id", "target_name", "label"],
+            value_vars=[
+                c for c in merged.columns if c not in {"pdb_id", "target_name", "label"}
+            ],
+            var_name="Method",
+            value_name="RMSD",
+        ),
+    )
+    plot_df = cast(pd.DataFrame, plot_df.dropna(subset=["RMSD"]))
     if plot_df.empty:
         return
 
-    plt.figure(figsize=(12, 6))
-    sns.barplot(data=plot_df, x="pdb_id", y="RMSD", hue="Method")
+    label_count = len(set(plot_df["label"].tolist()))
+    plt.figure(figsize=(max(12, 1.5 * label_count), 7.5))
+    sns.barplot(data=cast(pd.DataFrame, plot_df), x="label", y="RMSD", hue="Method")
     plt.axhline(2.0, color="red", linestyle="--", linewidth=1, label="2A success")
     plt.ylabel("RMSD (A)")
-    plt.xlabel("PDB")
+    plt.xlabel("Complex")
     plt.title("Redocking RMSD by Complex")
+    plt.xticks(rotation=0, ha="center", fontsize=8)
+    plt.subplots_adjust(bottom=0.3)
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
@@ -138,21 +152,31 @@ def _plot_timing(payload: dict, output_path: Path) -> None:
 
     dq_plot = dq_df[["pdb_id", "time_s"]].copy()
     dq_plot["Method"] = "DQ-Dock"
-    dq_plot = dq_plot.rename(columns={"time_s": "Time"})
+    dq_plot["Time"] = dq_plot.pop("time_s")
+    dq_plot["label"] = dq_df.apply(
+        lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])), axis=1
+    )
     frames = [dq_plot]
     if not vina_df.empty:
         vina_plot = vina_df[["pdb_id", "time_s"]].copy()
         vina_plot["Method"] = "Vina"
-        vina_plot = vina_plot.rename(columns={"time_s": "Time"})
+        vina_plot["Time"] = vina_plot.pop("time_s")
+        vina_plot["label"] = vina_df.apply(
+            lambda row: _graph_label(str(row["pdb_id"]), str(row["target_name"])),
+            axis=1,
+        )
         frames.append(vina_plot)
-    plot_df = pd.concat(frames, ignore_index=True)
+    plot_df = cast(pd.DataFrame, pd.concat(frames, ignore_index=True))
 
-    plt.figure(figsize=(12, 6))
-    sns.barplot(data=plot_df, x="pdb_id", y="Time", hue="Method")
+    label_count = len(set(plot_df["label"].tolist()))
+    plt.figure(figsize=(max(12, 1.5 * label_count), 7.5))
+    sns.barplot(data=cast(pd.DataFrame, plot_df), x="label", y="Time", hue="Method")
     plt.yscale("log")
     plt.ylabel("Runtime (s, log scale)")
-    plt.xlabel("PDB")
+    plt.xlabel("Complex")
     plt.title("Runtime by Complex")
+    plt.xticks(rotation=0, ha="center", fontsize=8)
+    plt.subplots_adjust(bottom=0.3)
     plt.tight_layout()
     plt.savefig(output_path, dpi=220, bbox_inches="tight")
     plt.close()
@@ -178,7 +202,12 @@ def _plot_scatter(payload: dict, output_path: Path) -> None:
     plt.figure(figsize=(6.5, 6.5))
     sns.scatterplot(data=merged, x="best_returned_mode_rmsd", y="rmsd", s=90)
     for _, row in merged.iterrows():
-        plt.text(row["best_returned_mode_rmsd"], row["rmsd"], row["pdb_id"], fontsize=8)
+        plt.text(
+            float(row["best_returned_mode_rmsd"]),
+            float(row["rmsd"]),
+            str(row["pdb_id"]),
+            fontsize=8,
+        )
     plt.plot([0, limit], [0, limit], linestyle="--", color="gray")
     plt.xlabel("Vina best returned RMSD (A)")
     plt.ylabel("DQ-Dock RMSD (A)")
