@@ -190,6 +190,31 @@ def OutsideCutoffApproximationBounded
     ((∀ a : MDAction, |prob.utility a s - prob.utility a s'| ≤ δ) ∧
     δ < (StrictUtilityGap prob.toDecisionProblem a_star s) / 2))
 
+/--
+  THEOREM: Decision-Theoretic Backdoor (Stage 9 Gate)
+  Any atom outside the cutoff radius is formally irrelevant to the decision problem.
+  Its movement mathematically cannot change the optimal binding pose.
+ -/
+theorem outside_cutoff_is_irrelevant
+    (prob : MDBindingProblem)
+    [Fintype MDAction]
+    (atomIdx : Nat)
+    (hAtomInProtein : atomIdx < prob.protein.numAtoms)
+    (axis : Fin 3)
+    (hStrictAll : ∀ s, ∃ a, StrictOpt prob.toDecisionProblem a s)
+    (hBounded : OutsideCutoffApproximationBounded prob)
+    (hOutside : ¬ atomWithinCutoff (proteinAtom prob atomIdx hAtomInProtein) prob.bindingSite prob.cutoff) :
+    @DecisionProblem.isIrrelevant MDAction MDState (numMDCoordinates prob)
+      (mdCoordinateSpaceStruct prob) prob.toDecisionProblem
+      (proteinCoordFin prob atomIdx hAtomInProtein axis) := by
+  intro s s' hSame
+  rcases hStrictAll s with ⟨a_opt, hStrict⟩
+  have h_bound_hyp := hBounded atomIdx hAtomInProtein axis s s' a_opt
+  rcases h_bound_hyp with ⟨δ, hδ, h_impl⟩
+  have h_conseq := h_impl hSame hOutside hStrict
+  rcases h_conseq with ⟨hPerturb, hBoundLt⟩
+  exact epsilon_margin_invariance prob.toDecisionProblem s s' a_opt δ hδ hStrict hPerturb hBoundLt
+
 /-! ## 4. Relevance for MD -/
 
 theorem md_relevant_only_if_within_cutoff

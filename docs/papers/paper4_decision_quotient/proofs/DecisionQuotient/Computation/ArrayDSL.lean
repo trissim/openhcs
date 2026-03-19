@@ -130,6 +130,206 @@ noncomputable def sumPairPotentials {n : ℕ}
 
 /-! ## 5. Compilation Target Specification -/
 
+/-- Primitive argument kind for exported wrapper generation. -/
+inductive ExprKind where
+  | scalar
+  | tensor
+  | callable
+  deriving Repr, DecidableEq
+
+/-- Primitive scalar payload type when one exists. -/
+inductive ScalarType where
+  | real
+  | boolean
+  deriving Repr, DecidableEq
+
+/-- Structured lowering category for Python/JAX code generation. -/
+inductive LoweringKind where
+  | vmap
+  | reduceSum
+  | elemBinaryAdd
+  | elemBinarySub
+  | norm
+  | distance
+  | pairwiseDistances
+  | applyCutoff
+  | lennardJones
+  | sumPairPotentials
+  deriving Repr, DecidableEq
+
+/-- Exported argument schema for a primitive. -/
+structure ArgSpec where
+  name : String
+  kind : ExprKind
+  scalarType? : Option ScalarType := none
+  deriving Repr, DecidableEq
+
+/-- Structured export artifact for Lean-to-Python wrapper generation. -/
+structure PrimitiveIR where
+  name : String
+  args : List ArgSpec
+  resultKind : ExprKind
+  scalarType? : Option ScalarType := none
+  loweringKind : LoweringKind
+  jaxModule : String
+  jaxSymbol : String
+  supportsGrad : Bool
+  leanSymbol : String
+  proofRef? : Option String := none
+  proofStatus? : Option String := none
+  deriving Repr, DecidableEq
+
+/-- Structured primitive export used by the Python/JAX code generator. -/
+def exportPrimitives : List PrimitiveIR := [
+  {
+    name := "map"
+    args := [
+      { name := "f", kind := .callable },
+      { name := "arr", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .vmap
+    jaxModule := "jax"
+    jaxSymbol := "vmap"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.map"
+  },
+  {
+    name := "reduce_sum"
+    args := [
+      { name := "arr", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .scalar
+    scalarType? := some .real
+    loweringKind := .reduceSum
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sum"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.reduce_sum"
+  },
+  {
+    name := "elemBinaryAdd"
+    args := [
+      { name := "arr1", kind := .tensor, scalarType? := some .real },
+      { name := "arr2", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .elemBinaryAdd
+    jaxModule := "jax.numpy"
+    jaxSymbol := "add"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.elemBinaryAdd"
+  },
+  {
+    name := "elemBinarySub"
+    args := [
+      { name := "arr1", kind := .tensor, scalarType? := some .real },
+      { name := "arr2", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .elemBinarySub
+    jaxModule := "jax.numpy"
+    jaxSymbol := "subtract"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.elemBinarySub"
+  },
+  {
+    name := "norm"
+    args := [
+      { name := "arr", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .scalar
+    scalarType? := some .real
+    loweringKind := .norm
+    jaxModule := "jax.numpy.linalg"
+    jaxSymbol := "norm"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.norm"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.norm_nonneg_bound"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "distance"
+    args := [
+      { name := "arr1", kind := .tensor, scalarType? := some .real },
+      { name := "arr2", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .scalar
+    scalarType? := some .real
+    loweringKind := .distance
+    jaxModule := "jax.numpy.linalg"
+    jaxSymbol := "norm"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.distance"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.distance_triangle_bound"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "pairwiseDistances"
+    args := [
+      { name := "coords1", kind := .tensor, scalarType? := some .real },
+      { name := "coords2", kind := .tensor, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .pairwiseDistances
+    jaxModule := "jax.numpy"
+    jaxSymbol := "abs"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.pairwiseDistances"
+  },
+  {
+    name := "applyCutoff"
+    args := [
+      { name := "distances", kind := .tensor, scalarType? := some .real },
+      { name := "rc", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .tensor
+    scalarType? := some .real
+    loweringKind := .applyCutoff
+    jaxModule := "jax.numpy"
+    jaxSymbol := "where"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.applyCutoff"
+  },
+  {
+    name := "lennardJones"
+    args := [
+      { name := "epsilon", kind := .scalar, scalarType? := some .real },
+      { name := "sigma", kind := .scalar, scalarType? := some .real },
+      { name := "r", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .scalar
+    scalarType? := some .real
+    loweringKind := .lennardJones
+    jaxModule := "jax.numpy"
+    jaxSymbol := "where"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.lennardJones"
+    proofRef? := some "DecisionQuotient.Computation.ArrayDSL.lennardJones"
+    proofStatus? := some "CERTIFIED"
+  },
+  {
+    name := "sumPairPotentials"
+    args := [
+      { name := "distances", kind := .tensor, scalarType? := some .real },
+      { name := "rc", kind := .scalar, scalarType? := some .real },
+      { name := "epsilon", kind := .scalar, scalarType? := some .real },
+      { name := "sigma", kind := .scalar, scalarType? := some .real }
+    ]
+    resultKind := .scalar
+    scalarType? := some .real
+    loweringKind := .sumPairPotentials
+    jaxModule := "jax.numpy"
+    jaxSymbol := "sum"
+    supportsGrad := true
+    leanSymbol := "DecisionQuotient.Computation.ArrayDSL.sumPairPotentials"
+  }
+]
+
 /-- JAX compilation target for each primitive.
     This is the specification that JAX implementation must match. -/
 structure JAXSpec where
@@ -137,20 +337,25 @@ structure JAXSpec where
   jaxExpr : String
   hasGrad : Bool
 
+/-- Backward-compatible string summary of the lowering target. -/
+def PrimitiveIR.jaxExpr (primitive : PrimitiveIR) : String :=
+  match primitive.loweringKind with
+  | .vmap => "jax.vmap(f)(arr)"
+  | .reduceSum => "jnp.sum(arr)"
+  | .elemBinaryAdd => "arr1 + arr2"
+  | .elemBinarySub => "arr1 - arr2"
+  | .norm => "jnp.linalg.norm(arr)"
+  | .distance => "jnp.linalg.norm(arr1 - arr2)"
+  | .pairwiseDistances => "jnp.abs(coords1[:, None] - coords2[None, :])"
+  | .applyCutoff => "jnp.where(distances < rc, distances, 0)"
+  | .lennardJones => "jnp.where(r == 0, 0, 4*epsilon*((sigma/r)**12 - (sigma/r)**6))"
+  | .sumPairPotentials => "jnp.sum(lennardJones(epsilon, sigma, applyCutoff(distances, rc)))"
+
 /-- Mapping from Lean primitives to JAX expressions.
     Gradients are implemented fully via JAX autodiff equivalent to Lean's `gradient`. -/
-def primitiveJAXMapping : List JAXSpec := [
-  ⟨"map", "jax.vmap(f, arr)", true⟩,
-  ⟨"reduce_sum", "jnp.sum(arr)", true⟩,
-  ⟨"elemBinaryAdd", "arr1 + arr2", true⟩,
-  ⟨"elemBinarySub", "arr1 - arr2", true⟩,
-  ⟨"norm", "jnp.linalg.norm(arr)", true⟩,
-  ⟨"distance", "jnp.linalg.norm(arr1 - arr2)", true⟩,
-  ⟨"pairwiseDistances", "jnp.abs(coords1[:,None] - coords2[None,:])", true⟩,
-  ⟨"applyCutoff", "distances * (distances < rc)", true⟩,
-  ⟨"lennardJones", "4*epsilon*((sigma/r)**12 - (sigma/r)**6)", true⟩,
-  ⟨"sumPairPotentials", "jnp.sum(energies)", true⟩
-]
+def primitiveJAXMapping : List JAXSpec :=
+  exportPrimitives.map fun primitive =>
+    ⟨primitive.name, primitive.jaxExpr, primitive.supportsGrad⟩
 
 /-! ## 6. Correctness Theorems -/
 
