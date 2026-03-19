@@ -25,7 +25,7 @@ from dq_dock_engine.docking.core import (
 from dq_dock_engine.docking.charges import ChargeMethod
 from dq_dock_engine.docking.scoring import route_scoring, score_certified_lj
 from dq_dock_engine.docking.optimization import optimize_poses_batched
-from dq_dock_engine.docking_config import DockingConfig, DockingMode
+from dq_dock_engine.docking_config import DockingConfig, DockingMode, OptimizerBackend
 
 
 def run_docking_pipeline(
@@ -222,21 +222,42 @@ def run_docking_pipeline(
     top_translations = pose_vecs.translation[opt_indices]
     top_quaternions = pose_vecs.quaternion[opt_indices]
 
-    opt_t, opt_q = optimize_poses_batched(
-        translations=top_translations,
-        quaternions=top_quaternions,
-        ligand_base_coords=ligand_ctx.base_coords,
-        receptor_coords=protein_coords,
-        receptor_radii=receptor_radii,
-        ligand_radii=ligand_ctx.base_radii,
-        n_steps=n_opt_steps,
-        lr_t=0.05,
-        lr_q=0.05,
-        config=config,
+    backend = (
+        config.optimizer_backend if config is not None else OptimizerBackend.GRADIENT
     )
 
-    opt_vecs = PoseVector(translation=opt_t, quaternion=opt_q)
-    opt_coords = apply_poses(ligand_ctx, opt_vecs)
+    if backend == OptimizerBackend.FORMAL:
+        from dq_dock_engine.docking.formal_optimizer import refine_poses_certified
+
+        initial_opt_vecs = PoseVector(
+            translation=top_translations,
+            quaternion=top_quaternions,
+        )
+        initial_coords = apply_poses(ligand_ctx, initial_opt_vecs)
+        opt_coords, _ = refine_poses_certified(
+            coords_batch=initial_coords,
+            receptor_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_ctx.base_radii,
+            n_rounds=n_opt_steps,
+            target_error=target_error,
+        )
+        opt_vecs = None
+    else:
+        opt_t, opt_q = optimize_poses_batched(
+            translations=top_translations,
+            quaternions=top_quaternions,
+            ligand_base_coords=ligand_ctx.base_coords,
+            receptor_coords=protein_coords,
+            receptor_radii=receptor_radii,
+            ligand_radii=ligand_ctx.base_radii,
+            n_steps=n_opt_steps,
+            lr_t=0.05,
+            lr_q=0.05,
+            config=config,
+        )
+        opt_vecs = PoseVector(translation=opt_t, quaternion=opt_q)
+        opt_coords = apply_poses(ligand_ctx, opt_vecs)
 
     # --- FINAL SCORING ---
     kwargs = {

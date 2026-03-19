@@ -27,6 +27,16 @@ class DockingMode(Enum):
     HEURISTIC = "heuristic"
 
 
+class OptimizerBackend(Enum):
+    """Optimizer backend for local pose refinement."""
+
+    #: JAX gradient descent on translation/quaternion (batch-parallel)
+    GRADIENT = "gradient"
+
+    #: Formal multi-round Bayesian action selection (per-pose, certified bounds)
+    FORMAL = "formal"
+
+
 @dataclass(frozen=True)
 class DockingConfig:
     """
@@ -62,6 +72,9 @@ class DockingConfig:
     #: HEURISTIC: Optional for comparison
     use_external_scorer: bool = False
 
+    #: Which optimizer backend to use for local refinement
+    optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT
+
     @property
     def is_certified(self) -> bool:
         """True if running in certified mode."""
@@ -91,9 +104,18 @@ class DockingConfig:
 # Predefined configurations
 CERTIFIED_DOCKING = DockingConfig(
     mode=DockingMode.CERTIFIED,
-    target_error=0.001,  # kcal/mol, passed to optimal_cutoff -> R=29.29Å
+    target_error=0.001,
     min_energy_gap=0.0,
     use_external_scorer=False,
+    optimizer_backend=OptimizerBackend.GRADIENT,
+)
+
+CERTIFIED_DOCKING_FORMAL = DockingConfig(
+    mode=DockingMode.CERTIFIED,
+    target_error=0.001,
+    min_energy_gap=0.0,
+    use_external_scorer=False,
+    optimizer_backend=OptimizerBackend.FORMAL,
 )
 
 HEURISTIC_SCREENING = DockingConfig(
@@ -104,17 +126,17 @@ HEURISTIC_SCREENING = DockingConfig(
 )
 
 
-def create_config(mode: Literal["certified", "heuristic"], **kwargs) -> DockingConfig:
-    """
-    Factory for creating docking configurations.
-
-    Examples:
-    --------
-    >>> config = create_config("certified", cutoff_radius=12.0)
-    >>> config = create_config("heuristic", use_external_scorer=True)
-    """
+def create_config(
+    mode: Literal["certified", "heuristic"],
+    optimizer: Literal["gradient", "formal"] = "gradient",
+    **kwargs,
+) -> DockingConfig:
+    """Factory for creating docking configurations."""
     mode_enum = DockingMode.CERTIFIED if mode == "certified" else DockingMode.HEURISTIC
-    return DockingConfig(mode=mode_enum, **kwargs)
+    backend = (
+        OptimizerBackend.FORMAL if optimizer == "formal" else OptimizerBackend.GRADIENT
+    )
+    return DockingConfig(mode=mode_enum, optimizer_backend=backend, **kwargs)
 
 
 def compute_certified_cutoff(target_error: float, exponent: float = 6.0) -> float:

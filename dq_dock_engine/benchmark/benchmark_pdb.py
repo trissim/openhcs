@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from dq_dock_engine.docking.core import BenchmarkResult, ScoringEngine
 from dq_dock_engine.docking.pdb_io import parse_structure, build_receptor_arrays
 from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
-from dq_dock_engine.docking_config import CERTIFIED_DOCKING
+from dq_dock_engine.docking_config import CERTIFIED_DOCKING, OptimizerBackend
 from dq_dock_engine.benchmark.large_pdb_ids import (
     BenchmarkScope,
     PDBEntry,
@@ -298,6 +298,7 @@ class BenchmarkExecutionContext:
     pose_dir: Path
     competitors: tuple[CompetitorMetadata, ...]
     bench_start: float
+    optimizer_backend: "OptimizerBackend"
 
     @property
     def charge_method_name(self) -> str:
@@ -1251,6 +1252,7 @@ def run_dq_dock(
     receptor_elements: list[str] | tuple[str, ...] | None = None,
     n_opt_steps: int = 50,
     max_retries: int = 6,
+    optimizer_backend: "OptimizerBackend" = OptimizerBackend.GRADIENT,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -1262,12 +1264,24 @@ def run_dq_dock(
         build_receptor_arrays,
     )
     from dq_dock_engine.docking.pipeline import run_docking_pipeline
+    from dq_dock_engine.docking_config import create_config
     from dq_dock_engine.docking.metrics import compute_docking_rmsd_batched
 
     start = time.time()
 
     center_jnp = jnp.array(center)
     box = DockingBox(center=center_jnp, size=jnp.array([20.0, 20.0, 20.0]))
+
+    optimizer_str = (
+        "formal" if optimizer_backend == OptimizerBackend.FORMAL else "gradient"
+    )
+    docking_config = create_config(
+        mode="certified",
+        optimizer=optimizer_str,
+        target_error=0.001,
+        min_energy_gap=0.0,
+        use_external_scorer=False,
+    )
 
     # Assign ligand elements/charges and build LigandContext
     from dq_dock_engine.docking.charges import create_charge_assigner
@@ -1318,7 +1332,7 @@ def run_dq_dock(
                 receptor_elements=tuple(receptor_elements)
                 if receptor_elements is not None
                 else None,
-                config=CERTIFIED_DOCKING,
+                config=docking_config,
                 use_pocket_guided=use_pocket_guided,
                 use_multi_stage=use_multi_stage,
                 include_native=True,
@@ -1488,6 +1502,7 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             use_pocket_guided=context.use_pocket_guided,
             ligand_elements=complex_entry.ligand_elements,
             receptor_elements=complex_entry.pocket_elements,
+            optimizer_backend=context.optimizer_backend,
         )
 
         dq_pose_path: Path | None = None
@@ -1924,6 +1939,7 @@ def run_benchmark(
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "curated",
+    optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT,
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -1937,7 +1953,9 @@ def run_benchmark(
         "smina": SminaBenchmarkEngine,
         "gnina": GninaBenchmarkEngine,
     }
-    _selected = set(_COMPETITOR_ENGINES) if competitors == "all" else {competitors}
+    _selected = set(_COMPETITOR_ENGINES) if competitors == "all" else set()
+    if competitors not in ("all", "none"):
+        _selected = {competitors}
 
     engines: list[BenchmarkEngine] = [
         DQDockBenchmarkEngine(),
@@ -2062,6 +2080,7 @@ def run_benchmark(
         pose_dir=pose_dir,
         competitors=competitor_metadata,
         bench_start=bench_start,
+        optimizer_backend=optimizer_backend,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
     state.save("curation", context, excluded_rows)
@@ -2183,6 +2202,14 @@ if __name__ == "__main__":
         help="Which dataset to benchmark (default: curated). "
         "'casf2007' uses the 195-entry CASF-2007 core set.",
     )
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        choices=("gradient", "formal"),
+        default="gradient",
+        help="Optimizer backend for local pose refinement (default: gradient). "
+        "'formal' uses the multi-round certified optimizer.",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2210,4 +2237,7 @@ if __name__ == "__main__":
         results_dir=args.results_dir,
         competitors=competitor_choice,
         dataset=args.dataset,
+        optimizer_backend=OptimizerBackend.FORMAL
+        if args.optimizer == "formal"
+        else OptimizerBackend.GRADIENT,
     )
