@@ -36,6 +36,9 @@ import urllib.request
 import gzip
 import shutil
 
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -985,9 +988,10 @@ def parse_smina_affinities(stdout: str) -> tuple[float, ...]:
         if "mode |" in line and "affinity" in line:
             in_results = True
             continue
-        if not in_results or not line.strip() or not line[0].isdigit():
+        stripped = line.strip()
+        if not in_results or not stripped or not stripped[0].isdigit():
             continue
-        parts = line.split()
+        parts = stripped.split()
         if len(parts) < 2:
             continue
         try:
