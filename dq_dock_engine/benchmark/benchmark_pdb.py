@@ -21,6 +21,7 @@ Requirements:
 """
 
 import argparse
+from abc import ABC, abstractmethod
 import csv
 import json
 import os
@@ -114,6 +115,15 @@ class ComplexSummaryRow:
 
 
 @dataclass(frozen=True)
+class BenchmarkComplex:
+    pdb_id: str
+    target_name: str
+    path: Path
+    center: tuple[float, float, float]
+    preferred_resname: str | None = None
+
+
+@dataclass(frozen=True)
 class VinaResult:
     success: bool
     time: float
@@ -145,6 +155,66 @@ class VinaPrepTools:
     tool_family: str
     receptor_tool: str
     ligand_tool: str
+
+
+@dataclass(frozen=True)
+class BenchmarkExecutionContext:
+    charge_method: object
+    complexes: tuple[BenchmarkComplex, ...]
+    n_complexes_requested: int
+    n_poses: int
+    n_opt_steps: int
+    use_multi_stage: bool
+    use_pocket_guided: bool
+    output_paths: BenchmarkOutputPaths
+    pose_dir: Path
+    vina_prep_protocol: str
+    competitors: tuple[str, ...]
+    bench_start: float
+
+    @property
+    def charge_method_name(self) -> str:
+        return (
+            "unknown"
+            if self.charge_method is None
+            else str(getattr(self.charge_method, "name")).lower()
+        )
+
+    def elapsed(self) -> float:
+        return time.time() - self.bench_start
+
+
+@dataclass
+class BenchmarkState:
+    dq_results: list[BenchmarkResult]
+    dq_rows: list[ComplexSummaryRow]
+    vina_results: list[VinaResult]
+    vina_rows: list[VinaSummaryRow]
+
+    def save(
+        self,
+        phase: str,
+        context: "BenchmarkExecutionContext",
+        excluded_rows: list["ExcludedComplexRow"],
+    ) -> tuple[Path, Path]:
+        return save_benchmark_results(
+            context.output_paths,
+            charge_method_name=context.charge_method_name,
+            n_complexes_requested=context.n_complexes_requested,
+            n_poses=context.n_poses,
+            n_opt_steps=context.n_opt_steps,
+            use_multi_stage=context.use_multi_stage,
+            use_pocket_guided=context.use_pocket_guided,
+            vina_prep_protocol=context.vina_prep_protocol,
+            competitors=context.competitors,
+            bench_elapsed=context.elapsed(),
+            phase=phase,
+            complexes=list(context.complexes),
+            dq_rows=self.dq_rows,
+            dq_results=self.dq_results,
+            vina_rows=self.vina_rows,
+            excluded_rows=excluded_rows,
+        )
 
 
 @dataclass(frozen=True)
@@ -746,9 +816,10 @@ def save_benchmark_results(
     use_multi_stage: bool,
     use_pocket_guided: bool,
     vina_prep_protocol: str,
+    competitors: tuple[str, ...],
     bench_elapsed: float,
     phase: str,
-    complexes: list[dict],
+    complexes: list[BenchmarkComplex],
     dq_rows: list[ComplexSummaryRow],
     dq_results: list[BenchmarkResult],
     vina_rows: list[VinaSummaryRow],
@@ -757,11 +828,9 @@ def save_benchmark_results(
     json_path = output_paths.json_path
     csv_path = output_paths.csv_path
 
-    complex_map = {str(cx["pdb_id"]): cx for cx in complexes}
+    complex_map = {cx.pdb_id: cx for cx in complexes}
     dq_map = {row.pdb_id: row for row in dq_rows}
-    dq_result_map = {
-        str(cx["pdb_id"]): result for cx, result in zip(complexes, dq_results)
-    }
+    dq_result_map = {row.pdb_id: result for row, result in zip(dq_rows, dq_results)}
     vina_map = {row.pdb_id: row for row in vina_rows}
     expect_complete_vina_alignment = phase == "complete" and len(vina_rows) > 0
     allow_partial_vina_alignment = phase == "vina"
@@ -791,9 +860,9 @@ def save_benchmark_results(
             {
                 "pdb_id": pdb_id,
                 "target_name": row.target_name,
-                "center_x": cx["center"][0],
-                "center_y": cx["center"][1],
-                "center_z": cx["center"][2],
+                "center_x": cx.center[0],
+                "center_y": cx.center[1],
+                "center_z": cx.center[2],
                 "ligand_atoms": row.ligand_atoms,
                 "pocket_atoms": row.pocket_atoms,
                 "dq_energy": dq_result.energy,
@@ -861,7 +930,7 @@ def save_benchmark_results(
         "use_multi_stage": use_multi_stage,
         "use_pocket_guided": use_pocket_guided,
         "vina_prep_protocol": vina_prep_protocol,
-        "competitors": ["smina"],
+        "competitors": list(competitors),
         "total_benchmark_time_s": bench_elapsed,
         "dq_avg_rmsd": None
         if not dq_rows
@@ -1169,175 +1238,80 @@ def run_dq_dock(
     return best_result, best_pose_coords
 
 
-def run_benchmark(
-    n_complexes: int = 10,
-    charge_method=None,
-    n_poses: int = 2000,
-    n_opt_steps: int = 50,
-    use_multi_stage: bool = False,
-    use_pocket_guided: bool | None = None,
-    results_dir: Path = Path("benchmark_results"),
-):
-    """Run full benchmark."""
-    bench_start = time.time()
-    effective_pocket_guided = True if use_pocket_guided is None else use_pocket_guided
+class BenchmarkEngine(ABC):
+    engine_id: str
+    display_name: str
+    include_in_competitors: bool = False
 
-    print("=" * 70, flush=True)
-    print("REAL PDB DOCKING BENCHMARK", flush=True)
-    print("=" * 70, flush=True)
+    def announce(self) -> None:
+        return None
 
-    # Check Vina
-    vina_path = check_vina()
-    vina_prep_tools = check_vina_prep_tools()
-    if vina_path:
-        print(f"\n✅ Vina found: {vina_path}")
-        if vina_prep_tools is not None:
-            print(
-                f"✅ {vina_prep_tools.tool_family} preparation tools found; Vina will try PDBQT inputs first"
-            )
-        else:
-            print(
-                "⚠️  AutoDock preparation tools not found; Vina will use direct PDB inputs"
-            )
-    else:
-        print("""
-❌ Vina not found!
+    def is_available(self) -> bool:
+        return True
 
-To run this benchmark with real Vina comparisons:
+    @abstractmethod
+    def section_title(self, context: BenchmarkExecutionContext) -> str:
+        """Human-readable section title for this engine."""
 
-1. Install Vina:
-   conda install -c conda-forge vina
-   
-   Or download from:
-   https://github.com/ccsb-scripps/AutoDock-Vina/releases
+    def run_all(
+        self,
+        complexes: list[BenchmarkComplex],
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        if not self.is_available():
+            return
+        print("\n" + "=" * 70, flush=True)
+        print(self.section_title(context), flush=True)
+        print("=" * 70, flush=True)
+        for complex_entry in complexes:
+            self.run_complex(complex_entry, state, context, excluded_rows)
 
-2. Make sure 'vina' is in your PATH
+    @abstractmethod
+    def run_complex(
+        self,
+        complex_entry: BenchmarkComplex,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        """Run one complex and update benchmark state."""
 
-3. Re-run this benchmark
+    @abstractmethod
+    def print_summary(
+        self,
+        state: BenchmarkState,
+        complexes: list[BenchmarkComplex],
+    ) -> None:
+        """Print summary lines for this engine."""
 
-For now, we'll run DQ-Dock only on PDB files.
-""")
-        vina_path = None
 
-    # Download PDB files
-    cache_dir = Path("./pdb_cache")
-    cache_dir.mkdir(exist_ok=True)
-    output_paths = create_benchmark_output_paths(results_dir)
-    pose_dir = benchmark_pose_dir(output_paths)
-    vina_prep_protocol = (
-        "direct_pdb"
-        if vina_prep_tools is None
-        else f"{vina_prep_tools.tool_family}_pdbqt_with_direct_fallback"
-    )
+class DQDockBenchmarkEngine(BenchmarkEngine):
+    engine_id = "dq_dock"
+    display_name = "DQ-Dock"
 
-    print(
-        f"\nDownloading {n_complexes} PDB complexes from saved benchmark list...",
-        flush=True,
-    )
-    print(f"Live Results JSON: {output_paths.json_path}", flush=True)
-    print(f"Live Results CSV: {output_paths.csv_path}", flush=True)
-    dataset_exclusions = [
-        entry
-        for entry in get_benchmark_entries()
-        if entry.scope == BenchmarkScope.LIGAND
-        and not entry.include_by_default
-        and entry.exclusion_reason is not None
-    ]
-    if dataset_exclusions:
-        print("Configured dataset exclusions:", flush=True)
-        for entry in dataset_exclusions:
-            print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
-    complexes = []
-    excluded_rows: list[ExcludedComplexRow] = []
+    def section_title(self, context: BenchmarkExecutionContext) -> str:
+        mode_label = (
+            "multi-stage composite" if context.use_multi_stage else "random picking"
+        )
+        if context.use_pocket_guided and not context.use_multi_stage:
+            mode_label = "pocket-guided picking"
+        return f"RUNNING DQ-DOCK ({context.n_poses} poses, {context.n_opt_steps} opt steps, {mode_label})"
 
-    for entry in get_default_ligand_entries():
-        if len(complexes) >= n_complexes:
-            break
-        pdb_path = download_pdb(entry.pdb_id, cache_dir)
-        if pdb_path:
-            try:
-                protein_path = prepare_protein(pdb_path)
-                screening = screen_complex(entry, pdb_path, protein_path)
-                if not screening.accepted:
-                    reason = "; ".join(screening.reasons)
-                    excluded_rows.append(
-                        ExcludedComplexRow(pdb_id=entry.pdb_id, reason=reason)
-                    )
-                    print(f"  {entry.pdb_id}: excluded ({reason})", flush=True)
-                    continue
+    def run_complex(
+        self,
+        complex_entry: BenchmarkComplex,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        print(f"\n{complex_entry.pdb_id}:", flush=True)
 
-                center = find_docking_center(
-                    pdb_path, preferred_resname=entry.preferred_resname
-                )
-            except ValueError as e:
-                excluded_rows.append(
-                    ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e))
-                )
-                print(f"  {entry.pdb_id}: excluded ({e})", flush=True)
-                continue
-            complexes.append(
-                {
-                    "pdb_id": entry.pdb_id,
-                    "target_name": entry.target_name,
-                    "path": pdb_path,
-                    "center": center,
-                    "preferred_resname": entry.preferred_resname,
-                }
-            )
-            print(
-                f"  {entry.pdb_id}: center = ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})"
-            )
-
-    print(f"\nDownloaded {len(complexes)} complexes", flush=True)
-    if excluded_rows:
-        print(f"Excluded during QC: {len(excluded_rows)}", flush=True)
-
-    save_benchmark_results(
-        output_paths,
-        charge_method_name=(
-            "unknown" if charge_method is None else charge_method.name.lower()
-        ),
-        n_complexes_requested=n_complexes,
-        n_poses=n_poses,
-        n_opt_steps=n_opt_steps,
-        use_multi_stage=use_multi_stage,
-        use_pocket_guided=effective_pocket_guided,
-        vina_prep_protocol=vina_prep_protocol,
-        bench_elapsed=time.time() - bench_start,
-        phase="curation",
-        complexes=complexes,
-        dq_rows=[],
-        dq_results=[],
-        vina_rows=[],
-        excluded_rows=excluded_rows,
-    )
-
-    if not complexes:
-        print("❌ No complexes downloaded")
-        return
-
-    # Run DQ-Dock on each
-    print("\n" + "=" * 70, flush=True)
-    mode_label = "multi-stage composite" if use_multi_stage else "random picking"
-    if effective_pocket_guided and not use_multi_stage:
-        mode_label = "pocket-guided picking"
-    print(
-        f"RUNNING DQ-DOCK ({n_poses} poses, {n_opt_steps} opt steps, {mode_label})",
-        flush=True,
-    )
-    print("=" * 70, flush=True)
-
-    dq_results = []
-    dq_rows: list[ComplexSummaryRow] = []
-    vina_results: list[VinaResult] = []
-    vina_rows: list[VinaSummaryRow] = []
-    for cx in complexes:
-        print(f"\n{cx['pdb_id']}:", flush=True)
-
-        receptor_pdb = prepare_protein(cx["path"])
-        pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, cx["center"])
+        receptor_pdb = prepare_protein(complex_entry.path)
+        pocket_receptor_pdb = prepare_pocket_protein(receptor_pdb, complex_entry.center)
         ligand_pdb = prepare_ligand(
-            cx["path"], preferred_resname=cx["preferred_resname"]
+            complex_entry.path, preferred_resname=complex_entry.preferred_resname
         )
 
         try:
@@ -1351,10 +1325,9 @@ For now, we'll run DQ-Dock only on PDB files.
             )
         except ValueError as e:
             print(f"  ⚠️  {e}")
-            continue
+            return
 
-        # Extract pocket via core infra
-        center = np.array(cx["center"])
+        center = np.array(complex_entry.center)
         pocket_coords, pocket_radii, pocket_elements = cast(
             tuple[jnp.ndarray, jnp.ndarray, list[str]],
             build_receptor_arrays(
@@ -1370,44 +1343,47 @@ For now, we'll run DQ-Dock only on PDB files.
 
         if len(pocket_coords_np) == 0:
             print("  ⚠️  No protein atoms in pocket")
-            continue
+            return
 
         print(
             f"  Ligand atoms: {len(ligand_coords)}, Pocket atoms: {len(pocket_coords_np)}",
             flush=True,
         )
 
-        receptor_view_path = pose_dir / f"{cx['pdb_id']}_receptor.pdb"
-        native_ligand_view_path = pose_dir / f"{cx['pdb_id']}_native_ligand.pdb"
+        receptor_view_path = context.pose_dir / f"{complex_entry.pdb_id}_receptor.pdb"
+        native_ligand_view_path = (
+            context.pose_dir / f"{complex_entry.pdb_id}_native_ligand.pdb"
+        )
         copy_structure_for_viewing(receptor_pdb, receptor_view_path)
         copy_structure_for_viewing(ligand_pdb, native_ligand_view_path)
 
-        # Run DQ-Dock
         result, dq_pose_coords = run_dq_dock(
             pocket_coords_np,
             pocket_radii_np,
             ligand_coords,
             ligand_radii,
-            cx["center"],
+            complex_entry.center,
             ligand_file=ligand_pdb,
             receptor_file=pocket_receptor_pdb,
-            charge_method=charge_method,
-            n_poses=n_poses,
-            n_opt_steps=n_opt_steps,
-            use_multi_stage=use_multi_stage,
-            use_pocket_guided=effective_pocket_guided,
+            charge_method=context.charge_method,
+            n_poses=context.n_poses,
+            n_opt_steps=context.n_opt_steps,
+            use_multi_stage=context.use_multi_stage,
+            use_pocket_guided=context.use_pocket_guided,
             ligand_elements=ligand_elements,
             receptor_elements=tuple(pocket_elements),
         )
+
         dq_pose_path: Path | None = None
         if dq_pose_coords is not None:
-            dq_pose_path = pose_dir / f"{cx['pdb_id']}_dq_dock_pose.pdb"
+            dq_pose_path = context.pose_dir / f"{complex_entry.pdb_id}_dq_dock_pose.pdb"
             save_pose_from_template(dq_pose_coords, ligand_pdb, dq_pose_path)
-        dq_results.append(result)
-        dq_rows.append(
+
+        state.dq_results.append(result)
+        state.dq_rows.append(
             ComplexSummaryRow(
-                pdb_id=str(cx["pdb_id"]),
-                target_name=str(cx["target_name"]),
+                pdb_id=complex_entry.pdb_id,
+                target_name=complex_entry.target_name,
                 ligand_atoms=len(ligand_coords),
                 pocket_atoms=len(pocket_coords_np),
                 rmsd=result.rmsd,
@@ -1436,176 +1412,357 @@ For now, we'll run DQ-Dock only on PDB files.
                 flush=True,
             )
 
-        save_benchmark_results(
-            output_paths,
-            charge_method_name=(
-                "unknown" if charge_method is None else charge_method.name.lower()
-            ),
-            n_complexes_requested=n_complexes,
-            n_poses=n_poses,
-            n_opt_steps=n_opt_steps,
-            use_multi_stage=use_multi_stage,
-            use_pocket_guided=effective_pocket_guided,
-            vina_prep_protocol=vina_prep_protocol,
-            bench_elapsed=time.time() - bench_start,
-            phase="dq_dock",
-            complexes=complexes,
-            dq_rows=dq_rows,
-            dq_results=dq_results,
-            vina_rows=vina_rows,
+        state.save(
+            "dq_dock",
+            context,
             excluded_rows=excluded_rows,
         )
 
-    # Run Vina if available
-    if vina_path:
-        print("\n" + "=" * 70, flush=True)
-        print("RUNNING SMINA/VINA", flush=True)
-        print("=" * 70, flush=True)
+    def print_summary(
+        self,
+        state: BenchmarkState,
+        complexes: list[BenchmarkComplex],
+    ) -> None:
+        if state.dq_rows:
+            print("\nDQ-Dock Per-Complex")
+            print("-" * 70)
+            print(f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'RMSD':<10} {'Time':<10}")
+            for row in state.dq_rows:
+                print(
+                    f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {row.rmsd:<10.2f} {row.time:<10.2f}"
+                )
 
-        for cx in complexes:
-            print(f"\n{cx['pdb_id']}...", flush=True)
-
-            # Prepare separate protein and ligand files
-            receptor_pdb = prepare_protein(cx["path"])
-            ligand_pdb = prepare_ligand(
-                cx["path"], preferred_resname=cx["preferred_resname"]
+        if state.dq_results:
+            avg_time = np.mean([r.time for r in state.dq_results])
+            avg_rmsd = np.mean([r.rmsd for r in state.dq_results])
+            min_time = np.min([r.time for r in state.dq_results])
+            max_time = np.max([r.time for r in state.dq_results])
+            dq_total = sum(r.time for r in state.dq_results)
+            print(
+                f"{self.display_name:<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(state.dq_results)}/{len(complexes)}"
             )
+            print(f"  Avg RMSD: {avg_rmsd:.2f}A")
+            print(f"  Time range: {min_time:.2f}s - {max_time:.2f}s per complex")
 
-            prep_temp_dir: Path | None = None
-            vina_pose_output_path = pose_dir / f"{cx['pdb_id']}_vina_pose.pdb"
+
+class SminaBenchmarkEngine(BenchmarkEngine):
+    engine_id = "smina"
+    display_name = "Vina"
+    include_in_competitors = True
+
+    def __init__(self, binary_path: str | None, prep_tools: VinaPrepTools | None):
+        self.binary_path = binary_path
+        self.prep_tools = prep_tools
+
+    def is_available(self) -> bool:
+        return self.binary_path is not None
+
+    def prep_protocol_label(self) -> str:
+        if self.prep_tools is None:
+            return "direct_pdb"
+        return f"{self.prep_tools.tool_family}_pdbqt_with_direct_fallback"
+
+    def announce(self) -> None:
+        if self.binary_path is not None:
+            print(f"\n✅ Vina found: {self.binary_path}")
+            if self.prep_tools is not None:
+                print(
+                    f"✅ {self.prep_tools.tool_family} preparation tools found; Vina will try PDBQT inputs first"
+                )
+            else:
+                print(
+                    "⚠️  AutoDock preparation tools not found; Vina will use direct PDB inputs"
+                )
+            return
+        print("""
+❌ Vina not found!
+
+To run this benchmark with real Vina comparisons:
+
+1. Install Vina:
+   conda install -c conda-forge vina
+
+   Or download from:
+   https://github.com/ccsb-scripps/AutoDock-Vina/releases
+
+2. Make sure 'vina' is in your PATH
+
+3. Re-run this benchmark
+
+For now, we'll run DQ-Dock only on PDB files.
+""")
+
+    def section_title(self, context: BenchmarkExecutionContext) -> str:
+        return "RUNNING SMINA/VINA"
+
+    def run_complex(
+        self,
+        complex_entry: BenchmarkComplex,
+        state: BenchmarkState,
+        context: BenchmarkExecutionContext,
+        excluded_rows: list[ExcludedComplexRow],
+    ) -> None:
+        if self.binary_path is None:
+            return
+        print(f"\n{complex_entry.pdb_id}...", flush=True)
+
+        receptor_pdb = prepare_protein(complex_entry.path)
+        ligand_pdb = prepare_ligand(
+            complex_entry.path, preferred_resname=complex_entry.preferred_resname
+        )
+
+        prep_temp_dir: Path | None = None
+        vina_pose_output_path = (
+            context.pose_dir / f"{complex_entry.pdb_id}_vina_pose.pdb"
+        )
+        try:
             try:
-                try:
-                    vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
-                        vina_prep_tools,
-                        receptor_pdb,
-                        ligand_pdb,
-                    )
-                except Exception as exc:
-                    print(
-                        f"  PDBQT preparation failed; retrying with direct PDB inputs ({exc})",
-                        flush=True,
-                    )
-                    vina_receptor, vina_ligand = receptor_pdb, ligand_pdb
-                print(f"  Receptor: {vina_receptor.name}", flush=True)
-                print(f"  Ligand: {vina_ligand.name}", flush=True)
+                vina_receptor, vina_ligand, prep_temp_dir = prepare_vina_inputs(
+                    self.prep_tools,
+                    receptor_pdb,
+                    ligand_pdb,
+                )
+            except Exception as exc:
+                print(
+                    f"  PDBQT preparation failed; retrying with direct PDB inputs ({exc})",
+                    flush=True,
+                )
+                vina_receptor, vina_ligand = receptor_pdb, ligand_pdb
+            print(f"  Receptor: {vina_receptor.name}", flush=True)
+            print(f"  Ligand: {vina_ligand.name}", flush=True)
 
-                # Run Vina docking
+            result = run_vina(
+                self.binary_path,
+                vina_receptor,
+                vina_ligand,
+                complex_entry.center,
+                saved_output_pdb=vina_pose_output_path,
+            )
+            if (
+                not result.success
+                and self.prep_tools is not None
+                and vina_receptor != receptor_pdb
+            ):
+                print(
+                    "  PDBQT attempt failed; retrying with direct PDB inputs",
+                    flush=True,
+                )
                 result = run_vina(
-                    vina_path,
-                    vina_receptor,
-                    vina_ligand,
-                    cx["center"],
+                    self.binary_path,
+                    receptor_pdb,
+                    ligand_pdb,
+                    complex_entry.center,
                     saved_output_pdb=vina_pose_output_path,
                 )
-                if (
-                    not result.success
-                    and vina_prep_tools is not None
-                    and vina_receptor != receptor_pdb
-                ):
-                    print(
-                        "  PDBQT attempt failed; retrying with direct PDB inputs",
-                        flush=True,
-                    )
-                    result = run_vina(
-                        vina_path,
-                        receptor_pdb,
-                        ligand_pdb,
-                        cx["center"],
-                        saved_output_pdb=vina_pose_output_path,
-                    )
-            finally:
-                if prep_temp_dir is not None:
-                    shutil.rmtree(prep_temp_dir, ignore_errors=True)
+        finally:
+            if prep_temp_dir is not None:
+                shutil.rmtree(prep_temp_dir, ignore_errors=True)
 
-            vina_results.append(result)
-
-            # Must have successfully parsed affinity
-            if not result.success or result.best_affinity is None:
-                error_msg = result.error or "Failed to parse SMINA output"
-                print(f"  ❌ {error_msg}")
-                save_benchmark_results(
-                    output_paths,
-                    charge_method_name=(
-                        "unknown"
-                        if charge_method is None
-                        else charge_method.name.lower()
-                    ),
-                    n_complexes_requested=n_complexes,
-                    n_poses=n_poses,
-                    n_opt_steps=n_opt_steps,
-                    use_multi_stage=use_multi_stage,
-                    use_pocket_guided=effective_pocket_guided,
-                    vina_prep_protocol=vina_prep_protocol,
-                    bench_elapsed=time.time() - bench_start,
-                    phase="vina",
-                    complexes=complexes,
-                    dq_rows=dq_rows,
-                    dq_results=dq_results,
-                    vina_rows=vina_rows,
-                    excluded_rows=excluded_rows,
-                )
-                continue
-
-            top_rmsd = float("nan")
-            best_mode_rmsd = float("nan")
-            ligand_coords_vina, _, _ = cast(
-                tuple[np.ndarray, np.ndarray, list[str]],
-                parse_structure(ligand_pdb, return_elements=True),
-            )
-            if result.top_coords is not None:
-                pose_coords = result.top_coords
-                if len(pose_coords) != len(ligand_coords_vina):
-                    print(
-                        f"  ⚠️  Atom count mismatch: Native={len(ligand_coords_vina)}, SMINA={len(pose_coords)}"
-                    )
-
-                top_rmsd = compute_pose_rmsd(pose_coords, ligand_coords_vina)
-
-            if result.model_coords:
-                model_rmsds = [
-                    compute_pose_rmsd(model_coords, ligand_coords_vina)
-                    for model_coords in result.model_coords
-                ]
-                finite_model_rmsds = [r for r in model_rmsds if not np.isnan(r)]
-                if finite_model_rmsds:
-                    best_mode_rmsd = min(finite_model_rmsds)
-
-            print(
-                f"  Affinity: {result.best_affinity:.2f} kcal/mol, Top Pose RMSD: {top_rmsd:.2f}A, Best Returned Mode RMSD: {best_mode_rmsd:.2f}A, Time: {result.time:.1f}s"
-            )
-            vina_rows.append(
-                VinaSummaryRow(
-                    pdb_id=str(cx["pdb_id"]),
-                    target_name=str(cx["target_name"]),
-                    top_rmsd=top_rmsd,
-                    best_mode_rmsd=best_mode_rmsd,
-                    time=result.time,
-                    affinity=result.best_affinity,
-                    vina_pose_pdb=str(vina_pose_output_path),
-                )
-            )
-
-            save_benchmark_results(
-                output_paths,
-                charge_method_name=(
-                    "unknown" if charge_method is None else charge_method.name.lower()
-                ),
-                n_complexes_requested=n_complexes,
-                n_poses=n_poses,
-                n_opt_steps=n_opt_steps,
-                use_multi_stage=use_multi_stage,
-                use_pocket_guided=effective_pocket_guided,
-                vina_prep_protocol=vina_prep_protocol,
-                bench_elapsed=time.time() - bench_start,
-                phase="vina",
-                complexes=complexes,
-                dq_rows=dq_rows,
-                dq_results=dq_results,
-                vina_rows=vina_rows,
+        state.vina_results.append(result)
+        if not result.success or result.best_affinity is None:
+            error_msg = result.error or "Failed to parse SMINA output"
+            print(f"  ❌ {error_msg}")
+            state.save(
+                "vina",
+                context,
                 excluded_rows=excluded_rows,
             )
+            return
 
-    bench_elapsed = time.time() - bench_start
+        top_rmsd = float("nan")
+        best_mode_rmsd = float("nan")
+        ligand_coords_vina, _, _ = cast(
+            tuple[np.ndarray, np.ndarray, list[str]],
+            parse_structure(ligand_pdb, return_elements=True),
+        )
+        if result.top_coords is not None:
+            pose_coords = result.top_coords
+            if len(pose_coords) != len(ligand_coords_vina):
+                print(
+                    f"  ⚠️  Atom count mismatch: Native={len(ligand_coords_vina)}, SMINA={len(pose_coords)}"
+                )
+            top_rmsd = compute_pose_rmsd(pose_coords, ligand_coords_vina)
+
+        if result.model_coords:
+            model_rmsds = [
+                compute_pose_rmsd(model_coords, ligand_coords_vina)
+                for model_coords in result.model_coords
+            ]
+            finite_model_rmsds = [r for r in model_rmsds if not np.isnan(r)]
+            if finite_model_rmsds:
+                best_mode_rmsd = min(finite_model_rmsds)
+
+        print(
+            f"  Affinity: {result.best_affinity:.2f} kcal/mol, Top Pose RMSD: {top_rmsd:.2f}A, Best Returned Mode RMSD: {best_mode_rmsd:.2f}A, Time: {result.time:.1f}s"
+        )
+        state.vina_rows.append(
+            VinaSummaryRow(
+                pdb_id=complex_entry.pdb_id,
+                target_name=complex_entry.target_name,
+                top_rmsd=top_rmsd,
+                best_mode_rmsd=best_mode_rmsd,
+                time=result.time,
+                affinity=result.best_affinity,
+                vina_pose_pdb=str(vina_pose_output_path),
+            )
+        )
+        state.save(
+            "vina",
+            context,
+            excluded_rows=excluded_rows,
+        )
+
+    def print_summary(
+        self,
+        state: BenchmarkState,
+        complexes: list[BenchmarkComplex],
+    ) -> None:
+        if not state.vina_results:
+            return
+        successes = sum(1 for r in state.vina_results if r.success)
+        successful_vina_times = [r.time for r in state.vina_results if r.success]
+        avg_time = (
+            float(np.mean(successful_vina_times))
+            if successful_vina_times
+            else float("nan")
+        )
+        vina_total = sum(successful_vina_times)
+        print(
+            f"{self.display_name:<20} {avg_time:<12.1f} {vina_total:<12.1f} {successes}/{len(state.vina_results)}"
+        )
+        if state.vina_rows:
+            avg_top_rmsd = np.mean([r.top_rmsd for r in state.vina_rows])
+            avg_best_mode_rmsd = np.mean([r.best_mode_rmsd for r in state.vina_rows])
+            print(f"  Avg top-pose RMSD: {avg_top_rmsd:.2f}A")
+            print(f"  Avg best-returned RMSD: {avg_best_mode_rmsd:.2f}A")
+
+
+def run_benchmark(
+    n_complexes: int = 10,
+    charge_method=None,
+    n_poses: int = 2000,
+    n_opt_steps: int = 50,
+    use_multi_stage: bool = False,
+    use_pocket_guided: bool | None = None,
+    results_dir: Path = Path("benchmark_results"),
+):
+    """Run full benchmark."""
+    bench_start = time.time()
+    effective_pocket_guided = True if use_pocket_guided is None else use_pocket_guided
+
+    print("=" * 70, flush=True)
+    print("REAL PDB DOCKING BENCHMARK", flush=True)
+    print("=" * 70, flush=True)
+
+    engines: list[BenchmarkEngine] = [
+        DQDockBenchmarkEngine(),
+        SminaBenchmarkEngine(check_vina(), check_vina_prep_tools()),
+    ]
+    for engine in engines:
+        engine.announce()
+
+    # Download PDB files
+    cache_dir = Path("./pdb_cache")
+    cache_dir.mkdir(exist_ok=True)
+    output_paths = create_benchmark_output_paths(results_dir)
+    pose_dir = benchmark_pose_dir(output_paths)
+    smina_engine = next(
+        engine for engine in engines if isinstance(engine, SminaBenchmarkEngine)
+    )
+    competitor_names = tuple(
+        engine.engine_id
+        for engine in engines
+        if engine.include_in_competitors and engine.is_available()
+    )
+    vina_prep_protocol = smina_engine.prep_protocol_label()
+
+    print(
+        f"\nDownloading {n_complexes} PDB complexes from saved benchmark list...",
+        flush=True,
+    )
+    print(f"Live Results JSON: {output_paths.json_path}", flush=True)
+    print(f"Live Results CSV: {output_paths.csv_path}", flush=True)
+    dataset_exclusions = [
+        entry
+        for entry in get_benchmark_entries()
+        if entry.scope == BenchmarkScope.LIGAND
+        and not entry.include_by_default
+        and entry.exclusion_reason is not None
+    ]
+    if dataset_exclusions:
+        print("Configured dataset exclusions:", flush=True)
+        for entry in dataset_exclusions:
+            print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
+    complexes: list[BenchmarkComplex] = []
+    excluded_rows: list[ExcludedComplexRow] = []
+
+    for entry in get_default_ligand_entries():
+        if len(complexes) >= n_complexes:
+            break
+        pdb_path = download_pdb(entry.pdb_id, cache_dir)
+        if pdb_path:
+            try:
+                protein_path = prepare_protein(pdb_path)
+                screening = screen_complex(entry, pdb_path, protein_path)
+                if not screening.accepted:
+                    reason = "; ".join(screening.reasons)
+                    excluded_rows.append(
+                        ExcludedComplexRow(pdb_id=entry.pdb_id, reason=reason)
+                    )
+                    print(f"  {entry.pdb_id}: excluded ({reason})", flush=True)
+                    continue
+
+                center = find_docking_center(
+                    pdb_path, preferred_resname=entry.preferred_resname
+                )
+            except ValueError as e:
+                excluded_rows.append(
+                    ExcludedComplexRow(pdb_id=entry.pdb_id, reason=str(e))
+                )
+                print(f"  {entry.pdb_id}: excluded ({e})", flush=True)
+                continue
+            complexes.append(
+                BenchmarkComplex(
+                    pdb_id=entry.pdb_id,
+                    target_name=entry.target_name,
+                    path=pdb_path,
+                    center=center,
+                    preferred_resname=entry.preferred_resname,
+                )
+            )
+            print(
+                f"  {entry.pdb_id}: center = ({center[0]:.1f}, {center[1]:.1f}, {center[2]:.1f})"
+            )
+
+    print(f"\nDownloaded {len(complexes)} complexes", flush=True)
+    if excluded_rows:
+        print(f"Excluded during QC: {len(excluded_rows)}", flush=True)
+
+    context = BenchmarkExecutionContext(
+        charge_method=charge_method,
+        complexes=tuple(complexes),
+        n_complexes_requested=n_complexes,
+        n_poses=n_poses,
+        n_opt_steps=n_opt_steps,
+        use_multi_stage=use_multi_stage,
+        use_pocket_guided=effective_pocket_guided,
+        output_paths=output_paths,
+        pose_dir=pose_dir,
+        vina_prep_protocol=vina_prep_protocol,
+        competitors=competitor_names,
+        bench_start=bench_start,
+    )
+    state = BenchmarkState(dq_results=[], dq_rows=[], vina_results=[], vina_rows=[])
+    state.save("curation", context, excluded_rows)
+
+    if not complexes:
+        print("❌ No complexes downloaded")
+        return
+
+    for engine in engines:
+        engine.run_all(complexes, state, context, excluded_rows)
+
+    bench_elapsed = context.elapsed()
 
     # Summary
     print("\n" + "=" * 70, flush=True)
@@ -1615,74 +1772,22 @@ For now, we'll run DQ-Dock only on PDB files.
     print(f"\n{'Method':<20} {'Avg Time':<12} {'Total Time':<12} {'Success Rate':<15}")
     print("-" * 60)
 
-    if dq_rows:
-        print("\nDQ-Dock Per-Complex")
-        print("-" * 70)
-        print(f"{'PDB':<8} {'Ligand':<8} {'Pocket':<8} {'RMSD':<10} {'Time':<10}")
-        for row in dq_rows:
-            print(
-                f"{row.pdb_id:<8} {row.ligand_atoms:<8} {row.pocket_atoms:<8} {row.rmsd:<10.2f} {row.time:<10.2f}"
-            )
-
     if excluded_rows:
         print("\nExcluded By QC")
         print("-" * 70)
         for row in excluded_rows:
             print(f"{row.pdb_id:<8} {row.reason}")
 
-    if dq_results:
-        avg_time = np.mean([r.time for r in dq_results])
-        avg_rmsd = np.mean([r.rmsd for r in dq_results])
-        min_time = np.min([r.time for r in dq_results])
-        max_time = np.max([r.time for r in dq_results])
-        dq_total = sum(r.time for r in dq_results)
-        print(
-            f"{'DQ-Dock':<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(dq_results)}/{len(complexes)}"
-        )
-        print(f"  Avg RMSD: {avg_rmsd:.2f}A")
-        print(f"  Time range: {min_time:.2f}s - {max_time:.2f}s per complex")
-
-    if vina_results:
-        successes = sum(1 for r in vina_results if r.success)
-        successful_vina_times = [r.time for r in vina_results if r.success]
-        avg_time = (
-            float(np.mean(successful_vina_times))
-            if successful_vina_times
-            else float("nan")
-        )
-        vina_total = sum(successful_vina_times)
-        print(
-            f"{'Vina':<20} {avg_time:<12.1f} {vina_total:<12.1f} {successes}/{len(vina_results)}"
-        )
-        if vina_rows:
-            avg_top_rmsd = np.mean([r.top_rmsd for r in vina_rows])
-            avg_best_mode_rmsd = np.mean([r.best_mode_rmsd for r in vina_rows])
-            print(f"  Avg top-pose RMSD: {avg_top_rmsd:.2f}A")
-            print(f"  Avg best-returned RMSD: {avg_best_mode_rmsd:.2f}A")
+    for engine in engines:
+        engine.print_summary(state, complexes)
 
     print(f"\n  Total benchmark time: {bench_elapsed:.2f}s")
-    print(f"  {len(dq_results)}/{len(complexes)} complexes completed successfully")
+    print(
+        f"  {len(state.dq_results)}/{len(complexes)} complexes completed successfully"
+    )
     print(f"  {len(excluded_rows)} complexes excluded by QC")
 
-    json_path, csv_path = save_benchmark_results(
-        output_paths,
-        charge_method_name=(
-            "unknown" if charge_method is None else charge_method.name.lower()
-        ),
-        n_complexes_requested=n_complexes,
-        n_poses=n_poses,
-        n_opt_steps=n_opt_steps,
-        use_multi_stage=use_multi_stage,
-        use_pocket_guided=effective_pocket_guided,
-        vina_prep_protocol=vina_prep_protocol,
-        bench_elapsed=bench_elapsed,
-        phase="complete",
-        complexes=complexes,
-        dq_rows=dq_rows,
-        dq_results=dq_results,
-        vina_rows=vina_rows,
-        excluded_rows=excluded_rows,
-    )
+    json_path, csv_path = state.save("complete", context, excluded_rows)
     print(f"  Results JSON: {json_path}")
     print(f"  Results CSV: {csv_path}")
     print(f"  Pose Files: {pose_dir}")
