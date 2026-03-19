@@ -299,6 +299,9 @@ class BenchmarkExecutionContext:
     competitors: tuple[CompetitorMetadata, ...]
     bench_start: float
     optimizer_backend: "OptimizerBackend"
+    max_retries: int
+    retry_break_rmsd: float
+    retry_preserve_seed: bool
 
     @property
     def charge_method_name(self) -> str:
@@ -1253,6 +1256,8 @@ def run_dq_dock(
     n_opt_steps: int = 50,
     max_retries: int = 6,
     optimizer_backend: "OptimizerBackend" = OptimizerBackend.GRADIENT,
+    retry_break_rmsd: float = 0.0,
+    retry_preserve_seed: bool = False,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     import os
@@ -1315,7 +1320,27 @@ def run_dq_dock(
 
     for attempt in range(max_retries):
         try:
-            attempt_key = jax.random.fold_in(base_key, attempt)
+            if retry_preserve_seed:
+                attempt_key = base_key
+            else:
+                attempt_key = jax.random.fold_in(base_key, attempt)
+            # Debug: print per-attempt PRNG key and budgets to help trace sampling variance
+            try:
+                key_parts = jax.random.key_data(attempt_key)
+                k0 = int(key_parts[0])
+                k1 = int(key_parts[1])
+                backend_name = (
+                    optimizer_backend.name
+                    if optimizer_backend is not None
+                    else "GRADIENT"
+                )
+                print(
+                    f"    [Debug] Attempt {attempt + 1}/{max_retries} seed={k0:08x}-{k1:08x} backend={backend_name} n_poses={n_poses} n_opt_steps={n_opt_steps}",
+                    flush=True,
+                )
+            except Exception:
+                # Best effort only; don't fail the run for logging issues
+                pass
             result_tuple = run_docking_pipeline(
                 protein_coords=jnp.array(pocket_coords),
                 receptor_radii=jnp.array(pocket_radii),
@@ -1374,6 +1399,13 @@ def run_dq_dock(
             if best_result is None or attempt_result.rmsd < best_result.rmsd:
                 best_result = attempt_result
                 best_pose_coords = np.asarray(best_pose.coords)
+
+            # If we reached an acceptably low RMSD, break early
+            if retry_break_rmsd and attempt_result.rmsd <= retry_break_rmsd:
+                print(
+                    f"    [Info] Breaking retries: RMSD {attempt_result.rmsd:.2f} <= {retry_break_rmsd:.2f}"
+                )
+                return best_result, best_pose_coords
 
             if attempt < max_retries - 1:
                 n_poses *= 2
@@ -1503,6 +1535,9 @@ class DQDockBenchmarkEngine(BenchmarkEngine):
             ligand_elements=complex_entry.ligand_elements,
             receptor_elements=complex_entry.pocket_elements,
             optimizer_backend=context.optimizer_backend,
+            max_retries=context.max_retries,
+            retry_break_rmsd=context.retry_break_rmsd,
+            retry_preserve_seed=context.retry_preserve_seed,
         )
 
         dq_pose_path: Path | None = None
@@ -1940,6 +1975,9 @@ def run_benchmark(
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
     dataset: Literal["curated", "casf2007"] = "curated",
     optimizer_backend: OptimizerBackend = OptimizerBackend.GRADIENT,
+    max_retries: int = 6,
+    retry_break_rmsd: float = 0.0,
+    retry_preserve_seed: bool = False,
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -2083,6 +2121,9 @@ def run_benchmark(
         competitors=competitor_metadata,
         bench_start=bench_start,
         optimizer_backend=optimizer_backend,
+        max_retries=max_retries,
+        retry_break_rmsd=retry_break_rmsd,
+        retry_preserve_seed=retry_preserve_seed,
     )
     state = BenchmarkState(dq_results=[], dq_rows=[], competitor_rows=[])
     state.save("curation", context, excluded_rows)
@@ -2205,6 +2246,23 @@ if __name__ == "__main__":
         "'casf2007' uses the 195-entry CASF-2007 core set.",
     )
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=6,
+        help="Maximum retry attempts for DQ-Dock (default: 6)",
+    )
+    parser.add_argument(
+        "--retry-break-rmsd",
+        type=float,
+        default=0.0,
+        help="Stop retrying if RMSD <= this value (0 disables)",
+    )
+    parser.add_argument(
+        "--retry-preserve-seed",
+        action="store_true",
+        help="Preserve the PRNG seed across retries (do not fold attempt index)",
+    )
+    parser.add_argument(
         "--optimizer",
         type=str,
         choices=("gradient", "formal"),
@@ -2242,4 +2300,8 @@ if __name__ == "__main__":
         optimizer_backend=OptimizerBackend.FORMAL
         if args.optimizer == "formal"
         else OptimizerBackend.GRADIENT,
+        # retry params
+        max_retries=args.max_retries,
+        retry_break_rmsd=args.retry_break_rmsd,
+        retry_preserve_seed=args.retry_preserve_seed,
     )
