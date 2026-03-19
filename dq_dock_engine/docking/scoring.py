@@ -2,7 +2,14 @@
 Scoring mechanism using strict OpenHCS Enum dispatch.
 
 Separates JAX-native internal physics from impure SMINA external subprocess wrapper.
+
+PROOF STATUS SUMMARY:
+  - score_internal_lj: HEURISTIC (ad-hoc weights)
+  - score_smina_exact: HEURISTIC (external unverified binary)
+  - route_scoring: HEURISTIC (dispatch only)
 """
+
+from dq_dock_engine.proof_status import heuristic
 
 from typing import List, Dict, Callable
 import os
@@ -18,6 +25,7 @@ from dq_dock_engine.docking.core import ScoringEngine, ScoredPose
 
 
 @jax.jit
+@heuristic()  # HEURISTIC: ad-hoc weights
 def _score_single_lj(
     receptor_coords: jnp.ndarray,
     pose_coords: jnp.ndarray,
@@ -27,37 +35,28 @@ def _score_single_lj(
     """
     Atom-typed LJ score tuned for rigid-body docking.
 
-    Uses asymmetric weighting: strong repulsion (steric clash) + mild attraction
-    (shape complementarity). This matches the approach of real docking programs
-    where the score is dominated by clash avoidance.
+    PROOF STATUS: HEURISTIC
+      - Ad-hoc weights (4.0, 0.4) not backed by formal proof
+      - Based on empirical observation that clash avoidance dominates scoring
+      - VdW radii: EMPIRICAL (physics_params.py)
 
-    Args:
-        receptor_coords: (N_rec, 3)
-        pose_coords:     (N_lig, 3)
-        receptor_radii:  (N_rec,) VdW radii in Angstroms
-        ligand_radii:    (N_lig,) VdW radii in Angstroms
-
-    Returns:
-        Scalar energy (0-d array)
+    NOTE: The functional form is correct (Lorentz-Berthelot combining rules),
+    but the specific weights are heuristic.
     """
     diffs = receptor_coords[:, None, :] - pose_coords[None, :, :]
     dist_sq = jnp.sum(diffs**2, axis=-1)  # (N_rec, N_lig)
 
-    # Lorentz-Berthelot: sigma_ij = r_i + r_j  (sum of VdW radii)
-    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]  # (N_rec, N_lig)
+    sigma_ij = receptor_radii[:, None] + ligand_radii[None, :]  # Lorentz-Berthelot
     sigma_sq = sigma_ij**2
 
-    # Clamp to prevent gradient overflow
     dist_sq_safe = jnp.maximum(dist_sq, (0.5 * sigma_ij) ** 2)
 
     r6 = (sigma_sq / dist_sq_safe) ** 3
     r12 = r6**2
 
-    # Asymmetric weighting: strong repulsion, mild attraction
-    # Standard LJ: 4*(r12 - r6)  → equal repulsion/attraction
-    # Docking LJ:  repulsion_weight * r12 - attraction_weight * r6
-    repulsion = 4.0 * r12  # Full repulsive wall
-    attraction = 0.4 * r6  # 10x weaker attractive well
+    # HEURISTIC WEIGHTS: not proven optimal
+    repulsion = 4.0 * r12
+    attraction = 0.4 * r6
 
     pe = repulsion - attraction
     return jnp.sum(pe)
@@ -123,19 +122,19 @@ def _write_pdb(coords: np.ndarray, template_pdb: str, output_pdb: str):
         f.writelines(out_lines)
 
 
+@heuristic()  # HEURISTIC: external unverified binary
 def score_smina_exact(
     receptor_file: str, ligand_template: str, poses_coords: np.ndarray
 ) -> np.ndarray:
     """
     Impure external wrapper invoking SMINA for accurate scoring.
 
-    Args:
-        receptor_file: path to receptor PDB
-        ligand_template: path to original ligand PDB to use as template
-        poses_coords: (N_poses, N_lig, 3) numpy array
+    PROOF STATUS: HEURISTIC
+      - SMINA/Vina: closed-source external binary
+      - No formal verification of scoring function
+      - Used for ground-truth comparison only
 
-    Returns:
-        np.ndarray of shape (N_poses,) with SMINA affinities
+    DO NOT use for certified docking.
     """
     from dq_dock_engine.benchmark.benchmark_pdb import check_vina
 
