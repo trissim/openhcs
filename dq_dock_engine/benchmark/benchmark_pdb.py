@@ -49,6 +49,8 @@ from dq_dock_engine.benchmark.large_pdb_ids import (
     BenchmarkScope,
     PDBEntry,
     get_benchmark_entries,
+    get_casf_2007_entries,
+    get_casf_2007_ids,
     get_default_ligand_entries,
 )
 from dq_dock_engine.benchmark.redocking_report import render_redocking_report
@@ -1251,6 +1253,9 @@ def run_dq_dock(
     max_retries: int = 6,
 ) -> tuple[BenchmarkResult, np.ndarray | None]:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
+    import os
+
+    os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
     from dq_dock_engine.docking.core import DockingBox, ScoringEngine
     from dq_dock_engine.docking.pdb_io import (
         build_ligand_context,
@@ -1288,8 +1293,6 @@ def run_dq_dock(
         elements=list(ligand_elements) if ligand_elements is not None else None,
         charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
     )
-
-    RMSD_THRESHOLD = 2.0
 
     base_key = jax.random.PRNGKey(42)
     formal_status = "DQ-Dock"
@@ -1358,14 +1361,13 @@ def run_dq_dock(
                 best_result = attempt_result
                 best_pose_coords = np.asarray(best_pose.coords)
 
-            if attempt < max_retries - 1 and rmsd > RMSD_THRESHOLD:
+            if attempt < max_retries - 1:
                 n_poses *= 2
                 n_opt_steps *= 2
                 print(
-                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A > {RMSD_THRESHOLD}A, n_poses={n_poses}, n_opt_steps={n_opt_steps}"
+                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A, n_poses={n_poses}, n_opt_steps={n_opt_steps}"
                 )
                 continue
-            break
         except Exception as e:
             if attempt < max_retries - 1:
                 n_poses *= 2
@@ -1921,6 +1923,7 @@ def run_benchmark(
     use_pocket_guided: bool | None = None,
     results_dir: Path = Path("benchmark_results"),
     competitors: Literal["all", "none", "smina", "gnina"] = "all",
+    dataset: Literal["curated", "casf2007"] = "curated",
 ):
     """Run full benchmark."""
     bench_start = time.time()
@@ -1943,9 +1946,11 @@ def run_benchmark(
     for engine in engines:
         engine.announce()
 
-    # Download PDB files
     cache_dir = Path("./pdb_cache")
+    if dataset == "casf2007":
+        cache_dir = Path("./casf2007_pdb_cache")
     cache_dir.mkdir(exist_ok=True)
+
     output_paths = create_benchmark_output_paths(results_dir)
     pose_dir = benchmark_pose_dir(output_paths)
     competitor_metadata = tuple(
@@ -1955,26 +1960,43 @@ def run_benchmark(
     )
 
     print(
-        f"\nDownloading {n_complexes} PDB complexes from saved benchmark list...",
+        f"\nPreparing {dataset} dataset ({n_complexes} complexes)...",
         flush=True,
     )
     print(f"Live Results JSON: {output_paths.json_path}", flush=True)
     print(f"Live Results CSV: {output_paths.csv_path}", flush=True)
-    dataset_exclusions = [
-        entry
-        for entry in get_benchmark_entries()
-        if entry.scope == BenchmarkScope.LIGAND
-        and not entry.include_by_default
-        and entry.exclusion_reason is not None
-    ]
-    if dataset_exclusions:
-        print("Configured dataset exclusions:", flush=True)
-        for entry in dataset_exclusions:
-            print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
     complexes: list[BenchmarkComplex] = []
     excluded_rows: list[ExcludedComplexRow] = []
 
-    for entry in get_default_ligand_entries():
+    if dataset == "casf2007":
+        print("Downloading CASF-2007 PDBs to cache...", flush=True)
+        casf_ids = get_casf_2007_ids()
+        for pdb_id in casf_ids:
+            pdb_path = cache_dir / f"{pdb_id}.pdb"
+            if not pdb_path.exists():
+                download_pdb(pdb_id, cache_dir)
+                print(f"  Downloaded {pdb_id}", flush=True)
+        print(f"CASF-2007 PDBs cached: {len(casf_ids)}", flush=True)
+        available_entries = get_casf_2007_entries()
+        print(
+            f"CASF-2007 QC-passed: {len(available_entries)} / {len(casf_ids)}",
+            flush=True,
+        )
+    else:
+        dataset_exclusions = [
+            entry
+            for entry in get_benchmark_entries()
+            if entry.scope == BenchmarkScope.LIGAND
+            and not entry.include_by_default
+            and entry.exclusion_reason is not None
+        ]
+        if dataset_exclusions:
+            print("Configured dataset exclusions:", flush=True)
+            for entry in dataset_exclusions:
+                print(f"  {entry.pdb_id}: {entry.exclusion_reason}", flush=True)
+        available_entries = get_default_ligand_entries()
+
+    for entry in available_entries:
         if len(complexes) >= n_complexes:
             break
         pdb_path = download_pdb(entry.pdb_id, cache_dir)
@@ -2153,6 +2175,14 @@ if __name__ == "__main__":
         help="Which competitor engines to run (default: all). "
         "'none' is same as --dq_only. 'smina'/'gnina' run that engine only.",
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        choices=("curated", "casf2007"),
+        default="curated",
+        help="Which dataset to benchmark (default: curated). "
+        "'casf2007' uses the 195-entry CASF-2007 core set.",
+    )
     args = parser.parse_args()
 
     is_valid, warnings = CERTIFIED_DOCKING.validate()
@@ -2179,4 +2209,5 @@ if __name__ == "__main__":
         use_pocket_guided=args.use_pocket_guided,
         results_dir=args.results_dir,
         competitors=competitor_choice,
+        dataset=args.dataset,
     )
