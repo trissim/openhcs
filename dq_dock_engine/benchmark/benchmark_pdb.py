@@ -1905,8 +1905,6 @@ To run this benchmark with GNINA comparisons:
             "64",
             "--num_modes",
             "20",
-            "--energy_range",
-            "12.0",
             "--min_rmsd_filter",
             "0.5",
             "--seed",
