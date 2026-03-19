@@ -375,12 +375,9 @@ def run_vina(
 
 def parse_smina_output(pdb_path: Path) -> Optional[np.ndarray]:
     """Extract first model's heavy atom coordinates from smina output."""
-    from dq_dock_engine.docking.pdb_io import parse_structure
-
     try:
-        # PDB files from smina have multiple models; parse_structure reads first one until ENDMDL/END
         coords, _ = parse_structure(
-            pdb_path, strip_hydrogens=True, return_elements=False
+            pdb_path, strip_hydrogens=True, first_model_only=True
         )
         return coords
     except Exception:
@@ -572,7 +569,7 @@ def run_dq_dock(
 def run_benchmark(
     n_complexes: int = 10,
     charge_method=None,
-    config: DockingConfig = HEURISTIC_SCREENING,
+    config: DockingConfig = CERTIFIED_DOCKING,
     n_poses: int = 2000,
     use_multi_stage: bool = False,
     use_pocket_guided: bool = False,
@@ -838,11 +835,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--certified",
         action="store_true",
-        help="Use CERTIFIED_DOCKING mode (Lean proofs + NIST constants only)",
+        default=True,
+        help="Use CERTIFIED_DOCKING mode (default, Lean proofs + NIST constants only)",
+    )
+    parser.add_argument(
+        "--heuristic",
+        action="store_true",
+        help="Use HEURISTIC_SCREENING mode (ad-hoc approximations, experimental)",
     )
     args = parser.parse_args()
 
-    config = CERTIFIED_DOCKING if args.certified else HEURISTIC_SCREENING
+    if args.heuristic:
+        config = HEURISTIC_SCREENING
+    else:
+        config = CERTIFIED_DOCKING
     is_valid, warnings = config.validate()
     for warning in warnings:
         print(f"Config warning: {warning}")

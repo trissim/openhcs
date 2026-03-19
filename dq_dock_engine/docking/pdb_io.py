@@ -19,7 +19,11 @@ from dq_dock_engine.docking.physics_params import get_vdw_radius
 
 
 def parse_structure(
-    pdb_path: Path, *, strip_hydrogens: bool = True, return_elements: bool = False
+    pdb_path: Path,
+    *,
+    strip_hydrogens: bool = True,
+    return_elements: bool = False,
+    first_model_only: bool = False,
 ) -> tuple[np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Parse a PDB file into coordinate and VdW radius arrays.
@@ -30,6 +34,7 @@ def parse_structure(
     Args:
         pdb_path: Path to PDB file.
         strip_hydrogens: If True, skip hydrogen atoms entirely.
+        first_model_only: If True, stop after first MODEL/ENDMDL block.
 
     Returns:
         (coords, radii) where:
@@ -39,9 +44,15 @@ def parse_structure(
     coords: list[list[float]] = []
     radii: list[float] = []
     elements: list[str] = []
+    in_first_model = True
 
     with open(pdb_path) as f:
         for line in f:
+            if first_model_only and (
+                "ENDMDL" in line or (in_first_model and line.strip() == "END")
+            ):
+                break
+
             if not (line.startswith("ATOM") or line.startswith("HETATM")):
                 continue
 

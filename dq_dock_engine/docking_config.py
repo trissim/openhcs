@@ -92,16 +92,16 @@ class DockingConfig:
 # Predefined configurations
 CERTIFIED_DOCKING = DockingConfig(
     mode=DockingMode.CERTIFIED,
-    cutoff_radius=10.0,  # Will be computed from error bound in practice
+    cutoff_radius=0.001,  # Target error bound in kcal/mol
     min_energy_gap=0.0,
     use_external_scorer=False,
 )
 
 HEURISTIC_SCREENING = DockingConfig(
     mode=DockingMode.HEURISTIC,
-    cutoff_radius=8.0,  # Typical heuristic value
+    cutoff_radius=8.0,  # Typical heuristic cutoff
     min_energy_gap=0.0,
-    use_external_scorer=True,  # Optional SMINA comparison
+    use_external_scorer=True,
 )
 
 
