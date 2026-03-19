@@ -1,0 +1,365 @@
+"""Generated registry for Lean ArrayDSL primitives."""
+
+from __future__ import annotations
+
+from dq_dock_engine.codegen.arraydsl_runtime import PrimitiveMetadata, PRIMITIVE_REGISTRY, register_primitive
+from dq_dock_engine.generated.arraydsl_primitives import (
+    map,
+    reduce_sum,
+    elemBinaryAdd,
+    elemBinarySub,
+    norm,
+    rowWiseNorm,
+    distance,
+    rowWiseDistance,
+    rigidTransform3D,
+    pairwiseDistances,
+    pairwiseDistances3D,
+    minimumImagePairwiseDistances,
+    applyCutoff,
+    lennardJones,
+    sumPairPotentials,
+    sumPairPotentialsMatrix,
+    sumPairPotentials3D,
+    typedLennardJonesMatrix,
+    typedLennardJonesCutoff,
+    coulombCutoff,
+    upperTriangleMaskedSum,
+    ewaldRealSpaceKernel,
+)
+from dq_dock_engine.proof_status import ProofStatus
+
+
+register_primitive(
+    PrimitiveMetadata(
+        name='map',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.map',
+        jax_module='jax',
+        jax_symbol='vmap',
+        lowering_kind='vmap',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=map,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='reduce_sum',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.reduce_sum',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='reduce_sum',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=reduce_sum,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='elemBinaryAdd',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.elemBinaryAdd',
+        jax_module='jax.numpy',
+        jax_symbol='add',
+        lowering_kind='elem_binary_add',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=elemBinaryAdd,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='elemBinarySub',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.elemBinarySub',
+        jax_module='jax.numpy',
+        jax_symbol='subtract',
+        lowering_kind='elem_binary_sub',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=elemBinarySub,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='norm',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.norm',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='norm',
+        supports_grad=True,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.norm_nonneg_bound',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=norm,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='rowWiseNorm',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.rowWiseNorm',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='row_wise_norm',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=rowWiseNorm,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='distance',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.distance',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='distance',
+        supports_grad=True,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.distance_triangle_bound',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=distance,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='rowWiseDistance',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.rowWiseDistance',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='row_wise_distance',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=rowWiseDistance,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='rigidTransform3D',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.rigidTransform3D',
+        jax_module='jax.numpy',
+        jax_symbol='matmul',
+        lowering_kind='rigid_transform_3d',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=rigidTransform3D,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='pairwiseDistances',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.pairwiseDistances',
+        jax_module='jax.numpy',
+        jax_symbol='abs',
+        lowering_kind='pairwise_distances',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=pairwiseDistances,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='pairwiseDistances3D',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.pairwiseDistances3D',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='pairwise_distances_3d',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=pairwiseDistances3D,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='minimumImagePairwiseDistances',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.minimumImagePairwiseDistances',
+        jax_module='jax.numpy.linalg',
+        jax_symbol='norm',
+        lowering_kind='minimum_image_pairwise_distances',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=minimumImagePairwiseDistances,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='applyCutoff',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.applyCutoff',
+        jax_module='jax.numpy',
+        jax_symbol='where',
+        lowering_kind='apply_cutoff',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=applyCutoff,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='lennardJones',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.lennardJones',
+        jax_module='jax.numpy',
+        jax_symbol='where',
+        lowering_kind='lennard_jones',
+        supports_grad=True,
+        proof_ref='DecisionQuotient.Computation.ArrayDSL.lennardJones',
+        proof_status=ProofStatus.CERTIFIED,
+        callable=lennardJones,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='sumPairPotentials',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.sumPairPotentials',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='sum_pair_potentials',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=sumPairPotentials,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='sumPairPotentialsMatrix',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.sumPairPotentialsMatrix',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='sum_pair_potentials_matrix',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=sumPairPotentialsMatrix,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='sumPairPotentials3D',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.sumPairPotentials3D',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='sum_pair_potentials_3d',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=sumPairPotentials3D,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='typedLennardJonesMatrix',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.typedLennardJonesMatrix',
+        jax_module='jax.numpy',
+        jax_symbol='where',
+        lowering_kind='typed_lennard_jones_matrix',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=typedLennardJonesMatrix,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='typedLennardJonesCutoff',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.typedLennardJonesCutoff',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='typed_lennard_jones_cutoff',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=typedLennardJonesCutoff,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='coulombCutoff',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.coulombCutoff',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='coulomb_cutoff',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=coulombCutoff,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='upperTriangleMaskedSum',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.upperTriangleMaskedSum',
+        jax_module='jax.numpy',
+        jax_symbol='sum',
+        lowering_kind='upper_triangle_masked_sum',
+        supports_grad=True,
+        proof_ref=None,
+        proof_status=None,
+        callable=upperTriangleMaskedSum,
+    )
+)
+
+register_primitive(
+    PrimitiveMetadata(
+        name='ewaldRealSpaceKernel',
+        lean_symbol='DecisionQuotient.Computation.ArrayDSL.ewaldRealSpaceKernel',
+        jax_module='jax.numpy',
+        jax_symbol='exp',
+        lowering_kind='ewald_real_space_kernel',
+        supports_grad=True,
+        proof_ref='EwaldSummation.lean::ewald_real_space_exponential_decay',
+        proof_status=ProofStatus.CONDITIONALLY_CERTIFIED,
+        callable=ewaldRealSpaceKernel,
+    )
+)
+
+
+ARRAYDSL_PRIMITIVES = tuple(PRIMITIVE_REGISTRY[name] for name in [
+    'map',
+    'reduce_sum',
+    'elemBinaryAdd',
+    'elemBinarySub',
+    'norm',
+    'rowWiseNorm',
+    'distance',
+    'rowWiseDistance',
+    'rigidTransform3D',
+    'pairwiseDistances',
+    'pairwiseDistances3D',
+    'minimumImagePairwiseDistances',
+    'applyCutoff',
+    'lennardJones',
+    'sumPairPotentials',
+    'sumPairPotentialsMatrix',
+    'sumPairPotentials3D',
+    'typedLennardJonesMatrix',
+    'typedLennardJonesCutoff',
+    'coulombCutoff',
+    'upperTriangleMaskedSum',
+    'ewaldRealSpaceKernel'
+])
