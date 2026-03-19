@@ -9,13 +9,13 @@
 ## Stage 0: Preconditions
 
 - [x] Confirm `lake build` succeeds in `docs/papers/paper4_decision_quotient/proofs`
-- [ ] Confirm the current theorem anchors still match the plan:
+  - [x] Confirm the current theorem anchors still match the plan:
   - [x] `EpsilonUtilityGap.lean`
   - [x] `Sufficiency.lean`
   - [x] `MolecularSrank.lean`
   - [x] `DiscretizedState.lean`
 - [x] Freeze naming conventions for new files before implementation begins
-- [ ] Decide whether sampled action restriction will use:
+  - [x] Decide whether sampled action restriction will use:
   - [ ] a subtype over an ambient action family, or
   - [x] a standalone finite sampled action type
 
@@ -218,7 +218,7 @@ Dependency checklist:
 
 Acceptance gate:
 
-- [ ] There is a theorem saying inside-cutoff retained coordinates are sufficient under the cutoff boundedness premise
+  - [x] There is a theorem saying inside-cutoff retained coordinates are sufficient under the cutoff boundedness premise
 
 ---
 
@@ -257,9 +257,9 @@ Acceptance gate:
 
 ### 13. Chemistry-side physical bounds
 
-- [ ] Instantiate `SatisfiesBoundedPotential` for standard LJ with cutoff
-- [ ] Instantiate Coulomb tail bounds or Ewald-based bounds
-- [ ] Delay composite chemistry until simple physical score families are discharged
+- [x] Instantiate `SatisfiesBoundedPotential` for standard LJ with cutoff
+- [x] Instantiate Coulomb tail bounds or Ewald-based bounds
+- [x] Delay composite chemistry until simple physical score families are discharged
 
 ### 14. Remove `lattice_sum_converges` axiom
 
@@ -287,9 +287,9 @@ Acceptance gate:
 
 ## Stop Conditions
 
-- [ ] Stop introducing new pruning heuristics until Stage 7 exists
-- [ ] Stop claiming formal grounding for score families not actually tied to Lean theorems
-- [ ] Stop using empirical rank-correlation as a substitute for containment theorems
+- [x] Stop introducing new pruning heuristics until Stage 7 exists
+- [x] Stop claiming formal grounding for score families not actually tied to Lean theorems
+- [x] Stop using empirical rank-correlation as a substitute for containment theorems
 
 ---
 
