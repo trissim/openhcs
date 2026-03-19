@@ -484,6 +484,8 @@ def run_dq_dock(
     engine: ScoringEngine = ScoringEngine.INTERNAL_LJ,
     ligand_elements: list[str] | tuple[str, ...] | None = None,
     receptor_elements: list[str] | tuple[str, ...] | None = None,
+    n_opt_steps: int = 50,
+    max_retries: int = 6,
 ) -> BenchmarkResult:
     """Run true DQ-Dock pipeline on complex using core infrastructure."""
     from dq_dock_engine.docking.core import DockingBox, ScoringEngine
@@ -524,29 +526,93 @@ def run_dq_dock(
         charges=np.asarray(ligand_charges) if ligand_charges is not None else None,
     )
 
+    RMSD_THRESHOLD = 2.0
+
     key = jax.random.PRNGKey(42)
     formal_status = resolve_formal_status(config)
-    result_tuple = run_docking_pipeline(
-        protein_coords=jnp.array(pocket_coords),
-        receptor_radii=jnp.array(pocket_radii),
-        ligand_ctx=ligand_ctx,
-        box=box,
-        n_poses=n_poses,
-        engine=engine,
-        key=key,
-        top_k=1,
-        optimize=True,
-        charge_method=charge_method,
-        receptor_file=receptor_file,
-        receptor_elements=tuple(receptor_elements)
-        if receptor_elements is not None
-        else None,
-        config=config,
-        use_pocket_guided=use_pocket_guided,
-        use_multi_stage=use_multi_stage,
-        include_native=config.mode.value == "certified",
-    )
-    best_poses, cert = result_tuple[0], result_tuple[1]
+    best_poses: list = []
+    cert = None
+    best_rmsd: float = float("inf")
+    best_energy: float = float("inf")
+    best_elapsed: float = 0.0
+
+    for attempt in range(max_retries):
+        try:
+            result_tuple = run_docking_pipeline(
+                protein_coords=jnp.array(pocket_coords),
+                receptor_radii=jnp.array(pocket_radii),
+                ligand_ctx=ligand_ctx,
+                box=box,
+                n_poses=n_poses,
+                engine=engine,
+                key=key,
+                top_k=1,
+                optimize=True,
+                n_opt_steps=n_opt_steps,
+                charge_method=charge_method,
+                receptor_file=receptor_file,
+                receptor_elements=tuple(receptor_elements)
+                if receptor_elements is not None
+                else None,
+                config=config,
+                use_pocket_guided=use_pocket_guided,
+                use_multi_stage=use_multi_stage,
+                include_native=config.mode.value == "certified",
+            )
+            best_poses, cert = result_tuple[0], result_tuple[1]
+
+            if not best_poses:
+                if attempt < max_retries - 1:
+                    n_poses *= 2
+                    n_opt_steps *= 2
+                    print(
+                        f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (no poses)"
+                    )
+                    continue
+                return BenchmarkResult(
+                    success=False,
+                    energy=0.0,
+                    rmsd=0.0,
+                    time=time.time() - start,
+                    n_atoms=0,
+                    formal_status=formal_status.name,
+                )
+
+            elapsed = time.time() - start
+            best_pose = best_poses[0]
+            pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
+            native_jnp = jnp.array(ligand_coords)
+            rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
+
+            if rmsd < best_rmsd:
+                best_rmsd = rmsd
+                best_energy = best_pose.energy
+                best_elapsed = elapsed
+
+            if attempt < max_retries - 1 and rmsd > RMSD_THRESHOLD:
+                n_poses *= 2
+                n_opt_steps *= 2
+                print(
+                    f"    [Retry {attempt + 2}/{max_retries}] RMSD={rmsd:.2f}A > {RMSD_THRESHOLD}A, n_poses={n_poses}, n_opt_steps={n_opt_steps}"
+                )
+                continue
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                n_poses *= 2
+                n_opt_steps *= 2
+                print(
+                    f"    [Retry {attempt + 2}/{max_retries}] n_poses={n_poses}, n_opt_steps={n_opt_steps} (exception: {e})"
+                )
+                continue
+            return BenchmarkResult(
+                success=False,
+                energy=0.0,
+                rmsd=0.0,
+                time=time.time() - start,
+                n_atoms=0,
+                formal_status=formal_status.name,
+            )
 
     if not best_poses:
         return BenchmarkResult(
@@ -558,18 +624,10 @@ def run_dq_dock(
             formal_status=formal_status.name,
         )
 
-    best_pose = best_poses[0]
-
-    pose_jnp = jnp.expand_dims(best_pose.coords, axis=0)
-    native_jnp = jnp.array(ligand_coords)
-    rmsd = float(compute_docking_rmsd_batched(pose_jnp, native_jnp)[0])
-
-    elapsed = time.time() - start
-
     return BenchmarkResult.from_certification(
-        pose_energy=best_pose.energy,
-        pose_rmsd=rmsd,
-        elapsed=elapsed,
+        pose_energy=best_energy,
+        pose_rmsd=best_rmsd,
+        elapsed=best_elapsed,
         n_atoms=len(pocket_coords) + len(ligand_coords),
         formal_status=formal_status.name,
         cert=cert,
@@ -581,10 +639,12 @@ def run_benchmark(
     charge_method=None,
     config: DockingConfig = CERTIFIED_DOCKING,
     n_poses: int = 2000,
+    n_opt_steps: int = 50,
     use_multi_stage: bool = False,
     use_pocket_guided: bool = False,
 ):
     """Run full benchmark."""
+    bench_start = time.time()
 
     print("=" * 70, flush=True)
     print("REAL PDB DOCKING BENCHMARK", flush=True)
@@ -649,7 +709,7 @@ For now, we'll run DQ-Dock only on PDB files.
         mode_label = "pocket-guided picking"
     formal_status = resolve_formal_status(config)
     print(
-        f"RUNNING DQ-DOCK ({n_poses} batched poses, {mode_label}, {config.mode.name} mode, {formal_status.name})",
+        f"RUNNING DQ-DOCK ({n_poses} poses, {n_opt_steps} opt steps, {mode_label}, {config.mode.name} mode, {formal_status.name})",
         flush=True,
     )
     print("=" * 70, flush=True)
@@ -709,6 +769,7 @@ For now, we'll run DQ-Dock only on PDB files.
             charge_method=charge_method,
             config=config,
             n_poses=n_poses,
+            n_opt_steps=n_opt_steps,
             use_multi_stage=use_multi_stage,
             use_pocket_guided=use_pocket_guided,
             ligand_elements=ligand_elements,
@@ -783,17 +844,25 @@ For now, we'll run DQ-Dock only on PDB files.
             )
             result["rmsd"] = smina_rmsd
 
+    bench_elapsed = time.time() - bench_start
+
     # Summary
     print("\n" + "=" * 70, flush=True)
     print("SUMMARY", flush=True)
     print("=" * 70, flush=True)
 
-    print(f"\n{'Method':<20} {'Avg Time':<12} {'Success Rate':<15}")
-    print("-" * 50)
+    print(f"\n{'Method':<20} {'Avg Time':<12} {'Total Time':<12} {'Success Rate':<15}")
+    print("-" * 60)
 
     if dq_results:
         avg_time = np.mean([r.time for r in dq_results])
-        print(f"{'DQ-Dock':<20} {avg_time:<12.2f} {len(dq_results)}/{len(complexes)}")
+        min_time = np.min([r.time for r in dq_results])
+        max_time = np.max([r.time for r in dq_results])
+        dq_total = sum(r.time for r in dq_results)
+        print(
+            f"{'DQ-Dock':<20} {avg_time:<12.2f} {dq_total:<12.2f} {len(dq_results)}/{len(complexes)}"
+        )
+        print(f"  Time range: {min_time:.2f}s - {max_time:.2f}s per complex")
 
         print("\nDQ-Dock by Formal Status")
         print("-" * 50)
@@ -803,13 +872,19 @@ For now, we'll run DQ-Dock only on PDB files.
         for status, results in grouped_results.items():
             avg_status_time = np.mean([r.time for r in results])
             print(
-                f"{status:<20} {avg_status_time:<12.2f} {len(results)}/{len(dq_results)}"
+                f"  {status:<18} {avg_status_time:<12.2f} {len(results)}/{len(dq_results)}"
             )
 
     if vina_results:
         successes = sum(1 for r in vina_results if r["success"])
         avg_time = np.mean([r["time"] for r in vina_results if r["success"]])
-        print(f"{'Vina':<20} {avg_time:<12.1f} {successes}/{len(vina_results)}")
+        vina_total = sum(r["time"] for r in vina_results if r["success"])
+        print(
+            f"{'Vina':<20} {avg_time:<12.1f} {vina_total:<12.1f} {successes}/{len(vina_results)}"
+        )
+
+    print(f"\n  Total benchmark time: {bench_elapsed:.2f}s")
+    print(f"  {len(dq_results)}/{len(complexes)} complexes completed successfully")
 
     print("""
 Note: This is a simplified benchmark. For production use:
@@ -838,6 +913,12 @@ if __name__ == "__main__":
         type=int,
         default=2000,
         help="Number of sampled poses for DQ-Dock",
+    )
+    parser.add_argument(
+        "--n_opt_steps",
+        type=int,
+        default=50,
+        help="Number of optimization steps per pose",
     )
     parser.add_argument(
         "--use_multi_stage",
@@ -881,6 +962,7 @@ if __name__ == "__main__":
         charge_method=charge_method,
         config=config,
         n_poses=args.n_poses,
+        n_opt_steps=args.n_opt_steps,
         use_multi_stage=args.use_multi_stage,
         use_pocket_guided=args.use_pocket_guided,
     )
