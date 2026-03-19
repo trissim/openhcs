@@ -535,15 +535,26 @@ certified-mode runtime free from hidden ad hoc Python logic.
 - keep `dq_dock_engine/docking/optimization.py` heuristic-only
 - create `dq_dock_engine/docking/formal_optimizer.py`
 
+Status: implemented
+
 ### Step B - deterministic action family
 
 - implement 13-action stencil
 - wire DSL rigid transform application
 
+Status: implemented in `dq_dock_engine/docking/formal_actions.py`
+
 ### Step C - exact/coarse certified family scoring
 
 - implement exact/coarse score pair for the same action family
 - expose perturbation bound/certificate
+
+Status: partially implemented
+
+- exact family scoring is implemented via `score_certified_batch`
+- coarse family scoring currently aliases exact certified scoring, so `delta = 0`
+- this removes heuristic scoring from certified refinement, but does not yet give
+  a cheaper certified surrogate/pruning pass
 
 ### Step D - Bayes support-restriction update
 
@@ -551,14 +562,71 @@ certified-mode runtime free from hidden ad hoc Python logic.
 - implement survivor-indicator likelihood
 - implement deterministic admissible action selection
 
+Status: implemented in `dq_dock_engine/docking/formal_belief.py` and
+`dq_dock_engine/docking/formal_pruning.py`
+
 ### Step E - pipeline cutover
 
 - in certified mode, replace local gradient descent with formal optimizer rounds
+
+Status: implemented in `dq_dock_engine/docking/pipeline.py`
 
 ### Step F - theorem wrapper cleanup
 
 - if runtime/documentation still has handwaving around admissibility of the
   support-restriction update, add the small Lean wrappers named above
+
+Status: not yet implemented
+
+## Implemented runtime modules
+
+- `dq_dock_engine/docking/formal_actions.py`
+  - deterministic 13-action local stencil
+  - DSL-backed rigid transform application
+- `dq_dock_engine/docking/formal_belief.py`
+  - uniform prior
+  - survivor-set Bayes conditioning
+  - deterministic posterior-based action selection
+- `dq_dock_engine/docking/formal_pruning.py`
+  - top-k-with-ties mask
+  - ambiguity band mask
+  - certified survivor mask
+- `dq_dock_engine/docking/formal_optimizer.py`
+  - round-based certified local refinement over a finite action family
+- `dq_dock_engine/docking/pipeline.py`
+  - certified mode now routes local refinement through the formal optimizer
+
+## Validation completed
+
+- `dq_dock_engine/tests/test_formal_optimizer.py`
+  - action family determinism
+  - posterior normalization
+  - certified local action selection
+  - certified pipeline avoids heuristic optimizer path
+- benchmark smoke test
+  - `1hvr`, `500` poses, `3` certified refinement rounds
+  - RMSD `0.40A`
+  - benchmark completed successfully end-to-end
+
+## Remaining proof/completeness gaps
+
+1. **Coarse certified surrogate is still degenerate**
+   - exact and coarse scores are currently identical in certified refinement
+   - this is rigorous but does not yet exploit the sampled-docking gap/pruning
+     theorems for cheaper selection
+
+2. **Prior choice is explicit, not yet theorem-wrapped**
+   - current prior is uniform over the declared finite action family
+   - acceptable as an explicit assumption, but not yet discharged by a Lean
+     wrapper theorem
+
+3. **Admissibility wrapper theorem still missing**
+   - we still need a small Lean theorem that support-restriction conditioning over
+     a certified survivor set is an admissible update in the Paper 4 sense
+
+4. **Certified sampling outside local refinement is still heuristic**
+   - certified mode still enters the local optimizer from a heuristic sampled pose
+     family upstream in the pipeline
 
 ## Remaining honest caveat
 
